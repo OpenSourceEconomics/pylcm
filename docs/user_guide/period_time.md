@@ -10,13 +10,13 @@ Use `Model(n_periods=...)` when computational stages are the natural model clock
 ## Model time
 
 ```python
-from lcm import InitialNode, Model, PeriodRange, Periods
+from lcm import InitialNodes, Model, PeriodRange, Periods
 
 model = Model(
     n_periods=3,
     regimes=regimes,
     regime_id_class=RegimeId,
-    initial_nodes=(InitialNode(period=0, regime="working"),),
+    initial_nodes=InitialNodes(by_period={0: "working"}),
     edges={
         "working": {
             "working": PeriodRange(exclusive_stop=1),
@@ -35,6 +35,15 @@ invalid.
 `age` argument is an error. Declare a separately named `biological_age` or
 `economic_quarter` function when the economics needs it. A computational stage does not
 determine discounting, survival, interest accrual or how flows are aggregated.
+
+Admissible starts use `InitialNodes(by_period={0: "working"})`; age models use
+`InitialNodes(by_age={25: "working"})`. Exactly one nonempty mapping is required, and a
+declaration for the other clock is rejected. Both forms copy their containers and
+normalize regime collections. `model.initial_nodes` can be passed directly into another
+model; `model.graph.initial_nodes` exposes expanded pairs labelled by
+`graph.coordinate_kind`. See
+[InitialNodes](../reference/model_and_regime.md#api-initial-nodes) for selector and
+grid-membership rules.
 
 Period graph declarations require `PeriodRange` or `Periods`; a bare integer or tuple
 cannot silently change from an age into a period. `ByPeriod(cases={0: ..., 1: ...})`

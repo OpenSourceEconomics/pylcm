@@ -51,8 +51,8 @@ from _lcm.regime_building.transition_support import (
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.typing import RegimeName
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.initial_nodes import InitialNodes
 from lcm.phased import Phased
-from lcm.time import InitialNode
 from lcm.transition import (
     AgeRange,
     ByAge,
@@ -672,10 +672,9 @@ def resolve_initial_nodes(
 ) -> frozenset[tuple[object, RegimeName]]:
     """Normalize `Model(initial_nodes=...)` to the exact admissible start pairs.
 
-    `initial_nodes` accepts a sequence or set of exact `(age, regime)` pairs, so
-    a published `Model.initial_nodes` is accepted back, or maps age selectors
-    (as in `ByAge`) to a regime name or a nonempty sequence of names. Selector
-    rules contribute the Cartesian product of grid ages and names; all pairs
+    `InitialNodes` explicitly names the model's age or period coordinate.
+    Legacy exact pairs and bare selector mappings remain age-only inputs.
+    Selector rules contribute the Cartesian product of coordinates and names; all pairs
     are unioned. The result depends on the declaration and clock, never on
     solve coverage.
     """
@@ -700,7 +699,8 @@ def resolve_initial_nodes(
             raise ModelInitializationError(str(error)) from error
         if not periods:
             raise ModelInitializationError(
-                f"The `initial_nodes` selector {selector!r} selects no age of "
+                f"The `initial_nodes` selector {selector!r} selects no "
+                f"{coordinate_kind(ages)} of "
                 "the model."
             )
         permitted |= {
@@ -716,6 +716,17 @@ def _initial_node_entries(
     *, initial_nodes: object, kind: str = "age"
 ) -> list[tuple[object, object]]:
     """Normalize exact-pair or selector-mapping entries before grid selection."""
+    if isinstance(initial_nodes, InitialNodes):
+        selected = initial_nodes.by_age if kind == "age" else initial_nodes.by_period
+        if selected is None:
+            raise ModelInitializationError(
+                f"This model requires InitialNodes(by_{kind}=...)."
+            )
+        return list(selected.items())
+    if kind == "period":
+        raise ModelInitializationError(
+            "Period models require InitialNodes(by_period=...)."
+        )
     if isinstance(initial_nodes, Sequence | AbstractSet) and not isinstance(
         initial_nodes, str
     ):
@@ -723,16 +734,12 @@ def _initial_node_entries(
             raise ModelInitializationError(
                 "`initial_nodes` must name at least one starting pair."
             )
-        entries = [_initial_node_pair(pair=pair, kind=kind) for pair in initial_nodes]
+        entries = [_initial_node_pair(pair) for pair in initial_nodes]
     elif isinstance(initial_nodes, Mapping) and initial_nodes:
         entries = list(initial_nodes.items())
-        if any(
-            isinstance(selector, PeriodRange | Periods) != (kind == "period")
-            for selector, _ in entries
-        ):
+        if any(isinstance(selector, PeriodRange | Periods) for selector, _ in entries):
             raise ModelInitializationError(
-                "Initial-node mappings must use the model's coordinate kind; "
-                "use PeriodRange or Periods for a period model."
+                "Age initial-node mappings cannot use period selectors."
             )
     else:
         raise ModelInitializationError(
@@ -743,19 +750,8 @@ def _initial_node_entries(
     return entries
 
 
-def _initial_node_pair(*, pair: object, kind: str) -> tuple[object, object]:
-    """Normalize one named coordinate or legacy exact age pair."""
-    if isinstance(pair, InitialNode):
-        coordinate = pair.period if kind == "period" else pair.age
-        if coordinate is None:
-            raise ModelInitializationError(
-                f"InitialNode must specify {kind} for this model."
-            )
-        return coordinate, pair.regime
-    if kind == "period":
-        raise ModelInitializationError(
-            "Period models require InitialNode(period=..., regime=...)."
-        )
+def _initial_node_pair(pair: object) -> tuple[object, object]:
+    """Normalize one legacy exact age pair."""
     if (
         not isinstance(pair, Sequence)
         or isinstance(pair, str)
@@ -765,7 +761,7 @@ def _initial_node_pair(*, pair: object, kind: str) -> tuple[object, object]:
             f"`initial_nodes` must contain (age, regime) pairs; got {pair!r}."
         )
     age, name = pair
-    if isinstance(age, AgeRange | tuple | range):
+    if isinstance(age, AgeRange | PeriodRange | Periods | tuple | range):
         raise ModelInitializationError(
             f"`initial_nodes` pairs require an exact age; got {age!r}."
         )

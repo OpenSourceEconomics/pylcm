@@ -136,7 +136,7 @@ def test_a_terminal_value_reference_does_not_become_a_start(
     if participation:
         expected_values |= {(1, "single_f_terminal")}
 
-    assert model.initial_nodes == frozenset({(0, "couple")})
+    assert model.graph.initial_nodes == frozenset({(0, "couple")})
     assert model.reachability.visited_nodes == physical
     assert model.reachability.nodes == expected_values
 

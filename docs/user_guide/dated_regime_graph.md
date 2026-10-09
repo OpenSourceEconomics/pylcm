@@ -5,10 +5,11 @@ title: Age-indexed regime graphs
 # Age-indexed regime graphs
 
 The examples on this page use `Model(ages=...)`. For `Model(n_periods=...)`, declare
-starts with `InitialNode(period=..., regime=...)`, source selectors with `PeriodRange`
-or `Periods`, and transition schedules with `ByPeriod`. Their edges still land in the
-next computational slot. See [Periods and temporal parameters](period_time.md) for the
-explicit period forms and coordinate validation.
+starts with `InitialNodes(by_period={0: "working"})`, source selectors with
+`PeriodRange` or `Periods`, and transition schedules with `ByPeriod`. Their edges still
+land in the next computational slot. See
+[Periods and temporal parameters](period_time.md) for the explicit period forms and
+coordinate validation.
 
 A model declares its admissible initial nodes and its graph. `Model` requires
 `initial_nodes` and `edges`. `Model(edges=...)` is the only place regime transitions are
@@ -22,7 +23,7 @@ it from its edges.
 ```python
 import jax.numpy as jnp
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, InitialNodes, LinSpacedGrid, Model, Regime, categorical
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
@@ -79,7 +80,7 @@ model = Model(
     ages=ages,
     regime_id_class=RegimeId,
     edges=edges,
-    initial_nodes=((60, "working"),),
+    initial_nodes=InitialNodes(by_age={60: "working"}),
 )
 ```
 
@@ -96,14 +97,25 @@ the final age as dormant metadata; the effective graph never has an outgoing edg
 Names in dormant declarations are still validated. A regime with no outgoing declared
 edges is terminal.
 
-Prefer an explicit tuple of age–regime pairs. A selector mapping remains convenient when
-many starts share regimes:
+Use `InitialNodes(by_age=...)` to identify starting coordinates explicitly. Each
+selector maps to a regime name or a nonempty sequence or set of names:
 
 ```python
 # Equivalent admissible starts.
-initial_nodes = ((60, "working"), (61, "working"))
-initial_nodes = {(60, 61): "working"}
+initial_nodes = InitialNodes(by_age={60: "working", 61: "working"})
+initial_nodes = InitialNodes(by_age={(60, 61): "working"})
 ```
+
+Overlapping selectors contribute their union; repeated pairs are harmless. `AgeRange`
+selects existing grid ages in its half-open interval. Explicit off-grid ages, selectors
+that select no age, and unknown regimes raise errors. `ByAge` selects transition laws;
+it does not declare admissible starts.
+
+The declaration copies its mapping and regime collections. The model publishes a
+normalized `InitialNodes`: `model.initial_nodes.by_age` maps exact grid ages to sorted,
+unique regime tuples. Pass `model.initial_nodes` back to `Model` to reconstruct the same
+starts. Use `model.graph.initial_nodes` when you need expanded `(age, regime)` pairs.
+Legacy pair collections and bare selector mappings remain accepted as inputs.
 
 Starts are admissibility declarations, not population weights. Simulation still receives
 subjects and their states through `InitialConditions` or `Population`. There is no

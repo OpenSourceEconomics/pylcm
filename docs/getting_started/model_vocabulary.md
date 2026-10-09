@@ -49,7 +49,7 @@ Read [Choose your starting declaration](next_steps.md) before writing a larger m
 The [User Guide](../user_guide/index.md) then develops each object, while the
 [Reference](../reference/index.md) states the exact contracts.
 
-`Model(edges={source: {target: source_ages}}, initial_nodes=((age, regime), ...))`
+`Model(edges={source: {target: source_ages}}, initial_nodes=InitialNodes(by_age={age: regime}))`
 declares connectivity and admissible starts. A source with one destination at every age
 needs nothing more: the graph is its law. A source with several destinations at some age
 is declared as `Transition(targets={target: source_ages, ...}, law=...)`, and a regime

@@ -259,6 +259,7 @@ from lcm.exceptions import (
     UnsupportedOperationError,
 )
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule
+from lcm.initial_nodes import InitialNodes, UserInitialNodes
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
@@ -295,12 +296,16 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
 )
 from lcm.solvers import GridSearch
-from lcm.time import InitialNode
-from lcm.transition import ModelEdges, Periods, PhaseEdges, Transition
+from lcm.transition import (
+    ModelEdges,
+    Periods,
+    PhaseEdges,
+    Transition,
+    snapshot_transition_containers,
+)
 from lcm.typing import (
     Bool1D,
     FloatND,
-    InitialNodes,
     IntND,
     Phase,
     UserFacingParamsTemplate,
@@ -565,8 +570,8 @@ class Model:
     reachability: ModelReachability
     """Static solution and simulation regime graphs."""
 
-    initial_nodes: frozenset[tuple[object, RegimeName]] | frozenset[InitialNode]
-    """Exact admissible starts in the model's age or period coordinates."""
+    initial_nodes: InitialNodes
+    """Immutable admissible starts, keyed by the model's exact time coordinate."""
 
     @property
     def graph(self) -> ModelGraph:
@@ -630,7 +635,7 @@ class Model:
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
-        initial_nodes: InitialNodes,
+        initial_nodes: UserInitialNodes,
         edges: object,
     ) -> None:
         """Initialize the Model.
@@ -648,11 +653,12 @@ class Model:
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to JIT-compile the functions of the internal
                 regimes.
-            initial_nodes: Nonempty admissible starts. Age models accept
-                `(age, regime)` pairs or a mapping from age selectors to regime
-                names. Period models require `InitialNode(period=..., regime=...)`
-                entries. Published as exact starts in `self.initial_nodes`, which
-                this argument accepts back. There is no default starting universe.
+            initial_nodes: Admissible starts as `InitialNodes(by_age=...)` or
+                `InitialNodes(by_period=...)`, matching the model's clock.
+                Legacy exact age-regime pairs and age-selector mappings are
+                also accepted. Published as normalized `self.initial_nodes`,
+                which this argument accepts back; expanded pairs are in
+                `self.graph.initial_nodes`. Required, with no default.
             edges: Mapping from source regime to destination regime to a source-time
                 selector. Period models require explicit `Periods` or `PeriodRange`
                 selectors. A bare mapping broadcasts to both phases; `Phased`
@@ -703,9 +709,9 @@ class Model:
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
-        self._edges = cast("ModelEdges", edges)
+        self._edges = cast("ModelEdges", snapshot_transition_containers(edges))
         laws, graph_edges = bind_edge_laws(
-            edges=edges, regimes=regimes, ages=self._time
+            edges=self._edges, regimes=regimes, ages=self._time
         )
         # The transitions as declared, before any age selects among them: the
         # `edges` parameter template and its Series conversion read these.
@@ -946,13 +952,8 @@ class Model:
             coordinate_kind=self._time.kind,
         )
         self._resolved_initial_nodes = resolved_initial_nodes
-        self.initial_nodes = (
-            frozenset(
-                InitialNode(period=cast("int", period), regime=name)
-                for period, name in resolved_initial_nodes
-            )
-            if self.ages is None
-            else resolved_initial_nodes
+        self.initial_nodes = InitialNodes._from_pairs(  # noqa: SLF001
+            pairs=resolved_initial_nodes, kind=self._time.kind
         )
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self._time,
@@ -1172,9 +1173,10 @@ class Model:
                     "Rebuild this model with an explicit time coordinate."
                 )
             self._time = ModelTime.from_inputs(ages=self.ages, n_periods=None)
-            self._resolved_initial_nodes = cast(
-                "frozenset[tuple[object, RegimeName]]", self.initial_nodes
-            )
+        self._resolved_initial_nodes = self.graph.initial_nodes
+        self.initial_nodes = InitialNodes._from_pairs(  # noqa: SLF001
+            pairs=self._resolved_initial_nodes, kind=self._time.kind
+        )
         if "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
         self._simulate_runtime_regimes = {}

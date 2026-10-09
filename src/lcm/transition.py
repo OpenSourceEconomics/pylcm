@@ -233,7 +233,26 @@ class Transition:
             )
         else:
             object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
+        object.__setattr__(self, "law", snapshot_transition_containers(self.law))
         object.__setattr__(self, "gates", MappingProxyType(dict(self.gates)))
+
+
+def snapshot_transition_containers(value: object) -> object:
+    """Copy edge and law mappings, including phase variants, preserving callables.
+
+    A mapping proxy may still view a caller-owned dictionary, so it also needs
+    a copy. Transition and ByAge declarations own their containers at construction.
+    """
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: snapshot_transition_containers(item) for key, item in value.items()}
+        )
+    if isinstance(value, Phased):
+        return Phased(
+            solve=snapshot_transition_containers(value.solve),
+            simulate=snapshot_transition_containers(value.simulate),
+        )
+    return value
 
 
 def law_names_its_targets(law: object) -> bool:
@@ -751,17 +770,30 @@ class ByAge:
                     "ByAge requires age selectors, not period selectors."
                 )
             _fail_if_invalid_age_selector(selector)
-        self._cases: tuple[tuple[object, object], ...] = tuple(cases.items())
+        self._cases: tuple[tuple[object, object], ...] = tuple(
+            (selector, snapshot_transition_containers(law))
+            for selector, law in cases.items()
+        )
         # Stored as `None` rather than the signature sentinel, so the model
         # fingerprint sees plain data.
-        self._default = None if default is _MISSING else default
+        self._default = (
+            None if default is _MISSING else snapshot_transition_containers(default)
+        )
         self._until: _Until | None = None
 
     @classmethod
     def _from_until(cls, *, until: _Until) -> Self:
         """A schedule that resolves through `until` instead of cases."""
         schedule = cls.__new__(cls)
-        vars(schedule).update(_cases=(), _default=None, _until=until)
+        vars(schedule).update(
+            _cases=(),
+            _default=None,
+            _until=dataclasses.replace(
+                until,
+                law=snapshot_transition_containers(until.law),
+                then=snapshot_transition_containers(until.then),
+            ),
+        )
         return schedule
 
     @classmethod
@@ -794,7 +826,7 @@ class ByAge:
             )
         )
 
-    def with_mapped_laws(self, *, func: Callable[[object], object]) -> ByAge:
+    def with_mapped_laws(self, *, func: Callable[[object], object]) -> Self:
         """Return this schedule with every law replaced by `func(law)`.
 
         The selectors are kept. Returns `self` when `func` leaves every law
@@ -1072,9 +1104,12 @@ def _select_periods(
         values = selector.values
     for value in values:
         if value not in period_by_age:
+            kind = coordinate_kind(ages)
+            article = "an" if kind == "age" else "a"
             raise RegimeInitializationError(
-                f"Age {value} in selector {selector!r} is not an age of the model; "
-                f"valid ages are {list(ages.exact_values)}."
+                f"{kind.title()} {value} in selector {selector!r} is not "
+                f"{article} {kind} of the model; "
+                f"valid {kind}s are {list(ages.exact_values)}."
             )
         periods.add(period_by_age[value])
     return tuple(sorted(periods))

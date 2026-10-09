@@ -80,7 +80,7 @@ def _model(
         regime_id_class=RegimeId,
         initial_nodes=((40, "work"),)
         if age
-        else (lcm.InitialNode(period=0, regime="work"),),
+        else lcm.InitialNodes(by_period={0: "work"}),
         edges={"work": {"work": (40,), "done": (41,)}}
         if age
         else {
@@ -229,7 +229,7 @@ def test_schedule_requires_only_periods_of_consuming_case() -> None:
             "work": lcm.Regime(functions={"utility": _terminal}),
             "done": lcm.Regime(functions={"utility": _terminal}),
         },
-        initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+        initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
         edges={
             "work": lcm.Transition(
                 law=lcm.ByPeriod(
@@ -270,7 +270,7 @@ def test_temporal_marker_cannot_name_a_dag_node() -> None:
                 ),
                 "done": lcm.Regime(functions={"utility": _terminal}),
             },
-            initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+            initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
             edges={},
         )
 
@@ -443,7 +443,7 @@ def test_temporal_coverage_follows_the_phase_that_reads_a_parameter(
                 "done": lcm.Regime(functions={"utility": _terminal}),
             },
             regime_id_class=RegimeId,
-            initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+            initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
             edges=lcm.Phased(
                 solve={
                     "work": {
@@ -492,7 +492,7 @@ def test_deferred_temporal_target_uses_realized_period(tmp_path: Path) -> None:
             "done": lcm.Regime(functions={"utility": _terminal}),
         },
         regime_id_class=RegimeId,
-        initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+        initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
         edges={
             "work": {"work": lcm.Periods(values=(0,)), "done": lcm.Periods(values=(1,))}
         },
@@ -542,7 +542,7 @@ def test_series_time_and_categorical_axes_are_validated_together(
             "done": lcm.Regime(functions={"utility": _terminal}),
         },
         regime_id_class=RegimeId,
-        initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+        initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
         edges={"work": {"done": lcm.Periods(values=(0,))}},
         fixed_params={"discount_factor": 0.5},
     )
@@ -659,7 +659,7 @@ def test_temporal_aggregator_uses_current_source_period() -> None:
             "done": lcm.Regime(functions={"utility": _terminal}),
         },
         regime_id_class=RegimeId,
-        initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+        initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
         edges={
             "work": {"work": lcm.Periods(values=(0,)), "done": lcm.Periods(values=(1,))}
         },
@@ -699,7 +699,7 @@ def test_temporal_constraint_changes_the_feasible_action(
             "done": lcm.Regime(functions={"utility": _terminal}),
         },
         regime_id_class=RegimeId,
-        initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+        initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
         edges={
             "work": {"work": lcm.Periods(values=(0,)), "done": lcm.Periods(values=(1,))}
         },
@@ -777,7 +777,7 @@ def test_managed_lottery_composes_with_explicit_period(
             ),
         },
         regime_id_class=RegimeId,
-        initial_nodes=(lcm.InitialNode(period=1, regime="work"),),
+        initial_nodes=lcm.InitialNodes(by_period={1: "work"}),
         edges={"work": {"done": lcm.Periods(values=(1,))}},
         fixed_params={"discount_factor": 0.5},
     )
@@ -836,7 +836,7 @@ def _joint_model() -> lcm.Model:
             ),
         },
         regime_id_class=RegimeId,
-        initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+        initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
         edges={"work": {"done": lcm.Periods(values=(0,))}},
         fixed_params={"discount_factor": 0.5},
     )
@@ -892,7 +892,7 @@ def test_temporal_gate_requires_and_reads_target_period(
             "fallback": lcm.Regime(functions={"utility": _fallback}),
         },
         regime_id_class=GateRegimeId,
-        initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+        initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
         edges={
             "work": lcm.Transition(
                 law={"done": lcm.StochasticTransition(func=_one)},
@@ -948,7 +948,7 @@ def test_edge_temporal_coverage_follows_the_declaring_phase(
                 for name in ("work", "done")
             },
             regime_id_class=RegimeId,
-            initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+            initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
             edges=lcm.Phased(
                 solve={
                     "work": lcm.Transition(
@@ -1024,7 +1024,7 @@ def test_temporal_gate_projection_reads_target_period(
             ),
         },
         regime_id_class=GateRegimeId,
-        initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+        initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
         edges={
             "work": lcm.Transition(
                 law={"done": lcm.StochasticTransition(func=_one)},
