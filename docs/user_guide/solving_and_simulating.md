@@ -182,9 +182,10 @@ result = model.simulate(
 
 Forward simulation using solved value functions. Each agent starts from the given
 initial conditions and makes optimal decisions at each period. Every subject's starting
-age and regime must be an admissible root in `model.initial_nodes`; a start elsewhere is
-rejected even where that problem's value is solved. Returns a `SimulationResult` object.
-The complete `SolutionResult` is supplied through `solution=...`.
+age and regime must be an admissible root in `model.graph.initial_nodes`; a start
+elsewhere is rejected even where that problem's value is solved. Returns a
+`SimulationResult` object. The complete `SolutionResult` is supplied through
+`solution=...`.
 
 ## Simulate without pre-solving
 
@@ -396,8 +397,8 @@ fingerprints.
 
 `"age"` must always be provided in `initial_conditions`. Each value must be a valid
 point on the model's `AgeGrid`, and each subject's `(age, regime)` pair must be a
-declared start in `model.initial_nodes`. The most common case is that all subjects start
-at the initial age — just pass a constant array.
+declared start in `model.graph.initial_nodes`. The most common case is that all subjects
+start at the initial age — just pass a constant array.
 
 Subjects can start at different ages:
 

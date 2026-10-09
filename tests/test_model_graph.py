@@ -84,7 +84,7 @@ def test_graph_edges_price_perceived_choice_and_realize_other_destination() -> N
         ),
         enable_jit=False,
     )
-    assert model.initial_nodes == frozenset({(0, "work")})
+    assert model.graph.initial_nodes == frozenset({(0, "work")})
     assert model.reachability.solution.targets(period=0, source="work") == (
         "perceived",
     )
@@ -353,7 +353,7 @@ def test_graph_destination_order_preserves_nnbegm_phase_invariance() -> None:
         ages=template.ages,
         regime_id_class=n_nbegm_toy.RegimeId,
         fixed_params=template.fixed_params,
-        initial_nodes=tuple(template.initial_nodes),
+        initial_nodes=template.initial_nodes,
         edges=Phased(solve=solve_edges, simulate=simulate_edges),
     )
     assert model.graph.edges.solve == model.graph.edges.simulate
@@ -510,7 +510,7 @@ def test_published_initial_nodes_are_accepted_by_the_constructor() -> None:
     """`Model.initial_nodes` passed back to `Model` selects the same start pairs."""
     model = _phased_graph_model({0: "work"})
     rebuilt = _phased_graph_model(model.initial_nodes)
-    assert rebuilt.initial_nodes == frozenset({(0, "work")})
+    assert rebuilt.graph.initial_nodes == frozenset({(0, "work")})
 
 
 def _declaration_model(*, edges: object, enable_jit: bool) -> Model:
@@ -563,7 +563,7 @@ def test_declared_edges_snapshot_reconstructs_original_value(
 
 
 @pytest.mark.parametrize(
-    "wrapper", ["plain", "proxy", "case", "default", "until", "phased"]
+    "wrapper", ["plain", "proxy", "case", "default", "until", "mapped-until", "phased"]
 )
 def test_transition_snapshots_nested_laws_at_construction(wrapper: str) -> None:
     """Nested probability mappings are owned before a model binds their laws."""
@@ -578,6 +578,9 @@ def test_transition_snapshots_nested_laws_at_construction(wrapper: str) -> None:
         "until": ByAge.until(
             stop_age_exclusive=1, law=probabilities, then=probabilities
         ),
+        "mapped-until": ByAge.until(
+            stop_age_exclusive=1, law="perceived", then="perceived"
+        ).with_mapped_laws(func=lambda _: probabilities),
         "phased": Phased(solve=probabilities, simulate=probabilities),
     }
     transition = Transition(law=laws[wrapper])

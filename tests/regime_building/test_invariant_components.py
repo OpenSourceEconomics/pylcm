@@ -305,7 +305,7 @@ def _components(model: Model) -> dict[str, InvariantComponent]:
             laws=model.graph.laws,
             regimes=model._regimes,
             reachability=model.reachability,
-            initial_nodes=model.initial_nodes,
+            initial_nodes=model.graph.initial_nodes,
             ages=model.ages,
             fixed_component_splits=model._fixed_component_splits,
         )

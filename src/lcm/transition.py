@@ -705,7 +705,15 @@ class ByAge:
     def _from_until(cls, *, until: _Until) -> ByAge:
         """A schedule that resolves through `until` instead of cases."""
         schedule = cls.__new__(cls)
-        vars(schedule).update(_cases=(), _default=None, _until=until)
+        vars(schedule).update(
+            _cases=(),
+            _default=None,
+            _until=dataclasses.replace(
+                until,
+                law=snapshot_transition_containers(until.law),
+                then=snapshot_transition_containers(until.then),
+            ),
+        )
         return schedule
 
     @classmethod
@@ -732,8 +740,8 @@ class ByAge:
         return cls._from_until(
             until=_Until(
                 stop_age_exclusive=stop_age_exclusive,
-                law=snapshot_transition_containers(law),
-                then=snapshot_transition_containers(then),
+                law=law,
+                then=then,
                 start_age_inclusive=start_age_inclusive,
             )
         )
