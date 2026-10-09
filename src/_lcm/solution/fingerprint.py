@@ -37,6 +37,7 @@ import _lcm.optimization.golden_section as golden_section_declarations
 import _lcm.optimization.implicit_outer_derivative as implicit_outer_declarations
 import _lcm.power_mean as power_mean_declarations
 import _lcm.probability as probability_declarations
+import _lcm.subtracted_bill as subtracted_bill_declarations
 import _lcm.utils.functools as functools_declarations
 import _lcm.zero_safe as zero_safe_declarations
 import lcm.exceptions as lcm_exceptions
@@ -1969,6 +1970,7 @@ def _capture_shipped_beartype_wrappers() -> tuple[  # noqa: C901, PLR0912
         koopmans_declarations,
         power_mean_declarations,
         probability_declarations,
+        subtracted_bill_declarations,
         zero_safe_declarations,
     )
     loaded_roots = tuple(
