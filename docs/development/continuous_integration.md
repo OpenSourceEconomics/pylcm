@@ -74,17 +74,20 @@ read it, and it selects nothing.
 
 ## Python line coverage
 
-Every lane that runs under coverage uploads its own `coverage-*` artifact. A single
+Every coverage lane in the CPU workflow uploads its own `coverage-*` artifact. A single
 `coverage` job downloads all of them, checks them against the `coverage_contributors`
 list in `tests/ci/ci-workloads.json` with `tests/ci/check_coverage_manifest.py`, and
 uploads one combined report under the `cpu-python` flag. Reports are not carried across
 commits.
 
-Completeness is enforced by that checker, not by Codecov: the combine step refuses to
-proceed unless every recorded lane delivered a non-empty report, and refuses an
-unrecorded extra artifact too. Codecov itself publishes on the single upload
-(`after_n_builds: 1`), so a missing lane would otherwise read as a coverage drop in the
-code under test rather than as a lane that never ran.
+The checker enforces completeness: the combine step refuses to proceed unless every
+recorded lane delivered a non-empty report, and refuses an unrecorded extra artifact
+too.
+
+The GETTSIM integration workflow measures fp64 coverage separately and uploads it under
+the `gettsim` flag after verifying that its tests ran without skips. Codecov waits for
+both workflows' uploads (`after_n_builds: 2`). Both flags require fresh reports for each
+commit.
 
 This percentage measures Python lines exercised on CPU. The fp32 and GPU jobs do not
 repeat coverage instrumentation; they test dtype and hardware behavior directly, while

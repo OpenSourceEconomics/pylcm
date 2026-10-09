@@ -29,9 +29,13 @@ jobs:
       - name: Exercise durable identity and replay
         run: |
           mkdir -p reports
+          coverage_args=()
+          if test "${{ matrix.precision }}" = '64'; then
+            coverage_args=(--cov=./ --cov-report=xml:reports/coverage-gettsim.xml)
+          fi
           pixi run -e tests-gettsim pytest tests/solution/test_gettsim_fingerprint.py \
             --precision=${{ matrix.precision }} -v \
-            --junitxml=reports/gettsim-integration.xml
+            --junitxml=reports/gettsim-integration.xml "${coverage_args[@]}"
       - name: Require the integration module to run
         run: |
           pixi run -e tests-gettsim python - <<'PY'
@@ -44,10 +48,21 @@ jobs:
               f"GETTSIM integration: {tests} tests, {skipped} skipped"
           )
           PY
+      - name: Upload GETTSIM coverage to Codecov
+        if: matrix.precision == '64'
+        uses: codecov/codecov-action@v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: gettsim
+          files: reports/coverage-gettsim.xml
+          disable_search: true
+          fail_ci_if_error: true
       - name: Upload integration results
         if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gettsim-integration-fp${{ matrix.precision }}
-          path: reports/gettsim-integration.xml
+          path: |
+            reports/gettsim-integration.xml
+            reports/coverage-gettsim.xml
           if-no-files-found: error

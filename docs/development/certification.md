@@ -334,16 +334,19 @@ profiles, and the four markers a test uses to declare its contract.
 
 ## Coverage
 
-Every lane that runs under coverage uploads a `coverage-*` artifact. A single `coverage`
-job downloads all of them, runs `tests/ci/check_coverage_manifest.py` against the
-manifest's `coverage_contributors` list — 16 lanes — and uploads one combined report
-under the `cpu-python` flag.
+Every coverage lane in the CPU workflow uploads a `coverage-*` artifact. A single
+`coverage` job downloads all of them, runs `tests/ci/check_coverage_manifest.py` against
+the manifest's `coverage_contributors` list, and uploads one combined report under the
+`cpu-python` flag.
 
-The checker is the gate, not Codecov: `codecov.yml` sets `after_n_builds: 1`, so Codecov
-publishes as soon as the single upload arrives. What guarantees completeness is that the
-combine step refuses to proceed unless every recorded lane delivered a non-empty report,
-and refuses an *unexpected* artifact too — an extra lane means somebody added coverage
-without anyone deciding whether it belongs in the published number.
+The combine step requires every recorded lane to deliver a non-empty report and refuses
+an *unexpected* artifact too. An extra lane means somebody added coverage without anyone
+deciding whether it belongs in the published number.
 
-Adding or removing a coverage-producing lane therefore means editing
+The GETTSIM integration workflow publishes its fp64 report separately under the
+`gettsim` flag after verifying that its tests ran without skips. `codecov.yml` requires
+both workflows' uploads before publishing coverage status or comments
+(`after_n_builds: 2`). Both flags require fresh reports for each commit.
+
+Adding or removing a CPU coverage-producing lane therefore means editing
 `coverage_contributors` in the manifest in the same change.

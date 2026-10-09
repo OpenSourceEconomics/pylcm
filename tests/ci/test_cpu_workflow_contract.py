@@ -155,6 +155,30 @@ def test_the_combine_stage_checks_the_manifest_before_uploading():
     assert check < upload
 
 
+def test_gettsim_workflow_reports_coverage_from_fp64() -> None:
+    """GETTSIM's fp64 report contributes coverage under its own flag."""
+    workflow = yaml.safe_load(
+        (_REPO_ROOT / ".github/workflows/gettsim.yml").read_text(encoding="utf-8")
+    )
+    uploads = [
+        (step.get("if"), step["with"]["files"], step["with"]["flags"])
+        for step in workflow["jobs"]["gettsim"]["steps"]
+        if str(step.get("uses", "")).startswith("codecov/codecov-action")
+    ]
+    assert uploads == [
+        ("matrix.precision == '64'", "reports/coverage-gettsim.xml", "gettsim")
+    ]
+
+
+def test_codecov_waits_for_cpu_and_gettsim_reports() -> None:
+    """Coverage status and comments wait for both workflows' reports."""
+    config = yaml.safe_load((_REPO_ROOT / "codecov.yml").read_text(encoding="utf-8"))
+    assert (
+        config["codecov"]["notify"]["after_n_builds"],
+        config["comment"]["after_n_builds"],
+    ) == (2, 2)
+
+
 def _step_run_block(*, job: str, step_name: str) -> str:
     """Return the `run:` script of one named step in one workflow job."""
     workflow = yaml.safe_load(
