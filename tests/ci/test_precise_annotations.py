@@ -69,6 +69,15 @@ CONSTRUCTS = (
     ),
     pytest.param("Alias = dict[str, {T}]\n", 1, "type-alias", id="implicit-alias"),
     pytest.param(
+        "_Alias = dict[str, {T}]\n", 1, "type-alias", id="private-implicit-alias"
+    ),
+    pytest.param(
+        "from typing import Annotated\n\nAlias = Annotated[{T}, 'unit']\n",
+        3,
+        "type-alias",
+        id="implicit-alias-of-any-generic",
+    ),
+    pytest.param(
         "from typing import TypeVar\n\nT = TypeVar('T', bound={T})\n",
         3,
         "type-param",

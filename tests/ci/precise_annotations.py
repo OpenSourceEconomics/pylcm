@@ -88,25 +88,6 @@ _FIRST_ARGUMENT_ONLY = frozenset(
         "UInt64",
     }
 )
-_IMPLICIT_ALIAS_HEADS = frozenset(
-    {
-        "AbstractSet",
-        "Callable",
-        "Collection",
-        "Iterable",
-        "Iterator",
-        "Mapping",
-        "MappingProxyType",
-        "MutableMapping",
-        "Sequence",
-        "dict",
-        "frozenset",
-        "list",
-        "set",
-        "tuple",
-        "type",
-    }
-)
 _COLLECTION_HEADS = frozenset(
     {
         "AbstractSet",
@@ -391,7 +372,7 @@ class _AnnotationVisitor(ast.NodeVisitor):
         if (
             not self._scopes
             and isinstance(target, ast.Name)
-            and target.id[:1].isupper()
+            and target.id.lstrip("_")[:1].isupper()
             and _is_implicit_alias(node.value)
         ):
             self._check_type(node=node.value, construct="type-alias")
@@ -598,10 +579,9 @@ def _is_bare_object(annotation: ast.expr) -> bool:
 
 
 def _is_implicit_alias(value: ast.expr) -> bool:
-    if isinstance(value, ast.BinOp) and isinstance(value.op, ast.BitOr):
-        return True
-    return isinstance(value, ast.Subscript) and (
-        _head_name(value.value) in _IMPLICIT_ALIAS_HEADS
+    """Return whether a module-level CapWords assignment reads as a type alias."""
+    return isinstance(value, ast.Subscript) or (
+        isinstance(value, ast.BinOp) and isinstance(value.op, ast.BitOr)
     )
 
 
