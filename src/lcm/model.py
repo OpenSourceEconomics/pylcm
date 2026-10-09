@@ -39,6 +39,7 @@ from _lcm.execution.execution_plan import (
     visible_device_ids,
     visible_device_pool_limits,
 )
+from _lcm.execution.footprint import layout_footprint
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
 from _lcm.model_graph import (
     ModelGraph,
@@ -130,6 +131,7 @@ from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
+    require_transfer_headroom,
     resolve_budget_devices,
     union_buffer_footprints,
 )
@@ -144,6 +146,7 @@ from _lcm.simulation.simulate import (
 from _lcm.simulation.subject_groups import group_sizes, grouped_extent
 from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
+from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.artifacts import (
     OwnedSolutionView,
     build_solution_result,
@@ -257,6 +260,7 @@ from lcm.exceptions import (
     UnsupportedOperationError,
 )
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule
+from lcm.initial_nodes import InitialNodes, UserInitialNodes
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
@@ -293,11 +297,15 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
 )
 from lcm.solvers import GridSearch
-from lcm.transition import ModelEdges, PhaseEdges, Transition
+from lcm.transition import (
+    ModelEdges,
+    PhaseEdges,
+    Transition,
+    snapshot_transition_containers,
+)
 from lcm.typing import (
     Bool1D,
     FloatND,
-    InitialNodes,
     IntND,
     Phase,
     UserFacingParamsTemplate,
@@ -562,8 +570,8 @@ class Model:
     reachability: ModelReachability
     """Static solution and simulation regime graphs."""
 
-    initial_nodes: frozenset[tuple[object, RegimeName]]
-    """Exact admissible starting age-regime pairs."""
+    initial_nodes: InitialNodes
+    """Immutable admissible starting nodes, keyed by exact age."""
 
     @property
     def graph(self) -> ModelGraph:
@@ -627,7 +635,7 @@ class Model:
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
-        initial_nodes: InitialNodes,
+        initial_nodes: UserInitialNodes,
         edges: object,
     ) -> None:
         """Initialize the Model.
@@ -645,12 +653,11 @@ class Model:
             durable_identity: Whether to require a persistable semantic identity.
                 Set to `False` for same-runtime, same-model solution use.
                 Component jobs and public period capture/replay require `True`.
-            initial_nodes: The admissible starting age-regime pairs, as a
-                nonempty sequence or set of `(age, regime)` pairs. A mapping
-                from age selectors to regime names also selects admissible
-                pairs. Published as the exact pairs in `self.initial_nodes`,
-                which this argument accepts back. Required: there is no
-                default starting universe.
+            initial_nodes: Admissible starts as `InitialNodes(by_age=...)`.
+                Legacy exact `(age, regime)` pairs and selector mappings are
+                also accepted. Published as a normalized `InitialNodes` in
+                `self.initial_nodes`, which this argument accepts back; expanded
+                pairs are in `self.graph.initial_nodes`. Required, with no default.
             edges: Mapping from source regime to destination regime to source-age
                 selector. A bare mapping broadcasts to both phases; `Phased`
                 declares perceived solve and realized simulation topology separately.
@@ -701,8 +708,10 @@ class Model:
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
-        self._edges = cast("ModelEdges", edges)
-        laws, graph_edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
+        self._edges = cast("ModelEdges", snapshot_transition_containers(edges))
+        laws, graph_edges = bind_edge_laws(
+            edges=self._edges, regimes=regimes, ages=ages
+        )
         # The transitions as declared, before any age selects among them: the
         # `edges` parameter template and its Series conversion read these.
         self._declared_transitions = collect_declared_transitions(self._edges)
@@ -939,7 +948,7 @@ class Model:
             pruned_edges=prepared_graph.pruned_edges,
             laws=laws,
         )
-        self.initial_nodes = resolved_initial_nodes
+        self.initial_nodes = InitialNodes._from_pairs(resolved_initial_nodes)  # noqa: SLF001
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
             user_regimes=self.user_regimes,
@@ -957,7 +966,7 @@ class Model:
             regimes=self._regimes,
             laws=laws,
             reachability=self.reachability,
-            initial_nodes=self.initial_nodes,
+            initial_nodes=resolved_initial_nodes,
             ages=self.ages,
             fixed_component_splits=self._fixed_component_splits,
             block_widths=self._execution.invariant_block_widths,
@@ -1165,14 +1174,16 @@ class Model:
     def __setstate__(self, state: dict[str, object]) -> None:
         """Restore transient state and reseal the model in this process.
 
-        The structure digest the model was pickled with stays its identity, so
-        results it labelled before remain compatible; the walk after
-        unpickling records which bindings this process's copies of the
-        callables read.
+        Durable models retain their saved structure digest and result compatibility.
+        Ephemeral models receive a fresh identity for results made in this process.
+        Resealing records the bindings read by this process's copies of the callables.
         """
         self.__dict__.update(state)
         if "durable_identity" not in state:
             self.durable_identity = True
+        stored_initial_nodes = state.get("initial_nodes")
+        if isinstance(stored_initial_nodes, frozenset):
+            self.initial_nodes = InitialNodes._from_pairs(stored_initial_nodes)  # noqa: SLF001
         if not self.durable_identity or "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
         self._identity_process_id = os.getpid()
@@ -3720,7 +3731,29 @@ class Model:
             params=params, inputs=(states, action_grids), solution=solution
         )
         try:
-            return self._lookup_policy(
+            states = canonicalize_initial_conditions(
+                initial_conditions=states,
+                regimes=MappingProxyType({regime_name: regime}),
+                array_writer=allocations,
+            )
+            n_rows = len(next(iter(states.values()))) if states else 0
+            if states:
+                # Rows split evenly over the subject devices, as simulated
+                # subjects do: the last row is repeated and trimmed afterwards.
+                n_devices = len(self._execution.device_ids)
+                alignment = (
+                    n_devices if self._distributes_subjects() and n_devices > 1 else 1
+                )
+                if allocations is None:
+                    states, _ = pad_initial_conditions_to_multiple(
+                        initial_conditions=states, multiple=alignment
+                    )
+                else:
+                    states, _ = allocations.pad(
+                        initial_conditions=states, multiple=alignment
+                    )
+                    allocations.publish(stage="initial", tree=states)
+            lookup = self._lookup_policy(
                 params=params,
                 solution=solution,
                 period=period,
@@ -3729,6 +3762,16 @@ class Model:
                 action_grids=action_grids,
                 allocations=allocations,
                 return_action_values=return_action_values,
+            )
+            if not states or len(next(iter(states.values()))) == n_rows:
+                return lookup
+            return PolicyLookup(
+                actions=MappingProxyType(
+                    {name: each[:n_rows] for name, each in lookup.actions.items()}
+                ),
+                value=lookup.value[:n_rows],
+                Q=None if lookup.Q is None else lookup.Q[:n_rows],
+                F=None if lookup.F is None else lookup.F[:n_rows],
             )
         finally:
             if allocations is not None:
@@ -3835,14 +3878,30 @@ class Model:
             source_regime_name=regime_name,
             source_period=period,
         )
+        references = _referenced_value_kwargs(
+            regime=regime,
+            period_to_regime_to_V_arr=V_arrs,
+            flat_params=flat_params,
+            period=period,
+        )
         programs = runtime_regime.simulation.programs
         executor = cast("SimulationProgramExecutor", programs.executor)
+        if isinstance(executor, SimulationRuntime):
+            # The solve may leave a regime's values on any of its devices; the
+            # decision reads them replicated over the subject devices, as in
+            # simulation.
+            next_V, references = _place_lookup_values(
+                values=(next_V, references),
+                runtime=executor,
+                allocations=allocations,
+                call_roots=(states, space.states, grids),
+            )
         unit = None
         if allocations is not None and isinstance(executor, SimulationRuntime):
             call_live = functools.partial(
                 _lookup_live_footprint,
                 allocations=allocations,
-                call_roots=(states, space.states, grids),
+                call_roots=(states, space.states, grids, next_V, references),
             )
             unit = SimulationUnitExecutor(
                 runtime=executor,
@@ -3871,12 +3930,7 @@ class Model:
                     continuous_actions={n: grids[n] for n in space.continuous_actions},
                     taste_keys={},
                     next_values=next_V,
-                    references=_referenced_value_kwargs(
-                        regime=regime,
-                        period_to_regime_to_V_arr=V_arrs,
-                        flat_params=flat_params,
-                        period=period,
-                    ),
+                    references=references,
                     params=regime_kernel_params(flat_params, regime_name=regime_name),
                     period=jnp.int32(period),
                     age=self.ages.values[period],  # noqa: PD011
@@ -3901,7 +3955,9 @@ class Model:
                 allocations.operations.dispatch(
                     function=_lookup_values_from_indices,
                     arguments={"flat_indices": indices, "grids": lookup_grids},
-                    subject_arg_names=("flat_indices",),
+                    # The one row of a stateless query is not divisible across
+                    # subject devices, so it is decoded replicated.
+                    subject_arg_names=("flat_indices",) if space.states else (),
                     devices=unit.runtime.subject_devices,
                     live_footprint=functools.partial(
                         _lookup_live_footprint,
@@ -4189,7 +4245,9 @@ class Model:
         period_by_age: dict[object, int] = {
             age: p for p, age in enumerate(self.ages.exact_values)
         }
-        permitted = {(period_by_age[age], name) for age, name in self.initial_nodes}
+        permitted = {
+            (period_by_age[age], name) for age, name in self.graph.initial_nodes
+        }
         refused = sorted(pairs - permitted)
         if refused:
             details = "\n".join(
@@ -4614,6 +4672,100 @@ def _fail_if_a_sharded_state_is_pruned(
             "devices. Drop the name, or make some regime use the state."
         )
         raise ExecutionPlanningError(msg)
+
+
+def _place_lookup_values[T](
+    *,
+    values: T,
+    runtime: SimulationRuntime,
+    allocations: SimulationEntryAllocations | None,
+    call_roots: object,
+) -> T:
+    """Copy a lookup's values to their subject-device layout, admitted if budgeted.
+
+    A budgeted call admits the copies against its entry owner's inventory and
+    its own arrays before the first copy is made.
+    """
+    budget = runtime.execution.device_memory_bytes
+    if allocations is not None and budget is not None:
+        live = _lookup_live_footprint(
+            allocations=allocations, call_roots=(call_roots, values)
+        )
+        _require_value_placement_headroom(
+            values=values,
+            devices=runtime.subject_devices,
+            live=live,
+            budget_bytes=budget,
+            budget_note=runtime.execution.device_memory_cap_note(),
+        )
+    return _place_values_on_subject_devices(
+        values=values, devices=runtime.subject_devices
+    )
+
+
+def _place_values_on_subject_devices[T](
+    *, values: T, devices: tuple[jax.Device, ...]
+) -> T:
+    """Copy every value array to the replicated layout its subject devices read.
+
+    A value already in that layout is returned as is, without a copy.
+    """
+
+    def place(leaf: object) -> object:
+        if not isinstance(leaf, jax.Array):
+            return leaf
+        required = simulation_value_sharding(
+            stored_sharding=leaf.sharding, devices=devices
+        )
+        if leaf.sharding == required:
+            return leaf
+        return jax.device_put(leaf, required)
+
+    placed = jax.tree.map(place, values)
+    jax.block_until_ready(placed)
+    return placed
+
+
+def _require_value_placement_headroom(
+    *,
+    values: object,
+    devices: tuple[jax.Device, ...],
+    live: DeviceBufferFootprint,
+    budget_bytes: int,
+    budget_note: str,
+) -> None:
+    """Refuse value copies whose payload and transfer scratch exceed the budget.
+
+    Each value not yet in its replicated read layout costs that layout's payload
+    on every subject device, plus the same amount of transfer scratch on its
+    source and destination devices. `live` holds the inputs, the solution and
+    the call's own arrays, which all stay owned while the copies are made.
+    """
+    destination_bytes: dict[jax.Device, int] = {}
+    scratch_bytes: dict[jax.Device, int] = {}
+    for leaf in jax.tree.leaves(values):
+        if not isinstance(leaf, jax.Array):
+            continue
+        required = simulation_value_sharding(
+            stored_sharding=leaf.sharding, devices=devices
+        )
+        if leaf.sharding == required:
+            continue
+        byte_count = layout_footprint(
+            sharding=required, shape=tuple(leaf.shape), item_bytes=leaf.dtype.itemsize
+        ).bytes_per_device
+        for device in required.device_set:
+            destination_bytes[device] = destination_bytes.get(device, 0) + byte_count
+        for device in leaf.sharding.device_set | required.device_set:
+            scratch_bytes[device] = scratch_bytes.get(device, 0) + byte_count
+    require_transfer_headroom(
+        live=live,
+        destination_bytes=destination_bytes,
+        scratch_bytes=scratch_bytes,
+        budget_bytes=budget_bytes,
+        devices=resolve_budget_devices(execution_devices=devices, live=live),
+        budget_note=budget_note,
+    )
 
 
 def _lookup_live_footprint(

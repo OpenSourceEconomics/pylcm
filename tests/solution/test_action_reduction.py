@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.extend.core import Var
 from numpy.testing import assert_array_equal
 
 from _lcm.solution.action_reduction import (
@@ -272,13 +273,14 @@ def test_hard_max_identity_is_not_matched_against_a_separately_reduced_maximum()
     assert count_equalities_with_a_reduced_maximum(jaxpr) == 0
 
 
-def test_hard_max_block_reads_its_values_once_through_a_barrier():
-    """The block's values are materialized once before anything reads them.
+def test_hard_max_block_values_reach_exactly_one_reduction():
+    """Everything the block computes from its values flows into one reduction.
 
-    The NaN test and the paired reduction then read the same copy. Left free, the
-    compiler fuses the values' producer into each reader, and how a fused copy
-    rounds depends on the width the program is compiled at, so a regime chunked
-    at another width would publish a different maximum.
+    The NaN test is folded into the paired max / smallest-id reduction, so no
+    second reduction reads the values. A second reader would let the compiler
+    evaluate the values' producer once per reader, or materialize it, and which
+    it does depends on the width the program is compiled at, so a regime chunked
+    at another width could publish a different maximum.
     """
     action_ids = jnp.arange(4, dtype=jnp.int32)
 
@@ -292,10 +294,24 @@ def test_hard_max_block_reads_its_values_once_through_a_barrier():
             action_ids=action_ids,
         )
 
-    closed = jax.make_jaxpr(reduce_block)(jnp.zeros((2, 4)))
-    values = closed.jaxpr.invars[0]
-    readers = [eqn.primitive.name for eqn in closed.jaxpr.eqns if values in eqn.invars]
-    assert readers == ["optimization_barrier"]
+    block_shape = (2, 4)
+    closed = jax.make_jaxpr(reduce_block)(jnp.zeros(block_shape))
+    derived = {closed.jaxpr.invars[0]}
+    block_reductions = []
+    for eqn in closed.jaxpr.eqns:
+        reads = [var for var in eqn.invars if isinstance(var, Var) and var in derived]
+        if not reads:
+            continue
+        derived.update(eqn.outvars)
+        reads_a_block = block_shape in {
+            getattr(var.aval, "shape", None) for var in reads
+        }
+        writes_a_block = block_shape in {
+            getattr(var.aval, "shape", None) for var in eqn.outvars
+        }
+        if reads_a_block and not writes_a_block:
+            block_reductions.append(eqn.primitive.name)
+    assert block_reductions == ["custom_jvp_call"]
 
 
 @pytest.mark.parametrize(

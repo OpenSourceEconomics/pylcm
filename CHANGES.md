@@ -5,6 +5,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Explicit initial nodes and owned declarations
+
+- Declare admissible starts with `InitialNodes(by_age={25: "working"})`. The model
+  returns a normalized immutable `InitialNodes` mapping exact ages to sorted, unique
+  regime tuples. Code unpacking `model.initial_nodes` must use
+  `model.graph.initial_nodes` for expanded pairs. Legacy pair collections and bare
+  selector mappings remain accepted as constructor inputs.
+- Edge mappings and nested transition-law mappings are copied and frozen at
+  construction, including mappings in `ByAge` and `Phased`. Reusing caller dictionaries
+  cannot change a model's published configuration; callable identity is preserved.
+
 ### Gates are declared beside the transition law; derived `Transition.targets`
 
 - Breaking API: `ValueDependentTransition` is removed. A value-dependent destination is
@@ -172,7 +183,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `(age, regime)` pairs or maps age selectors (exact age, tuple, `range`,
   `AgeRange(start=..., exclusive_stop=...)`) to one regime name or a nonempty
   sequence of names; the resulting pairs are the admissible roots,
-  published as `model.initial_nodes`. `None`, a bare name, an empty mapping, unknown
+  published as `model.graph.initial_nodes`. `model.initial_nodes` is the normalized
+  `InitialNodes` declaration. `None`, a bare name, an empty mapping, unknown
   names and off-grid ages raise.
 - `AgeGrid.inclusive_stop` includes the final grid age; `AgeRange.exclusive_stop`
   excludes its upper selector bound.

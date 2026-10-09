@@ -645,11 +645,7 @@ def test_ar1_stationary_moments_and_autocorrelation(*, grid_cls, extra_kw):
 def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
     hash_seed: int,
 ) -> None:
-    """Continuation draws retain process declaration order in fresh processes.
-
-    The order covers the joint node axes followed by the draws averaged inside
-    the continuation reader.
-    """
+    """Continuation lottery axes retain process declaration order in fresh processes."""
     root = Path(__file__).resolve().parents[1]
     script = textwrap.dedent("""
         import json
@@ -676,9 +672,7 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
         def observe(**kwargs: Any) -> Any:
             result = original(**kwargs)
             if kwargs['target_regime_name'] == 'alive':
-                observed.append([*result.lottery_axis_names, *(
-                    name.rpartition('__')[2]
-                    for name in result.slice_weight_names)])
+                observed.append(list(result.lottery_axis_names))
             return result
         Q_and_F._build_target_continuation = observe
         try:

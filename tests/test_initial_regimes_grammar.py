@@ -7,6 +7,7 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
+import lcm
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -98,7 +99,7 @@ def test_model_initial_nodes_has_no_default() -> None:
     assert parameter.default is inspect.Parameter.empty
 
 
-_NOT_A_MAPPING = r"parameter initial_nodes=.* violates type hint InitialNodes"
+_NOT_A_MAPPING = r"parameter initial_nodes=.* violates type hint UserInitialNodes"
 
 
 @pytest.mark.parametrize(
@@ -158,12 +159,104 @@ def test_initial_nodes_are_the_cartesian_union_of_rules(
     *, initial_nodes: Any, expected: frozenset
 ) -> None:
     """Each rule contributes ages times names; rules are unioned."""
-    assert _model(initial_nodes=initial_nodes).initial_nodes == expected
+    assert _model(initial_nodes=initial_nodes).graph.initial_nodes == expected
 
 
 def test_initial_nodes_are_immutable() -> None:
     """`model.initial_nodes` is an immutable snapshot of the admissible starts."""
-    assert isinstance(_model(initial_nodes={25: "working"}).initial_nodes, frozenset)
+    assert isinstance(
+        _model(initial_nodes={25: "working"}).initial_nodes, lcm.InitialNodes
+    )
+
+
+def test_explicit_initial_nodes_normalizes_and_unions_selectors() -> None:
+    """Publish exact ages and sorted, unique regimes after binding the grid."""
+    model = _model(
+        initial_nodes=lcm.InitialNodes(
+            by_age={
+                AgeRange(start=24, exclusive_stop=36): ["working", "dead"],
+                25: ["working", "working"],
+            }
+        )
+    )
+    assert model.initial_nodes.by_age == {
+        25: ("dead", "working"),
+        35: ("dead", "working"),
+    }
+
+
+def test_explicit_initial_nodes_owns_regime_collections() -> None:
+    """Editing the source mapping or its lists leaves a declaration unchanged."""
+    names = ["working"]
+    by_age = {25: names}
+    declaration = lcm.InitialNodes(by_age=by_age)
+    names.append("dead")
+    by_age[35] = ["dead"]
+    assert declaration.by_age == {25: ("working",)}
+
+
+@pytest.mark.parametrize(
+    "by_age",
+    [
+        {},
+        {25: ()},
+        {25: ""},
+        {25: ("working", "")},
+        {True: "working"},
+        {float("nan"): "working"},
+    ],
+)
+def test_explicit_initial_nodes_rejects_invalid_declarations(by_age: Any) -> None:
+    """Refuse empty declarations, invalid regime names and invalid selectors."""
+    with pytest.raises(ModelInitializationError):
+        lcm.InitialNodes(by_age=by_age)
+
+
+@pytest.mark.parametrize(
+    "by_age", [{26: "working"}, {25: "unknown"}, {AgeRange(start=80): "dead"}]
+)
+def test_explicit_initial_nodes_checks_model_coordinates(by_age: Any) -> None:
+    """Binding refuses off-grid starts, unknown regimes and empty selections."""
+    with pytest.raises(ModelInitializationError):
+        _model(initial_nodes=lcm.InitialNodes(by_age=by_age))
+
+
+def test_explicit_initial_nodes_round_trip_preserves_fingerprint() -> None:
+    """Equivalent declarations and reconstruction keep the model identity."""
+    legacy = _model(initial_nodes=((25, "working"), (35, "working")))
+    explicit = _model(
+        initial_nodes=lcm.InitialNodes(by_age={range(25, 36, 10): "working"})
+    )
+    rebuilt = _model(initial_nodes=explicit.initial_nodes)
+    assert (
+        legacy._model_structure_fingerprint
+        == explicit._model_structure_fingerprint
+        == rebuilt._model_structure_fingerprint
+    )
+
+
+def test_explicit_initial_nodes_mapping_is_read_only() -> None:
+    """A published initial-node mapping cannot be changed in place."""
+    nodes = lcm.InitialNodes(by_age={25: "working"})
+    with pytest.raises(TypeError):
+        nodes.by_age[25] = ("dead",)  # ty: ignore[invalid-assignment]
+
+
+def test_explicit_initial_nodes_field_is_frozen() -> None:
+    """A declaration cannot switch its coordinate mapping after construction."""
+    nodes = lcm.InitialNodes(by_age={25: "working"})
+    with pytest.raises(AttributeError):
+        nodes.by_age = {35: ("working",)}  # ty: ignore[invalid-assignment]
+
+
+def test_explicit_initial_nodes_normalizes_legacy_pickle_state() -> None:
+    """Restoring a model with stored pairs publishes the explicit declaration."""
+    model = _model(initial_nodes={25: "working"})
+    state = model.__getstate__()
+    state["initial_nodes"] = model.graph.initial_nodes
+    restored = object.__new__(Model)
+    restored.__setstate__(state)
+    assert restored.initial_nodes == lcm.InitialNodes(by_age={25: "working"})
 
 
 @pytest.mark.parametrize(
@@ -259,7 +352,7 @@ def test_unused_final_age_law_does_not_fail_model_construction() -> None:
         regime_id_class=RegimeId,
         initial_nodes={25: "working"},
     )
-    assert model.initial_nodes == frozenset({(25, "working")})
+    assert model.graph.initial_nodes == frozenset({(25, "working")})
 
 
 def test_root_at_final_age_of_a_nonterminal_regime_fails() -> None:

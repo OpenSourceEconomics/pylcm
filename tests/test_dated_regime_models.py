@@ -382,7 +382,7 @@ def test_initial_nodes_are_the_permitted_covered_pairs(
     *, initial_nodes: Any, expected: frozenset
 ) -> None:
     """Entry rules select exact covered pairs and union across rules."""
-    assert _model_with_entries(initial_nodes).initial_nodes == expected
+    assert _model_with_entries(initial_nodes).graph.initial_nodes == expected
 
 
 @pytest.mark.parametrize(
