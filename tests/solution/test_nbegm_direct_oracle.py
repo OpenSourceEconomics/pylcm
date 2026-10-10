@@ -12,6 +12,7 @@ import pkgutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import numpy as np
@@ -633,7 +634,9 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
                 values[:-1] for values in read.stochastic_node_values
             ),
         )
-        mutated_plan = replace(plan, child_reads={target: mutated_read})
+        mutated_plan = replace(
+            plan, child_reads=MappingProxyType({target: mutated_read})
+        )
     mutated_kernel = replace(kernel, continuation_plan=mutated_plan)
     value, *_rest = run_production_kernel(kernel=kernel, context=context)
     oracle = direct_oracle_period(kernel=mutated_kernel, context=context, child=child)

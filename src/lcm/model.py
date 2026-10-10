@@ -240,6 +240,7 @@ from _lcm.transition_checks import validate_regime_selection, validate_transitio
 from _lcm.typing import (
     ActionName,
     ArtifactPayload,
+    DataclassInstance,
     FlatParams,
     FunctionName,
     InitialConditions,
@@ -704,7 +705,7 @@ class Model:
         ages: AgeGrid | None = None,
         n_periods: int | None = None,
         regimes: Mapping[RegimeName, UserRegime],
-        regime_id_class: type,
+        regime_id_class: type[DataclassInstance],
         enable_jit: bool = True,
         durable_identity: bool = True,
         fixed_params: UserParams = MappingProxyType({}),

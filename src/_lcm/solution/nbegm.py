@@ -223,8 +223,8 @@ type _ProbeBinding = (
     | ContinuationPlan
     | Float1D
     | tuple[_NBEGMSource, ...]
-    | Mapping[int, _BudgetProbeProgram]
-    | Mapping[_ContinuationLaw, _LawProbeProgram]
+    | MappingProxyType[int, _BudgetProbeProgram]
+    | MappingProxyType[_ContinuationLaw, _LawProbeProgram]
     | str
     | bool
 )
@@ -1481,7 +1481,7 @@ class _RideAlongArgumentBuilder:
 
     def __call__(
         self, context: CoreBuildContext
-    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
+    ) -> MappingProxyType[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         flat_params = cast("FlatParams", context.flat_params)
@@ -1516,7 +1516,7 @@ class _RideAlongArgumentBuilder:
         *,
         states: Mapping[StateName, ContinuousState | DiscreteState],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-    ) -> Mapping[RegimeName, EGMCarry]:
+    ) -> MappingProxyType[RegimeName, EGMCarry]:
         """Filter the carry to this period's targets and place it on the co-map mesh.
 
         With a distributed ride state the programs run on the co-map mesh, and every
@@ -1601,7 +1601,7 @@ class _RideAlongNBEGMPeriodKernel:
     retention; calling the kernel runs whichever program was compiled.
     """
 
-    _core_programs: Mapping[str, CoreProgram]
+    _core_programs: MappingProxyType[str, CoreProgram]
     """The immutable two-node program graph, `main` then `replay`."""
 
     statics: _NBEGMRideAlongStatics
@@ -2812,7 +2812,7 @@ def _branch_inputs(
     cont_marginal: FloatND | None,
     extra_cont_value: FloatND | None,
     cliff_savings: FloatND | None,
-) -> dict[str, FloatND | IntND]:
+) -> MappingProxyType[str, FloatND | IntND]:
     """Assemble the pytree `lax.map` streams over the branch axis.
 
     The optional continuations enter only where the regime supplies them, so a
@@ -2828,7 +2828,7 @@ def _branch_inputs(
         inputs["extra_cont_value"] = extra_cont_value
     if cliff_savings is not None:
         inputs["cliff_savings"] = cliff_savings
-    return inputs
+    return MappingProxyType(inputs)
 
 
 def _branch_bindings(
@@ -2905,7 +2905,7 @@ def _fail_if_budget_nonaffine_in_liquid(
     liquid_samples: Float1D,
     breakpoint_sources: tuple[_NBEGMSource, ...] = (),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
-    derivative_programs: Mapping[int, _BudgetProbeProgram] | None = None,
+    derivative_programs: MappingProxyType[int, _BudgetProbeProgram] | None = None,
 ) -> None:
     """Reject budgets violating affinity or required slope on any live interval.
 
@@ -3286,7 +3286,7 @@ class _ProbeFillRung:
     """Floor on the axis count of array-typed arguments."""
     leaf_rank: int
     """Axis count of a grouped param's probe entries."""
-    int_overrides: Mapping[str, int]
+    int_overrides: MappingProxyType[str, int]
     """Integer-coded arguments pinned to one grid code each."""
 
     def argument(self, *, name: str, probe_arguments: _ProbeArguments) -> ParamsLeaf:
@@ -3363,7 +3363,7 @@ class _LiquidAffinityProbe:
     """The canonical float dtype every probe value is cast to."""
     int_sweeps: tuple[MappingProxyType[str, int], ...]
     """The one-at-a-time integer-code overrides every fill is swept over."""
-    derivative_programs: Mapping[int, _BudgetProbeProgram] | None = None
+    derivative_programs: MappingProxyType[int, _BudgetProbeProgram] | None = None
     """Model-owned derivatives with current filled arguments supplied dynamically."""
 
     def budget_of_liquid(self, *, rung: _ProbeFillRung) -> _FilledScalarFunction:
@@ -3558,7 +3558,7 @@ def _second_liquid_derivative_magnitudes(
     array_rank: int,
     leaf_rank: int,
     probe: _LiquidAffinityProbe,
-) -> list[float]:
+) -> tuple[float, ...]:
     """Absolute second liquid derivatives at every probe point of one fill rung.
 
     Sweeps the constant fills and the integer-code overrides, probing the grid
@@ -3585,7 +3585,7 @@ def _second_liquid_derivative_magnitudes(
                 if not math.isfinite(value):
                     raise ValueError("non-finite second derivative")
                 values.append(abs(value))
-    return values
+    return tuple(values)
 
 
 def _liquid_slopes(
@@ -3836,7 +3836,7 @@ class _DeferredProbe:
     probe_schedule: Literal["first_solve", "every_solve", "never"]
     """Which draws the probe evaluates."""
 
-    bound: Mapping[str, _ProbeBinding]
+    bound: MappingProxyType[str, _ProbeBinding]
     """The probe's structural arguments, fixed at model build."""
 
     checked: bool = False
@@ -6587,7 +6587,7 @@ class _NBEGMTiledCore:
 def _solve_nbegm_inner_mesh(
     *,
     carry: MappingProxyType[RegimeName, EGMCarry],
-    comap_bindings: Mapping[StateName, _RideCoordinate],
+    comap_bindings: MappingProxyType[StateName, _RideCoordinate],
     kwargs: EconFunctionKwargs,
     solve_one_cell: Callable[..., tuple[FloatND, ...]],
     savings_grid: Float1D,
@@ -6657,17 +6657,19 @@ def _solve_nbegm_cell(
 
 def _nbegm_continuation_channels(
     *, rows: tuple[FloatND, ...], cliff_candidates: bool
-) -> dict[str, FloatND]:
+) -> MappingProxyType[str, FloatND]:
     """Name one cell's continuation rows as the envelope solve's channels."""
     if cliff_candidates:
         cont_value, cont_marginal, cliff_savings = rows
-        return {
-            "cont_value": cont_value,
-            "cont_marginal": cont_marginal,
-            "cliff_savings": cliff_savings,
-        }
+        return MappingProxyType(
+            {
+                "cont_value": cont_value,
+                "cont_marginal": cont_marginal,
+                "cliff_savings": cliff_savings,
+            }
+        )
     cont_value, cont_marginal = rows
-    return {"cont_value": cont_value, "cont_marginal": cont_marginal}
+    return MappingProxyType({"cont_value": cont_value, "cont_marginal": cont_marginal})
 
 
 def _nbegm_inner_ride_cells(
@@ -6705,7 +6707,7 @@ def _solve_nbegm_over_co_map(
     return _solve_with_co_map(
         carry=carry,
         remaining=co_map_names,
-        comap_bindings={},
+        comap_bindings=MappingProxyType({}),
         kwargs=kwargs,
         continuation_plan=continuation_plan,
         solve_inner=solve_inner,
@@ -6716,7 +6718,7 @@ def _solve_with_co_map(
     *,
     carry: MappingProxyType[RegimeName, EGMCarry],
     remaining: tuple[str, ...],
-    comap_bindings: Mapping[StateName, _RideCoordinate],
+    comap_bindings: MappingProxyType[StateName, _RideCoordinate],
     kwargs: EconFunctionKwargs,
     continuation_plan: ContinuationPlan,
     solve_inner: Callable[..., tuple[FloatND, ...]],
@@ -6757,7 +6759,7 @@ def _slice_solve(
     *,
     head: str,
     tail: tuple[str, ...],
-    comap_bindings: Mapping[StateName, _RideCoordinate],
+    comap_bindings: MappingProxyType[StateName, _RideCoordinate],
     kwargs: EconFunctionKwargs,
     continuation_plan: ContinuationPlan,
     solve_inner: Callable[..., tuple[FloatND, ...]],
@@ -6766,7 +6768,7 @@ def _slice_solve(
     return _solve_with_co_map(
         carry=sliced_carry,
         remaining=tail,
-        comap_bindings={**comap_bindings, head: head_value},
+        comap_bindings=MappingProxyType({**comap_bindings, head: head_value}),
         kwargs=kwargs,
         continuation_plan=continuation_plan,
         solve_inner=solve_inner,
@@ -6793,7 +6795,7 @@ class _NBEGMCellContinuation:
     carry: MappingProxyType[RegimeName, EGMCarry]
     """The filtered child carries, sliced to this co-map slice."""
 
-    comap_bindings: Mapping[StateName, _RideCoordinate]
+    comap_bindings: MappingProxyType[StateName, _RideCoordinate]
     """The co-mapped ride states' coordinates of this slice."""
 
     savings_grid: Float1D
@@ -7068,7 +7070,7 @@ def _bind_nbegm_cell_continuation(
     *,
     kwargs: EconFunctionKwargs,
     carry: MappingProxyType[RegimeName, EGMCarry],
-    comap_bindings: Mapping[StateName, _RideCoordinate],
+    comap_bindings: MappingProxyType[StateName, _RideCoordinate],
     savings_grid: Float1D,
     continuation_plan: ContinuationPlan,
     statics: _NBEGMRideAlongStatics,
@@ -7305,7 +7307,7 @@ class _NBEGMCellSolver:
             )
         else:
             extra_cont_value = None
-        cell = dict(zip(statics.ride_names, ride_values, strict=True))
+        cell = MappingProxyType(dict(zip(statics.ride_names, ride_values, strict=True)))
 
         # With published jump breakpoints, the cell publishes each jump's preimage
         # and its exact one-sided value limits: the liquid query grid is augmented
@@ -7534,7 +7536,7 @@ class _NBEGMBranchSolver:
     cell_solver: _NBEGMCellSolver
     """The cell's period-bound solve."""
 
-    cell: Mapping[StateName, _RideCoordinate]
+    cell: MappingProxyType[StateName, _RideCoordinate]
     """Every ride state's coordinate of this cell."""
 
     query_grid: Float1D

@@ -261,9 +261,11 @@ def fail_if_invariant_blocking_is_unsafe(
         raise ExecutionPlanningError(msg)
 
 
-def _identity_law_states(specs: Mapping[RegimeName, PhasedRegimeSpec]) -> set[str]:
+def _identity_law_states(
+    specs: Mapping[RegimeName, PhasedRegimeSpec],
+) -> frozenset[StateName]:
     """Return every state some phase slice gives the identity law toward a target."""
-    return {
+    return frozenset(
         state_name
         for spec in specs.values()
         for phase_slice in (spec.solution, spec.simulation)
@@ -272,7 +274,7 @@ def _identity_law_states(specs: Mapping[RegimeName, PhasedRegimeSpec]) -> set[st
             isinstance(leaf, _IdentityTransition)
             for leaf in (law.values() if isinstance(law, Mapping) else (law,))
         )
-    }
+    )
 
 
 def _analyze_phase(
@@ -393,7 +395,7 @@ def _channel_refusals(
     state_name: StateName,
     regimes: Mapping[RegimeName, Regime],
     carriers: frozenset[RegimeName],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Refuse every non-continuation value channel that touches a carrier."""
     refusals = [
         f"same-period reference {name} -> {reference} touches a carrier of "
@@ -420,7 +422,7 @@ def _channel_refusals(
                 GridRecomputationRoute | None,
             )
         ]
-    return refusals
+    return tuple(refusals)
 
 
 def _first_grid(

@@ -241,7 +241,7 @@ def bind_edge_period_context(
     func: Callable[..., ArrayTree],
     fold_period: int,
     fold_age: float | ScalarFloat | Int[Scalar, ""] | None,
-) -> dict[ReferenceName, Int[Scalar, ""] | ScalarFloat]:
+) -> MappingProxyType[ReferenceName, Int[Scalar, ""] | ScalarFloat]:
     """Bind the target-fold context an edge callable explicitly declares.
 
     `period` is an `int32` scalar; `age` keeps the dtype `jnp.asarray` gives the
@@ -262,7 +262,7 @@ def bind_edge_period_context(
     values = {_EDGE_PERIOD_ARG: jnp.int32(fold_period)}
     if fold_age is not None:
         values[_EDGE_AGE_ARG] = jnp.asarray(fold_age)
-    return {name: values[name] for name in accepted}
+    return MappingProxyType({name: values[name] for name in accepted})
 
 
 def is_target_value_operand(arg_name: ReferenceName) -> bool:
@@ -469,7 +469,7 @@ class ResolvedStakeholderRoute:
     the two separately (`StakeholderRoute(fallback=Phased(...))`); `None` where one
     reference serves both. Read `realized_fallback` rather than this field."""
 
-    fallback_state_projector: Callable[..., Mapping[StateName, FloatND]] = (
+    fallback_state_projector: Callable[..., MappingProxyType[StateName, FloatND]] = (
         _uncompiled_edge_callable
     )
     """This leg's FALLBACK state projector.
@@ -509,7 +509,7 @@ class ResolvedGatedEdge:
     below rename its parameters to their flat source-regime names
     (`_with_qualified_params`) after the fences have read it as declared."""
 
-    gate_refs: Mapping[str, ResolvedProjectedRegimeValue]
+    gate_refs: MappingProxyType[str, ResolvedProjectedRegimeValue]
     """Extra same-period references the gate reads (projected from the target grid)."""
 
     legs: tuple[ResolvedStakeholderRoute, ...]
@@ -959,7 +959,7 @@ def _build_target_dag_pool(
         TransitionFunctionName, TransitionFunction
     ],
     edge_target: RegimeName,
-) -> dict[FunctionName | TransitionFunctionName, Callable[..., FloatND]]:
+) -> MappingProxyType[FunctionName | TransitionFunctionName, Callable[..., FloatND]]:
     """Return the target-regime nodes a gate or projection resolves against.
 
     A gated-edge callable is written in the target regime's vocabulary and is
@@ -1011,7 +1011,7 @@ def _build_target_dag_pool(
             "resolved) functions."
         )
         raise ModelInitializationError(msg)
-    return pool
+    return MappingProxyType(pool)
 
 
 def _fence_edge_consumer(
@@ -1115,7 +1115,7 @@ class _CompiledEdgeGate:
     """Every engine-bound gate operand: the value components, `D_target`, the
     gate-ref keys."""
 
-    qualified_gate_refs: Mapping[str, ResolvedProjectedRegimeValue]
+    qualified_gate_refs: MappingProxyType[str, ResolvedProjectedRegimeValue]
     """The gate references with their projections' free params renamed to the
     flat spelling the source's params template gives them."""
 
@@ -1846,7 +1846,9 @@ def get_edge_simulate_gate_evaluator(
         for arg in d_interpolator_args
     }
     gate_ref_exposed = {
-        name: {arg: exposure.expose(arg=arg, namespace=SOURCE_PARAMS) for arg in args}
+        name: MappingProxyType(
+            {arg: exposure.expose(arg=arg, namespace=SOURCE_PARAMS) for arg in args}
+        )
         for name, args in gate_ref_args.items()
     }
     gate_extra_exposed = {
@@ -1873,16 +1875,16 @@ def get_edge_simulate_gate_evaluator(
         target_component_names=target_component_names,
         target_stakeholders=target_stakeholders,
         target_component_interpolator=target_component_interpolator,
-        target_component_exposed=target_component_exposed,
+        target_component_exposed=MappingProxyType(target_component_exposed),
         reads_d_target=reads_d_target,
         d_interpolator=d_interpolator,
-        d_interpolator_exposed=d_interpolator_exposed,
-        gate_ref_readers=gate_ref_readers,
-        gate_ref_exposed=gate_ref_exposed,
+        d_interpolator_exposed=MappingProxyType(d_interpolator_exposed),
+        gate_ref_readers=MappingProxyType(gate_ref_readers),
+        gate_ref_exposed=MappingProxyType(gate_ref_exposed),
         gate_evaluator=gate_evaluator,
         gate_arg_names=gate_arg_names,
         state_names=state_names,
-        gate_extra_exposed=gate_extra_exposed,
+        gate_extra_exposed=MappingProxyType(gate_extra_exposed),
         arg_names=outer_arg_names,
         arg_provenance=arg_provenance,
     )
@@ -1903,7 +1905,7 @@ def build_fallback_state_projector(
     ],
     route: str,
     phase: Literal["solve", "simulate"] | None,
-) -> Callable[..., Mapping[StateName, FloatND]]:
+) -> Callable[..., MappingProxyType[StateName, FloatND]]:
     """Project a target-grid point onto one edge leg's FALLBACK state coordinates.
 
     Companion to `_build_same_period_ref_reader`
@@ -2047,8 +2049,8 @@ def build_fallback_state_projector(
     )
 
     return _FallbackStateProjector(
-        projection_funcs=projection_funcs,
-        projection_args=projection_args,
+        projection_funcs=MappingProxyType(projection_funcs),
+        projection_args=MappingProxyType(projection_args),
         fallback_simulate_state_names=fallback_simulate_state_names,
         arg_names=arg_names,
         arg_provenance=arg_provenance,
@@ -2249,17 +2251,17 @@ class _SimulateGateEvaluator:
     """The target regime's stakeholders, or `None`."""
     target_component_interpolator: Callable[..., FloatND]
     """Interpolates one of the target's value components at the point."""
-    target_component_exposed: Mapping[str, str]
+    target_component_exposed: MappingProxyType[str, str]
     """The interpolator's arguments and the names they are exposed under."""
     reads_d_target: bool
     """Whether the gate reads the target's dissolution flag."""
     d_interpolator: Callable[..., FloatND]
     """Interpolates the target's dissolution flag at the point."""
-    d_interpolator_exposed: Mapping[str, str]
+    d_interpolator_exposed: MappingProxyType[str, str]
     """The flag interpolator's arguments and the names they are exposed under."""
-    gate_ref_readers: Mapping[str, Callable[..., FloatND]]
+    gate_ref_readers: MappingProxyType[str, Callable[..., FloatND]]
     """Per gate reference, its same-period reader."""
-    gate_ref_exposed: Mapping[str, Mapping[str, str]]
+    gate_ref_exposed: MappingProxyType[str, MappingProxyType[str, str]]
     """Per gate reference, its reader's arguments and their exposed names."""
     gate_evaluator: Callable[..., FloatND]
     """The gate predicate, concatenated with the target DAG."""
@@ -2267,7 +2269,7 @@ class _SimulateGateEvaluator:
     """Every argument the gate reads."""
     state_names: tuple[StateName, ...]
     """The target's states."""
-    gate_extra_exposed: Mapping[str, str]
+    gate_extra_exposed: MappingProxyType[str, str]
     """The gate's own free arguments and the names they are exposed under."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
@@ -2365,9 +2367,9 @@ class _SimulateGateEvaluator:
 class _FallbackStateProjector:
     """Project a target-grid point onto one edge leg's fallback state coordinates."""
 
-    projection_funcs: Mapping[StateName, Callable[..., FloatND]]
+    projection_funcs: MappingProxyType[StateName, Callable[..., FloatND]]
     """Per fallback state, its projection concatenated with the target DAG."""
-    projection_args: Mapping[StateName, tuple[str, ...]]
+    projection_args: MappingProxyType[StateName, tuple[str, ...]]
     """Per fallback state, the arguments its projection reads."""
     fallback_simulate_state_names: tuple[StateName, ...]
     """The fallback regime's simulate states, in order."""
@@ -2385,16 +2387,18 @@ class _FallbackStateProjector:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: ParamsLeaf) -> Mapping[StateName, FloatND]:
+    def __call__(self, **kwargs: ParamsLeaf) -> MappingProxyType[StateName, FloatND]:
         _fail_if_arguments_do_not_match(
             kwargs=kwargs, arg_names=self.arg_names, name="project"
         )
-        return {
-            state_name: self.projection_funcs[state_name](
-                **{arg: kwargs[arg] for arg in self.projection_args[state_name]}
-            )
-            for state_name in self.fallback_simulate_state_names
-        }
+        return MappingProxyType(
+            {
+                state_name: self.projection_funcs[state_name](
+                    **{arg: kwargs[arg] for arg in self.projection_args[state_name]}
+                )
+                for state_name in self.fallback_simulate_state_names
+            }
+        )
 
 
 def _fail_if_arguments_do_not_match(
@@ -2458,7 +2462,7 @@ def _assemble_gate_kwargs(
     gate_ref_values: Mapping[str, FloatND],
     state_mesh: Mapping[StateName, ContinuousState | DiscreteState],
     cell_kwargs: QAndFKwargs,
-) -> dict[ReferenceName, QAndFArg]:
+) -> MappingProxyType[ReferenceName, QAndFArg]:
     """Bind each gate argument to its grid array.
 
     Resolves the gate's declared arguments against the target's own value
@@ -2496,7 +2500,7 @@ def _assemble_gate_kwargs(
             gate_kwargs[arg] = state_mesh[arg]
         else:
             gate_kwargs[arg] = cell_kwargs[arg]
-    return gate_kwargs
+    return MappingProxyType(gate_kwargs)
 
 
 def source_reads_folded_wbar(
@@ -2600,7 +2604,7 @@ def build_reference_params_mapping_for_fold(
     *,
     edge: ResolvedGatedEdge,
     flat_params: FlatParams,
-) -> MappingProxyType[RegimeName, Mapping[str, ParamsLeaf]]:
+) -> MappingProxyType[RegimeName, MappingProxyType[str, ParamsLeaf]]:
     """Assemble `SAME_PERIOD_PARAMS_ARG` for one edge's reference readers.
 
     The params counterpart of `build_same_period_mapping_for_fold`, over the

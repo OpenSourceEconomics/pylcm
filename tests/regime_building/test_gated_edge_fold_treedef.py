@@ -91,7 +91,7 @@ def _build_mapping(*, gate, supply_flag: bool) -> MappingProxyType:
     edge = ResolvedGatedEdge(
         target="married_terminal",
         gate=gate,
-        gate_refs={},
+        gate_refs=MappingProxyType({}),
         legs=(
             ResolvedStakeholderRoute(
                 route="f",

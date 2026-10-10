@@ -19,6 +19,7 @@ from _lcm.execution.core_program import core_program_graph
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.placement import PlacementRequest, plan_submesh_placement
 from _lcm.regime_building.action_partitioning import action_partition_width_ceilings
+from _lcm.typing import DataclassInstance
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError
 from tests import collective_fixtures
@@ -128,7 +129,11 @@ def _many_actions(**config: Any) -> Model:
 
 
 def _rebuilt(
-    *, model: Model, regime_id_class: type, initial_nodes: dict, **config: Any
+    *,
+    model: Model,
+    regime_id_class: type[DataclassInstance],
+    initial_nodes: dict,
+    **config: Any,
 ) -> Model:
     return Model(
         edges=model.edges,

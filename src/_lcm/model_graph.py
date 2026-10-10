@@ -353,7 +353,7 @@ def bind_edge_laws(
     }
     bound: dict[RegimeName, RegimeTransitionLaw] = {}
     for name in regimes:
-        laws_by_side: dict[Side, dict[int, PhaseLaw]] = {}
+        laws_by_side: dict[Side, MappingProxyType[int, PhaseLaw]] = {}
         for side in _PHASE_SIDES:
             declaration = declared[side].get(name)
             if isinstance(declaration, Transition):
@@ -433,6 +433,8 @@ def _transition_targets(
 ) -> Mapping[RegimeName, AgeSelector | PeriodSelector]:
     """Return a `Transition`'s destinations and their source-time selectors.
 
+    Supplied `targets` of a law over all targets are returned as declared.
+
     A law that names its targets supplies them: each case's keys at the
     non-final ages the case covers, and each gate's route fallbacks at the ages
     of the gated target. A `Transition` declared for one phase of a `Phased`
@@ -474,7 +476,9 @@ def _transition_targets(
                 "`targets` to use the derived ones, or change the law so that it "
                 "names exactly the supplied destinations at their ages."
             )
-    return {target: tuple(sorted(selected)) for target, selected in derived.items()}
+    return MappingProxyType(
+        {target: tuple(sorted(selected)) for target, selected in derived.items()}
+    )
 
 
 def _derived_target_ages(
@@ -482,7 +486,7 @@ def _derived_target_ages(
     transition: Transition,
     ages: TimeAxis,
     fallback_phases: tuple[Side, ...],
-) -> dict[RegimeName, frozenset[UserAge]] | None:
+) -> MappingProxyType[RegimeName, frozenset[UserAge]] | None:
     """The source ages at which a law names each target; `None` if it names none."""
     law = cast("CaseLaw | ByAge", transition.law)
     sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
@@ -513,7 +517,9 @@ def _derived_target_ages(
                 for phase in fallback_phases
             }:
                 selected.setdefault(fallback, set()).update(selected.get(target, ()))
-    return {name: frozenset(found) for name, found in selected.items() if found}
+    return MappingProxyType(
+        {name: frozenset(found) for name, found in selected.items() if found}
+    )
 
 
 def _case_targets(case: CaseLaw) -> tuple[RegimeName, ...] | None:
@@ -546,7 +552,7 @@ def _declared_gated_edges(
     source: RegimeName,
     declared: Mapping[Side, PhaseEdges],
     resolved: Mapping[Side, ResolvedEdges],
-) -> dict[RegimeName, GatedEdge]:
+) -> MappingProxyType[RegimeName, GatedEdge]:
     """Return the gated edges a source declares, one per gated target.
 
     A gate holds for its target in both phases. A target reached in both
@@ -578,15 +584,17 @@ def _declared_gated_edges(
                 "both, or none. A difference the model needs goes in a route's "
                 "`fallback`, which is `Phased` in its own right."
             )
-    return {
-        target: gated_edge_from_gate(gate)
-        for target, gate in {**simulate, **solve}.items()
-    }
+    return MappingProxyType(
+        {
+            target: gated_edge_from_gate(gate)
+            for target, gate in {**simulate, **solve}.items()
+        }
+    )
 
 
 def _targets_by_period(
     *, resolved: Mapping[RegimeName, frozenset[UserAge]], ages: TimeAxis
-) -> dict[int, tuple[RegimeName, ...]]:
+) -> MappingProxyType[int, tuple[RegimeName, ...]]:
     """Return the destinations of each non-final source period that has any."""
     targets = {
         period: tuple(
@@ -594,7 +602,9 @@ def _targets_by_period(
         )
         for period, age in enumerate(ages.exact_values[:-1])
     }
-    return {period: names for period, names in targets.items() if names}
+    return MappingProxyType(
+        {period: names for period, names in targets.items() if names}
+    )
 
 
 def _single_destination_laws(
@@ -603,7 +613,7 @@ def _single_destination_laws(
     resolved: Mapping[RegimeName, frozenset[UserAge]],
     ages: TimeAxis,
     side: Side,
-) -> dict[int, PhaseLaw]:
+) -> MappingProxyType[int, PhaseLaw]:
     """Read a law-free source's law off its edges: the only destination per age."""
     laws: dict[int, PhaseLaw] = {}
     for period, targets in _targets_by_period(resolved=resolved, ages=ages).items():
@@ -615,7 +625,7 @@ def _single_destination_laws(
                 "`Transition(targets=..., law=...)`."
             )
         laws[period] = targets[0]
-    return laws
+    return MappingProxyType(laws)
 
 
 def _transition_laws(
@@ -625,7 +635,7 @@ def _transition_laws(
     resolved: Mapping[RegimeName, frozenset[UserAge]],
     ages: TimeAxis,
     side: Side,
-) -> dict[int, PhaseLaw]:
+) -> MappingProxyType[int, PhaseLaw]:
     """Select a `Transition`'s law at each source period with outgoing edges."""
     targets_by_period = _targets_by_period(resolved=resolved, ages=ages)
     law = cast("CaseLaw | ByAge", transition.law)
@@ -653,7 +663,7 @@ def _transition_laws(
                 f"{ages.exact_values[period]}, where its {side} edges lead to "
                 f"{', '.join(targets)}. Give the `Transition` law a case there."
             )
-    return laws
+    return MappingProxyType(laws)
 
 
 def _combined_law(

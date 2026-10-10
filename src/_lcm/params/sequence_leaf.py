@@ -73,8 +73,8 @@ class SequenceLeaf(UserSequenceLeaf):
         data: tuple[ParamsLeaf, ...]
 
 
-def _user_flatten(leaf: UserSequenceLeaf) -> tuple[list[LeafEntry], None]:
-    return list(leaf.data), None
+def _user_flatten(leaf: UserSequenceLeaf) -> tuple[tuple[LeafEntry, ...], None]:
+    return leaf.data, None
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
