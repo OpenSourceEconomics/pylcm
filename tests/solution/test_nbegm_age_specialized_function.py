@@ -19,14 +19,18 @@ def _utility_with_bonus[**P](
 ) -> AgeSpecializedFunction:
     """Add a period-specific level without changing the optimal action."""
 
-    def build(age: float) -> Callable[P, FloatND]:
-        level = bonus if age == bonus_age else 0.0
-
+    def with_level(level: float) -> Callable[P, FloatND]:
         @functools.wraps(base)
         def utility(*args: P.args, **kwargs: P.kwargs) -> FloatND:
             return base(*args, **kwargs) + level
 
         return utility
+
+    regular = with_level(0.0)
+    bonused = with_level(bonus)
+
+    def build(age: float) -> Callable[P, FloatND]:
+        return bonused if age == bonus_age else regular
 
     return AgeSpecializedFunction(build=build, signature=lambda age: age)
 
