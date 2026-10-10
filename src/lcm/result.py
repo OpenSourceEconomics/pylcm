@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 import cloudpickle
 import jax
@@ -651,7 +651,7 @@ def _load_period_to_regime_to_V_arr(
     return _array_tree_to_period_V(array_tree)
 
 
-def _restore_array_tree(*, input_dir: Path) -> dict[str, Any]:
+def _restore_array_tree(*, input_dir: Path) -> Mapping[str, ArrayTree]:
     """Restore recorded placements using explicit CPU backend device lookup."""
     checkpointer = ocp.StandardCheckpointer()
 
@@ -714,34 +714,65 @@ def _raw_results_to_array_tree(
 
 
 def _array_tree_to_raw_results(
-    tree: dict[str, dict[str, dict[str, Any]]],
+    tree: ArrayTree,
 ) -> MappingProxyType[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]]:
     """Inverse of `_raw_results_to_array_tree`."""
     return MappingProxyType(
         {
             regime_name: MappingProxyType(
                 {
-                    int(period): PeriodRegimeSimulationData(
-                        V_arr=period_dict["V_arr"],
-                        actions=MappingProxyType(period_dict["actions"]),
-                        states=MappingProxyType(period_dict["states"]),
-                        in_regime=period_dict["in_regime"],
-                        own_stakeholder=period_dict.get(
-                            "own_stakeholder",
-                            jnp.full_like(
-                                period_dict["in_regime"], NO_ROLE, dtype=jnp.int32
-                            ),
-                        ),
-                        nested_policy_fallback=period_dict.get(
-                            "nested_policy_fallback",
-                            jnp.zeros_like(period_dict["in_regime"], dtype=bool),
-                        ),
-                    )
-                    for period, period_dict in regime_dict.items()
+                    int(period): _restored_period_data(_restored_level(period_tree))
+                    for period, period_tree in _restored_level(regime_tree).items()
                 }
             )
-            for regime_name, regime_dict in tree.items()
+            for regime_name, regime_tree in _restored_level(tree).items()
         }
+    )
+
+
+def _restored_period_data(tree: Mapping[str, ArrayTree]) -> PeriodRegimeSimulationData:
+    """Rebuild one period's simulation data from its restored checkpoint level.
+
+    A checkpoint without the stakeholder or fallback leaves gets the values a
+    singleton regime without nested replay records.
+    """
+    in_regime = _restored_array(tree["in_regime"])
+    own_stakeholder = tree.get("own_stakeholder")
+    nested_policy_fallback = tree.get("nested_policy_fallback")
+    return PeriodRegimeSimulationData(
+        V_arr=_restored_array(tree["V_arr"]),
+        actions=_restored_arrays(tree["actions"]),
+        states=_restored_arrays(tree["states"]),
+        in_regime=in_regime,
+        own_stakeholder=jnp.full_like(in_regime, NO_ROLE, dtype=jnp.int32)
+        if own_stakeholder is None
+        else _restored_array(own_stakeholder),
+        nested_policy_fallback=jnp.zeros_like(in_regime, dtype=bool)
+        if nested_policy_fallback is None
+        else _restored_array(nested_policy_fallback),
+    )
+
+
+def _restored_level(node: ArrayTree) -> Mapping[str, ArrayTree]:
+    """Return one mapping level of a restored checkpoint tree."""
+    if not isinstance(node, Mapping):
+        msg = f"Checkpoint holds {type(node).__name__} where a mapping was saved"
+        raise TypeError(msg)
+    return node
+
+
+def _restored_array(node: ArrayTree) -> jax.Array:
+    """Return one array leaf of a restored checkpoint tree."""
+    if not isinstance(node, jax.Array):
+        msg = f"Checkpoint holds {type(node).__name__} where an array was saved"
+        raise TypeError(msg)
+    return node
+
+
+def _restored_arrays(node: ArrayTree) -> MappingProxyType[str, jax.Array]:
+    """Return a restored mapping level whose values are array leaves."""
+    return MappingProxyType(
+        {name: _restored_array(leaf) for name, leaf in _restored_level(node).items()}
     )
 
 
@@ -789,12 +820,12 @@ def _host_or_device_value(
 
 
 def _array_tree_to_period_V(
-    tree: dict[str, dict[RegimeName, FloatND]],
+    tree: Mapping[str, ArrayTree],
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
     """Inverse of `_period_V_to_array_tree`."""
     return MappingProxyType(
         {
-            int(period): MappingProxyType(regime_dict)
-            for period, regime_dict in tree.items()
+            int(period): _restored_arrays(regime_tree)
+            for period, regime_tree in tree.items()
         }
     )
