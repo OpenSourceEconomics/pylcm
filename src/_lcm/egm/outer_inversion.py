@@ -24,6 +24,7 @@ domain. The optional stricter rule therefore remains outside this merge repair.
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -38,7 +39,15 @@ from lcm.typing import (
     ReferenceName,
     RegimeName,
     ScalarFloat,
+    ValueND,
 )
+
+if TYPE_CHECKING:
+    from _lcm.typing import EconFunctionArg
+else:
+    # `_lcm.typing` imports this module through the published policies, so the
+    # alias is not importable here at runtime.
+    type EconFunctionArg = object
 
 __all__ = [
     "DeclaredOuterInverse",
@@ -90,7 +99,7 @@ def certify_declared_outer_inverse(
     *,
     func: Callable[..., Mapping[str, FloatND]],
     arg_names: tuple[ReferenceName, ...],
-    abstract_args: Iterable[object],
+    abstract_args: Iterable[jax.ShapeDtypeStruct],
     outer_action_name: ActionName,
     outer_post_decision_name: str,
     outer_state_domain: tuple[float, float],
@@ -183,7 +192,7 @@ class _OuterPostDecisionTarget:
     def __post_init__(self) -> None:
         object.__setattr__(self, "__name__", self.outer_post_decision_name)
 
-    def __call__(self, *values: object) -> FloatND:
+    def __call__(self, *values: ValueND) -> FloatND:
         bound = dict(zip(self.arg_names, values, strict=True))
         return jnp.asarray(self.func(**bound)[self.outer_post_decision_name])
 
@@ -223,7 +232,9 @@ def invert_declared_outer_target(
     return OuterInversion(action=action, image=image, admissible=admissible)
 
 
-def abstract_like(values: Iterable[object]) -> tuple[object, ...]:
+def abstract_like(
+    values: Iterable[EconFunctionArg],
+) -> tuple[jax.ShapeDtypeStruct, ...]:
     """Return shape/dtype stand-ins for values, so tracing never runs the map.
 
     The certificate reads structure, and structure does not depend on the
