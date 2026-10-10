@@ -36,7 +36,7 @@ from _lcm.regime_building.gated_edges import (
     is_target_value_operand,
 )
 from _lcm.regime_building.transitions import collect_state_transitions
-from _lcm.regime_law import RegimeLaw
+from _lcm.regime_law import DecomposedTransition, RegimeLaw
 from _lcm.typing import (
     EdgeParamsTemplate,
     FunctionName,
@@ -51,7 +51,7 @@ from _lcm.utils.functools import get_union_of_args
 from lcm.collective import Gate
 from lcm.exceptions import InvalidNameError, ModelInitializationError
 from lcm.phased import Phased
-from lcm.regime import ProjectedRegimeValue
+from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.transition import (
     ByAge,
@@ -69,6 +69,10 @@ from lcm.typing import ParameterName, Phase, ReferenceName, UserFunction
 type _TemplateNode = str | Mapping[str, _TemplateNode]
 # A mutable branch of a parameter template under construction.
 type _TemplateBranch = dict[str, _TemplateNode]
+# A regime slot value whose callables the template and the read checks walk: a
+# function, a law (a stochastic one, a per-target mapping, or a phase pair), or
+# `None` for a masked entry.
+type _CallableSlot = StateTransitionEntry | DecomposedTransition
 
 
 def create_regime_params_template(
@@ -872,7 +876,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
         transition_role = _function_names_in_transition_role(
             user_regime=user_regime, phase=phase
         )
-        consumers: dict[str, object] = {
+        consumers: dict[str, UserFunction | Phased] = {
             name: func
             for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
@@ -894,7 +898,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
         for target, kernels in user_regime.joint_transitions.items():
             for kernel_name, raw in kernels.items():
                 kernel = _joint_variant_for_phase(raw=raw, phase=phase)
-                roles: dict[str, object] = {
+                roles: dict[str, UserFunction] = {
                     "probabilities": kernel.probabilities,
                 }
                 if callable(kernel.support):
@@ -957,7 +961,7 @@ def _fail_if_joint_role_reads_a_next_output(
 def _fail_if_joint_support_reads_runtime_names(
     *,
     consumer_name: str,
-    func: object,
+    func: UserFunction | Phased,
     phase: Literal["solve", "simulate"],
     user_regime: UserRegime,
 ) -> None:
@@ -989,7 +993,7 @@ def _fail_if_joint_support_reads_runtime_names(
 
 def _joint_nodes_reachable_from(
     *,
-    func: object,
+    func: UserFunction | Phased,
     functions: Mapping[FunctionName, UserFunction | Phased | None],
     phase: Literal["solve", "simulate"],
     joint_node_names: frozenset[str],
@@ -1077,7 +1081,7 @@ def _fail_if_a_next_name_is_read_outside_a_transition(
         transition_role = _function_names_in_transition_role(
             user_regime=user_regime, phase=phase
         )
-        consumers: dict[str, object] = {
+        consumers: dict[str, UserFunction | Phased] = {
             name: func
             for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
@@ -1107,7 +1111,7 @@ def _fail_if_a_next_name_is_read_outside_a_transition(
 
 def _next_names_reachable_from(
     *,
-    func: object,
+    func: UserFunction | Phased,
     functions: Mapping[FunctionName, UserFunction | Phased | None],
     phase: Literal["solve", "simulate"],
 ) -> dict[str, tuple[FunctionName, ...]]:
@@ -1356,7 +1360,7 @@ def _fail_if_runtime_grid_shadows_function(
 
 
 def _callables_in(
-    *, value: object, phase: Literal["solve", "simulate"] | None = None
+    *, value: _CallableSlot, phase: Literal["solve", "simulate"] | None = None
 ) -> list[UserFunction]:
     """Return the callables a regime slot value stands for.
 
@@ -1657,7 +1661,7 @@ def _drop_engine_provided_args(
 
 
 def _regime_transition_entries(
-    transition: object,
+    transition: DecomposedTransition,
 ) -> dict[TransitionFunctionName, UserFunction | Phased]:
     """Key the regime transition for the read checks.
 

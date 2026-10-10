@@ -469,9 +469,9 @@ def test_kernel_params_refuse_a_key_both_the_regime_and_its_edges_hold():
     """A source's kernels cannot bind one key from two namespaces."""
     flat_params = MappingProxyType(
         {
-            "working": MappingProxyType({"dead__rate": 1.0}),
+            "working": MappingProxyType({"dead__rate": jnp.array(1.0)}),
             "edges": MappingProxyType(
-                {"working": MappingProxyType({"dead__rate": 2.0})}
+                {"working": MappingProxyType({"dead__rate": jnp.array(2.0)})}
             ),
         }
     )

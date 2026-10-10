@@ -1,8 +1,8 @@
 """Static time alignment and declared temporal-consumer metadata."""
 
 import inspect
-from collections.abc import Callable, Sequence
-from typing import Any, cast
+from collections.abc import Sequence
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -12,10 +12,10 @@ from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.utils.ast_inspection import time_index_names
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.temporal import TimeVarying
-from lcm.typing import ValueND
+from lcm.typing import UserAge, UserFunction, ValueND
 
 
-def temporal_parameter_names(func: Callable[..., Any] | None) -> frozenset[str]:
+def temporal_parameter_names(func: UserFunction | None) -> frozenset[str]:
     """Read declarations through normal wrappers and scheduled sources."""
     if func is None:
         return frozenset()
@@ -32,7 +32,7 @@ def temporal_parameter_names(func: Callable[..., Any] | None) -> frozenset[str]:
 
 
 def validate_temporal_variants(
-    *, functions: Sequence[Callable[..., Any]], name: str
+    *, functions: Sequence[UserFunction], name: str
 ) -> frozenset[str]:
     """Require one temporal meaning for every parameter shared by variants."""
     names = frozenset().union(*(temporal_parameter_names(func) for func in functions))
@@ -93,7 +93,7 @@ def time_gather_indices(
             f"{name}: {kind} coordinates supplied to a {coordinate_kind(ages)} model."
         )
     _validate_time_labels(labels=labels, kind=kind, name=name)
-    wanted: dict[object, int] = {
+    wanted: dict[UserAge | float, int] = {
         label: period for period, label in enumerate(ages.exact_values)
     }
     # Fraction labels have an exact public identity; support the AgeGrid's float
