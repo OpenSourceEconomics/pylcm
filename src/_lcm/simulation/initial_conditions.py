@@ -57,8 +57,9 @@ from _lcm.transition_checks import (
 from _lcm.typing import (
     ActionName,
     FlatParams,
-    FlatRegimeParams,
     InitialConditions,
+    ParamsLeaf,
+    QualifiedName,
     RegimeIdsToNames,
     RegimeName,
     RegimeNamesToIds,
@@ -82,6 +83,7 @@ from lcm.typing import (
     FloatND,
     Int1D,
     IntND,
+    ReferenceName,
     UserInitialConditions,
 )
 
@@ -1235,7 +1237,7 @@ def _initial_own_stakeholder(
 
 def _merged_regime_params(
     *, regime: Regime, regime_name: RegimeName, flat_params: FlatParams
-) -> dict[str, object]:
+) -> dict[QualifiedName, ParamsLeaf]:
     """Merge a regime's fixed and runtime parameters; the runtime value binds."""
     return {
         **regime.resolved_fixed_params,
@@ -1572,7 +1574,7 @@ def _batched_feasibility_check(
     feasibility_func: Callable[..., BoolND],
     subject_states: Mapping[str, FloatND | IntND],
     action_kwargs: Mapping[str, FloatND | IntND],
-    filtered_params: Mapping[str, object],
+    filtered_params: Mapping[ReferenceName, ParamsLeaf],
     flat_actions: Mapping[ActionName, FloatND | IntND],
     memory: SimulationMemory | None = None,
 ) -> BoolND:
@@ -1792,7 +1794,7 @@ def _check_regime_feasibility(
     regime_name: RegimeName,
     initial_states: Mapping[StateName, FloatND | IntND],
     subject_indices: list[int],
-    regime_params: Mapping[str, object],
+    regime_params: Mapping[QualifiedName, ParamsLeaf],
     ages: TimeAxis,
     cohorts: _InitialCohorts | None = None,
     summary: _ValidationSummary | None = None,
@@ -1870,7 +1872,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     regime_name: RegimeName,
     initial_states: Mapping[StateName, FloatND | IntND],
     subject_indices: list[int],
-    regime_params: Mapping[str, object],
+    regime_params: Mapping[QualifiedName, ParamsLeaf],
     ages: TimeAxis,
     cohorts: _InitialCohorts | None = None,
     summary: _ValidationSummary | None = None,
@@ -1925,7 +1927,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     # substituted. The base grid's `to_jax()` raises for runtime-supplied
     # `IrregSpacedGrid`s declared with `pass_points_at_runtime=True`, so the
     # validator must read points from `state_action_space(regime_params=...)`.
-    flat_regime_params = cast("FlatRegimeParams", MappingProxyType(dict(regime_params)))
+    flat_regime_params = MappingProxyType(dict(regime_params))
     state_action_space = (
         regime.solution.state_action_space(
             regime_params=flat_regime_params,
@@ -2096,7 +2098,7 @@ def _admits_any_action(
     *,
     feasibility_func: Callable[..., BoolND],
     action_kwargs: Mapping[str, FloatND | IntND],
-    params: Mapping[str, object],
+    params: Mapping[ReferenceName, ParamsLeaf],
     memory: SimulationMemory | None = None,
 ) -> bool:
     """Return True iff the feasibility function admits ≥ 1 action under params."""
@@ -2113,7 +2115,7 @@ def _evaluate_constant_feasibility(
     *,
     feasibility_func: Callable[..., BoolND],
     action_kwargs: Mapping[str, FloatND | IntND],
-    params: Mapping[str, object],
+    params: Mapping[ReferenceName, ParamsLeaf],
     memory: SimulationMemory | None = None,
 ) -> BoolND | bool:
     """Evaluate a cohort-constant predicate with its full per-action output profile."""
@@ -2142,7 +2144,7 @@ def _is_combo_feasible(
     subject_kw: Mapping[str, FloatND | IntND],
     *,
     feasibility_func: Callable[..., BoolND],
-    filtered_params: Mapping[str, object],
+    filtered_params: Mapping[ReferenceName, ParamsLeaf],
 ) -> BoolND:
     """Evaluate feasibility of one action combo at one subject's states."""
     return feasibility_func(**action_kw, **subject_kw, **filtered_params)
@@ -2154,7 +2156,7 @@ def _is_any_action_feasible(
     *,
     feasibility_func: Callable[..., BoolND],
     action_kwargs: Mapping[str, FloatND | IntND],
-    filtered_params: Mapping[str, object],
+    filtered_params: Mapping[ReferenceName, ParamsLeaf],
 ) -> BoolND:
     """Return whether any action combo is feasible at one subject's states."""
     per_combo = jax.vmap(
@@ -2173,7 +2175,7 @@ def _is_feasible_without_actions(
     per_subject_kwargs: Mapping[str, FloatND | IntND],
     *,
     feasibility_func: Callable[..., BoolND],
-    filtered_params: Mapping[str, object],
+    filtered_params: Mapping[ReferenceName, ParamsLeaf],
 ) -> BoolND:
     """Return whether an action-free regime is feasible at one subject's states."""
     return jnp.any(feasibility_func(**per_subject_kwargs, **filtered_params))
@@ -2184,7 +2186,7 @@ def _is_combo_feasible_for_all_subjects(
     action_kw: Mapping[str, FloatND | IntND],
     *,
     feasibility_func: Callable[..., BoolND],
-    params: Mapping[str, object],
+    params: Mapping[ReferenceName, ParamsLeaf],
 ) -> BoolND:
     """Evaluate feasibility of one action combo when no state varies by subject."""
     return feasibility_func(**action_kw, **params)
@@ -2194,7 +2196,7 @@ def _per_constraint_feasibility(
     *,
     regime: Regime,
     subject_states: Mapping[str, FloatND | IntND],
-    regime_params: Mapping[str, object],
+    regime_params: Mapping[QualifiedName, ParamsLeaf],
     flat_actions: Mapping[ActionName, FloatND | IntND],
     idx_arr: Int1D | _HostIntArray,
     infeasible_indices: Sequence[int],

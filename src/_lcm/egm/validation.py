@@ -86,7 +86,16 @@ from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.transition import ByAge, DeterministicTransition, StochasticTransition
-from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, UserFunction
+from lcm.typing import (
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ReferenceName,
+    ScalarFloat,
+    ScalarInt,
+    UserFunction,
+)
 
 # Shrink threshold of the node-resolution continuity spot check. Within one
 # Euler grid cell, a function that is smooth at node resolution has
@@ -1388,7 +1397,7 @@ def _find_jump_at_node_resolution(
 def _law_values_on_sample(
     *,
     law_func: UserFunction,
-    context: dict[str, object],
+    context: dict[ReferenceName, ScalarFloat | ScalarInt],
     euler_state_name: StateName,
     post_decision_name: FunctionName,
     savings_value: ScalarFloat,
@@ -1419,7 +1428,7 @@ def _law_at_euler_state(
     state_value: ScalarFloat,
     *,
     law_func: UserFunction,
-    context: dict[str, object],
+    context: dict[ReferenceName, ScalarFloat | ScalarInt],
     euler_state_name: StateName,
     post_decision_name: FunctionName,
     savings_value: ScalarFloat,
@@ -1452,7 +1461,7 @@ def _combo_contexts(
     grids: dict[StateOrActionName, Grid],
     varied: set[str],
     n_contexts: int = 3,
-) -> list[dict[str, object]]:
+) -> list[dict[ReferenceName, ScalarFloat | ScalarInt]]:
     """A few fixed-input contexts for every non-varied argument of `func`.
 
     Context `j` binds each non-varied argument to the `j`-th point of its
@@ -1603,14 +1612,14 @@ def _fixed_kwargs(
     func: UserFunction,
     grids: dict[StateOrActionName, Grid],
     varied: set[str],
-) -> dict[str, object] | None:
+) -> dict[ReferenceName, ScalarFloat | ScalarInt] | None:
     """Fixed inputs (first grid point) for every non-varied argument of `func`.
 
     Returns `None` when an argument is neither varied nor a state/action —
     a free model parameter whose value is unknown at build time, so the
     numeric check cannot run.
     """
-    fixed: dict[str, object] = {}
+    fixed: dict[ReferenceName, ScalarFloat | ScalarInt] = {}
     for arg_name in inspect.signature(func).parameters:
         if arg_name in varied:
             continue
@@ -1624,8 +1633,8 @@ def _fixed_kwargs(
 def _call_with_varied(
     *,
     func: UserFunction,
-    fixed: dict[str, object],
-    varied: dict[str, object],
+    fixed: Mapping[ReferenceName, ScalarFloat | ScalarInt],
+    varied: Mapping[ReferenceName, FloatND],
 ) -> FloatND | IntND:
     """Call `func` with fixed kwargs plus the varied values it actually takes.
 

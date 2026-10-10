@@ -26,8 +26,10 @@ from _lcm.transition_plans import (
     TargetTransitionPlans,
 )
 from _lcm.typing import (
+    ArrayTree,
     EconFunctionsMapping,
     NextStateSimulationFunction,
+    PRNGKeyND,
     QualifiedName,
     RegimeName,
     StateName,
@@ -408,7 +410,7 @@ class _RealizedJointNode:
     # Python scalars, arrays of either integer width -- so its annotations
     # document the contract and are not enforced at call time.
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> ArrayTree:
         index = jax.random.choice(
             key=kwargs[f"key_{self.qname}"],
             a=self.support_size,
@@ -686,7 +688,9 @@ class _IIDNextState:
 
 
 def _conditioned_sigma(
-    *, conditioned: tuple[StateConditioned, Float1D] | None, kwargs: Mapping[str, Any]
+    *,
+    conditioned: tuple[StateConditioned, Float1D] | None,
+    kwargs: Mapping[ReferenceName, FloatND | IntND | PRNGKeyND],
 ) -> Mapping[str, Any]:
     """Return `{"sigma": <the value the conditioning state selects>}`, else `{}`.
 
@@ -701,7 +705,7 @@ def _conditioned_sigma(
 
 def _publish_signature(
     *,
-    target: object,
+    target: Callable[..., ArrayTree],
     args: Mapping[ReferenceName, str],
     return_annotation: str,
     name: str,

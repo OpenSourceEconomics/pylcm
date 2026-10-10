@@ -105,7 +105,16 @@ from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import _evaluate_edge_fold, _states_for_period
-from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, StatesPerRegime
+from _lcm.typing import (
+    ArrayTree,
+    FlatParams,
+    ParamsLeaf,
+    QAndFArg,
+    QAndFKwargs,
+    RegimeName,
+    RegimeNamesToIds,
+    StatesPerRegime,
+)
 from lcm.typing import (
     Bool1D,
     BoolND,
@@ -113,6 +122,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     Int1D,
+    ReferenceName,
     ScalarFloat,
     ScalarInt,
 )
@@ -824,7 +834,7 @@ def bind_provenance_params(
     flat_params: FlatParams,
     source_name: RegimeName,
     target_name: RegimeName,
-) -> dict[str, object]:
+) -> dict[ReferenceName, ParamsLeaf]:
     """Bind an edge callable's params, each from the namespace that OWNS it.
 
     The router holds every regime's flat params and the realized candidate
@@ -845,7 +855,7 @@ def bind_provenance_params(
         SOURCE_PARAMS: edge_params(flat_params, source=source_name),
         TARGET_PARAMS: regime_kernel_params(flat_params, regime_name=target_name),
     }
-    bound: dict[str, object] = {}
+    bound: dict[ReferenceName, ParamsLeaf] = {}
     for exposed, (namespace, qname) in provenance.params.items():
         namespace_params = params_of_namespace[namespace]
         if qname not in namespace_params:
@@ -867,12 +877,12 @@ def bind_provenance_params(
 def _call_vmapped_with_accepted_kwargs(
     *,
     func: Callable,
-    batched_kwargs: Mapping[str, object],
+    batched_kwargs: QAndFKwargs,
     static_kwargs: Mapping[str, object],
     axis_size: int,
     subject_devices: tuple[jax.Device, ...] = (),
     subject_width: int | None = None,
-) -> object:
+) -> ArrayTree:
     """Call a per-subject-scalar `func` over a whole population via `vmap`.
 
     `func` here is always a `_lcm.regime_building.V.get_V_interpolator`
@@ -938,9 +948,9 @@ def _call_vmapped_with_accepted_kwargs(
 def split_population_call_args(
     *,
     func: Callable,
-    batched_kwargs: Mapping[str, object],
+    batched_kwargs: QAndFKwargs,
     static_kwargs: Mapping[str, object],
-) -> tuple[dict[str, object], dict[str, object]]:
+) -> tuple[dict[ReferenceName, QAndFArg], dict[str, object]]:
     """Filter both kwarg pools down to what `func` accepts, `static` winning.
 
     The two dicts are the positional pair a population call is invoked with,
@@ -1046,13 +1056,13 @@ def population_call(
 
 # keyword-only-exempt: library-callback=jax.jit
 def _map_subject_tiles(
-    batched_kwargs: Mapping[str, object],
+    batched_kwargs: QAndFKwargs,
     shared_kwargs: Mapping[str, object],
     *,
     func: Callable,
     subject_width: int,
     axis_size: int,
-) -> object:
+) -> ArrayTree:
     """Tile stateful rows and preserve explicit extent for stateless rows."""
     if not jax.tree.leaves(batched_kwargs):
         # No mapped input carries N. This is a broadcast of shared/scalar work,
@@ -1071,21 +1081,21 @@ def _map_subject_tiles(
 
 # keyword-only-exempt: library-callback=jax.lax.map
 def _call_one_subject_with_shared(
-    one_subject_kwargs: Mapping[str, object],
+    one_subject_kwargs: QAndFKwargs,
     *,
     func: Callable,
     shared: Mapping[str, object],
-) -> object:
+) -> ArrayTree:
     """Invoke one gate evaluator or projector with shared dynamic operands."""
     return func(**one_subject_kwargs, **shared)
 
 
 # keyword-only-exempt: library-callback=jax.vmap
 def _call_one_subject(
-    one_subject_kwargs: Mapping[str, object],
+    one_subject_kwargs: QAndFKwargs,
     shared_kwargs: Mapping[str, object],
     *,
     func: Callable,
-) -> object:
+) -> ArrayTree:
     """Call `func` for one subject with its own and the shared keyword arguments."""
     return func(**one_subject_kwargs, **shared_kwargs)

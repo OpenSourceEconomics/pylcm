@@ -13,7 +13,7 @@ orchestration that maps it over the discrete-combo product.
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -35,6 +35,8 @@ from _lcm.egm.preferences import (
 from _lcm.egm.upper_envelope.fues import QueryBracket
 from _lcm.typing import (
     ActionName,
+    EconFunctionArg,
+    EconFunctionKwargs,
     RegimeName,
     StateName,
 )
@@ -43,6 +45,7 @@ from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    ReferenceName,
     ScalarBool,
     ScalarFloat,
     ScalarInt,
@@ -114,7 +117,7 @@ class _EgmKernelPieces:
     feasibility_func: Callable[..., ScalarBool] | None
     """Discrete-feasibility predicate of a combo, or `None`."""
 
-    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    build_W_kwargs: Callable[[EconFunctionKwargs], dict[ReferenceName, EconFunctionArg]]
     """Closure assembling the Bellman aggregator's keyword arguments."""
 
     refine: Callable[
@@ -135,7 +138,7 @@ class _EgmKernelPieces:
 def _get_solve_one_combo(
     *,
     pieces: _EgmKernelPieces,
-    pool: dict[str, Any],
+    pool: EconFunctionKwargs,
     state_grid: Float1D,
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     euler_point_width: int | None,
@@ -181,7 +184,7 @@ class _SolveOneCombo:
     pieces: _EgmKernelPieces
     """Build-time statics shared by every per-combo computation."""
 
-    pool: dict[str, Any]
+    pool: EconFunctionKwargs
     """The kernel's flat params, `period`, and `age`."""
 
     state_grid: Float1D
@@ -225,7 +228,8 @@ class _SolveOneCombo:
         }
         # Validation pins the default Bellman aggregator, whose single
         # non-(utility, CE) parameter is the discount factor.
-        (discount_factor,) = tuple(pieces.build_W_kwargs(combo_pool).values())
+        (discount_factor_arg,) = tuple(pieces.build_W_kwargs(combo_pool).values())
+        discount_factor = cast("ScalarFloat", discount_factor_arg)
         utility_of_action = BoundUtilityOfAction(
             utility_func=pieces.utility_func,
             action_name=pieces.action_name,
@@ -369,7 +373,7 @@ class ResourcesOfState:
     euler_state_name: StateName
     """The regime's name for its continuous (Euler) state."""
 
-    bound: Mapping[str, Any]
+    bound: EconFunctionKwargs
     """Every other argument of `resources_func`, by name."""
 
     def __call__(self, state_value: ScalarFloat) -> ScalarFloat:
@@ -417,7 +421,7 @@ def _compute_nodes_over_savings(
 def _get_compute_node(
     *,
     pieces: _EgmKernelPieces,
-    combo_pool: dict[str, Any],
+    combo_pool: EconFunctionKwargs,
     discount_factor: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],

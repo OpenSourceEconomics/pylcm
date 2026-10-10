@@ -34,13 +34,20 @@ from _lcm.params.processing import (
     find_param_candidates,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.typing import FlatParams, QualifiedName, RegimeName, StateName
+from _lcm.typing import (
+    FlatParams,
+    FlatRegimeParams,
+    ParamsLeaf,
+    QualifiedName,
+    RegimeName,
+    StateName,
+)
 from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedGrid
-from lcm.typing import UserParams
+from lcm.typing import UserParams, UserParamsLeaf, UserParamsNode
 
 # A state as the user declares it on a `Regime`, or one member of a `Phased`
 # declaration. The two are one type because a carried state is
@@ -110,7 +117,7 @@ def bind_fixed_process_laws(
 def _resolve_process_law_params(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
-    params_flat: Mapping[str, Any],
+    params_flat: Mapping[QualifiedName, UserParamsLeaf],
 ) -> tuple[dict[RegimeName, dict[StateName, dict[str, Any]]], set[str]]:
     """Resolve every runtime process parameter against the user's `fixed_params`.
 
@@ -132,7 +139,9 @@ def _resolve_process_law_params(
             leaf type the canonical boundary cast rejects.
 
     """
-    raw: dict[RegimeName, dict[str, Any]] = {name: {} for name in user_regimes}
+    raw: dict[RegimeName, dict[QualifiedName, UserParamsLeaf]] = {
+        name: {} for name in user_regimes
+    }
     slot_owner: dict[tuple[RegimeName, str], tuple[StateName, str]] = {}
     consumed: set[str] = set()
     for regime_name, user_regime in user_regimes.items():
@@ -172,7 +181,8 @@ def _resolve_process_law_params(
 
     resolved: dict[RegimeName, dict[StateName, dict[str, Any]]] = {}
     for regime_name, regime_slots in canonical.items():
-        for slot, value in regime_slots.items():
+        # The cast input holds regime levels only, so no edge level comes back.
+        for slot, value in cast("FlatRegimeParams", regime_slots).items():
             state_name, param_name = slot_owner[regime_name, slot]
             resolved.setdefault(regime_name, {}).setdefault(state_name, {})[
                 param_name
@@ -208,7 +218,7 @@ def _processes_in(declaration: StateDeclaration) -> list[_ContinuousStochasticPr
 
 def _fail_if_any_process_law_field_varies(
     *,
-    raw: Mapping[RegimeName, Mapping[str, Any]],
+    raw: Mapping[RegimeName, Mapping[QualifiedName, UserParamsLeaf]],
     slot_owner: Mapping[tuple[RegimeName, str], tuple[StateName, str]],
 ) -> None:
     """Reject every process law field that was given more than one number.
@@ -230,7 +240,9 @@ def _fail_if_any_process_law_field_varies(
             )
 
 
-def _fail_if_a_process_law_field_varies(*, value: Any, qname: QualifiedName) -> None:
+def _fail_if_a_process_law_field_varies(
+    *, value: UserParamsLeaf | ParamsLeaf, qname: QualifiedName
+) -> None:
     """Reject a process law field given more than one number.
 
     Args:
@@ -257,7 +269,7 @@ def _fail_if_a_process_law_field_varies(*, value: Any, qname: QualifiedName) -> 
     raise InvalidParamsError(msg)
 
 
-def _as_process_field(*, value: Any, qname: QualifiedName) -> float | int | bool:
+def _as_process_field(*, value: ParamsLeaf, qname: QualifiedName) -> float | int | bool:
     """Return a canonically cast leaf as the Python scalar a process field takes.
 
     A process's distribution fields are Python scalars, and it computes its nodes
@@ -365,9 +377,9 @@ def _drop_flat_keys(*, params: UserParams, drop: set[str]) -> UserParams:
 
 def _prune_flat_keys(
     *, branch: Mapping[str, Any], prefix: tuple[str, ...], drop: set[str]
-) -> dict[str, Any]:
+) -> dict[str, UserParamsNode]:
     """Copy `branch` without the leaves whose qualified name is in `drop`."""
-    kept: dict[str, Any] = {}
+    kept: dict[str, UserParamsNode] = {}
     for key, value in branch.items():
         path = (*prefix, key)
         if qname_from_tree_path(path) in drop:

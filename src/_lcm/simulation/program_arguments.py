@@ -3,13 +3,18 @@
 from collections.abc import Mapping
 from types import MappingProxyType
 
+import jax
+
+from _lcm.typing import PRNGKeyND
+from lcm.typing import ReferenceName, ScalarFloat, ScalarInt
+
 
 def decision_arguments(
     *,
     states: Mapping[str, object],
     discrete_actions: Mapping[str, object],
     continuous_actions: Mapping[str, object],
-    taste_keys: Mapping[str, object],
+    taste_keys: Mapping[ReferenceName, PRNGKeyND | jax.ShapeDtypeStruct],
     next_values: object,
     references: Mapping[str, object],
     params: Mapping[str, object],
@@ -35,7 +40,7 @@ def transition_arguments(
     states: Mapping[str, object],
     carried: Mapping[str, object],
     actions: Mapping[str, object],
-    keys: Mapping[str, object],
+    keys: Mapping[ReferenceName, PRNGKeyND | jax.ShapeDtypeStruct],
     period: object,
     age: object,
     params: Mapping[str, object],
@@ -53,7 +58,11 @@ def transition_arguments(
 
 
 def policy_prepare_arguments(
-    *, payload: object, states: Mapping[str, object], params: object, age: object
+    *,
+    payload: object,
+    states: Mapping[str, object],
+    params: object,
+    age: ScalarFloat | ScalarInt | jax.ShapeDtypeStruct,
 ) -> dict[str, object]:
     """Bind the dynamic published bank to its declared reconstruction inputs."""
     return {
