@@ -229,7 +229,7 @@ def test_every_memory_mutation_advances_the_residency_epoch() -> None:
         lambda: memory.set_derived((array,)),
         lambda: memory.set_chunk_inputs(tree=(array,)),
         lambda: memory.publish(tree=(array,)),
-        lambda: memory.replace_outputs(tree=(array,)),
+        lambda: memory.replace_outputs(tree=({"alive": {0: array}},)),
         lambda: setattr(memory, "unit_inputs", (array,)),
         lambda: setattr(memory, "inputs", measure_buffer_footprint(tree=(array,))),
         lambda: setattr(

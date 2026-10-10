@@ -39,6 +39,7 @@ from _lcm.simulation.runtime import (
     SimulationRuntime,
 )
 from _lcm.solution import backward_induction
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 
@@ -131,7 +132,9 @@ def test_simulation_refuses_a_shape_only_live_input_over_budget(
     executions: list[None] = []
     original = CompiledSimulationProgram.__call__
 
-    def observe(self: CompiledSimulationProgram, **arguments: object) -> object:
+    def observe(
+        self: CompiledSimulationProgram, **arguments: PytreeValue | ShapeDtypePytree
+    ) -> object:
         executions.append(None)
         return original(self, **arguments)
 

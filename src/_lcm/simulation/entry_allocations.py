@@ -23,7 +23,7 @@ import numpy as np
 
 from _lcm.engine import Regime
 from _lcm.params.edges import EDGES, flat_namespaces
-from _lcm.simulation.entry_inputs import SimulationEntryInputs
+from _lcm.simulation.entry_inputs import SimulationEntryInputs, SolutionResultBoundary
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.process_grids import SimulationProcessGrids
@@ -65,7 +65,7 @@ class SimulationEntryAllocations:
 
     original_inputs: SimulationEntryInputs | None
     """Original caller buffers retained until the public call returns."""
-    solution: object | None
+    solution: SolutionResultBoundary | None
     """Currently resolved value, policy and replay-artifact owners."""
     model_roots: tuple[PytreeValue, ...]
     """Already materialized model grids, fixed parameters, IDs and ages."""
@@ -262,7 +262,10 @@ class SimulationEntryAllocations:
         return cast("InitialConditions", MappingProxyType(padded)), original_n_subjects
 
     def update_solution(
-        self, *, solution: object | None, resolved_inputs: _ResolvedInputs
+        self,
+        *,
+        solution: SolutionResultBoundary | None,
+        resolved_inputs: _ResolvedInputs,
     ) -> None:
         """Observe newly retained result views without claiming their admission."""
         self.solution = solution

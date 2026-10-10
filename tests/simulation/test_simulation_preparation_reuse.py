@@ -17,6 +17,7 @@ import pytest
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.simulation import chunk_profile_inventory, operand_placement, process_grids
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
+from _lcm.typing import PytreeValue
 from lcm import Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import UserInitialConditions, UserParams
@@ -383,7 +384,7 @@ def test_operand_admission_rechecks_growing_live_inventory(
     original = operand_placement._place_operand_leaf
     attempts = []
 
-    def observed(*, leaf: object, sharding: jax.sharding.Sharding) -> object:
+    def observed(*, leaf: PytreeValue, sharding: jax.sharding.Sharding) -> object:
         attempts.append(leaf)
         return original(leaf=leaf, sharding=sharding)
 

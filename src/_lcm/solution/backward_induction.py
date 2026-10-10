@@ -62,6 +62,7 @@ from _lcm.execution.core_program import (
     ResolvedCoreProgram,
     TiledOutputAxis,
     ValueRead,
+    _TransferArgumentLeaf,
     _value_read_argument_leaf,
     core_program_graph,
     materialize_core_program,
@@ -114,6 +115,7 @@ from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import (
     ExpectedOutputLeaf,
     OutputRoleLeaf,
+    OutputRoleTree,
     PlannedCore,
     ResolvedOutputLayout,
     assert_value_leaf_layout,
@@ -230,6 +232,7 @@ from _lcm.solution.v_topology import (
 )
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import (
+    ArtifactPayload,
     FlatParams,
     HostArray,
     ParamsLeaf,
@@ -586,9 +589,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     ] = {}
     dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
     solver_diagnostics: dict[int, MappingProxyType[RegimeName, SolverDiagnostics]] = {}
-    retained_continuations: dict[ArtifactRef, object] = {}
-    replay_artifacts: dict[ArtifactRef, object] = {}
-    auxiliary_artifacts: dict[ArtifactRef, object] = {}
+    retained_continuations: dict[ArtifactRef, ArtifactPayload] = {}
+    replay_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
+    auxiliary_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
 
     # Every collective kernel publishes `D`, but only two things read the
     # ACCUMULATED per-period mapping: forward simulation, for a gate that
@@ -702,7 +705,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 period_dissolution_flags: dict[RegimeName, BoolND] = {}
                 period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
                 period_retained_continuations: dict[
-                    tuple[RegimeName, ArtifactKey], object
+                    tuple[RegimeName, ArtifactKey], ArtifactPayload
                 ] = {}
                 period_replay_artifacts: dict[
                     tuple[RegimeName, ArtifactKey], object
@@ -6733,7 +6736,7 @@ def _bound_block_view(
     *,
     program: MaterializedCoreProgram,
     read: ValueRead,
-    stored_template: object,
+    stored_template: _TransferArgumentLeaf,
     source_sharding: jax.sharding.Sharding,
     value_axis_names: Mapping[RegimeName, tuple[StateName, ...]],
 ) -> tuple[ValueViewDescriptor, jax.sharding.Sharding] | None:
@@ -6750,7 +6753,8 @@ def _bound_block_view(
     axis_names = value_axis_names.get(read.target.regime, ())
     if binding.state_name not in axis_names:
         return None
-    stored_sharding = stored_template.sharding  # ty: ignore[unresolved-attribute]
+    # The caller's layout resolution has refused a template without a sharding.
+    stored_sharding = cast("jax.sharding.Sharding", stored_template.sharding)
     selected_sharding = block_layout(
         layout=stored_sharding,
         axis=axis_names.index(binding.state_name),
@@ -6949,7 +6953,7 @@ def _lowering_key(
     layout_key: Hashable,
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree] | None = None,
     specialization_key: Hashable | None = None,
-    output_roles: object | None = None,
+    output_roles: OutputRoleTree = None,
     donated_arguments: tuple[str, ...] = (),
     placement_key: Hashable | None = None,
     compiler_options: tuple[tuple[str, int], ...] = (),
@@ -7052,7 +7056,7 @@ def _hashable_metadata(value: _KeyMetadata) -> Hashable:
     return cast("Hashable", value)
 
 
-def _output_roles_key(*, output_roles: object | None) -> Hashable:
+def _output_roles_key(*, output_roles: OutputRoleTree) -> Hashable:
     """Encode a declared logical output tree in the lowering identity."""
     if output_roles is None:
         return None
@@ -7065,7 +7069,7 @@ def _output_roles_key(*, output_roles: object | None) -> Hashable:
 def _assert_lowered_output_roles(
     *,
     lowered: jax.stages.Lowered,
-    output_roles: object,
+    output_roles: OutputRoleTree,
     layout: ResolvedOutputLayout,
     label: str,
 ) -> None:
@@ -7087,7 +7091,7 @@ def _assert_lowered_output_roles(
 
 
 def _assert_lowered_output_tree(
-    *, output_roles: object, output_info: ShapeDtypePytree, label: str
+    *, output_roles: OutputRoleTree, output_info: ShapeDtypePytree, label: str
 ) -> None:
     """Require the lowered pytree to match the solver's declared role tree."""
     expected = jax.tree.structure(output_roles)
