@@ -226,10 +226,12 @@ from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import (
     FlatParams,
     ParamsLeaf,
+    PytreeValue,
     QAndFArg,
     QualifiedName,
     ReferenceName,
     RegimeName,
+    ShapeDtypePytree,
     SimulationPolicy,
     StateName,
 )
@@ -1775,13 +1777,10 @@ def _roll_gated_edges(
             fold=fold,
             fold_period=period,
             fold_age=coordinate_at(ages=ages, period=period),
-            target_states=cast(
-                "Mapping[str, ContinuousState | DiscreteState]",
-                _states_for_period(
-                    regime=regimes[target_name],
-                    state_action_space=base_state_action_spaces[target_name],
-                    period=period,
-                ),
+            target_states=_states_for_period(
+                regime=regimes[target_name],
+                state_action_space=base_state_action_spaces[target_name],
+                period=period,
             ),
             same_period_mapping=same_period_mapping,
             source_flat_params=edge_params(flat_params, source=source_name),
@@ -3152,7 +3151,7 @@ def _period_transfer_scratch_reservations(
 def _internal_reservations_by_cell(
     *,
     programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
-    templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    templates: Mapping[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]],
 ) -> Mapping[tuple[RegimeName, int], int]:
     """Reserve future producer subtrees across all cores of their runtime cell.
 
@@ -3338,7 +3337,7 @@ def _candidate_resident_bytes(
     *,
     compiled: jax.stages.Compiled,
     program: ResolvedCoreProgram,
-    internal_arguments: Mapping[str, object],
+    internal_arguments: Mapping[ReferenceName, ShapeDtypePytree],
     inventory: ResidentInventory,
 ) -> int:
     """Exclude only this specialization's aligned, compiler-live read buffers.
@@ -3539,7 +3538,7 @@ def _prepare_solve_programs(
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
     dict[_CoreCandidate, ResolvedCoreProgram],
-    dict[_CoreCandidate, Mapping[str, object]],
+    dict[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]],
     PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
     dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
     MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
@@ -4576,7 +4575,9 @@ def _lower_and_compile_candidate(
     lowering_keys: Mapping[_CoreCandidate, Hashable],
     resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
-    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    internal_templates: Mapping[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ],
     donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
     ages: TimeAxis,
     budget_bytes: int | None,
@@ -4990,7 +4991,9 @@ def _measure_variant(
     labels: Mapping[Hashable, str],
     memory_by_lowering_key: dict[Hashable, CompilerMemoryReservation],
     resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
-    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    internal_templates: Mapping[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ],
     resident_inventory: Mapping[_CoreTriple, ResidentInventory],
     logger: logging.Logger,
 ) -> int:
@@ -5042,7 +5045,9 @@ def _lower_and_compile_wave(
     new_lowerings: Mapping[Hashable, _CoreCandidate],
     resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
-    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    internal_templates: Mapping[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ],
     donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
     ages: TimeAxis,
     n_triples_per_lowering: Mapping[Hashable, int],
@@ -5099,7 +5104,7 @@ def _lower_resolved_candidate(
     resolved: ResolvedCoreProgram,
     layout: ResolvedOutputLayout,
     donated: tuple[str, ...],
-    internal_templates: Mapping[str, object],
+    internal_templates: Mapping[ReferenceName, ShapeDtypePytree],
     label: str,
 ) -> jax.stages.Lowered:
     """Trace and lower one resolved solve candidate at its output layout."""
@@ -5174,7 +5179,7 @@ class CompilationWave:
         self._futures_by_key: dict[
             Hashable, tuple[Future[tuple[Hashable, jax.stages.Compiled]], str]
         ] = {}
-        self._out_info: dict[Hashable, object] = {}
+        self._out_info: dict[Hashable, ShapeDtypePytree] = {}
         self._publishers: dict[Hashable, Callable[..., object] | None] = {}
 
     def __enter__(self) -> Self:
@@ -5188,7 +5193,7 @@ class CompilationWave:
         lower: Callable[[], jax.stages.Lowered],
         publish: Callable[..., object] | None = None,
         wait: bool = False,
-    ) -> object:
+    ) -> ShapeDtypePytree:
         """Lower one program here, submit its compile, and return its outputs.
 
         A key this wave already lowered is not lowered again.
@@ -5465,7 +5470,7 @@ def _checked_producer_records(
     *,
     top: ResolvedProducer,
     candidate: ResolvedCoreProgram,
-    templates: Mapping[str, object],
+    templates: Mapping[ReferenceName, ShapeDtypePytree],
 ) -> None:
     """Hold one newly bound producer candidate against its top-ranked record.
 
@@ -5507,7 +5512,7 @@ class _CoreFrontier:
 
     program: MaterializedCoreProgram
     transfer_plan: tuple[ResolvedValueTransfer, ...]
-    templates: Mapping[str, object]
+    templates: Mapping[ReferenceName, ShapeDtypePytree]
     widths: tuple[Mapping[str, object] | None, ...]
     top_record: ResolvedProducer | None
     """The top-ranked candidate's producer record, for a consumed producer.
@@ -5551,7 +5556,7 @@ class _LazyCandidateFrontier:
     frontier_lengths: Mapping[_CoreTriple, int]
     layouts: Mapping[_CoreTriple, ResolvedOutputLayout]
     resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram]
-    internal_templates: dict[_CoreCandidate, Mapping[str, object]]
+    internal_templates: dict[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]]
     nominations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]]
     donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]]
     lowering_keys: dict[_CoreCandidate, Hashable]
@@ -5744,7 +5749,7 @@ def _resolve_output_layouts_and_lowering_keys(
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
     dict[_CoreCandidate, ResolvedCoreProgram],
-    dict[_CoreCandidate, Mapping[str, object]],
+    dict[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]],
     PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
     dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
     MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
@@ -5882,7 +5887,9 @@ class _StructuralBlueprint:
     layouts: MappingProxyType[_CoreTriple, ResolvedOutputLayout]
     resolved_programs: MappingProxyType[_CoreCandidate, ResolvedCoreProgram]
     """The marked top-ranked candidate of every core, in producer order."""
-    internal_templates: MappingProxyType[_CoreCandidate, Mapping[str, object]]
+    internal_templates: MappingProxyType[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ]
     frontiers: MappingProxyType[_CoreTriple, _CoreFrontier]
     frontier_lengths: MappingProxyType[_CoreTriple, int]
     transfer_consumers: MappingProxyType[_ConsumerKey, frozenset[_CoreTriple]]
@@ -5912,7 +5919,9 @@ def _build_structural_blueprint(
     """
     layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
     resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram] = {}
-    internal_templates: dict[_CoreCandidate, Mapping[str, object]] = {}
+    internal_templates: dict[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ] = {}
     # The frontier of a core with one candidate is exhausted by the binding
     # below, so nothing is kept for it; only a budgeted frontier retains what a
     # later candidate is bound from.
@@ -6105,7 +6114,7 @@ def _bind_structural_blueprint(
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
     dict[_CoreCandidate, ResolvedCoreProgram],
-    dict[_CoreCandidate, Mapping[str, object]],
+    dict[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]],
     PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
     dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
     MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
@@ -6280,7 +6289,9 @@ def _value_axis_names(
 def _lowering_keys(
     *,
     resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
-    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    internal_templates: Mapping[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ],
     layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
     donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
     regimes: MappingProxyType[RegimeName, Regime],
@@ -6883,7 +6894,7 @@ def _lowering_key(
     *,
     program_identity: Hashable,
     layout_key: Hashable,
-    arguments: Mapping[str, object] | None = None,
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree] | None = None,
     specialization_key: Hashable | None = None,
     output_roles: object | None = None,
     donated_arguments: tuple[str, ...] = (),
@@ -7074,7 +7085,9 @@ def _attach_resolved_output_layout(
     layout: ResolvedOutputLayout,
     tile_widths: Mapping[str, int],
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
-    internal_input_templates: Mapping[str, object] = MappingProxyType({}),
+    internal_input_templates: Mapping[ReferenceName, ShapeDtypePytree] = (
+        MappingProxyType({})
+    ),
     donated_arguments: tuple[str, ...] = (),
     name: str,
 ) -> PlannedCore:

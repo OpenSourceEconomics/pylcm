@@ -5,7 +5,7 @@ import functools
 import gc
 import weakref
 from collections.abc import Callable, Mapping
-from typing import cast
+from typing import NoReturn, cast
 
 import jax
 import jax.numpy as jnp
@@ -20,10 +20,13 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.eager_core import make_eager_core
 from _lcm.execution.output_layout import VALUE
+from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 
 
-def internal_eager_program(*, function: Callable[..., object]) -> ResolvedCoreProgram:
+def internal_eager_program(
+    *, function: Callable[..., PytreeValue]
+) -> ResolvedCoreProgram:
     """Declare a real producer reference separate from ordinary builder arguments."""
     return dataclasses.replace(
         eager_program(function=function, arguments={}),
@@ -36,7 +39,7 @@ def internal_eager_program(*, function: Callable[..., object]) -> ResolvedCorePr
 
 
 def eager_program(
-    *, function: Callable[..., object], arguments: Mapping[str, object]
+    *, function: Callable[..., PytreeValue], arguments: Mapping[str, object]
 ) -> ResolvedCoreProgram:
     """Declare a dense numerical body independently of the eager adapter."""
     return ResolvedCoreProgram(
@@ -68,7 +71,7 @@ def test_eager_scalar_keeps_dtype_weak_type_and_original_tree(*, kind: str) -> N
     target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     returned: list[object] = []
 
-    def body(*, scalar: jax.Array) -> object:
+    def body(*, scalar: jax.Array) -> PytreeValue:
         output = {"value": (scalar, None)}
         returned.append(output)
         return output
@@ -145,7 +148,7 @@ def test_eager_adapter_drops_runtime_owners_between_calls() -> None:
 def test_eager_exception_does_not_retain_runtime_owners() -> None:
     target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
 
-    def body(*, value: jax.Array) -> object:
+    def body(*, value: jax.Array) -> NoReturn:
         assert value.shape == (4,)
         raise RuntimeError("numerical failure")
 
@@ -171,7 +174,7 @@ def test_repeated_original_does_not_hide_an_invalid_second_descriptor() -> None:
     target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     source = jnp.asarray(1.0, dtype=jnp.float32)
 
-    def forbidden(**_arguments: object) -> object:
+    def forbidden(**_arguments: object) -> NoReturn:
         pytest.fail("invalid alias metadata reached the numerical body")
 
     adapter = make_eager_core(
@@ -209,7 +212,7 @@ def test_eager_input_metadata_mismatch_fails_before_body(*, change: str) -> None
     shape = (1,) if change == "shape" else ()
     dtype = jnp.int32 if change == "dtype" else jnp.float32
 
-    def forbidden(*, value: object) -> object:
+    def forbidden(*, value: object) -> NoReturn:
         pytest.fail(f"numerical body received invalid operand {value!r}")
 
     adapter = make_eager_core(
@@ -251,7 +254,7 @@ def test_internal_eager_metadata_corruption_stops_before_body(*, change: str) ->
     target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     source = jax.device_put(jnp.asarray(2.0, dtype=jnp.float32), target)
 
-    def forbidden(*, produced: object) -> object:
+    def forbidden(*, produced: object) -> NoReturn:
         pytest.fail(f"corrupted internal operand reached numerical body: {produced!r}")
 
     adapter = make_eager_core(

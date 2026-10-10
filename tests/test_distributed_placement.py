@@ -16,7 +16,7 @@ import weakref
 from collections.abc import Callable, Hashable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import jax
 import numpy as np
@@ -72,7 +72,7 @@ from _lcm.simulation.residency import (
 from _lcm.solution import backward_induction
 from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
-from _lcm.typing import RegimeName
+from _lcm.typing import PytreeValue, RegimeName
 from _lcm.utils.logging import LogLevel
 from lcm import DeterministicTransition, Transition, fixed_transition
 from lcm.ages import AgeGrid
@@ -237,7 +237,7 @@ def test_eager_ordered_mesh_preserves_owners_and_outputs_at_birth(
         assert not body_finished, "eager adapter repaired an already produced output"
         return original_put(*args, **kwargs)
 
-    def body(*, value: jax.Array, offset: jax.Array) -> object:
+    def body(*, value: jax.Array, offset: jax.Array) -> PytreeValue:
         nonlocal body_finished
         assert offset is fixed
         result = (
@@ -288,7 +288,7 @@ def test_eager_committed_operand_is_not_silently_moved() -> None:
     expected = _ordered_eager_sharding()
     source = jax.device_put(jnp.ones((3, 2)), jax.devices()[0])
 
-    def forbidden(*, value: object) -> object:
+    def forbidden(*, value: object) -> NoReturn:
         pytest.fail(f"a misplaced committed operand reached the body: {value!r}")
 
     adapter = make_eager_core(
@@ -318,7 +318,7 @@ def test_eager_nested_aliases_and_context_restoration() -> None:
     outside_mesh = jax.get_mesh()
     outside_device = jax.config.jax_default_device
 
-    def body(*, values: Mapping[str, Any]) -> object:
+    def body(*, values: Mapping[str, Any]) -> PytreeValue:
         assert type(values) is MappingProxyType
         assert tuple(values) == tuple(original)
         assert jax.tree.structure(values) == jax.tree.structure(original)
@@ -347,7 +347,7 @@ def test_eager_repeated_original_keeps_distinct_declared_layouts() -> None:
     replicated = jax.NamedSharding(sharded.mesh, jax.P())
     source = jnp.arange(6, dtype=jnp.float32).reshape(3, 2)
 
-    def body(*, partitioned: jax.Array, whole: jax.Array) -> object:
+    def body(*, partitioned: jax.Array, whole: jax.Array) -> PytreeValue:
         assert partitioned is not whole
         assert partitioned.sharding.devices_indices_map(
             source.shape

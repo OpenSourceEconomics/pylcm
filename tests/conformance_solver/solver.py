@@ -245,7 +245,7 @@ def _terminal_value_and_counter() -> tuple[FloatND, Counter]:
 class _TerminalArgumentBuilder:
     """Build the empty dynamic argument map for the terminal scalar core."""
 
-    def __call__(self, _context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(self, _context: CoreBuildContext) -> Mapping[str, jax.Array]:
         """Return the terminal core's public empty argument view."""
         return MappingProxyType({})
 
@@ -256,7 +256,7 @@ class _ArgumentBuilder:
 
     regime_name: RegimeName
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(self, context: CoreBuildContext) -> Mapping[str, jax.Array]:
         """Read only public state, action, and continuation views."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         continuation = cast(
@@ -887,7 +887,9 @@ class _TargetValueArgumentBuilder:
     regime_name: RegimeName
     target_regimes: tuple[RegimeName, ...]
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[str, jax.Array | Mapping[RegimeName, FloatND]]:
         """Read public states, the counter, and the declared targets' values."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         continuation = cast(
@@ -901,7 +903,7 @@ class _TargetValueArgumentBuilder:
                 "next_count": continuation.count,
                 "next_regime_to_V_arr": MappingProxyType(
                     {
-                        target: context.next_regime_to_V_arr[target]
+                        target: cast("FloatND", context.next_regime_to_V_arr[target])
                         for target in self.target_regimes
                     }
                 ),

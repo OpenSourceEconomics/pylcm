@@ -246,6 +246,7 @@ from _lcm.typing import (
     FunctionName,
     NextStateSimulationFunction,
     ProcessName,
+    PytreeValue,
     QAndFFunction,
     QualifiedName,
     RegimeName,
@@ -6077,11 +6078,13 @@ def _joint_node_annotation(
     return next(iter(annotations), "Any")
 
 
-def _literal_joint_support(*, support: object, node_annotation: str) -> EconFunction:
+def _literal_joint_support(
+    *, support: PytreeValue, node_annotation: str
+) -> EconFunction:
     """Lift an immutable literal support pytree into the target-local DAG."""
 
     @with_signature(args={}, return_annotation=node_annotation)
-    def provide() -> object:
+    def provide() -> PytreeValue:
         return support
 
     return cast("EconFunction", provide)

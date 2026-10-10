@@ -28,6 +28,7 @@ from _lcm.simulation.program_types import (
 )
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.runtime import CompiledSimulationProgram, SimulationRuntime
+from _lcm.typing import PytreeValue
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm import (
     AgeGrid,
@@ -470,7 +471,7 @@ def test_dispatch_executes_the_exact_planner_selection(
         marker = object()
         selections.append(marker)
 
-        def execute(**arguments: object) -> object:
+        def execute(**arguments: PytreeValue) -> PytreeValue:
             calls.append(marker)
             return plan.compiled(**arguments)
 

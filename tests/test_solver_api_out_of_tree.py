@@ -105,7 +105,7 @@ def _wealth_value(*, wealth: Float1D) -> Float1D:
     return wealth
 
 
-def _wealth_arguments(build: CoreBuildContext) -> Mapping[str, object]:
+def _wealth_arguments(build: CoreBuildContext) -> Mapping[str, jax.Array]:
     """Bind wealth from the public state-space contract the solver consumes."""
     state_action_space = build.state_action_space
     if not isinstance(state_action_space, StateActionSpace):
@@ -221,7 +221,7 @@ class TerminalPublisher(Solver):
             raise TypeError("The terminal publisher's parent publishes nothing.")
         template = spec.template
 
-        def terminal_value(*, wealth: Float1D) -> tuple[Float1D, object]:
+        def terminal_value(*, wealth: Float1D) -> tuple[Float1D, ContinuationArtifact]:
             return jnp.zeros_like(wealth), template
 
         program = CoreProgram(
@@ -360,7 +360,7 @@ def _counting_value(*, wealth: Float1D, count: FloatND) -> tuple[Float1D, _Count
     return wealth + count, _Counter(count=count + 1.0)
 
 
-def _counting_arguments(build: CoreBuildContext) -> Mapping[str, object]:
+def _counting_arguments(build: CoreBuildContext) -> Mapping[str, jax.Array]:
     """Bind the solver's own count payload through its declared runtime type."""
     continuation = build.next_regime_to_continuation["alive"]
     if not isinstance(continuation, _Counter):

@@ -43,7 +43,7 @@ from _lcm.execution.internal_outputs import topological_program_order
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.solution.period_replay import replay_period
-from _lcm.typing import FlatParams, FloatND
+from _lcm.typing import FlatParams, FloatND, PytreeValue
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -59,6 +59,7 @@ from lcm.solver_api import (
     SolverIdentity,
 )
 from lcm.solvers import GridSearch, ReducedAxis
+from lcm.typing import ReferenceName
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -150,7 +151,9 @@ class _StateArguments:
     planned: bool
     """Whether the root also receives the streamed candidate coordinate."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue]:
         """Return the wealth row, plus the candidate row for a planned root."""
         x = cast("Any", context.state_action_space).states["wealth"]
         if not self.planned:
@@ -162,7 +165,9 @@ class _StateArguments:
 class _NoArguments:
     """Build the empty argument tree of a program that only reads its producers."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue]:
         """Return no arguments, ignoring the build context."""
         del context
         return {}
@@ -177,7 +182,7 @@ def _spec(*, producer: CoreProgram, label: str) -> InternalOutputSpec:
     raise ValueError(msg)
 
 
-def _select(*, tree: object, path: tuple[int | str, ...]) -> object:
+def _select(*, tree: PytreeValue, path: tuple[int | str, ...]) -> PytreeValue:
     """Index a producer's real output down to the subtree one label publishes."""
     node: Any = tree
     for step in path:
@@ -300,7 +305,7 @@ class _GraphSolver(GridSearch):
 def _program(
     *,
     name: str,
-    function: Callable[..., object],
+    function: Callable[..., PytreeValue],
     builder: CoreArgumentBuilder,
     internal_inputs: Mapping[str, InternalInputRef],
     internal_outputs: tuple[InternalOutputSpec, ...],

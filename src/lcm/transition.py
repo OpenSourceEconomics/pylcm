@@ -25,7 +25,7 @@ from _lcm.beartype_conf import REGIME_CONF
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.time import ModelTime, TimeAxis, coordinate_kind
-from _lcm.typing import StateName
+from _lcm.typing import PytreeValue, StateName
 from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
@@ -393,7 +393,7 @@ def stochastic_transition(
     return decorate
 
 
-def _freeze_joint_support(value: Any) -> Any:
+def _freeze_joint_support(value: PytreeValue) -> PytreeValue:
     """Freeze the container structure of a literal joint-support pytree."""
     if isinstance(value, Mapping):
         return MappingProxyType(
@@ -405,7 +405,7 @@ def _freeze_joint_support(value: Any) -> Any:
 
 
 def _literal_joint_support_schema(
-    support: Any,
+    support: PytreeValue | Callable[..., PytreeValue],
 ) -> tuple[object, tuple[tuple[tuple[int, ...], object], ...]] | None:
     """Return a literal support's pytree and leaf event-shape/dtype schema."""
     if callable(support):
@@ -465,7 +465,7 @@ class JointTransition:
     support_size: int
     """Number of nodes on the joint finite support."""
 
-    support: Any
+    support: PytreeValue | Callable[..., PytreeValue]
     """Literal support pytree, or callable returning one."""
 
     probabilities: Callable[..., FloatND]
@@ -529,8 +529,8 @@ class JointTransition:
                     "only finite numeric or boolean values; nonfinite or "
                     f"unsupported leaf index(es): {nonfinite_leaves}."
                 )
+            object.__setattr__(self, "support", _freeze_joint_support(self.support))
 
-        object.__setattr__(self, "support", _freeze_joint_support(self.support))
         object.__setattr__(self, "outputs", MappingProxyType(dict(self.outputs)))
 
 

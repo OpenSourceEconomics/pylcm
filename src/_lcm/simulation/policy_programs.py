@@ -27,7 +27,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.simulation.program_types import subject_axis
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.solution.continuation_reads import rekeyed_value_reads
-from _lcm.typing import FlatRegimeParams, QAndFKwargs, RegimeName
+from _lcm.typing import FlatRegimeParams, PytreeValue, QAndFKwargs, RegimeName
 from lcm.solver_api import SIMULATION_POLICY
 from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt, StateName
 
@@ -153,7 +153,7 @@ def declare_finite_replay_programs(regime: Regime) -> Regime:
 def _program(
     *,
     name: str,
-    body: Callable[..., object],
+    body: Callable[..., PytreeValue],
     subject_names: tuple[str, ...],
     state_names: tuple[StateName, ...],
     reads: tuple[ValueRead, ...],
@@ -212,7 +212,7 @@ class _Prepare:
         states: Mapping[str, FloatND | IntND],
         params: FlatRegimeParams,
         age: ScalarFloat | ScalarInt,
-    ) -> object:
+    ) -> PytreeValue:
         # Imported at execution to keep declaration construction independent of
         # the forward coordinator's import order.
         from _lcm.simulation.simulate import (  # noqa: PLC0415
@@ -253,7 +253,7 @@ class _Rank:
             )
         )
 
-    def __call__(self, **arguments: object) -> object:
+    def __call__(self, **arguments: object) -> PytreeValue:
         from _lcm.simulation.simulate import (  # noqa: PLC0415
             _rank_nnbegm_candidate_bank,
         )

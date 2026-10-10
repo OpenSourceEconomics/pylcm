@@ -18,6 +18,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.footprint import ArtifactFootprint, ScheduledUnit
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.solution import backward_induction
+from _lcm.typing import PytreeValue
 
 
 @pytest.mark.parametrize(
@@ -146,7 +147,7 @@ def test_fixed_only_device_is_charged_its_owners_without_peer_or_internal() -> N
     assert smaller.resident_bytes(consumes=()) == 34
 
 
-def _internal_pair(*, first: object, second: object) -> object:
+def _internal_pair(*, first: PytreeValue, second: PytreeValue) -> PytreeValue:
     return first, second
 
 
@@ -178,7 +179,9 @@ def test_internal_reservation_uses_producer_identity_and_candidate_maximum() -> 
     large = jax.ShapeDtypeStruct((8,), jnp.int32)
     # Identical representative object under two labels sizes two future outputs.
     # Another consumer of those same labels adds no third allocation.
-    templates: dict[backward_induction._CoreCandidate, Mapping[str, object]] = {
+    templates: dict[
+        backward_induction._CoreCandidate, Mapping[str, jax.ShapeDtypeStruct]
+    ] = {
         narrow: {"first": small, "second": small},
         wide: {"first": large, "second": small},
         duplicate: {"first": large, "second": small},

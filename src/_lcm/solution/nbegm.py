@@ -129,11 +129,14 @@ from _lcm.solution.periodization import (
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
+    ArrayTree,
     EconFunctionKwargs,
     EconFunctionsMapping,
     FlatParams,
+    PytreeValue,
     QualifiedName,
     RegimeName,
+    ShapeDtypePytree,
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import map_over_leading_axis
@@ -1415,7 +1418,9 @@ class _RideAlongArgumentBuilder:
     n_intervals: int
     """Number of declared continuation intervals, or zero on a smooth route."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         flat_params = cast("FlatParams", context.flat_params)
@@ -1453,7 +1458,7 @@ class _RideAlongArgumentBuilder:
         *,
         states: Mapping[str, object],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-    ) -> Mapping[RegimeName, ContinuationPayload]:
+    ) -> Mapping[RegimeName, EGMCarry]:
         """Filter the carry to this period's targets and place it on the co-map mesh.
 
         With a distributed ride state the programs run on the co-map mesh, and every
@@ -3664,7 +3669,7 @@ def _deferred_probe(
         bound["derivative_programs"] = MappingProxyType(
             {
                 order: _make_liquid_probe_program(
-                    func=cast("Callable[..., object]", bound["coh_dag"]),
+                    func=cast("Callable[..., ArrayTree]", bound["coh_dag"]),
                     liquid_name=cast("str", bound["liquid_name"]),
                     order=order,
                     scalar=True,
@@ -3707,7 +3712,7 @@ def _deferred_probe(
 
 
 def _make_liquid_probe_program(
-    *, func: Callable[..., object], liquid_name: str, order: int, scalar: bool
+    *, func: Callable[..., ArrayTree], liquid_name: str, order: int, scalar: bool
 ) -> Callable[..., object]:
     """Construct a derivative program closing over model structure only."""
     derivative = _DynamicLiquidProbe(func=func, liquid_name=liquid_name, scalar=scalar)
@@ -3720,7 +3725,7 @@ def _make_liquid_probe_program(
 class _DynamicLiquidProbe:
     """Bind model structure while receiving every current probe fill dynamically."""
 
-    func: Callable[..., object]
+    func: Callable[..., ArrayTree]
     """The model function differentiated with respect to its liquid argument."""
     liquid_name: str
     """Name of the liquid argument replaced by each probe point."""
@@ -3728,7 +3733,7 @@ class _DynamicLiquidProbe:
     """Whether to normalize the budget output to a scalar before differentiation."""
 
     # keyword-only-exempt: library-callback=jax.grad
-    def __call__(self, value: FloatND, arguments: EconFunctionKwargs) -> object:
+    def __call__(self, value: FloatND, arguments: EconFunctionKwargs) -> ArrayTree:
         result = self.func(**{**arguments, self.liquid_name: value})
         return jnp.asarray(result).reshape(()) if self.scalar else result
 

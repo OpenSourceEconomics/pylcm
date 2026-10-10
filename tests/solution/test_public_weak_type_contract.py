@@ -30,7 +30,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.solution import backward_induction
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
-from _lcm.typing import FlatParams, FloatND
+from _lcm.typing import FlatParams, FloatND, PytreeValue
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -44,6 +44,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.solver_api import KernelOutput, ResultRetention, SolverIdentity
 from lcm.solvers import GridSearch, ReducedAxis
+from lcm.typing import ReferenceName
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -140,7 +141,9 @@ class _MaxReduction:
 class _StateAndCandidates:
     """Build the wealth row and the streamed candidate coordinate."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue]:
         """Return the wealth row and the candidate coordinate it reduces over."""
         x = cast("Any", context.state_action_space).states["wealth"]
         return {"x": x, "candidate": jnp.arange(_CANDIDATES, dtype=x.dtype)}
@@ -150,7 +153,9 @@ class _StateAndCandidates:
 class _StateOnly:
     """Build the wealth row the consumer shifts by its internal input."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue]:
         """Return the wealth row alone."""
         return {"x": cast("Any", context.state_action_space).states["wealth"]}
 

@@ -79,9 +79,9 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
+    PytreeValue,
     RegimeName,
     RegimeTransitionFunction,
-    StateName,
     StateOrActionName,
 )
 from _lcm.utils.logging import raise_or_warn, validation_enabled
@@ -95,8 +95,6 @@ from lcm.exceptions import (
 from lcm.typing import (
     Bool1D,
     BoolND,
-    ContinuousState,
-    DiscreteState,
     FloatND,
     FunctionName,
     IntND,
@@ -756,10 +754,7 @@ def _state_action_space_for_period(
     if not period_states:
         return base
     return base.replace(
-        states=cast(
-            "MappingProxyType[StateName, ContinuousState | DiscreteState]",
-            MappingProxyType(dict(base.states) | dict(period_states)),
-        )
+        states=MappingProxyType(dict(base.states) | dict(period_states))
     )
 
 
@@ -1367,7 +1362,7 @@ def validate_joint_transitions_all_periods(
 
 @contextmanager
 def _own_transition_outputs(
-    *, memory: SimulationMemory | None, outputs: object, restore: ArrayTree = ()
+    *, memory: SimulationMemory | None, outputs: PytreeValue, restore: PytreeValue = ()
 ) -> Generator[None]:
     """Publish temporary roots for admitted checks and release them reliably."""
     _set_transition_outputs(memory=memory, outputs=outputs)
@@ -1378,7 +1373,7 @@ def _own_transition_outputs(
 
 
 def _set_transition_outputs(
-    *, memory: SimulationMemory | None, outputs: object
+    *, memory: SimulationMemory | None, outputs: PytreeValue
 ) -> None:
     """Expose every temporary mapping leaf to residency accounting."""
     if memory is not None:
@@ -1482,7 +1477,7 @@ def _validate_joint_laws(
 
 def _check_joint_support_schema(
     *,
-    support: object,
+    support: PytreeValue,
     kernel_name: str,
     regime_name: RegimeName,
     phase_name: str,
@@ -1529,7 +1524,7 @@ def _evaluate_joint_support(
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     memory: SimulationMemory | None = None,
-) -> Any:
+) -> PytreeValue | None:
     """Bind and admit one complete parameter-bound joint-support provider."""
     kwargs: dict[ReferenceName, EconFunctionArg] = {}
     for name in inspect.signature(func).parameters:
@@ -1563,7 +1558,7 @@ def _evaluate_joint_support(
 
 def _validate_joint_support(
     *,
-    support: object,
+    support: PytreeValue,
     support_size: int,
     kernel_name: str,
     regime_name: RegimeName,
@@ -2142,10 +2137,10 @@ def _evaluate_state_probability_law(
 
 def _evaluate_admitted_transition_producer(
     *,
-    function: Callable[..., object],
+    function: Callable[..., PytreeValue],
     arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
     memory: SimulationMemory,
-) -> object:
+) -> PytreeValue:
     """Place, profile, admit, and complete one transition validation producer."""
     placed = place_simulation_arguments(
         arguments=arguments,

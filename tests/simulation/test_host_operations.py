@@ -26,7 +26,9 @@ from _lcm.simulation.transitions import (
     _advance_states_for_subjects,
     _draw_random_regime_ids,
 )
+from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName
 from tests.conftest import assert_agrees_to_ulp
 
 try:
@@ -42,8 +44,8 @@ pytestmark = pytest.mark.skipif(
 
 
 class _DispatchArguments(TypedDict):
-    function: Callable[..., object]
-    arguments: Mapping[str, object]
+    function: Callable[..., PytreeValue]
+    arguments: Mapping[ReferenceName, PytreeValue]
     subject_arg_names: tuple[str, ...]
     devices: tuple[jax.Device, ...]
     live_footprint: Callable[[], DeviceBufferFootprint]
@@ -77,7 +79,9 @@ def _static_zero_sign(*, state: jax.Array, selector: float) -> jax.Array:
 
 def _operation_case(
     *, name: str
-) -> tuple[Callable[..., object], dict[str, object], tuple[str, ...]]:
+) -> tuple[
+    Callable[..., PytreeValue], dict[ReferenceName, PytreeValue], tuple[str, ...]
+]:
     if name == "merge":
         return (
             _advance_states_for_subjects,

@@ -8,7 +8,7 @@ import textwrap
 import weakref
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -497,7 +497,9 @@ def test_joint_support_is_charged_through_probability_admission(
     def support_and_record(**kwargs: Any) -> Any:
         support = original_support(**kwargs)
         if support is not None:
-            references[:] = [weakref.ref(leaf) for leaf in support.values()]
+            # This file's support providers return a mapping of arrays.
+            arrays = cast("Mapping[str, jax.Array]", support)
+            references[:] = [weakref.ref(leaf) for leaf in arrays.values()]
         return support
 
     def operation_and_check(**kwargs: Any) -> Any:
@@ -580,7 +582,9 @@ def test_previous_joint_support_is_released_before_next_support_producer(
             observations.append(all(reference() is None for reference in references))
         support = original_support(**kwargs)
         if support is not None:
-            references[:] = [weakref.ref(leaf) for leaf in support.values()]
+            # This file's support providers return a mapping of arrays.
+            arrays = cast("Mapping[str, jax.Array]", support)
+            references[:] = [weakref.ref(leaf) for leaf in arrays.values()]
         return support
 
     monkeypatch.setattr(transition_checks, "_evaluate_joint_support", support_and_check)

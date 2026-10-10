@@ -48,9 +48,10 @@ from _lcm.simulation.runtime import (
     SimulationRuntime,
     _SimulationCandidateCompiler,
 )
+from _lcm.typing import PytreeValue
 from benchmarks.asv._simulation_witnesses import multi_regime
 from lcm.execution import ExecutionConfig
-from lcm.typing import FloatND
+from lcm.typing import FloatND, ReferenceName
 
 # Operations whose repetition AC4 is about, named at the module attribute each
 # caller actually reads, so a rename or a re-import cannot silently stop
@@ -169,9 +170,9 @@ def _unit_runtime(*, width: int | None = None) -> SimulationRuntime:
 _UNIT_SUBJECTS = 64
 
 
-def _unit_arguments(**overrides: object) -> dict[str, object]:
+def _unit_arguments(**overrides: PytreeValue) -> dict[ReferenceName, PytreeValue]:
     """Bind one call's complete operands for the unit-level witness program."""
-    arguments: dict[str, object] = {
+    arguments: dict[ReferenceName, PytreeValue] = {
         "state": jnp.arange(_UNIT_SUBJECTS, dtype=jnp.result_type(float))
     }
     arguments.update(overrides)
@@ -313,29 +314,29 @@ def test_a_repeat_binds_this_call_s_own_values(
     np.testing.assert_array_equal(np.asarray(result), np.asarray(shifted + 1))
 
 
-def _changed_dtype() -> dict[str, object]:
+def _changed_dtype() -> dict[ReferenceName, PytreeValue]:
     """Same population and shape, a different floating-point dtype."""
     return _unit_arguments(state=jnp.arange(_UNIT_SUBJECTS, dtype=jnp.float16))
 
 
-def _weak_typed() -> dict[str, object]:
+def _weak_typed() -> dict[ReferenceName, PytreeValue]:
     """Same shape and dtype as the working precision, but a weakly typed leaf."""
     return _unit_arguments(state=jnp.full(_UNIT_SUBJECTS, 1.0))
 
 
-def _extra_column() -> dict[str, object]:
+def _extra_column() -> dict[ReferenceName, PytreeValue]:
     """An additional optional argument column the previous call did not carry."""
     return _unit_arguments(
         spare=jnp.zeros(_UNIT_SUBJECTS, dtype=jnp.result_type(float))
     )
 
 
-def _typed_static_value() -> dict[str, object]:
+def _typed_static_value() -> dict[ReferenceName, PytreeValue]:
     """A typed static leaf whose value, not shape, changed."""
     return _unit_arguments(replay_address=1)
 
 
-def _prng_key() -> dict[str, object]:
+def _prng_key() -> dict[ReferenceName, PytreeValue]:
     """A leaf carrying an extended PRNG-key dtype."""
     return _unit_arguments(state=jax.random.key(0))
 

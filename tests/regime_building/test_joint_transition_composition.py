@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 import textwrap
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -375,7 +375,7 @@ def _support_reading_next_value(next_value: FloatND) -> FloatND:
     ids=["source-state", "next-output"],
 )
 def test_joint_support_cannot_read_runtime_transition_values(
-    *, support: object, message: str
+    *, support: Callable[..., FloatND], message: str
 ) -> None:
     """Declared support is hoistable: only period, age, and params may enter it."""
     source = Regime(

@@ -18,7 +18,7 @@ from typing import Protocol, runtime_checkable
 from _lcm.execution.core_program import CoreBuildContext, CoreProgram, TiledOutputAxis
 from _lcm.execution.output_layout import OutputRoleTree
 from _lcm.simulation.subject_groups import SubjectGroupingRoute
-from _lcm.typing import RegimeName, StateOrActionName
+from _lcm.typing import PytreeValue, RegimeName, ShapeDtypePytree, StateOrActionName
 from lcm.typing import ReferenceName
 
 # Planner name of the per-subject axis every simulation program tiles.
@@ -60,7 +60,7 @@ UNRESOLVED_SUBJECT_EXTENT = 1
 class SimulationBuildContext(CoreBuildContext):
     """Complete dynamic arguments for one forward program invocation."""
 
-    call_arguments: Mapping[str, object]
+    call_arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     """Subject states, action operands, parameters, keys and addressed value reads."""
 
     def __post_init__(self) -> None:
@@ -79,10 +79,10 @@ class SimulationProgramExecutor(Protocol):
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
-    ) -> object:
+    ) -> PytreeValue:
         """Select and invoke the executable for this argument signature."""
         ...
 
@@ -91,7 +91,7 @@ class SimulationProgramExecutor(Protocol):
 class _PerSubjectFunction:
     """One simulation body at a single subject's state cell."""
 
-    function: Callable[..., object]
+    function: Callable[..., PytreeValue]
     """The body, taking one subject's states and actions as scalars."""
 
     subject_arg_names: tuple[ReferenceName, ...]

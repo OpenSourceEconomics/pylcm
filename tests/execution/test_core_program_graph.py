@@ -28,6 +28,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE
 from _lcm.solution import backward_induction, period_replay
 from _lcm.solution.backward_induction import _resolve_program_for_execution
+from _lcm.typing import PytreeValue
 from lcm.solver_api import ArtifactKey
 from lcm.solvers import (
     ValueArtifactAddress,
@@ -38,7 +39,7 @@ from lcm.solvers import (
 )
 
 
-def _identity(*, value: object) -> object:
+def _identity(*, value: PytreeValue) -> PytreeValue:
     return value
 
 
