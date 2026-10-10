@@ -35,7 +35,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
-from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND
+from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, UserParams
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic.retirement_only import (
@@ -206,7 +206,7 @@ def _get_corner_model() -> Model:
     )
 
 
-def _get_params(*, pension: float) -> dict:
+def _get_params(*, pension: float) -> UserParams:
     final_age_alive = 40 + (N_PERIODS - 2) * 10
     return {
         "discount_factor": 0.95,

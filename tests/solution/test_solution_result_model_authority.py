@@ -25,7 +25,7 @@ _INITIAL = {
 }
 
 
-def _forward_loop_must_not_run(**_kwargs: object) -> None:
+def _forward_loop_must_not_run[Argument](**_kwargs: Argument) -> None:
     raise AssertionError("forward simulation ran before model-authority preflight")
 
 
