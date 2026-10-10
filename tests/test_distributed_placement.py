@@ -13,16 +13,19 @@ import logging
 import subprocess
 import sys
 import weakref
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, NoReturn, cast
+from typing import NoReturn, NotRequired, Protocol, Unpack, cast
 
 import jax
 import numpy as np
 import pytest
 from jax import numpy as jnp
+from typing_extensions import TypedDict
 
+import lcm.model as model_module
+from _lcm.execution import placement, scheduler, workspace_planning
 from _lcm.execution import value_transfer as transfers_module
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
@@ -61,6 +64,7 @@ from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building import processing
+from _lcm.simulation import entry_allocations, process_grids
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.initial_conditions import build_initial_states
 from _lcm.simulation.process_grids import SimulationProcessGrids
@@ -81,15 +85,197 @@ from lcm.execution import ExecutionConfig
 from lcm.model import Model
 from lcm.persistence import PeriodCapture
 from lcm.regime import Regime as UserRegime
-from lcm.solver_api import ContinuationReader
+from lcm.solver_api import ContinuationReader, SolutionResult
 from lcm.solvers import GridSearch, Solver
-from lcm.typing import Float1D, ScalarFloat, ScalarInt
-from tests.conftest import assert_agrees_to_ulp
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    Float1D,
+    ScalarFloat,
+    ScalarInt,
+    UserParams,
+)
+from tests.conftest import (
+    AttachResolvedOutputLayoutKwargs,
+    ResidentInventoryKwargs,
+    assert_agrees_to_ulp,
+)
 from tests.execution.test_eager_core import eager_program, internal_eager_program
 from tests.simulation._profile_comparison import (
     assert_same_bytes,
     assert_values_agree,
 )
+
+
+class _ResolveArguments(TypedDict, closed=True):
+    all_programs: Mapping[
+        backward_induction._CoreTriple, backward_induction.CoreProgram
+    ]
+    regimes: MappingProxyType[backward_induction.RegimeName, backward_induction.Regime]
+    program_fingerprint: str
+    flat_params: backward_induction.FlatParams
+    ages: backward_induction.TimeAxis
+    next_regime_to_V_arr: MappingProxyType[
+        backward_induction.RegimeName, backward_induction.FloatND
+    ]
+    next_regime_to_continuation: MappingProxyType[
+        backward_induction.RegimeName, backward_induction.ContinuationPayload
+    ]
+    next_edge_to_V_arr: MappingProxyType[
+        backward_induction._EdgeKey, backward_induction.FloatND
+    ]
+    budget_bytes: int | None
+    execution_widths: backward_induction.ResolvedExecution
+    enable_jit: bool
+    continuous_sharded_state: NotRequired[backward_induction.StateName | None]
+    donate_buffers: NotRequired[bool]
+    retain_all_artifacts: bool
+    persistable_artifact_refs: frozenset[backward_induction.ArtifactRef]
+    process_grid_resolver: NotRequired[backward_induction.ProcessGridResolver | None]
+    structural_blueprints: NotRequired[
+        backward_induction.StructuralBlueprintCache[
+            backward_induction._StructuralBlueprint
+        ]
+        | None
+    ]
+    base_state_action_spaces: NotRequired[
+        Mapping[backward_induction.RegimeName, backward_induction.StateActionSpace]
+        | None
+    ]
+    logger: NotRequired[logging.Logger | None]
+
+
+type _ResolveArgumentsResult = tuple[
+    dict[backward_induction._CoreTriple, backward_induction.ResolvedOutputLayout],
+    dict[backward_induction._CoreCandidate, Hashable],
+    dict[backward_induction._CoreCandidate, backward_induction.ResolvedCoreProgram],
+    dict[
+        backward_induction._CoreCandidate,
+        Mapping[backward_induction.ReferenceName, backward_induction.ShapeDtypePytree],
+    ],
+    backward_induction.PlannedInputLiveness[
+        backward_induction._InputDispatch, backward_induction.ValueArtifactAddress
+    ],
+    dict[
+        backward_induction._CoreCandidate,
+        tuple[backward_induction.ResolvedDonation, ...],
+    ],
+    MappingProxyType[
+        backward_induction._CoreTriple, backward_induction._ProgramExecutionMetadata
+    ],
+    backward_induction._LazyCandidateFrontier,
+]
+
+
+class _KernelArguments(TypedDict, closed=True):
+    regime: backward_induction.Regime
+    regime_name: backward_induction.RegimeName
+    period: int
+    compiled_cores: MappingProxyType[str, backward_induction.PlannedCore]
+    capture_target: backward_induction.PeriodCaptureTarget | None
+    state_action_space: backward_induction.StateActionSpace
+    flat_params: backward_induction.FlatParams
+    ages: backward_induction.TimeAxis
+    next_regime_to_V_arr: MappingProxyType[
+        backward_induction.RegimeName, backward_induction.FloatND
+    ]
+    next_regime_to_continuation: MappingProxyType[
+        backward_induction.RegimeName, backward_induction.ContinuationPayload
+    ]
+    logger: logging.Logger
+    next_edge_to_V_arr: MappingProxyType[
+        backward_induction._EdgeKey, backward_induction.FloatND
+    ]
+    period_solution: Mapping[backward_induction.RegimeName, backward_induction.FloatND]
+    retain_replay: bool
+    selected_artifact_keys: frozenset[backward_induction.ArtifactKey]
+    period_capture: NotRequired[backward_induction.CaptureContext | None]
+    captured_admission: NotRequired[Mapping[str, Mapping[str, int | None]]]
+
+
+type _KernelArgumentsResult = backward_induction.KernelOutput
+
+
+class _SolveArguments(TypedDict, closed=True):
+    flat_params: model_module.FlatParams
+    params: model_module.UserParams
+    log: logging.Logger
+    retention: model_module.ResultRetention
+    max_compilation_workers: int | None
+    log_path: str | model_module.Path | None
+    log_keep_n_latest: int
+    retained_input_arrays: NotRequired[model_module._RetainedInputArrays]
+    process_grid_resolver: NotRequired[model_module.ProcessGridResolver | None]
+    call_id: NotRequired[model_module.CallId | None]
+    period_capture: NotRequired[model_module.CaptureContext | None]
+
+
+class _SolvePlacementArguments(TypedDict, closed=True):
+    flat_params: entry_allocations.FlatParams
+    regimes: Mapping[entry_allocations.RegimeName, entry_allocations.Regime]
+
+
+class _ProcessArguments(TypedDict, closed=True):
+    spec: process_grids._ContinuousStochasticProcess
+    parameters: Mapping[str, process_grids.ScalarFloat | process_grids.ScalarInt]
+    required: jax.sharding.Sharding
+
+
+class _WaveArguments(TypedDict, closed=True):
+    nodes: Sequence[scheduler.ScheduledNode]
+    same_period_dependencies: Mapping[
+        scheduler.RegimeName, Sequence[scheduler.RegimeName]
+    ]
+    device_sets: Mapping[scheduler.RegimeName, frozenset[int]]
+
+
+class _CacheArguments(TypedDict, closed=True):
+    registry: scheduler.BufferRegistry
+    consumer_counts: Mapping[tuple[Hashable, Hashable], int]
+    pending_outputs: NotRequired[Sequence[jax.Array]]
+    release_enabled: NotRequired[bool]
+    logger: NotRequired[logging.Logger]
+    before_delete: NotRequired[scheduler.BeforeArrayDelete | None]
+    generation: NotRequired[Hashable]
+
+
+class _PeakArguments[Compiled](TypedDict, closed=True):
+    compiled: Compiled
+    widths: Mapping[str, int]
+
+
+class _DevicePutArguments(TypedDict, closed=True):
+    src: NotRequired[jax.Device | jax.sharding.Sharding | None]
+    donate: NotRequired[bool]
+    may_alias: NotRequired[bool | None]
+
+
+class _WavePlanner(Protocol):
+    def __call__(
+        self, **kwargs: Unpack[_WaveArguments]
+    ) -> tuple[tuple[scheduler.DispatchUnit, ...], ...]: ...
+
+
+class _SolveOriginal(Protocol):
+    def __call__(
+        self, model: Model, **kwargs: Unpack[_SolveArguments]
+    ) -> SolutionResult: ...
+
+
+class _SolvePlacementOriginal(Protocol):
+    def __call__(
+        self,
+        allocations: SimulationEntryAllocations,
+        **kwargs: Unpack[_SolvePlacementArguments],
+    ) -> entry_allocations.FlatParams: ...
+
+
+class _ProcessOriginal(Protocol):
+    def __call__(
+        self, grids: SimulationProcessGrids, **kwargs: Unpack[_ProcessArguments]
+    ) -> Float1D: ...
+
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized; otherwise the tests skip.
@@ -126,7 +312,11 @@ def test_eager_internal_input_preserves_its_ordered_producer_layout(
     destinations: list[tuple[jax.Device, ...]] = []
 
     # keyword-only-exempt: library-callback=jax.device_put
-    def record_put(value: object, device: object = None, **kwargs: Any) -> object:
+    def record_put[Tree](
+        value: Tree,
+        device: jax.Device | jax.sharding.Sharding | None = None,
+        **kwargs: Unpack[_DevicePutArguments],
+    ) -> Tree:
         assert isinstance(device, jax.sharding.Sharding)
         destinations.append(tuple(device.device_set))
         return original_put(value, device, **kwargs)
@@ -179,7 +369,11 @@ def test_public_replay_uploads_saved_values_directly_to_the_recorded_device(
     uploaded_devices: list[set[jax.Device]] = []
 
     # keyword-only-exempt: library-callback=jax.device_put
-    def record_put(value: object, device: object = None, **kwargs: Any) -> object:
+    def record_put[Tree](
+        value: Tree,
+        device: jax.Device | jax.sharding.Sharding | None = None,
+        **kwargs: Unpack[_DevicePutArguments],
+    ) -> Tree:
         uploaded = original_put(value, device, **kwargs)
         # Each persisted value has three types and twelve wealth points. Grid
         # construction has smaller leaves; retain the real transfer in every case.
@@ -229,13 +423,20 @@ def test_eager_ordered_mesh_preserves_owners_and_outputs_at_birth(
         source = jax.device_put(source, expected)
     before = np.asarray(source).copy()
     fixed = jnp.asarray(2.0)
-    observed: list[object] = []
+    observed: list[PytreeValue] = []
     body_finished = False
     original_put = jax.device_put
 
-    def observed_put(*args: Any, **kwargs: Any) -> object:
-        assert not body_finished, "eager adapter repaired an already produced output"
-        return original_put(*args, **kwargs)
+    def recording[**P, Result](callback: Callable[P, Result]) -> Callable[P, Result]:
+        def observed_put(*args: P.args, **kwargs: P.kwargs) -> Result:
+            assert not body_finished, (
+                "eager adapter repaired an already produced output"
+            )
+            return callback(*args, **kwargs)
+
+        return observed_put
+
+    observed_put = recording(original_put)
 
     def body(*, value: jax.Array, offset: jax.Array) -> PytreeValue:
         nonlocal body_finished
@@ -288,7 +489,7 @@ def test_eager_committed_operand_is_not_silently_moved() -> None:
     expected = _ordered_eager_sharding()
     source = jax.device_put(jnp.ones((3, 2)), jax.devices()[0])
 
-    def forbidden(*, value: object) -> NoReturn:
+    def forbidden(*, value: ArgumentTree) -> NoReturn:
         pytest.fail(f"a misplaced committed operand reached the body: {value!r}")
 
     adapter = make_eager_core(
@@ -318,11 +519,16 @@ def test_eager_nested_aliases_and_context_restoration() -> None:
     outside_mesh = jax.get_mesh()
     outside_device = jax.config.jax_default_device
 
-    def body(*, values: Mapping[str, Any]) -> PytreeValue:
+    def body(
+        *, values: Mapping[str, jax.Array | tuple[jax.Array, None]]
+    ) -> PytreeValue:
         assert type(values) is MappingProxyType
         assert tuple(values) == tuple(original)
         assert jax.tree.structure(values) == jax.tree.structure(original)
-        assert shares_a_buffer(first=values["second"], second=values["first"][0])
+        second, first = values["second"], values["first"]
+        assert isinstance(second, jax.Array)
+        assert isinstance(first, tuple)
+        assert shares_a_buffer(first=second, second=first[0])
         assert tuple(jax.get_mesh().devices.flat) == tuple(expected.mesh.devices.flat)
         assert jax.config.jax_default_device == jax.devices()[3]
         raise RuntimeError("body failure after observing placed aliases")
@@ -598,13 +804,15 @@ def test_solve_planning_keeps_descriptors_instead_of_transferred_buffers(
     original_transfer = transfers_module.apply_value_transfer
     original_peak = backward_induction.compiler_memory_reservation
     planning = False
-    peak_calls: list[object] = []
+    peak_calls: list[jax.stages.Compiled] = []
     planning_copies: list[tuple[weakref.ReferenceType[jax.Array], int]] = []
     runtime_copies: list[ResolvedValueTransfer] = []
     runtime_reads: list[ResolvedValueTransfer] = []
     candidate_counts: list[int] = []
 
-    def observe_peak(**kwargs: Any) -> Any:
+    def observe_peak(
+        **kwargs: Unpack[_PeakArguments[jax.stages.Compiled]],
+    ) -> workspace_planning.CompilerMemoryReservation:
         peak_calls.append(kwargs["compiled"])
         return original_peak(**kwargs)
 
@@ -630,7 +838,9 @@ def test_solve_planning_keeps_descriptors_instead_of_transferred_buffers(
                 runtime_copies.append(transfer)
         return copied
 
-    def observe_planning(**kwargs: Any) -> Any:
+    def observe_planning(
+        **kwargs: Unpack[_ResolveArguments],
+    ) -> _ResolveArgumentsResult:
         nonlocal planning
         planning = True
         try:
@@ -783,7 +993,9 @@ def test_the_planner_partitions_the_models_own_devices(
     recorded: list[int] = []
     original = processing.plan_submesh_placement
 
-    def _recording(*, requests: Any, n_devices: int) -> Any:
+    def _recording(
+        *, requests: Sequence[placement.PlacementRequest], n_devices: int
+    ) -> placement.SubmeshPlacement:
         recorded.append(n_devices)
         return original(requests=requests, n_devices=n_devices)
 
@@ -939,14 +1151,18 @@ def test_independent_regimes_of_one_period_share_one_wave(
 class _WavePlanRecorder:
     """Call the real wave planner and record each period's first wave width."""
 
-    def __init__(self, *, planner: object, units_by_period: dict[int, int]) -> None:
+    def __init__(
+        self, *, planner: _WavePlanner, units_by_period: dict[int, int]
+    ) -> None:
         """Keep the planner to delegate to and the mapping to record into."""
         self._planner = planner
         self._units_by_period = units_by_period
 
-    def __call__(self, **kwargs: object) -> object:
+    def __call__(
+        self, **kwargs: Unpack[_WaveArguments]
+    ) -> tuple[tuple[scheduler.DispatchUnit, ...], ...]:
         """Plan the period's waves and record how many units the first one holds."""
-        waves = self._planner(**kwargs)  # ty: ignore[call-non-callable]
+        waves = self._planner(**kwargs)
         self._units_by_period[waves[0][0].period] = len(waves[0])
         return waves
 
@@ -1139,7 +1355,7 @@ class _RecordingTransferCacheFactory:
         """Keep the log every cache this factory builds reports into."""
         self._log = log
 
-    def __call__(self, **kwargs: Any) -> _RecordingTransferCache:
+    def __call__(self, **kwargs: Unpack[_CacheArguments]) -> _RecordingTransferCache:
         """Build one period's recording cache."""
         cache = _RecordingTransferCache(**kwargs)
         cache.log = self._log
@@ -1226,10 +1442,14 @@ def _make_two_block_model(*, distributed: bool) -> Model:
     reads the second regime's value from devices its own mesh does not hold.
     """
 
-    def _utility(*, wealth: Any, consumption: Any, type1: Any) -> Any:
+    def _utility(
+        *, wealth: ContinuousState, consumption: ContinuousAction, type1: DiscreteState
+    ) -> ScalarFloat:
         return (jnp.log(consumption) + wealth * 0.001) * (type1 + 1)
 
-    def _next_wealth(*, wealth: Any, consumption: Any) -> Any:
+    def _next_wealth(
+        *, wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
         return wealth - consumption
 
     def _worker() -> UserRegime:
@@ -1275,10 +1495,12 @@ def test_a_value_read_across_disjoint_blocks_is_a_cross_mesh_copy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The first block's regime reads the second block's value by cross-mesh copy."""
-    captured: list[Any] = []
+    captured: list[backward_induction.PlannedCore] = []
     original = backward_induction._attach_resolved_output_layout
 
-    def capture(**kwargs: Any) -> Any:
+    def capture(
+        **kwargs: Unpack[AttachResolvedOutputLayoutKwargs],
+    ) -> backward_induction.PlannedCore:
         core = original(**kwargs)
         captured.append(core)
         return core
@@ -1334,7 +1556,7 @@ def _nbegm_toy(*, distributed_kind: bool) -> Model:
     )
 
 
-def _nbegm_toy_params() -> dict[str, float]:
+def _nbegm_toy_params() -> UserParams:
     """The toy's parameters."""
     from tests.test_models import nbegm_ride_along_toy  # noqa: PLC0415
 
@@ -1383,7 +1605,7 @@ def test_the_nbegm_toy_publishes_the_same_values_under_both_placements(
     run = backward_induction._run_period_kernel
     nominations: list[tuple[str, ...]] = []
 
-    def observe(**kwargs: Any) -> Any:
+    def observe(**kwargs: Unpack[_KernelArguments]) -> _KernelArgumentsResult:
         if kwargs["regime_name"] == "alive":
             nominations.extend(
                 core.donated_arguments for core in kwargs["compiled_cores"].values()
@@ -1689,12 +1911,12 @@ def test_uniform_entry_grid_uses_selected_device_and_keeps_source_owners(
 def _observe_placed_solve_parameters(
     self: Model,
     *,
-    original: Callable[..., object],
+    original: _SolveOriginal,
     selected: tuple[int, ...],
     sources: DeviceBufferFootprint,
     calls: list[bool],
-    **kwargs: Any,
-) -> object:
+    **kwargs: Unpack[_SolveArguments],
+) -> SolutionResult:
     """Check parameter contents and ownership at the public automatic-solve seam."""
     flat = kwargs["flat_params"]["alive"]
     for leaf in jax.tree.leaves(flat):
@@ -1756,11 +1978,11 @@ def test_automatic_parameter_transfer_refuses_before_allocating_a_copy(
 def _exhaust_solve_parameter_budget(
     self: SimulationEntryAllocations,
     *,
-    original: Callable[..., object],
+    original: _SolvePlacementOriginal,
     monkeypatch: pytest.MonkeyPatch,
     calls: list[bool],
-    **kwargs: Any,
-) -> object:
+    **kwargs: Unpack[_SolvePlacementArguments],
+) -> entry_allocations.FlatParams:
     calls.append(True)
     self.budget_bytes = 0
     with monkeypatch.context() as probe:
@@ -1768,7 +1990,7 @@ def _exhaust_solve_parameter_budget(
         return original(self, **kwargs)
 
 
-def _forbid_solve_parameter_copy(*_args: Any, **_kwargs: Any) -> object:
+def _forbid_solve_parameter_copy[Arg, Kwarg](*_args: Arg, **_kwargs: Kwarg) -> NoReturn:
     raise AssertionError("Parameter copy allocated before transfer admission")
 
 
@@ -1776,11 +1998,11 @@ def _forbid_solve_parameter_copy(*_args: Any, **_kwargs: Any) -> object:
 def _observe_selected_uniform_grid(
     self: SimulationProcessGrids,
     *,
-    original: Callable[..., Float1D],
+    original: _ProcessOriginal,
     selected: tuple[int, ...],
     sources: DeviceBufferFootprint,
     grids: list[Float1D],
-    **kwargs: Any,
+    **kwargs: Unpack[_ProcessArguments],
 ) -> Float1D:
 
     missing = resident_bytes_by_device(
@@ -1929,10 +2151,12 @@ def test_solve_admission_covers_code_owners_held_off_the_execution_device(
     assert [(code.nbytes, code.devices()) for code in codes] == [
         (8, {jax.devices()[0]})
     ]
-    captured: list[Mapping[Any, ResidentInventory]] = []
+    captured: list[Mapping[backward_induction._CoreTriple, ResidentInventory]] = []
     original = backward_induction._resident_inventory_by_triple
 
-    def record(**kwargs: Any) -> Mapping[Any, ResidentInventory]:
+    def record(
+        **kwargs: Unpack[ResidentInventoryKwargs],
+    ) -> Mapping[backward_induction._CoreTriple, ResidentInventory]:
         inventories = original(**kwargs)
         captured.append(inventories)
         return inventories

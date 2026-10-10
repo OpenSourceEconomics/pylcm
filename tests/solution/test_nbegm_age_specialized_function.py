@@ -8,24 +8,29 @@ import pytest
 
 from lcm import AgeSpecializedFunction
 from lcm.solvers import EGM
+from lcm.typing import FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.solution import test_egm_solver
 from tests.test_models import n_nbegm_toy, nbegm_medicaid_toy
 
 
-def _utility_with_bonus(
-    *, base: Callable, bonus_age: float, bonus: float
+def _utility_with_bonus[**P](
+    *, base: Callable[P, FloatND], bonus_age: float, bonus: float
 ) -> AgeSpecializedFunction:
     """Add a period-specific level without changing the optimal action."""
 
-    def build(age: float) -> Callable:
-        level = bonus if age == bonus_age else 0.0
-
+    def with_level(level: float) -> Callable[P, FloatND]:
         @functools.wraps(base)
-        def utility(*args, **kwargs):
+        def utility(*args: P.args, **kwargs: P.kwargs) -> FloatND:
             return base(*args, **kwargs) + level
 
         return utility
+
+    regular = with_level(0.0)
+    bonused = with_level(bonus)
+
+    def build(age: float) -> Callable[P, FloatND]:
+        return bonused if age == bonus_age else regular
 
     return AgeSpecializedFunction(build=build, signature=lambda age: age)
 

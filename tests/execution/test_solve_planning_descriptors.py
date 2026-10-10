@@ -4,6 +4,7 @@ import weakref
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
+from typing import Never
 
 import jax
 import jax.numpy as jnp
@@ -38,8 +39,8 @@ from tests.test_dropped_models_release_nested_functions import _live_nested_func
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class _Payload:
-    values: object
-    other: object
+    values: PytreeValue | ShapeDtypePytree
+    other: PytreeValue | ShapeDtypePytree
 
 
 def _identity(
@@ -62,7 +63,11 @@ def _program(
     )
 
 
-def _describe_and_drop() -> tuple[weakref.ReferenceType[object], ...]:
+def _describe_and_drop() -> tuple[
+    weakref.ReferenceType[jax.Array],
+    weakref.ReferenceType[MaterializedCoreProgram],
+    weakref.ReferenceType[MaterializedCoreProgram],
+]:
     """Exercise real descriptor construction without retaining its input owners."""
     original = jnp.arange(4.0)
     program = _program({"payload": original, "scalar": jnp.asarray(1.0)})
@@ -155,7 +160,7 @@ def test_canonical_array_and_descriptor_metadata_requires_no_new_trace(
     )
     program = _program({"payload": original, "scalar": descriptor})
 
-    def forbidden(*_args: object, **_kwargs: object) -> object:
+    def forbidden[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
         raise AssertionError("Canonical descriptor construction attempted tracing.")
 
     monkeypatch.setattr(jax, "eval_shape", forbidden)
@@ -178,7 +183,7 @@ def test_host_metadata_keeps_jax_dtype_and_weak_type_without_upload(
     layout = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     program = _program({"payload": value, "scalar": value})
 
-    def forbidden(*_args: object, **_kwargs: object) -> object:
+    def forbidden[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
         raise AssertionError("Host descriptor construction attempted a device upload.")
 
     monkeypatch.setattr(jax, "device_put", forbidden)
@@ -240,7 +245,7 @@ def test_exact_occurrences_of_one_original_keep_distinct_required_layouts(
         requirements=CoreExecutionRequirements(value_reads=reads),
     )
 
-    def forbidden(*_args: object, **_kwargs: object) -> object:
+    def forbidden[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
         raise AssertionError("A descriptor builder attempted a concrete allocation.")
 
     monkeypatch.setattr(jax, "device_put", forbidden)

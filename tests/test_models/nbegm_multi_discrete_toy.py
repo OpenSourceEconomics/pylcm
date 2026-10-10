@@ -14,6 +14,8 @@ The two-action variant has 2x2 = 4 branches; the three-action variant has
 labor-supply margin presents.
 """
 
+from typing import Literal
+
 import jax.numpy as jnp
 
 import lcm
@@ -24,6 +26,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     crra_utility,
@@ -163,8 +166,8 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 60,
     savings_max: float = 28.0,
-    jump_read: str = "bridged",
-    envelope_arithmetic: str = "certified",
+    jump_read: Literal["one_sided", "bridged"] = "bridged",
+    envelope_arithmetic: Literal["certified", "ordinary"] = "certified",
     execution_config: lcm.ExecutionConfig = lcm.ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Create the (alive, dead) ride-along toy with several discrete choices.
@@ -227,7 +230,7 @@ def build_params(
     wage: float = 1.2,
     tax_rate: float = 0.2,
     tax_exemption: float = 12.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the multi-discrete ride-along toy."""
     budget_params = {
         "base_income": base_income,

@@ -54,6 +54,7 @@ import pandas as pd
 
 import lcm
 from lcm import Model
+from lcm.typing import FloatND, RegimeName, UserInitialConditions, UserParams
 from lcm_examples import (
     collective_household,
     iskhakov_et_al_2017,
@@ -195,7 +196,7 @@ def _git(source_root: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _representative_case(name: str) -> tuple[Model, dict, dict]:
+def _representative_case(name: str) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build one representative model with its params and initial conditions."""
     starting_wealth = jnp.linspace(5.0, 40.0, _N_SUBJECTS)
     regime_ids = jnp.zeros(_N_SUBJECTS, dtype=jnp.int32)
@@ -242,7 +243,9 @@ def _representative_case(name: str) -> tuple[Model, dict, dict]:
     )
 
 
-def _leaves(*, prefix: str, value: object) -> Iterator[tuple[str, object]]:
+def _leaves(
+    *, prefix: str, value: Mapping[RegimeName, FloatND] | FloatND
+) -> Iterator[tuple[str, FloatND]]:
     """Yield the leaves of a nested mapping with their `/`-joined key paths."""
     if isinstance(value, Mapping):
         for key, inner in value.items():

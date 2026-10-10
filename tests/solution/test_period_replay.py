@@ -14,10 +14,10 @@ import logging
 import math
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Never, TypedDict, Unpack
 
 import cloudpickle
 import jax
@@ -28,6 +28,7 @@ from beartype.roar import BeartypeCallHintParamViolation
 from jax._src import compilation_cache as jax_compilation_cache
 from jaxlib import (
     _hlo,  # ty: ignore[unresolved-import] - installed native API has no stub
+    xla_client,
 )
 
 from _lcm.execution.output_layout import PlannedCore
@@ -35,12 +36,14 @@ from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_wi
 from _lcm.solution import backward_induction, period_replay, public_period_capture
 from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.persistence import PeriodCapture, load_period_capture, replay_period
-from lcm.solver_api import ResultRetention
+from lcm.solver_api import ArtifactKey, ResultRetention
+from lcm.typing import RegimeName
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
     _with_full_topology_laws,
 )
+from tests.solution._callback_types import CompileFunctionsKwargs
 from tests.solution.test_period_core_memory import _StandInRegime
 from tests.test_models.deterministic import base as retirement_model
 from tests.test_models.deterministic.discrete import (
@@ -53,6 +56,37 @@ from tests.test_sharded_state_across_gated_edge import (
     build_model as build_gated_edge_model,
 )
 
+type CaptureSelection = str
+
+type CaptureFixtureValue = _StandInRegime | int | dict[str, dict[str, int]]
+type CacheReadResult = tuple[xla_client.LoadedExecutable | None, int | None]
+
+
+class _CacheEvidence(TypedDict):
+    modules: list[str]
+    cache_keys: list[str]
+    proto_type: str
+    proto_bytes: int | None
+    raw_peak_bytes: int | None
+    memory: str
+
+
+def observe_cache_read[**P](
+    *,
+    read: Callable[P, CacheReadResult],
+    loaded_executables: list[tuple[xla_client.LoadedExecutable, str]],
+) -> Callable[P, CacheReadResult]:
+    def recording_read(*args: P.args, **kwargs: P.kwargs) -> CacheReadResult:
+        result = read(*args, **kwargs)
+        if result[0] is not None:
+            cache_key = args[0]
+            assert isinstance(cache_key, str)
+            loaded_executables.append((result[0], cache_key))
+        return result
+
+    return recording_read
+
+
 _N_PERIODS = 3
 _FULL_TOPOLOGY_EDGES = {
     "single_f": {"married": 0, "single_f_p1": 0},
@@ -63,7 +97,7 @@ _FULL_TOPOLOGY_EDGES = {
 }
 
 
-def _solve_capturing(*, monkeypatch, tmp_path, target: str | None):
+def _solve_capturing(*, monkeypatch, tmp_path, target: CaptureSelection | None):
     """Solve the discrete toy, optionally capturing one regime-period."""
     if target is None:
         monkeypatch.delenv("LCM_CAPTURE_PERIOD", raising=False)
@@ -195,7 +229,9 @@ def test_a_malformed_target_is_rejected_before_kernel_compilation(
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", "working_life")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
 
-    def fail_if_compilation_starts(*_args: object, **_kwargs: object) -> None:
+    def fail_if_compilation_starts[Ignored](
+        *_args: Ignored, **_kwargs: Ignored
+    ) -> Never:
         msg = "kernel compilation started"
         raise AssertionError(msg)
 
@@ -265,7 +301,7 @@ def test_replay_lowers_the_scope_the_solve_dispatched(
         and model._regimes["working_life"].simulation.egm_policy_read is not None
     )
 
-    observed: list[tuple[bool, frozenset[object]]] = []
+    observed: list[tuple[bool, frozenset[ArtifactKey]]] = []
     real_select = period_replay.select_programs
 
     def record_select(**kwargs):
@@ -281,7 +317,7 @@ def test_replay_lowers_the_scope_the_solve_dispatched(
 _REQUIRED_PAYLOAD_KEYS = ("regime", "period", "kernel_kwargs", "core_tile_widths")
 
 
-def _well_formed_payload() -> dict[str, object]:
+def _well_formed_payload() -> dict[str, CaptureFixtureValue]:
     """A capture payload with every required entry at its declared type."""
     return {
         "regime": _StandInRegime(),
@@ -456,7 +492,7 @@ def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
             )
     assert not tuple(tmp_path.rglob("*.pkl"))
 
-    def reject_compilation(**_kwargs: object) -> None:
+    def reject_compilation[Ignored](**_kwargs: Ignored) -> Never:
         raise AssertionError("An incompatible capture reached compilation")
 
     monkeypatch.setattr(
@@ -568,24 +604,24 @@ def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadat
     params = retirement_model.get_params(n_periods=_N_PERIODS)
     warmed = json.loads((root / "warm.json").read_text())
     assert warmed["pid"] != os.getpid()
-    observed: dict[str, Any] = {}
+    observed: dict[str, _CacheEvidence] = {}
     # Distinct period cores can share an HLO module name. Bind cache keys to the
     # actual loaded objects, retaining them until the selected core is observed.
-    loaded_executables: list[tuple[object, str]] = []
+    loaded_executables: list[tuple[xla_client.LoadedExecutable, str]] = []
     original_cache_read = jax_compilation_cache.get_executable_and_time
     original = public_period_capture.optimized_hlo_records
 
-    def observe_cache_read(*args: Any, **kwargs: Any) -> Any:
-        result = original_cache_read(*args, **kwargs)
-        if result[0] is not None:
-            loaded_executables.append((result[0], args[0]))
-        return result
-
     monkeypatch.setattr(
-        jax_compilation_cache, "get_executable_and_time", observe_cache_read
+        jax_compilation_cache,
+        "get_executable_and_time",
+        observe_cache_read(
+            read=original_cache_read, loaded_executables=loaded_executables
+        ),
     )
 
-    def observe(*, compiled_cores: Mapping[str, PlannedCore]) -> dict[str, Any]:
+    def observe(
+        *, compiled_cores: Mapping[str, PlannedCore]
+    ) -> dict[str, dict[str, str]]:
         for name, core in compiled_cores.items():
             assert isinstance(core.compiled, jax.stages.Compiled)
             executable = core.compiled.runtime_executable()
@@ -636,7 +672,7 @@ def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadat
 def test_an_ungated_regime_in_a_gated_edge_model_replays_bit_for_bit(
     *,
     tmp_path: Path,
-    target: tuple[str, int],
+    target: tuple[RegimeName, int],
     persistent_compilation_cache: bool,
 ) -> None:
     """A regime without gated edges of its own captures and replays exactly.
@@ -823,7 +859,7 @@ def _record_public_cache_warmup(
 
 def _assert_selected_cache_evidence(
     *,
-    observed: dict[str, Any],
+    observed: dict[str, _CacheEvidence],
     warm_writes: list[list[str]],
     records: list[logging.LogRecord],
 ) -> None:
@@ -853,7 +889,9 @@ def test_captured_admission_records_round_trip_as_read_only_views(
     observed: list[backward_induction._CompiledPrograms] = []
     original = backward_induction._compile_all_functions
 
-    def observe(**kwargs: Any) -> backward_induction._CompiledPrograms:
+    def observe(
+        **kwargs: Unpack[CompileFunctionsKwargs],
+    ) -> backward_induction._CompiledPrograms:
         compiled = original(**kwargs)
         observed.append(compiled)
         return compiled

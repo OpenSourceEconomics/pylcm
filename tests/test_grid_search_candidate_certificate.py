@@ -65,21 +65,27 @@ import functools
 import hashlib
 import json
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Literal, NotRequired, Protocol, TypeGuard, Unpack
 
+import jax
 import jax.numpy as jnp
 import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
+from typing_extensions import TypedDict
 
 from _lcm.regime_building import max_Q_over_a as max_Q_over_a_module
 from _lcm.simulation import programs as simulation_programs_module
 from _lcm.simulation import runtime as simulation_runtime_module
 from _lcm.simulation import taste_stream as taste_stream_module
+from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
+from _lcm.solution.action_reduction import HardMaxResult
+from _lcm.typing import ArtifactPayload, PRNGKeyND, PytreeValue, QAndFArg
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -95,14 +101,24 @@ from lcm import (
 )
 from lcm.collective import CollectiveUtility
 from lcm.regime import Regime
+from lcm.result import SimulationResult
+from lcm.solver_api import ArtifactKey, KernelOutput
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
+    ActionName,
     BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteAction,
     FloatND,
+    FunctionName,
+    IntND,
+    ReferenceName,
+    RegimeName,
     ScalarInt,
+    UserParams,
+    UserParamsLeaf,
+    UserParamsNode,
 )
 from tests.candidate_certificate.direct_flow import (
     direct_flow_mutation_specs,
@@ -119,6 +135,92 @@ from tests.candidate_certificate.verify import (
     reference_masked_argmax,
 )
 from tests.conftest import DECIMAL_PRECISION
+
+type _TemplateNode = str | UserParamsLeaf | Mapping[str, _TemplateNode]
+
+type _ModelParams = dict[
+    RegimeName, dict[FunctionName | RegimeName, dict[str, _TemplateNode]]
+]
+
+type _SuppliedModelParams = dict[
+    RegimeName, dict[FunctionName | RegimeName, dict[str, UserParamsNode]]
+]
+
+
+class _AverageArguments(TypedDict, closed=True):
+    a: FloatND
+    weights: FloatND
+    shifts: IntND | None
+    axis: NotRequired[int | None]
+
+
+class _KernelOutputArguments(TypedDict, closed=True):
+    value: FloatND
+    solve_time_artifacts: NotRequired[Mapping[ArtifactKey, ArtifactPayload]]
+
+
+class _SimulationKeyArguments(TypedDict, closed=True):
+    key: PRNGKeyND
+    names: list[str]
+    n_initial_states: int
+    subject_slice: NotRequired[slice | SubjectRows | None]
+    original_n_subjects: NotRequired[int | None]
+    memory: NotRequired[SimulationMemory | None]
+
+
+class _EvaluateBlockArguments(TypedDict, closed=True):
+    block_index: jax.Array
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    action_names: tuple[ActionName, ...]
+    action_grids: tuple[jax.Array, ...]
+    action_sizes: tuple[int, ...]
+    fixed_kwargs: dict[ReferenceName, QAndFArg]
+    n_actions: int
+    block_width: int
+    block_offsets: jax.Array
+
+
+class _EvaluateBlock(Protocol):
+    def __call__(
+        self, **kwargs: Unpack[_EvaluateBlockArguments]
+    ) -> tuple[jax.Array, jax.Array, jax.Array]: ...
+
+
+def _mutable_params_template(*, model: Model) -> _ModelParams:
+    """Copy annotation leaves into a mutable tree accepting supplied values."""
+    params: _ModelParams = {}
+    for regime, functions in model.get_params_template().items():
+        regime_params: dict[FunctionName | RegimeName, dict[str, _TemplateNode]] = {}
+        for name, branch in functions.items():
+            regime_params[name] = dict(branch)
+        params[regime] = regime_params
+    return params
+
+
+def _is_supplied_node(*, node: _TemplateNode) -> bool:
+    """Distinguish filled parameter leaves from annotation placeholders."""
+    if isinstance(node, str):
+        return False
+    if isinstance(node, Mapping):
+        return all(_is_supplied_node(node=child) for child in node.values())
+    return True
+
+
+def _has_supplied_values(params: _ModelParams) -> TypeGuard[_SuppliedModelParams]:
+    """Require every template placeholder to have a supplied parameter value."""
+    return all(
+        _is_supplied_node(node=node)
+        for functions in params.values()
+        for branch in functions.values()
+        for node in branch.values()
+    )
+
+
+def _supplied_params(*, params: _ModelParams) -> _SuppliedModelParams:
+    """Read a completely filled fixture template at the public model boundary."""
+    assert _has_supplied_values(params=params)
+    return params
+
 
 _SRC_ROOT = Path(__file__).parent.parent / "src"
 
@@ -1006,9 +1108,16 @@ def test_certified_sources_are_read_as_utf_8_whatever_the_platform_default_is():
     recorded: list[str | None] = []
     original = Path.read_text
 
-    def recording_read_text(self: Path, *args: object, **kwargs: object) -> str:
-        recorded.append(kwargs.get("encoding"))  # ty: ignore[invalid-argument-type]
-        return original(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+    def recording[**P](callback: Callable[P, str]) -> Callable[P, str]:
+        def recording_read_text(*args: P.args, **kwargs: P.kwargs) -> str:
+            encoding = kwargs.get("encoding")
+            assert encoding is None or isinstance(encoding, str)
+            recorded.append(encoding)
+            return callback(*args, **kwargs)
+
+        return recording_read_text
+
+    recording_read_text = recording(original)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(Path, "read_text", recording_read_text)
@@ -1280,18 +1389,18 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
     )
 
 
-def _dedup_params(model: Model) -> dict[str, Any]:
+def _dedup_params(model: Model) -> _ModelParams:
     """Populate continuation parameters for both same-shaped decision regimes."""
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = _mutable_params_template(model=model)
     for name in ("left", "right"):
         params[name]["koopmans_aggregator"]["discount_factor"] = 0.5
     return params
 
 
-def _simulate_dedup_model(*, model: Model, params: dict[str, Any]):
+def _simulate_dedup_model(*, model: Model, params: _ModelParams):
     """Run both same-shaped decision regimes through the public runtime path."""
     result = model.simulate(
-        params=params,
+        params=_supplied_params(params=params),
         initial_conditions={
             "age": jnp.zeros(2),
             "wealth": jnp.ones(2),
@@ -1306,7 +1415,7 @@ def _simulate_dedup_model(*, model: Model, params: dict[str, Any]):
 
 
 def _solve_acting(
-    *, model: Model, work: float, consumption: float, function_name: str
+    *, model: Model, work: float, consumption: float, function_name: FunctionName
 ) -> FloatND:
     """Solve for one named target candidate and return the acting regime's value.
 
@@ -1319,11 +1428,13 @@ def _solve_acting(
     Returns:
         The acting regime's period-0 value array.
     """
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = _mutable_params_template(model=model)
     params["acting"][function_name]["target_work"] = work
     params["acting"][function_name]["target_consumption"] = consumption
     params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
-    return model.solve(params=params, log_level="debug").values[0]["acting"]
+    return model.solve(
+        params=_supplied_params(params=params), log_level="debug"
+    ).values[0]["acting"]
 
 
 @pytest.fixture(scope="module")
@@ -1463,7 +1574,7 @@ def test_every_declared_candidate_can_be_the_household_choice(
 
 
 def _simulate_acting(
-    *, model: Model, work: float, consumption: float, function_name: str
+    *, model: Model, work: float, consumption: float, function_name: FunctionName
 ) -> dict[str, list[float]]:
     """Simulate one target candidate and return the actions it published at period 0.
 
@@ -1476,12 +1587,12 @@ def _simulate_acting(
     Returns:
         Mapping of each action name to its published value, one entry per subject.
     """
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = _mutable_params_template(model=model)
     params["acting"][function_name]["target_work"] = work
     params["acting"][function_name]["target_consumption"] = consumption
     params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
     result = model.simulate(
-        params=params,
+        params=_supplied_params(params=params),
         initial_conditions={
             "age": jnp.zeros(len(_WEALTH_VALUES)),
             "wealth": _WEALTH_VALUES,
@@ -1544,9 +1655,9 @@ def test_simulation_routes_a_household_to_every_declared_candidate(
 
 def _params_for_mask(
     *, model: Model, mask: tuple[bool, ...], ranks: tuple[float, ...]
-) -> dict[str, Any]:
+) -> _ModelParams:
     """Populate the parameter template with one mask and one candidate ordering."""
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = _mutable_params_template(model=model)
     for name, feasible in zip(_MASK_PARAMETER_NAMES, mask, strict=True):
         params["acting"]["candidate_mask"][name] = float(feasible)
     for stakeholder in _utility_keys(model):
@@ -1560,7 +1671,7 @@ def _params_for_mask(
 
 def _utility_keys(model: Model) -> tuple[str, ...]:
     """Name the params keys carrying the ranked utility, one per stakeholder."""
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = _mutable_params_template(model=model)
     return tuple(
         key
         for key, entry in params["acting"].items()
@@ -1573,7 +1684,9 @@ def _solve_mask_case(
 ) -> FloatND:
     """Solve one mask neighborhood and return the acting regime's value."""
     params = _params_for_mask(model=model, mask=mask, ranks=ranks)
-    return model.solve(params=params, log_level="debug").values[0]["acting"]
+    return model.solve(
+        params=_supplied_params(params=params), log_level="debug"
+    ).values[0]["acting"]
 
 
 def _simulate_mask_case(
@@ -1582,7 +1695,7 @@ def _simulate_mask_case(
     """Simulate one mask neighborhood and return actions plus published values."""
     params = _params_for_mask(model=model, mask=mask, ranks=ranks)
     result = model.simulate(
-        params=params,
+        params=_supplied_params(params=params),
         initial_conditions={
             "age": jnp.zeros(len(_WEALTH_VALUES)),
             "wealth": _WEALTH_VALUES,
@@ -1596,7 +1709,7 @@ def _simulate_mask_case(
 
 
 def _period_zero_action_views(
-    *, result: Any, regime_name: str
+    *, result: SimulationResult, regime_name: RegimeName
 ) -> tuple[dict[str, list[float]], dict[str, list[float]], dict[str, list[float]]]:
     """Read selected actions from raw, ordinary, and enriched public results."""
     raw_period = result.raw_results[regime_name][0]
@@ -1622,10 +1735,12 @@ def _simulate_materialization_case(
 ) -> tuple[dict[str, list[float]], dict[str, list[float]], dict[str, list[float]]]:
     """Select the last two-grid candidate and expose all publication views."""
     result = model.simulate(
-        params=_params_for_mask(
-            model=model,
-            mask=tuple(True for _ in _CANDIDATES),
-            ranks=tuple(float(index) for index in range(len(_CANDIDATES))),
+        params=_supplied_params(
+            params=_params_for_mask(
+                model=model,
+                mask=tuple(True for _ in _CANDIDATES),
+                ranks=tuple(float(index) for index in range(len(_CANDIDATES))),
+            )
         ),
         initial_conditions={
             "age": jnp.zeros(len(_WEALTH_VALUES)),
@@ -1716,7 +1831,7 @@ def _build_runtime_action_model(
     fixed_points: FloatND | None = None,
 ) -> Model:
     """Build a model whose candidate menu arrives through public params."""
-    fixed_params: dict[str, Any] = {}
+    fixed_params: UserParams = {}
     if fixed_points is not None:
         fixed_params = {"acting": {"choice": {"points": fixed_points}}}
     return Model(
@@ -1753,14 +1868,14 @@ def _build_runtime_action_model(
 
 
 def _simulate_runtime_action_model(
-    *, point_source: str, target_choice: float
+    *, point_source: Literal["array", "series", "fixed"], target_choice: float
 ) -> tuple[dict[str, list[float]], dict[str, list[float]], dict[str, list[float]]]:
     """Run array, Series, or constructor-fixed runtime action points."""
     points = jnp.asarray([1.0, 2.0, 3.0])
     model = _build_runtime_action_model(
         fixed_points=points if point_source == "fixed" else None,
     )
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = _mutable_params_template(model=model)
     params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
     params["acting"]["utility"]["target_choice"] = target_choice
     if point_source != "fixed":
@@ -1769,7 +1884,7 @@ def _simulate_runtime_action_model(
         )
 
     result = model.simulate(
-        params=params,
+        params=_supplied_params(params=params),
         initial_conditions={
             "age": jnp.zeros(len(_WEALTH_VALUES)),
             "wealth": _WEALTH_VALUES,
@@ -1784,7 +1899,7 @@ def _simulate_runtime_action_model(
 @pytest.mark.parametrize("target_choice", [1.0, 2.0, 3.0])
 def test_public_runtime_action_points_reach_every_candidate_view(
     *,
-    point_source: str,
+    point_source: Literal["array", "series", "fixed"],
     target_choice: float,
 ):
     """Array, Series, and fixed public points all complete the candidate menu."""
@@ -1900,7 +2015,7 @@ def _reference_taste_outcome(
 
 
 def _controlled_taste_noise(
-    *, key: Any, shape: tuple[int, ...], scale: FloatND
+    *, key: PRNGKeyND, shape: tuple[int, ...], scale: FloatND
 ) -> FloatND:
     """Supply deterministic, candidate-distinct noise at the production seam."""
     del key
@@ -1920,7 +2035,7 @@ def _simulate_taste_mask_case(
             _controlled_taste_noise,
         )
         result = model.simulate(
-            params=params,
+            params=_supplied_params(params=params),
             initial_conditions={
                 "age": jnp.zeros(len(_WEALTH_VALUES)),
                 "wealth": _WEALTH_VALUES,
@@ -1949,17 +2064,17 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
     """The synchronized dedup-key defect is visible on the public runtime path."""
     model = _build_dedup_collision_model()
     params = _dedup_params(model)
-    values = model.solve(params=params, log_level="debug")
+    values = model.solve(params=_supplied_params(params=params), log_level="debug")
     original = simulation_runtime_module._func_dedup_key
 
-    def collapsed_key(*, func: Callable[..., Any]):
+    def collapsed_key(*, func: Callable[..., PytreeValue]) -> Hashable:
         if isinstance(func, functools.partial):
             return original(func=func)
         return 0
 
     monkeypatch.setattr(simulation_runtime_module, "_func_dedup_key", collapsed_key)
     result = model.simulate(
-        params=params,
+        params=_supplied_params(params=params),
         initial_conditions={
             "age": jnp.zeros(2),
             "wealth": jnp.ones(2),
@@ -1987,7 +2102,7 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned():
     """Padding and trimming preserve each subject's selected candidate."""
     model = _build_dedup_collision_model(subject_width=2)
     result = model.simulate(
-        params=_dedup_params(model),
+        params=_supplied_params(params=_dedup_params(model)),
         initial_conditions={
             "age": jnp.zeros(3),
             "wealth": jnp.asarray([1.0, 2.0, 1.0]),
@@ -2015,7 +2130,7 @@ def test_additional_targets_preserve_unbatched_selected_candidates():
     """Computed targets cannot overwrite an already published action column."""
     model = _build_dedup_collision_model()
     result = model.simulate(
-        params=_dedup_params(model),
+        params=_supplied_params(params=_dedup_params(model)),
         initial_conditions={
             "age": jnp.zeros(3),
             "wealth": jnp.asarray([1.0, 2.0, 1.0]),
@@ -2093,10 +2208,10 @@ def _build_zero_weight_fold_model() -> Model:
 
 
 def _simulate_zero_weight_fold(model: Model) -> tuple[list[int], list[int], list[int]]:
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = _mutable_params_template(model=model)
     params["src"]["koopmans_aggregator"]["discount_factor"] = 0.9
     result = model.simulate(
-        params=params,
+        params=_supplied_params(params=params),
         initial_conditions={
             "age": jnp.zeros(1),
             "wealth": jnp.zeros(1),
@@ -2130,8 +2245,8 @@ def test_negating_the_fold_average_reverses_the_public_candidate(
     baseline = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
     original = max_Q_over_a_module.zero_safe_average
 
-    def negated_average(*args: Any, **kwargs: Any) -> FloatND:
-        return -original(*args, **kwargs)
+    def negated_average(**kwargs: Unpack[_AverageArguments]) -> FloatND:
+        return -original(**kwargs)
 
     monkeypatch.setattr(max_Q_over_a_module, "zero_safe_average", negated_average)
     shifted = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
@@ -2149,7 +2264,7 @@ def test_negating_kernel_output_reverses_the_public_candidate(
     baseline = _simulate_zero_weight_fold(model)
     original = grid_search_module.KernelOutput
 
-    def negated_kernel_output(**kwargs: Any) -> Any:
+    def negated_kernel_output(**kwargs: Unpack[_KernelOutputArguments]) -> KernelOutput:
         output = original(**kwargs)
         object.__setattr__(output, "value", -output.value)
         return output
@@ -2170,7 +2285,9 @@ _RNG_MASK = tuple(True for _ in _CANDIDATES)
 def _simulate_seeded_taste_routing(*, model: Model) -> tuple[list[int], list[int]]:
     """Publish raw and DataFrame choices for one fixed subject-key stream."""
     result = model.simulate(
-        params=_params_for_mask(model=model, mask=_RNG_MASK, ranks=_RNG_RANKS),
+        params=_supplied_params(
+            params=_params_for_mask(model=model, mask=_RNG_MASK, ranks=_RNG_RANKS)
+        ),
         initial_conditions={
             "age": jnp.zeros(_RNG_N_SUBJECTS),
             "wealth": jnp.ones(_RNG_N_SUBJECTS),
@@ -2219,7 +2336,9 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
     baseline = _simulate_seeded_taste_routing(model=model)
     original = taste_stream_module.generate_simulation_keys
 
-    def reassigned_keys(**kwargs: Any) -> tuple[Any, dict[str, Any]]:
+    def reassigned_keys(
+        **kwargs: Unpack[_SimulationKeyArguments],
+    ) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
         next_key, keys = original(**kwargs)
         return next_key, {
             name: jnp.roll(values, 1, axis=0) for name, values in keys.items()
@@ -2365,22 +2484,24 @@ def test_collective_simulate_matches_reference_over_every_nonempty_feasibility_m
 
 
 def _q_and_f_masking_the_last_action_cell(
-    *, Q_and_F: Callable[..., tuple[FloatND, BoolND]], **kwargs: Any
+    *, Q_and_F: Callable[..., tuple[FloatND, BoolND]], **kwargs: QAndFArg
 ) -> tuple[FloatND, BoolND]:
     """Hide exactly the final coordinate pair from the simulation hard-max fold."""
     value, feasible = Q_and_F(**kwargs)
-    is_last = (kwargs["work"] == _WORK_VALUES[-1]) & (
-        kwargs["consumption"] == _CONSUMPTION_VALUES[-1]
-    )
+    work = kwargs["work"]
+    consumption = kwargs["consumption"]
+    assert isinstance(work, jax.Array)
+    assert isinstance(consumption, jax.Array)
+    is_last = (work == _WORK_VALUES[-1]) & (consumption == _CONSUMPTION_VALUES[-1])
     return value, feasible & ~is_last
 
 
 def _simulation_fold_masking_the_last_action_cell(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
-    action_names: tuple[str, ...],
+    action_names: tuple[ActionName, ...],
     block_width: int,
-) -> Callable[..., Any]:
+) -> Callable[..., HardMaxResult]:
     """Build the simulation fold with one candidate hidden; leave solve unchanged.
 
     The simulation module owns the patched builder binding. The solve module keeps
@@ -2452,7 +2573,7 @@ def test_masking_one_simulate_candidate_leaves_the_others_alone():
     assert rows["consumption"] == [_CONSUMPTION_VALUES[0]] * len(_WEALTH_VALUES)
 
 
-def _streaming_block_dropping_the_last_action_cell() -> Callable[..., Any]:
+def _streaming_block_dropping_the_last_action_cell() -> _EvaluateBlock:
     """Return an action-block evaluator that hides global candidate five.
 
     Returns:
@@ -2460,7 +2581,9 @@ def _streaming_block_dropping_the_last_action_cell() -> Callable[..., Any]:
     """
     real = action_streaming_module._evaluate_block
 
-    def patched(**kwargs: Any) -> Any:
+    def patched(
+        **kwargs: Unpack[_EvaluateBlockArguments],
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
         values, feasible, global_ids = real(**kwargs)
         return values, feasible & (global_ids != 5), global_ids
 

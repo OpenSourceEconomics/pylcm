@@ -50,7 +50,7 @@ from _lcm.solution.backward_induction import (
 )
 from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.solvers import GridSearch
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND, RegimeName
 from tests.regime_building.test_collective_feasibility_is_shared import (
     _make_model as _build_collective_model,
 )
@@ -139,7 +139,7 @@ def _program(
     )
 
 
-def _eval_resolved_shape(resolved: ResolvedCoreProgram) -> object:
+def _eval_resolved_shape(resolved: ResolvedCoreProgram) -> ShapeDtypePytree:
     """Evaluate abstract output with the resolver's static choices bound."""
     bound = functools.partial(resolved.function, **resolved.static_kwargs)
     return jax.eval_shape(bound, **resolved.arguments)
@@ -199,7 +199,7 @@ def test_a_host_loop_leaves_the_planned_inner_width_keyword_unchanged() -> None:
     assert dict(resolved.static_kwargs) == {_WIDTH_KEYWORD: 2}
 
 
-def _unused_value_consumer_core(**_arguments: object) -> jax.Array:
+def _unused_value_consumer_core[Ignored](**_arguments: Ignored) -> jax.Array:
     """Provide a stable callable for consumer-address planning tests."""
     return jnp.asarray(0.0)
 
@@ -207,7 +207,7 @@ def _unused_value_consumer_core(**_arguments: object) -> jax.Array:
 def _value_access(
     *,
     source: tuple[str, int, str],
-    target_regime: str = "target",
+    target_regime: RegimeName = "target",
     channel: ValueInputChannel = ValueInputChannel.NEXT_REGIME_VALUE,
 ) -> ValueRead:
     """Build one internally valid target/source value address pair."""
@@ -347,7 +347,7 @@ def test_value_input_planning_independently_resolves_argument_leaf(
     """A matching source triple does not bypass channel/path leaf validation."""
     value = jnp.asarray([3.0, 4.0])
     access = _value_access(source=_SCHEDULED_SOURCE)
-    argument_variants: dict[str, Mapping[str, object]] = {
+    argument_variants: dict[str, Mapping[str, Mapping[str, jax.Array | object]]] = {  # noqa: PAN001 - Includes the arbitrary non-array rejection witness.
         "missing-channel": {},
         "missing-path": {
             ValueInputChannel.NEXT_REGIME_VALUE.value: {"other": value},
@@ -565,7 +565,9 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
         ),
     )
     with pytest.raises(TypeError):
-        cast("dict[str, object]", materialized.arguments)["injected"] = jnp.asarray(0)
+        cast("dict[str, PytreeValue]", materialized.arguments)["injected"] = (
+            jnp.asarray(0)
+        )
 
     resolved = resolve_core_program(
         program=materialized,
@@ -849,7 +851,7 @@ def test_the_specialization_key_separates_the_two_x64_arithmetic_profiles() -> N
 )
 def test_width_candidates_reject_invalid_coordinate_extents_fail_closed(
     *,
-    coordinate_extent: object,
+    coordinate_extent: float,
     error: type[Exception],
     message: str,
 ) -> None:
@@ -926,9 +928,9 @@ def test_program_and_resolution_snapshot_their_input_mappings() -> None:
     assert resolved.static_kwargs == {_WIDTH_KEYWORD: 3}
     assert resolved.tile_widths == {"action_product": 3}
     with pytest.raises(TypeError):
-        cast("dict[str, object]", program.arguments)["new"] = jnp.asarray(0)
+        cast("dict[str, PytreeValue]", program.arguments)["new"] = jnp.asarray(0)
     with pytest.raises(TypeError):
-        cast("dict[str, object]", resolved.arguments)["new"] = jnp.asarray(0)
+        cast("dict[str, PytreeValue]", resolved.arguments)["new"] = jnp.asarray(0)
     with pytest.raises(TypeError):
         cast("dict[str, int]", resolved.static_kwargs)[_WIDTH_KEYWORD] = 4
     with pytest.raises(TypeError):
@@ -994,7 +996,7 @@ def test_resolver_rejects_a_non_canonical_product_order() -> None:
 )
 def test_resolver_rejects_invalid_widths(
     *,
-    width: object,
+    width: float,
     error: type[Exception],
     message: str,
 ) -> None:

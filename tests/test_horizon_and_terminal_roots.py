@@ -7,7 +7,7 @@ including in a model with a single age, and its utility is evaluated only at
 the ages some start requires.
 """
 
-from typing import Any
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -26,7 +26,17 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
-from lcm.typing import ContinuousState, FloatND, ScalarInt
+from lcm.initial_nodes import UserInitialNodes
+from lcm.transition import AgeSelector, PeriodSelector, TransitionLaw
+from lcm.typing import (
+    AgeLabel,
+    ContinuousState,
+    FloatND,
+    RegimeName,
+    ScalarInt,
+    UserFunction,
+    UserParams,
+)
 from tests.test_demand_worklists import _gated_model
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
@@ -58,7 +68,7 @@ def _nonterminal() -> Regime:
     )
 
 
-def _terminal(utility: Any = _utility) -> Regime:
+def _terminal(utility: UserFunction = _utility) -> Regime:
     return Regime(
         states={"wealth": _WEALTH},
         functions={"utility": utility},
@@ -86,9 +96,9 @@ _UNTIL_EXIT_EDGES = {"working": AgeRange(exclusive_stop=65), "dead": _EVERY_SOUR
 
 def _life_model(
     *,
-    working_edges: Any,
-    initial_nodes: Any,
-    working_law: Any = None,
+    working_edges: Mapping[RegimeName, AgeSelector | PeriodSelector],
+    initial_nodes: UserInitialNodes,
+    working_law: TransitionLaw | None = None,
     dead: Regime | None = None,
 ):
     return Model(
@@ -109,7 +119,9 @@ def _life_model(
     )
 
 
-def _solved_pairs(*, model: Model, params: dict) -> frozenset[tuple[Any, str]]:
+def _solved_pairs(
+    *, model: Model, params: UserParams
+) -> frozenset[tuple[AgeLabel, RegimeName]]:
     values = model.solve(params=params, log_level="off").values
     assert model.ages is not None
     return frozenset(
@@ -229,7 +241,7 @@ def _finite_only_at_75(*, wealth: ContinuousState, age: float) -> FloatND:
     ids=["reached-at-75", "final-terminal-root"],
 )
 def test_terminal_utility_is_not_evaluated_at_unrequired_ages(
-    initial_nodes: Any,
+    initial_nodes: Mapping[AgeSelector, RegimeName],
 ) -> None:
     """A terminal utility that is NaN off age 75 passes the debug NaN check."""
     model = _life_model(

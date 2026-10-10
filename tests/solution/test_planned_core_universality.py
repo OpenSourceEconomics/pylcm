@@ -7,13 +7,15 @@ built-in solvers so that no kernel can fall back to an engine-side adapter or re
 """
 
 from collections.abc import Callable
-from typing import Any
+from types import MappingProxyType
+from typing import Unpack
 
 import pytest
 
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
+    CoreProgram,
     CoreProgramGraphAware,
     ProgramScope,
     ValueRead,
@@ -30,6 +32,8 @@ from _lcm.solution.backward_induction import (
     _classify_dispatch_value_artifacts,
     _ProgramExecutionMetadata,
 )
+from _lcm.typing import PytreeValue
+from tests.solution._callback_types import CompileFunctionsKwargs
 from tests.solution.test_kernel_output import _SHIPPED_KERNELS
 
 _SOLVES: dict[str, Callable[[], None]] = {
@@ -45,7 +49,9 @@ def test_every_shipped_period_kernel_is_core_program_graph_aware(
     kernels: list[CoreProgramGraphAware] = []
     original = backward_induction.core_program_graph
 
-    def recording(*, kernel: CoreProgramGraphAware) -> Any:
+    def recording(
+        *, kernel: CoreProgramGraphAware
+    ) -> MappingProxyType[str, CoreProgram]:
         kernels.append(kernel)
         return original(kernel=kernel)
 
@@ -72,18 +78,39 @@ def test_every_compiled_core_is_a_planned_core(
     *, case: str, enable_jit: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Every compiled program, eager or ahead-of-time, carries its resolved layout."""
-    attached: list[object] = []
+    attached: list[PlannedCore] = []
     original_attach = backward_induction._attach_resolved_output_layout
     original_compile = backward_induction._compile_all_functions
 
-    def recording(**kwargs: Any) -> Any:
-        core = original_attach(**kwargs)
+    def recording[**P](
+        *,
+        compiled: Callable[P, PytreeValue],
+        layout: backward_induction.ResolvedOutputLayout,
+        tile_widths: backward_induction.Mapping[str, int],
+        input_transfer_plan: tuple[backward_induction.ResolvedValueTransfer, ...] = (),
+        internal_input_templates: backward_induction.Mapping[
+            backward_induction.ReferenceName, backward_induction.ShapeDtypePytree
+        ] = MappingProxyType({}),
+        donated_arguments: tuple[str, ...] = (),
+        name: str,
+    ) -> PlannedCore:
+        core = original_attach(
+            compiled=compiled,
+            layout=layout,
+            tile_widths=tile_widths,
+            input_transfer_plan=input_transfer_plan,
+            internal_input_templates=internal_input_templates,
+            donated_arguments=donated_arguments,
+            name=name,
+        )
         attached.append(core)
         return core
 
-    def with_jit_mode(**kwargs: Any) -> Any:
-        kwargs.pop("enable_jit")
-        return original_compile(**kwargs, enable_jit=enable_jit)
+    def with_jit_mode(
+        **kwargs: Unpack[CompileFunctionsKwargs],
+    ) -> backward_induction._CompiledPrograms:
+        kwargs["enable_jit"] = enable_jit
+        return original_compile(**kwargs)
 
     monkeypatch.setattr(backward_induction, "_attach_resolved_output_layout", recording)
     monkeypatch.setattr(backward_induction, "_compile_all_functions", with_jit_mode)

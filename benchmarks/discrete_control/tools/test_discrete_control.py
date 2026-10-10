@@ -5,7 +5,7 @@ import os
 
 # The original fixture helpers are deliberately reused unchanged.
 # ruff: noqa: SLF001
-from typing import Any
+from collections.abc import Callable
 
 import discrete_fixture as fixture
 import jax
@@ -14,7 +14,9 @@ import pytest
 from value_contract import assert_agrees_to_ulp
 
 
-def test_four_device_discrete_values_and_coverage(record_property: Any) -> None:
+def test_four_device_discrete_values_and_coverage(
+    record_property: Callable[[str, str | int], None],
+) -> None:
     """Retain the existing nine-array roster and eight-ULP placement invariant."""
     jax.config.update("jax_default_matmul_precision", "highest")
     assert jax.default_backend() == "gpu"

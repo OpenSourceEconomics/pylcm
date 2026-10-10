@@ -159,7 +159,9 @@ def test_finite_reads_never_reverse_a_discrete_choice() -> None:
 _DTYPES = [jnp.float32, jnp.float64]
 
 
-def _grid_with_infeasible_node(*, infeasible_index: int, dtype: type) -> FloatND:
+def _grid_with_infeasible_node(
+    *, infeasible_index: int, dtype: type[np.float32 | np.float64]
+) -> FloatND:
     """Twelve finite nodes, the one at `infeasible_index` replaced by `-inf`.
 
     The last node holds the value of the feasible neighbour from a production
@@ -182,7 +184,7 @@ def _read(*, grid: FloatND, coordinate: float) -> FloatND:
 @pytest.mark.usefixtures("x64_enabled")
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
 def test_extrapolation_above_the_grid_onto_an_infeasible_node_is_infeasible(
-    dtype: type,
+    dtype: type[np.float32 | np.float64],
 ) -> None:
     """A read beyond the top node whose stencil holds `-inf` is `-inf`.
 
@@ -199,7 +201,7 @@ def test_extrapolation_above_the_grid_onto_an_infeasible_node_is_infeasible(
 @pytest.mark.usefixtures("x64_enabled")
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
 def test_extrapolation_below_the_grid_onto_an_infeasible_node_is_infeasible(
-    dtype: type,
+    dtype: type[np.float32 | np.float64],
 ) -> None:
     """A read below the bottom node whose stencil holds `-inf` is `-inf`."""
     grid = _grid_with_infeasible_node(infeasible_index=1, dtype=dtype)
@@ -212,7 +214,7 @@ def test_extrapolation_below_the_grid_onto_an_infeasible_node_is_infeasible(
 @pytest.mark.usefixtures("x64_enabled")
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
 def test_interpolation_inside_the_grid_onto_an_infeasible_node_is_infeasible(
-    dtype: type,
+    dtype: type[np.float32 | np.float64],
 ) -> None:
     """A read strictly between a feasible and an infeasible node is `-inf`."""
     grid = _grid_with_infeasible_node(infeasible_index=10, dtype=dtype)
@@ -226,7 +228,7 @@ def test_interpolation_inside_the_grid_onto_an_infeasible_node_is_infeasible(
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
 @pytest.mark.parametrize("coordinate", [11.0, 0.0], ids=["top-node", "bottom-node"])
 def test_a_zero_weight_infeasible_corner_leaves_the_read_feasible(
-    *, dtype: type, coordinate: float
+    *, dtype: type[np.float32 | np.float64], coordinate: float
 ) -> None:
     """A read exactly at a feasible node returns that node beside an `-inf` one."""
     infeasible_index = 10 if coordinate > 0 else 1
@@ -245,7 +247,7 @@ def test_a_zero_weight_infeasible_corner_leaves_the_read_feasible(
     ids=["far-below", "below", "inside", "above", "far-above"],
 )
 def test_a_finite_read_is_bitwise_the_plain_weighted_sum(
-    *, dtype: type, coordinate: float
+    *, dtype: type[np.float32 | np.float64], coordinate: float
 ) -> None:
     """On a finite grid every read, extrapolated or not, is the bare corner sum."""
     grid = jnp.asarray(np.linspace(-1.0, 3.0, 12) ** 3, dtype=dtype)
@@ -312,7 +314,7 @@ def _read_at_integer_coordinate(case: tuple[FloatND, IntND]) -> FloatND:
     ids=["negative-weight-on-infeasible", "zero-weight-on-infeasible"],
 )
 def test_an_integer_coordinate_on_a_floating_grid_obeys_the_feasibility_rule(
-    *, dtype: type, coordinate: int, expected: float
+    *, dtype: type[np.float32 | np.float64], coordinate: int, expected: float
 ) -> None:
     """An int32 read returns `-inf` under a live infeasible corner, else its node.
 
@@ -334,7 +336,7 @@ def test_an_integer_coordinate_on_a_floating_grid_obeys_the_feasibility_rule(
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager-vmap", "jit-vmap"])
 def test_every_two_node_stencil_at_integer_coordinates_matches_the_exact_reference(
-    *, dtype: type, compiled: bool
+    *, dtype: type[np.float32 | np.float64], compiled: bool
 ) -> None:
     """Each two-node stencil read at an int32 coordinate equals the exact reference.
 
@@ -370,7 +372,10 @@ def test_every_two_node_stencil_at_integer_coordinates_matches_the_exact_referen
 @pytest.mark.parametrize("pinned_axes", [(), (0,), (1,), (0, 1)])
 @pytest.mark.parametrize("mixed_coordinates", [False, True], ids=["integer", "mixed"])
 def test_batched_two_dimensional_reads_keep_each_reads_own_feasibility(
-    *, dtype: type, pinned_axes: tuple[int, ...], mixed_coordinates: bool
+    *,
+    dtype: type[np.float32 | np.float64],
+    pinned_axes: tuple[int, ...],
+    mixed_coordinates: bool,
 ) -> None:
     """Each read of a batch of 2x2 grids equals the exact reference.
 
@@ -431,7 +436,7 @@ def test_batched_two_dimensional_reads_keep_each_reads_own_feasibility(
 @pytest.mark.usefixtures("x64_enabled")
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
 def test_a_finite_integer_coordinate_read_is_bitwise_the_plain_weighted_sum(
-    dtype: type,
+    dtype: type[np.float32 | np.float64],
 ) -> None:
     """On finite grids an int32 read has the bits of the bare corner sum.
 
@@ -458,7 +463,9 @@ def test_a_finite_integer_coordinate_read_is_bitwise_the_plain_weighted_sum(
 
 @pytest.mark.usefixtures("x64_enabled")
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
-def test_the_compiled_read_stays_differentiable_at_a_node(dtype: type) -> None:
+def test_the_compiled_read_stays_differentiable_at_a_node(
+    dtype: type[np.float32 | np.float64],
+) -> None:
     """Under `jit`, the slope at a node of a linear grid is its analytical value 2."""
     grid = jnp.asarray([0.0, 2.0, 4.0, 6.0], dtype=dtype)
 

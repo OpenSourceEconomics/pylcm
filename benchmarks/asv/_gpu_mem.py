@@ -47,6 +47,18 @@ import tempfile
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from _lcm.typing import JSONValue
+    from lcm import ExecutionConfig
+
+
+class BudgetExecutionKwargs(TypedDict, total=False):
+    """The optional device budget a benchmark passes to its model builder."""
+
+    execution_config: ExecutionConfig
+
 
 # Project root: the directory containing the benchmarks/ package. This file lives
 # at benchmarks/asv/_gpu_mem.py, so the repo root is three parents up — the cwd the
@@ -108,7 +120,7 @@ def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
     return env
 
 
-def default_budget_execution_kwargs() -> dict[str, object]:
+def default_budget_execution_kwargs() -> BudgetExecutionKwargs:
     """Return the device-default budget as an explicit `execution_config` keyword.
 
     Benchmarks measured inside the ASV process run with preallocation off, where
@@ -143,7 +155,7 @@ def default_budget_execution_kwargs() -> dict[str, object]:
     return {"execution_config": config_type(device_memory_bytes=budget)}
 
 
-def _file_provenance(path: Path) -> dict[str, object]:
+def _file_provenance(path: Path) -> dict[str, JSONValue]:
     """Return identity for one persisted solution archive, without loading it."""
     if not path.is_file():
         msg = f"GPU memory profile archive is not a regular file: {path}"
@@ -189,13 +201,13 @@ def _profile_subprocess_error(
 
 def _validate_profile_child_result(
     *,
-    record: object,
+    record: JSONValue,
     phase: str,
     bench_module: str,
     bench_class: str,
     invocation_token: str,
     env: Mapping[str, str],
-    archive: dict[str, object] | None,
+    archive: dict[str, JSONValue] | None,
 ) -> tuple[int, int]:
     """Validate an exact child result before exposing its peak to ASV."""
     expected_keys = {
@@ -296,7 +308,7 @@ def _parse_profile_child_result(
     bench_class: str,
     invocation_token: str,
     env: Mapping[str, str],
-    archive: dict[str, object] | None,
+    archive: dict[str, JSONValue] | None,
 ) -> tuple[int, int]:
     """Parse exactly one marker and reject incomplete or ambiguous child output."""
     if result.returncode != 0:
@@ -362,7 +374,7 @@ def measure_gpu_memory_profile(
     with tempfile.TemporaryDirectory(prefix="pylcm-gpu-memory-profile-") as tmp:
         profile_root = Path(tmp).resolve()
         archive_path = profile_root / "solution.lcm"
-        saved_archive: dict[str, object] | None = None
+        saved_archive: dict[str, JSONValue] | None = None
 
         for phase in phases:
             if phase in (AUTOMATIC_SOLVE_SIMULATE, SOLVE_SAVE_ALL_PERSISTABLE):
@@ -688,9 +700,7 @@ def _collect_combined_measurements_with_warm_samples_and_gpu_peak(
     }
 
 
-def warm_call_seconds(
-    *, execute: Callable[[], object], warm_samples: int
-) -> list[float]:
+def warm_call_seconds(*, execute: Callable[[], None], warm_samples: int) -> list[float]:
     """Time `warm_samples` consecutive calls of `execute`.
 
     Args:
@@ -743,7 +753,7 @@ def _collect_gpu_memory_phase(
     bench_module: str,
     bench_class: str,
     invocation_token: str,
-) -> dict[str, object]:
+) -> dict[str, JSONValue]:
     """Execute exactly one attributed phase and report its local peak/provenance."""
     if phase in (AUTOMATIC_SOLVE_SIMULATE, SOLVE_SAVE_ALL_PERSISTABLE):
         if archive_path.exists():

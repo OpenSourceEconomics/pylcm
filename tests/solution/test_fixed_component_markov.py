@@ -46,9 +46,11 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     IntND,
+    RegimeName,
     ScalarFloat,
     ScalarInt,
     UserFunction,
+    UserInitialConditions,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -211,7 +213,7 @@ def _model(
     )
 
 
-def _values(model: Model) -> dict:
+def _values(model: Model) -> dict[tuple[int, RegimeName], np.ndarray]:
     solution = model.solve(params={"discount_factor": 0.95}, log_level="off")
     return {
         (period, regime): np.asarray(v)
@@ -270,7 +272,7 @@ def test_fixed_component_is_shardable_like_the_hand_split_model():
     assert all(np.array_equal(factored[key], split[key]) for key in split)
 
 
-def _initial(*, factored: bool, as_frame: bool) -> dict | pd.DataFrame:
+def _initial(*, factored: bool, as_frame: bool) -> UserInitialConditions | pd.DataFrame:
     code = np.arange(8) % 4
     common = {"wealth": np.linspace(1.0, 10.0, 8), "age": np.zeros(8)}
     if as_frame:
@@ -390,7 +392,7 @@ def test_fixed_component_lowering_covers_declarations_and_terminal(
 @pytest.mark.parametrize("inactive", [None, np.nan, "irrelevant"])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_fixed_component_initial_labels_are_scoped_to_the_initial_regime(
-    *, inactive: object, reverse: bool
+    *, inactive: float | str | None, reverse: bool
 ) -> None:
     """Rows in a state-absent regime do not require that state's label."""
     model = _model(factored=True)
@@ -945,8 +947,11 @@ def _next_output_from_landing(*, landing: DiscreteState) -> DiscreteState:
     return landing
 
 
+type _TemplateNode = str | Mapping[str, _TemplateNode]
+
+
 def _next_output_parameter_leaves(
-    *, value: object, prefix: tuple[str, ...] = ()
+    *, value: _TemplateNode, prefix: tuple[str, ...] = ()
 ) -> list[tuple[str, ...]]:
     if not isinstance(value, Mapping):
         return []

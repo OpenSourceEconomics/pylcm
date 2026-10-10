@@ -36,6 +36,8 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParams,
+    UserParamsNode,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
@@ -199,7 +201,7 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
     )
 
 
-def _base_params() -> dict:
+def _base_params() -> dict[str, UserParamsNode]:
     final_age_alive = 40 + (N_PERIODS - 2) * 10
     return {
         "discount_factor": 0.98,
@@ -209,7 +211,7 @@ def _base_params() -> dict:
     }
 
 
-def _free_scale_params() -> dict:
+def _free_scale_params() -> UserParams:
     params = _base_params()
     params["dead"] = {
         "utility_scale_factor": {"average_consumption_equiv": AVERAGE_CONSUMPTION_EQUIV}
@@ -217,7 +219,7 @@ def _free_scale_params() -> dict:
     return params
 
 
-def _fixed_scale() -> dict:
+def _fixed_scale() -> UserParams:
     return {
         "dead": {
             "utility_scale_factor": {

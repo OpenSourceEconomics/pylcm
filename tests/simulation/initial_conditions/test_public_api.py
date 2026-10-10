@@ -1,5 +1,7 @@
 """Public `Model` methods for validating initial conditions without simulating."""
 
+from collections.abc import Generator
+
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -356,7 +358,7 @@ def test_methods_never_solve_or_simulate(
     model = _constraint_model()
     working_life = model.regime_names_to_ids["working_life"]
 
-    def forbidden(*args: object, **kwargs: object) -> None:
+    def forbidden[Ignored](*args: Ignored, **kwargs: Ignored) -> None:
         del args, kwargs
         pytest.fail("A feasibility check solved or simulated the model.")
 
@@ -428,7 +430,7 @@ def _sealed_model() -> Model:
 
 
 @pytest.fixture
-def restore_scale() -> object:
+def restore_scale() -> Generator[None]:
     yield None
     globals()["_UTILITY_SCALE"] = jnp.asarray(1.0)
 
@@ -437,7 +439,7 @@ def restore_scale() -> object:
     "method", ["validate_initial_conditions", "initial_conditions_feasibility"]
 )
 def test_rebound_global_after_build_is_refused(
-    *, method: str, restore_scale: object
+    *, method: str, restore_scale: None
 ) -> None:
     """A model whose sealed bindings moved refuses the check like `solve` does."""
     del restore_scale

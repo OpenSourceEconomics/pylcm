@@ -10,8 +10,6 @@ Both models below are small enough that every simulated value is an exact
 arithmetic expression, stated in the factory's docstring.
 """
 
-from collections.abc import Callable
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -134,12 +132,15 @@ def test_gate_evaluators_reuse_compilation_for_a_repeated_population(
         "regime_id": jnp.full(_N_SUBJECTS, ConsentRegimeId.single, dtype=jnp.int32),
     }
     solution = model.solve(params=params, log_level="debug")
-    calls: list[Callable] = []
+    calls: list[gated_routing._PopulationCall] = []
     original = gated_routing.population_call
 
     def observe(
-        *, func: Callable, axis_size: int, subject_width: int | None = None
-    ) -> Callable:
+        *,
+        func: gated_routing._EdgeCallable,
+        axis_size: int,
+        subject_width: int | None = None,
+    ) -> gated_routing._PopulationCall:
         call = original(func=func, axis_size=axis_size, subject_width=subject_width)
         calls.append(call)
         return call
@@ -188,7 +189,7 @@ def _capture_compiled_dispatches(
 
     def observe(
         self: CompiledSimulationProgram, **arguments: PytreeValue | ShapeDtypePytree
-    ) -> object:
+    ) -> PytreeValue:
         assert isinstance(self.executable, jax.stages.Compiled)
         observed.append(self.executable)
         return original(self, **arguments)

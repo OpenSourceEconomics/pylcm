@@ -65,9 +65,9 @@ import copy
 import hashlib
 import json
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 try:
     from generate_sources import sha256_file
@@ -426,9 +426,9 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "638b10ada11b4e0be0a8aaf01a26993bbb937bab377761785733159d8178128e",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "021477216a17a6013fab518c32c2708a8d1a5a958214cdf044ab45b81e6455d9",
+    MODEL_SOURCE: "02d11c2b56f839625f23ecd0cb945d1c74699395572a9e126b33076106938d51",
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
-    BACKWARD_INDUCTION_SOURCE: "f4c3d5bb26f469215e0e866ade213ac74fb425804bc1ac87f56a641ca0a3aead",
+    BACKWARD_INDUCTION_SOURCE: "e016962ca9f9b98e1d15affd7fb463a4efbb0914df581f7a4b034f3c6aeeefec",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
     INITIAL_CONDITIONS_SOURCE: "bfe4fcda56d8a9140c5224bdb68688ff5b08394652ec44e2f77768a68b4fd61b",
     RESULT_SOURCE: "a6c38c577d7e06219a8ce7dfd3b121957b1de9759ff9177ab38b465a55037ee9",
@@ -994,7 +994,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "57fe0454a6e50490b3472850e612cfa7ea7116edab122b2c273fb24a2b59122f",
+        "7715aba5a6ef3691e3e34e49423b061971e3822ace3b06ca06ef4264d23dbcb3",
         {
             "_validate_sharded_state_capability": "76a10f69e8f6acb1150617100119e1f61ad7ed4b759f4849c8ee7536f44f3f4c",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -1085,7 +1085,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     BACKWARD_INDUCTION_SOURCE: (
-        "6da6fa1f61352b5fa3f16b8143b69da12967842ce2dc01d1714b209f858b9a60",
+        "c4edf650065dcf16fcbb1a0f815005b683aedcc5ab6c766e7252049b313bba40",
         {
             "_period_transfer_scratch_reservations": "e614b686048f4131f4b612386ca89ed8cec5f786fc64ac82f7ba87866e54fc76",
             "_continuous_value_replica_required": "4f22692255b3746899ee7b2849776ea8967090af80d68d46272cd0b9a5bc771b",
@@ -1123,7 +1123,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_resolve_program_for_execution": "733461e0e7be3e2593e5668754c205c67388e541e42a8aa0ed2e819140a9bf78",
             "_resolve_value_input_transfer_plan": "deebbe66f82de9f1480f5fc6012bd36db2badca5181381df85737ef814b7b223",
             "_resolve_value_transfer_layout": "0d912a492ca62d2881126ef4e8dc6f161b73c9ca9ab5430b4affd10b5199f4ea",
-            "_lowering_key": "fbd31dd18b07fa72901cd9f1b69bb78a78667b2eba8ca55393ad0d1c9a83b993",
+            "_lowering_key": "be1057a978ea37e2f180672a33b3ed72f6e851483834c224f428dc9633a30412",
             "_abstract_arguments_key": "b9c3fa7ccf8652de781f0e083dcfd4cad6edb1e8c10762d94e402d0e5a112469",
             "_abstract_value_key": "1d0f76837ec388633e2e290f2e577245107c2d4a968faae4de5d0e80fda890ee",
             "_abstract_leaf_key": "b2ff6f4e4276a9f591af0453cb86129f6ae9a473dd268478082567aee3ea4e8a",
@@ -1850,7 +1850,77 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
 _SELECTED_PINS: set[tuple[str, str]] = set()
 
 
-def _surface_pin(source: str) -> str:
+type SourceText = str
+type SourcePath = str
+
+
+class DirectFlowReport(TypedDict):
+    ok: bool
+    result: str
+    errors: list[str]
+    offending_paths: list[str]
+    routes: dict[str, str]
+    certified_corridor_sources: list[SourcePath]
+    source_seals: dict[str, str]
+
+
+class MutationCase(TypedDict):
+    path: str
+    rejected: bool
+    errors: list[str]
+    offending_paths: list[str]
+
+
+class DirectMutationControls(TypedDict):
+    clean: DirectFlowReport
+    mutations: dict[str, MutationCase]
+    mutation_count: int
+    expected_mutation_count: int
+    mutation_count_matches_expected: bool
+    mutation_names_sha256: str
+    expected_mutation_names_sha256: str
+    mutation_names_match_expected: bool
+    admitted_mutations: list[str]
+    action_partition_mutations: dict[str, MutationCase]
+    action_partition_mutation_count: int
+    action_partition_names_match_expected: bool
+    admitted_action_partition_mutations: list[str]
+    normal_process_mutations: dict[str, MutationCase]
+    normal_process_mutation_count: int
+    normal_process_names_match_expected: bool
+    admitted_normal_process_mutations: list[str]
+    allocation_reservation_mutations: dict[str, MutationCase]
+    allocation_reservation_mutation_count: int
+    allocation_reservation_names_match_expected: bool
+    admitted_allocation_reservation_mutations: list[str]
+    feasibility_mutations: dict[str, MutationCase]
+    feasibility_mutation_count: int
+    feasibility_names_match_expected: bool
+    admitted_feasibility_mutations: list[str]
+    grouped_guard_mutations: dict[str, MutationCase]
+    grouped_guard_mutation_count: int
+    grouped_guard_names_match_expected: bool
+    admitted_grouped_guard_mutations: list[str]
+    grouped_mapper_mutations: dict[str, MutationCase]
+    grouped_mapper_mutation_count: int
+    grouped_mapper_names_match_expected: bool
+    admitted_grouped_mapper_mutations: list[str]
+    action_grid_mutations: dict[str, MutationCase]
+    action_grid_mutation_count: int
+    action_grid_names_match_expected: bool
+    admitted_action_grid_mutations: list[str]
+    uniform_process_mutations: dict[str, MutationCase]
+    uniform_process_mutation_count: int
+    uniform_process_names_match_expected: bool
+    admitted_uniform_process_mutations: list[str]
+    supplemental_mutations: dict[str, MutationCase]
+    supplemental_mutation_count: int
+    supplemental_names_match_expected: bool
+    admitted_supplemental_mutations: list[str]
+    all_rejected: bool
+
+
+def _surface_pin(source: SourcePath) -> str:
     """Select one certified source's pinned module transport surface."""
     surface = _CORRIDOR_PINS[source][0]
     if surface is None:
@@ -1859,7 +1929,7 @@ def _surface_pin(source: str) -> str:
     return surface
 
 
-def _callable_pins(*, source: str, names: tuple[str, ...]) -> dict[str, str]:
+def _callable_pins(*, source: SourcePath, names: tuple[str, ...]) -> dict[str, str]:
     """Select pinned callable digests of one source, in the order named."""
     pinned = _CORRIDOR_PINS[source][1]
     missing = [name for name in names if name not in pinned]
@@ -1896,7 +1966,7 @@ def _unselected_pins() -> tuple[tuple[str, str], ...]:
     return tuple(sorted(stored - _SELECTED_PINS))
 
 
-def canonical_json(payload: dict[str, Any]) -> str:
+def canonical_json[PayloadValue](payload: Mapping[str, PayloadValue]) -> str:
     """Render deterministic JSON for command-line controls."""
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
@@ -2234,18 +2304,18 @@ def _class_surface_errors(
     return errors
 
 
-def _expected_statements(source: str) -> list[ast.stmt]:
+def _expected_statements(source: SourceText) -> list[ast.stmt]:
     """Parse an allowlisted statement sequence under the running Python AST."""
     return ast.parse(source).body
 
 
-def _body_matches(*, node: ast.FunctionDef, expected_source: str) -> bool:
+def _body_matches(*, node: ast.FunctionDef, expected_source: SourceText) -> bool:
     observed = [_ast_key(item) for item in _body_without_docstring(node)]
     expected = [_ast_key(item) for item in _expected_statements(expected_source)]
     return observed == expected
 
 
-def _expression_matches(*, node: ast.AST | None, source: str) -> bool:
+def _expression_matches(*, node: ast.AST | None, source: SourceText) -> bool:
     """Compare one expression with a hard-coded, location-free AST."""
     return node is not None and _ast_key(node) == _ast_key(
         ast.parse(source, mode="eval").body
@@ -2452,7 +2522,9 @@ def _scope_binding_counts(statements: list[ast.stmt]) -> dict[str, int]:
     return visitor.counts
 
 
-def _statements_match(*, observed: Sequence[ast.stmt], expected_source: str) -> bool:
+def _statements_match(
+    *, observed: Sequence[ast.stmt], expected_source: SourceText
+) -> bool:
     """Compare one statement sequence with a hard-coded AST allowlist."""
     return [_ast_key(item) for item in observed] == [
         _ast_key(item) for item in _expected_statements(expected_source)
@@ -4740,7 +4812,9 @@ _SIMULATION_PROGRAM_CORRIDOR_CONTRACTS = _contracts(
 )
 
 
-def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _simulation_program_corridor_errors(
+    *, tree: ast.Module, source: SourcePath
+) -> list[str]:
     """Pin the reviewed declaration → materialization → dispatch corridor.
 
     The declaration binds the same Q/F function into either the canonical dense
@@ -4824,7 +4898,9 @@ _SIMULATION_DISPATCH_CORRIDOR_CONTRACTS = _contracts(
 )
 
 
-def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _simulation_dispatch_corridor_errors(
+    *, tree: ast.Module, source: SourcePath
+) -> list[str]:
     """Pin phase publication and consumption of the selected decision's exact pair.
 
     The live caller passes complete action grids, states, values and addressed
@@ -5270,7 +5346,7 @@ _SIMULATION_ADAPTER_MUTATIONS = {
 }
 
 
-def _simulation_adapter_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _simulation_adapter_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Pin actual copy/read/dispatch helpers independently of refreshable seals.
 
     These are structural transport and admission checks, not a claim that every
@@ -5346,7 +5422,7 @@ _FINITE_BUDGET_CONTRACTS = _contracts(
 )
 
 
-def _finite_budget_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _finite_budget_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Reject changed finite budget transport independently of byte seals."""
     surface, callables = _FINITE_BUDGET_CONTRACTS[source]
     errors = _exact_callable_errors(
@@ -5380,7 +5456,7 @@ _EAGER_INPUT_CONTRACTS = _contracts(
 )
 
 
-def _eager_input_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _eager_input_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Reject changed eager transport even after an independent byte reseal."""
     surface, callables = _EAGER_INPUT_CONTRACTS[source]
     errors = _exact_callable_errors(
@@ -5435,7 +5511,7 @@ _SOLVE_READINESS_CONTRACTS = _contracts(
 )
 
 
-def _solve_readiness_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _solve_readiness_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Reject changed solve completion ownership after independent byte resealing."""
     surface, callables = _SOLVE_READINESS_CONTRACTS[source]
     errors = _exact_callable_errors(
@@ -5684,7 +5760,7 @@ _COMBINED_INPUT_CONTRACTS = _contracts(
 )
 
 
-def _combined_input_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _combined_input_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Authenticate reviewed copy/profile boundaries after independent byte reseals."""
     surface, callables = _COMBINED_INPUT_CONTRACTS[source]
     errors = _exact_callable_errors(
@@ -5716,7 +5792,7 @@ _STRUCTURAL_BLUEPRINT_CONTRACTS = _contracts(
 )
 
 
-def _structural_blueprint_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _structural_blueprint_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Authenticate the structural-blueprint store and its key derivations."""
     surface, callables = _STRUCTURAL_BLUEPRINT_CONTRACTS[source]
     errors = _exact_callable_errors(
@@ -5747,7 +5823,7 @@ _FINITE_REPLAY_CONTRACTS = _contracts(
 )
 
 
-def _finite_replay_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _finite_replay_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Pin the finite producer schema, dynamic payload and declared stage transport.
 
     Producer numerical kernels are outside this structural obligation. The
@@ -6623,7 +6699,7 @@ return gathered[..., 0]
     return errors
 
 
-def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
+def verify_direct_candidate_flow(*, repo_root: Path) -> DirectFlowReport:
     """Verify the complete direct-flow architecture against one repository tree."""
     root = repo_root.resolve()
     errors: list[str] = []
@@ -7047,7 +7123,7 @@ def _replace_nth(*, text: str, marker: str, replacement: str, occurrence: int) -
     return text[:start] + replacement + text[start + len(marker) :]
 
 
-def direct_flow_mutations(source: str) -> dict[str, str]:
+def direct_flow_mutations(source: SourceText) -> dict[str, str]:
     """Generate the required route/value/support/shape/index perturbation family."""
     mutations: dict[str, str] = {}
     solve_singleton = "        return Q_arr.max(where=F_arr, initial=-jnp.inf)"
@@ -8062,7 +8138,7 @@ _GROUPED_MAPPER_CONTRACTS = _contracts(
 )
 
 
-def _grouped_mapper_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _grouped_mapper_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Pin C-order cells, bounded two-axis windows, and unchanged output roles."""
     surface, callables = _GROUPED_MAPPER_CONTRACTS[source]
     errors = _exact_callable_errors(
@@ -8298,7 +8374,7 @@ _ACTION_GRID_CONTRACTS = _contracts(
 )
 
 
-def _action_grid_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _action_grid_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Pin preflight producer admission, reuse and cleanup independently of byte seals."""
     surface, callables = _ACTION_GRID_CONTRACTS[source]
     errors = _exact_callable_errors(
@@ -8401,7 +8477,7 @@ EXPECTED_ACTION_GRID_MUTATION_NAMES_SHA256 = (
 )
 
 
-def _uniform_process_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _uniform_process_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Protect reviewed support admission independently of source-byte resealing."""
     surface, callables = _UNIFORM_PROCESS_CONTRACTS[source]
     errors = _exact_callable_errors(
@@ -9186,7 +9262,7 @@ _ACTION_PARTITION_CONTRACTS = _contracts(
 )
 
 
-def _action_partition_errors(*, tree: ast.Module, source: str) -> list[str]:
+def _action_partition_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Pin the action-partitioned hard-max route independently of byte seals."""
     surface, callables = _ACTION_PARTITION_CONTRACTS[source]
     errors = _exact_callable_errors(
@@ -9673,7 +9749,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         for name, mutated in direct_flow_mutations(max_source).items()
     }
 
-    def replace_once(*, source: str, old: str, new: str, label: str) -> str:
+    def replace_once(*, source: SourceText, old: str, new: str, label: str) -> str:
         if source.count(old) != 1:
             raise ValueError(
                 f"{label}: expected one mutation marker, found {source.count(old)}"
@@ -12551,7 +12627,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     return specs
 
 
-def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
+def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationControls:
     """Show every semantic mutation is rejected by the route-local AST proof.
 
     The repository control wraps these exact mutations in full source inventory,
@@ -12574,7 +12650,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
     allocation = allocation_reservation_mutation_specs(repo_root=root)
     normal = normal_process_mutation_specs(repo_root=root)
     partition = action_partition_mutation_specs(repo_root=root)
-    cases: dict[str, dict[str, Any]] = {}
+    cases: dict[str, MutationCase] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
         for relative, source in originals.items():

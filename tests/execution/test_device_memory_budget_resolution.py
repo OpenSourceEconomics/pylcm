@@ -221,11 +221,11 @@ def test_execution_config_rejects_an_unusable_headroom_fraction(
 
 @pytest.mark.parametrize("fraction", [True, 0, 1])
 def test_execution_config_rejects_a_non_float_headroom_fraction(
-    *, fraction: object
+    *, fraction: int
 ) -> None:
     """An exact float keeps `0` from reading as "no margin" by accident."""
     with pytest.raises((TypeError, BeartypeCallHintViolation)):
-        ExecutionConfig(device_memory_headroom_fraction=fraction)  # ty: ignore[invalid-argument-type]
+        ExecutionConfig(device_memory_headroom_fraction=fraction)
 
 
 def test_the_budget_summary_names_the_request_and_the_effective_ceiling() -> None:

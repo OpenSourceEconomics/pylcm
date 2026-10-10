@@ -6,7 +6,8 @@ up front; a narrower candidate is traced, and held against the top-ranked record
 when a refusal or a width search actually binds it.
 """
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Unpack
 
 import jax
 import pytest
@@ -16,6 +17,12 @@ from _lcm.solution import backward_induction
 from lcm import ExecutionConfig
 from lcm.exceptions import ExecutionPlanningError
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.solution._callback_types import (
+    PlanningKwargs,
+    PlanningResult,
+    ResolveProducerKwargs,
+    WidthCandidatesKwargs,
+)
 from tests.test_models import negm_kinked_toy
 
 _GENEROUS_BUDGET = 2**40
@@ -23,25 +30,29 @@ _GENEROUS_BUDGET = 2**40
 
 def _solve_counting(
     *, monkeypatch: pytest.MonkeyPatch, device_memory_bytes: int | None
-) -> tuple[int, list[int], list[Any]]:
+) -> tuple[int, list[int], list[backward_induction._LazyCandidateFrontier]]:
     """Solve the kinked NEGM toy; count producer traces and frontier sizes."""
     traced: list[int] = []
     frontier_sizes: list[int] = []
-    frontiers: list[Any] = []
+    frontiers: list[backward_induction._LazyCandidateFrontier] = []
     resolve = backward_induction.resolve_producer
     candidates = backward_induction.workspace_width_candidates
     structural = backward_induction._resolve_output_layouts_and_lowering_keys
 
-    def counting_resolve(**kwargs: Any) -> Any:
+    def counting_resolve(
+        **kwargs: Unpack[ResolveProducerKwargs],
+    ) -> internal_outputs.ResolvedProducer:
         traced.append(1)
         return resolve(**kwargs)
 
-    def sized_candidates(**kwargs: Any) -> Any:
+    def sized_candidates(
+        **kwargs: Unpack[WidthCandidatesKwargs],
+    ) -> tuple[Mapping[str, int], ...]:
         widths = candidates(**kwargs)
         frontier_sizes.append(len(widths))
         return widths
 
-    def kept_structural(**kwargs: Any) -> Any:
+    def kept_structural(**kwargs: Unpack[PlanningKwargs]) -> PlanningResult:
         result = structural(**kwargs)
         frontiers.append(result[-1])
         return result
@@ -79,7 +90,9 @@ def test_a_budget_traces_each_consumed_producer_once(
     assert budgeted == unbudgeted > 0
 
 
-def _keeper_frontier(frontier: Any) -> tuple[Any, tuple[str, int, str]]:
+def _keeper_frontier(
+    frontier: backward_induction._LazyCandidateFrontier,
+) -> tuple[backward_induction._LazyCandidateFrontier, backward_induction._CoreTriple]:
     """Return the lazy frontier and one consumed producer triple with a frontier."""
     lazy = frontier
     triples = [
@@ -103,7 +116,9 @@ def test_binding_a_later_producer_width_traces_and_checks_it(
     traced: list[int] = []
     resolve = internal_outputs.resolve_producer
 
-    def counting_resolve(**kwargs: Any) -> Any:
+    def counting_resolve(
+        **kwargs: Unpack[ResolveProducerKwargs],
+    ) -> internal_outputs.ResolvedProducer:
         traced.append(1)
         return resolve(**kwargs)
 
@@ -125,7 +140,9 @@ def test_a_later_width_publishing_a_different_subtree_is_refused_when_bound(
     lazy, triple = _keeper_frontier(frontiers[-1])
     resolve = internal_outputs.resolve_producer
 
-    def width_dependent_resolve(**kwargs: Any) -> Any:
+    def width_dependent_resolve(
+        **kwargs: Unpack[ResolveProducerKwargs],
+    ) -> internal_outputs.ResolvedProducer:
         record = resolve(**kwargs)
         widened = jax.tree.map(
             lambda leaf: jax.ShapeDtypeStruct((*leaf.shape, 2), leaf.dtype),

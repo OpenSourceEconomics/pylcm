@@ -99,7 +99,8 @@ def resolve_law(*, transition: object, regime_name: str) -> Law: ...
 
 `object` and `Any` are for slots that genuinely hold unrelated types. The
 `precise-annotations` hook (`tests/ci/precise_annotations.py`) checks every annotation
-under `src/` and in the `docs/` notebooks, string annotations and `cast` targets
+under `src/`, `tests/`, `benchmarks/` and in the `docs/` notebooks, string
+annotations and `cast` targets
 included:
 
 - `PAN001` / `PAN002` ⇒ `object` / `Any` in an annotation

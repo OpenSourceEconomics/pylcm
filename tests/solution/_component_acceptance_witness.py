@@ -29,6 +29,8 @@ import jax
 import numpy as np
 import pandas as pd
 
+from _lcm.engine import PeriodRegimeSimulationData
+from _lcm.typing import JSONValue
 from lcm.component_jobs import (
     collect_component_jobs,
     plan_component_jobs,
@@ -51,7 +53,7 @@ def produce(
     width: int,
     codes: tuple[int, ...],
     enable_jit: bool,
-) -> dict[str, object]:
+) -> dict[str, JSONValue]:
     """Collect a campaign, compare it with the reference, save it, describe it."""
     params = {"discount_factor": 0.9}
     initial = _initial_population(codes=codes)
@@ -98,7 +100,7 @@ def produce(
     return report
 
 
-def reload(*, directory: Path) -> dict[str, object]:
+def reload(*, directory: Path) -> dict[str, JSONValue]:
     """Describe the saved simulation as every public reader returns it."""
     loaded = SimulationResult.load(directory=directory / "simulation")
     return {
@@ -114,7 +116,7 @@ def reload(*, directory: Path) -> dict[str, object]:
 
 def _describe(
     *, simulation: SimulationResult, values: Mapping[int, Mapping[str, jax.Array]]
-) -> dict[str, object]:
+) -> dict[str, JSONValue]:
     raw = simulation.raw_results
     return {
         "raw": {
@@ -152,7 +154,15 @@ def _describe(
     }
 
 
-def _named_leaves(*, tree: object, path: str) -> Iterator[tuple[str, jax.Array]]:
+type _RawTree = (
+    jax.Array
+    | PeriodRegimeSimulationData
+    | Mapping[str, _RawTree]
+    | Mapping[int, _RawTree]
+)
+
+
+def _named_leaves(*, tree: _RawTree, path: str) -> Iterator[tuple[str, jax.Array]]:
     """Yield every array leaf under a path of mapping keys and field names.
 
     The path names each leaf by regime, period, field and variable, so a leaf is

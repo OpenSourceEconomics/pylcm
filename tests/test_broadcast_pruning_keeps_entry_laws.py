@@ -9,12 +9,13 @@ not a change of the transition structure.
 """
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Unpack
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.broadcast import ModelSlots
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -25,7 +26,8 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.typing import FloatND, ScalarInt
+from lcm.regime import RegimeReplacement
+from lcm.typing import FloatND, ScalarInt, StateName
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -73,8 +75,8 @@ def _entry_health(wealth: float) -> FloatND:
     return jnp.stack([1.0 - good, good], axis=-1)
 
 
-def _working_regime(**overrides: Any) -> Regime:
-    spec: dict[str, Any] = {
+def _working_regime(**overrides: Unpack[RegimeReplacement]) -> Regime:
+    spec: RegimeReplacement = {
         "states": {"wealth": _WEALTH_GRID},
         "state_transitions": {
             "wealth": _next_wealth,
@@ -87,8 +89,8 @@ def _working_regime(**overrides: Any) -> Regime:
     return Regime(**spec)
 
 
-def _retired_regime(**overrides: Any) -> Regime:
-    spec: dict[str, Any] = {
+def _retired_regime(**overrides: Unpack[RegimeReplacement]) -> Regime:
+    spec: RegimeReplacement = {
         "states": {"wealth": _WEALTH_GRID},
         "functions": {"utility": _utility_with_health},
     }
@@ -96,14 +98,14 @@ def _retired_regime(**overrides: Any) -> Regime:
     return Regime(**spec)
 
 
-def _entry_targets(*, regime: Regime, state_name: str) -> set[str]:
+def _entry_targets(*, regime: Regime, state_name: StateName) -> set[str]:
     """Return the targets a regime's entry law for `state_name` names."""
     law = regime.state_transitions[state_name]
     assert isinstance(law, Mapping)
     return set(law)
 
 
-def _build(*, regimes: dict[str, Regime], **model_slots: Any) -> Model:
+def _build(*, regimes: dict[str, Regime], **model_slots: Unpack[ModelSlots]) -> Model:
     return Model(
         regimes=regimes,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),

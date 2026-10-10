@@ -16,8 +16,8 @@ from lcm import (
     StochasticTransition,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import Regime
-from lcm.typing import FloatND
+from lcm.regime import Regime, StateTransitionEntry
+from lcm.typing import FloatND, StateName
 from tests.conftest import bind_laws
 
 
@@ -45,11 +45,11 @@ def _joint(*, output: str = "wealth") -> JointTransition:
 def _specs(
     *,
     joint_transitions: dict[str, dict[str, JointTransition]],
-    state_transitions: dict[str, object] | None = None,
+    state_transitions: dict[StateName, StateTransitionEntry] | None = None,
 ) -> MappingProxyType[str, PhasedRegimeSpec]:
     source = Regime(
         functions={"utility": lambda: jnp.asarray(0.0)},
-        state_transitions=state_transitions or {},  # ty: ignore[invalid-argument-type]
+        state_transitions=state_transitions or {},
         joint_transitions=joint_transitions,
     )
     target = Regime(

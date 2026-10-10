@@ -18,6 +18,7 @@ import pytest
 from jax import numpy as jnp
 
 from lcm import ExecutionConfig, Model
+from lcm.typing import FunctionName
 from tests.simulation._profile_comparison import assert_public_frames
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import (
@@ -38,7 +39,7 @@ _INITIAL_CONDITIONS = {
 def _simulate_df(
     *,
     subject_batch_size: int,
-    additional_targets: list[str] | None = None,
+    additional_targets: list[FunctionName] | None = None,
     repeat: bool = False,
 ) -> pd.DataFrame:
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")

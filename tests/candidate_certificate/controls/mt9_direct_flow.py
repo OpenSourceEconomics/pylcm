@@ -13,8 +13,6 @@ Exit 1 means at least one mutation remains fail-open.  Exit 2 is an instrument
 error.
 """
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import json
@@ -22,9 +20,65 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType
-from typing import Any, cast
+from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
+
+if TYPE_CHECKING:
+    from tests.candidate_certificate.verify import _VerificationReport
+
+
+class _ProcessOutput(TypedDict):
+    stdout: str
+    stderr: str
+    errors: NotRequired[list[str]]
+
+
+type _VerifierPayload = _VerificationReport | _ProcessOutput
+
+
+class _PolicyProfile(TypedDict):
+    candidate_source: NotRequired[str | None]
+    candidate_source_digest: NotRequired[str | None]
+
+
+class _Policy(TypedDict):
+    contract_version: NotRequired[str]
+    target: NotRequired[str]
+    profiles: NotRequired[dict[str, _PolicyProfile]]
+    digest: NotRequired[str]
+
+
+class _ManifestFile(TypedDict):
+    path: str
+    source_path: NotRequired[str]
+    role: NotRequired[str]
+    bytes: NotRequired[int]
+    sha256: NotRequired[str]
+
+
+class _Manifest(TypedDict):
+    files: list[_ManifestFile]
+    profile_contract_digest: NotRequired[str]
+    profile_contract_policy: NotRequired[_Policy]
+    manifest_digest: NotRequired[str]
+
+
+class _ManifestState(TypedDict):
+    manifest_digest: str
+    relevant_entries_match: bool
+    bundle_root: str | None
+
+
+class _ControlCase(TypedDict):
+    path: str
+    exit: int
+    rejected_by_direct_flow: bool
+    semantic_errors: list[str]
+    anchor_errors: list[str]
+    manifest: _ManifestState | None
+
 
 REQUIRED_PROFILES = ("fast", "certified")
 INVENTORY = Path("tests/candidate_certificate/sources.json")
@@ -33,7 +87,7 @@ VERIFIER = Path("tests/candidate_certificate/verify.py")
 MAX_Q_SOURCE = Path("src/_lcm/regime_building/max_Q_over_a.py")
 
 
-def _canonical_json(payload: dict[str, Any]) -> str:
+def _canonical_json[PayloadValue](payload: Mapping[str, PayloadValue]) -> str:
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
@@ -123,12 +177,12 @@ def _sync_policy(*, policy: Path, contract: Path, repo_root: Path) -> None:
     inventory_path = repo_root / INVENTORY
     anchor = f"sha256:{_sha256(inventory_path)}"
     try:
-        payload = cast("dict[str, Any]", json.loads(policy.read_text(encoding="utf-8")))
+        payload = cast("_Policy", json.loads(policy.read_text(encoding="utf-8")))
     except OSError, json.JSONDecodeError:
         payload = {"contract_version": "1", "target": "", "profiles": {}}
-    profiles = cast("dict[str, Any]", payload.setdefault("profiles", {}))
+    profiles = cast("dict[str, _PolicyProfile]", payload.setdefault("profiles", {}))
     for profile in REQUIRED_PROFILES:
-        entry = cast("dict[str, Any]", profiles.setdefault(profile, {}))
+        entry = profiles.setdefault(profile, {})
         entry["candidate_source"] = INVENTORY.as_posix()
         entry["candidate_source_digest"] = anchor
     payload["digest"] = _sha256(contract)
@@ -142,12 +196,12 @@ def _sync_manifest(
     repo_root: Path,
     contract: Path | None,
     policy: Path | None,
-) -> dict[str, Any] | None:
+) -> _ManifestState | None:
     if manifest is None:
         return None
-    payload = cast("dict[str, Any]", json.loads(manifest.read_text(encoding="utf-8")))
-    manifest_files = cast("list[dict[str, Any]]", payload["files"])
-    path_to_entry: dict[str, dict[str, Any]] = {
+    payload = cast("_Manifest", json.loads(manifest.read_text(encoding="utf-8")))
+    manifest_files = payload["files"]
+    path_to_entry: dict[str, _ManifestFile] = {
         str(item["path"]): item for item in manifest_files
     }
     inventory_payload = json.loads((repo_root / INVENTORY).read_text(encoding="utf-8"))
@@ -192,7 +246,7 @@ def _sync_manifest(
                 if manifest_path.endswith("policy.json")
                 else "code"
             )
-            entry: dict[str, Any] = {
+            entry: _ManifestFile = {
                 "path": manifest_path,
                 "source_path": source_path,
                 "role": role,
@@ -225,7 +279,7 @@ def _sync_manifest(
 
 def _run_verifier(
     *, repo_root: Path, contract: Path | None, policy: Path | None
-) -> tuple[int, dict[str, Any]]:
+) -> tuple[int, _VerifierPayload]:
     command = [
         sys.executable,
         "-S",
@@ -239,7 +293,7 @@ def _run_verifier(
         command += ["--policy", str(policy)]
     completed = _run(command)
     try:
-        payload = json.loads(completed.stdout)
+        payload: _VerifierPayload = json.loads(completed.stdout)
     except json.JSONDecodeError:
         payload = {"stdout": completed.stdout, "stderr": completed.stderr}
     return completed.returncode, payload
@@ -252,7 +306,7 @@ def _synchronize(
     policy: Path | None,
     manifest: Path | None,
     bundle_root: Path | None,
-) -> dict[str, Any] | None:
+) -> _ManifestState | None:
     _regenerate_inventory(repo_root)
     if contract is not None:
         _sync_contract(contract=contract, repo_root=repo_root)
@@ -358,7 +412,7 @@ def main() -> int:
                 manifest.read_text(encoding="utf-8") if manifest is not None else None
             )
 
-            cases: dict[str, dict[str, Any]] = {}
+            cases: dict[str, _ControlCase] = {}
             for name, spec in mutation_specs.items():
                 relative = spec["path"]
                 source_path = repo / relative

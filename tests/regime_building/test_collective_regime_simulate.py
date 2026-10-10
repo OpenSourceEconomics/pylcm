@@ -45,6 +45,7 @@ from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
 )
+from _lcm.regime_law import RegimeLawDeclaration
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
@@ -81,6 +82,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 from tests.conftest import bind_laws, build_prepared_structure
@@ -107,9 +109,9 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
 def _solve_and_process(
     *,
     regimes_dict: dict[str, Regime],
-    laws: dict[str, object],
+    laws: dict[RegimeName, RegimeLawDeclaration | Transition],
     ages: AgeGrid,
-    regime_names: list[str],
+    regime_names: list[RegimeName],
 ):
     """Shared build+solve harness (kernel-level, mirrors the solve-side tests).
 
@@ -179,7 +181,7 @@ def _next_couple_regime() -> ScalarInt:
 _WAGE_GRID_2 = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 
 
-def _couple_laws() -> dict[str, object]:
+def _couple_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """Return the law of every regime of `_make_couple_regimes`.
 
     `None` marks a terminal regime.
@@ -393,7 +395,7 @@ def _consent_gate(
     return (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)
 
 
-def _consent_laws() -> dict[str, object]:
+def _consent_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """Return the law of every regime of `_make_consent_regimes`.
 
     `None` marks a terminal regime.
@@ -668,7 +670,7 @@ def _married_dissolution_transition() -> Transition:
     )
 
 
-def _dissolution_laws() -> dict[str, object]:
+def _dissolution_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """Return the law of every regime of `_make_dissolution_regimes`.
 
     `None` marks a terminal regime. Each nonterminal law but `married`'s picks
@@ -1037,7 +1039,9 @@ def _u_married_m_educ(
     return wage + 0.0 * work + 0.0 * educ  # {1, 2}
 
 
-def _consent_discrete_axis_laws() -> dict[str, object]:
+def _consent_discrete_axis_laws() -> dict[
+    RegimeName, RegimeLawDeclaration | Transition
+]:
     """Return the law of every regime of the discrete-target-axis consent miniature.
 
     Its regimes come from `_make_consent_regimes_with_discrete_target_axis`; `None`
@@ -1536,7 +1540,7 @@ def _u_solo_terminal(wage: ContinuousState) -> FloatND:
     return wage
 
 
-def _solo_laws() -> dict[str, object]:
+def _solo_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """Return the law of every regime of `_make_solo_regimes`.
 
     `None` marks a terminal regime.
@@ -1673,7 +1677,7 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
     return V_target > _REPEAT_GATE_THRESHOLD
 
 
-def _repeating_self_loop_laws() -> dict[str, object]:
+def _repeating_self_loop_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """Return the law of every regime of `_make_repeating_self_loop_regimes`.
 
     `None` marks a terminal regime.

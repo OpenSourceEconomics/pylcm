@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import replace
 from types import MappingProxyType
-from typing import cast
+from typing import Never, cast
 
 import jax
 import jax.numpy as jnp
@@ -26,10 +26,11 @@ from _lcm.execution.value_transfer import (
     resolve_value_transfer,
 )
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import RegimeName
 
 
 def _read_value(
-    *, next_regime_to_V_arr: Mapping[str, jax.Array], extra: jax.Array
+    *, next_regime_to_V_arr: Mapping[RegimeName, jax.Array], extra: jax.Array
 ) -> jax.Array:
     return next_regime_to_V_arr["future"] + extra
 
@@ -76,7 +77,7 @@ def test_abstract_resolution_keeps_transfer_metadata_without_device_put(
     """An abstract read retains its original exact plan and cost metadata."""
     program, transfer = _inputs()
 
-    def forbidden(*_args: object, **_kwargs: object) -> object:
+    def forbidden[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
         raise AssertionError("Abstract resolution attempted a physical transfer")
 
     monkeypatch.setattr(jax, "device_put", forbidden)
@@ -118,7 +119,7 @@ def test_abstract_copy_uses_destination_layout_and_keeps_source_cost(
         ),
     )
 
-    def forbidden(*_args: object, **_kwargs: object) -> object:
+    def forbidden[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
         raise AssertionError("Abstract copy preparation executed device_put")
 
     monkeypatch.setattr(jax, "device_put", forbidden)

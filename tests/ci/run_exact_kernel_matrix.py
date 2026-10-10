@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+type CommandArgument = str
+
+
 _SMOKE_NODE = (
     "tests/test_exact_kernel_capability_contract.py::"
     "test_exact_kernel_answers_in_the_active_precision"
@@ -173,7 +176,7 @@ def _run_pytest(
     *,
     name: str,
     precision: str,
-    pytest_args: list[str],
+    pytest_args: list[CommandArgument],
     junit_path: Path,
     log_path: Path,
 ) -> subprocess.CompletedProcess[str]:

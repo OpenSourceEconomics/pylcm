@@ -196,9 +196,11 @@ def test_sources_are_read_as_utf_8_whatever_the_platform_default_is():
     recorded: list[str | None] = []
     original = pathlib.Path.read_text
 
-    def recording_read_text(self: pathlib.Path, *args: object, **kwargs: object) -> str:
-        recorded.append(kwargs.get("encoding"))  # ty: ignore[invalid-argument-type]
-        return original(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+    def recording_read_text(
+        self: pathlib.Path, *args: str | None, **kwargs: str | None
+    ) -> str:
+        recorded.append(kwargs.get("encoding"))
+        return original(self, *args, **kwargs)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(pathlib.Path, "read_text", recording_read_text)

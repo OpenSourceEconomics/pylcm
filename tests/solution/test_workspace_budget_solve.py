@@ -11,8 +11,10 @@ from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
+from typing import TypedDict
 
 import cloudpickle
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -95,7 +97,7 @@ def synthetic_peaks(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, int]]:
     seen: list[dict[str, int]] = []
 
     def peak(
-        *, compiled: object, widths: Mapping[str, int]
+        *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
     ) -> CompilerMemoryReservation:
         del compiled
         seen.append(dict(widths))
@@ -246,8 +248,18 @@ def test_budget_below_every_candidate_fails_closed(*, monkeypatch, tmp_path) -> 
     assert not (tmp_path / _CAPTURE_TARGET).exists()
 
 
+class _FixedWidthSolve(TypedDict):
+    compiled: set[int]
+    dispatched: dict[str, dict[str, int]]
+
+
 @pytest.fixture
-def fixed_width_solve(*, synthetic_peaks, monkeypatch, tmp_path) -> dict[str, object]:
+def fixed_width_solve(
+    *,
+    synthetic_peaks: list[dict[str, int]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> _FixedWidthSolve:
     """Solve the regression model with the action product pinned to width four."""
     _solve_capturing(
         monkeypatch=monkeypatch,

@@ -1,9 +1,10 @@
 """Simulation population belongs to each call's initial conditions."""
 
 import inspect
-from typing import Any
+from typing import Unpack
 
 import cloudpickle
+import jax
 import jax.numpy as jnp
 import jax.stages
 import pandas as pd
@@ -12,6 +13,7 @@ from jax import Array
 
 from lcm import AgeGrid, Model
 from lcm.exceptions import InvalidInitialConditionsError, InvalidSimulationInputError
+from tests.execution._jax_callback_types import CompileOptions, CompilerOptions
 from tests.simulation.test_process_grid_entry_admission import _inputs
 from tests.test_models.deterministic.regression import (
     RegimeId,
@@ -114,9 +116,14 @@ def test_repeated_simulation_reuses_compilation_and_values(
     compilations: list[None] = []
     original = jax.stages.Lowered.compile
 
-    def observe(self: jax.stages.Lowered, *args: Any, **kwargs: Any) -> Any:
+    # keyword-only-exempt: library-callback=jax.stages.Lowered.compile
+    def observe(
+        self: jax.stages.Lowered,
+        compiler_options: CompilerOptions | None = None,
+        **kwargs: Unpack[CompileOptions],
+    ) -> jax.stages.Compiled:
         compilations.append(None)
-        return original(self, *args, **kwargs)
+        return original(self, compiler_options, **kwargs)
 
     monkeypatch.setattr(jax.stages.Lowered, "compile", observe)
     second = model.simulate(
@@ -180,7 +187,7 @@ def test_warm_simulation_rejects_invalid_rows_before_dispatch_and_recovers(
     invalid = {**initial, "regime_id": jnp.full(4, 999, dtype=jnp.int32)}
     assert invalid["regime_id"].tolist() == [999] * 4
 
-    def refuse_runtime_selection(**kwargs: object) -> None:
+    def refuse_runtime_selection[Ignored](**kwargs: Ignored) -> None:
         del kwargs
         raise AssertionError("Invalid population reached forward runtime selection")
 

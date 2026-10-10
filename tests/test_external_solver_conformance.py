@@ -6,12 +6,13 @@ import functools
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import NotRequired, Unpack, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from typing_extensions import TypedDict
 
 import lcm.model as model_module
 import lcm.solver_api as solver_api_module
@@ -68,8 +69,10 @@ from lcm.solver_api import (
 )
 from lcm.solvers import (
     CoreExecutionDisposition,
+    CoreProgram,
     GridSearch,
     ProgramScope,
+    ReducedAxis,
     SolutionKernels,
     Solver,
     SolverBuildContext,
@@ -81,12 +84,15 @@ from lcm.solvers import (
     ValueRead,
 )
 from lcm.typing import (
+    ActionName,
     ContinuousAction,
     ContinuousState,
     DiscreteAction,
     FloatND,
+    RegimeName,
     ScalarFloat,
     ScalarInt,
+    StateName,
     UserFunction,
 )
 from tests.conformance_solver import (
@@ -94,14 +100,38 @@ from tests.conformance_solver import (
     OPTIONAL_REPLAY_KEY,
     POLICY_KEY,
     SCRATCH_KEY,
-    Counter,
     Policy,
     ReferenceReplayRoute,
     ReferenceSolver,
     TargetValueSolver,
     TerminalCounterSolver,
 )
+from tests.conformance_solver import (
+    Counter as SolverCounter,
+)
+from tests.conformance_solver.solver import _PeriodKernel as ReferencePeriodKernel
 from tests.conftest import DECIMAL_PRECISION
+
+
+class _SelectProgramsArguments(TypedDict, closed=True):
+    graph: Mapping[str, CoreProgram]
+    retain_replay: bool
+    selected_artifact_keys: NotRequired[frozenset[ArtifactKey]]
+
+
+class _SnapshotArguments(TypedDict, closed=True):
+    artifacts: MappingProxyType[ArtifactKey, ArtifactPayload]
+    authorities: MappingProxyType[ArtifactKey, ArtifactAuthority]
+    metadata: SolutionMetadata
+
+
+class _PlacedReplayArguments(TypedDict, closed=True):
+    key: ArtifactKey
+    period: int
+    regime: RegimeName
+    core: str
+    owner: PeriodSimulationReads
+
 
 _N_PERIODS = 3
 _WEALTH_GRID = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
@@ -144,7 +174,7 @@ class _HostileComparisonInt(int):
 class _ChangingLazyEntry(solver_api_module._LazyEntry):
     """Return trusted input once, then expose a different unvalidated object."""
 
-    def __init__(self, *, first: object, subsequent: object) -> None:
+    def __init__(self, *, first: ArtifactPayload, subsequent: ArtifactPayload) -> None:
         self.first = first
         self.subsequent = subsequent
         self.materialization_count = 0
@@ -156,13 +186,14 @@ class _ChangingLazyEntry(solver_api_module._LazyEntry):
             LoadState.UNLOADED if self.materialization_count == 0 else LoadState.LOADED
         )
 
-    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
+    def materialize(
+        self,
+        *,
+        template: ArtifactPayload | None = None,  # noqa: ARG002
+    ) -> ArtifactPayload:
         """Change the returned object after the first materialization."""
         self.materialization_count += 1
-        return cast(
-            "ArtifactPayload",
-            self.first if self.materialization_count == 1 else self.subsequent,
-        )
+        return self.first if self.materialization_count == 1 else self.subsequent
 
 
 class _FailingLazyEntry(solver_api_module._LazyEntry):
@@ -178,7 +209,11 @@ class _FailingLazyEntry(solver_api_module._LazyEntry):
             LoadState.UNLOADED if self.materialization_count == 0 else LoadState.LOADED
         )
 
-    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
+    def materialize(
+        self,
+        *,
+        template: ArtifactPayload | None = None,  # noqa: ARG002
+    ) -> ArtifactPayload:
         """Raise the low-level decoder error simulation must normalize."""
         self.materialization_count += 1
         raise TypeError("hostile lazy decoder")
@@ -190,7 +225,7 @@ class _MetadataMutatingLazyEntry(solver_api_module._LazyEntry):
     def __init__(
         self,
         *,
-        value: object,
+        value: ArtifactPayload,
         metadata: SolutionMetadata,
         solver_identity: SolverIdentity,
     ) -> None:
@@ -203,7 +238,11 @@ class _MetadataMutatingLazyEntry(solver_api_module._LazyEntry):
         """Report that the adversarial entry has not materialized."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
+    def materialize(
+        self,
+        *,
+        template: ArtifactPayload | None = None,  # noqa: ARG002
+    ) -> ArtifactPayload:
         """Replace a mapping and mutate one nested frozen identity wrapper."""
         object.__setattr__(
             self._solver_identity,
@@ -215,7 +254,7 @@ class _MetadataMutatingLazyEntry(solver_api_module._LazyEntry):
             "solver_types",
             MappingProxyType({"hostile": "replacement"}),
         )
-        return cast("ArtifactPayload", self._value)
+        return self._value
 
 
 class _CachedAuthorityMutatingLazyEntry(solver_api_module._LazyEntry):
@@ -224,7 +263,7 @@ class _CachedAuthorityMutatingLazyEntry(solver_api_module._LazyEntry):
     def __init__(
         self,
         *,
-        value: object,
+        value: ArtifactPayload,
         model: Model,
         fingerprint: str,
         ref: ArtifactRef,
@@ -242,7 +281,11 @@ class _CachedAuthorityMutatingLazyEntry(solver_api_module._LazyEntry):
             LoadState.UNLOADED if self.materialization_count == 0 else LoadState.LOADED
         )
 
-    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
+    def materialize(
+        self,
+        *,
+        template: ArtifactPayload | None = None,  # noqa: ARG002
+    ) -> ArtifactPayload:
         """Corrupt a cached nested authority wrapper after preflight copied it."""
         self.materialization_count += 1
         authority = self._model._declared_authority_cache[self._fingerprint]
@@ -251,7 +294,7 @@ class _CachedAuthorityMutatingLazyEntry(solver_api_module._LazyEntry):
             "payload_runtime_type",
             tuple,
         )
-        return cast("ArtifactPayload", self._value)
+        return self._value
 
 
 class _TemplateMutatingLazyEntry(solver_api_module._LazyEntry):
@@ -268,7 +311,9 @@ class _TemplateMutatingLazyEntry(solver_api_module._LazyEntry):
             LoadState.UNLOADED if self.materialization_count == 0 else LoadState.LOADED
         )
 
-    def materialize(self, *, template: object | None = None) -> ArtifactPayload:
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
         """Corrupt only the decoder-facing copy of a frozen plugin template."""
         self.materialization_count += 1
         if type(template) is not Policy:
@@ -289,7 +334,7 @@ class _EnvelopeMutatingLazyEntry(solver_api_module._LazyEntry):
     def __init__(
         self,
         *,
-        value: object,
+        value: ArtifactPayload,
         replacement_replay: ArtifactStore,
         replacement_omissions: MappingProxyType[ArtifactRef, OmissionReason],
     ) -> None:
@@ -303,13 +348,17 @@ class _EnvelopeMutatingLazyEntry(solver_api_module._LazyEntry):
         """Report that the adversarial entry has not materialized."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
+    def materialize(
+        self,
+        *,
+        template: ArtifactPayload | None = None,  # noqa: ARG002
+    ) -> ArtifactPayload:
         """Replace result channels after preflight has begun."""
         if self.target is None:
             raise AssertionError("The adversarial lazy entry has no target result.")
         object.__setattr__(self.target, "replay_artifacts", self._replacement_replay)
         object.__setattr__(self.target, "omissions", self._replacement_omissions)
-        return cast("ArtifactPayload", self._value)
+        return self._value
 
 
 def _moving_wealth_grid(age: float) -> LinSpacedGrid:
@@ -489,18 +538,18 @@ def _opaque_shifted_values_core(
     consumption: FloatND,  # noqa: ARG001
     next_count: FloatND,
     candidate_width: int,  # noqa: ARG001
-) -> tuple[FloatND, Counter]:
+) -> tuple[FloatND, SolverCounter]:
     """Expose the distinct core selected only by an opaque solver token."""
     count = next_count + 1.0
     value = count * (wealth[:, None] + 0.0 * productivity[None, :])
-    return value + 7.0, Counter(count=count)
+    return value + 7.0, SolverCounter(count=count)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _OpaqueMarkerSolver(ReferenceSolver):
     """Accepted solver whose opaque instance token selects executable semantics."""
 
-    marker: object
+    marker: object  # noqa: PAN001 - Identity-only opaque solver tokens have no data contract.
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         kernels = super().build_period_kernels(context=context)
@@ -508,13 +557,14 @@ class _OpaqueMarkerSolver(ReferenceSolver):
             return kernels
         period_kernels = {}
         for period, kernel in kernels.period_kernels.items():
-            programs = dict(cast("Any", kernel).core_programs())
+            assert isinstance(kernel, ReferencePeriodKernel)
+            programs = dict(kernel.core_programs())
             programs["values"] = dataclasses.replace(
                 programs["values"],
                 function=_opaque_shifted_values_core,
             )
             period_kernels[period] = dataclasses.replace(
-                cast("Any", kernel),
+                kernel,
                 programs=MappingProxyType(programs),
             )
         return dataclasses.replace(
@@ -629,7 +679,8 @@ class _ConflictingProducerTypeSolver(ReferenceSolver):
         kernels = super().build_period_kernels(context=context)
         period_kernels = {}
         for period, kernel in kernels.period_kernels.items():
-            programs = dict(cast("Any", kernel).core_programs())
+            assert isinstance(kernel, ReferencePeriodKernel)
+            programs = dict(kernel.core_programs())
             replay = programs["replay"]
             programs["replay"] = dataclasses.replace(
                 replay,
@@ -638,7 +689,7 @@ class _ConflictingProducerTypeSolver(ReferenceSolver):
                 ),
             )
             period_kernels[period] = dataclasses.replace(
-                cast("Any", kernel),
+                kernel,
                 programs=MappingProxyType(programs),
             )
         return dataclasses.replace(
@@ -655,7 +706,8 @@ class _MissingRequiredProducerSolver(ReferenceSolver):
         kernels = super().build_period_kernels(context=context)
         period_kernels = {}
         for period, kernel in kernels.period_kernels.items():
-            programs = dict(cast("Any", kernel).core_programs())
+            assert isinstance(kernel, ReferencePeriodKernel)
+            programs = dict(kernel.core_programs())
             replay = programs["replay"]
             programs["replay"] = dataclasses.replace(
                 replay,
@@ -663,7 +715,7 @@ class _MissingRequiredProducerSolver(ReferenceSolver):
                 retained_artifact_payload_types={OPTIONAL_REPLAY_KEY: jax.Array},
             )
             period_kernels[period] = dataclasses.replace(
-                cast("Any", kernel),
+                kernel,
                 programs=MappingProxyType(programs),
             )
         return dataclasses.replace(
@@ -680,10 +732,11 @@ class _MissingRequiredAuxiliaryProducerSolver(ReferenceSolver):
         kernels = super().build_period_kernels(context=context)
         period_kernels = {}
         for period, kernel in kernels.period_kernels.items():
-            programs = dict(cast("Any", kernel).core_programs())
+            assert isinstance(kernel, ReferencePeriodKernel)
+            programs = dict(kernel.core_programs())
             del programs["scratch"]
             period_kernels[period] = dataclasses.replace(
-                cast("Any", kernel),
+                kernel,
                 programs=MappingProxyType(programs),
             )
         return dataclasses.replace(
@@ -764,7 +817,9 @@ class _ContradictoryContinuationAuthoritySolver(ReferenceSolver):
                     payload_type_id="tests._WrongCounter",
                 ),
                 payload_runtime_type=_WrongCounter,
-                template=_WrongCounter(count=cast("Counter", authority.template).count),
+                template=_WrongCounter(
+                    count=cast("SolverCounter", authority.template).count
+                ),
                 container_runtime_types={(): _WrongCounter},
             )
         elif self.defect == "template_dtype":
@@ -776,7 +831,7 @@ class _ContradictoryContinuationAuthoritySolver(ReferenceSolver):
                     authority.descriptor,
                     leaf_descriptors=(incompatible_leaf.descriptor,),
                 ),
-                template=Counter(count=jnp.asarray(0, dtype=jnp.int32)),
+                template=SolverCounter(count=jnp.asarray(0, dtype=jnp.int32)),
                 leaves={path: incompatible_leaf},
             )
         else:
@@ -800,8 +855,8 @@ class _ScalarActionReader:
     def __call__(
         self,
         *,
-        states: Mapping[str, object],  # noqa: ARG002
-        fallback_actions: Mapping[str, object],  # noqa: ARG002
+        states: Mapping[StateName, jax.Array],  # noqa: ARG002
+        fallback_actions: Mapping[ActionName, jax.Array],  # noqa: ARG002
     ) -> ActionOutput:
         """Return the selected scalar without Python data dependence."""
         values = {
@@ -856,8 +911,8 @@ class _OutOfDomainActionReader:
     def __call__(
         self,
         *,
-        states: Mapping[str, object],  # noqa: ARG002
-        fallback_actions: Mapping[str, object],  # noqa: ARG002
+        states: Mapping[StateName, jax.Array],  # noqa: ARG002
+        fallback_actions: Mapping[ActionName, jax.Array],  # noqa: ARG002
     ) -> ActionOutput:
         """Return a broadcastable but invalid int32 categorical code."""
         return ActionOutput(actions={"consumption": jnp.asarray(17, dtype=jnp.int32)})
@@ -931,10 +986,12 @@ def test_reference_solver_scopes_planned_cores_to_requested_retention() -> None:
     """VALUES skips replay assembly while ALL selects persistable replay."""
     model = _model(solver=ReferenceSolver())
     kernel = model._regimes["active"].solution.period_kernels[0]
-    programs = cast("Any", kernel).core_programs()
+    assert isinstance(kernel, ReferencePeriodKernel)
+    programs = kernel.core_programs()
     values_program = programs["values"]
     replay_program = programs["replay"]
     axis = values_program.requirements.axes[0]
+    assert isinstance(axis, ReducedAxis)
 
     scratch_program = programs["scratch"]
     assert tuple(programs) == ("values", "replay", "scratch")
@@ -1027,11 +1084,13 @@ def test_period_replay_preserves_exact_artifact_selection(
     observed: list[tuple[bool, frozenset[ArtifactKey]]] = []
     real_select = period_replay_module.select_programs
 
-    def record_select(**kwargs: Any) -> object:
+    def record_select(
+        **kwargs: Unpack[_SelectProgramsArguments],
+    ) -> MappingProxyType[str, CoreProgram]:
         observed.append(
             (
                 kwargs["retain_replay"],
-                cast("frozenset[ArtifactKey]", kwargs["selected_artifact_keys"]),
+                kwargs["selected_artifact_keys"],
             )
         )
         return real_select(**kwargs)
@@ -1396,8 +1455,10 @@ def test_lazy_value_cannot_mutate_cached_model_authority_used_for_replay() -> No
         for regime_name, value in regime_to_value.items()
     }
     coordinate = next(iter(value_entries))
+    stored_value = value_entries[coordinate]
+    assert isinstance(stored_value, jax.Array)
     adversarial = _CachedAuthorityMutatingLazyEntry(
-        value=value_entries[coordinate],
+        value=stored_value,
         model=model,
         fingerprint=fingerprint,
         ref=policy_ref,
@@ -1454,7 +1515,7 @@ def test_mutated_cached_authority_is_normalized_before_forward_simulation(
     )
     model._declared_authority_cache[fingerprint] = cached_authority
 
-    def fail_if_forward_simulation_starts(**_kwargs: object) -> None:
+    def fail_if_forward_simulation_starts[Ignored](**_kwargs: Ignored) -> None:
         raise AssertionError("forward simulation started")
 
     monkeypatch.setattr(model_module, "simulate", fail_if_forward_simulation_starts)
@@ -1489,9 +1550,11 @@ def test_hostile_descriptor_key_is_rejected_before_value_materialization() -> No
         for regime_name, value in regime_to_value.items()
     }
     coordinate = next(iter(value_entries))
+    stored_value = value_entries[coordinate]
+    assert isinstance(stored_value, jax.Array)
     lazy_value = _ChangingLazyEntry(
-        first=value_entries[coordinate],
-        subsequent=value_entries[coordinate],
+        first=stored_value,
+        subsequent=stored_value,
     )
     value_entries[coordinate] = lazy_value
     malformed = dataclasses.replace(
@@ -1546,9 +1609,11 @@ def test_hostile_cached_value_shape_is_rejected_before_materialization() -> None
         for regime_name, value in regime_to_value.items()
     }
     coordinate = next(iter(value_entries))
+    stored_value = value_entries[coordinate]
+    assert isinstance(stored_value, jax.Array)
     lazy_value = _ChangingLazyEntry(
-        first=value_entries[coordinate],
-        subsequent=value_entries[coordinate],
+        first=stored_value,
+        subsequent=stored_value,
     )
     value_entries[coordinate] = lazy_value
     malformed = dataclasses.replace(
@@ -1643,7 +1708,7 @@ def test_type_different_descriptor_axis_is_rejected_before_forward_simulation(
     malformed = dataclasses.replace(solution, metadata=metadata)
     object.__setattr__(malformed, "_artifact_authority", solution._artifact_authority)
 
-    def fail_if_forward_simulation_starts(**_kwargs: object) -> None:
+    def fail_if_forward_simulation_starts[Ignored](**_kwargs: Ignored) -> None:
         raise AssertionError("forward simulation started")
 
     monkeypatch.setattr(model_module, "simulate", fail_if_forward_simulation_starts)
@@ -1711,8 +1776,10 @@ def test_lazy_value_cannot_replace_metadata_seen_by_external_route(
         for regime_name, value in regime_to_value.items()
     }
     coordinate = next(iter(value_entries))
+    stored_value = value_entries[coordinate]
+    assert isinstance(stored_value, jax.Array)
     value_entries[coordinate] = _MetadataMutatingLazyEntry(
-        value=value_entries[coordinate],
+        value=stored_value,
         metadata=supplied_metadata,
         solver_identity=private_identity,
     )
@@ -1725,8 +1792,10 @@ def test_lazy_value_cannot_replace_metadata_seen_by_external_route(
     observed_plugin_versions: list[dict[str, str]] = []
     snapshot_type = model_module.ReplayRouteSnapshot
 
-    def _recording_snapshot(**kwargs: Any) -> ReplayRouteSnapshot:
-        metadata = cast("SolutionMetadata", kwargs["metadata"])
+    def _recording_snapshot(
+        **kwargs: Unpack[_SnapshotArguments],
+    ) -> ReplayRouteSnapshot:
+        metadata = kwargs["metadata"]
         observed_solver_types.append(dict(metadata.solver_types))
         observed_plugin_versions.append(
             {
@@ -1772,8 +1841,10 @@ def test_lazy_value_cannot_swap_result_channels_after_envelope_snapshot() -> Non
         for regime_name, value in regime_to_value.items()
     }
     coordinate = next(iter(value_entries))
+    stored_value = value_entries[coordinate]
+    assert isinstance(stored_value, jax.Array)
     mutating_value = _EnvelopeMutatingLazyEntry(
-        value=value_entries[coordinate],
+        value=stored_value,
         replacement_replay=replacement_replay,
         replacement_omissions=replacement_omissions,
     )
@@ -1992,7 +2063,7 @@ def test_invalid_later_replay_artifact_fails_before_any_period_execution(
     )
 
 
-def _refuse_unvalidated_simulation(**kwargs: object) -> None:
+def _refuse_unvalidated_simulation[Ignored](**kwargs: Ignored) -> None:
     """Witness the first forward entry, including before any reader is built."""
     raise AssertionError(f"Forward execution preceded complete preflight: {kwargs}")
 
@@ -2024,9 +2095,11 @@ def test_invalid_placed_replay_payload_is_rejected_before_reader_construction(
     owner.finish()
 
 
-def _wrong_placed_replay_policy(*, payload: object, **kwargs: object) -> Policy:
+def _wrong_placed_replay_policy(
+    *, payload: ArtifactPayload, **kwargs: Unpack[_PlacedReplayArguments]
+) -> Policy:
     """Keep the payload schema while seeding a different candidate selection."""
-    assert kwargs
+    assert kwargs  # ty: ignore[redundant-condition]
     assert isinstance(payload, Policy)
     return Policy(values=jnp.zeros_like(payload.values))
 
@@ -2138,8 +2211,8 @@ def test_artifact_canonicalization_rejects_type_different_static_metadata() -> N
 
     @dataclasses.dataclass(frozen=True)
     class TaggedPolicy:
-        values: object
-        tag: object
+        values: jax.Array
+        tag: int | Meta
 
     jax.tree_util.register_dataclass(
         TaggedPolicy,
@@ -2349,7 +2422,7 @@ class _ArtifactKeySubclass(
     ],
 )
 def test_public_identity_and_address_types_are_exact(
-    *, factory: Callable[[], object]
+    *, factory: Callable[[], ArtifactKey | SolverIdentity | ArtifactRef]
 ) -> None:
     """Equal subclasses and bool-as-int values fail at the public boundary."""
     with pytest.raises(TypeError, match="exact"):
@@ -2359,7 +2432,7 @@ def test_public_identity_and_address_types_are_exact(
 @pytest.mark.parametrize("coordinate", [np.nan, np.inf, -np.inf])
 @pytest.mark.parametrize("axis_type", [AxisDescriptor, AxisAuthority])
 def test_artifact_axis_coordinates_must_be_finite(
-    *, coordinate: float, axis_type: Callable[..., object]
+    *, coordinate: float, axis_type: Callable[..., AxisDescriptor | AxisAuthority]
 ) -> None:
     """Neither descriptive nor authoritative axes admit non-finite coordinates."""
     with pytest.raises(ValueError, match="finite"):
@@ -2478,7 +2551,7 @@ def test_a_producer_cannot_publish_an_inapplicable_custom_artifact() -> None:
     ],
 )
 def test_mutated_metadata_identity_types_fail_before_simulation(
-    *, field: str, invalid: object
+    *, field: str, invalid: str | int
 ) -> None:
     """Identity/version fields cannot use equal or branch-bypassing impostors."""
     model = _model(solver=ReferenceSolver())
@@ -2503,9 +2576,9 @@ def test_a_core_reading_next_period_target_values_declares_each_access() -> None
     that `_enter_retirement` is zero at this age is a value, not a declaration.
     """
     model = _model(solver=TargetValueSolver())
-    program = cast(
-        "Any", model._regimes["active"].solution.period_kernels[0]
-    ).core_programs()["values"]
+    kernel = model._regimes["active"].solution.period_kernels[0]
+    assert isinstance(kernel, ReferencePeriodKernel)
+    program = kernel.core_programs()["values"]
     assert program.requirements.value_reads == tuple(
         ValueRead(
             target=ValueArtifactAddress(

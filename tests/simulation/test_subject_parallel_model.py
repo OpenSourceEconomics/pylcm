@@ -1,6 +1,7 @@
 """Public opt-in: unsharded solve states, eight forward devices, unchanged rows."""
 
-from typing import Any
+# Seven rows per device at width three exercise full tiles and a padded remainder.
+from typing import Unpack
 
 import jax
 import jax.numpy as jnp
@@ -9,7 +10,9 @@ import pandas as pd
 import pytest
 
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.typing import PytreeValue
 from lcm import ExecutionConfig, LinSpacedGrid
+from tests.simulation._callback_types import RuntimeDispatch
 from tests.test_models.deterministic.regression import (
     RegimeId,
     get_model,
@@ -17,7 +20,6 @@ from tests.test_models.deterministic.regression import (
 )
 
 
-# Seven rows per device at width three exercise full tiles and a padded remainder.
 @pytest.mark.parametrize("n_subjects", [1, 13, 56])
 @pytest.mark.parametrize("budgeted", [False, True])
 def test_public_subject_partition_matches_supplied_solution_reference(
@@ -64,7 +66,9 @@ def test_public_subject_partition_matches_supplied_solution_reference(
     births = []
     dispatch = SimulationRuntime.dispatch
 
-    def observe(self: SimulationRuntime, **kwargs: Any) -> object:
+    def observe(
+        self: SimulationRuntime, **kwargs: Unpack[RuntimeDispatch]
+    ) -> PytreeValue:
         result = dispatch(self, **kwargs)
         if self.execution.simulation_sharding == "subjects":
             for leaf in jax.tree.leaves(result):

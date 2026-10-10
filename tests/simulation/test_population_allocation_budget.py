@@ -1,7 +1,8 @@
 """Full-population setup must admit its concrete operations before dispatch."""
 
+from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any
+from typing import Never
 
 import jax
 import jax._src.core
@@ -28,7 +29,7 @@ class _UnadmittedAllocationError(AssertionError):
     """A concrete numerical dispatch occurred before a budget refusal."""
 
 
-def _forbid_concrete(*_args: object, **_kwargs: object) -> object:
+def _forbid_concrete[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
     raise _UnadmittedAllocationError("Population setup allocated before admission")
 
 
@@ -109,13 +110,18 @@ def test_public_population_setup_uses_its_admitted_pure_bodies(
     original = getattr(jnp, operation)
     traced: list[str] = []
 
-    def guard(first: object, *args: Any, **kwargs: Any) -> object:
-        if not isinstance(first, jax.core.Tracer):
-            raise _UnadmittedAllocationError(f"Unprofiled {operation} population setup")
-        traced.append(operation)
-        return original(first, *args, **kwargs)
+    def guarded[**P, R](original: Callable[P, R]) -> Callable[P, R]:
+        def guard(*args: P.args, **kwargs: P.kwargs) -> R:
+            if not isinstance(args[0], jax.core.Tracer):
+                raise _UnadmittedAllocationError(
+                    f"Unprofiled {operation} population setup"
+                )
+            traced.append(operation)
+            return original(*args, **kwargs)
 
-    monkeypatch.setattr(jnp, operation, guard)
+        return guard
+
+    monkeypatch.setattr(jnp, operation, guarded(original))
     assert model.ages is not None
     sentinel_args = (
         (initial["regime_id"], -1)

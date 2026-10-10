@@ -21,12 +21,27 @@ asserts a value that comes out `nan`.
 import contextlib
 import inspect
 import itertools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from fractions import Fraction
+
+# Helpers for the FMA / bit-exactness regression tests.
+#
+# The production arithmetic masks the VALUE before the weight-multiply
+# (`w * where(w==0, 0, v)`) rather than the PRODUCT after it
+# (`where(w==0, 0, w*v)`). Both neutralize a zero-weight `+-inf`, but only the
+# value-masking form leaves the multiply FMA-contractible into the downstream
+# reduction, so the all-positive-weight path is BIT-IDENTICAL to the naive
+# `jnp.average` / raw corner sum. The product-masking form drifts (up to 6 ULP
+# measured), enough to reverse a non-tied action or an IR/dissolution flag.
+# `_product_masked_average*` run that recipe in-process so each bit-identity
+# test can PROVE the difference is live on its fixture, without touching `src/`.
+from types import MappingProxyType
+from typing import Unpack
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 from _lcm.regime_building import ndimage
@@ -53,20 +68,8 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.regime import Regime
-from lcm.typing import DiscreteAction, FloatND, ScalarInt
-
-# Helpers for the FMA / bit-exactness regression tests.
-#
-# The production arithmetic masks the VALUE before the weight-multiply
-# (`w * where(w==0, 0, v)`) rather than the PRODUCT after it
-# (`where(w==0, 0, w*v)`). Both neutralize a zero-weight `+-inf`, but only the
-# value-masking form leaves the multiply FMA-contractible into the downstream
-# reduction, so the all-positive-weight path is BIT-IDENTICAL to the naive
-# `jnp.average` / raw corner sum. The product-masking form drifts (up to 6 ULP
-# measured), enough to reverse a non-tied action or an IR/dissolution flag.
-# `_product_masked_average*` run that recipe in-process so each bit-identity
-# test can PROVE the difference is live on its fixture, without touching `src/`.
+from lcm.regime import Regime, RegimeReplacement
+from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserFunction
 
 
 @contextlib.contextmanager
@@ -80,7 +83,7 @@ def _x64(*, enabled: bool):
         jax.config.update("jax_enable_x64", previous)
 
 
-def _bits(x: object) -> object:
+def _bits(x: npt.ArrayLike) -> int | npt.NDArray[np.uint32 | np.uint64]:
     """Raw IEEE-754 bit pattern(s) as unsigned ints, for exact bit comparison."""
     arr = np.asarray(x)
     view = np.uint32 if arr.dtype == np.float32 else np.uint64
@@ -654,18 +657,22 @@ def test_sum_regime_mixture_is_invariant_to_alpha_renaming_of_the_regimes():
     )
     exact_side = exact > _ALPHA_RENAME_COMPETING
 
-    new_bits: set[object] = set()
+    new_bits: set[int] = set()
     new_policy: set[bool] = set()
-    old_bits: set[object] = set()
+    old_bits: set[int] = set()
     old_policy: set[bool] = set()
     with _x64(enabled=True):
         for perm in itertools.permutations(range(5)):
             names = [str(p) for p in perm]
             new_val = _alpha_rename_mixture(reducer=_value_sorted_mixture, names=names)
             old_val = _alpha_rename_mixture(reducer=_name_sorted_mixture, names=names)
-            new_bits.add(_bits(new_val))
+            new_bit = _bits(new_val)
+            assert isinstance(new_bit, int)
+            new_bits.add(new_bit)
             new_policy.add(bool(float(new_val) > _ALPHA_RENAME_COMPETING))
-            old_bits.add(_bits(old_val))
+            old_bit = _bits(old_val)
+            assert isinstance(old_bit, int)
+            old_bits.add(old_bit)
             old_policy.add(bool(float(old_val) > _ALPHA_RENAME_COMPETING))
 
     # The alpha-renaming reducer: bit-identical across ALL 120 relabelings -> ONE
@@ -848,7 +855,14 @@ def _utility_m(labor_supply_f: DiscreteAction) -> FloatND:
     return -0.5 * (labor_supply_f == LaborSupply.work)
 
 
-def _build_terminal_regime(**kwargs: object) -> Regime:
+def _build_terminal_regime(
+    *,
+    utilities: Mapping[str, UserFunction] = MappingProxyType(
+        {"f": _utility_f, "m": _utility_m}
+    ),
+    objective: ParetoObjective | None = None,
+    **kwargs: Unpack[RegimeReplacement],
+) -> Regime:
     """Build the two-stakeholder terminal regime, overriding one slot by keyword.
 
     The regime is validated against the law of a regime without outgoing edges.
@@ -856,20 +870,18 @@ def _build_terminal_regime(**kwargs: object) -> Regime:
     `utilities` and `objective` reach the `CollectiveUtility` the regime
     declares; every other keyword is a `Regime` slot.
     """
-    utilities = kwargs.pop("utilities", {"f": _utility_f, "m": _utility_m})
-    objective = kwargs.pop("objective", None)
-    base = {
+    base: RegimeReplacement = {
         "states": {"wealth": _WEALTH},
         "actions": {"labor_supply_f": DiscreteGrid(category_class=LaborSupply)},
         "functions": {
             "utility": CollectiveUtility(
-                utilities=utilities,  # ty: ignore[invalid-argument-type]
-                objective=objective,  # ty: ignore[invalid-argument-type]
+                utilities=utilities,
+                objective=objective,
             )
         },
     }
     base.update(kwargs)
-    regime = Regime(**base)  # ty: ignore[invalid-argument-type]
+    regime = Regime(**base)
     validate_regime_law(regime, law=bind_regime_law(None))
     return regime
 

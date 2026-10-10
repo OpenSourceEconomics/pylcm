@@ -10,7 +10,7 @@ import jax.numpy as jnp
 
 import lcm
 from lcm import LinSpacedGrid, Model
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND, UserParamsNode
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
@@ -96,7 +96,7 @@ def build_params(
     subsidy_low: float = 0.5,
     cliff_low: float = 6.0,
     cliff_high: float = 14.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the two-cliff one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
     return {

@@ -22,7 +22,7 @@ from _lcm.solution.contract import (
 from _lcm.solution.grid_search import GridSearch
 from _lcm.typing import FlatParams
 from lcm import Model
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND, UserParams
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
@@ -82,9 +82,7 @@ class _CheckingGridSearch(GridSearch):
         )
 
 
-def _build_model(
-    *, check: ParamCheck, fixed_params: Mapping[str, object] | None = None
-) -> Model:
+def _build_model(*, check: ParamCheck, fixed_params: UserParams | None = None) -> Model:
     return make_alive_dead_model(
         fixed_params=fixed_params,
         n_periods=3,

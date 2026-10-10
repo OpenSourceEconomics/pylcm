@@ -34,6 +34,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=10.0, n_points=6)
@@ -113,7 +114,9 @@ def get_model(*, execution_config: ExecutionConfig | None = None) -> Model:
     )
 
 
-def get_params(*, scale: float, discount_factor: float = 0.95) -> dict:
+def get_params(
+    *, scale: float, discount_factor: float = 0.95
+) -> dict[str, UserParamsNode]:
     return {
         "discount_factor": discount_factor,
         "alive": {
