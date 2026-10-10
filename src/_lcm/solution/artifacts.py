@@ -4,7 +4,7 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -17,6 +17,7 @@ from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
 from _lcm.typing import (
+    ArtifactPayload,
     FlatParams,
     HostArray,
     ParamsLeaf,
@@ -123,7 +124,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         internal_result.retained_continuations
     )
     auxiliary: dict[ArtifactRef, object] = dict(internal_result.auxiliary_artifacts)
-    diagnostics: dict[ArtifactRef, object] = {}
+    diagnostics: dict[ArtifactRef, ArtifactPayload] = {}
     omissions: dict[ArtifactRef, OmissionReason] = {}
     declared_replay_policies: PeriodToRegimeToSimulationPolicy = MappingProxyType(
         {
@@ -371,7 +372,14 @@ def fingerprint_flat_params(flat_params: FlatParams) -> str:
     return digest.hexdigest()
 
 
-def _update_digest_token(*, digest: Any, chunk: str | bytes) -> None:
+@runtime_checkable
+class _Digest(Protocol):
+    """A running `hashlib` digest; the module exposes no public class for one."""
+
+    def update(self, data: bytes, /) -> None: ...
+
+
+def _update_digest_token(*, digest: _Digest, chunk: str | bytes) -> None:
     """Feed one length-prefixed token into the digest."""
     payload = chunk.encode() if isinstance(chunk, str) else chunk
     digest.update(len(payload).to_bytes(8, byteorder="big"))
@@ -380,7 +388,7 @@ def _update_digest_token(*, digest: Any, chunk: str | bytes) -> None:
 
 def _update_digest_value(
     *,
-    digest: Any,
+    digest: _Digest,
     value: ParamsLeaf | HostArray,
     path: tuple[str, ...],
 ) -> None:
@@ -431,10 +439,10 @@ def _graph_publishes_replay(*, regime: Regime, period: int) -> bool:
     return any(program.scope is ProgramScope.REPLAY for program in graph.values())
 
 
-def _add_nested_artifacts(
+def _add_nested_artifacts[Payload](
     *,
-    target: dict[ArtifactRef, object],
-    nested: Mapping[int, Mapping[RegimeName, object]],
+    target: dict[ArtifactRef, Payload],
+    nested: Mapping[int, Mapping[RegimeName, Payload]],
     key: ArtifactKey,
 ) -> None:
     """Flatten one existing period/regime mapping into addressed artifacts."""
