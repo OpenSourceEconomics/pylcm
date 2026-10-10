@@ -223,7 +223,7 @@ def broadcast_to_template(
 
 def _edge_slot_hints(
     *, unknown: set[str], template_flat: Mapping[str, str]
-) -> list[str]:
+) -> tuple[str, ...]:
     """Point each unknown key written under a source regime at its edge slots.
 
     A value written under a regime never reaches a callable `Model(edges=...)`
@@ -256,7 +256,7 @@ def _edge_slot_hints(
                 f"at {user_path(path=(EDGES, path[0], path[-1]))}, or at the "
                 "model level."
             )
-    return hints
+    return tuple(hints)
 
 
 def materialize_granular_transition_params(
@@ -497,7 +497,7 @@ def find_param_candidates(
     *,
     qname: QualifiedName,
     params_flat: Mapping[QualifiedName, UserParamsLeaf],
-) -> list[str]:
+) -> tuple[QualifiedName, ...]:
     """Find candidate matches for a template qname, most to least specific.
 
     This is the project's one resolution rule. Every consumer that asks where a
@@ -528,7 +528,7 @@ def find_param_candidates(
         params_flat: Flattened user params, keyed by qualified name.
 
     Returns:
-        List of the matching keys of `params_flat`, most specific first. More
+        The matching keys of `params_flat`, most specific first. More
         than one entry means the user wrote the value at several levels, which
         the caller reports as ambiguous.
 
@@ -546,7 +546,7 @@ def find_param_candidates(
             candidates.append(source_level_qname)
         if param_name in params_flat:
             candidates.append(param_name)
-        return candidates
+        return tuple(candidates)
 
     if len(tree_path) == ParamsQnameDepth.REGIME__TARGETREGIME__FUNC__PARAM:
         coarse_qname = qname_from_tree_path((tree_path[0], *tree_path[2:]))
@@ -561,7 +561,7 @@ def find_param_candidates(
     if param_name in params_flat:
         candidates.append(param_name)
 
-    return candidates
+    return tuple(candidates)
 
 
 def create_params_template(
@@ -654,8 +654,8 @@ def create_params_template(
                 )
 
     _fail_if_template_names_invalid(
-        regime_names=regime_names,
-        function_names=function_names,
+        regime_names=frozenset(regime_names),
+        function_names=frozenset(function_names),
         arg_names=arg_names,
     )
 
@@ -665,36 +665,38 @@ def create_params_template(
     )
 
 
-def _edge_arg_names(regimes: Mapping[RegimeName, Regime]) -> set[ParameterName]:
+def _edge_arg_names(
+    regimes: Mapping[RegimeName, Regime],
+) -> frozenset[ParameterName]:
     """Return the argument names every source's edge slots read."""
-    return {
+    return frozenset(
         path[-1]
         for regime in regimes.values()
         for path in _leaf_paths(regime.edge_params_template)
-    }
+    )
 
 
 def _edges_branch(
     regimes: Mapping[RegimeName, Regime],
-) -> dict[str, dict[RegimeName, EdgeParamsTemplate]]:
+) -> MappingProxyType[str, MappingProxyType[RegimeName, EdgeParamsTemplate]]:
     """Return the template's `edges` branch, or nothing when no source has a slot."""
     sources = {
         name: regime.edge_params_template
         for name, regime in regimes.items()
         if regime.edge_params_template
     }
-    return {EDGES: sources} if sources else {}
+    return MappingProxyType({EDGES: MappingProxyType(sources)} if sources else {})
 
 
 def _leaf_paths(
     branch: Mapping[str, RegimeParamsTemplateNode],
-) -> list[tuple[str, ...]]:
+) -> tuple[tuple[str, ...], ...]:
     """Return the key path of every leaf below a nested template branch."""
-    return [
+    return tuple(
         (name, *path)
         for name, value in branch.items()
-        for path in (_leaf_paths(value) if isinstance(value, Mapping) else [()])
-    ]
+        for path in (_leaf_paths(value) if isinstance(value, Mapping) else ((),))
+    )
 
 
 def _validated_arg_names(
@@ -702,7 +704,7 @@ def _validated_arg_names(
     func_name: FunctionName,
     params: Mapping[str, RegimeParamsTemplateNode],
     regime_name: RegimeName,
-) -> set[str]:
+) -> frozenset[ReferenceName]:
     """Return a function entry's argument names, validating each leaf.
 
     Argument names must be valid parameter-path segments and map to bare leaves
@@ -719,14 +721,14 @@ def _validated_arg_names(
                 f"nested too deeply."
             )
         arg_names.add(arg_name)
-    return arg_names
+    return frozenset(arg_names)
 
 
 def _fail_if_template_names_invalid(
     *,
-    regime_names: set[RegimeName],
-    function_names: set[FunctionName],
-    arg_names: set[ReferenceName],
+    regime_names: frozenset[RegimeName],
+    function_names: frozenset[FunctionName],
+    arg_names: frozenset[ReferenceName],
 ) -> None:
     """Validate the form and disjointness of template name sets.
 
@@ -771,7 +773,7 @@ def _fail_if_template_names_invalid(
 
 def get_flat_param_names(
     regime_params_template: Mapping[str, RegimeParamsTemplateNode],
-) -> set[str]:
+) -> frozenset[QualifiedName]:
     """Get all flat parameter names from a regime params template.
 
     Converts nested template entries like `{"utility": {"risk_aversion": type}}`
@@ -783,7 +785,7 @@ def get_flat_param_names(
     result: set[str] = set()
     for key, value in regime_params_template.items():
         _collect_flat_param_names(prefix=(key,), node=value, result=result)
-    return result
+    return frozenset(result)
 
 
 def _collect_flat_param_names(
