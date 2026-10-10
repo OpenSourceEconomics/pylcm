@@ -21,6 +21,7 @@ from _lcm.simulation.runtime import (
     SimulationDispatchContext,
     SimulationRuntime,
 )
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -102,7 +103,9 @@ def test_last_device_retained_owner_refuses_before_numerical_dispatch(
     calls = []
     original = CompiledSimulationProgram.__call__
 
-    def observe(self: CompiledSimulationProgram, **arguments: object) -> object:
+    def observe(
+        self: CompiledSimulationProgram, **arguments: PytreeValue | ShapeDtypePytree
+    ) -> object:
         calls.append(None)
         return original(self, **arguments)
 

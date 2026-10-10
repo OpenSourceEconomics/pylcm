@@ -50,7 +50,7 @@ type _Footprint = DeviceBufferFootprint
 _EMPTY_FOOTPRINT = DeviceBufferFootprint(spans={})
 
 
-def _is_empty(*, tree: object) -> bool:
+def _is_empty(*, tree: PytreeValue) -> bool:
     """Recognize the empty transient tree without touching a numeric leaf."""
     return type(tree) is tuple and len(tree) == 0
 
@@ -76,7 +76,7 @@ class SimulationMemory:
         default_factory=lambda: DeviceBufferFootprint(spans={})
     )
     unit_inputs: ArrayTree = ()
-    derived: object = ()
+    derived: PytreeValue = ()
     period_owner: PeriodSimulationReads | None = None
     ledger: OwnerLedger = field(default_factory=OwnerLedger, repr=False)
     """Call-local span metadata for every owner this scope binds."""
@@ -110,16 +110,17 @@ class SimulationMemory:
         if name in _LEDGER_FOOTPRINT_FIELDS:
             self.ledger.bind(owner=name, footprint=cast("DeviceBufferFootprint", value))
         elif name in _LEDGER_TREE_FIELDS:
+            tree = cast("PytreeValue", value)
             if name == "unit_inputs":
                 # Rebinding the unit roots has always discarded the temporaries
                 # held since the previous rebinding; release their owners too.
                 self._held = []
                 self.ledger.release_prefix(prefix=_HELD_PREFIX)
-            if _is_empty(tree=value):
+            if _is_empty(tree=tree):
                 # Releasing an owner set needs no measurement, only an epoch.
                 self.ledger.bind(owner=name, footprint=_EMPTY_FOOTPRINT)
             else:
-                self.ledger.measure(owner=name, tree=value)
+                self.ledger.measure(owner=name, tree=tree)
         elif name == "period_owner":
             self._period_generation = None
             self._period_footprint = _EMPTY_FOOTPRINT
@@ -134,7 +135,7 @@ class SimulationMemory:
     def snapshot(
         self,
         *,
-        additional: object = (),
+        additional: PytreeValue = (),
         devices: tuple[jax.Device, ...] | None = None,
     ) -> DeviceBufferFootprint:
         """Drain known transfers and inventory the current explicit live roots."""
@@ -178,7 +179,7 @@ class SimulationMemory:
         """Reset publication metadata after offload and release of the old owners."""
         self.outputs = measure_buffer_footprint(tree=tree)
 
-    def set_derived(self, tree: object) -> None:
+    def set_derived(self, tree: PytreeValue) -> None:
         """Replace the current host adapter's live derived-input snapshot."""
         self.derived = tree
 

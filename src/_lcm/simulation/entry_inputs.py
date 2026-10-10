@@ -7,8 +7,10 @@ snapshots or an automatic solve; those operations need their own allocation prof
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax
+import pandas as pd
 
 from _lcm.engine import placed_devices_for_ids
 from _lcm.execution.execution_plan import ResolvedExecution
@@ -20,6 +22,37 @@ from _lcm.simulation.residency import (
     require_transfer_headroom,
 )
 from _lcm.solution.retained_buffers import retained_solution_buffers
+from lcm.typing import (
+    ActionName,
+    StateName,
+    UserInitialConditions,
+    UserParams,
+    UserParamsLeaf,
+    UserParamsNode,
+)
+
+if TYPE_CHECKING:
+    from lcm._solver_api.result import SolutionResult
+
+    type SolutionResultBoundary = SolutionResult
+else:
+    # The caller's result reaches this module unvalidated; `retained_solution_buffers`
+    # refuses any other class with its own error, before any field is read.
+    type SolutionResultBoundary = object
+
+# The caller inputs a budgeted public call owns: a simulation's initial
+# conditions, or a policy lookup's states and action grids.
+type EntryCallerInputs = (
+    UserInitialConditions
+    | pd.DataFrame
+    | tuple[Mapping[StateName, jax.Array], Mapping[ActionName, jax.Array] | None]
+)
+
+# A value the caller-array walk reaches: a parameter node, an entry input, a
+# sequence leaf's values, or an absent action-grid mapping.
+type _CallerValue = (
+    UserParamsNode | EntryCallerInputs | tuple[UserParamsLeaf, ...] | None
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -28,7 +61,9 @@ class SimulationEntryInputs:
 
     arrays: tuple[jax.Array, ...]
 
-    def footprint(self, *, solution: object | None) -> DeviceBufferFootprint:
+    def footprint(
+        self, *, solution: SolutionResultBoundary | None
+    ) -> DeviceBufferFootprint:
         """Observe source and solution footprints while their owners remain live."""
         return measure_buffer_footprint(
             tree=(
@@ -43,9 +78,9 @@ class SimulationEntryInputs:
 def capture_simulation_entry_inputs(
     *,
     execution: ResolvedExecution,
-    params: object,
-    initial_conditions: object,
-    solution: object | None,
+    params: UserParams,
+    initial_conditions: EntryCallerInputs,
+    solution: SolutionResultBoundary | None,
 ) -> SimulationEntryInputs | None:
     """Refuse excess existing residency before any input conversion or snapshot.
 
@@ -69,14 +104,16 @@ def capture_simulation_entry_inputs(
     return inputs
 
 
-def _caller_arrays(*, values: tuple[object, ...]) -> tuple[jax.Array, ...]:
+def _caller_arrays(
+    *, values: tuple[UserParams, EntryCallerInputs]
+) -> tuple[jax.Array, ...]:
     """Read the accepted input containers, including unregistered Mapping classes.
 
     Generic PyTree traversal treats ``UserDict`` and wrapper subclasses as opaque.
     Host numerical leaves and DataFrames have no existing JAX payload to inventory.
     """
     arrays: list[jax.Array] = []
-    pending = list(values)
+    pending: list[_CallerValue] = list(values)
     seen: set[int] = set()
     while pending:
         value = pending.pop()
