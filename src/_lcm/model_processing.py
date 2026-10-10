@@ -588,18 +588,15 @@ def _validate_all_variables_used(
             simulated_age = specialization_coordinate_at(
                 ages=ages, period=visited_periods[0]
             )
-            user_functions = cast(
-                "dict[FunctionName, UserFunction]",
-                {
-                    name: resolve_node(
-                        node=func,
-                        age=simulated_age
-                        if name.endswith("__simulate")
-                        else representative_age,
-                    )
-                    for name, func in user_functions.items()
-                },
-            )
+            user_functions = {
+                name: resolve_node(
+                    node=func,
+                    age=simulated_age
+                    if name.endswith("__simulate")
+                    else representative_age,
+                )
+                for name, func in user_functions.items()
+            }
 
         targets = [
             *roots,
@@ -816,13 +813,10 @@ def _validate_constraint_phase_invariance(
             representative_age = specialization_coordinate_at(
                 ages=ages, period=active_periods[0]
             )
-            ancestry_funcs = cast(
-                "dict[FunctionName, UserFunction]",
-                {
-                    name: resolve_node(node=func, age=representative_age)
-                    for name, func in solve_funcs.items()
-                },
-            )
+            ancestry_funcs = {
+                name: resolve_node(node=func, age=representative_age)
+                for name, func in solve_funcs.items()
+            }
 
         for constraint_name in user_regime.decomposed_constraints:
             ancestors = get_ancestors(

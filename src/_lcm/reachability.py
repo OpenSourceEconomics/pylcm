@@ -30,7 +30,7 @@ from typing import Literal
 
 from _lcm.typing import RegimeName
 from lcm.transition import StochasticTransition
-from lcm.typing import UserAge
+from lcm.typing import UserAge, UserFunction
 
 type PhaseName = Literal["solution", "simulation"]
 
@@ -160,8 +160,10 @@ class ModelReachability:
         return self.solution if phase == "solution" else self.simulation
 
 
-def candidate_targets_from_transition(
-    *, transition: object, all_regime_names: Collection[RegimeName]
+def candidate_targets_from_transition[Cell](
+    *,
+    transition: UserFunction | StochasticTransition | Mapping[RegimeName, Cell] | None,
+    all_regime_names: Collection[RegimeName],
 ) -> tuple[RegimeName, ...]:
     """Return the static candidate universe declared by one transition.
 

@@ -39,7 +39,9 @@ class _Invariant:
 INVARIANT: Final[Hashable] = _Invariant()
 
 
-def resolve_node(*, node: UserFunction | AgeSpecializedFunction, age: float) -> object:
+def resolve_node(
+    *, node: UserFunction | AgeSpecializedFunction, age: float
+) -> UserFunction:
     """Return the concrete function for `age`, or the node if age-invariant."""
     if isinstance(node, AgeSpecializedFunction):
         return node.build(age)
