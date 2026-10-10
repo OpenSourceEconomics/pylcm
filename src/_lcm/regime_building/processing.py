@@ -178,7 +178,7 @@ else:
     # Importing the private bound solver here would close the solution/processing
     # cycle. Static analysis sees the precise type above; runtime validation only
     # needs a decoratable broad alias.
-    _BoundNNBEGM = object
+    type _BoundNNBEGM = object
 
 from _lcm.constraints.dispositions import ConstraintContext, Evaluate, Reject
 from _lcm.constraints.materialize import as_constraint_function

@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import (
     TYPE_CHECKING,
-    TypeAlias,
 )
 
 import numpy as np
@@ -410,18 +409,12 @@ class LeafAuthority:
 
 
 if TYPE_CHECKING:
-    _CategoricalDomainsBoundary: TypeAlias = Mapping[  # noqa: UP040
-        str, CategoryDomain
-    ]
-    _ContainerRuntimeTypesBoundary: TypeAlias = Mapping[  # noqa: UP040
-        TreePath, type[object]
-    ]
-    _LeafAuthoritiesBoundary: TypeAlias = Mapping[  # noqa: UP040
-        TreePath, LeafAuthority
-    ]
+    type _CategoricalDomainsBoundary = Mapping[str, CategoryDomain]
+    type _ContainerRuntimeTypesBoundary = Mapping[TreePath, type[object]]
+    type _LeafAuthoritiesBoundary = Mapping[TreePath, LeafAuthority]
 else:
     # These public constructors own exact, single-traversal mapping validation.
     # Runtime annotation sampling must not observe a stateful mapping first.
-    _CategoricalDomainsBoundary = object
-    _ContainerRuntimeTypesBoundary = object
-    _LeafAuthoritiesBoundary = object
+    type _CategoricalDomainsBoundary = object  # noqa: PYI047
+    type _ContainerRuntimeTypesBoundary = object  # noqa: PYI047
+    type _LeafAuthoritiesBoundary = object  # noqa: PYI047

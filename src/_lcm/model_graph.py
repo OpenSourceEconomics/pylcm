@@ -140,7 +140,7 @@ class DroppedCells:
 
 
 # Keyed by `(source, period)`.
-CellsWithoutEdges = MappingProxyType[tuple[RegimeName, int], DroppedCells]
+type CellsWithoutEdges = MappingProxyType[tuple[RegimeName, int], DroppedCells]
 
 
 @dataclass(frozen=True, kw_only=True)

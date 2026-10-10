@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any
 
 import cloudpickle
 
@@ -51,18 +51,18 @@ if TYPE_CHECKING:
     from lcm.result import SimulationResult
 
     # Type-checker view: full precision.
-    _ModelOrNone = Model | None
-    _SimulationResultOrNone = SimulationResult | None
-    _SolutionResultBoundary: TypeAlias = SolutionResult  # noqa: UP040
+    type _ModelOrNone = Model | None
+    type _SimulationResultOrNone = SimulationResult | None
+    type _SolutionResultBoundary = SolutionResult
 else:
     # Runtime view used by beartype's annotation evaluator. `Model` and
     # `SimulationResult` cannot be imported here (circular), so collapse
     # to `Any`. The snapshot dataclasses are serialization carriers; the
     # API surface that needs strict checking is the snapshot writers,
     # which beartype polices via their own parameters.
-    _ModelOrNone = Any
-    _SimulationResultOrNone = Any
-    _SolutionResultBoundary = object
+    type _ModelOrNone = Any
+    type _SimulationResultOrNone = Any
+    type _SolutionResultBoundary = object
 
 
 def _bind_forward_refs(

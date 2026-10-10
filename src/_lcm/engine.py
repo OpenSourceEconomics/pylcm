@@ -14,7 +14,7 @@ import dataclasses
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from math import prod as math_prod
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax
 from jax import Array
@@ -80,7 +80,7 @@ if TYPE_CHECKING:
     # reachable only under `TYPE_CHECKING`. ty reads the precise element type;
     # the beartype claw checks only the outer `Mapping` container at runtime
     # (see the runtime alias below).
-    PeriodKernelsMapping: TypeAlias = Mapping[int, PeriodKernel]  # noqa: UP040
+    type PeriodKernelsMapping = Mapping[int, PeriodKernel]
 else:
     PeriodKernelsMapping = Mapping
 

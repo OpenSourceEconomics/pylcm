@@ -12,7 +12,7 @@ from collections import OrderedDict
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, TypeAlias, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -326,13 +326,13 @@ from lcm.typing import (
 )
 
 if TYPE_CHECKING:
-    _SolutionResultBoundary: TypeAlias = SolutionResult  # noqa: UP040
-    _ArtifactStoreBoundary: TypeAlias = ArtifactStore  # noqa: UP040
+    type _SolutionResultBoundary = SolutionResult
+    type _ArtifactStoreBoundary = ArtifactStore
 else:
     # Caller-visible result containers are validated and snapshotted explicitly;
     # runtime annotation traversal must not inspect hostile or lazy contents first.
-    _SolutionResultBoundary = object
-    _ArtifactStoreBoundary = object
+    type _SolutionResultBoundary = object
+    type _ArtifactStoreBoundary = object
 
 
 def _same_exactly_typed(*, actual: object, expected: object) -> bool:

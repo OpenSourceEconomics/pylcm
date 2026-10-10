@@ -278,7 +278,7 @@ class _GatherCheck:
 
 
 # Fusion verdicts by runtime-executable identity, each held with its executable.
-GatherChecks = dict[int, tuple[object, _GatherCheck]]
+type GatherChecks = dict[int, tuple[object, _GatherCheck]]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
