@@ -412,11 +412,10 @@ def test_legacy_age_model_state_restores_an_explicit_clock(
     if declaration:
         starts = lcm.InitialNodes(by_age={0: "work"})
         object.__delattr__(starts, "by_period")
-        state["initial_nodes"] = starts
+        state["initial_nodes"] = starts  # ty: ignore[invalid-key]
     else:
-        state["initial_nodes"] = model.graph.initial_nodes
+        state["initial_nodes"] = model.graph.initial_nodes  # ty: ignore[invalid-key]
     del state["_time"]
-    del state["_resolved_initial_nodes"]
     restored = lcm.Model.__new__(lcm.Model)
     restored.__setstate__(state)
     assert restored._model_structure_fingerprint == model._model_structure_fingerprint

@@ -39,6 +39,7 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     InitialConditions,
+    PytreeByPeriod,
     PytreeValue,
     RegimeName,
     SimulationPolicy,
@@ -120,7 +121,7 @@ class SimulationEntryAllocations:
             )
         )
 
-    def solve_input_roots(self) -> tuple[PytreeValue | _ResolvedInputs, ...]:
+    def solve_input_roots(self) -> tuple[tuple[PytreeByPeriod, ...], ...]:
         """Keep original and normalized inputs charged during an automatic solve.
 
         These are actual array owners, not a byte total: the solve inventory must

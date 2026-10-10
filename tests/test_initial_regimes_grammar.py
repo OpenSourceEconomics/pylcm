@@ -253,7 +253,7 @@ def test_explicit_initial_nodes_normalizes_legacy_pickle_state() -> None:
     """Restoring a model with stored pairs publishes the explicit declaration."""
     model = _model(initial_nodes={25: "working"})
     state = model.__getstate__()
-    state["initial_nodes"] = model.graph.initial_nodes
+    state["initial_nodes"] = model.graph.initial_nodes  # ty: ignore[invalid-key]
     restored = object.__new__(Model)
     restored.__setstate__(state)
     assert restored.initial_nodes == lcm.InitialNodes(by_age={25: "working"})
