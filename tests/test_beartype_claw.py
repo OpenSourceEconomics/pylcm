@@ -19,6 +19,8 @@ the project exception, not as `BeartypeCallHintViolation`.
 
 import ast
 import importlib
+import subprocess
+import sys
 from pathlib import Path
 from types import MappingProxyType
 
@@ -47,6 +49,33 @@ from lcm.exceptions import (
 )
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
+
+_LIST_UNDECORATED_FUNCTIONS = """
+import warnings
+
+warnings.simplefilter("always")
+with warnings.catch_warnings(record=True) as caught:
+    import lcm
+for warning in caught:
+    if type(warning.message).__name__ == "BeartypeClawDecorWarning":
+        print(str(warning.message).split(" in file ")[0])
+"""
+
+
+def test_claw_decorates_every_function_lcm_imports() -> None:
+    """A fresh `import lcm` leaves no function undecorated by the claw.
+
+    beartype warns instead of failing when it cannot build a check for a
+    function, and the function then runs unchecked; the import must emit no
+    such warning.
+    """
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _LIST_UNDECORATED_FUNCTIONS],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout == ""
 
 
 def test_claw_checks_lcm_simulation() -> None:

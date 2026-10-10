@@ -48,12 +48,12 @@ if TYPE_CHECKING:
 else:
     # The block-major retention imports the solve engine, which imports this
     # module; the runtime check of this private bridge accepts any owner.
-    type RetainedComponentValues = Any
+    type RetainedComponentValues = object
     # The beartype import claw resolves annotations at runtime. Importing the
     # concrete type here would close the artifacts -> authority -> artifacts cycle;
     # static checking keeps the precise type above while runtime checks the rest of
     # this private bridge's fully concrete signature.
-    type SolutionAuthority = Any
+    type SolutionAuthority = object
 
 
 @dataclass(frozen=True, kw_only=True)
