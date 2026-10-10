@@ -1530,7 +1530,7 @@ def _accumulate_ez_partials_block(
 
 def euler_draw_nodes(
     *, read: _ChildRead, combo_pool: EconFunctionKwargs
-) -> dict[TransitionFunctionName, FloatND | IntND]:
+) -> MappingProxyType[TransitionFunctionName, FloatND | IntND]:
     """Node values of each draw the child's Euler-state law reads.
 
     A draw of a stochastic state the child carries takes that state's nodes; a
@@ -1553,12 +1553,14 @@ def euler_draw_nodes(
                 read.local_draw_names, read.local_support_keys, strict=True
             )
         }
-    return {name: nodes[name] for name in sorted(read.euler_draw_names)}
+    return MappingProxyType(
+        {name: nodes[name] for name in sorted(read.euler_draw_names)}
+    )
 
 
 def child_resources_params(
     *, read: _ChildRead, combo_pool: EconFunctionKwargs
-) -> dict[ReferenceName, EconFunctionArg]:
+) -> MappingProxyType[ReferenceName, EconFunctionArg]:
     """The params, `age` and `period` the child's resources function reads.
 
     Params are the combo pool's. The child is next period's regime, and its carry
@@ -1573,10 +1575,12 @@ def child_resources_params(
         if child_period is not None
         else {}
     )
-    return {
-        name: child_time[name] if name in child_time else combo_pool[name]
-        for name in read.resources_param_names
-    }
+    return MappingProxyType(
+        {
+            name: child_time[name] if name in child_time else combo_pool[name]
+            for name in read.resources_param_names
+        }
+    )
 
 
 def _local_support_values(support: FloatND | IntND) -> FloatND | IntND:
@@ -1794,7 +1798,7 @@ def _aggregate_child_choices(
             fp=marginal_rows,
             x_query=queries_flat,
         )
-    # The passive blend interpolates a list of finite marginal-like payloads.
+    # The passive blend interpolates a tuple of finite marginal-like payloads.
     # The regular path carries the single marginal read; the stacked NEGM path
     # carries side-separated payloads plus a right-liveness indicator, so the
     # ownership side is chosen after the blend rather than committed per node.
@@ -1823,7 +1827,7 @@ def _aggregate_child_choices(
             jnp.isneginf(value_at_child), 0.0, marginal_at_child * gradients_flat
         )
         value_at_child = value_at_child.reshape(block_shape)
-        marginal_arrays = [marginal_at_child.reshape(block_shape)]
+        marginal_arrays = (marginal_at_child.reshape(block_shape),)
 
     value_at_child, marginal_at_child = _blend_passive_axes(
         value_at_child=value_at_child,
@@ -1850,7 +1854,7 @@ def _aggregate_child_choices(
 def _blend_passive_axes(
     *,
     value_at_child: FloatND,
-    marginal_arrays: list[FloatND],
+    marginal_arrays: tuple[FloatND, ...],
     child_passive_values: tuple[ScalarFloat, ...],
     child_passive_grids: tuple[Float1D, ...],
     n_outer_candidates: int,
@@ -1867,9 +1871,9 @@ def _blend_passive_axes(
     Args:
         value_at_child: Read values with the row block's shape (passive dims,
             then action dims).
-        marginal_arrays: List of marginal-like payloads with the same shape —
+        marginal_arrays: Tuple of marginal-like payloads with the same shape —
             the single marginal read on the regular path, the
-            `[right_side, left_side, right_alive]` triple on the stacked path.
+            `(right_side, left_side, right_alive)` triple on the stacked path.
         child_passive_values: The child's passive values at this savings node,
             aligned with `child_passive_grids`.
         child_passive_grids: The child's passive grids in carry-axis order.
@@ -1901,7 +1905,7 @@ def _blend_passive_axes(
             value=value_at_child[upper],
             subnormal_is_accounted_for=True,
         )
-        marginal_arrays = [
+        marginal_arrays = tuple(
             zero_safe_weighted_term(
                 weight=weight_lower,
                 value=arr[lower],
@@ -1913,7 +1917,7 @@ def _blend_passive_axes(
                 subnormal_is_accounted_for=True,
             )
             for arr in marginal_arrays
-        ]
+        )
 
     marginal_at_child = _choose_blended_side(
         marginal_arrays=marginal_arrays, n_outer_candidates=n_outer_candidates
@@ -1969,7 +1973,7 @@ def _stacked_blend_payloads(
     gradients_flat: FloatND,
     block_shape: tuple[int, ...],
     paired_marginal_read: bool,
-) -> tuple[FloatND, list[FloatND]]:
+) -> tuple[FloatND, tuple[FloatND, ...]]:
     """Collapse a stacked candidate axis into passive-blend payloads.
 
     Masks each candidate to `-inf` below its own first finite coh node (so the
@@ -1991,7 +1995,7 @@ def _stacked_blend_payloads(
 
     Returns:
         Tuple of the reshaped value maximum and the finite marginal-like
-        payloads `[right_side, left_side, right_alive]` for the passive blend.
+        payloads `(right_side, left_side, right_alive)` for the passive blend.
 
     """
     right_germ_at_child, left_germ_at_child, left_marginal_at_child = jax.vmap(
@@ -2062,7 +2066,7 @@ def _stacked_blend_payloads(
         right_germ_at_child=_reshaped_germ(germ=right_germ_at_child, shape=block_shape),
         left_germ_at_child=_reshaped_germ(germ=left_germ_at_child, shape=block_shape),
     )
-    return value_at_child, [right_side, left_side, right_alive]
+    return value_at_child, (right_side, left_side, right_alive)
 
 
 def _reshaped_germ(
@@ -2079,7 +2083,7 @@ def _reshaped_germ(
 
 
 def _choose_blended_side(
-    *, marginal_arrays: list[FloatND], n_outer_candidates: int
+    *, marginal_arrays: tuple[FloatND, ...], n_outer_candidates: int
 ) -> FloatND:
     """Pick the published marginal from the blended payloads.
 

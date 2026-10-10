@@ -38,6 +38,8 @@ from lcm_examples.mahler_yum_2024 import (
     RETIREMENT_REGIME,
     START_PARAMS,
     WORKING_REGIME,
+    Education,
+    _category_names,
     ages,
     create_inputs,
     retirement_period,
@@ -462,3 +464,8 @@ def test_wealth_non_negative(simulation_result):
 def test_consumption_positive(simulation_result):
     """Consumption must be positive."""
     assert (simulation_result["consumption"] > 0).all()
+
+
+def test_category_names_are_a_tuple_in_declaration_order() -> None:
+    """A categorical class's names come back as a tuple in declaration order."""
+    assert _category_names(Education) == ("low", "high")
