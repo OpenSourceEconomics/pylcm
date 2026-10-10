@@ -23,6 +23,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_artifact_template_declaration,
     snapshot_solution_metadata,
 )
+from _lcm.typing import ArtifactPayload
 from lcm import ExecutionConfig, LinSpacedGrid, Model
 from lcm.exceptions import (
     IncompatibleSolutionError,
@@ -533,8 +534,8 @@ class _ReentrantTree:
 
 def _custom_tree_authority(
     *,
-    template: object,
-    runtime_type: type[object],
+    template: ArtifactPayload,
+    runtime_type: type[ArtifactPayload],
     leaf_count: int,
 ) -> ArtifactAuthority:
     """Declare one scalar-leaf custom tree for plan-contract regressions."""
@@ -590,7 +591,9 @@ def _counting_tree_authority(*, value: float = 0.0) -> ArtifactAuthority:
     )
 
 
-def _tuple_tree_authority(*, template: tuple[object, ...]) -> ArtifactAuthority:
+def _tuple_tree_authority(
+    *, template: tuple[ArtifactPayload, ...]
+) -> ArtifactAuthority:
     """Declare a tuple with one scalar leaf and optional zero-leaf children."""
     leaf_path = ("sequence:0",)
     leaf = LeafAuthority(
@@ -764,7 +767,7 @@ def test_descriptor_and_authority_mappings_are_each_captured_once() -> None:
         payload_runtime_type=_CountingTree,
         template=_CountingTree(jnp.asarray(1.0, dtype=jnp.float32)),
         container_runtime_types=cast(
-            "Mapping[tuple[str, ...], type[object]]",
+            "Mapping[tuple[str, ...], type[ArtifactPayload]]",
             MappingProxyType(containers),
         ),
         leaves=cast(
@@ -1026,7 +1029,7 @@ def test_safe_nested_zero_leaf_nodes_roundtrip_without_public_container_entries(
 )
 def test_mutable_zero_leaf_nodes_are_rejected_at_unique_structural_paths(
     *,
-    zero_node: object,
+    zero_node: ArtifactPayload,
     path_pattern: str,
     type_name: str,
 ) -> None:
@@ -1363,8 +1366,10 @@ def test_forged_dataclass_markers_cannot_hide_mutable_instance_state() -> None:
 
     with pytest.raises(TypeError, match="hidden instance dictionary state"):
         _custom_tree_authority(
-            template=_FakeMarkerTree(jnp.asarray(1.0, dtype=jnp.float32)),
-            runtime_type=_FakeMarkerTree,
+            template=cast(
+                "ArtifactPayload", _FakeMarkerTree(jnp.asarray(1.0, dtype=jnp.float32))
+            ),
+            runtime_type=cast("type[ArtifactPayload]", _FakeMarkerTree),
             leaf_count=1,
         )
 

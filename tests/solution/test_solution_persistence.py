@@ -20,6 +20,7 @@ from _lcm.persistence import solution as solution_persistence
 from _lcm.solution.result_snapshot import (
     snapshot_artifact_template_declaration,
 )
+from _lcm.typing import ArtifactPayload
 from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
 from lcm.persistence import load_solution, save_solution
 from lcm.solver_api import (
@@ -874,7 +875,7 @@ def test_safe_zero_leaf_nodes_survive_lazy_persistence_roundtrip(
 
 @pytest.mark.parametrize("zero_node", [[], {}], ids=["list", "dict"])
 def test_public_raw_materialize_rejects_mutable_zero_leaf_templates(
-    *, tmp_path: Path, zero_node: object
+    *, tmp_path: Path, zero_node: ArtifactPayload
 ) -> None:
     """The public compatibility route validates hidden zero-node containers."""
     solution, ref = _make_stateful_pytree_solution()
