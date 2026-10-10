@@ -254,12 +254,15 @@ type ArgumentTree = (
 )
 
 if TYPE_CHECKING:
+    from lcm.solver_api import ArtifactKey
+
     # ty keeps mapping keys invariant, so `Mapping[Hashable, ...]` admits no mapping
     # with narrower keys; the key types that reach a footprint are named for ty.
     type _FootprintValueForTy = (
         PytreeByPeriod
         | ArgumentTree
         | Mapping[tuple[str, str], FootprintTree]
+        | Mapping[tuple[str, ArtifactKey], FootprintTree]
         | Mapping[int, FootprintTree]
         | Mapping[str, FootprintTree]
     )
