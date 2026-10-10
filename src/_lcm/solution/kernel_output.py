@@ -80,13 +80,13 @@ class ConsumedKernelOutput:
     diagnostics: SolverDiagnostics | None
     """The solver's numerical self-report, when it measures anything."""
 
-    continuation_artifacts: Mapping[ArtifactKey, ArtifactPayload]
+    continuation_artifacts: MappingProxyType[ArtifactKey, ArtifactPayload]
     """Declared continuation payloads retained independently after rolling."""
 
-    replay_artifacts: Mapping[ArtifactKey, ArtifactPayload]
+    replay_artifacts: MappingProxyType[ArtifactKey, ArtifactPayload]
     """Every declared replay payload, including custom plugin artifacts."""
 
-    auxiliary_artifacts: Mapping[ArtifactKey, ArtifactPayload]
+    auxiliary_artifacts: MappingProxyType[ArtifactKey, ArtifactPayload]
     """Declared solver outputs retained only for inspection or persistence."""
 
 
@@ -252,7 +252,7 @@ def consume_kernel_output(
         generated_replay_authority=generated_replay_authority,
         dissolution=dissolution,
         diagnostics=diagnostics,
-        continuation_artifacts=published_continuations,
+        continuation_artifacts=MappingProxyType(published_continuations),
         replay_artifacts=published_replay,
         auxiliary_artifacts=declared_auxiliary,
     )
@@ -265,7 +265,7 @@ def _consume_declared_artifacts(
     authorities: Mapping[ArtifactKey, ArtifactAuthority],
     regime_name: RegimeName,
     period: int,
-) -> dict[ArtifactKey, ArtifactPayload]:
+) -> MappingProxyType[ArtifactKey, ArtifactPayload]:
     """Canonicalize extension artifacts once and return those exact snapshots."""
     canonical: dict[ArtifactKey, ArtifactPayload] = {}
     for key in tuple(artifacts):
@@ -287,12 +287,12 @@ def _consume_declared_artifacts(
         regime_name=regime_name,
         period=period,
     )
-    return canonical
+    return MappingProxyType(canonical)
 
 
 def _canonicalize_declared_artifact(
     *,
-    payload: object,
+    payload: ArtifactPayload,
     authority: ArtifactAuthority,
     channel: ArtifactChannel,
     key: ArtifactKey,

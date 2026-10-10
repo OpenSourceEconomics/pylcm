@@ -19,6 +19,7 @@ from _lcm.engine import StateActionSpace
 from _lcm.persistence import solution as solution_persistence
 from _lcm.solution import model_authority as model_authority_module
 from _lcm.solution.result_snapshot import (
+    capture_exact_mapping,
     snapshot_artifact_authorities,
     snapshot_artifact_store,
     snapshot_artifact_template_declaration,
@@ -26,6 +27,7 @@ from _lcm.solution.result_snapshot import (
 )
 from _lcm.typing import ArtifactPayload, JSONValue
 from lcm import ExecutionConfig, LinSpacedGrid, Model
+from lcm._solver_api import authority as authority_module
 from lcm.exceptions import (
     IncompatibleSolutionError,
     InvalidSimulationInputError,
@@ -1171,6 +1173,43 @@ def test_whole_payload_zero_leaf_nodes_have_intentional_boundary_semantics() -> 
         )
 
 
+def test_container_types_from_tree_returns_a_read_only_mapping() -> None:
+    """The container classes derived from a PyTree come back read-only."""
+    with_paths, tree = jax.tree_util.tree_flatten_with_path((jnp.zeros(2), jnp.ones(3)))
+    paths = tuple(
+        solver_api_module._normalize_jax_tree_path(path) for path, _leaf in with_paths
+    )
+
+    containers = solver_api_module._container_types_from_tree(
+        tree=tree, leaf_paths=paths
+    )
+
+    assert (type(containers), dict(containers)) == (MappingProxyType, {(): tuple})
+
+
+def test_template_snapshot_returns_read_only_container_types() -> None:
+    """Observing a template once yields its container classes read-only."""
+    _snapshot, containers = solver_api_module._snapshot_artifact_template_once(
+        template=(jnp.zeros(2),),
+        payload_runtime_type=tuple,
+    )
+
+    assert (type(containers), dict(containers)) == (MappingProxyType, {(): tuple})
+
+
+@dataclass(frozen=True, slots=True)
+class _SlottedRecord:
+    values: jax.Array
+
+
+def test_frozen_dataclass_layout_returns_read_only_slot_descriptors() -> None:
+    """A closed dataclass record's slot descriptors come back read-only."""
+    layout = authority_module._frozen_dataclass_layout(_SlottedRecord)
+    slot_descriptors = None if layout is None else layout[3]
+
+    assert type(slot_descriptors) is MappingProxyType
+
+
 def test_root_array_authority_owns_public_private_and_fresh_buffers() -> None:
     """Deleting one exposed root array cannot poison the private declaration."""
     authority = _array_authority(value=4.0)
@@ -1518,3 +1557,14 @@ def test_save_normalizes_mapping_failure_before_lazy_load(tmp_path: Path) -> Non
     assert backing.traversals == 1
     assert lazy.materialization_count == 0
     assert not destination.exists()
+
+
+def test_captured_mapping_copy_is_read_only() -> None:
+    """The owned copy of a captured mapping is itself read-only."""
+    copied = capture_exact_mapping(
+        MappingProxyType({"a": 1}),
+        label="example",
+        snapshot_key=str,
+        snapshot_value=int,
+    )
+    assert type(copied) is MappingProxyType

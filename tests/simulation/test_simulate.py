@@ -800,6 +800,13 @@ def test_collect_array_tree_leaf_sizes_orders_leaves_by_size_descending():
     assert [(leaf.shape, leaf.n_bytes) for leaf in leaves] == [((100,), 400), ((2,), 8)]
 
 
+def test_collect_array_tree_leaf_sizes_returns_a_tuple():
+    """The leaf records come back as an immutable sequence."""
+    tree = {"regime_A": {"big": jnp.zeros((2,), dtype=jnp.float32)}}
+
+    assert isinstance(_collect_array_tree_leaf_sizes(tree=tree), tuple)
+
+
 def test_collect_array_tree_leaf_sizes_records_path_dtype_and_size():
     """Each leaf carries the full dotted path, shape, dtype, and byte count.
 

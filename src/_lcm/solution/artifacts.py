@@ -79,7 +79,7 @@ class OwnedSolutionView:
     """The published replay policies consumed by a declared route."""
     dissolution_flags: PeriodToRegimeToDissolutionFlags
     """The retained per-period, per-collective-regime dissolution flags."""
-    replay_artifacts: Mapping[ArtifactRef, ArtifactPayload]
+    replay_artifacts: MappingProxyType[ArtifactRef, ArtifactPayload]
     """Every retained replay-channel payload, by reference, for plugin routes."""
     authority: SolutionAuthority
     """The solution authority bound to this solve."""

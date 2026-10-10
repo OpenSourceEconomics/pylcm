@@ -56,7 +56,11 @@ class _HostKernelKwargs(PeriodKernelContext):
     """Logger the adapter reports through."""
 
     period_solution: Mapping[RegimeName, HostArray]
-    """Persisted value arrays of the regimes already solved in this period."""
+    """Persisted value arrays of the regimes already solved in this period.
+
+    A plain dict, as the solve loop passes it, so the restored leaf paths match
+    the captured ones.
+    """
 
 
 class _ShardingRecord(TypedDict):

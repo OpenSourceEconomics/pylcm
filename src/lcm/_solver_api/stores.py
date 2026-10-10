@@ -67,8 +67,8 @@ else:
 
 def _traverse_public_mapping_items[K, V](
     *, mapping: Mapping[K, V], label: str
-) -> list[tuple[K, V]]:
-    """Consume one item traversal of a public mapping into an owned list of pairs.
+) -> tuple[tuple[K, V], ...]:
+    """Consume one item traversal of a public mapping into an owned tuple of pairs.
 
     A public mapping may be any `Mapping` implementation, so its key view, item
     view, and length can disagree or execute backing code. Store constructors read
@@ -79,7 +79,7 @@ def _traverse_public_mapping_items[K, V](
     if not isinstance(mapping, Mapping):
         raise TypeError(f"{label} must be a mapping.")
     try:
-        items = list(mapping.items())
+        items = tuple(mapping.items())
     except Exception as error:
         raise TypeError(f"{label} cannot be traversed as mapping items.") from error
     for item in items:
@@ -186,8 +186,10 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     load state never reads a numerical payload.
     """
 
-    _entries: Mapping[_ValueCoordinate, _LazyEntry] = field(repr=False)
-    _regimes_by_period: Mapping[int, tuple[RegimeName, ...]] = field(repr=False)
+    _entries: MappingProxyType[_ValueCoordinate, _LazyEntry] = field(repr=False)
+    _regimes_by_period: MappingProxyType[int, tuple[RegimeName, ...]] = field(
+        repr=False
+    )
 
     def __init__(self, _entries: _ValueEntriesInput = MappingProxyType({})) -> None:
         # `__post_init__` replaces the supplied mapping with its canonical form.
@@ -405,9 +407,10 @@ class ArtifactStore(Mapping[ArtifactRef, ArtifactPayload]):
     key.
     """
 
-    # ``__post_init__`` is the one admission boundary, so the runtime annotation
-    # check does not traverse the key view.
-    _entries: _ArtifactEntriesInput = field(default_factory=dict, repr=False)
+    # Callers pass any mapping. ``__post_init__`` is the one admission boundary and
+    # stores a read-only copy, so the runtime annotation check does not traverse the
+    # key view.
+    _entries: _ArtifactEntriesInput = field(default=MappingProxyType({}), repr=False)
 
     def __post_init__(self) -> None:
         # One item traversal; each raw address is an exact ``ArtifactRef`` and unique
@@ -444,7 +447,7 @@ class ArtifactStore(Mapping[ArtifactRef, ArtifactPayload]):
 
     def project(
         self, key: ArtifactKey
-    ) -> Mapping[int, Mapping[RegimeName, ArtifactPayload]]:
+    ) -> MappingProxyType[int, MappingProxyType[RegimeName, ArtifactPayload]]:
         """Project one artifact schema to an immutable nested period mapping."""
         key = _require_exact_artifact_key(key)
         projected: dict[int, dict[RegimeName, ArtifactPayload]] = {}

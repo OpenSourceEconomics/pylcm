@@ -591,3 +591,12 @@ def test_a_kernel_output_survives_a_dataclass_replace_of_its_value() -> None:
 
     assert replaced.continuations[EGM_CONTINUATION] is carry
     assert isinstance(replaced.continuations, Mapping)
+
+
+@pytest.mark.parametrize(
+    "field_name", ["continuation_artifacts", "replay_artifacts", "auxiliary_artifacts"]
+)
+def test_consumed_artifact_channels_are_read_only_mappings(field_name: str) -> None:
+    """Each artifact channel of a consumed kernel output is a read-only mapping."""
+    consumed = _consume(output=KernelOutput(value=jnp.zeros(2)), continuation_key=None)
+    assert type(getattr(consumed, field_name)) is MappingProxyType

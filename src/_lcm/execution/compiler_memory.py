@@ -2,12 +2,40 @@
 
 import dataclasses
 import functools
-from typing import Any
+from collections.abc import Callable
+from typing import Protocol, runtime_checkable
 
-# A compiler memory report, one of its per-device records, or one of their fields.
-# Backends differ: an attribute record, a string-keyed mapping, or one record per
-# device; every reader validates the fields it reads.
-type CompilerMemoryReport = object  # noqa: PAN001 - JAX types `Compiled.memory_analysis()` as `Any`
+from _lcm.typing import PytreeValue
+
+
+@runtime_checkable
+class CompilerMemoryReport(Protocol):
+    """The byte counters pylcm reads off `Compiled.memory_analysis()`.
+
+    JAX returns one attribute record with every counter as an integer on CPU and GPU,
+    for single-device and sharded executables alike.
+    """
+
+    peak_memory_in_bytes: int
+    argument_size_in_bytes: int
+    output_size_in_bytes: int
+    alias_size_in_bytes: int
+    temp_size_in_bytes: int
+    generated_code_size_in_bytes: int
+    host_argument_size_in_bytes: int
+    host_output_size_in_bytes: int
+    host_alias_size_in_bytes: int
+    host_temp_size_in_bytes: int
+    host_generated_code_size_in_bytes: int
+
+
+@runtime_checkable
+class MemoryAnalyzable(Protocol):
+    """Compiler result exposing JAX-style memory analysis."""
+
+    def memory_analysis(self) -> CompilerMemoryReport | None:
+        """Return compiler workspace statistics, or `None` when unsupported."""
+        ...
 
 
 @dataclasses.dataclass(frozen=True)
@@ -27,18 +55,27 @@ class CompilerMemoryBytes:
     host_temp_size_in_bytes: int | None
 
 
-def compiler_memory_bytes(*, compiled: Any) -> CompilerMemoryBytes | None:
+def compiler_memory_bytes(
+    *, compiled: MemoryAnalyzable | Callable[..., PytreeValue]
+) -> CompilerMemoryBytes | None:
     """Normalize a backend memory-analysis object to stable integer byte fields.
 
-    Memory reporting is an optional backend capability. Unsupported executables,
-    missing reports, and missing individual fields therefore return ``None`` at
-    the corresponding level rather than changing compilation or replay behavior.
+    Memory reporting is an optional backend capability, so each of these yields no
+    report rather than changing compilation or replay behavior:
+
+    - a core without `memory_analysis`;
+    - an analysis that raises or returns `None`;
+    - a report that is not a complete `CompilerMemoryReport`.
+
+    A counter the backend leaves unset yields `None`.
     """
+    if not isinstance(compiled, MemoryAnalyzable):
+        return None
     try:
         stats = compiled.memory_analysis()
     except Exception:  # noqa: BLE001 - analysis is optional across JAX backends
         return None
-    if stats is None:
+    if not isinstance(stats, CompilerMemoryReport):
         return None
 
     optional_bytes = functools.partial(_optional_bytes, stats=stats)
@@ -62,6 +99,6 @@ def compiler_memory_bytes(*, compiled: Any) -> CompilerMemoryBytes | None:
 
 
 def _optional_bytes(*, stats: CompilerMemoryReport, name: str) -> int | None:
-    """Read one optional byte count off a backend memory-analysis object."""
-    value = getattr(stats, name, None)
+    """Read one byte count off a backend memory report, `None` when unset."""
+    value = getattr(stats, name)
     return None if value is None else int(value)

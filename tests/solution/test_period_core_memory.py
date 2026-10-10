@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import cloudpickle
 import jax
@@ -145,3 +146,27 @@ def test_compiler_memory_bytes_normalizes_real_and_unsupported_backends() -> Non
 
     assert compiler_memory_bytes(compiled=UnsupportedExecutable(raises=False)) is None
     assert compiler_memory_bytes(compiled=UnsupportedExecutable(raises=True)) is None
+
+
+class _ReportingExecutable:
+    def __init__(self, *, report: object) -> None:
+        self.report = report
+
+    def memory_analysis(self) -> Any:
+        """Return the report as untyped as JAX's own `memory_analysis` does."""
+        return self.report
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        SimpleNamespace(peak_memory_in_bytes=1, temp_size_in_bytes=2),
+        {"peak_memory_in_bytes": 1},
+        [SimpleNamespace(peak_memory_in_bytes=1)],
+    ],
+    ids=("missing-counters", "string-keyed-record", "record-sequence"),
+)
+def test_compiler_memory_bytes_gives_no_report_for_a_non_record(report: object) -> None:
+    """Only a report exposing every counter pylcm reads yields byte counts."""
+    executable = _ReportingExecutable(report=report)
+    assert compiler_memory_bytes(compiled=executable) is None

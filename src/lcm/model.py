@@ -339,6 +339,7 @@ from lcm.typing import (
     FloatND,
     IntND,
     Phase,
+    UserAge,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
@@ -463,7 +464,7 @@ def _simulation_programs(
 
 def _built_in_policy_payload_defect(  # noqa: PLR0911
     *,
-    supplied: object,
+    supplied: ArtifactPayload,
     descriptor: ReplayCellDescriptor,
     period: int,
 ) -> str | None:
@@ -1118,7 +1119,9 @@ class Model:
         return self._edges
 
     @property
-    def declared_transitions(self) -> Mapping[Phase, Mapping[RegimeName, Transition]]:
+    def declared_transitions(
+        self,
+    ) -> MappingProxyType[Phase, MappingProxyType[RegimeName, Transition]]:
         """Each source declared as a `Transition`, by phase and source.
 
         - Edges declared for both phases give both phases the same `Transition`.
@@ -3115,9 +3118,11 @@ class Model:
         dissolution_flags: Mapping[int, Mapping[RegimeName, ArtifactPayload]],
     ) -> None:
         """Validate and require only flags consumed by model-declared gates."""
-        missing_dissolution_flags = self._find_malformed_dissolution_flags(
-            dissolution_flags=dissolution_flags,
-            authority=authority,
+        missing_dissolution_flags = list(
+            self._find_malformed_dissolution_flags(
+                dissolution_flags=dissolution_flags,
+                authority=authority,
+            )
         )
         for ref, descriptor in authority.replay.items():
             if ref.key != DISSOLUTION_FLAG or not descriptor.required:
@@ -3143,7 +3148,7 @@ class Model:
         *,
         dissolution_flags: Mapping[int, Mapping[RegimeName, ArtifactPayload]],
         authority: SolutionAuthority,
-    ) -> list[tuple[int, RegimeName, str]]:
+    ) -> tuple[tuple[int, RegimeName, str], ...]:
         """Return structural defects among materialized required flags."""
         malformed: list[tuple[int, RegimeName, str]] = []
         for period, regime_to_flag in dissolution_flags.items():
@@ -3165,7 +3170,7 @@ class Model:
                     or str(np.dtype(supplied_dtype)) != descriptor.dtype
                 ):
                     malformed.append((period, regime_name, "mismatched_payload"))
-        return malformed
+        return tuple(malformed)
 
     def _fail_if_simulation_is_unsupported(self) -> None:
         """Refuse model configurations whose solved decision cannot be replayed.
@@ -4372,7 +4377,7 @@ class Model:
             )
             if code in ids_to_names and admissible
         }
-        period_by_age: dict[object, int] = {
+        period_by_age: dict[UserAge, int] = {
             age: p for p, age in enumerate(self._time.exact_values)
         }
         permitted = {
@@ -4623,7 +4628,7 @@ def _validate_sharded_state_capability(
     *,
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
     laws: RegimeLaws,
-    model_states: Mapping[str, object],
+    model_states: Mapping[StateName, StateEntry],
     sharded_states: frozenset[StateName],
 ) -> StateName | None:
     """Keep discrete sharding and validate the bounded continuous GridSearch route.
@@ -4690,7 +4695,7 @@ _FIXED_NODE_GRID_TYPES = (
 )
 
 
-def _is_concrete_sharded_grid(grid: object) -> bool:
+def _is_concrete_sharded_grid(grid: StateEntry) -> bool:
     """Whether a continuous grid's nodes are fixed when the model is built.
 
     Every device reads the next-period values through the full grid, so the
