@@ -18,6 +18,7 @@ from typing import Protocol, TypedDict, runtime_checkable
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 
 from _lcm.execution.footprint import (
     ArtifactFootprint,
@@ -25,7 +26,12 @@ from _lcm.execution.footprint import (
     sharding_device_ids,
 )
 from _lcm.execution.runtime_sharding import runtime_shardings_match
-from _lcm.typing import HostArray, RegimeName, StateName
+from _lcm.typing import (
+    DataclassInstance,
+    HostArray,
+    RegimeName,
+    StateName,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 from lcm.typing import ValueND
@@ -178,7 +184,7 @@ class ValueViewDescriptor:
     """Name of every stored axis, in stored order."""
     stored_shape: tuple[int, ...]
     """Shape of the stored artifact."""
-    dtype: object
+    dtype: DTypeLike
     """Element type of both the stored artifact and the consumer leaf."""
     weak_type: bool
     """Weak typing of the consumer leaf."""
@@ -552,7 +558,7 @@ class ResolvedValueTransfer:
     stored_sharding: jax.sharding.Sharding
     source_sharding: jax.sharding.Sharding
     expected_shape: tuple[int, ...]
-    expected_dtype: object
+    expected_dtype: DTypeLike
     reused_by_several_consumers: bool = False
     """Whether several source cores of one period read this transfer's result."""
     view: ValueViewDescriptor | None = None
@@ -1007,7 +1013,7 @@ def _transferred_leaf(
     transfer: ResolvedValueTransfer,
     cache: TransferCache | None,
     on_materialized: MaterializedTransferObserver | None,
-) -> object:
+) -> jax.Array:
     """Apply one transfer to the selected leaf, sharing a copy where one is cached."""
     if cache is None or not transfer.reused_by_several_consumers:
         return apply_value_transfer(
@@ -1028,14 +1034,14 @@ def _transferred_leaf(
 
 def _replace_dataclass_field(
     *,
-    node: object,
+    node: DataclassInstance,
     segment: str | int,
     path: tuple[str | int, ...],
     transfer: ResolvedValueTransfer,
     traversed: tuple[str | int, ...],
     cache: TransferCache | None,
     on_materialized: MaterializedTransferObserver | None,
-) -> object:
+) -> DataclassInstance:
     """Rebuild one dataclass branch field by field around the replaced leaf.
 
     A solver's continuation payload is a frozen dataclass carrying arrays, so
@@ -1048,7 +1054,7 @@ def _replace_dataclass_field(
             f"{traversed!r}, got {segment!r}."
         )
         raise TypeError(msg)
-    declared = {item.name for item in fields(node)}  # ty: ignore[invalid-argument-type]
+    declared = {item.name for item in fields(node)}
     if segment not in declared:
         msg = (
             f"Value-transfer dataclass path {(*traversed, segment)!r} names "
@@ -1056,7 +1062,7 @@ def _replace_dataclass_field(
         )
         raise KeyError(msg)
     return replace(
-        node,  # ty: ignore[invalid-argument-type]
+        node,
         **{
             segment: _replace_transfer_leaf(
                 node=getattr(node, segment),
@@ -1173,7 +1179,7 @@ def _assert_value_metadata(
     *,
     value: object,
     expected_shape: tuple[int, ...],
-    expected_dtype: object,
+    expected_dtype: DTypeLike,
     expected_sharding: jax.sharding.Sharding,
     label: str,
 ) -> jax.Array:
@@ -1204,7 +1210,7 @@ def _assert_value_metadata(
     return value
 
 
-def _normalize_shape(*, shape: object) -> tuple[int, ...]:
+def _normalize_shape(*, shape: tuple[int, ...]) -> tuple[int, ...]:
     """Return an immutable absolute shape, rejecting symbolic dimensions."""
     if not isinstance(shape, tuple):
         msg = "A resolved transfer shape must be a tuple."
@@ -1217,28 +1223,28 @@ def _normalize_shape(*, shape: object) -> tuple[int, ...]:
     return shape
 
 
-def _require_period(*, period: object, label: str) -> None:
+def _require_period(*, period: int, label: str) -> None:
     """Validate an absolute solve-period coordinate."""
     if type(period) is not int or period < 0:
         msg = f"{label} must be a nonnegative Python int, got {period!r}."
         raise ValueError(msg)
 
 
-def _require_name(*, name: object, label: str) -> None:
+def _require_name(*, name: str | None, label: str) -> None:
     """Validate a nonempty logical name."""
     if not isinstance(name, str) or not name:
         msg = f"{label} must be a nonempty string, got {name!r}."
         raise ValueError(msg)
 
 
-def _require_enum(*, value: object, enum_type: type[StrEnum], label: str) -> None:
+def _require_enum(*, value: StrEnum, enum_type: type[StrEnum], label: str) -> None:
     """Reject untyped strings and future unsupported enum members."""
     if not isinstance(value, enum_type):
         msg = f"{label} must be a {enum_type.__name__}, got {value!r}."
         raise TypeError(msg)
 
 
-def _validate_path_segment(*, segment: object) -> None:
+def _validate_path_segment(*, segment: str | int) -> None:
     """Accept only immutable mapping keys and sequence indices."""
     if isinstance(segment, str):
         if segment:
@@ -1254,7 +1260,7 @@ def _validate_path_segment(*, segment: object) -> None:
     raise TypeError(msg)
 
 
-def _require_sharding(*, sharding: object, label: str) -> None:
+def _require_sharding(*, sharding: jax.sharding.Sharding, label: str) -> None:
     """Require a concrete JAX sharding at both transfer endpoints."""
     if not isinstance(sharding, jax.sharding.Sharding):
         msg = f"The {label} layout must be a concrete JAX sharding."

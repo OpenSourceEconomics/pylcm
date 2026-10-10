@@ -103,6 +103,7 @@ def _aligned_transfer_plan(
         leaf: object = program.arguments[access.source.channel.value]
         for segment in access.source.path:
             assert isinstance(leaf, Mapping)
+            assert isinstance(segment, str)
             leaf = leaf[segment]
         assert isinstance(leaf, jax.Array)
         result.append(
