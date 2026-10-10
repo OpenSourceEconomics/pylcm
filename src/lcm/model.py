@@ -253,6 +253,7 @@ from _lcm.typing import (
     PytreeValue,
     RegimeName,
     RegimeNamesToIds,
+    RegimeParamsTemplateNode,
     StateName,
 )
 from _lcm.user_regime_validation import (
@@ -261,7 +262,6 @@ from _lcm.user_regime_validation import (
 )
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
-    ensure_containers_are_mutable,
 )
 from _lcm.utils.error_messages import format_messages
 from _lcm.utils.logging import (
@@ -334,6 +334,7 @@ from lcm.transition import (
     Periods,
     PhaseEdges,
     Transition,
+    _period_by_age,
     snapshot_transition_containers,
 )
 from lcm.typing import (
@@ -341,12 +342,12 @@ from lcm.typing import (
     FloatND,
     IntND,
     Phase,
-    UserAge,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
     UserParams,
     ValueND,
+    _UserFacingTemplateNode,
 )
 
 if TYPE_CHECKING:
@@ -1422,11 +1423,17 @@ class Model:
         regime expects. The `edges` branch lists each edge parameter at its
         declaration path, the most specific level. Any single level may supply a
         slot instead: the declaration path, `params["edges"][source][arg]`, or
-        the model level.
+        the model level. Each call returns a fresh copy of plain dicts that the
+        caller may fill in.
 
         """
-        mutable = ensure_containers_are_mutable(self._params_template)
-        return cast("UserFacingParamsTemplate", _readable_template(mutable))
+        return {
+            regime_name: {
+                name: {arg: _readable_template(node) for arg, node in branch.items()}
+                for name, branch in regime_template.items()
+            }
+            for regime_name, regime_template in self._params_template.items()
+        }
 
     @beartype(conf=PARAMS_CONF)
     def _compile_period_cores(
@@ -4384,9 +4391,7 @@ class Model:
             )
             if code in ids_to_names and admissible
         }
-        period_by_age: dict[UserAge, int] = {
-            age: p for p, age in enumerate(self._time.exact_values)
-        }
+        period_by_age = _period_by_age(self._time)
         permitted = {
             (period_by_age[age], name) for age, name in self._resolved_initial_nodes
         }
@@ -4620,15 +4625,11 @@ def _missing_policy_message(
     )
 
 
-# A params-template node: a parameter's type string, or a mapping of nodes.
-type _TemplateNode = str | Mapping[str, _TemplateNode]
-
-
-def _readable_template(value: _TemplateNode) -> _TemplateNode:
-    """Replace every leaf of a params template by its name or string form."""
-    if isinstance(value, Mapping):
-        return {key: _readable_template(inner) for key, inner in value.items()}
-    return getattr(value, "__name__", str(value))
+def _readable_template(node: RegimeParamsTemplateNode) -> _UserFacingTemplateNode:
+    """Copy a params-template node into plain dicts, keeping its annotation leaves."""
+    if isinstance(node, str):
+        return node
+    return {key: _readable_template(inner) for key, inner in node.items()}
 
 
 def _validate_sharded_state_capability(

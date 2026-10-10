@@ -32,6 +32,7 @@ from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.typing import (
+    AgeLabel,
     FloatND,
     RegimeName,
     UserAge,
@@ -919,9 +920,7 @@ class ByAge:
             raise RegimeInitializationError(
                 "ByPeriod requires a period model; ByAge requires an age model."
             )
-        period_by_age: dict[object, int] = {
-            age: period for period, age in enumerate(ages.exact_values)
-        }
+        period_by_age = _period_by_age(ages)
         if self._until is not None:
             law_by_period = _resolve_until(
                 until=self._until, ages=ages, period_by_age=period_by_age
@@ -1139,8 +1138,18 @@ def _fail_if_invalid_age_selector(selector: _DeclaredSelector) -> None:
         )
 
 
+def _period_by_age(ages: TimeAxis) -> Mapping[AgeLabel, int]:
+    """Map each exact coordinate of `ages` to its computational period."""
+    return MappingProxyType(
+        {age: period for period, age in enumerate(ages.exact_values)}
+    )
+
+
 def _select_periods(
-    *, selector: object, ages: TimeAxis, period_by_age: Mapping[object, int]
+    *,
+    selector: _DeclaredSelector,
+    ages: TimeAxis,
+    period_by_age: Mapping[AgeLabel, int],
 ) -> tuple[int, ...]:
     """Return the periods an exact selector names; off-grid points raise."""
     if isinstance(selector, AgeRange | PeriodRange):
@@ -1150,10 +1159,13 @@ def _select_periods(
             if (selector.start is None or age >= selector.start)
             and (selector.exclusive_stop is None or age < selector.exclusive_stop)
         )
-    values = selector if isinstance(selector, tuple | range) else (selector,)
-    periods = set()
     if isinstance(selector, Periods):
         values = selector.values
+    elif isinstance(selector, tuple | range):
+        values = selector
+    else:
+        values = (selector,)
+    periods = set()
     for value in values:
         if value not in period_by_age:
             kind = coordinate_kind(ages)
@@ -1171,7 +1183,7 @@ def _resolve_until(
     *,
     until: _Until,
     ages: TimeAxis,
-    period_by_age: Mapping[object, int],
+    period_by_age: Mapping[AgeLabel, int],
 ) -> dict[int, AgeCaseLaw]:
     """Resolve `ByAge.until` into per-period laws."""
     boundary, start = until.stop_age_exclusive, until.start_age_inclusive
