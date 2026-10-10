@@ -312,7 +312,7 @@ class Regime:
     singleton regime.
     """
 
-    value_constraints: Mapping[FunctionName, UserFunction] = field(
+    value_constraints: MappingProxyType[FunctionName, UserFunction] = field(
         init=False, default_factory=lambda: MappingProxyType({})
     )
     """Value-aware feasibility predicates for a collective regime.
@@ -359,7 +359,7 @@ class Regime:
     predicates read `Q_<s>`, which a singleton regime does not carry.
     """
 
-    same_period_refs: Mapping[str, ProjectedRegimeValue] = field(
+    same_period_refs: MappingProxyType[str, ProjectedRegimeValue] = field(
         init=False, default_factory=lambda: MappingProxyType({})
     )
     """Same-period cross-regime reference values read by `value_constraints`.
@@ -437,7 +437,7 @@ class Regime:
     @property
     def decomposed_constraints(
         self,
-    ) -> Mapping[FunctionName, ConstraintLike | Phased | None]:
+    ) -> MappingProxyType[FunctionName, ConstraintLike | Phased | None]:
         """`constraints` with every `ValueDependentConstraint` taken apart.
 
         A value-dependent constraint's predicate belongs to
@@ -495,8 +495,10 @@ class Regime:
                         "One name is one reference; rename one of them."
                     )
                 same_period_refs[ref_name] = reference
-        object.__setattr__(self, "value_constraints", value_constraints)
-        object.__setattr__(self, "same_period_refs", same_period_refs)
+        object.__setattr__(
+            self, "value_constraints", MappingProxyType(value_constraints)
+        )
+        object.__setattr__(self, "same_period_refs", MappingProxyType(same_period_refs))
 
     def _fail_if_egm_solver_has_no_margin_declaration(self) -> None:
         if self._accepts_margin_solver:
@@ -769,7 +771,7 @@ def decompose_functions(
 
 def decompose_constraints(
     constraints: Mapping[FunctionName, ConstraintEntry],
-) -> Mapping[FunctionName, ConstraintLike | Phased | None]:
+) -> MappingProxyType[FunctionName, ConstraintLike | Phased | None]:
     """Drop the value-dependent declarations from a regime's constraints.
 
     Args:
