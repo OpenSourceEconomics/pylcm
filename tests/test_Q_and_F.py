@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -31,6 +31,7 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F_terminal,
 )
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.typing import FlatRegimeParams
 from lcm import (
     AgeGrid,
     ByAge,
@@ -121,7 +122,7 @@ def test_get_Q_and_F_function():
         consumption=consumption,
         labor_supply=labor_supply,
         wealth=wealth,
-        **flat_params["working_life"],
+        **cast("FlatRegimeParams", flat_params["working_life"]),
         next_regime_to_V_arr=MappingProxyType({}),
         period=3,
         age=ages.period_to_age(3),
@@ -337,11 +338,11 @@ def test_get_U_and_F_with_annotated_constraints():
     # Verify it works correctly
     U, F = U_and_F(consumption=5.0, wealth=10.0)
     assert jnp.isclose(U, jnp.log(6.0))
-    assert F.item() is True
+    assert bool(F) is True
 
     # Test infeasible case
     U, F = U_and_F(consumption=15.0, wealth=10.0)
-    assert F.item() is False
+    assert bool(F) is False
 
 
 def _health_probs(*, health: DiscreteState, probs_array: FloatND) -> FloatND:

@@ -124,8 +124,8 @@ def _case(*, shared: bool) -> _Case:
     program = ResolvedCoreProgram(
         name="main",
         function=_shape_only,
-        arguments=arguments,
-        static_kwargs={},
+        arguments=MappingProxyType(dict(arguments)),
+        static_kwargs=MappingProxyType({}),
         requirements=CoreExecutionRequirements(
             value_reads=tuple(
                 ValueRead(target=address, source=transfer.source)
@@ -135,7 +135,7 @@ def _case(*, shared: bool) -> _Case:
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         specialization_key=(),
         input_transfer_plan=transfers,
     )
@@ -221,7 +221,7 @@ def _core(*, case: _Case, owner: PendingSolveWork, shared: bool) -> PlannedCore:
     return PlannedCore(
         compiled=case.executable,
         name="main",
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         layout=resolve_output_layout(
             core_key="main",
             value_template=case.source,
@@ -292,7 +292,9 @@ def test_pruned_full_replicas_and_scratch_have_an_exact_admission_threshold(
     assert admitted.compiled is case.executable
     # Negative control: the SAME just-below ceiling wrongly admits when only
     # operator scratch is omitted. No rejected/mutated candidate is dispatched.
-    omitted = dataclasses.replace(case.inventory, transfer_scratch_bytes={})
+    omitted = dataclasses.replace(
+        case.inventory, transfer_scratch_bytes=MappingProxyType({})
+    )
     assert plan(budget=ceiling - 1, inventory=omitted).compiled is case.executable
     assert copies == []
     assert dispatches == []

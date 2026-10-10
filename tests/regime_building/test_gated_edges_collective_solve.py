@@ -1025,20 +1025,24 @@ def _edge_with_refs(*, fallback_regime: str, gate_ref_regime: str) -> GatedEdge:
     """
     return GatedEdge(
         gate=_always_open_gate,
-        legs={
-            "f": StakeholderRoute(
-                fallback=ProjectedRegimeValue(
-                    regime=fallback_regime,
+        legs=MappingProxyType(
+            {
+                "f": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime=fallback_regime,
+                        projection={"wage": _identity_wage},
+                    )
+                )
+            }
+        ),
+        gate_refs=MappingProxyType(
+            {
+                "g": ProjectedRegimeValue(
+                    regime=gate_ref_regime,
                     projection={"wage": _identity_wage},
                 )
-            )
-        },
-        gate_refs={
-            "g": ProjectedRegimeValue(
-                regime=gate_ref_regime,
-                projection={"wage": _identity_wage},
-            )
-        },
+            }
+        ),
     )
 
 
@@ -1133,3 +1137,16 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
         regimes_to_active_periods=regimes_to_active_periods,
         gated_periods=(0, 1),
     )
+
+
+@pytest.mark.parametrize("field_name", ["legs", "gate_refs"])
+def test_gated_edge_refuses_a_plain_dict_for_its_mappings(field_name: str) -> None:
+    """A gated edge holds read-only mappings; a plain dict is refused."""
+    edge = _edge_with_refs(fallback_regime="single", gate_ref_regime="single")
+    arguments = {
+        "legs": edge.legs,
+        "gate_refs": edge.gate_refs,
+        field_name: dict(getattr(edge, field_name)),
+    }
+    with pytest.raises(RegimeInitializationError, match=field_name):
+        GatedEdge(gate=_always_open_gate, **arguments)  # ty: ignore[invalid-argument-type]

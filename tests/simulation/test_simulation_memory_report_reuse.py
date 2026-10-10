@@ -11,6 +11,7 @@ operations (see `host_operations._operation_memory`).
 from collections import Counter
 from collections.abc import Generator
 from contextlib import contextmanager
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -166,7 +167,9 @@ def test_changed_shape_produces_a_fresh_report(
 def test_malformed_memory_lookup_fails_loud() -> None:
     """A `None` cached record (uncompiled candidate) raises rather than reusing 0."""
     program = runtime.CompiledSimulationProgram(
-        executable=lambda **kwargs: kwargs, static_kwargs={}, memory=None
+        executable=lambda **kwargs: kwargs,
+        static_kwargs=MappingProxyType({}),
+        memory=None,
     )
     with pytest.raises(ExecutionPlanningError, match="compiled executable"):
         runtime._simulation_memory(program)
@@ -178,7 +181,9 @@ def test_cached_memory_is_returned_without_recomputation(
     """`_simulation_memory` reads the retained record; it never recomputes it."""
     memory = synthetic_memory(2**20)
     program = runtime.CompiledSimulationProgram(
-        executable=lambda **kwargs: kwargs, static_kwargs={}, memory=memory
+        executable=lambda **kwargs: kwargs,
+        static_kwargs=MappingProxyType({}),
+        memory=memory,
     )
 
     def forbidden(**_kwargs: Any) -> Any:

@@ -17,11 +17,12 @@ import functools
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
 from dags import concatenate_functions
+from jax.typing import DTypeLike
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import (
@@ -71,11 +72,16 @@ from _lcm.regime_law import RegimeLaws
 from _lcm.transition_plans import LotteryLifetime, TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
+    EconFunctionArg,
+    EconFunctionKwargs,
     EconFunctionsMapping,
     FunctionName,
+    NextStateSolutionFunction,
+    QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
+    TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
@@ -87,6 +93,7 @@ from lcm.typing import (
     Float1D,
     FloatND,
     IntND,
+    ReferenceName,
     ScalarBool,
     ScalarFloat,
     ScalarInt,
@@ -95,6 +102,10 @@ from lcm.typing import (
 # Stable Epstein-Zin partials `(nu, W, b, T~)` returned by a child reader
 # when a power certainty equivalent is active.
 type _EZPartials = tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+
+# A child carry read at one savings node: the linear `(value, marginal)` pair, or
+# the Epstein-Zin partials.
+type _ChildCarryRead = tuple[ScalarFloat, ScalarFloat] | _EZPartials
 
 
 def _is_runtime_process(grid: Grid) -> bool:
@@ -146,7 +157,7 @@ class _ChildRead:
     kernel's per-savings-node read is pure array work.
     """
 
-    next_state_func: Callable[..., Any]
+    next_state_func: NextStateSolutionFunction
     """The target's next-state function (post-decision function removed).
 
     Computes every law that reads no draw. A law reading a draw has one value
@@ -156,7 +167,7 @@ class _ChildRead:
     next_state_key: TransitionFunctionName
     """`next_<state>` key of the child's continuous (Euler) state."""
 
-    euler_state_func: Callable[..., Any]
+    euler_state_func: NextStateSolutionFunction
     """The child's Euler-state law alone, with the draws it reads as inputs."""
 
     euler_draw_names: frozenset[TransitionFunctionName] = frozenset()
@@ -179,10 +190,10 @@ class _ChildRead:
     resources_func: Callable[..., ScalarFloat]
     """The child's concatenated resources function (kwargs-based)."""
 
-    resources_arg_names: frozenset[str]
+    resources_arg_names: frozenset[ReferenceName]
     """Leaf argument names of the child's resources function."""
 
-    resources_param_names: frozenset[str]
+    resources_param_names: frozenset[QualifiedName]
     """Qualified param leaves of the child's resources function.
 
     Bound per node from the combo pool (the regime's flat params, plus `age`
@@ -243,7 +254,7 @@ class _ChildRead:
     weight_keys: tuple[str, ...]
     """`weight_<target>__next_<state>` keys aligned with the stochastic dims."""
 
-    weights_func: Callable[..., Any] | None
+    weights_func: Callable[..., Mapping[str, FloatND]] | None
     """Concatenated intrinsic-weights function, or `None` without stochastic dims."""
 
     passive_state_names: tuple[StateName, ...]
@@ -284,7 +295,7 @@ class _ChildRead:
     no carry row, it only feeds the laws reading it.
     """
 
-    local_support_func: Callable[..., Any] | None = None
+    local_support_func: Callable[..., Mapping[str, FloatND | IntND]] | None = None
     """Concatenated support providers of the local draws, or `None` without."""
 
     local_support_keys: tuple[str, ...] = ()
@@ -321,7 +332,7 @@ class ContinuationPlan:
     scalar_targets: tuple[RegimeName, ...]
     """Stateless targets contributing a constant continuation value."""
 
-    child_reads: Mapping[RegimeName, _ChildRead]
+    child_reads: MappingProxyType[RegimeName, _ChildRead]
     """Per-carry-target statics of the child carry read."""
 
     compute_regime_transition_probs: RegimeTransitionFunction
@@ -330,7 +341,7 @@ class ContinuationPlan:
     post_decision_name: FunctionName
     """Name of the post-decision function (the savings node's input slot)."""
 
-    risk_aversion_param_name: str | None = None
+    risk_aversion_param_name: QualifiedName | None = None
     """Flat-param name of the certainty equivalent's risk-aversion coefficient.
 
     `None` for the linear (expected-utility) continuation. When set, the child
@@ -343,9 +354,9 @@ class ContinuationPlan:
 def bind_continuation(
     *,
     plan: ContinuationPlan,
-    combo_pool: dict[str, Any],
+    combo_pool: EconFunctionKwargs,
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-    dtype: Any,  # noqa: ANN401
+    dtype: DTypeLike,
     stochastic_node_width: int | None = None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
     co_map_state_names: tuple[StateName, ...] = (),
@@ -401,7 +412,7 @@ def bind_continuation(
     # coefficient is a flat param resolved from the pool here (runtime), keyed by
     # the plan's build-time name. `None` keeps the linear expected-utility read.
     risk_aversion = (
-        combo_pool[plan.risk_aversion_param_name]
+        cast("FloatND", combo_pool[plan.risk_aversion_param_name])
         if plan.risk_aversion_param_name is not None
         else None
     )
@@ -458,13 +469,13 @@ class _BoundContinuation:
     risk_aversion: FloatND | None
     """The Epstein-Zin risk-aversion coefficient; `None` for the linear read."""
 
-    child_readers: Mapping[RegimeName, Callable[[ScalarFloat], object]]
+    child_readers: Mapping[RegimeName, Callable[[ScalarFloat], _ChildCarryRead]]
     """Per stateful target, the carry read at a savings node."""
 
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
     """The next period's EGM carries (scalar targets read their constant)."""
 
-    dtype: Any
+    dtype: DTypeLike
     """The canonical float dtype of the blended results."""
 
     def __call__(
@@ -596,7 +607,7 @@ def build_continuation_plan(
     post_decision_name: FunctionName,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     age_values: FloatND | IntND,
-    risk_aversion_param_name: str | None = None,
+    risk_aversion_param_name: QualifiedName | None = None,
 ) -> ContinuationPlan:
     """Assemble a `ContinuationPlan` from the regime's continuation statics.
 
@@ -687,7 +698,7 @@ def _get_child_carry_reader(
     *,
     read: _ChildRead,
     carry: EGMCarry,
-    combo_pool: dict[str, Any],
+    combo_pool: EconFunctionKwargs,
     post_decision_name: FunctionName,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
@@ -788,7 +799,7 @@ class _ChildCarryReader:
     carry: EGMCarry
     """The target's carry rows for the period."""
 
-    combo_pool: dict[str, Any]
+    combo_pool: EconFunctionKwargs
     """The combo's pool: flat params, `period`, `age`, and the combo's values."""
 
     post_decision_name: FunctionName
@@ -827,15 +838,14 @@ class _ChildCarryReader:
         combo_pool = self.combo_pool
         risk_aversion = self.risk_aversion
         # The solution-phase next-state function returns a flat mapping of
-        # `next_<state>` names to scalars; the shared protocol's nested
-        # return type is the simulation form. Everything but the child's
-        # Euler state is savings-independent (validated), so these values
-        # ride as constants through the composed gradients below.
+        # `next_<state>` names to scalars. Everything but the child's Euler
+        # state is savings-independent (validated), so these values ride as
+        # constants through the composed gradients below.
         next_states = read.next_state_func(
             **combo_pool, **{self.post_decision_name: savings_value}
         )
         deterministic_index = tuple(
-            cast("ScalarInt", next_states[f"next_{name}"])
+            next_states[f"next_{name}"]
             for name, is_stochastic in zip(
                 read.discrete_state_names, read.stochastic_flags, strict=True
             )
@@ -931,10 +941,10 @@ class _ChildCarryReader:
 class _ChildEulerState:
     """The child's Euler state as a function of the savings node, combo bound."""
 
-    next_state_func: Callable[..., Any]
+    next_state_func: NextStateSolutionFunction
     """The solution-phase next-state DAG of the target."""
 
-    combo_pool: dict[str, Any]
+    combo_pool: EconFunctionKwargs
     """The combo's pool, bound into every argument but the savings node."""
 
     post_decision_name: FunctionName
@@ -950,7 +960,7 @@ class _ChildEulerState:
         inner = self.next_state_func(
             **self.combo_pool, **self.draws, **{self.post_decision_name: savings}
         )
-        return cast("ScalarFloat", inner[self.next_state_key])
+        return inner[self.next_state_key]
 
     def at_node(
         self, *, draws: Mapping[str, ScalarFloat | ScalarInt]
@@ -969,10 +979,10 @@ class _RowQueriesAndGradients:
     child_euler_state: Callable[[ScalarFloat], ScalarFloat]
     """The child's Euler state as a function of the savings node."""
 
-    deterministic_resources_kwargs: dict[str, Any]
+    deterministic_resources_kwargs: EconFunctionKwargs
     """Deterministic next-state values the resources function reads."""
 
-    resources_param_kwargs: dict[str, Any]
+    resources_param_kwargs: EconFunctionKwargs
     """Flat params and `age`/`period` the resources function reads."""
 
     savings_value: ScalarFloat
@@ -996,8 +1006,8 @@ def _compute_row_queries_and_gradients(
     *,
     read: _ChildRead,
     child_euler_state: Callable[[ScalarFloat], ScalarFloat],
-    deterministic_resources_kwargs: dict[str, Any],
-    resources_param_kwargs: dict[str, Any],
+    deterministic_resources_kwargs: EconFunctionKwargs,
+    resources_param_kwargs: EconFunctionKwargs,
     savings_value: ScalarFloat,
     stochastic_values: tuple[ScalarFloat | ScalarInt, ...],
 ) -> tuple[FloatND, FloatND]:
@@ -1073,7 +1083,7 @@ def _composed_simple_resources(
     *,
     read: _ChildRead,
     child_euler_state: Callable[[ScalarFloat], ScalarFloat],
-    resources_param_kwargs: dict[str, Any],
+    resources_param_kwargs: EconFunctionKwargs,
 ) -> ScalarFloat:
     """Child resources at the savings node, for a resources map of Euler state alone."""
     return read.resources_func(
@@ -1089,9 +1099,9 @@ def _composed_row_resources(
     *,
     read: _ChildRead,
     child_euler_state: Callable[[ScalarFloat], ScalarFloat],
-    deterministic_resources_kwargs: dict[str, Any],
-    stochastic_kwargs: dict[str, Any],
-    resources_param_kwargs: dict[str, Any],
+    deterministic_resources_kwargs: EconFunctionKwargs,
+    stochastic_kwargs: EconFunctionKwargs,
+    resources_param_kwargs: EconFunctionKwargs,
 ) -> ScalarFloat:
     """Child resources at the savings node for one row's discrete/passive values."""
     bound = {
@@ -1519,8 +1529,8 @@ def _accumulate_ez_partials_block(
 
 
 def euler_draw_nodes(
-    *, read: _ChildRead, combo_pool: Mapping[str, Any]
-) -> dict[TransitionFunctionName, FloatND | IntND]:
+    *, read: _ChildRead, combo_pool: EconFunctionKwargs
+) -> MappingProxyType[TransitionFunctionName, FloatND | IntND]:
     """Node values of each draw the child's Euler-state law reads.
 
     A draw of a stochastic state the child carries takes that state's nodes; a
@@ -1543,28 +1553,34 @@ def euler_draw_nodes(
                 read.local_draw_names, read.local_support_keys, strict=True
             )
         }
-    return {name: nodes[name] for name in sorted(read.euler_draw_names)}
+    return MappingProxyType(
+        {name: nodes[name] for name in sorted(read.euler_draw_names)}
+    )
 
 
 def child_resources_params(
-    *, read: _ChildRead, combo_pool: Mapping[str, Any]
-) -> dict[str, Any]:
+    *, read: _ChildRead, combo_pool: EconFunctionKwargs
+) -> MappingProxyType[ReferenceName, EconFunctionArg]:
     """The params, `age` and `period` the child's resources function reads.
 
     Params are the combo pool's. The child is next period's regime, and its carry
     rows were built in resources evaluated at its own period and age, so `period`
     is the source's plus one and `age` is the age grid at that period.
     """
-    child_period = combo_pool["period"] + 1 if "period" in combo_pool else None
+    child_period = (
+        cast("ScalarInt", combo_pool["period"]) + 1 if "period" in combo_pool else None
+    )
     child_time = (
         {"period": child_period, "age": read.age_values[child_period]}
         if child_period is not None
         else {}
     )
-    return {
-        name: child_time[name] if name in child_time else combo_pool[name]
-        for name in read.resources_param_names
-    }
+    return MappingProxyType(
+        {
+            name: child_time[name] if name in child_time else combo_pool[name]
+            for name in read.resources_param_names
+        }
+    )
 
 
 def _local_support_values(support: FloatND | IntND) -> FloatND | IntND:
@@ -1782,7 +1798,7 @@ def _aggregate_child_choices(
             fp=marginal_rows,
             x_query=queries_flat,
         )
-    # The passive blend interpolates a list of finite marginal-like payloads.
+    # The passive blend interpolates a tuple of finite marginal-like payloads.
     # The regular path carries the single marginal read; the stacked NEGM path
     # carries side-separated payloads plus a right-liveness indicator, so the
     # ownership side is chosen after the blend rather than committed per node.
@@ -1811,7 +1827,7 @@ def _aggregate_child_choices(
             jnp.isneginf(value_at_child), 0.0, marginal_at_child * gradients_flat
         )
         value_at_child = value_at_child.reshape(block_shape)
-        marginal_arrays = [marginal_at_child.reshape(block_shape)]
+        marginal_arrays = (marginal_at_child.reshape(block_shape),)
 
     value_at_child, marginal_at_child = _blend_passive_axes(
         value_at_child=value_at_child,
@@ -1838,7 +1854,7 @@ def _aggregate_child_choices(
 def _blend_passive_axes(
     *,
     value_at_child: FloatND,
-    marginal_arrays: list[FloatND],
+    marginal_arrays: tuple[FloatND, ...],
     child_passive_values: tuple[ScalarFloat, ...],
     child_passive_grids: tuple[Float1D, ...],
     n_outer_candidates: int,
@@ -1855,9 +1871,9 @@ def _blend_passive_axes(
     Args:
         value_at_child: Read values with the row block's shape (passive dims,
             then action dims).
-        marginal_arrays: List of marginal-like payloads with the same shape —
+        marginal_arrays: Tuple of marginal-like payloads with the same shape —
             the single marginal read on the regular path, the
-            `[right_side, left_side, right_alive]` triple on the stacked path.
+            `(right_side, left_side, right_alive)` triple on the stacked path.
         child_passive_values: The child's passive values at this savings node,
             aligned with `child_passive_grids`.
         child_passive_grids: The child's passive grids in carry-axis order.
@@ -1889,7 +1905,7 @@ def _blend_passive_axes(
             value=value_at_child[upper],
             subnormal_is_accounted_for=True,
         )
-        marginal_arrays = [
+        marginal_arrays = tuple(
             zero_safe_weighted_term(
                 weight=weight_lower,
                 value=arr[lower],
@@ -1901,7 +1917,7 @@ def _blend_passive_axes(
                 subnormal_is_accounted_for=True,
             )
             for arr in marginal_arrays
-        ]
+        )
 
     marginal_at_child = _choose_blended_side(
         marginal_arrays=marginal_arrays, n_outer_candidates=n_outer_candidates
@@ -1957,7 +1973,7 @@ def _stacked_blend_payloads(
     gradients_flat: FloatND,
     block_shape: tuple[int, ...],
     paired_marginal_read: bool,
-) -> tuple[FloatND, list[FloatND]]:
+) -> tuple[FloatND, tuple[FloatND, ...]]:
     """Collapse a stacked candidate axis into passive-blend payloads.
 
     Masks each candidate to `-inf` below its own first finite coh node (so the
@@ -1979,7 +1995,7 @@ def _stacked_blend_payloads(
 
     Returns:
         Tuple of the reshaped value maximum and the finite marginal-like
-        payloads `[right_side, left_side, right_alive]` for the passive blend.
+        payloads `(right_side, left_side, right_alive)` for the passive blend.
 
     """
     right_germ_at_child, left_germ_at_child, left_marginal_at_child = jax.vmap(
@@ -2050,7 +2066,7 @@ def _stacked_blend_payloads(
         right_germ_at_child=_reshaped_germ(germ=right_germ_at_child, shape=block_shape),
         left_germ_at_child=_reshaped_germ(germ=left_germ_at_child, shape=block_shape),
     )
-    return value_at_child, [right_side, left_side, right_alive]
+    return value_at_child, (right_side, left_side, right_alive)
 
 
 def _reshaped_germ(
@@ -2067,7 +2083,7 @@ def _reshaped_germ(
 
 
 def _choose_blended_side(
-    *, marginal_arrays: list[FloatND], n_outer_candidates: int
+    *, marginal_arrays: tuple[FloatND, ...], n_outer_candidates: int
 ) -> FloatND:
     """Pick the published marginal from the blended payloads.
 
@@ -2452,7 +2468,7 @@ def _build_child_reads(
 class _ChildDrawReads:
     """How one target's laws read the draws of its edge."""
 
-    laws: MappingProxyType[TransitionFunctionName, Any]
+    laws: MappingProxyType[TransitionFunctionName, TransitionFunction]
     """The target's laws, without the draws' own producers."""
 
     draw_free_law_names: tuple[TransitionFunctionName, ...]
@@ -2473,14 +2489,14 @@ class _ChildDrawReads:
     local_draw_sizes: tuple[int, ...]
     """Node counts of the local draws."""
 
-    local_support_func: Callable[..., Any] | None
+    local_support_func: Callable[..., Mapping[str, FloatND | IntND]] | None
     """Concatenated support providers of the local draws."""
 
 
 def _child_draw_reads(
     *,
     target: RegimeName,
-    bundle: MappingProxyType[TransitionFunctionName, Any],
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
     functions: EconFunctionsMapping,
     transition_plans: TargetTransitionPlans,
     euler_state_name: StateName,

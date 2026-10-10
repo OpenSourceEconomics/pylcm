@@ -30,12 +30,16 @@ from collections.abc import (
     Sequence,
 )
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from types import MappingProxyType
+from types import MappingProxyType, TracebackType
 from typing import Self, cast
 
 import jax
+import numpy as np
 from jax._src import config as jax_config
 from jax._src import core as jax_core
+from jax._src.dtypes import ExtendedDType
+from jax._src.lib import xla_client
+from jaxtyping import Float, Int, Scalar
 
 from _lcm.engine import (
     Regime,
@@ -109,6 +113,8 @@ from _lcm.execution.invariant_blocks import (
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import (
     ExpectedOutputLeaf,
+    OutputRoleLeaf,
+    OutputRoleTree,
     PlannedCore,
     ResolvedOutputLayout,
     assert_value_leaf_layout,
@@ -128,6 +134,7 @@ from _lcm.execution.scheduler import (
 )
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
+    StoredValueTemplate,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
@@ -191,7 +198,9 @@ from _lcm.solution.kernel_output import (
     consume_kernel_output,
 )
 from _lcm.solution.period_capture import (
+    CompiledShardingTree,
     PeriodCaptureTarget,
+    PeriodKernelKwargs,
     capture_kernel_inputs,
     resolve_capture_target,
 )
@@ -222,7 +231,26 @@ from _lcm.solution.v_topology import (
     placed_V_sharding,
 )
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
-from _lcm.typing import FlatParams, RegimeName, SimulationPolicy, StateName
+from _lcm.typing import (
+    ArgumentTree,
+    ArtifactPayload,
+    FlatParams,
+    FootprintTree,
+    HostArray,
+    ParamsLeaf,
+    PRNGKeyND,
+    PytreeByPeriod,
+    PytreeValue,
+    QAndFArg,
+    QualifiedName,
+    ReferenceName,
+    RegimeName,
+    RegimeNamesToIds,
+    ShapeDtypePytree,
+    SimulationPolicy,
+    StateName,
+    ValueND,
+)
 from _lcm.utils.logging import (
     format_duration,
     log_period_header,
@@ -245,12 +273,14 @@ from lcm.solver_api import (
     KernelOutput,
 )
 from lcm.typing import (
+    ActionName,
     BoolND,
+    ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
-    ScalarFloat,
-    ScalarInt,
+    IntND,
 )
 
 
@@ -267,8 +297,61 @@ class _GatherCheck:
     """Whether the classifier could not read the program completely."""
 
 
-# Fusion verdicts by runtime-executable identity, each held with its executable.
-GatherChecks = dict[int, tuple[object, _GatherCheck]]
+# Fusion verdicts by runtime-executable identity, each held with its executable:
+# the backend's loaded executable, or the compiled stage where JAX exposes none.
+type GatherChecks = dict[
+    int, tuple[xla_client.LoadedExecutable | jax.stages.Compiled, _GatherCheck]
+]
+
+# The age of a gated edge's fold period: a Python number, a concrete or traced
+# scalar array of any integer or float width, or `None` where no age is known.
+type FoldAge = float | Int[Scalar, ""] | Float[Scalar, ""] | None
+
+# A regime's base state, discrete-action and continuous-action arrays.
+type _SpaceArrays = tuple[
+    MappingProxyType[StateName, ContinuousState | DiscreteState],
+    MappingProxyType[ActionName, DiscreteAction],
+    MappingProxyType[ActionName, ContinuousAction],
+]
+
+# One leaf of a program's concrete or abstract arguments.
+type _ArgumentLeaf = (
+    ValueND
+    | PRNGKeyND
+    | jax.ShapeDtypeStruct
+    | HostArray
+    | np.generic
+    | bool
+    | int
+    | float
+)
+
+# One dispatch's outputs, as the period loop collects them before a donation is
+# retired: the value array, the continuation, the continuation, replay and auxiliary
+# artifacts, the simulation policy, the dissolution flags and the diagnostic arrays.
+type _DispatchOutputs = tuple[
+    FloatND,
+    ContinuationPayload | None,
+    Mapping[ArtifactKey, ArtifactPayload],
+    Mapping[ArtifactKey, ArtifactPayload],
+    Mapping[ArtifactKey, ArtifactPayload],
+    SimulationPolicy | None,
+    BoolND | None,
+    tuple[FloatND | IntND | BoolND | None, ...],
+]
+
+# Metadata spelled into a lowering or admission key: a tree structure, a leaf's
+# dtype or sharding, an output role, or a regime-code table.
+type _KeyMetadata = (
+    jax.tree_util.PyTreeDef
+    | np.dtype
+    | ExtendedDType
+    | jax.sharding.Sharding
+    | OutputRoleLeaf
+    | str
+    | RegimeNamesToIds
+    | None
+)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -313,7 +396,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retain_replay: bool = True,
     retain_all_artifacts: bool = False,
     persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
-    retained_input_arrays: object = (),
+    retained_input_arrays: tuple[tuple[PytreeByPeriod, ...], ...] = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     call_id: CallId | None = None,
     gather_checks: GatherChecks | None = None,
@@ -523,9 +606,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     ] = {}
     dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
     solver_diagnostics: dict[int, MappingProxyType[RegimeName, SolverDiagnostics]] = {}
-    retained_continuations: dict[ArtifactRef, object] = {}
-    replay_artifacts: dict[ArtifactRef, object] = {}
-    auxiliary_artifacts: dict[ArtifactRef, object] = {}
+    retained_continuations: dict[ArtifactRef, ArtifactPayload] = {}
+    replay_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
+    auxiliary_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
 
     # Every collective kernel publishes `D`, but only two things read the
     # ACCUMULATED per-period mapping: forward simulation, for a gate that
@@ -639,13 +722,13 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 period_dissolution_flags: dict[RegimeName, BoolND] = {}
                 period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
                 period_retained_continuations: dict[
-                    tuple[RegimeName, ArtifactKey], object
+                    tuple[RegimeName, ArtifactKey], ArtifactPayload
                 ] = {}
                 period_replay_artifacts: dict[
-                    tuple[RegimeName, ArtifactKey], object
+                    tuple[RegimeName, ArtifactKey], ArtifactPayload
                 ] = {}
                 period_auxiliary_artifacts: dict[
-                    tuple[RegimeName, ArtifactKey], object
+                    tuple[RegimeName, ArtifactKey], ArtifactPayload
                 ] = {}
 
                 period_inputs = SolveInputMappings(
@@ -1266,7 +1349,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
 def _diagnostic_arrays(
     *, diagnostics: Sequence[SolverDiagnostics]
-) -> tuple[object, ...]:
+) -> tuple[FloatND | IntND | BoolND | None, ...]:
     """Return the field values of each diagnostic payload, flattened.
 
     `SolverDiagnostics` is a registered pytree, so walking one reaches exactly
@@ -1376,7 +1459,7 @@ def _run_period_kernel(
 
     # Captured before the period-specific state axes are substituted below. Replay
     # re-enters this funnel with capture explicitly disabled.
-    kernel_kwargs = {
+    kernel_kwargs: PeriodKernelKwargs = {
         "regime_name": regime_name,
         "period": period,
         "state_action_space": state_action_space,
@@ -1447,7 +1530,7 @@ def _run_period_kernel(
         logger=logger,
     )
 
-    same_period_kwargs: dict[str, object] = {}
+    same_period_kwargs: dict[ReferenceName, MappingProxyType[RegimeName, FloatND]] = {}
     if regime.same_period_ref_regimes:
         same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
             {
@@ -1765,13 +1848,10 @@ def _roll_gated_edges(
             fold=fold,
             fold_period=period,
             fold_age=coordinate_at(ages=ages, period=period),
-            target_states=cast(
-                "Mapping[str, ContinuousState | DiscreteState]",
-                _states_for_period(
-                    regime=regimes[target_name],
-                    state_action_space=base_state_action_spaces[target_name],
-                    period=period,
-                ),
+            target_states=_states_for_period(
+                regime=regimes[target_name],
+                state_action_space=base_state_action_spaces[target_name],
+                period=period,
             ),
             same_period_mapping=same_period_mapping,
             source_flat_params=edge_params(flat_params, source=source_name),
@@ -1869,11 +1949,11 @@ def _evaluate_edge_fold(
     *,
     fold: CompiledEdgeFold,
     fold_period: int,
-    fold_age: object,
+    fold_age: FoldAge,
     target_states: Mapping[str, ContinuousState | DiscreteState],
     same_period_mapping: Mapping[RegimeName, FloatND],
-    source_flat_params: Mapping[str, object],
-    reference_flat_params: Mapping[RegimeName, Mapping[str, object]],
+    source_flat_params: Mapping[QualifiedName, ParamsLeaf],
+    reference_flat_params: Mapping[RegimeName, Mapping[QualifiedName, ParamsLeaf]],
     shared_sharding: jax.sharding.Sharding | None = None,
 ) -> FloatND:
     """Call one edge's fold with exactly the arguments its signature declares.
@@ -1900,7 +1980,7 @@ def _evaluate_edge_fold(
     """
     surfaces = fold.surfaces
     sig_params = set(inspect.signature(surfaces).parameters)
-    kwargs: dict[str, object] = {
+    kwargs: dict[ReferenceName, QAndFArg] = {
         name: arr for name, arr in target_states.items() if name in sig_params
     }
     kwargs.update(
@@ -1914,7 +1994,7 @@ def _evaluate_edge_fold(
         bind_edge_period_context(
             func=surfaces,
             fold_period=fold_period,
-            fold_age=cast("float | ScalarFloat | ScalarInt | None", fold_age),
+            fold_age=fold_age,
         )
     )
     kwargs[SAME_PERIOD_V_ARG] = same_period_mapping
@@ -1958,7 +2038,7 @@ def _match_leaf_pair_sharding(leaf: FloatND, template_leaf: FloatND) -> FloatND:
 def _publish_kernel_value(
     *,
     value: FloatND,
-    compiled_cores: Mapping[str, Callable],
+    compiled_cores: Mapping[str, PlannedCore],
     assembled_template: FloatND | None = None,
 ) -> FloatND:
     """Publish a period value after asserting its planned placement.
@@ -2119,7 +2199,7 @@ def _edge_kwargs(
     regime: Regime,
     regime_name: RegimeName,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
-) -> dict[str, object]:
+) -> MappingProxyType[ReferenceName, MappingProxyType[RegimeName, FloatND]]:
     """Build a source kernel's gated-edge `Wbar` argument, keyed by target.
 
     The kernel substitutes each entry for the raw target V in
@@ -2128,15 +2208,17 @@ def _edge_kwargs(
     called with. Empty for a regime declaring no gated edge.
     """
     if not regime.gated_edges:
-        return {}
-    return {
-        "edge_regime_to_V_arr": MappingProxyType(
-            {
-                target_name: next_edge_to_V_arr[(regime_name, target_name)]
-                for target_name in regime.gated_edges
-            }
-        )
-    }
+        return MappingProxyType({})
+    return MappingProxyType(
+        {
+            "edge_regime_to_V_arr": MappingProxyType(
+                {
+                    target_name: next_edge_to_V_arr[(regime_name, target_name)]
+                    for target_name in regime.gated_edges
+                }
+            )
+        }
+    )
 
 
 def _iter_edge_topologies(
@@ -2279,7 +2361,9 @@ class _ProgramExecutionMetadata:
 class _CompiledPrograms:
     """Executable graph plus the metadata liveness reads through the same seam."""
 
-    executables: dict[tuple[RegimeName, int], MappingProxyType[str, PlannedCore]]
+    executables: MappingProxyType[
+        tuple[RegimeName, int], MappingProxyType[str, PlannedCore]
+    ]
     metadata: MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]
 
     input_liveness: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]
@@ -2293,8 +2377,8 @@ class _CompiledPrograms:
     )
     """Admitted ordinary alternatives at exactly the selected donating widths."""
 
-    capture_admission: Mapping[
-        tuple[str, int], Mapping[str, Mapping[str, int | None]]
+    capture_admission: MappingProxyType[
+        tuple[str, int], MappingProxyType[str, MappingProxyType[str, int | None]]
     ] = dataclasses.field(default_factory=lambda: MappingProxyType({}))
     """Selected non-donating reservation and residency for requested captures."""
 
@@ -2604,7 +2688,7 @@ def _retire_donated_inputs(
     dispatch: _InputDispatch,
     inputs: SolveInputMappings,
     templates: SolveInputMappings,
-    pending_outputs: Sequence[object],
+    pending_outputs: tuple[tuple[ValueND, ...], _DispatchOutputs],
     registry: BufferRegistry,
     logger: logging.Logger,
     before_delete: BeforeArrayDelete | None = None,
@@ -2984,7 +3068,7 @@ def _resident_inventory_by_triple(
     templates: SolveInputMappings,
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
-    fixed_bytes: Mapping[int, int] = MappingProxyType({}),
+    fixed_bytes: MappingProxyType[int, int] = MappingProxyType({}),
 ) -> MappingProxyType[_CoreTriple, ResidentInventory]:
     """Predict, per core triple, the live inventory at its scheduled position.
 
@@ -3066,7 +3150,7 @@ def _period_copy_reservations(
     *,
     period: int,
     metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
-) -> Mapping[Hashable, ArtifactFootprint]:
+) -> MappingProxyType[Hashable, ArtifactFootprint]:
     """Reserve each shared destination throughout its period, including aliases.
 
     Runtime caches a destination by artifact and required layout, or by the
@@ -3097,7 +3181,7 @@ def _period_transfer_scratch_reservations(
     period: int,
     metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
-) -> Mapping[int, int]:
+) -> MappingProxyType[int, int]:
     """Bound all pending copy scratch on every endpoint device of one period.
 
     An operator's declared temporary bytes are what it holds beyond its result,
@@ -3142,8 +3226,8 @@ def _period_transfer_scratch_reservations(
 def _internal_reservations_by_cell(
     *,
     programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
-    templates: Mapping[_CoreCandidate, Mapping[str, object]],
-) -> Mapping[tuple[RegimeName, int], int]:
+    templates: Mapping[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]],
+) -> MappingProxyType[tuple[RegimeName, int], int]:
     """Reserve future producer subtrees across all cores of their runtime cell.
 
     These are not allocations owned by abstract templates. The existing producer
@@ -3328,7 +3412,7 @@ def _candidate_resident_bytes(
     *,
     compiled: jax.stages.Compiled,
     program: ResolvedCoreProgram,
-    internal_arguments: Mapping[str, object],
+    internal_arguments: Mapping[ReferenceName, ShapeDtypePytree],
     inventory: ResidentInventory,
 ) -> int:
     """Exclude only this specialization's aligned, compiler-live read buffers.
@@ -3380,7 +3464,7 @@ def _candidate_resident_bytes(
 
 def _compiler_reads_source(
     *,
-    shardings: Mapping[str, object],
+    shardings: Mapping[str, CompiledShardingTree],
     source: ValueConsumerAddress,
 ) -> bool:
     """Read one exact declared locator from the validated public input tree.
@@ -3392,7 +3476,7 @@ def _compiler_reads_source(
     node = shardings[source.argument or source.channel.value]
     for segment in source.path:
         if isinstance(node, Mapping):
-            node = node[segment]
+            node = node[cast("str", segment)]
         elif isinstance(node, tuple):
             node = node[cast("int", segment)]
         else:
@@ -3498,7 +3582,7 @@ def _selected_artifact_keys_for_cell(
     )
 
 
-def _retained_base_space_arrays(*, regime: Regime) -> object:
+def _retained_base_space_arrays(*, regime: Regime) -> _SpaceArrays:
     """Read owned base arrays without constructing another completed state space."""
     # The canonical phase retains this original even when runtime params replace
     # its placeholders. Accounting intentionally observes that owning field.
@@ -3529,7 +3613,7 @@ def _prepare_solve_programs(
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
     dict[_CoreCandidate, ResolvedCoreProgram],
-    dict[_CoreCandidate, Mapping[str, object]],
+    dict[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]],
     PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
     dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
     MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
@@ -3650,7 +3734,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     max_compilation_workers: int | None,
     logger: logging.Logger,
     call_id: CallId | None = None,
-    fixed_input_arrays: object = (),
+    fixed_input_arrays: PytreeByPeriod = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     gather_checks: GatherChecks | None = None,
     executable_cache: ExecutableCache | None = None,
@@ -4295,7 +4379,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     logger=logger,
                 )
 
-    capture_admission: dict[tuple[str, int], dict[str, Mapping[str, int | None]]] = {}
+    capture_admission: dict[
+        tuple[str, int], dict[str, MappingProxyType[str, int | None]]
+    ] = {}
     for triple, core in selected_cores.items():
         if triple[:2] not in capture_periods:
             continue
@@ -4326,7 +4412,12 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
 
     return _CompiledPrograms(
         executables=_group_cores_by_regime_period(selected_cores),
-        capture_admission=MappingProxyType(capture_admission),
+        capture_admission=MappingProxyType(
+            {
+                cell: MappingProxyType(records)
+                for cell, records in capture_admission.items()
+            }
+        ),
         metadata=_execution_metadata(programs=selected_programs),
         input_liveness=input_liveness,
         donations=MappingProxyType(
@@ -4566,7 +4657,9 @@ def _lower_and_compile_candidate(
     lowering_keys: Mapping[_CoreCandidate, Hashable],
     resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
-    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    internal_templates: Mapping[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ],
     donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
     ages: TimeAxis,
     budget_bytes: int | None,
@@ -4766,7 +4859,7 @@ def _bounded_plan(
     executable = compiled_by_width[_width_key(widths=widths)]
     memory = memory_by_compiled_id[id(executable)]
     return WorkspacePlan(
-        widths=widths,
+        widths=MappingProxyType(dict(widths)),
         peak_bytes=memory.peak_bytes,
         reservation_bytes=memory.reservation_bytes,
         compiled=executable,
@@ -4962,13 +5055,13 @@ def _uncompiled(
     *,
     keys: Mapping[_CoreCandidate, Hashable],
     compiled: Mapping[Hashable, jax.stages.Compiled],
-) -> dict[Hashable, _CoreCandidate]:
+) -> MappingProxyType[Hashable, _CoreCandidate]:
     """Name one representative candidate per key no wave has compiled yet."""
     new: dict[Hashable, _CoreCandidate] = {}
     for candidate, key in keys.items():
         if key not in compiled:
             new.setdefault(key, candidate)
-    return new
+    return MappingProxyType(new)
 
 
 def _measure_variant(
@@ -4980,7 +5073,9 @@ def _measure_variant(
     labels: Mapping[Hashable, str],
     memory_by_lowering_key: dict[Hashable, CompilerMemoryReservation],
     resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
-    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    internal_templates: Mapping[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ],
     resident_inventory: Mapping[_CoreTriple, ResidentInventory],
     logger: logging.Logger,
 ) -> int:
@@ -5032,7 +5127,9 @@ def _lower_and_compile_wave(
     new_lowerings: Mapping[Hashable, _CoreCandidate],
     resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
-    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    internal_templates: Mapping[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ],
     donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
     ages: TimeAxis,
     n_triples_per_lowering: Mapping[Hashable, int],
@@ -5089,7 +5186,7 @@ def _lower_resolved_candidate(
     resolved: ResolvedCoreProgram,
     layout: ResolvedOutputLayout,
     donated: tuple[str, ...],
-    internal_templates: Mapping[str, object],
+    internal_templates: Mapping[ReferenceName, ShapeDtypePytree],
     label: str,
 ) -> jax.stages.Lowered:
     """Trace and lower one resolved solve candidate at its output layout."""
@@ -5164,8 +5261,8 @@ class CompilationWave:
         self._futures_by_key: dict[
             Hashable, tuple[Future[tuple[Hashable, jax.stages.Compiled]], str]
         ] = {}
-        self._out_info: dict[Hashable, object] = {}
-        self._publishers: dict[Hashable, Callable[..., object] | None] = {}
+        self._out_info: dict[Hashable, ShapeDtypePytree] = {}
+        self._publishers: dict[Hashable, Callable[..., None] | None] = {}
 
     def __enter__(self) -> Self:
         return self
@@ -5176,9 +5273,9 @@ class CompilationWave:
         lowering_key: Hashable,
         label: str,
         lower: Callable[[], jax.stages.Lowered],
-        publish: Callable[..., object] | None = None,
+        publish: Callable[..., None] | None = None,
         wait: bool = False,
-    ) -> object:
+    ) -> ShapeDtypePytree:
         """Lower one program here, submit its compile, and return its outputs.
 
         A key this wave already lowered is not lowered again.
@@ -5216,7 +5313,7 @@ class CompilationWave:
         lowering_key: Hashable,
         label: str,
         lower: Callable[[], jax.stages.Lowered],
-        publish: Callable[..., object] | None,
+        publish: Callable[..., None] | None,
     ) -> None:
         """Lower one program on the calling thread and hand its compile to the pool."""
         self._raise_first_compile_error()
@@ -5247,7 +5344,12 @@ class CompilationWave:
         self._publishers[lowering_key] = publish
 
     # keyword-only-exempt: library-callback=contextlib.AbstractContextManager
-    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         if exc is not None:
             self._pool.shutdown(wait=False, cancel_futures=True)
             return
@@ -5323,7 +5425,7 @@ def _execution_metadata(
 def _count_triples_per_lowering_key(
     *,
     lowering_keys: Mapping[_CoreCandidate, Hashable],
-) -> dict[Hashable, int]:
+) -> MappingProxyType[Hashable, int]:
     """Count the candidate addresses each compiled module will serve.
 
     A shared callable with distinct output layouts is deliberately counted as
@@ -5332,7 +5434,7 @@ def _count_triples_per_lowering_key(
     counts: dict[Hashable, int] = {}
     for key in lowering_keys.values():
         counts[key] = counts.get(key, 0) + 1
-    return counts
+    return MappingProxyType(counts)
 
 
 def _fail_if_one_key_covers_two_callables(
@@ -5455,7 +5557,7 @@ def _checked_producer_records(
     *,
     top: ResolvedProducer,
     candidate: ResolvedCoreProgram,
-    templates: Mapping[str, object],
+    templates: Mapping[ReferenceName, ShapeDtypePytree],
 ) -> None:
     """Hold one newly bound producer candidate against its top-ranked record.
 
@@ -5497,8 +5599,8 @@ class _CoreFrontier:
 
     program: MaterializedCoreProgram
     transfer_plan: tuple[ResolvedValueTransfer, ...]
-    templates: Mapping[str, object]
-    widths: tuple[Mapping[str, object] | None, ...]
+    templates: Mapping[ReferenceName, ShapeDtypePytree]
+    widths: tuple[Mapping[str, int], ...]
     top_record: ResolvedProducer | None
     """The top-ranked candidate's producer record, for a consumed producer.
 
@@ -5536,17 +5638,17 @@ class _LazyCandidateFrontier:
     ahead of it.
     """
 
-    frontiers: Mapping[_CoreTriple, _CoreFrontier]
+    frontiers: MappingProxyType[_CoreTriple, _CoreFrontier]
     candidates_by_triple: dict[_CoreTriple, list[_CoreCandidate]]
-    frontier_lengths: Mapping[_CoreTriple, int]
+    frontier_lengths: MappingProxyType[_CoreTriple, int]
     layouts: Mapping[_CoreTriple, ResolvedOutputLayout]
     resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram]
-    internal_templates: dict[_CoreCandidate, Mapping[str, object]]
+    internal_templates: dict[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]]
     nominations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]]
     donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]]
     lowering_keys: dict[_CoreCandidate, Hashable]
     argument_keys: dict[_CoreTriple, Hashable]
-    transfer_consumers: Mapping[_ConsumerKey, Collection[_CoreTriple]]
+    transfer_consumers: MappingProxyType[_ConsumerKey, frozenset[_CoreTriple]]
     readers_by_dispatch: Mapping[
         tuple[int, RegimeName],
         Mapping[ValueArtifactAddress, frozenset[ValueConsumerAddress]],
@@ -5722,7 +5824,7 @@ def _resolve_output_layouts_and_lowering_keys(
     budget_bytes: int | None,
     execution_widths: ResolvedExecution,
     enable_jit: bool,
-    continuous_sharded_state: str | None = None,
+    continuous_sharded_state: StateName | None = None,
     donate_buffers: bool = True,
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
@@ -5734,7 +5836,7 @@ def _resolve_output_layouts_and_lowering_keys(
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
     dict[_CoreCandidate, ResolvedCoreProgram],
-    dict[_CoreCandidate, Mapping[str, object]],
+    dict[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]],
     PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
     dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
     MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
@@ -5872,7 +5974,9 @@ class _StructuralBlueprint:
     layouts: MappingProxyType[_CoreTriple, ResolvedOutputLayout]
     resolved_programs: MappingProxyType[_CoreCandidate, ResolvedCoreProgram]
     """The marked top-ranked candidate of every core, in producer order."""
-    internal_templates: MappingProxyType[_CoreCandidate, Mapping[str, object]]
+    internal_templates: MappingProxyType[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ]
     frontiers: MappingProxyType[_CoreTriple, _CoreFrontier]
     frontier_lengths: MappingProxyType[_CoreTriple, int]
     transfer_consumers: MappingProxyType[_ConsumerKey, frozenset[_CoreTriple]]
@@ -5890,7 +5994,7 @@ def _build_structural_blueprint(
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     budget_bytes: int | None,
     execution_widths: ResolvedExecution,
-    continuous_sharded_state: str | None,
+    continuous_sharded_state: StateName | None,
     process_grid_resolver: ProcessGridResolver | None,
 ) -> _StructuralBlueprint:
     """Materialize every program once and bind its top-ranked width candidate.
@@ -5902,7 +6006,9 @@ def _build_structural_blueprint(
     """
     layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
     resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram] = {}
-    internal_templates: dict[_CoreCandidate, Mapping[str, object]] = {}
+    internal_templates: dict[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ] = {}
     # The frontier of a core with one candidate is exhausted by the binding
     # below, so nothing is kept for it; only a budgeted frontier retains what a
     # later candidate is bound from.
@@ -5954,10 +6060,7 @@ def _build_structural_blueprint(
             flat_params=flat_params,
             period=period,
             ages=ages,
-            edge_regime_to_V_arr=cast(
-                "Mapping[str, object] | None",
-                edge_kwargs.get("edge_regime_to_V_arr"),
-            ),
+            edge_regime_to_V_arr=edge_kwargs.get("edge_regime_to_V_arr"),
         )
         materialized = materialize_core_program(program=declaration, context=context)
         templates = internal_input_templates(program=materialized, producers=producers)
@@ -6095,7 +6198,7 @@ def _bind_structural_blueprint(
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
     dict[_CoreCandidate, ResolvedCoreProgram],
-    dict[_CoreCandidate, Mapping[str, object]],
+    dict[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]],
     PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
     dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
     MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
@@ -6270,7 +6373,9 @@ def _value_axis_names(
 def _lowering_keys(
     *,
     resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
-    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    internal_templates: Mapping[
+        _CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ],
     layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
     donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
     regimes: MappingProxyType[RegimeName, Regime],
@@ -6490,7 +6595,7 @@ def _width_key(*, widths: Mapping[str, int]) -> _WidthKey:
 
 
 def _continuous_value_replica_required(
-    *, regime: Regime, state_name: str | None
+    *, regime: Regime, state_name: StateName | None
 ) -> bool:
     """Read the construction-validated capability, never infer it from a grid."""
     if state_name is None:
@@ -6506,7 +6611,7 @@ def _resolve_program_for_execution(
     *,
     program: MaterializedCoreProgram,
     tile_widths: Mapping[str, int],
-    source_value_template: object,
+    source_value_template: FloatND,
     source: _CoreTriple,
     require_full_next_value: bool = False,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] | None = None,
@@ -6582,7 +6687,7 @@ def _prepare_abstract_program(
 def _resolve_value_input_transfer_plan(
     *,
     program: MaterializedCoreProgram,
-    source_value_template: object,
+    source_value_template: FloatND,
     source: _CoreTriple,
     require_full_next_value: bool = False,
     value_axis_names: Mapping[RegimeName, tuple[StateName, ...]] = MappingProxyType({}),
@@ -6659,7 +6764,7 @@ def _bound_block_view(
     *,
     program: MaterializedCoreProgram,
     read: ValueRead,
-    stored_template: object,
+    stored_template: StoredValueTemplate,
     source_sharding: jax.sharding.Sharding,
     value_axis_names: Mapping[RegimeName, tuple[StateName, ...]],
 ) -> tuple[ValueViewDescriptor, jax.sharding.Sharding] | None:
@@ -6676,7 +6781,7 @@ def _bound_block_view(
     axis_names = value_axis_names.get(read.target.regime, ())
     if binding.state_name not in axis_names:
         return None
-    stored_sharding = stored_template.sharding  # ty: ignore[unresolved-attribute]
+    stored_sharding = stored_template.sharding
     selected_sharding = block_layout(
         layout=stored_sharding,
         axis=axis_names.index(binding.state_name),
@@ -6696,7 +6801,7 @@ def _bound_block_view(
 
 def _resolve_value_transfer_layout(
     *,
-    stored_sharding: object,
+    stored_sharding: jax.sharding.Sharding | None,
     source_execution_sharding: jax.sharding.Sharding,
     require_full_replica: bool = False,
     target_regime: RegimeName | None = None,
@@ -6873,9 +6978,9 @@ def _lowering_key(
     *,
     program_identity: Hashable,
     layout_key: Hashable,
-    arguments: Mapping[str, object] | None = None,
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree] | None = None,
     specialization_key: Hashable | None = None,
-    output_roles: object | None = None,
+    output_roles: OutputRoleTree = None,
     donated_arguments: tuple[str, ...] = (),
     placement_key: Hashable | None = None,
     compiler_options: tuple[tuple[str, int], ...] = (),
@@ -6920,7 +7025,7 @@ def _trace_settings_key() -> Hashable:
     )
 
 
-def _spelled_trace_value(value: object) -> object:
+def _spelled_trace_value(value: Hashable) -> Hashable:
     """Replace an axis environment by the axis names and sizes it binds."""
     if not isinstance(value, jax_core.AxisEnv):
         return value
@@ -6934,7 +7039,7 @@ def _spelled_trace_value(value: object) -> object:
 
 def _abstract_arguments_key(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, ArgumentTree],
 ) -> Hashable:
     """Describe dynamic kwargs by pytree and abstract leaf metadata."""
     return tuple(
@@ -6942,7 +7047,7 @@ def _abstract_arguments_key(
     )
 
 
-def _abstract_value_key(*, value: object) -> Hashable:
+def _abstract_value_key(*, value: FootprintTree) -> Hashable:
     """Describe one dynamic argument without retaining its concrete value."""
     tree = jax.tree.structure(value)
     leaves = jax.tree.leaves(value)
@@ -6952,7 +7057,7 @@ def _abstract_value_key(*, value: object) -> Hashable:
     )
 
 
-def _abstract_leaf_key(*, leaf: object) -> Hashable:
+def _abstract_leaf_key(*, leaf: _ArgumentLeaf) -> Hashable:
     """Return the tracing-relevant metadata for one dynamic leaf."""
     raw_shape = getattr(leaf, "shape", None)
     shape = (
@@ -6969,7 +7074,7 @@ def _abstract_leaf_key(*, leaf: object) -> Hashable:
     )
 
 
-def _hashable_metadata(value: object) -> Hashable:
+def _hashable_metadata(value: _KeyMetadata) -> Hashable:
     """Return metadata directly when hashable and a stable spelling otherwise."""
     try:
         hash(value)
@@ -6978,7 +7083,7 @@ def _hashable_metadata(value: object) -> Hashable:
     return cast("Hashable", value)
 
 
-def _output_roles_key(*, output_roles: object | None) -> Hashable:
+def _output_roles_key(*, output_roles: OutputRoleTree) -> Hashable:
     """Encode a declared logical output tree in the lowering identity."""
     if output_roles is None:
         return None
@@ -6991,7 +7096,7 @@ def _output_roles_key(*, output_roles: object | None) -> Hashable:
 def _assert_lowered_output_roles(
     *,
     lowered: jax.stages.Lowered,
-    output_roles: object,
+    output_roles: OutputRoleTree,
     layout: ResolvedOutputLayout,
     label: str,
 ) -> None:
@@ -7013,7 +7118,7 @@ def _assert_lowered_output_roles(
 
 
 def _assert_lowered_output_tree(
-    *, output_roles: object, output_info: object, label: str
+    *, output_roles: OutputRoleTree, output_info: ShapeDtypePytree, label: str
 ) -> None:
     """Require the lowered pytree to match the solver's declared role tree."""
     expected = jax.tree.structure(output_roles)
@@ -7028,7 +7133,7 @@ def _assert_lowered_output_tree(
 
 def _assert_lowered_output_leaf(
     *,
-    output_info: object,
+    output_info: jax.ShapeDtypeStruct,
     label: str,
     expected: ExpectedOutputLeaf,
 ) -> None:
@@ -7060,15 +7165,19 @@ def _assert_lowered_output_leaf(
 
 def _attach_resolved_output_layout(
     *,
-    compiled: Callable[..., object],
+    compiled: Callable[..., PytreeValue],
     layout: ResolvedOutputLayout,
     tile_widths: Mapping[str, int],
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
-    internal_input_templates: Mapping[str, object] = MappingProxyType({}),
+    internal_input_templates: Mapping[ReferenceName, ShapeDtypePytree] = (
+        MappingProxyType({})
+    ),
     donated_arguments: tuple[str, ...] = (),
     name: str,
 ) -> PlannedCore:
     """Carry one node's resolved output and input plans to runtime dispatch."""
+    tile_widths = MappingProxyType(dict(tile_widths))
+    internal_input_templates = MappingProxyType(dict(internal_input_templates))
     return PlannedCore(
         compiled=compiled,
         layout=layout,
@@ -7082,7 +7191,7 @@ def _attach_resolved_output_layout(
 
 def _group_cores_by_regime_period(
     cores_by_triple: Mapping[_CoreTriple, PlannedCore],
-) -> dict[tuple[RegimeName, int], MappingProxyType[str, PlannedCore]]:
+) -> MappingProxyType[tuple[RegimeName, int], MappingProxyType[str, PlannedCore]]:
     """Group (regime, period, core_key) -> core into (regime, period) -> {key: core}.
 
     The solve loop dispatches each period adapter with its full per-key core map,
@@ -7092,7 +7201,9 @@ def _group_cores_by_regime_period(
     grouped: dict[tuple[RegimeName, int], dict[str, PlannedCore]] = {}
     for (regime_name, period, core_key), core in cores_by_triple.items():
         grouped.setdefault((regime_name, period), {})[core_key] = core
-    return {key: MappingProxyType(cores) for key, cores in grouped.items()}
+    return MappingProxyType(
+        {key: MappingProxyType(cores) for key, cores in grouped.items()}
+    )
 
 
 def _log_kernel_memory(
@@ -7223,7 +7334,7 @@ def _resolve_compilation_workers(*, max_compilation_workers: int | None) -> int:
     return max_compilation_workers
 
 
-def _func_dedup_key(*, func: Callable) -> Hashable:
+def _func_dedup_key(*, func: Callable[..., PytreeValue]) -> Hashable:
     """Return a hashable deduplication key for a callable.
 
     For `functools.partial` objects wrapping shared JIT functions, deduplicate

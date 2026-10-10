@@ -13,6 +13,7 @@ ungrouped route.
 import dataclasses
 from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
@@ -405,7 +406,7 @@ def test_plan_groups_original_rows_by_code_and_restores_their_order() -> None:
     )
 
     route = SubjectGroupingRoute(
-        state_name="pref_type", codes=(0, 1, 2), value_axis_names={}
+        state_name="pref_type", codes=(0, 1, 2), value_axis_names=MappingProxyType({})
     )
     codes = np.asarray((0, 2, 0, 0, 2, 0, 0, 2, 0, 0, 7), dtype=np.int32)
     plan = plan_subject_groups(route=route, codes=codes, n_real=11, width=3)

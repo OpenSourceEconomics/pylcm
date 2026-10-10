@@ -90,13 +90,12 @@ def test_actual_dispatch_preserves_the_outer_reserved_width(
     assert selected == [8], (
         "The current-residency counterfactual must choose wider code"
     )
-    caller_widths = {"subject": 2}
+    reserved_widths = MappingProxyType({"subject": 2})
     reserved = SimulationDispatchContext(
         live_footprint=context.live_footprint,
         budget_devices=context.budget_devices,
-        axis_widths=caller_widths,
+        axis_widths=reserved_widths,
     )
-    caller_widths["subject"] = 8
     actual = runtime.dispatch(
         program=program,
         arguments={"x": source},
@@ -123,7 +122,7 @@ def test_reserved_width_conflicting_with_explicit_configuration_is_refused() -> 
             residency=SimulationDispatchContext(
                 live_footprint=lambda: measure_buffer_footprint(tree=source),
                 budget_devices=runtime.subject_devices,
-                axis_widths={"subject": 2},
+                axis_widths=MappingProxyType({"subject": 2}),
             ),
         )
     assert not runtime.cache

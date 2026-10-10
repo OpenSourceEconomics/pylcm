@@ -20,6 +20,7 @@ from typing import cast
 import jax.numpy as jnp
 import pytest
 
+from _lcm.egm.continuation import ContinuationPlan
 from _lcm.solution.nbegm import (
     _fail_if_liquid_reading_next_state_varies_within_interval,
     _ProbeArguments,
@@ -190,7 +191,7 @@ def test_constancy_probe_sweeps_each_discrete_arguments_actual_grid_codes():
     )
     with pytest.raises(RegimeInitializationError, match="varies smoothly"):
         _fail_if_liquid_reading_next_state_varies_within_interval(
-            continuation_plan=plan,
+            continuation_plan=cast("ContinuationPlan", plan),
             liquid_name="liquid",
             regime_name="toy",
             probe_arguments=_ProbeArguments(

@@ -16,7 +16,7 @@ read at a projected wage. Wages live on the two-point grid $\\{1, 2\\}$ and ever
 value below is exact on it.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import cast
 
@@ -455,7 +455,7 @@ def _build_model(
     gate: UserFunction,
     husband_reference_projection: UserFunction,
     wife_fallback: ProjectedRegimeValue | Phased,
-    probability: UserFunction | None = None,
+    probability: Callable[..., FloatND] | None = None,
 ) -> Model:
     """Build the mutual-consent model around the edge callables given.
 

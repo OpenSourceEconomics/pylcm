@@ -13,22 +13,32 @@ import dataclasses
 import math
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from fractions import Fraction
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Literal, NoReturn, Self, cast, overload
 
 import jax
+import numpy as np
 from beartype import beartype
+from jax.tree_util import PyTreeDef
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.time import ModelTime, TimeAxis, coordinate_kind
-from _lcm.typing import StateName
+from _lcm.typing import EconFunctionArg, PytreeValue, StateName
 from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.typing import FloatND, RegimeName, UserAge, UserFunction
+from lcm.typing import (
+    AgeLabel,
+    FloatND,
+    RegimeName,
+    UserAge,
+    UserFunction,
+    UserFunctionResult,
+)
 
 
 def fixed_transition(state_name: StateName) -> UserFunction:
@@ -140,12 +150,39 @@ type TransitionLaw = AgeCaseLaw | ByAge
 if TYPE_CHECKING:
     type _DeclaredCaseLaw = AgeCaseLaw
     type _DeclaredTransitionLaw = TransitionLaw
+    type DeclaredModelEdges = ModelEdges
+    type _DeclaredSelector = AgeSelector | PeriodSelector
 else:
+    # A malformed selector reaches the selector validators, which refuse it with a
+    # regime error naming it rather than with a type violation.
+    type _DeclaredSelector = object
+    # The runtime check also admits a `Phased` pair of transitions for one source,
+    # so that the graph refuses it naming the supported form rather than with a
+    # type violation.
+    type DeclaredModelEdges = (
+        Mapping[
+            RegimeName,
+            Transition | Mapping[RegimeName, AgeSelector | PeriodSelector] | Phased,
+        ]
+        | Phased[PhaseEdges, PhaseEdges]
+    )
     # The runtime checks also admit `None` and a nested `ByAge`, so that
     # `Transition` and `ByAge` refuse them with their own messages rather than
     # with a type violation.
     type _DeclaredCaseLaw = AgeCaseLaw | ByAge | None
     type _DeclaredTransitionLaw = TransitionLaw | None
+
+# A value a declaration snapshot copies: a law or an edges declaration, or a part
+# of one.
+type _Snapshottable = (
+    _DeclaredTransitionLaw
+    | ModelEdges
+    | Transition
+    | AgeSelector
+    | PeriodSelector
+    | Mapping[RegimeName, _Snapshottable]
+    | Phased[_Snapshottable, _Snapshottable]
+)
 
 
 @beartype(conf=REGIME_CONF)
@@ -237,7 +274,11 @@ class Transition:
         object.__setattr__(self, "gates", MappingProxyType(dict(self.gates)))
 
 
-def snapshot_transition_containers(value: object) -> object:
+@overload
+def snapshot_transition_containers(value: AgeCaseLaw) -> AgeCaseLaw: ...
+@overload
+def snapshot_transition_containers(value: _Snapshottable) -> _Snapshottable: ...
+def snapshot_transition_containers(value: _Snapshottable) -> _Snapshottable:
     """Copy edge and law mappings, including phase variants, preserving callables.
 
     A mapping proxy may still view a caller-owned dictionary, so it also needs
@@ -255,7 +296,7 @@ def snapshot_transition_containers(value: object) -> object:
     return value
 
 
-def law_names_its_targets(law: object) -> bool:
+def law_names_its_targets(law: _DeclaredTransitionLaw) -> bool:
     """Whether every case and phase of `law` is a per-target mapping or a name.
 
     Args:
@@ -325,7 +366,7 @@ class StochasticTransition:
             self, "__annotations__", getattr(self.func, "__annotations__", {})
         )
 
-    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
+    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
         return self.func(*args, **kwargs)
 
 
@@ -349,7 +390,7 @@ class DeterministicTransition:
     declared even when its target is never selected at runtime.
     """
 
-    func: Callable[..., Any]
+    func: UserFunction
     """The selector returning a global regime code."""
 
     def __post_init__(self) -> None:
@@ -358,7 +399,9 @@ class DeterministicTransition:
             self, "__annotations__", getattr(self.func, "__annotations__", {})
         )
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(
+        self, *args: EconFunctionArg, **kwargs: EconFunctionArg
+    ) -> UserFunctionResult:
         return self.func(*args, **kwargs)
 
 
@@ -392,7 +435,7 @@ def stochastic_transition(
     return decorate
 
 
-def _freeze_joint_support(value: Any) -> Any:  # noqa: ANN401
+def _freeze_joint_support(value: PytreeValue) -> PytreeValue:
     """Freeze the container structure of a literal joint-support pytree."""
     if isinstance(value, Mapping):
         return MappingProxyType(
@@ -404,8 +447,8 @@ def _freeze_joint_support(value: Any) -> Any:  # noqa: ANN401
 
 
 def _literal_joint_support_schema(
-    support: Any,  # noqa: ANN401
-) -> tuple[object, tuple[tuple[tuple[int, ...], object], ...]] | None:
+    support: PytreeValue | Callable[..., PytreeValue],
+) -> tuple[PyTreeDef, tuple[tuple[tuple[int, ...], np.dtype], ...]] | None:
     """Return a literal support's pytree and leaf event-shape/dtype schema."""
     if callable(support):
         return None
@@ -464,7 +507,7 @@ class JointTransition:
     support_size: int
     """Number of nodes on the joint finite support."""
 
-    support: Any
+    support: PytreeValue | Callable[..., PytreeValue]
     """Literal support pytree, or callable returning one."""
 
     probabilities: Callable[..., FloatND]
@@ -528,8 +571,8 @@ class JointTransition:
                     "only finite numeric or boolean values; nonfinite or "
                     f"unsupported leaf index(es): {nonfinite_leaves}."
                 )
+            object.__setattr__(self, "support", _freeze_joint_support(self.support))
 
-        object.__setattr__(self, "support", _freeze_joint_support(self.support))
         object.__setattr__(self, "outputs", MappingProxyType(dict(self.outputs)))
 
 
@@ -563,7 +606,7 @@ class _AgeSpecialized:
     it is used, so calling it directly is a loud error.
     """
 
-    build: Callable[[float], Any]
+    build: Callable[[float], UserFunction | ContinuousGrid]
     """Factory returning the concrete object (function or grid) for a given age. Must be
     deterministic and side-effect-free; it is called more than once per age."""
 
@@ -573,7 +616,7 @@ class _AgeSpecialized:
     `AgeSpecializedFunction`; cross-checked against the resolved nodes at build
     time for `AgeSpecializedGrid`. See the class docstrings."""
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
+    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> NoReturn:  # noqa: ARG002
         msg = (
             f"{type(self).__name__} is a build-time marker and must be resolved to a "
             "concrete object via build(age) before it is used."
@@ -721,7 +764,10 @@ class PeriodSpecializedGrid(AgeSpecializedGrid):
     """Hashable identity of the period's grid, checked against its nodes."""
 
 
-_MISSING = object()
+class _Missing(Enum):
+    """The marker of a `ByAge` declared without a default."""
+
+    MISSING = auto()
 
 
 class ByAge:
@@ -756,11 +802,14 @@ class ByAge:
         self,
         *,
         cases: Mapping[K, _DeclaredCaseLaw],
-        default: object = _MISSING,
+        default: _DeclaredCaseLaw | Literal[_Missing.MISSING] = _Missing.MISSING,
     ) -> None:
-        if not cases and default is _MISSING:
+        if not cases and default is _Missing.MISSING:
             raise RegimeInitializationError("`ByAge` needs at least one case.")
-        for law in (*cases.values(), *(() if default is _MISSING else (default,))):
+        for law in (
+            *cases.values(),
+            *(() if default is _Missing.MISSING else (default,)),
+        ):
             _fail_if_not_a_nonterminal_law(law)
         for selector in cases:
             if isinstance(self, ByPeriod):
@@ -770,14 +819,18 @@ class ByAge:
                     "ByAge requires age selectors, not period selectors."
                 )
             _fail_if_invalid_age_selector(selector)
-        self._cases: tuple[tuple[object, object], ...] = tuple(
-            (selector, snapshot_transition_containers(law))
-            for selector, law in cases.items()
+        self._cases: tuple[tuple[AgeSelector | PeriodSelector, AgeCaseLaw], ...] = (
+            tuple(
+                (selector, snapshot_transition_containers(law))
+                for selector, law in cases.items()
+            )
         )
         # Stored as `None` rather than the signature sentinel, so the model
         # fingerprint sees plain data.
         self._default = (
-            None if default is _MISSING else snapshot_transition_containers(default)
+            None
+            if default is _Missing.MISSING
+            else snapshot_transition_containers(default)
         )
         self._until: _Until | None = None
 
@@ -801,8 +854,8 @@ class ByAge:
         cls,
         *,
         stop_age_exclusive: UserAge | float,
-        law: object,
-        then: object,
+        law: _DeclaredCaseLaw,
+        then: _DeclaredCaseLaw,
         start_age_inclusive: UserAge | float | None = None,
     ) -> ByAge:
         """Supply `law` on `[start_age_inclusive, stop_age_exclusive)`, then exit.
@@ -826,7 +879,7 @@ class ByAge:
             )
         )
 
-    def with_mapped_laws(self, *, func: Callable[[object], object]) -> Self:
+    def with_mapped_laws(self, *, func: Callable[[AgeCaseLaw], AgeCaseLaw]) -> Self:
         """Return this schedule with every law replaced by `func(law)`.
 
         The selectors are kept. Returns `self` when `func` leaves every law
@@ -852,7 +905,7 @@ class ByAge:
         return type(self)(cases=cases, default=mapped[-1])
 
     @property
-    def laws(self) -> tuple[object, ...]:
+    def laws(self) -> tuple[AgeCaseLaw, ...]:
         """Every law the schedule may select, in declaration order."""
         if self._until is not None:
             return (self._until.law, self._until.then)
@@ -867,9 +920,7 @@ class ByAge:
             raise RegimeInitializationError(
                 "ByPeriod requires a period model; ByAge requires an age model."
             )
-        period_by_age: dict[object, int] = {
-            age: period for period, age in enumerate(ages.exact_values)
-        }
+        period_by_age = _period_by_age(ages)
         if self._until is not None:
             law_by_period = _resolve_until(
                 until=self._until, ages=ages, period_by_age=period_by_age
@@ -913,8 +964,8 @@ class ByPeriod(ByAge):
         cls,
         *,
         stop_period_exclusive: int,
-        law: object,
-        then: object,
+        law: _DeclaredCaseLaw,
+        then: _DeclaredCaseLaw,
         start_period_inclusive: int | None = None,
     ) -> ByPeriod:
         """Use `law` before the predecessor of the stop and `then` on it."""
@@ -947,7 +998,7 @@ class ByPeriod(ByAge):
         return super().resolve(ages=axis)
 
 
-def _fail_if_invalid_period_selector(selector: object) -> None:
+def _fail_if_invalid_period_selector(selector: _DeclaredSelector) -> None:
     """Require genuinely integer period coordinates, without numeric coercion."""
     if isinstance(selector, PeriodRange | Periods):
         return
@@ -965,7 +1016,7 @@ class ResolvedSchedule:
     ages: TimeAxis
     """The grid the schedule was resolved against."""
 
-    law_by_period: MappingProxyType[int, object]
+    law_by_period: MappingProxyType[int, AgeCaseLaw]
     """The selected law at each covered period."""
 
     @property
@@ -980,7 +1031,7 @@ class ResolvedSchedule:
         """The covered period indices, ascending."""
         return tuple(self.law_by_period)
 
-    def at(self, age: UserAge | float) -> object:
+    def at(self, age: UserAge | float) -> AgeCaseLaw:
         """Return the law selected at `age`; raise `KeyError` if it is uncovered.
 
         `age` must equal a grid age exactly, as a selector does; a float that
@@ -1001,9 +1052,9 @@ class _Until:
 
     stop_age_exclusive: UserAge | float
     """The exact source age at and after which no law is supplied."""
-    law: object
+    law: AgeCaseLaw
     """The law at the earlier source ages."""
-    then: object
+    then: AgeCaseLaw
     """The law at the last source age below the stop."""
     start_age_inclusive: UserAge | float | None
     """The first source age with a law, or `None` for the first grid age."""
@@ -1015,7 +1066,7 @@ _NESTED_SCHEDULE = (
 )
 
 
-def fail_if_phased_wraps_a_schedule(transition: object) -> None:
+def fail_if_phased_wraps_a_schedule(transition: _DeclaredTransitionLaw | None) -> None:
     """Reject a top-level `Phased` regime transition with a `ByAge` side.
 
     A schedule varies by age and `Phased` by phase; age is the outer dimension,
@@ -1038,7 +1089,7 @@ def fail_if_phased_wraps_a_schedule(transition: object) -> None:
         )
 
 
-def _fail_if_not_a_nonterminal_law(law: object) -> None:
+def _fail_if_not_a_nonterminal_law(law: _DeclaredCaseLaw) -> None:
     """Reject terminality and nested schedules inside a schedule."""
     sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
     for side in sides:
@@ -1057,7 +1108,7 @@ def _fail_if_not_a_nonterminal_law(law: object) -> None:
             )
 
 
-def _fail_if_invalid_age_selector(selector: object) -> None:
+def _fail_if_invalid_age_selector(selector: _DeclaredSelector) -> None:
     """Reject selectors whose values can never be grid ages."""
     values = selector if isinstance(selector, tuple | range) else (selector,)
     if isinstance(selector, AgeRange | PeriodRange):
@@ -1087,8 +1138,18 @@ def _fail_if_invalid_age_selector(selector: object) -> None:
         )
 
 
+def _period_by_age(ages: TimeAxis) -> Mapping[AgeLabel, int]:
+    """Map each exact coordinate of `ages` to its computational period."""
+    return MappingProxyType(
+        {age: period for period, age in enumerate(ages.exact_values)}
+    )
+
+
 def _select_periods(
-    *, selector: object, ages: TimeAxis, period_by_age: Mapping[object, int]
+    *,
+    selector: _DeclaredSelector,
+    ages: TimeAxis,
+    period_by_age: Mapping[AgeLabel, int],
 ) -> tuple[int, ...]:
     """Return the periods an exact selector names; off-grid points raise."""
     if isinstance(selector, AgeRange | PeriodRange):
@@ -1098,10 +1159,13 @@ def _select_periods(
             if (selector.start is None or age >= selector.start)
             and (selector.exclusive_stop is None or age < selector.exclusive_stop)
         )
-    values = selector if isinstance(selector, tuple | range) else (selector,)
-    periods = set()
     if isinstance(selector, Periods):
         values = selector.values
+    elif isinstance(selector, tuple | range):
+        values = selector
+    else:
+        values = (selector,)
+    periods = set()
     for value in values:
         if value not in period_by_age:
             kind = coordinate_kind(ages)
@@ -1119,8 +1183,8 @@ def _resolve_until(
     *,
     until: _Until,
     ages: TimeAxis,
-    period_by_age: Mapping[object, int],
-) -> dict[int, object]:
+    period_by_age: Mapping[AgeLabel, int],
+) -> dict[int, AgeCaseLaw]:
     """Resolve `ByAge.until` into per-period laws."""
     boundary, start = until.stop_age_exclusive, until.start_age_inclusive
     for name, value in (

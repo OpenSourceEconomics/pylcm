@@ -2,14 +2,14 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    _NamesBoundary: TypeAlias = tuple[str, ...]  # noqa: UP040
+    type _NamesBoundary = tuple[str, ...]
 else:
     # The constructor snapshots sequences before the published tuple contract
     # applies; runtime annotation sampling must not reject a mutable input first.
-    _NamesBoundary = object
+    type _NamesBoundary = object
 
 
 @dataclass(frozen=True, kw_only=True)

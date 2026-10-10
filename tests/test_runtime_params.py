@@ -114,6 +114,39 @@ def test_runtime_grid_requires_points_or_n_points():
         IrregSpacedGrid()
 
 
+def test_get_params_template_lists_each_parameter_with_its_annotation():
+    """Each regime maps its functions to their parameters' annotation names."""
+    assert _make_model().get_params_template() == {
+        "alive": {
+            "utility": {},
+            "borrowing_constraint": {},
+            "next_wealth": {"interest_rate": "float"},
+            "koopmans_aggregator": {"discount_factor": "FloatND"},
+            "certainty_equivalent": {},
+        },
+        "dead": {"utility": {}},
+    }
+
+
+def test_get_params_template_is_built_from_plain_dicts():
+    """Every branch of the template is a plain `dict` a user can fill in."""
+    template = _make_model().get_params_template()
+    branch_types = {type(template)} | {
+        type(branch)
+        for regime in template.values()
+        for branch in (regime, *regime.values())
+    }
+    assert branch_types == {dict}
+
+
+def test_get_params_template_returns_a_fresh_copy_on_each_call():
+    """Filling in one returned template leaves the next call's template as is."""
+    model = _make_model()
+    model.get_params_template()["alive"]["next_wealth"]["interest_rate"] = 0.05
+    template = model.get_params_template()
+    assert template["alive"]["next_wealth"]["interest_rate"] == "float"
+
+
 def test_runtime_grid_in_params_template():
     """IrregSpacedGrid with runtime-supplied points adds 'points' to template."""
     model = _make_model(

@@ -40,6 +40,9 @@ bare `str` whenever a string slot has a fixed semantic role.
 | `ProcessName`            | Subset of `StateName` for stochastic processes — keys of `_ContinuousStochasticProcess`-typed mappings, process-transition helpers.                     |
 | `FunctionName`           | User-supplied function names — `"utility"`, helpers; keys of `Regime.functions`, `derived_categoricals`.                                                |
 | `TransitionFunctionName` | Names of transition callables — `next_<state>`, `weight_next_<state>`; keys of `state_transitions` and per-target dicts.                                |
+| `ParameterName`          | One parameter of a user function on its own — `risk_aversion`; a function signature's parameter, not the flat params key.                          |
+| `ReferenceName`          | Any name a user function's argument can reference — a state, action, function, parameter or margin role; argument names of DAG functions.        |
+| `QualifiedName`          | (`_lcm.typing`) A `__`-joined path through the params or function namespace — `utility__risk_aversion`; keys of flat params.                      |
 
 When a string slot covers more than one of the categories above, prefer a union (e.g.
 `dict[RegimeName | TransitionFunctionName, ...]`) over bare `str`. Plain `str` is the
@@ -47,6 +50,11 @@ right type only when the keys really are heterogeneous and don't map onto any of
 aliases — DataFrame column labels, free-form param-template leaf strings, and similar.
 Use `NewType` only when an opaque ID is required; the project has not needed that so
 far.
+
+The `precise-annotations` hook reports a bare `str` on a regime, state, action,
+function, qualified or parameter name (`PAN003`), together with `object`, `Any`,
+generics without type arguments and aliases outside `type` statements; see
+[style.md](style.md), "Precise Annotations".
 
 ### Code Standards
 

@@ -9,15 +9,23 @@ and `dags` see the function they stand in for.
 """
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, TypeVar, cast
+from types import MappingProxyType
+from typing import TypeIs, TypeVar, cast
+
+import jax.numpy as jnp
+from jax import Array
+
+from _lcm.typing import ArrayTree, PytreeValue
+from lcm.typing import ReferenceName, UserFunction, UserFunctionResult, ValueND
 
 ReturnType = TypeVar("ReturnType")
 
 # Names `functools.wraps` copies, minus the deferred annotations (PEP 649):
-# an adapter's own `(*args: Any, **kwargs: Any)` annotations must stay in force
-# so that the beartype claw never enforces user-model types on a forwarder.
+# an adapter's own `(*args: PytreeValue, **kwargs: PytreeValue)` annotations
+# must stay in force so that the beartype claw never enforces user-model types
+# on a forwarder.
 _WRAPPER_ASSIGNMENTS: tuple[str, ...] = (
     "__module__",
     "__name__",
@@ -60,7 +68,7 @@ def allow_only_kwargs(
         "Callable[..., ReturnType]",
         _KeywordOnlyAdapter(
             func=func,
-            parameter_names=tuple(parameters),
+            signature_parameter_names=tuple(parameters),
             keyword_only_names=tuple(
                 p.name
                 for p in parameters.values()
@@ -72,13 +80,13 @@ def allow_only_kwargs(
     )
 
 
-def _split_bound_arguments(
+def _split_bound_arguments[T](
     *,
     bound: inspect.BoundArguments,
     n_positional: int,
     original_signature: inspect.Signature,
     adapted_signature: inspect.Signature,
-) -> tuple[list[Any], dict[str, Any]]:
+) -> tuple[tuple[T, ...], MappingProxyType[ReferenceName, T]]:
     """Preserve how positional-or-keyword values reached the adapter."""
     positional_origins: set[str] = set()
     remaining_positional = n_positional
@@ -95,8 +103,8 @@ def _split_bound_arguments(
             positional_origins.add(parameter.name)
             break
 
-    forwarded_args: list[Any] = []
-    forwarded_kwargs: dict[str, Any] = {}
+    forwarded_args: list[T] = []
+    forwarded_kwargs: dict[ReferenceName, T] = {}
     for name, value in bound.arguments.items():
         kind = original_signature.parameters[name].kind
         if kind == inspect.Parameter.VAR_POSITIONAL:
@@ -111,7 +119,7 @@ def _split_bound_arguments(
         else:
             forwarded_kwargs[name] = value
 
-    return forwarded_args, forwarded_kwargs
+    return tuple(forwarded_args), MappingProxyType(forwarded_kwargs)
 
 
 def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
@@ -167,7 +175,7 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
 
 
 def publish_signature(
-    *, target: Callable[..., Any], signature: inspect.Signature
+    *, target: Callable[..., ArrayTree], signature: inspect.Signature
 ) -> None:
     """Set the signature `inspect.signature` reports for `target`.
 
@@ -177,7 +185,53 @@ def publish_signature(
     object.__setattr__(target, "__signature__", signature)
 
 
-def get_union_of_args(list_of_functions: list[Callable[..., Any]]) -> set[str]:
+def is_user_function[T](value: T | UserFunction) -> TypeIs[UserFunction]:
+    """Whether a declared value is a user function rather than a constant or spec.
+
+    Every callable in a model declaration is a user function: its parameters are
+    resolved by name and its result is used as the model value it declares.
+
+    Args:
+        value: A declared value, such as a weight, a law or a kernel slot.
+
+    Returns:
+        Whether `value` is callable.
+
+    """
+    return callable(value)
+
+
+def array_result(value: UserFunctionResult) -> ValueND:
+    """Return a user function's result where its role requires an array.
+
+    A utility, a resources map, a constraint or a probability cell is evaluated on
+    arrays and returns one. A Python scalar, such as a constant function's value,
+    becomes a 0-d array; a mapping or tuple there is a model error.
+
+    Args:
+        value: What the user function returned.
+
+    Returns:
+        `value` as an array.
+
+    Raises:
+        TypeError: If `value` is a mapping or a tuple.
+
+    """
+    if isinstance(value, Array):
+        return value
+    if isinstance(value, float | int):
+        return jnp.asarray(value)
+    msg = (
+        f"A model function returned a {type(value).__name__} where an array is "
+        "required."
+    )
+    raise TypeError(msg)
+
+
+def get_union_of_args[R](
+    list_of_functions: Sequence[Callable[..., R]],
+) -> frozenset[str]:
     """Return the union of arguments of a list of functions.
 
     Args:
@@ -188,15 +242,15 @@ def get_union_of_args(list_of_functions: list[Callable[..., Any]]) -> set[str]:
 
     """
     arguments = [inspect.signature(f).parameters for f in list_of_functions]
-    return set().union(*arguments)
+    return frozenset(set().union(*arguments))
 
 
-def all_as_kwargs(
+def all_as_kwargs[T](
     *,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    arg_names: list[str],
-) -> dict[str, Any]:
+    args: tuple[T, ...],
+    kwargs: dict[ReferenceName, T],
+    arg_names: list[ReferenceName],
+) -> MappingProxyType[ReferenceName, T]:
     """Return kwargs dictionary containing all arguments.
 
     Args:
@@ -208,15 +262,17 @@ def all_as_kwargs(
         A dictionary of all arguments.
 
     """
-    return dict(zip(arg_names[: len(args)], args, strict=True)) | kwargs
+    return MappingProxyType(
+        dict(zip(arg_names[: len(args)], args, strict=True)) | kwargs
+    )
 
 
-def all_as_args(
+def all_as_args[T](
     *,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    arg_names: list[str],
-) -> tuple[Any, ...]:
+    args: tuple[T, ...],
+    kwargs: dict[ReferenceName, T],
+    arg_names: list[ReferenceName],
+) -> tuple[T, ...]:
     """Return args tuple containing all arguments.
 
     Args:
@@ -231,9 +287,9 @@ def all_as_args(
     return args + tuple(convert_kwargs_to_args(kwargs=kwargs, arg_names=arg_names))
 
 
-def convert_kwargs_to_args(
-    *, kwargs: dict[str, Any], arg_names: list[str]
-) -> list[Any]:
+def convert_kwargs_to_args[T](
+    *, kwargs: dict[ReferenceName, T], arg_names: list[ReferenceName]
+) -> tuple[T, ...]:
     """Convert kwargs to args in the order of arg_names.
 
     Args:
@@ -247,14 +303,14 @@ def convert_kwargs_to_args(
     unknown = set(kwargs).difference(arg_names)
     if unknown:
         raise ValueError(f"Arguments {sorted(unknown)} are not among {arg_names}.")
-    return [kwargs[name] for name in arg_names if name in kwargs]
+    return tuple(kwargs[name] for name in arg_names if name in kwargs)
 
 
 @dataclass(frozen=True, eq=False)
-class _WrappedCallable:
+class _WrappedCallable[R]:
     """Base of the adapters: a callable standing in for `func` under `signature`."""
 
-    func: Callable[..., Any]
+    func: Callable[..., R]
     """The wrapped function."""
     signature: inspect.Signature
     """The signature `inspect.signature` reports for the adapter."""
@@ -276,22 +332,22 @@ class _WrappedCallable:
             self, "__annotations__", dict(type(self).__call__.__annotations__)
         )
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: PytreeValue, **kwargs: PytreeValue) -> R:
         raise NotImplementedError
 
 
 @dataclass(frozen=True, eq=False)
-class _KeywordOnlyAdapter(_WrappedCallable):
+class _KeywordOnlyAdapter[R](_WrappedCallable[R]):
     """Forward keyword arguments to `func`, refusing positional ones."""
 
-    parameter_names: tuple[str, ...]
+    signature_parameter_names: tuple[str, ...]
     """Every parameter of `func`, in declaration order."""
     keyword_only_names: tuple[str, ...]
     """The parameters `func` itself takes keyword-only."""
     enforce: bool
     """Whether an argument `func` does not take is an error."""
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: PytreeValue, **kwargs: PytreeValue) -> R:
         if args:
             raise ValueError(
                 (
@@ -301,17 +357,18 @@ class _KeywordOnlyAdapter(_WrappedCallable):
             )
 
         if self.enforce:
-            extra = set(kwargs).difference(self.parameter_names)
+            extra = set(kwargs).difference(self.signature_parameter_names)
             if extra:
                 raise ValueError(
-                    f"Expected arguments: {list(self.parameter_names)}, "
+                    f"Expected arguments: {list(self.signature_parameter_names)}, "
                     f"got extra: {extra}",
                 )
 
-        missing = set(self.parameter_names).difference(kwargs)
+        missing = set(self.signature_parameter_names).difference(kwargs)
         if missing:
             raise ValueError(
-                f"Expected arguments: {list(self.parameter_names)}, missing: {missing}",
+                f"Expected arguments: {list(self.signature_parameter_names)}, "
+                f"missing: {missing}",
             )
 
         # Retrieve keyword-only arguments
@@ -321,19 +378,20 @@ class _KeywordOnlyAdapter(_WrappedCallable):
         positional_kwargs = {
             k: v
             for k, v in kwargs.items()
-            if (k not in self.keyword_only_names) and (k in self.parameter_names)
+            if (k not in self.keyword_only_names)
+            and (k in self.signature_parameter_names)
         }
 
         # Collect all positional arguments in correct order
         positional = convert_kwargs_to_args(
-            kwargs=positional_kwargs, arg_names=list(self.parameter_names)
+            kwargs=positional_kwargs, arg_names=list(self.signature_parameter_names)
         )
 
         return self.func(*positional, **kw_only_kwargs)
 
 
 @dataclass(frozen=True, eq=False)
-class _PositionalAdapter(_WrappedCallable):
+class _PositionalAdapter[R](_WrappedCallable[R]):
     """Accept positional arguments for `func` and forward them as `func` takes them."""
 
     original_signature: inspect.Signature
@@ -341,7 +399,7 @@ class _PositionalAdapter(_WrappedCallable):
     accepts_variadic: bool
     """Whether `func` takes `*args` or `**kwargs`, so no argument count is too many."""
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: PytreeValue, **kwargs: PytreeValue) -> R:
         parameters = self.original_signature.parameters
         if len(args) + len(kwargs) > len(parameters) and not self.accepts_variadic:
             raise ValueError("Too many arguments provided.")
@@ -376,7 +434,7 @@ _PROTECTED_ATTRIBUTES: frozenset[str] = frozenset(
     {
         "func",
         "signature",
-        "parameter_names",
+        "signature_parameter_names",
         "keyword_only_names",
         "enforce",
         "original_signature",

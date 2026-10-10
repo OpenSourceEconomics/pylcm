@@ -8,13 +8,15 @@ compiles nothing else.
 """
 
 import re
-from types import MappingProxyType, SimpleNamespace
+from types import MappingProxyType
 
 import jax
 import pytest
 
 from _lcm.execution.core_program import (
+    CoreExecutionDisposition,
     CoreExecutionRequirements,
+    MaterializedCoreProgram,
     ReducedAxis,
     TiledOutputAxis,
 )
@@ -44,6 +46,19 @@ def _tiled_axis() -> TiledOutputAxis:
         state_names=("wealth",),
         extent=4096,
         width_keyword="_lcm_cell_width",
+    )
+
+
+def _program(*, requirements: CoreExecutionRequirements) -> MaterializedCoreProgram:
+    """A dense program declaring `requirements` and nothing a width projection reads."""
+    return MaterializedCoreProgram(
+        name="main",
+        function=lambda: None,
+        arguments=MappingProxyType({}),
+        requirements=requirements,
+        output_roles=None,
+        disposition=CoreExecutionDisposition.DENSE,
+        donation_candidates=(),
     )
 
 
@@ -162,8 +177,7 @@ def test_a_width_that_binds_no_axis_is_refused(model: Model) -> None:
 def test_an_omitted_axis_takes_its_bootstrap_width() -> None:
     """An axis the caller leaves out is bound where the unbudgeted route binds it."""
     axes = (_reduced_axis(), _tiled_axis())
-    program = SimpleNamespace(
-        name="main",
+    program = _program(
         requirements=CoreExecutionRequirements(
             reduced_axes=(axes[0],), tiled_axes=(axes[1],)
         ),
@@ -177,8 +191,7 @@ def test_an_omitted_axis_takes_its_bootstrap_width() -> None:
 def test_a_named_axis_overrides_its_bootstrap_width() -> None:
     """A fixed width is bound as given while its neighbours stay at bootstrap."""
     reduced, tiled = _reduced_axis(), _tiled_axis()
-    program = SimpleNamespace(
-        name="main",
+    program = _program(
         requirements=CoreExecutionRequirements(
             reduced_axes=(reduced,), tiled_axes=(tiled,)
         ),

@@ -105,7 +105,7 @@ def _wealth_value(*, wealth: Float1D) -> Float1D:
     return wealth
 
 
-def _wealth_arguments(build: CoreBuildContext) -> Mapping[str, object]:
+def _wealth_arguments(build: CoreBuildContext) -> Mapping[str, jax.Array]:
     """Bind wealth from the public state-space contract the solver consumes."""
     state_action_space = build.state_action_space
     if not isinstance(state_action_space, StateActionSpace):
@@ -134,12 +134,12 @@ class _GraphKernel:
         self,
         *,
         compiled_cores: Mapping[str, object],
-        state_action_space: object,
-        next_regime_to_V_arr: Mapping[str, object],
-        next_regime_to_continuation: Mapping[str, object],
-        flat_params: Mapping[str, object],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[str, FloatND],
+        next_regime_to_continuation: Mapping[str, ContinuationArtifact],
+        flat_params: Mapping[str, object],  # noqa: ARG002
         period: int,
-        ages: object,
+        ages: object,  # noqa: ARG002
         logger: object,  # noqa: ARG002
         **_unused: object,
     ) -> KernelOutput:
@@ -147,9 +147,9 @@ class _GraphKernel:
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
+            flat_params=MappingProxyType({}),
             period=period,
-            ages=ages,
+            ages=None,
         )
         arguments = self.programs["main"].argument_builder(context)
         out = compiled_cores["main"](**arguments)  # ty: ignore[call-non-callable]
@@ -221,7 +221,7 @@ class TerminalPublisher(Solver):
             raise TypeError("The terminal publisher's parent publishes nothing.")
         template = spec.template
 
-        def terminal_value(*, wealth: Float1D) -> tuple[Float1D, object]:
+        def terminal_value(*, wealth: Float1D) -> tuple[Float1D, ContinuationArtifact]:
             return jnp.zeros_like(wealth), template
 
         program = CoreProgram(
@@ -360,7 +360,7 @@ def _counting_value(*, wealth: Float1D, count: FloatND) -> tuple[Float1D, _Count
     return wealth + count, _Counter(count=count + 1.0)
 
 
-def _counting_arguments(build: CoreBuildContext) -> Mapping[str, object]:
+def _counting_arguments(build: CoreBuildContext) -> Mapping[str, jax.Array]:
     """Bind the solver's own count payload through its declared runtime type."""
     continuation = build.next_regime_to_continuation["alive"]
     if not isinstance(continuation, _Counter):

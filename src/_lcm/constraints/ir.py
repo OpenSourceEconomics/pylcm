@@ -29,10 +29,12 @@ its own grid is the boundary compiler's job, not the tree's.
 import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Self
 
 import jax.numpy as jnp
 
+from _lcm.typing import AnnotationForm
+from _lcm.utils.functools import array_result
 from lcm.typing import BoolND, FloatND, ReferenceName, UserFunction, ValueND
 
 type ComparisonOperator = Literal["<", "<=", ">", ">=", "==", "!="]
@@ -62,22 +64,22 @@ class Ref(Operand):
         self.name = name
         """The name this leaf resolves against when the condition is evaluated."""
 
-    def __lt__(self, other: object) -> Condition:
+    def __lt__(self, other: Self | bool | float) -> Condition:
         return _compare(left=self, op="<", right=other)
 
-    def __le__(self, other: object) -> Condition:
+    def __le__(self, other: Self | bool | float) -> Condition:
         return _compare(left=self, op="<=", right=other)
 
-    def __gt__(self, other: object) -> Condition:
+    def __gt__(self, other: Self | bool | float) -> Condition:
         return _compare(left=self, op=">", right=other)
 
-    def __ge__(self, other: object) -> Condition:
+    def __ge__(self, other: Self | bool | float) -> Condition:
         return _compare(left=self, op=">=", right=other)
 
-    def __eq__(self, other: object) -> Condition:  # ty: ignore[invalid-method-override]
+    def __eq__(self, other: Self | bool | float) -> Condition:  # ty: ignore[invalid-method-override]
         return _compare(left=self, op="==", right=other)
 
-    def __ne__(self, other: object) -> Condition:  # ty: ignore[invalid-method-override]
+    def __ne__(self, other: Self | bool | float) -> Condition:  # ty: ignore[invalid-method-override]
         return _compare(left=self, op="!=", right=other)
 
     def __hash__(self) -> int:
@@ -376,7 +378,7 @@ def evaluate_expression(
         case Opaque(func=func):
             names = signature_names(func)
             _fail_if_names_are_missing(names=names, values=values)
-            return func(**{name: values[name] for name in names})
+            return array_result(func(**{name: values[name] for name in names}))
     raise TypeError(f"Not a condition expression: {expression!r}")
 
 
@@ -428,7 +430,9 @@ def signature_names(func: UserFunction) -> tuple[str, ...]:
     return tuple(inspect.signature(func).parameters)
 
 
-def _compare(*, left: Ref, op: ComparisonOperator, right: object) -> Condition:
+def _compare(
+    *, left: Ref, op: ComparisonOperator, right: Ref | bool | float
+) -> Condition:
     """Build a comparison as a condition, keeping the declared name on the left."""
     if isinstance(right, Ref):
         return Condition(expression=Compare(left=left, op=op, right=right))
@@ -491,8 +495,12 @@ def _fail_if_names_are_missing(
         )
 
 
-def _annotations_of_signature(signature: inspect.Signature) -> dict[str, object]:
-    annotations: dict[str, object] = {
+def _annotations_of_signature(
+    signature: inspect.Signature,
+) -> dict[str, AnnotationForm]:
+    # It becomes the callable's `__annotations__`, which `annotationlib` reads only
+    # as a plain dict.
+    annotations: dict[str, AnnotationForm] = {
         arg_name: parameter.annotation
         for arg_name, parameter in signature.parameters.items()
         if parameter.annotation is not inspect.Parameter.empty

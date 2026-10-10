@@ -38,7 +38,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING
 
 import jax
 import numpy as np
@@ -47,23 +47,36 @@ from _lcm.engine import Regime
 from _lcm.execution.core_program import InvariantBinding, core_program_graph
 from _lcm.execution.footprint import layout_footprint
 from _lcm.execution.invariant_blocks import block_state_action_space
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import ExecutableCache
-from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.contract import BackwardInductionResult, PeriodKernel
 from _lcm.solution.grid_search import _GridSearchPeriodKernel
-from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
-from _lcm.typing import FlatParams, RegimeName, StateName
+from _lcm.solution.solver_diagnostics import SolverDiagnostics
+from _lcm.solution.v_topology import (
+    _get_regime_V_shapes_and_shardings,
+    _RegimeVTopology,
+)
+from _lcm.typing import (
+    ArtifactPayload,
+    FlatParams,
+    PeriodToRegimeToSimulationPolicy,
+    RegimeName,
+    StateName,
+)
 from lcm._solver_api.entries import _LazyEntry
 from lcm._solver_api.identity import LoadState
-from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
+from lcm._solver_api.stores import ArtifactStore, ValueStore, _ValueStoreBoundary
 from lcm.exceptions import ExecutionPlanningError
 
 if TYPE_CHECKING:
-    _ComponentBlocks: TypeAlias = Mapping[int, Mapping[RegimeName, jax.Array]]  # noqa: UP040
+    type _ComponentBlocks = MappingProxyType[
+        int, MappingProxyType[RegimeName, jax.Array]
+    ]
 else:
     # A component's blocks are read and deleted by the schedule itself; the
     # runtime annotation check must not walk them while they are being retired.
-    _ComponentBlocks = object
+    type _ComponentBlocks = object
 
 _REMEDY = (
     "Keep the default InvariantBlockSchedule.PERIOD_MAJOR, or remove the state "
@@ -71,6 +84,14 @@ _REMEDY = (
 )
 
 type _Coordinate = tuple[int, RegimeName]
+
+# One payload channel a solve result publishes: per-period, per-regime payloads
+# or an addressed artifact store.
+type _PublishedChannel = (
+    PeriodToRegimeToSimulationPolicy
+    | MappingProxyType[int, MappingProxyType[RegimeName, SolverDiagnostics]]
+    | ArtifactStore
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -171,8 +192,8 @@ def _component_binding(*, component: InvariantComponent) -> InvariantBinding:
 
 
 def _component_kernel(
-    *, kernel: object, component: InvariantComponent, regime_name: RegimeName
-) -> object:
+    *, kernel: PeriodKernel, component: InvariantComponent, regime_name: RegimeName
+) -> PeriodKernel:
     """Keep the kernel's program for the component's code, at position zero."""
     graph = core_program_graph(kernel=kernel)
     if all(program.invariant_binding is None for program in graph.values()):
@@ -506,7 +527,7 @@ class RetainedComponentValues:
     def value_store(self) -> _ValueStoreBoundary:
         """Return the complete logical store, one lazy entry per solved value."""
         self._coverage.fail_if_incomplete()
-        entries: dict[object, object] = {
+        entries: dict[_Coordinate, _ComponentValueEntry] = {
             coordinate: _ComponentValueEntry(
                 owner=self, period=coordinate[0], regime=coordinate[1]
             )
@@ -555,17 +576,21 @@ class RetainedComponentValues:
         )
         raise ExecutionPlanningError(msg)
 
-    def _over_budget(self, *, coordinates: tuple[_Coordinate, ...]) -> dict[int, int]:
+    def _over_budget(
+        self, *, coordinates: tuple[_Coordinate, ...]
+    ) -> MappingProxyType[int, int]:
         """Return each device whose bytes for `coordinates` exceed the budget."""
         need = _bytes_by_device(
             layouts=tuple(self._layouts[coordinate] for coordinate in coordinates),
             item_bytes=self._item_bytes(),
         )
-        return {
-            device: count
-            for device, count in need.items()
-            if self._budget_bytes is not None and count > self._budget_bytes
-        }
+        return MappingProxyType(
+            {
+                device: count
+                for device, count in need.items()
+                if self._budget_bytes is not None and count > self._budget_bytes
+            }
+        )
 
     def retention_record(self) -> ComponentRetentionRecord:
         """Return what this retention holds on the host and has moved."""
@@ -581,11 +606,9 @@ class RetainedComponentValues:
             ),
             device_to_host_bytes=self._device_to_host_bytes,
             host_to_device_bytes=self._host_to_device_bytes,
-            full_value_bytes_by_device=MappingProxyType(
-                _bytes_by_device(
-                    layouts=tuple(self._layouts.values()),
-                    item_bytes=self._item_bytes(),
-                )
+            full_value_bytes_by_device=_bytes_by_device(
+                layouts=tuple(self._layouts.values()),
+                item_bytes=self._item_bytes(),
             ),
         )
 
@@ -599,7 +622,7 @@ class RetainedComponentValues:
 
 def _bytes_by_device(
     *, layouts: tuple[ValueLayout, ...], item_bytes: int
-) -> dict[int, int]:
+) -> MappingProxyType[int, int]:
     """Sum the per-device bytes of complete values on their layouts."""
     totals: dict[int, int] = {}
     for layout in layouts:
@@ -608,7 +631,7 @@ def _bytes_by_device(
         )
         for device in footprint.device_ids:
             totals[device] = totals.get(device, 0) + footprint.bytes_per_device
-    return totals
+    return MappingProxyType(totals)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -629,7 +652,7 @@ class _ComponentValueEntry(_LazyEntry):
         """Nothing of a block-major value is resident until it is read."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(self, *, template: ArtifactPayload | None = None) -> jax.Array:
         """Assemble the value on the layout the period-major solve publishes."""
         del template
         return self.owner.assemble_value(period=self.period, regime=self.regime)
@@ -692,7 +715,7 @@ class ComponentSchedule:
         state_name: StateName,
         flat_params: FlatParams,
         device_ids: tuple[int, ...],
-        process_grid_resolver: object | None,
+        process_grid_resolver: ProcessGridResolver | None,
         budget_bytes: int | None,
         solve: Callable[..., BackwardInductionResult],
         logger: logging.Logger,
@@ -754,7 +777,7 @@ class ComponentSchedule:
                     regimes=regimes,
                     flat_params=flat_params,
                     device_ids=device_ids,
-                    process_grid_resolver=process_grid_resolver,  # ty: ignore[invalid-argument-type]
+                    process_grid_resolver=process_grid_resolver,
                 ),
             ),
             budget_bytes=budget_bytes,
@@ -846,14 +869,11 @@ class ComponentSchedule:
         return self._retained
 
 
-def _has_payload(store: object) -> bool:
+def _has_payload(store: _PublishedChannel) -> bool:
     """Return whether a published artifact mapping holds any payload."""
-    if isinstance(store, Mapping):
-        return any(
-            bool(inner) if isinstance(inner, Mapping) else True
-            for inner in store.values()
-        )
-    return bool(len(store))  # ty: ignore[invalid-argument-type]
+    return any(
+        bool(inner) if isinstance(inner, Mapping) else True for inner in store.values()
+    )
 
 
 class SolvingComponentValues:
@@ -1026,7 +1046,7 @@ def value_layouts(
     *,
     regimes: Mapping[RegimeName, Regime],
     state_name: StateName,
-    topology: Mapping[RegimeName, object],
+    topology: Mapping[RegimeName, _RegimeVTopology],
 ) -> MappingProxyType[_Coordinate, ValueLayout]:
     """Return the published layout of every value the solve publishes.
 
@@ -1044,9 +1064,9 @@ def value_layouts(
     return MappingProxyType(
         {
             (period, name): ValueLayout(
-                shape=tuple(topology[name].shape),  # ty: ignore[unresolved-attribute]
+                shape=tuple(topology[name].shape),
                 axis=axes[name].index(state_name),
-                sharding=topology[name].sharding,  # ty: ignore[unresolved-attribute]
+                sharding=topology[name].sharding,
             )
             for name, regime in regimes.items()
             for period in sorted(regime.active_periods)

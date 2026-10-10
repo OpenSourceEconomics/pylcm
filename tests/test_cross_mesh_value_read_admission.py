@@ -36,6 +36,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import jax.numpy as jnp
@@ -545,8 +546,8 @@ def _endpoint_bytes(*, inventory: Any, device: int, scratch_bytes: int) -> int:
     restricted = dataclasses.replace(
         inventory,
         device_ids=(device,) if device in inventory.device_ids else (),
-        fixed_bytes={device: inventory.fixed_bytes.get(device, 0)},
-        transfer_scratch_bytes={device: scratch_bytes},
+        fixed_bytes=MappingProxyType({device: inventory.fixed_bytes.get(device, 0)}),
+        transfer_scratch_bytes=MappingProxyType({device: scratch_bytes}),
     )
     return restricted.resident_bytes(consumes=(), consumed_copies=frozenset())
 
@@ -579,7 +580,9 @@ def _refusal_without_transfer_scratch(*, budget_bytes: int) -> str:
 
     def without_scratch(**kwargs: Any) -> Any:
         return {
-            triple: dataclasses.replace(inventory, transfer_scratch_bytes={})
+            triple: dataclasses.replace(
+                inventory, transfer_scratch_bytes=MappingProxyType({})
+            )
             for triple, inventory in original(**kwargs).items()
         }
 

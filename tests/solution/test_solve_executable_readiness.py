@@ -12,6 +12,8 @@ import pytest
 
 from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.solution import backward_induction
+from _lcm.time import TimeAxis
+from _lcm.typing import ArgumentTree, FlatParams, FlatRegimeParams, PytreeValue
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -20,7 +22,12 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.solver_api import KernelOutput, ResultRetention, SolverExecutionCapabilities
+from lcm.solver_api import (
+    ContinuationArtifact,
+    KernelOutput,
+    ResultRetention,
+    SolverExecutionCapabilities,
+)
 from lcm.solvers import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -33,9 +40,10 @@ from lcm.solvers import (
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    StateActionSpace,
     StateAxesLeading,
 )
-from lcm.typing import ScalarInt
+from lcm.typing import FloatND, ReferenceName, RegimeName, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution import test_donation_solve as counter_fixture
 from tests.test_models.initial_nodes import initial_nodes_of
@@ -64,16 +72,20 @@ def _consume(*, previous_value: jax.Array, previous_matrix: jax.Array) -> jax.Ar
     return previous_value + jnp.sum(previous_matrix) / previous_matrix.size
 
 
-def _producer_arguments(context: CoreBuildContext) -> Mapping[str, object]:
+def _producer_arguments(
+    context: CoreBuildContext,
+) -> Mapping[ReferenceName, PytreeValue]:
     space = cast("Any", context.state_action_space)
-    params = cast("Mapping[str, Mapping[str, object]]", context.flat_params)
+    params = cast("Mapping[RegimeName, FlatRegimeParams]", context.flat_params)
     return {
         "wealth": space.states["wealth"],
         "work": params["working"]["utility__work"],
     }
 
 
-def _consumer_arguments(_context: CoreBuildContext) -> Mapping[str, object]:
+def _consumer_arguments(
+    _context: CoreBuildContext,
+) -> Mapping[ReferenceName, PytreeValue]:
     return {}
 
 
@@ -92,12 +104,12 @@ class _TwoProgramKernel:
         self,
         *,
         compiled_cores: Mapping[str, Callable[..., object]],
-        state_action_space: object,
-        next_regime_to_V_arr: Mapping[str, object],
-        next_regime_to_continuation: Mapping[str, object],
-        flat_params: Mapping[str, object],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[str, FloatND],
+        next_regime_to_continuation: Mapping[str, ContinuationArtifact],
+        flat_params: FlatParams,
         period: int,
-        ages: object,
+        ages: TimeAxis,
         **_unused: object,
     ) -> KernelOutput:
         context = CoreBuildContext(
@@ -323,7 +335,7 @@ def test_budgeted_real_donor_and_template_fallback_leave_no_stale_witness(
         return cores
 
     def observe_call(
-        executable: jax.stages.Compiled, *args: object, **kwargs: object
+        executable: jax.stages.Compiled, *args: object, **kwargs: ArgumentTree
     ) -> object:
         count = kwargs.get("count")
         if isinstance(count, jax.Array):

@@ -5,6 +5,7 @@ separately. Every claim about a genuine mesh runs in a subprocess with forced
 host devices, so the per-device numbers are measured rather than assumed.
 """
 
+import dataclasses
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.footprint import (
     ArtifactFootprint,
@@ -720,18 +722,16 @@ def test_an_argument_on_another_device_leaves_that_devices_charge_standing() -> 
 
 def test_transfer_scratch_is_immutable_and_never_compiler_excluded() -> None:
     """Scratch survives complete input exclusions and remains per-device."""
-    scratch = {0: 7, 1: 19}
     inventory = ResidentInventory(
         device_ids=(0, 1),
         live={},
         peer_bytes={0: 20, 1: 0},
         declared_inputs=(),
-        shared_copies={
-            "copy": ArtifactFootprint(bytes_per_device=100, device_ids=(0, 1))
-        },
-        transfer_scratch_bytes=scratch,
+        shared_copies=MappingProxyType(
+            {"copy": ArtifactFootprint(bytes_per_device=100, device_ids=(0, 1))}
+        ),
+        transfer_scratch_bytes=MappingProxyType({0: 7, 1: 19}),
     )
-    scratch[0] = 1000
     assert inventory.resident_bytes() == 27
     assert (
         inventory.resident_bytes(consumes=(), consumed_copies=frozenset({"copy"})) == 27
@@ -751,3 +751,18 @@ def test_transfer_scratch_default_preserves_existing_reservation() -> None:
     )
     assert dict(inventory.transfer_scratch_bytes) == {}
     assert inventory.resident_bytes() == 11
+
+
+@pytest.mark.parametrize(
+    "field", ["fixed_bytes", "shared_copies", "transfer_scratch_bytes"]
+)
+def test_resident_inventory_refuses_plain_dict_reservations(*, field: str) -> None:
+    """Reservation metadata arrives frozen; a plain dict is refused."""
+    inventory = ResidentInventory(
+        device_ids=(0,),
+        live=MappingProxyType({}),
+        peer_bytes=MappingProxyType({0: 0}),
+        declared_inputs=(),
+    )
+    with pytest.raises(BeartypeCallHintParamViolation, match=field):
+        dataclasses.replace(inventory, **{field: {}})

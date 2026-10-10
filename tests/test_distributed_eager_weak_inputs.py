@@ -9,6 +9,7 @@ import pytest
 
 from _lcm.execution.eager_core import make_eager_core
 from _lcm.execution.runtime_sharding import runtime_shardings_match
+from _lcm.typing import PytreeValue
 from lcm.typing import ValueND
 from tests.execution.test_eager_core import eager_program
 
@@ -44,7 +45,7 @@ def test_strong_binding_preserves_actual_ordered_physical_layout(
     assert 0 not in {device.id for device in source.devices()}
     returned: list[object] = []
 
-    def body(*, value: ValueND) -> object:
+    def body(*, value: ValueND) -> PytreeValue:
         assert not value.weak_type
         assert isinstance(value.sharding, jax.NamedSharding)
         assert (

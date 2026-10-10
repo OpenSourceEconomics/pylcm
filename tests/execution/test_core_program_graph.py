@@ -28,6 +28,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE
 from _lcm.solution import backward_induction, period_replay
 from _lcm.solution.backward_induction import _resolve_program_for_execution
+from _lcm.typing import PytreeValue
 from lcm.solver_api import ArtifactKey
 from lcm.solvers import (
     ValueArtifactAddress,
@@ -38,7 +39,7 @@ from lcm.solvers import (
 )
 
 
-def _identity(*, value: object) -> object:
+def _identity(*, value: PytreeValue) -> PytreeValue:
     return value
 
 
@@ -48,12 +49,12 @@ def _double(*, value: object) -> object:
 
 def _context() -> CoreBuildContext:
     return CoreBuildContext(
-        state_action_space=object(),
+        state_action_space=None,
         next_regime_to_V_arr=MappingProxyType({}),
         next_regime_to_continuation=MappingProxyType({}),
         flat_params=MappingProxyType({}),
         period=0,
-        ages=object(),
+        ages=None,
     )
 
 
@@ -383,8 +384,8 @@ class _CoresOnlyKernel:
 
 def test_core_program_graph_rejects_a_kernel_without_a_native_graph() -> None:
     """A kernel is executable only through its own native core-program graph."""
-    with pytest.raises(TypeError, match="native core-program graph"):
-        core_program_graph(kernel=_CoresOnlyKernel())
+    with pytest.raises(BeartypeCallHintParamViolation, match="parameter kernel"):
+        core_program_graph(kernel=_CoresOnlyKernel())  # ty: ignore[invalid-argument-type]
 
 
 def test_every_disposition_is_planned_dense_or_host_driven() -> None:
@@ -421,7 +422,7 @@ def _scoped_program(
         if scope in {ProgramScope.REPLAY, ProgramScope.ARTIFACT}
         else ()
     )
-    retained_artifact_payload_types = dict.fromkeys(retained_artifact_keys, object)
+    retained_artifact_payload_types = dict.fromkeys(retained_artifact_keys, jax.Array)
     return CoreProgram(
         name=name,
         function=_identity,
@@ -711,3 +712,15 @@ def test_native_graph_rejects_a_scope_outside_the_enumeration() -> None:
 
     with pytest.raises(TypeError, match="scope"):
         core_program_graph(kernel=_NativeKernel({"main": program}))
+
+
+def test_core_build_context_refuses_ages_that_are_no_time_axis() -> None:
+    """A build context's ages are a time axis or absent, never another object."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="ages"):
+        dataclasses.replace(_context(), ages=object())
+
+
+def test_core_build_context_refuses_a_regime_level_that_is_no_mapping() -> None:
+    """Each regime's flat params are a mapping of parameter leaves, never a string."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="flat_params"):
+        dataclasses.replace(_context(), flat_params=MappingProxyType({"working": "x"}))

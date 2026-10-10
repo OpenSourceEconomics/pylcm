@@ -23,6 +23,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.transition import ModelEdges, PhaseEdges
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -111,7 +112,7 @@ def _retire_at_62(age: float) -> ScalarInt:
     return jnp.where(age < 62, RegimeId.working, RegimeId.retired)
 
 
-def _model(*, edges: object) -> Model:
+def _model(*, edges: ModelEdges) -> Model:
     return Model(
         regimes={"working": _alive(), "retired": _alive(), "dead": DEAD},
         ages=AGES,
@@ -361,7 +362,7 @@ LOTTERY_EDGES = {
     ids=["lone_solve", "lone_simulate"],
 )
 def test_phased_lone_edge_pairs_with_a_probability_mapping(
-    *, solve: dict[str, object], simulate: dict[str, object]
+    *, solve: PhaseEdges, simulate: PhaseEdges
 ) -> None:
     """A lone edge in one phase is a probability-one lottery; solve uses its law."""
     phased_values = _values(_model(edges=Phased(solve=solve, simulate=simulate)))

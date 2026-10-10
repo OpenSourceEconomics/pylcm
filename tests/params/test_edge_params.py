@@ -15,6 +15,7 @@ from typing import cast
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from jax import Array
 
 from _lcm.params.edges import edge_params, regime_kernel_params
@@ -40,6 +41,7 @@ from lcm.exceptions import (
     InvalidParamsError,
     ModelInitializationError,
 )
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -469,9 +471,9 @@ def test_kernel_params_refuse_a_key_both_the_regime_and_its_edges_hold():
     """A source's kernels cannot bind one key from two namespaces."""
     flat_params = MappingProxyType(
         {
-            "working": MappingProxyType({"dead__rate": 1.0}),
+            "working": MappingProxyType({"dead__rate": jnp.array(1.0)}),
             "edges": MappingProxyType(
-                {"working": MappingProxyType({"dead__rate": 2.0})}
+                {"working": MappingProxyType({"dead__rate": jnp.array(2.0)})}
             ),
         }
     )
@@ -481,8 +483,13 @@ def test_kernel_params_refuse_a_key_both_the_regime_and_its_edges_hold():
 
 def test_edge_callables_refuse_a_value_that_is_no_law_form():
     """A declared law cell that is neither a law nor a callable is named by type."""
-    with pytest.raises(TypeError, match="'float'"):
-        list(iter_edge_callables(law={"dead": 0.5}, path=()))
+    with pytest.raises(BeartypeCallHintParamViolation, match=r"value float 0\.5"):
+        list(
+            iter_edge_callables(
+                law={"dead": 0.5},  # ty: ignore[invalid-argument-type]
+                path=(),
+            )
+        )
 
 
 def test_invalid_law_argument_name_is_reported_at_its_edges_path():
@@ -629,7 +636,7 @@ _LATE_LAW = {
 def _mortal_model(
     *,
     ages: AgeGrid = _AGES,
-    law: object = None,
+    law: TransitionLaw | None = None,
     fixed_params: UserParams | None = None,
 ) -> Model:
     """Working regime that survives a year at a time, then dies at the last age.

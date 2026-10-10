@@ -23,14 +23,19 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_director
 from _lcm.regime_building.age_specialization import INVARIANT
 from _lcm.solution.cuda_lowering_identity import capture_cuda_lowering_identity
 from _lcm.solution.fingerprint import _semantic_fingerprint
+from _lcm.typing import HostArray, JSONValue, LoweringDescriptor
 from lcm.exceptions import ExecutionPlanningError
 
 
-def describe_lowering_value(value: object) -> object:
+def describe_lowering_value(
+    value: object,  # noqa: PAN001 - copies JAX tree-definition node data, whose auxiliary part JAX leaves untyped
+) -> LoweringDescriptor:
     """Copy descriptor data; reject unknown live objects instead of retaining them."""
     if isinstance(value, enum.Enum):
         return ("enum", type(value).__module__, type(value).__qualname__, value.name)
-    if value is None or type(value) in (str, bool, int, bytes):
+    if value is None or (
+        isinstance(value, str | int | bytes) and type(value) in (str, bool, int, bytes)
+    ):
         return value
     if isinstance(value, float):
         return ("float", value.hex())
@@ -41,7 +46,14 @@ def describe_lowering_value(value: object) -> object:
     return _describe_tree(value)
 
 
-def _describe_jax(value: object) -> object:
+def _describe_jax(
+    value: jax.Array
+    | jax.ShapeDtypeStruct
+    | HostArray
+    | jax.tree_util.PyTreeDef
+    | jax.sharding.Sharding
+    | jax.sharding.AbstractMesh,
+) -> LoweringDescriptor:
     """Copy supported JAX descriptors without retaining their live payloads."""
     if isinstance(value, (jax.Array, jax.ShapeDtypeStruct, np.ndarray)):
         return (
@@ -92,7 +104,9 @@ def _describe_jax(value: object) -> object:
     raise ExecutionPlanningError(f"Unspecified JAX descriptor type: {type(value)}")
 
 
-def _describe_tree(value: object) -> object:
+def _describe_tree(
+    value: object,  # noqa: PAN001 - copies JAX tree-definition node data, whose auxiliary part JAX leaves untyped
+) -> LoweringDescriptor:
     """Copy structural containers without saving their live leaves."""
     if value is INVARIANT:
         return ("singleton", "_lcm.regime_building.age_specialization", "INVARIANT")
@@ -131,7 +145,7 @@ def _describe_tree(value: object) -> object:
     raise ExecutionPlanningError(f"Unspecified descriptor type: {type(value)}")
 
 
-def capture_lowering_identity() -> Mapping[str, object]:
+def capture_lowering_identity() -> MappingProxyType[str, JSONValue]:
     """Read exact bytes before observation; reuse existing native/source seals."""
     # This diagnostic requires an identifiable source checkout and installed native
     # payload. A wheel without source inputs cannot satisfy this schema.
@@ -184,7 +198,7 @@ def capture_lowering_identity() -> Mapping[str, object]:
     )
     if not devices:
         raise ExecutionPlanningError("Lowering identity requires a device.")
-    extra_identity: Mapping[str, object] = {}
+    extra_identity: Mapping[str, JSONValue] = {}
     if not all(device[2] == "cpu" for device in devices):
         extra_identity = capture_cuda_lowering_identity(
             root=root,

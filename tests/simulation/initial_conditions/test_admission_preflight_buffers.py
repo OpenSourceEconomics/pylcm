@@ -147,7 +147,7 @@ def test_summary_allocation_is_refused_before_dispatch_and_inputs_survive(
     """Real admission refuses an unfunded summary and accepts generous headroom."""
     model, params, initial = _case(n_subjects=1024)
     generous = dataclasses.replace(model._execution, device_memory_bytes=2**25)
-    empty = DeviceBufferFootprint(spans={})
+    empty = DeviceBufferFootprint(spans=MappingProxyType({}))
     assert model.ages is not None
     memory = _preflight_memory(
         execution=generous,

@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.regime_building.phases import PhasedRegimeSpec, normalize_regime_phases
-from _lcm.regime_law import RegimeLaw, bind_regime_law
+from _lcm.regime_law import RegimeLaw, RegimeLawDeclaration, bind_regime_law
 from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
     validate_regime_law,
@@ -48,7 +48,7 @@ def _next_regime() -> FloatND:
 
 
 def _regime(
-    *, joint_transitions: object, law: object = _next_regime
+    *, joint_transitions: object, law: RegimeLawDeclaration = _next_regime
 ) -> tuple[Regime, RegimeLaw]:
     """A regime validated under `law`, returned with the bound law."""
     regime = Regime(

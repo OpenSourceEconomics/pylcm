@@ -17,6 +17,7 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
 )
 from _lcm.solution import backward_induction
+from _lcm.typing import FootprintTree
 from lcm import ExecutionConfig
 from tests.solution.test_solution_result import _small_grid_search_inputs
 
@@ -34,11 +35,11 @@ def _record_initial(
 
 def _inspect_fixed_inventory(
     *,
-    original_inputs: object,
+    original_inputs: FootprintTree,
     normalized: list[Mapping[str, jax.Array]],
     calls: list[bool],
     original: Callable[..., Mapping[int, int]],
-    tree: object,
+    tree: FootprintTree,
 ) -> Mapping[int, int]:
     assert len(normalized) == 1
     expected = measure_buffer_footprint(tree=(original_inputs, normalized[0]))

@@ -12,22 +12,25 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 import lcm.solver_api as solver_api_module
 from _lcm.engine import StateActionSpace
 from _lcm.persistence import solution as solution_persistence
 from _lcm.solution import model_authority as model_authority_module
 from _lcm.solution.result_snapshot import (
+    capture_exact_mapping,
     snapshot_artifact_authorities,
     snapshot_artifact_store,
     snapshot_artifact_template_declaration,
     snapshot_solution_metadata,
 )
+from _lcm.typing import ArtifactPayload, JSONValue
 from lcm import ExecutionConfig, LinSpacedGrid, Model
+from lcm._solver_api import authority as authority_module
 from lcm.exceptions import (
     IncompatibleSolutionError,
     InvalidSimulationInputError,
-    SolutionIntegrityError,
 )
 from lcm.persistence import save_solution
 from lcm.solver_api import (
@@ -118,7 +121,7 @@ class _RaisingMapping(_OneShotMapping):
 class _CountingLazyEntry(solver_api_module._LazyEntry):
     """Record any payload materialization past structural preflight."""
 
-    def __init__(self, value: object) -> None:
+    def __init__(self, value: ArtifactPayload) -> None:
         self.value = value
         self.materialization_count = 0
 
@@ -126,7 +129,7 @@ class _CountingLazyEntry(solver_api_module._LazyEntry):
     def load_state(self) -> LoadState:
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
         self.materialization_count += 1
         return self.value
 
@@ -143,7 +146,7 @@ class _DeletingLazyEntry(solver_api_module._LazyEntry):
     def load_state(self) -> LoadState:
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:
         del template
         self.materialization_count += 1
         for target in self.targets:
@@ -533,8 +536,8 @@ class _ReentrantTree:
 
 def _custom_tree_authority(
     *,
-    template: object,
-    runtime_type: type[object],
+    template: ArtifactPayload,
+    runtime_type: type[ArtifactPayload],
     leaf_count: int,
 ) -> ArtifactAuthority:
     """Declare one scalar-leaf custom tree for plan-contract regressions."""
@@ -590,7 +593,9 @@ def _counting_tree_authority(*, value: float = 0.0) -> ArtifactAuthority:
     )
 
 
-def _tuple_tree_authority(*, template: tuple[object, ...]) -> ArtifactAuthority:
+def _tuple_tree_authority(
+    *, template: tuple[ArtifactPayload, ...]
+) -> ArtifactAuthority:
     """Declare a tuple with one scalar leaf and optional zero-leaf children."""
     leaf_path = ("sequence:0",)
     leaf = LeafAuthority(
@@ -672,7 +677,7 @@ def _replace_first_value_with_counter(
 ) -> tuple[SolutionResult, _CountingLazyEntry]:
     values = cast("ValueStore", solution.values)
     entries = dict(values._entries)
-    coordinate = cast("tuple[int, str]", next(iter(entries)))
+    coordinate = next(iter(entries))
     lazy = _CountingLazyEntry(values[coordinate[0]][coordinate[1]])
     entries[coordinate] = lazy
     return replace(solution, values=ValueStore(entries)), lazy
@@ -764,7 +769,7 @@ def test_descriptor_and_authority_mappings_are_each_captured_once() -> None:
         payload_runtime_type=_CountingTree,
         template=_CountingTree(jnp.asarray(1.0, dtype=jnp.float32)),
         container_runtime_types=cast(
-            "Mapping[tuple[str, ...], type[object]]",
+            "Mapping[tuple[str, ...], type[ArtifactPayload]]",
             MappingProxyType(containers),
         ),
         leaves=cast(
@@ -1026,7 +1031,7 @@ def test_safe_nested_zero_leaf_nodes_roundtrip_without_public_container_entries(
 )
 def test_mutable_zero_leaf_nodes_are_rejected_at_unique_structural_paths(
     *,
-    zero_node: object,
+    zero_node: ArtifactPayload,
     path_pattern: str,
     type_name: str,
 ) -> None:
@@ -1096,9 +1101,9 @@ def test_mapping_key_scalar_grammar_uses_runtime_type_identity() -> None:
 
 def test_persistence_json_scalar_grammar_uses_runtime_type_identity() -> None:
     """A spoofing metaclass cannot enter the archive's scalar grammar."""
-    with pytest.raises(SolutionIntegrityError, match="exact JSON scalar"):
+    with pytest.raises(BeartypeCallHintParamViolation, match="value"):
         solution_persistence._require_exact_json_scalar(
-            value=_IntegerSpoof(),
+            value=cast("JSONValue", _IntegerSpoof()),
             label="spoof",
         )
 
@@ -1109,7 +1114,7 @@ def test_template_leaf_scalar_grammar_uses_runtime_type_identity() -> None:
 
     with pytest.raises(TypeError, match="not numerical"):
         solver_api_module._snapshot_artifact_template_once(
-            template=(_FloatSpoof(),),
+            template=cast("ArtifactPayload", (_FloatSpoof(),)),
             payload_runtime_type=tuple,
         )
 
@@ -1166,6 +1171,43 @@ def test_whole_payload_zero_leaf_nodes_have_intentional_boundary_semantics() -> 
             payload_runtime_type=tuple,
             template=(),
         )
+
+
+def test_container_types_from_tree_returns_a_read_only_mapping() -> None:
+    """The container classes derived from a PyTree come back read-only."""
+    with_paths, tree = jax.tree_util.tree_flatten_with_path((jnp.zeros(2), jnp.ones(3)))
+    paths = tuple(
+        solver_api_module._normalize_jax_tree_path(path) for path, _leaf in with_paths
+    )
+
+    containers = solver_api_module._container_types_from_tree(
+        tree=tree, leaf_paths=paths
+    )
+
+    assert (type(containers), dict(containers)) == (MappingProxyType, {(): tuple})
+
+
+def test_template_snapshot_returns_read_only_container_types() -> None:
+    """Observing a template once yields its container classes read-only."""
+    _snapshot, containers = solver_api_module._snapshot_artifact_template_once(
+        template=(jnp.zeros(2),),
+        payload_runtime_type=tuple,
+    )
+
+    assert (type(containers), dict(containers)) == (MappingProxyType, {(): tuple})
+
+
+@dataclass(frozen=True, slots=True)
+class _SlottedRecord:
+    values: jax.Array
+
+
+def test_frozen_dataclass_layout_returns_read_only_slot_descriptors() -> None:
+    """A closed dataclass record's slot descriptors come back read-only."""
+    layout = authority_module._frozen_dataclass_layout(_SlottedRecord)
+    slot_descriptors = None if layout is None else layout[3]
+
+    assert type(slot_descriptors) is MappingProxyType
 
 
 def test_root_array_authority_owns_public_private_and_fresh_buffers() -> None:
@@ -1363,8 +1405,10 @@ def test_forged_dataclass_markers_cannot_hide_mutable_instance_state() -> None:
 
     with pytest.raises(TypeError, match="hidden instance dictionary state"):
         _custom_tree_authority(
-            template=_FakeMarkerTree(jnp.asarray(1.0, dtype=jnp.float32)),
-            runtime_type=_FakeMarkerTree,
+            template=cast(
+                "ArtifactPayload", _FakeMarkerTree(jnp.asarray(1.0, dtype=jnp.float32))
+            ),
+            runtime_type=cast("type[ArtifactPayload]", _FakeMarkerTree),
             leaf_count=1,
         )
 
@@ -1513,3 +1557,14 @@ def test_save_normalizes_mapping_failure_before_lazy_load(tmp_path: Path) -> Non
     assert backing.traversals == 1
     assert lazy.materialization_count == 0
     assert not destination.exists()
+
+
+def test_captured_mapping_copy_is_read_only() -> None:
+    """The owned copy of a captured mapping is itself read-only."""
+    copied = capture_exact_mapping(
+        MappingProxyType({"a": 1}),
+        label="example",
+        snapshot_key=str,
+        snapshot_value=int,
+    )
+    assert type(copied) is MappingProxyType

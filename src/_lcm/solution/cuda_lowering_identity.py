@@ -17,6 +17,7 @@ from types import MappingProxyType, ModuleType
 import jax
 
 from _lcm.solution.fingerprint import _semantic_fingerprint
+from _lcm.typing import JSONValue
 from lcm.exceptions import ExecutionPlanningError
 
 _PROC_MAPS_FIELD_COUNT = 6
@@ -33,9 +34,9 @@ def capture_cuda_lowering_identity(
     *,
     root: Path,
     native_directory: Path,
-    manifest: Mapping[str, object],
+    manifest: Mapping[str, JSONValue],
     hatch_build: ModuleType,
-) -> Mapping[str, object]:
+) -> Mapping[str, JSONValue]:
     """Bind actual single-device CUDA placement, loaded plugin and native bytes."""
     try:
         devices = tuple(jax.devices())
@@ -108,7 +109,7 @@ def _headers(
     return identities
 
 
-def _tool_identity(command: object) -> tuple[str, str, str, str]:
+def _tool_identity(command: JSONValue) -> tuple[str, str, str, str]:
     if not isinstance(command, str) or not command:
         raise ExecutionPlanningError("Native tool command must be a nonempty string.")
     declared = Path(command)
@@ -124,7 +125,7 @@ def _tool_identity(command: object) -> tuple[str, str, str, str]:
     return command, str(origin), str(real_file), _sha256(real_file)
 
 
-def _capture_cuda_runtime(*, native_directory: Path) -> Mapping[str, object]:
+def _capture_cuda_runtime(*, native_directory: Path) -> Mapping[str, JSONValue]:
     packages, pjrt_libraries = _capture_cuda_packages()
     loaded_paths = _loaded_libraries()
     native_cuda = (native_directory / "libcertified_affine_ffi_cuda.so").resolve(

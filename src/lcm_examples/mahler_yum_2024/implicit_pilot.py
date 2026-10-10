@@ -29,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -43,10 +43,17 @@ from _lcm.optimization.implicit_outer_derivative import (
 )
 from _lcm.utils.logging import get_logger
 from lcm import ExecutionConfig
-from lcm.typing import FloatND
+from lcm.typing import FloatND, RegimeName
 
 if TYPE_CHECKING:
+    import logging
+
     import _lcm.solution.nnbegm as _nnbegm
+    from _lcm.continuation import ContinuationPayload
+    from _lcm.engine import StateActionSpace
+    from _lcm.time import TimeAxis
+    from _lcm.typing import FlatParams, FlatRegimeParams, PytreeValue
+    from lcm._solver_api.replay import KernelOutput
     from lcm.solvers import AdaptiveOuterMesh
 
 PILOT_PERIOD = 36
@@ -57,13 +64,33 @@ class _StopAfterCaptureError(Exception):
     pass
 
 
+class KernelCall(TypedDict):
+    """The arguments the backward loop hands the NNBEGM period kernel."""
+
+    compiled_cores: Mapping[str, Callable[..., PytreeValue]]
+    state_action_space: StateActionSpace
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
+    flat_params: FlatParams
+    period: int
+    ages: TimeAxis
+    logger: logging.Logger
+
+
+class _Capture(TypedDict, total=False):
+    """The kernel and its arguments, recorded when the capture period is entered."""
+
+    kernel: _nnbegm._NNBEGMPeriodKernel
+    kwargs: KernelCall
+
+
 @dataclass
 class PilotProblem:
     """The captured period kernel plus everything a node solve needs."""
 
     kernel: _nnbegm._NNBEGMPeriodKernel
-    kernel_kwargs: dict
-    adjuster_cores: Mapping[str, Callable]
+    kernel_kwargs: KernelCall
+    adjuster_cores: Mapping[str, Callable[..., PytreeValue]]
     theta_key: str
     theta_baseline: float
     owner_provenance: Callable[[FloatND, FloatND], OwnerProvenance] | None = None
@@ -112,15 +139,17 @@ def capture_pilot_problem(
             value_rtol=1e-3,
             golden_iterations=24,
         )
-    captured: dict = {}
+    captured: _Capture = {}
     original_call = _nnbegm._NNBEGMPeriodKernel.__call__  # noqa: SLF001
 
-    def capturing_call(self: object, **kw: object) -> object:
+    def capturing_call(
+        self: _nnbegm._NNBEGMPeriodKernel, **kw: Unpack[KernelCall]
+    ) -> KernelOutput:
         if kw["period"] == period:
             captured["kernel"] = self
             captured["kwargs"] = kw
             raise _StopAfterCaptureError
-        return cast("Callable[..., object]", original_call)(self, **kw)
+        return original_call(self, **kw)
 
     # enable_jit=False keeps the kernel cores traceable: AOT-compiled
     # cores reject JAX transformations, and the pilot objective must be
@@ -163,6 +192,10 @@ def capture_pilot_problem(
             f"found {theta_keys}"
         )
         raise RuntimeError(msg)
+    theta_baseline = regime_params[theta_keys[0]]
+    if not isinstance(theta_baseline, jax.Array):
+        msg = f"flat param {theta_keys[0]!r} is not an array: {theta_baseline!r}"
+        raise TypeError(msg)
     return PilotProblem(
         kernel=kernel,
         kernel_kwargs=kw,
@@ -170,7 +203,7 @@ def capture_pilot_problem(
             compiled_cores=kw["compiled_cores"], role="adjuster"
         ),
         theta_key=theta_keys[0],
-        theta_baseline=float(regime_params[theta_keys[0]]),
+        theta_baseline=float(theta_baseline),
     )
 
 
@@ -186,11 +219,13 @@ def node_value(
     kw = problem.kernel_kwargs
     regime_name = problem.kernel.regime_name
     base = kw["flat_params"]
-    flat_params = MappingProxyType(
+    # A regime's name keys its own flat params; only `edges` keys the edge level.
+    regime_params = cast("FlatRegimeParams", base[regime_name])
+    flat_params: FlatParams = MappingProxyType(
         {
             **dict(base),
             regime_name: MappingProxyType(
-                {**base[regime_name], problem.theta_key: jnp.asarray(theta)}
+                {**regime_params, problem.theta_key: jnp.asarray(theta)}
             ),
         }
     )

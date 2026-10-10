@@ -14,10 +14,10 @@ import sys
 import types
 import typing
 from collections.abc import Callable, Iterable, Mapping
-from enum import Enum
+from enum import Enum, auto
 from fractions import Fraction
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeIs, cast
 
 import dags.exceptions as dags_exceptions
 import jax
@@ -50,7 +50,16 @@ from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_law import RegimeLaw
 from _lcm.time import TimeAxis, coordinate_kind
-from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, RegimeNamesToIds
+from _lcm.typing import (
+    DataclassInstance,
+    FlatEdgeParams,
+    FlatParams,
+    FlatRegimeParams,
+    ParamsLeaf,
+    RegimeName,
+    RegimeNamesToIds,
+    StateName,
+)
 from lcm.case_piece import (
     AffineBreakpoint,
     CaseBoundary,
@@ -65,6 +74,13 @@ from lcm.solver_api import (
     SolverIdentity,
 )
 from lcm.transition import AgeRange
+from lcm.typing import (
+    ActionName,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+)
 
 # beartype compiles every guard it writes under this synthetic filename.
 _BEARTYPE_BODY_FILENAME_PREFIX = "<@beartype("
@@ -74,7 +90,15 @@ _BEARTYPE_CLAW_STATE = vars(certainty_equivalent_declarations).get(
 _INSPECT_SIGNATURE_FUNCTION = inspect.signature
 _INSPECT_SIGNATURE_CODE = inspect.signature.__code__
 _DATACLASSES_MISSING = dataclasses.MISSING
-_DATACLASSES_FIELD_MARKERS: tuple[tuple[str, object], ...] = tuple(
+# A value the hasher walks: what a hashed callable's globals, closure cells,
+# defaults, fields and instance state hold, or what a pylcm module binds.
+type _Reachable = object  # noqa: PAN001 - user code and pylcm's modules may bind any object, and the hasher must classify each one
+# What a callable the hasher inspects would return. The hasher reads a callable's
+# signature, code and state and never calls it.
+type _CallResult = object  # noqa: PAN001 - an uncalled callable's result is never consumed, so any result type is admitted
+# A function annotation as Python evaluates it.
+type _Annotation = object  # noqa: PAN001 - an annotation may be any expression's value, and `Annotated` metadata any object
+_DATACLASSES_FIELD_MARKERS: tuple[tuple[str, object], ...] = tuple(  # noqa: PAN001 - the stdlib's dataclass field markers have no public type
     (name, vars(dataclasses)[name])
     for name in ("_FIELD", "_FIELD_CLASSVAR", "_FIELD_INITVAR")
 )
@@ -112,7 +136,15 @@ _ARRAY_METADATA_READS = MappingProxyType(
         "dtype": np.dtype,
     }
 )
-_NOT_ARRAY_METADATA = object()
+
+
+class _NotArrayMetadata(Enum):
+    """Marks an attribute read that is not trusted array metadata."""
+
+    NOT_ARRAY_METADATA = auto()
+
+
+_NOT_ARRAY_METADATA: Final = _NotArrayMetadata.NOT_ARRAY_METADATA
 _TRUSTED_GRID_TYPE_OBJECTS = frozenset(
     value
     for name in grid_declarations.__all__
@@ -194,6 +226,9 @@ def _anchored_module_closure(
 # neither a mutable ``__module__`` string nor assignment to a module namespace can
 # make an arbitrary Python class/callable enter these sets later.
 _JAX_PJIT_FUNCTION_TYPE = type(jnp.exp)
+# One entry of a JAX ufunc's static properties: a jitted implementation, an
+# arity, or the ufunc's identity element.
+type _UfuncStaticProperty = Callable[..., Array] | bool | int | float | None
 _JAX_UFUNC_TYPE = type(jnp.maximum)
 _JAX_CUSTOM_JVP_TYPE = jax.custom_jvp
 _JAX_PUBLIC_NUMERIC_MODULES = (
@@ -224,7 +259,7 @@ _JAX_NUMERIC_PYTHON_FUNCTIONS = tuple(
     (value, value.__code__)
     for ufunc in _JAX_NUMPY_UFUNCS
     for value in cast(
-        "Mapping[str, object]", vars(ufunc)["_ufunc__static_props"]
+        "Mapping[str, _UfuncStaticProperty]", vars(ufunc)["_ufunc__static_props"]
     ).values()
     if isinstance(value, types.FunctionType)
 )
@@ -236,7 +271,7 @@ _JAX_NUMERIC_PJIT_FUNCTIONS = tuple(
     (value, vars(value).get("_fun"), getattr(vars(value).get("_fun"), "__code__", None))
     for ufunc in _JAX_NUMPY_UFUNCS
     for value in cast(
-        "Mapping[str, object]", vars(ufunc)["_ufunc__static_props"]
+        "Mapping[str, _UfuncStaticProperty]", vars(ufunc)["_ufunc__static_props"]
     ).values()
     if type(value) is _JAX_PJIT_FUNCTION_TYPE
 )
@@ -273,11 +308,17 @@ _NUMPY_PUBLIC_TYPE_OBJECTS = tuple(
     if not name.startswith("_") and isinstance(value, type)
 )
 
-type _SemanticCollection = (
-    tuple[object, ...] | list[object] | frozenset[object] | set[object]
-)
-
 if TYPE_CHECKING:
+    from _lcm.regime_building.collective import ParetoWeights
+    from _lcm.solution.contract import Solver
+    from _lcm.typing import (
+        ConstraintFunctionsMapping,
+        EconFunctionsMapping,
+        RegimeTransitionFunction,
+        TransitionFunctionsMapping,
+        VmappedRegimeTransitionFunction,
+    )
+
     type _ProjectionRegime = Regime
     type _ProjectionRegimes = Mapping[RegimeName, Regime]
 
@@ -290,17 +331,44 @@ if TYPE_CHECKING:
         def solver(self) -> _SolverDeclaration: ...
 
     type _FingerprintUserRegimes = Mapping[RegimeName, _UserRegimeDeclaration]
+    type _UserRegime = _UserRegimeDeclaration
     type _FingerprintLaws = Mapping[RegimeName, RegimeLaw]
+    # The solve or simulate declarations whose callables a parameter-usage walk
+    # reads, in one tuple.
+    type _CallableDeclarations = tuple[
+        EconFunctionsMapping
+        | ConstraintFunctionsMapping
+        | TransitionFunctionsMapping
+        | RegimeTransitionFunction
+        | VmappedRegimeTransitionFunction
+        | ParetoWeights
+        | None,
+        ...,
+    ]
+    type _SolverInstance = Solver
 else:
     # Runtime structural tests and extension boundaries reach the function's own
     # conservative attribute inspection instead of decorator nominal checking.
     type _ProjectionRegime = object
     type _ProjectionRegimes = object
     type _FingerprintUserRegimes = object
+    type _UserRegime = object
     type _FingerprintLaws = object
+    type _CallableDeclarations = object
+    # The solver contract imports this module through the engine, so `Solver` is
+    # importable only once a value is classified, and the claw checks no solver.
+    type _SolverInstance = object
 
 
 type SolutionParamProjection = MappingProxyType[RegimeName, frozenset[str]]
+
+# The rank, shape and dtype of one parameter leaf, nested like the data of a
+# mapping or sequence leaf.
+type _ParamShapeSignature = (
+    tuple[tuple[int, ...], str]
+    | dict[str, _ParamShapeSignature]
+    | tuple[_ParamShapeSignature, ...]
+)
 
 
 def solution_param_projection(regimes: _ProjectionRegimes) -> SolutionParamProjection:
@@ -323,7 +391,7 @@ def solution_param_projection(regimes: _ProjectionRegimes) -> SolutionParamProje
     computes it once at build and applies it to every parameter vector.
     """
     projection: dict[RegimeName, frozenset[str]] = {}
-    for regime_name, regime in cast("Mapping[RegimeName, Any]", regimes).items():
+    for regime_name, regime in regimes.items():
         solve_names, solve_accepts_unknown = _solution_parameter_usage(regime)
         simulate_names = _nested_callable_parameter_names(
             (
@@ -354,7 +422,7 @@ def project_solution_params(
     realized_only_by_regime = (
         solution_param_projection(regimes) if projection is None else projection
     )
-    projected: dict[RegimeName, MappingProxyType[str, object]] = {}
+    projected: dict[RegimeName, FlatRegimeParams | FlatEdgeParams] = {}
     projected_edges: dict[RegimeName, FlatRegimeParams] = {}
     # A source's law slots are read by its own transitions, so the source's
     # realized-only names apply to its edge slots as well.
@@ -369,7 +437,7 @@ def project_solution_params(
             projected[path[0]] = kept
     if EDGES in flat_params:
         projected[EDGES] = MappingProxyType(projected_edges)
-    return cast("FlatParams", MappingProxyType(projected))
+    return MappingProxyType(projected)
 
 
 def fingerprint_solution_support(
@@ -410,7 +478,7 @@ def fingerprint_solution_support(
     return _semantic_fingerprint(record)
 
 
-def _param_shape_signature(value: object) -> object:
+def _param_shape_signature(value: ParamsLeaf) -> _ParamShapeSignature:
     """Return the rank, shape, and dtype of one parameter leaf, never its bytes."""
     data = getattr(value, "data", None)
     if isinstance(data, Mapping):
@@ -442,14 +510,16 @@ def _solution_parameter_usage(
     return names, accepts_unknown
 
 
-def _nested_callable_parameter_names(value: object) -> frozenset[str]:
+def _nested_callable_parameter_names(value: _CallableDeclarations) -> frozenset[str]:
     """Collect explicit argument names from nested semantic callables."""
     names, _accepts_unknown = _nested_callable_parameter_usage(value)
     return names
 
 
 def _walk_parameter_usage(  # noqa: PLR0911
-    *, current: object, seen: set[int]
+    *,
+    current: _Reachable,
+    seen: set[int],
 ) -> tuple[frozenset[str], bool]:
     """Collect parameter usage below one object; `seen` guards against cycles."""
     if current is None or _has_exact_type(
@@ -466,10 +536,11 @@ def _walk_parameter_usage(  # noqa: PLR0911
                 _walk_parameter_usage(seen=seen, current=child)
                 for child in current.values()
             )
-        if _has_exact_type(value=current, candidates=(tuple, list, frozenset, set)):
-            children = cast("Iterable[object]", current)
+        if _has_exact_type(
+            value=current, candidates=(tuple, list, frozenset, set)
+        ) and isinstance(current, tuple | list | frozenset | set):
             return _union_parameter_usage(
-                _walk_parameter_usage(seen=seen, current=child) for child in children
+                _walk_parameter_usage(seen=seen, current=child) for child in current
             )
         if dataclasses.is_dataclass(current) and not isinstance(current, type):
             field_names, field_unknown = _union_parameter_usage(
@@ -492,17 +563,21 @@ def _walk_parameter_usage(  # noqa: PLR0911
         seen.remove(identity)
 
 
-def _nested_callable_parameter_usage(value: object) -> tuple[frozenset[str], bool]:
+def _nested_callable_parameter_usage(
+    value: _CallableDeclarations,
+) -> tuple[frozenset[str], bool]:
     """Collect explicit names and conservatively flag generic/opaque callables."""
     seen: set[int] = set()
 
     return _walk_parameter_usage(seen=seen, current=value)
 
 
-def _callable_parameter_usage(value: object) -> tuple[frozenset[str], bool]:
+def _callable_parameter_usage(
+    value: Callable[..., _CallResult],
+) -> tuple[frozenset[str], bool]:
     """Return explicit parameters and whether arbitrary keywords may be read."""
     try:
-        parameters = inspect.signature(cast("Callable[..., object]", value)).parameters
+        parameters = inspect.signature(value).parameters
     except TypeError, ValueError:
         return frozenset(), True
     return frozenset(parameters), any(
@@ -628,11 +703,11 @@ class SealedBinding:
     """Qualified name of the function that reads the binding."""
     name: str
     """The name as the function's code reads it."""
-    namespace: dict[str, object] | None
+    namespace: dict[str, _Reachable] | None
     """The globals mapping holding the binding, for a global reference."""
     cell: types.CellType | None
     """The closure cell holding the binding, for a free variable."""
-    value: object
+    value: _Reachable
     """The object the name was bound to when the model was built."""
 
     def has_moved(self) -> bool:
@@ -643,11 +718,17 @@ class SealedBinding:
             except ValueError:
                 return True
             return current is not self.value
-        namespace = cast("dict[str, object]", self.namespace)
-        return namespace.get(self.name, _MISSING_BINDING) is not self.value
+        namespace = cast("dict[str, _Reachable]", self.namespace)
+        return namespace.get(self.name, _MISSING) is not self.value
 
 
-_MISSING_BINDING = object()
+class _Missing(Enum):
+    """Marks a name or attribute absent from the namespace it is looked up in."""
+
+    MISSING = auto()
+
+
+_MISSING: Final = _Missing.MISSING
 
 type BindingRecorder = Callable[[SealedBinding], None]
 
@@ -732,12 +813,17 @@ def fingerprint_model_structure(
 def _grid_support(
     *,
     regime: Regime,
-    regime_params: Mapping[str, object],
+    regime_params: FlatRegimeParams,
     process_grid_resolver: ProcessGridResolver | None = None,
-) -> MappingProxyType[str, object]:
+) -> MappingProxyType[
+    str,
+    MappingProxyType[StateName, ContinuousState | DiscreteState]
+    | MappingProxyType[ActionName, DiscreteAction]
+    | MappingProxyType[ActionName, ContinuousAction],
+]:
     """Return one regime's concrete support under a canonical parameter vector."""
     state_action_space = regime.solution.state_action_space(
-        regime_params=cast("Any", regime_params),
+        regime_params=regime_params,
         process_grid_resolver=process_grid_resolver,
     )
     return MappingProxyType(
@@ -756,10 +842,10 @@ _TRANSITION_SLOTS = frozenset({"state_transitions", "transition"})
 # keyword-only-exempt: primary-argument=regime
 def _project_user_regime_declaration(
     # A dataclass or `SimpleNamespace` declaration; the branches below inspect it.
-    regime: object,
+    regime: _UserRegime,
     *,
     law: RegimeLaw,
-) -> MappingProxyType[str, object]:
+) -> MappingProxyType[str, str | MappingProxyType[str, _Reachable]]:
     """Return the semantic dataclass fields without importing declaration topology.
 
     The regime's law joins its fields as `transition` and `gated_edges`, read as
@@ -777,7 +863,7 @@ def _project_user_regime_declaration(
     elif dataclasses.is_dataclass(regime) and not isinstance(regime, type):
         fields = (
             (declaration.name, getattr(regime, declaration.name))
-            for declaration in dataclasses.fields(cast("Any", regime))
+            for declaration in dataclasses.fields(cast("DataclassInstance", regime))
         )
     else:
         msg = "A model fingerprint requires a dataclass user-regime declaration."
@@ -808,7 +894,7 @@ def _project_user_regime_declaration(
     )
 
 
-def _project_transition_slot_to_solve(value: object) -> object:
+def _project_transition_slot_to_solve(value: _Reachable) -> _Reachable:
     """Keep only the solve member of a `Phased` transition declaration.
 
     `Phased` is outermost-only in a transition slot: the slot value itself, or
@@ -826,7 +912,7 @@ def _project_transition_slot_to_solve(value: object) -> object:
     return value
 
 
-def _semantic_fingerprint(value: object) -> str:
+def _semantic_fingerprint(value: _Reachable) -> str:
     """Return a durable digest for one nested semantic value.
 
     This private entry point also keeps the collision-focused tests small: they
@@ -854,8 +940,8 @@ class _SemanticHasher:
         *,
         owner: types.FunctionType,
         name: str,
-        value: object,
-        namespace: dict[str, object] | None = None,
+        value: _Reachable,
+        namespace: dict[str, _Reachable] | None = None,
         cell: types.CellType | None = None,
     ) -> None:
         """Report one read binding to the recorder, when one listens."""
@@ -876,7 +962,9 @@ class _SemanticHasher:
             self._digest.update(len(part).to_bytes(8, byteorder="big"))
             self._digest.update(part)
 
-    def visit(self, *, value: object, _ignore_beartype_guards: bool = False) -> None:  # noqa: C901, PLR0911, PLR0912, PLR0915
+    def visit(  # noqa: C901, PLR0911, PLR0912, PLR0915
+        self, *, value: _Reachable, _ignore_beartype_guards: bool = False
+    ) -> None:
         if value is Ellipsis:
             self.frame(label="ellipsis")
             return
@@ -975,8 +1063,8 @@ class _SemanticHasher:
             return
         if self._visit_native_numeric_callable(value):
             return
-        if _is_native_numeric_type(value):
-            self._visit_native_numeric_type(cast("type[object]", value))
+        if _is_native_numeric_type(value) and isinstance(value, type):
+            self._visit_native_numeric_type(value)
             return
 
         identity = id(value)
@@ -1057,23 +1145,23 @@ class _SemanticHasher:
                         f"{type(value).__module__}.{type(value).__qualname__}."
                     )
                     raise TypeError(msg)
-                mapping = cast("Mapping[object, object]", value)
-                self.frame(label="mapping-start", payload=str(len(mapping)).encode())
-                for key in sorted(mapping, key=_semantic_sort_key):
+                self.frame(label="mapping-start", payload=str(len(value)).encode())
+                for key in sorted(value, key=_semantic_sort_key):
                     self.visit(value=key)
-                    self.visit(value=mapping[key])
+                    self.visit(value=value[key])
                 self.frame(label="mapping-end")
                 return
-            if _has_exact_type(value=value, candidates=(tuple, list, frozenset, set)):
-                collection = cast("_SemanticCollection", value)
+            if _has_exact_type(
+                value=value, candidates=(tuple, list, frozenset, set)
+            ) and isinstance(value, tuple | list | frozenset | set):
                 children = (
-                    sorted(collection, key=_semantic_sort_key)
-                    if isinstance(collection, frozenset | set)
-                    else collection
+                    sorted(value, key=_semantic_sort_key)
+                    if isinstance(value, frozenset | set)
+                    else value
                 )
                 self.frame(
                     label=type(value).__name__ + "-start",
-                    payload=str(len(collection)).encode(),
+                    payload=str(len(value)).encode(),
                 )
                 for child in children:
                     self.visit(value=child)
@@ -1164,7 +1252,7 @@ class _SemanticHasher:
         self.visit(value=code.co_names)
         self.frame(label="code-end")
 
-    def _visit_type(self, value: type) -> None:
+    def _visit_type(self, value: type[_Reachable]) -> None:
         self.frame(
             label="type-start",
             payload=f"{value.__module__}.{value.__qualname__}".encode(),
@@ -1181,7 +1269,7 @@ class _SemanticHasher:
                 self.visit(value=getattr(value, declaration.name))
         self.frame(label="type-end")
 
-    def _visit_native_numeric_callable(self, value: object) -> bool:
+    def _visit_native_numeric_callable(self, value: _Reachable) -> bool:
         """Hash supported native numerical callables without opaque object trust."""
         kind = _native_numeric_callable_kind(value)
         if kind is None:
@@ -1190,7 +1278,7 @@ class _SemanticHasher:
         self.frame(label="native-numeric-callable-start", payload=kind.encode())
         self.visit(value=_native_numeric_versions())
         if kind == "jax-custom-jvp":
-            self._visit_custom_jvp(value)
+            self._visit_custom_jvp(cast("jax.custom_jvp[_CallResult]", value))
         elif kind == "jax-function":
             function = cast("types.FunctionType", value)
             self.frame(label="canonical-jax-function")
@@ -1248,7 +1336,7 @@ class _SemanticHasher:
         self.frame(label="native-numeric-callable-end")
         return True
 
-    def _visit_numpy_array_function(self, value: object) -> None:
+    def _visit_numpy_array_function(self, value: _Reachable) -> None:
         """Seal a captured dispatcher without admitting mutable opaque state."""
         state = vars(value)
         metadata_fields = {
@@ -1279,7 +1367,7 @@ class _SemanticHasher:
                 self._visit_native_python_function_seal(implementation)
                 return
 
-    def _visit_custom_jvp(self, value: object) -> None:
+    def _visit_custom_jvp(self, value: jax.custom_jvp[_CallResult]) -> None:
         """Hash an exact JAX custom-JVP wrapper through its semantic callables."""
         identity = id(value)
         if identity in self._active:
@@ -1340,7 +1428,7 @@ class _SemanticHasher:
         self.visit(value=function.__kwdefaults__)
         self.frame(label="native-python-function-end")
 
-    def _visit_native_numeric_type(self, value: type[object]) -> None:
+    def _visit_native_numeric_type(self, value: type[_Reachable]) -> None:
         """Hash a genuine NumPy/JAX scalar constructor by dtype and runtime seal."""
         self.frame(
             label="native-numeric-type-start",
@@ -1350,9 +1438,12 @@ class _SemanticHasher:
         self.frame(label="native-numeric-dtype", payload=np.dtype(value).str.encode())
         self.frame(label="native-numeric-type-end")
 
-    def _visit_signature(self, function: object) -> None:
+    def _visit_signature(
+        self,
+        function: Callable[..., _CallResult],
+    ) -> None:
         try:
-            signature = inspect.signature(cast("Callable[..., object]", function))
+            signature = inspect.signature(function)
         except TypeError, ValueError:
             self.frame(label="signature-unavailable")
             return
@@ -1370,7 +1461,8 @@ class _SemanticHasher:
         self.frame(label="signature-end")
 
     def _visit_annotation(  # noqa: C901, PLR0911, PLR0912
-        self, annotation: object
+        self,
+        annotation: _Annotation,
     ) -> None:
         """Hash type metadata without treating an annotation as executable input."""
         if annotation is inspect.Signature.empty:
@@ -1385,13 +1477,14 @@ class _SemanticHasher:
         if annotation is Ellipsis:
             self.frame(label="annotation-ellipsis")
             return
-        if _has_exact_type(value=annotation, candidates=(list, tuple)):
-            arguments = cast("list[object] | tuple[object, ...]", annotation)
+        if _has_exact_type(value=annotation, candidates=(list, tuple)) and isinstance(
+            annotation, list | tuple
+        ):
             self.frame(
                 label="annotation-arguments-start",
-                payload=f"{type(annotation).__name__}:{len(arguments)}".encode(),
+                payload=f"{type(annotation).__name__}:{len(annotation)}".encode(),
             )
-            for argument in arguments:
+            for argument in annotation:
                 self._visit_annotation(argument)
             self.frame(label="annotation-arguments-end")
             return
@@ -1440,7 +1533,10 @@ class _SemanticHasher:
         )
         raise TypeError(msg)
 
-    def _visit_function_annotations(self, annotations: Mapping[str, object]) -> None:
+    def _visit_function_annotations(
+        self,
+        annotations: Mapping[str, _Annotation],
+    ) -> None:
         """Hash a function's raw annotation mapping via metadata-only traversal."""
         self.frame(label="function-annotations-start")
         for name in sorted(annotations):
@@ -1575,7 +1671,7 @@ class _SemanticHasher:
             raise TypeError(msg)
 
     @staticmethod
-    def _validate_partial_arguments(value: functools.partial[object]) -> None:
+    def _validate_partial_arguments(value: functools.partial[_CallResult]) -> None:
         """Fail closed when a partial binds an argument with unsealed semantics."""
         for index, argument in enumerate(value.args):
             if not _is_closed_terminal_reference(value=argument):
@@ -1593,7 +1689,7 @@ class _SemanticHasher:
     def _visit_object_reference(
         self,
         *,
-        value: object,
+        value: _Reachable,
         attribute_paths: frozenset[tuple[str, ...]],
     ) -> None:
         """Hash only the class/object attributes that bytecode actually reads."""
@@ -1622,13 +1718,13 @@ class _SemanticHasher:
                 self._visit_terminal_reference(current)
         self.frame(label="object-reference-end")
 
-    def _visit_direct_global_reference(self, value: object) -> None:
+    def _visit_direct_global_reference(self, value: _Reachable) -> None:
         """Hash a direct global value only when its complete semantics are closed."""
         self._visit_terminal_reference(value)
 
     def _visit_terminal_reference(
         self,
-        value: object,
+        value: _Reachable,
     ) -> None:
         """Hash one consumed reference or reject mutable protocol dispatch."""
         if inspect.ismethod(value):
@@ -1711,10 +1807,10 @@ class _SemanticHasher:
     def _resolve_referenced_attribute(
         self,
         *,
-        value: object,
+        value: _Reachable,
         attribute: str,
         path: tuple[str, ...],
-    ) -> object:
+    ) -> _Reachable:
         """Resolve a statically inspectable attribute without executing user code."""
         _validate_static_attribute_access(value=value, path=path)
         try:
@@ -1751,7 +1847,7 @@ class _SemanticHasher:
                 )
                 raise TypeError(msg)
             self.frame(label="module-attribute-path", payload=".".join(path).encode())
-            current: object = module
+            current: _Reachable = module
             for attribute in path:
                 if isinstance(current, types.ModuleType):
                     _validate_static_attribute_access(value=current, path=path)
@@ -1773,12 +1869,12 @@ class _SemanticHasher:
             self._visit_terminal_reference(current)
         self.frame(label="module-reference-end")
 
-    def _visit_dataclass(self, value: object) -> None:
+    def _visit_dataclass(self, value: DataclassInstance) -> None:
         self.frame(
             label="dataclass-start",
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
-        for declaration in dataclasses.fields(cast("Any", value)):
+        for declaration in dataclasses.fields(value):
             # An optional field left at its default hashes like its absence, so
             # declarations that never use it keep their durable fingerprint.
             if declaration.metadata.get("fingerprint_omit_if_default") and (
@@ -1800,7 +1896,10 @@ class _SemanticHasher:
             self._visit_referenced_bound_method(types.MethodType(call, value))
         self.frame(label="dataclass-end")
 
-    def _visit_callable_object(self, value: object) -> None:
+    def _visit_callable_object(
+        self,
+        value: Callable[..., _CallResult],
+    ) -> None:
         self.frame(
             label="callable-object-start",
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
@@ -1830,7 +1929,9 @@ class _SemanticHasher:
         self.frame(label="callable-object-end")
 
     @staticmethod
-    def _raise_uninspectable_callable(value: object) -> None:
+    def _raise_uninspectable_callable(
+        value: Callable[..., _CallResult],
+    ) -> None:
         callable_type = f"{type(value).__module__}.{type(value).__qualname__}"
         msg = (
             "Cannot durably fingerprint callable object with non-Python __call__: "
@@ -1838,7 +1939,7 @@ class _SemanticHasher:
         )
         raise TypeError(msg)
 
-    def _visit_solver(self, value: object) -> None:
+    def _visit_solver(self, value: _SolverInstance) -> None:
         """Hash a Solver's public compatibility identity and instance state.
 
         A stateless solver's class implementation and class attributes are covered by
@@ -1859,7 +1960,7 @@ class _SemanticHasher:
         )
         self.visit(value=identity)
         if dataclasses.is_dataclass(value) and not isinstance(value, type):
-            for declaration in dataclasses.fields(cast("Any", value)):
+            for declaration in dataclasses.fields(cast("DataclassInstance", value)):
                 self.frame(label="solver-field", payload=declaration.name.encode())
                 self.visit(value=getattr(value, declaration.name))
         else:
@@ -1867,7 +1968,7 @@ class _SemanticHasher:
             self._visit_named_state(state=_slot_state(value))
         self.frame(label="solver-end")
 
-    def _visit_certainty_equivalent(self, value: object) -> bool:
+    def _visit_certainty_equivalent(self, value: _Reachable) -> bool:
         """Hash a CE extension through state and its three protocol operations."""
         if not isinstance(value, CertaintyEquivalent):
             return False
@@ -1920,7 +2021,11 @@ class _SemanticHasher:
         self.frame(label="certainty-equivalent-end")
         return True
 
-    def _visit_named_state(self, *, state: Mapping[str, object]) -> None:
+    def _visit_named_state(
+        self,
+        *,
+        state: Mapping[str, _Reachable],
+    ) -> None:
         entries = state
         self.frame(label="state-start", payload=str(len(entries)).encode())
         for name in sorted(entries):
@@ -1978,7 +2083,7 @@ def _capture_shipped_beartype_wrappers() -> tuple[  # noqa: C901, PLR0912
         for name, module in tuple(sys.modules.items())
         if isinstance(module, types.ModuleType) and _is_shipped_pylcm_module_name(name)
     )
-    queue: list[object] = [*explicit_roots, *loaded_roots]
+    queue: list[_Reachable] = [*explicit_roots, *loaded_roots]
     seen: set[int] = set()
     captures: list[tuple[types.FunctionType, types.CodeType, types.FunctionType]] = []
 
@@ -2137,16 +2242,16 @@ def _unwrap_downstream_beartype_wrapper(
     return wrapped
 
 
-def _is_solver_instance(value: object) -> bool:
+def _is_solver_instance(value: _Reachable) -> TypeIs[_SolverInstance]:
     """Recognize the one stateless extension object sealed by public identity."""
     from _lcm.solution.contract import Solver  # noqa: PLC0415
 
     return isinstance(value, Solver)
 
 
-def _slot_state(value: object) -> dict[str, object]:
+def _slot_state(value: _Reachable) -> MappingProxyType[str, _Reachable]:
     """Read inherited slot state without invoking arbitrary properties."""
-    result: dict[str, object] = {}
+    result: dict[str, _Reachable] = {}
     for owner in type(value).__mro__:
         declared = owner.__dict__.get("__slots__", ())
         names = (declared,) if isinstance(declared, str) else declared
@@ -2162,20 +2267,24 @@ def _slot_state(value: object) -> dict[str, object]:
                 result[raw_name] = object.__getattribute__(value, name)
             except AttributeError:
                 continue
-    return result
+    return MappingProxyType(result)
 
 
-def _contains_identity(*, value: object, candidates: Iterable[object]) -> bool:
+def _contains_identity[Candidate](
+    *, value: Candidate, candidates: Iterable[Candidate]
+) -> bool:
     """Check a captured runtime allowlist without invoking overloaded equality."""
     return any(value is candidate for candidate in candidates)
 
 
-def _has_exact_type(*, value: object, candidates: Iterable[object]) -> bool:
+def _has_exact_type[Candidate](
+    *, value: Candidate, candidates: Iterable[type[Candidate]]
+) -> bool:
     """Classify a value by type identity without invoking metaclass equality."""
     return _contains_identity(value=type(value), candidates=candidates)
 
 
-def _is_captured_jax_python_function(value: object) -> bool:
+def _is_captured_jax_python_function(value: _Reachable) -> bool:
     """Whether this is an unchanged function captured from a public JAX module."""
     return isinstance(value, types.FunctionType) and any(
         value is candidate and value.__code__ is code
@@ -2183,7 +2292,7 @@ def _is_captured_jax_python_function(value: object) -> bool:
     )
 
 
-def _is_captured_jax_pjit(value: object) -> bool:
+def _is_captured_jax_pjit(value: _Reachable) -> bool:
     """Whether this is an unchanged PjitFunction captured from public JAX APIs."""
     if type(value) is not _JAX_PJIT_FUNCTION_TYPE:
         return False
@@ -2204,7 +2313,7 @@ def _native_numeric_versions() -> tuple[tuple[str, str], ...]:
     )
 
 
-def _native_numeric_callable_kind(value: object) -> str | None:
+def _native_numeric_callable_kind(value: _Reachable) -> str | None:
     """Classify only native callables whose executable semantics can be sealed."""
     if type(value) is _JAX_CUSTOM_JVP_TYPE:
         return "jax-custom-jvp"
@@ -2223,7 +2332,7 @@ def _native_numeric_callable_kind(value: object) -> str | None:
     return "numpy-array-function" if _is_captured_numpy_array_function(value) else None
 
 
-def _is_captured_numpy_array_function(value: object) -> bool:
+def _is_captured_numpy_array_function(value: _Reachable) -> bool:
     """Recognize unchanged genuine public NumPy array-function dispatchers."""
     if type(value) is not _NUMPY_ARRAY_FUNCTION_DISPATCHER_TYPE:
         return False
@@ -2239,30 +2348,24 @@ def _is_captured_numpy_array_function(value: object) -> bool:
     )
 
 
-def _is_native_numeric_type(value: object) -> bool:
+def _is_native_numeric_type(value: _Reachable) -> bool:
     """Whether a class is a captured genuine NumPy/JAX scalar constructor."""
     return _contains_identity(
-        value=value,
-        candidates=cast(
-            "tuple[object, ...]", _JAX_NUMERIC_SCALAR_TYPES + _NUMPY_SCALAR_TYPES
-        ),
+        value=value, candidates=_JAX_NUMERIC_SCALAR_TYPES + _NUMPY_SCALAR_TYPES
     )
 
 
-def _is_versioned_numeric_library_type(value: object) -> bool:
+def _is_versioned_numeric_library_type(value: type[_Reachable]) -> bool:
     """Whether a class is a captured genuine public NumPy/JAX class."""
     return _contains_identity(
         value=value,
-        candidates=cast(
-            "tuple[object, ...]",
-            _JAX_PUBLIC_NUMERIC_TYPE_OBJECTS + _NUMPY_PUBLIC_TYPE_OBJECTS,
-        ),
+        candidates=_JAX_PUBLIC_NUMERIC_TYPE_OBJECTS + _NUMPY_PUBLIC_TYPE_OBJECTS,
     )
 
 
 def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
     *,
-    value: object,
+    value: _Reachable,
     _active: set[int] | None = None,
 ) -> bool:
     """Whether the semantic serializer closes direct use of this exact value."""
@@ -2321,7 +2424,7 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
                 _is_closed_terminal_reference(
                     value=getattr(value, field.name), _active=active
                 )
-                for field in dataclasses.fields(cast("Any", value))
+                for field in dataclasses.fields(cast("DataclassInstance", value))
             )
         if isinstance(value, functools.partial):
             return _is_closed_terminal_reference(
@@ -2330,22 +2433,25 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
                 _is_closed_terminal_reference(value=item, _active=active)
                 for item in (*value.args, *(value.keywords or {}).values())
             )
-        if _has_exact_type(value=value, candidates=(tuple, list, frozenset, set)):
+        if _has_exact_type(
+            value=value, candidates=(tuple, list, frozenset, set)
+        ) and isinstance(value, tuple | list | frozenset | set):
             return all(
                 _is_closed_terminal_reference(value=item, _active=active)
-                for item in cast("Iterable[object]", value)
+                for item in value
             )
-        mapping = cast("Mapping[object, object]", value)
-        return all(
-            _is_closed_terminal_reference(value=item, _active=active)
-            for pair in mapping.items()
-            for item in pair
-        )
+        if isinstance(value, Mapping):
+            return all(
+                _is_closed_terminal_reference(value=item, _active=active)
+                for pair in value.items()
+                for item in pair
+            )
+        return False
     finally:
         active.remove(identity)
 
 
-def _is_engine_callable_dataclass(value: object) -> bool:
+def _is_engine_callable_dataclass(value: _Reachable) -> bool:
     """Whether `value` is a callable dataclass instance of a shipped pylcm class."""
     value_type = type(value)
     return (
@@ -2355,7 +2461,7 @@ def _is_engine_callable_dataclass(value: object) -> bool:
     )
 
 
-def _is_closed_direct_type(value: type) -> bool:
+def _is_closed_direct_type(value: type[_Reachable]) -> bool:
     """Whether a class consumed directly enters the digest by identity alone.
 
     Builtin and versioned numeric-library classes are sealed by their library
@@ -2371,7 +2477,7 @@ def _is_closed_direct_type(value: type) -> bool:
     )
 
 
-def _is_shipped_pylcm_type(value: type) -> bool:
+def _is_shipped_pylcm_type(value: type[_Reachable]) -> bool:
     """Whether a class is the object a shipped pylcm module binds at its name.
 
     A class's `__module__` and `__qualname__` are writable, so the claim alone
@@ -2381,7 +2487,7 @@ def _is_shipped_pylcm_type(value: type) -> bool:
     module = sys.modules.get(value.__module__)
     if not isinstance(module, types.ModuleType) or not _is_shipped_pylcm_module(module):
         return False
-    resolved: object = module
+    resolved: _Reachable = module
     for part in value.__qualname__.split("."):
         try:
             resolved = inspect.getattr_static(resolved, part)
@@ -2401,7 +2507,7 @@ def _is_shipped_pylcm_module(module: types.ModuleType) -> bool:
     return resolved_origin.startswith(_SHIPPED_PYLCM_PACKAGE_ROOTS)
 
 
-def _dataclasses_field_marker_name(value: object) -> str | None:
+def _dataclasses_field_marker_name(value: _Reachable) -> str | None:
     """Return the stable name of one exact stdlib dataclass field marker."""
     return next(
         (name for name, marker in _DATACLASSES_FIELD_MARKERS if value is marker),
@@ -2409,7 +2515,11 @@ def _dataclasses_field_marker_name(value: object) -> str | None:
     )
 
 
-def _validate_static_attribute_access(*, value: object, path: tuple[str, ...]) -> None:
+def _validate_static_attribute_access(
+    *,
+    value: _Reachable,
+    path: tuple[str, ...],
+) -> None:
     """Reject lookup hooks whose runtime value static inspection cannot reproduce."""
     if isinstance(value, types.ModuleType):
         accessor = inspect.getattr_static(type(value), "__getattribute__", None)
@@ -2438,8 +2548,12 @@ def _validate_static_attribute_access(*, value: object, path: tuple[str, ...]) -
 
 
 def _bind_referenced_member(
-    *, value: object, attribute: str, member: object, path: tuple[str, ...]
-) -> object:
+    *,
+    value: _Reachable,
+    attribute: str,
+    member: _Reachable,
+    path: tuple[str, ...],
+) -> _Reachable:
     """Apply only descriptor bindings whose semantics can be inspected statically."""
     binding_context = _descriptor_binding_context(
         value=value,
@@ -2500,8 +2614,11 @@ def _bind_referenced_member(
 
 
 def _read_array_metadata(
-    *, binding_instance: object, attribute: str, member: object
-) -> object:
+    *,
+    binding_instance: _Reachable | None,
+    attribute: str,
+    member: _Reachable,
+) -> tuple[int, ...] | int | np.dtype | Literal[_NotArrayMetadata.NOT_ARRAY_METADATA]:
     """Read shape metadata an array constant already fixes, else the sentinel.
 
     `shape`, `size`, `ndim` and `dtype` of a JAX or NumPy array are functions of the
@@ -2533,29 +2650,31 @@ def _read_array_metadata(
 
 
 def _descriptor_binding_context(
-    *, value: object, attribute: str, member: object
-) -> tuple[object | None, type] | None:
+    *,
+    value: _Reachable,
+    attribute: str,
+    member: _Reachable,
+) -> tuple[_Reachable | None, type[_Reachable]] | None:
     """Return the standard descriptor arguments when ``member`` comes from a type."""
-    sentinel = object()
     if not isinstance(value, type):
         try:
             instance_state = object.__getattribute__(value, "__dict__")
         except AttributeError:
             instance_state = None
         if isinstance(instance_state, Mapping) and (
-            instance_state.get(attribute, sentinel) is member
+            instance_state.get(attribute, _MISSING) is member
         ):
             return None
         for owner in type(value).__mro__:
-            if owner.__dict__.get(attribute, sentinel) is member:
+            if owner.__dict__.get(attribute, _MISSING) is member:
                 return value, type(value)
         return None
 
     for owner in value.__mro__:
-        if owner.__dict__.get(attribute, sentinel) is member:
+        if owner.__dict__.get(attribute, _MISSING) is member:
             return None, value
     for owner in type(value).__mro__:
-        if owner.__dict__.get(attribute, sentinel) is member:
+        if owner.__dict__.get(attribute, _MISSING) is member:
             return value, type(value)
     return None
 
@@ -2662,7 +2781,7 @@ def _referenced_closure_attribute_paths(  # noqa: C901
     *,
     code: types.CodeType,
     ignore_beartype_guards: bool = False,
-) -> dict[str, frozenset[tuple[str, ...]]]:
+) -> MappingProxyType[str, frozenset[tuple[str, ...]]]:
     """Collect static attribute chains rooted at closure-cell loads."""
     collected: dict[str, set[tuple[str, ...]]] = {}
     instructions = tuple(dis.get_instructions(code))
@@ -2701,7 +2820,9 @@ def _referenced_closure_attribute_paths(  # noqa: C901
         )
         for name, paths in nested.items():
             collected.setdefault(name, set()).update(paths)
-    return {name: frozenset(paths) for name, paths in collected.items()}
+    return MappingProxyType(
+        {name: frozenset(paths) for name, paths in collected.items()}
+    )
 
 
 def _receiver_paths_from_instructions(
@@ -2764,7 +2885,7 @@ def _referenced_global_attribute_paths(  # noqa: C901
     *,
     code: types.CodeType,
     ignore_beartype_guards: bool = False,
-) -> dict[str, frozenset[tuple[str, ...]]]:
+) -> MappingProxyType[str, frozenset[tuple[str, ...]]]:
     """Collect each global plus consecutive module attribute chains it reads."""
     collected: dict[str, set[tuple[str, ...]]] = {}
     instructions = tuple(dis.get_instructions(code))
@@ -2800,10 +2921,12 @@ def _referenced_global_attribute_paths(  # noqa: C901
         for name, paths in nested.items():
             collected.setdefault(name, set()).update(paths)
 
-    return {name: frozenset(paths) for name, paths in collected.items()}
+    return MappingProxyType(
+        {name: frozenset(paths) for name, paths in collected.items()}
+    )
 
 
-def _semantic_sort_key(value: object) -> tuple[str, str]:
+def _semantic_sort_key(value: _Reachable) -> tuple[str, str]:
     """Stable ordering key for unordered containers."""
     type_name = f"{type(value).__module__}.{type(value).__qualname__}"
     try:

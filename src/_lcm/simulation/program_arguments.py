@@ -2,20 +2,26 @@
 
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import cast
+
+import jax
+
+from _lcm.typing import PRNGKeyND, PytreeValue, QualifiedName, ShapeDtypePytree
+from lcm.typing import ReferenceName, ScalarFloat, ScalarInt, StateName
 
 
 def decision_arguments(
     *,
-    states: Mapping[str, object],
-    discrete_actions: Mapping[str, object],
-    continuous_actions: Mapping[str, object],
-    taste_keys: Mapping[str, object],
-    next_values: object,
-    references: Mapping[str, object],
-    params: Mapping[str, object],
-    period: object,
-    age: object,
-) -> dict[str, object]:
+    states: Mapping[StateName, PytreeValue | ShapeDtypePytree],
+    discrete_actions: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+    continuous_actions: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+    taste_keys: Mapping[ReferenceName, PRNGKeyND | jax.ShapeDtypeStruct],
+    next_values: PytreeValue | ShapeDtypePytree,
+    references: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+    params: Mapping[QualifiedName, PytreeValue | ShapeDtypePytree],
+    period: PytreeValue | ShapeDtypePytree,
+    age: PytreeValue | ShapeDtypePytree,
+) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Preserve the decision call's existing last-writer precedence exactly."""
     return {
         **states,
@@ -32,14 +38,14 @@ def decision_arguments(
 
 def transition_arguments(
     *,
-    states: Mapping[str, object],
-    carried: Mapping[str, object],
-    actions: Mapping[str, object],
-    keys: Mapping[str, object],
-    period: object,
-    age: object,
-    params: Mapping[str, object],
-) -> dict[str, object]:
+    states: Mapping[StateName, PytreeValue | ShapeDtypePytree],
+    carried: Mapping[StateName, PytreeValue | ShapeDtypePytree],
+    actions: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+    keys: Mapping[ReferenceName, PRNGKeyND | jax.ShapeDtypeStruct],
+    period: PytreeValue | ShapeDtypePytree,
+    age: PytreeValue | ShapeDtypePytree,
+    params: Mapping[QualifiedName, PytreeValue | ShapeDtypePytree],
+) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Preserve the state/route call's existing last-writer parameter precedence."""
     return {
         **states,
@@ -53,12 +59,20 @@ def transition_arguments(
 
 
 def policy_prepare_arguments(
-    *, payload: object, states: Mapping[str, object], params: object, age: object
-) -> dict[str, object]:
+    *,
+    payload: PytreeValue | ShapeDtypePytree,
+    states: Mapping[StateName, PytreeValue] | Mapping[StateName, ShapeDtypePytree],
+    params: Mapping[QualifiedName, PytreeValue]
+    | Mapping[QualifiedName, ShapeDtypePytree],
+    age: ScalarFloat | ScalarInt | jax.ShapeDtypeStruct,
+) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Bind the dynamic published bank to its declared reconstruction inputs."""
     return {
         "payload": payload,
-        "states": MappingProxyType(dict(states)),
+        # A copy of a concrete or an abstract mapping is that same kind of tree.
+        "states": cast(
+            "PytreeValue | ShapeDtypePytree", MappingProxyType(dict(states))
+        ),
         "params": params,
         "age": age,
     }
@@ -66,19 +80,23 @@ def policy_prepare_arguments(
 
 def policy_rank_arguments(
     *,
-    payload: object,
-    bank: object,
-    canonical_states: Mapping[str, object],
-    params: object,
-    age: object,
-    next_values: object,
-    references: Mapping[str, object],
-) -> dict[str, object]:
+    payload: PytreeValue | ShapeDtypePytree,
+    bank: PytreeValue | ShapeDtypePytree,
+    canonical_states: Mapping[StateName, PytreeValue]
+    | Mapping[StateName, ShapeDtypePytree],
+    params: Mapping[QualifiedName, PytreeValue]
+    | Mapping[QualifiedName, ShapeDtypePytree],
+    age: PytreeValue | ShapeDtypePytree,
+    next_values: PytreeValue | ShapeDtypePytree,
+    references: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Bind canonical ranking with the dispatch's final reference precedence."""
     return {
         "payload": payload,
         "bank": bank,
-        "canonical_states": MappingProxyType(dict(canonical_states)),
+        "canonical_states": cast(
+            "PytreeValue | ShapeDtypePytree", MappingProxyType(dict(canonical_states))
+        ),
         "params": params,
         "age": age,
         "next_regime_to_V_arr": next_values,
@@ -88,11 +106,11 @@ def policy_rank_arguments(
 
 def gate_fold_arguments(
     *,
-    edge_values: object,
-    edge_flags: object,
-    flat_params: object,
-    fold_age: object,
-) -> dict[str, object]:
+    edge_values: PytreeValue | ShapeDtypePytree,
+    edge_flags: PytreeValue | ShapeDtypePytree,
+    flat_params: PytreeValue | ShapeDtypePytree,
+    fold_age: PytreeValue | ShapeDtypePytree,
+) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Bind the raw addressed inputs of a gated-continuation fold."""
     return {
         "edge_values": edge_values,
@@ -104,16 +122,16 @@ def gate_fold_arguments(
 
 def gate_route_arguments(
     *,
-    edge_values: object,
-    edge_flags: object,
-    next_states: object,
-    new_subject_regime_ids: object,
-    subjects_in_regime: object,
-    flat_params: object,
-    own_stakeholder: object,
-    new_own_stakeholder: object,
-    fold_age: object,
-) -> dict[str, object]:
+    edge_values: PytreeValue | ShapeDtypePytree,
+    edge_flags: PytreeValue | ShapeDtypePytree,
+    next_states: PytreeValue | ShapeDtypePytree,
+    new_subject_regime_ids: PytreeValue | ShapeDtypePytree,
+    subjects_in_regime: PytreeValue | ShapeDtypePytree,
+    flat_params: PytreeValue | ShapeDtypePytree,
+    own_stakeholder: PytreeValue | ShapeDtypePytree,
+    new_own_stakeholder: PytreeValue | ShapeDtypePytree,
+    fold_age: PytreeValue | ShapeDtypePytree,
+) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Bind realized-state gate operands and the current carrier."""
     return {
         "edge_values": edge_values,

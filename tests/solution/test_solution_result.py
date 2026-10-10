@@ -26,6 +26,7 @@ from _lcm.solution import backward_induction
 from _lcm.solution.contract import GENERATED_REPLAY_AUTHORITY
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
+    ArtifactPayload,
     FlatParams,
 )
 from lcm import ExecutionConfig, LinSpacedGrid, Model
@@ -54,7 +55,7 @@ from lcm.solver_api import (
     ValueStore,
 )
 from lcm.solvers import MSSEnvelope
-from lcm.typing import UserInitialConditions, UserParams
+from lcm.typing import FloatND, UserInitialConditions, UserParams
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
     _make_dissolution_model,
@@ -89,22 +90,33 @@ class _RaisingLazyValueEntry(solver_api_module._LazyEntry):
         """Report that the adversarial entry has not materialized."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
         """Raise the configured decoder exception."""
         raise self._error
 
 
-def _imported_module_names(module: ModuleType) -> set[str]:
-    """Return every module name the given module's source imports."""
-    tree = ast.parse(inspect.getsource(module))
+def _imported_module_names(source: str) -> set[str]:
+    """Return every module name `source` imports when it runs.
+
+    Imports under `if TYPE_CHECKING:` exist only for type checkers and are skipped.
+    """
+    tree = ast.parse(source)
+    static_only = {
+        id(inner)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "TYPE_CHECKING"
+        for statement in node.body
+        for inner in ast.walk(statement)
+    }
+    runtime = [node for node in ast.walk(tree) if id(node) not in static_only]
     return {
         alias.name
-        for node in ast.walk(tree)
+        for node in runtime
         if isinstance(node, ast.Import)
         for alias in node.names
-    } | {
-        node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
-    }
+    } | {node.module or "" for node in runtime if isinstance(node, ast.ImportFrom)}
 
 
 def _solver_api_modules() -> list[ModuleType]:
@@ -124,9 +136,23 @@ def _solver_api_modules() -> list[ModuleType]:
 )
 def test_solver_api_has_no_private_lcm_imports(*, module: ModuleType) -> None:
     """An installed solver can import the result spine without importing `_lcm`."""
-    imported = _imported_module_names(module)
+    imported = _imported_module_names(inspect.getsource(module))
 
     assert not any(name == "_lcm" or name.startswith("_lcm.") for name in imported)
+
+
+def test_imported_module_names_skips_only_type_checking_imports() -> None:
+    """Runtime imports count, including ones beside a `TYPE_CHECKING` block."""
+    source = (
+        "import json\n"
+        "from _lcm.grids import Grid\n"
+        "if TYPE_CHECKING:\n"
+        "    from _lcm.solution.artifacts import OwnedSolutionView\n"
+        "else:\n"
+        "    from _lcm.typing import PytreeValue\n"
+    )
+
+    assert _imported_module_names(source) == {"json", "_lcm.grids", "_lcm.typing"}
 
 
 def test_artifact_identity_includes_schema_version() -> None:
@@ -161,7 +187,7 @@ def test_artifact_store_is_immutable_and_projects_one_artifact_type() -> None:
         ArtifactRef(period=0, regime="alive", key=policy): "p0",
         ArtifactRef(period=0, regime="alive", key=diagnostic): "d0",
     }
-    store = ArtifactStore(refs)
+    store = ArtifactStore(cast("Mapping[ArtifactRef, ArtifactPayload]", refs))
 
     assert dict(store) == refs
     projected = store.project(policy)
@@ -239,7 +265,7 @@ def test_store_lookups_reject_nonexact_coordinates_before_hashing() -> None:
 
     key = ArtifactKey(type_id="example.policy")
     ref = ArtifactRef(period=0, regime="alive", key=key)
-    artifacts = ArtifactStore({ref: object()})
+    artifacts = ArtifactStore({ref: cast("ArtifactPayload", object())})
     hostile_ref = replace(ref)
     object.__setattr__(hostile_ref, "regime", hostile_regime)
 
@@ -339,7 +365,7 @@ def test_model_rejects_a_present_inapplicable_artifact() -> None:
     )
     malformed = replace(
         solution,
-        replay_artifacts=ArtifactStore({policy_ref: object()}),
+        replay_artifacts=ArtifactStore({policy_ref: cast("ArtifactPayload", object())}),
         omissions={
             ref: reason
             for ref, reason in solution.omissions.items()
@@ -588,6 +614,18 @@ def test_legacy_model_pickle_backfills_solution_instance_id() -> None:
 
     assert restored._solution_model_instance_id
     assert solution.metadata.model_instance_id == restored._solution_model_instance_id
+
+
+def test_model_archive_with_dict_fixed_component_splits_restores_them_read_only() -> (
+    None
+):
+    """An archive holding the fixed-component splits as a dict restores them frozen."""
+    model, _, _ = _small_grid_search_inputs()
+    model._fixed_component_splits = dict(model._fixed_component_splits)  # ty: ignore[invalid-assignment]
+
+    restored = cloudpickle.loads(cloudpickle.dumps(model))
+
+    assert isinstance(restored._fixed_component_splits, MappingProxyType)
 
 
 def test_retained_finite_nnbegm_result_replay_matches_automatic_solve() -> None:
@@ -849,7 +887,7 @@ def test_lazy_value_decoder_errors_cross_the_public_boundary(
     """Normalize decoder mechanics without hiding archive-domain exceptions."""
     model, params, initial_conditions = _small_grid_search_inputs()
     solution = model.solve(params=params, log_level="off")
-    entries: dict[object, object] = {
+    entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime_name): value
         for period, regime_to_value in solution.values.items()
         for regime_name, value in regime_to_value.items()
@@ -1494,7 +1532,7 @@ def _with_artifact(
 ) -> SolutionResult:
     """Return a result with one test artifact added to the named store."""
     store = cast("ArtifactStore", getattr(solution, channel))
-    replacement = ArtifactStore(dict(store) | {ref: object()})
+    replacement = ArtifactStore(dict(store) | {ref: cast("ArtifactPayload", object())})
     return replace(
         solution,
         **{channel: replacement},

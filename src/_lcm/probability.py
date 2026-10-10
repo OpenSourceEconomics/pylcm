@@ -29,19 +29,23 @@ caller supplied, bit for bit.
 import dataclasses
 import functools
 from collections.abc import Iterable, Sequence
-from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 from jax.typing import DTypeLike
 from jaxtyping import Int
 
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, FloatND, ValueND
 
 # The bit pattern of a float, as an integer of the same width. Genuinely
 # width-polymorphic: `int32` beside `float32`, `int64` beside `float64`.
 type _BitsND = Int[Array, "..."]
+
+# The tangent JAX pairs with an integer primal: a `float0` zero array, held on
+# the host or traced.
+type _IntegerTangent = ValueND | np.ndarray
 
 _FLOAT32_BYTES = 4
 _FLOAT32_MANTISSA_BITS = 23
@@ -856,7 +860,7 @@ def _scaled_down_bits(values: FloatND, shift: _BitsND) -> FloatND:
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 def _scaled_down_jvp(
-    primals: tuple[FloatND, _BitsND], tangents: tuple[FloatND, Any]
+    primals: tuple[FloatND, _BitsND], tangents: tuple[FloatND, _IntegerTangent]
 ) -> tuple[FloatND, FloatND]:
     """Differentiate downward scaling as multiplication by `2**shift`."""
     values, shift = primals
@@ -930,7 +934,7 @@ def _scaled_bits(values: FloatND, shift: _BitsND) -> FloatND:
 
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 def _scaled_bits_jvp(
-    primals: tuple[FloatND, _BitsND], tangents: tuple[FloatND, Any]
+    primals: tuple[FloatND, _BitsND], tangents: tuple[FloatND, _IntegerTangent]
 ) -> tuple[FloatND, FloatND]:
     """Scale the tangent by the same power of two the value is scaled by.
 

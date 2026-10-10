@@ -43,7 +43,7 @@ from _lcm.persistence.solution import (
     _require_nonnegative_exact_int,
     _require_positive_exact_int,
 )
-from _lcm.typing import RegimeName
+from _lcm.typing import JSONValue, RegimeName
 from lcm.exceptions import SolutionIntegrityError
 
 PLAN_FILE: Final = "plan.json"
@@ -86,7 +86,7 @@ class FragmentPanel:
     for an array field. Leaves are in raw-result order.
     """
 
-    layouts: MappingProxyType[LeafAddress, MappingProxyType[str, object]]
+    layouts: MappingProxyType[LeafAddress, MappingProxyType[str, JSONValue]]
     """Per leaf, the JSON description of the device layout the job produced it on.
 
     Devices are positions in the model's selected devices, never device ids.
@@ -112,10 +112,10 @@ class Fragment:
     plan_id: str
     """Identifier of the plan the job ran."""
 
-    identity: MappingProxyType[str, object]
+    identity: MappingProxyType[str, JSONValue]
     """The model, parameter and build identity the job reproduced."""
 
-    execution: MappingProxyType[str, object]
+    execution: MappingProxyType[str, JSONValue]
     """Backend, devices and budget the job ran on."""
 
     coordinates: tuple[Coordinate, ...]
@@ -150,7 +150,7 @@ def failure_job(*, name: str) -> int | None:
     return None if match is None else int(match.group(1))
 
 
-def canonical_json(payload: object) -> bytes:
+def canonical_json(payload: JSONValue) -> bytes:
     """Encode JSON deterministically: sorted keys, no whitespace, no NaN."""
     return json.dumps(
         payload,
@@ -196,7 +196,7 @@ def write_atomically(*, path: Path, write: Callable[[Path], None]) -> None:
                 temporary.unlink()
 
 
-def write_json_atomically(*, path: Path, payload: object) -> None:
+def write_json_atomically(*, path: Path, payload: JSONValue) -> None:
     """Write `payload` as canonical JSON to `path` through an atomic rename."""
     encoded = canonical_json(payload)
     write_atomically(path=path, write=_BytesWriter(payload=encoded))
@@ -213,7 +213,7 @@ class _BytesWriter:
         path.write_bytes(self.payload)
 
 
-def array_checksum(*, identity: Mapping[str, object], array: np.ndarray) -> str:
+def array_checksum(*, identity: Mapping[str, JSONValue], array: np.ndarray) -> str:
     """Hash one array together with its logical address and representation."""
     return _array_checksum(identity=dict(identity), array=np.ascontiguousarray(array))
 
@@ -222,7 +222,7 @@ def array_checksum(*, identity: Mapping[str, object], array: np.ndarray) -> str:
 class _FragmentWriter:
     """Write one fragment without retaining its arrays in a function closure."""
 
-    header: Mapping[str, object]
+    header: Mapping[str, JSONValue]
     coordinates: tuple[Coordinate, ...]
     values: Mapping[int, Mapping[Coordinate, np.ndarray]]
     panel: FragmentPanel | None
@@ -241,7 +241,7 @@ class _FragmentWriter:
 def write_fragment(
     *,
     path: Path,
-    header: Mapping[str, object],
+    header: Mapping[str, JSONValue],
     coordinates: tuple[Coordinate, ...],
     values: Mapping[int, Mapping[Coordinate, np.ndarray]],
     panel: FragmentPanel | None,
@@ -290,13 +290,13 @@ def read_fragment(*, path: Path) -> Fragment:
 def _write_fragment_file(
     *,
     path: Path,
-    header: Mapping[str, object],
+    header: Mapping[str, JSONValue],
     coordinates: tuple[Coordinate, ...],
     values: Mapping[int, Mapping[Coordinate, np.ndarray]],
     panel: FragmentPanel | None,
 ) -> None:
     """Write the complete fragment to a path that is not yet public."""
-    manifest: dict[str, object] = {
+    manifest: dict[str, JSONValue] = {
         **dict(header),
         "format": FRAGMENT_FORMAT,
         "format_version": FORMAT_VERSION,
@@ -306,7 +306,7 @@ def _write_fragment_file(
     }
     with h5py.File(path, "w") as file:
         value_group = file.create_group(_VALUES)
-        value_entries = cast("list[object]", manifest["values"])
+        value_entries = cast("list[JSONValue]", manifest["values"])
         for code, blocks in values.items():
             for (period, regime), block in blocks.items():
                 address = f"{len(value_entries):06d}"
@@ -373,9 +373,9 @@ def _write_leaf(
     *,
     group: h5py.Group,
     address: str,
-    identity: Mapping[str, object],
+    identity: Mapping[str, JSONValue],
     array: np.ndarray,
-) -> dict[str, object]:
+) -> dict[str, JSONValue]:
     """Write one array and return its manifest entry."""
     contiguous = np.ascontiguousarray(array)
     group.create_dataset(address, data=contiguous)
@@ -409,7 +409,7 @@ def _read_fragment_file(*, path: Path, file: h5py.File) -> Fragment:
         for code in _require_exact_list(value=manifest["codes"], label="fragment codes")
     )
     blocks: dict[int, dict[Coordinate, np.ndarray]] = {code: {} for code in codes}
-    for entry in cast("list[dict[str, object]]", manifest["values"]):
+    for entry in cast("list[dict[str, JSONValue]]", manifest["values"]):
         identity = _require_exact_dict(
             value=entry["identity"], label=f"fragment {path.name} value address"
         )
@@ -458,7 +458,7 @@ def _read_fragment_file(*, path: Path, file: h5py.File) -> Fragment:
         else _read_panel(
             path=path,
             file=file,
-            entry=cast("dict[str, object]", panel_entry),
+            entry=cast("dict[str, JSONValue]", panel_entry),
             listed=listed,
         )
     )
@@ -476,8 +476,8 @@ def _read_fragment_file(*, path: Path, file: h5py.File) -> Fragment:
         codes=codes,
         plan_sha256=str(manifest["plan_sha256"]),
         plan_id=str(manifest["plan_id"]),
-        identity=MappingProxyType(cast("dict[str, object]", manifest["identity"])),
-        execution=MappingProxyType(cast("dict[str, object]", manifest["execution"])),
+        identity=MappingProxyType(cast("dict[str, JSONValue]", manifest["identity"])),
+        execution=MappingProxyType(cast("dict[str, JSONValue]", manifest["execution"])),
         coordinates=coordinates,
         values=MappingProxyType(
             {
@@ -506,7 +506,7 @@ _MANIFEST_KEYS: Final = frozenset(
 )
 
 
-def _read_manifest(*, path: Path, file: h5py.File) -> dict[str, object]:
+def _read_manifest(*, path: Path, file: h5py.File) -> dict[str, JSONValue]:
     """Verify and parse a fragment's manifest."""
     dataset = file[_MANIFEST]
     if not isinstance(dataset, h5py.Dataset):
@@ -538,7 +538,7 @@ def _read_manifest(*, path: Path, file: h5py.File) -> dict[str, object]:
 
 
 def _read_leaf(
-    *, path: Path, file: h5py.File, entry: Mapping[str, object], listed: set[str]
+    *, path: Path, file: h5py.File, entry: Mapping[str, JSONValue], listed: set[str]
 ) -> np.ndarray:
     """Read one listed array and verify its shape, dtype and checksum."""
     name = str(entry["dataset"])
@@ -561,7 +561,7 @@ def _read_leaf(
         or not isinstance(checksum, str)
         or len(checksum) != _SHA256_HEX_LENGTH
         or array_checksum(
-            identity=cast("Mapping[str, object]", entry["identity"]), array=array
+            identity=cast("Mapping[str, JSONValue]", entry["identity"]), array=array
         )
         != checksum
     ):
@@ -574,21 +574,21 @@ def _read_leaf(
 
 
 def _read_panel(
-    *, path: Path, file: h5py.File, entry: Mapping[str, object], listed: set[str]
+    *, path: Path, file: h5py.File, entry: Mapping[str, JSONValue], listed: set[str]
 ) -> FragmentPanel:
     """Read and verify a fragment's simulated rows."""
     rows = _read_leaf(
         path=path,
         file=file,
-        entry=cast("dict[str, object]", entry["rows"]),
+        entry=cast("dict[str, JSONValue]", entry["rows"]),
         listed=listed,
     )
     if rows.ndim != 1 or rows.dtype != np.dtype(np.int64):
         msg = f"Fragment {path.name} requires one-dimensional int64 original rows."
         raise SolutionIntegrityError(msg)
     leaves: dict[LeafAddress, np.ndarray] = {}
-    layouts: dict[LeafAddress, MappingProxyType[str, object]] = {}
-    for leaf in cast("list[dict[str, object]]", entry["leaves"]):
+    layouts: dict[LeafAddress, MappingProxyType[str, JSONValue]] = {}
+    for leaf in cast("list[dict[str, JSONValue]]", entry["leaves"]):
         identity = _require_exact_dict(value=leaf["identity"], label="raw leaf address")
         if (
             set(identity) != {"kind", "regime", "period", "field", "key"}
@@ -632,7 +632,7 @@ def _read_panel(
                     )
                 ),
             )
-            for regime, periods in cast("list[list[object]]", entry["regimes"])
+            for regime, periods in cast("list[list[JSONValue]]", entry["regimes"])
         ),
         leaves=MappingProxyType(leaves),
         layouts=MappingProxyType(layouts),
@@ -653,7 +653,9 @@ class _DatasetNames:
     names: set[str]
 
     # keyword-only-exempt: library-callback=h5py.Group.visititems
-    def __call__(self, name: str, item: object) -> None:
+    def __call__(
+        self, name: str, item: h5py.Group | h5py.Dataset | h5py.Datatype
+    ) -> None:
         """Record the addresses of numerical datasets."""
         if isinstance(item, h5py.Dataset):
             self.names.add(name)

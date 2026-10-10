@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import NoReturn
 
 import jax
 import jax.numpy as jnp
@@ -22,6 +23,7 @@ from _lcm.execution.value_transfer import (
     apply_value_transfer_plan,
 )
 from _lcm.solution.backward_induction import _period_shared_transfer_plan
+from _lcm.typing import ArgumentTree
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -66,7 +68,7 @@ def _copy_transfer(
     )
 
 
-def _arguments(*, stored: jax.Array) -> MappingProxyType[str, object]:
+def _arguments(*, stored: jax.Array) -> MappingProxyType[str, ArgumentTree]:
     return MappingProxyType(
         {"next_regime_to_V_arr": MappingProxyType({"target": stored})}
     )
@@ -121,7 +123,7 @@ def test_an_unshared_transfer_is_not_cached() -> None:
     assert len(cache) == 0
 
 
-def _produced_target_leaf(*, result: Mapping[str, object]) -> jax.Array:
+def _produced_target_leaf(*, result: Mapping[str, ArgumentTree]) -> jax.Array:
     """Return a transfer-plan result's produced `target` leaf, type-narrowed."""
     next_regime_to_V_arr = result["next_regime_to_V_arr"]
     assert isinstance(next_regime_to_V_arr, Mapping)
@@ -477,13 +479,13 @@ def _planned_core(*, name: str, transfer: ResolvedValueTransfer) -> PlannedCore:
             state_order=("wealth",),
             output_roles=VALUE,
         ),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         input_transfer_plan=(transfer,),
         name=name,
     )
 
 
-def _unreachable_core(**_kwargs: object) -> object:
+def _unreachable_core(**_kwargs: object) -> NoReturn:
     """Stand in for a compiled core the plan never calls."""
     raise AssertionError
 

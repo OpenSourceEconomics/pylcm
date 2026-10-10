@@ -30,8 +30,10 @@ from _lcm.simulation.runtime import (
     SimulationRuntime,
     _build_context,
 )
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm import ExecutionConfig, Model
 from lcm.solver_api import SIMULATION_POLICY
+from lcm.typing import ReferenceName
 from tests.test_models import n_nbegm_discrete_toy as discrete_toy
 from tests.test_models import n_nbegm_toy as smooth_toy
 from tests.test_models.initial_nodes import initial_nodes_of
@@ -43,8 +45,8 @@ type RankedBank = tuple[Mapping[str, jax.Array], jax.Array, jax.Array]
 @dataclass(frozen=True, kw_only=True)
 class _Call:
     program: CoreProgram
-    arguments: Mapping[str, object]
-    result: object
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
+    result: PytreeValue
     n_subjects: int
 
 
@@ -56,11 +58,11 @@ class _RecordingRuntime(SimulationRuntime):
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
         residency: SimulationDispatchContext | None = None,
-    ) -> object:
+    ) -> PytreeValue:
         result = super().dispatch(
             program=program,
             arguments=arguments,
@@ -242,8 +244,11 @@ def test_correspondence_rejects_a_same_shaped_source_leaf_swap(
 
 
 def _dispatch_same_executable(
-    *, case: _ProducedCase, call: _Call, arguments: Mapping[str, object]
-) -> object:
+    *,
+    case: _ProducedCase,
+    call: _Call,
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+) -> PytreeValue:
     original = case.runtime.prepare(
         program=call.program,
         arguments=call.arguments,

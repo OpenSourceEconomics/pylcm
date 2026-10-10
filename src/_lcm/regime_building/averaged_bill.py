@@ -23,7 +23,7 @@ import dataclasses
 import inspect
 import itertools
 from collections.abc import Callable, Mapping
-from typing import Any, NoReturn, no_type_check
+from typing import NoReturn, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -47,7 +47,11 @@ from _lcm.transition_plans import (
     TargetTransitionPlans,
 )
 from _lcm.typing import (
+    EconFunctionArg,
     EconFunctionsMapping,
+    FunctionName,
+    QualifiedName,
+    ReferenceName,
     RegimeName,
     StateName,
     TransitionFunction,
@@ -55,7 +59,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import Float1D, FloatND, Int1D
+from lcm.typing import Float1D, FloatND, Int1D, UserFunction
 
 _TIME_NAMES = frozenset({"period", "age"})
 _HIGHEST = jax.lax.Precision.HIGHEST
@@ -208,7 +212,7 @@ class AveragedBillPlan:
     """Transition-local draws the bill reads, averaged into the stored value."""
     kept_draws: tuple[TransitionFunctionName, ...]
     """Stored draws the bill reads, each an axis of the target's value."""
-    bill_param_names: tuple[str, ...]
+    bill_param_names: tuple[QualifiedName, ...]
     """What the bill reads besides its conditioners and the draws."""
 
 
@@ -614,7 +618,7 @@ class _AveragedBillReader:
 
     inner: Callable[..., FloatND]
     """Interpolator of the averaged value on the merged points."""
-    inner_args: frozenset[str]
+    inner_args: frozenset[ReferenceName]
     """Every argument `inner` reads."""
     V_arr_name: str
     """Argument carrying the target's value array."""
@@ -644,9 +648,9 @@ class _AveragedBillReader:
     """Transition-local draws averaged into the stored value."""
     bill: Callable[..., FloatND]
     """The bill as a function of conditioners, draws and parameters."""
-    bill_param_names: tuple[str, ...]
+    bill_param_names: tuple[QualifiedName, ...]
     """What the bill reads besides its conditioners and the draws."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names."""
 
     def __post_init__(self) -> None:
@@ -658,7 +662,7 @@ class _AveragedBillReader:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> FloatND:  # noqa: ANN401
+    def __call__(self, **kwargs: EconFunctionArg) -> FloatND:
         averaged, knots = self._average(kwargs)
         condition_index = []
         known = jnp.ones((), dtype=bool)
@@ -681,7 +685,9 @@ class _AveragedBillReader:
         return jnp.where(known, self.inner(**inner_kwargs), jnp.nan)
 
     @no_type_check
-    def _average(self, kwargs: Mapping[str, Any]) -> tuple[FloatND, FloatND]:
+    def _average(
+        self, kwargs: Mapping[ReferenceName, EconFunctionArg]
+    ) -> tuple[FloatND, FloatND]:
         """Return the averaged value and its merged points for every combination.
 
         The averaged value carries the conditioners' supports as leading axes,
@@ -732,7 +738,7 @@ class _AveragedBillReader:
             draw_values = {}
             weights = jnp.ones(1, dtype=values.dtype)
 
-        def bill_at(index: Mapping[str, Any]) -> FloatND:
+        def bill_at(index: Mapping[str, Int1D]) -> FloatND:
             return self.bill(
                 **{name: v[index["c"]] for name, v in condition_values.items()},
                 **{name: v[index["j"]] for name, v in kept_values.items()},
@@ -839,7 +845,7 @@ def _reads(
     *,
     functions: EconFunctionsMapping,
     bundle: Mapping[TransitionFunctionName, TransitionFunction],
-    targets: tuple[str, ...],
+    targets: tuple[FunctionName | TransitionFunctionName, ...],
 ) -> frozenset[str]:
     """Return every input the targets read, through helpers."""
     if not targets:
@@ -853,7 +859,9 @@ def _reads(
     return frozenset(inspect.signature(func).parameters)
 
 
-def _reads_only(*, func: object, allowed_inputs: frozenset[str] | None) -> bool:
+def _reads_only(
+    *, func: UserFunction | None, allowed_inputs: frozenset[str] | None
+) -> bool:
     """Return whether a function reads nothing but parameters and time."""
     if allowed_inputs is None or not callable(func):
         return False

@@ -14,12 +14,13 @@ import inspect
 import itertools
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any, get_args, get_type_hints
+from typing import Any, cast, get_args, get_type_hints
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from jaxtyping import Float
 
 from _lcm.continuation import EGMContinuationSpec
@@ -34,7 +35,7 @@ from _lcm.solution.contract import (
 )
 from _lcm.solution.kernel_output import ConsumedKernelOutput, consume_kernel_output
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.typing import RegimeName
+from _lcm.typing import ArtifactPayload, RegimeName
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -89,7 +90,7 @@ def _policy() -> EGMSimPolicy:
 
 
 def _consume(
-    *, output: object, continuation_key: ArtifactKey | None = EGM_CONTINUATION
+    *, output: KernelOutput, continuation_key: ArtifactKey | None = EGM_CONTINUATION
 ) -> ConsumedKernelOutput:
     return consume_kernel_output(
         output=output,
@@ -129,7 +130,7 @@ def test_kernel_output_is_public_dependency_safe_and_defensively_immutable() -> 
     assert not any(name == "_lcm" or name.startswith("_lcm.") for name in imports)
 
     key = ArtifactKey(type_id="example.continuation")
-    source = {key: "payload"}
+    source = {key: cast("ArtifactPayload", "payload")}
     output = KernelOutput(value=jnp.asarray([1.0]), continuations=source)
     source.clear()
 
@@ -192,8 +193,8 @@ def test_kernel_output_rejects_one_artifact_identity_in_multiple_channels(
         KernelOutput(
             value=jnp.asarray([1.0]),
             **{
-                left_channel: {key: "left"},
-                right_channel: {key: "right"},
+                left_channel: {key: cast("ArtifactPayload", "left")},
+                right_channel: {key: cast("ArtifactPayload", "right")},
             },
         )
 
@@ -285,7 +286,9 @@ def test_the_consumer_normalizes_an_accepted_numpy_value_to_jax() -> None:
             KernelOutput(
                 value=jnp.asarray([1.0]),
                 continuations={
-                    ArtifactKey(type_id="example.unknown", schema_version=1): object()
+                    ArtifactKey(type_id="example.unknown", schema_version=1): cast(
+                        "ArtifactPayload", object()
+                    )
                 },
             ),
             "Regime 'saving'.*period 2.*unconsumed.*example.unknown",
@@ -297,7 +300,7 @@ def test_the_consumer_normalizes_an_accepted_numpy_value_to_jax() -> None:
                     ArtifactKey(
                         type_id=EGM_CONTINUATION.type_id,
                         schema_version=2,
-                    ): object()
+                    ): cast("ArtifactPayload", object())
                 },
             ),
             "Regime 'saving'.*period 2.*version.*2.*expected.*1",
@@ -321,7 +324,7 @@ def test_the_consumer_refuses_every_unconsumed_artifact_channel(channel: str) ->
     output = KernelOutput(
         value=jnp.asarray([1.0]),
         continuations={EGM_CONTINUATION: _carry()},
-        **{channel: {key: object()}},
+        **{channel: {key: cast("ArtifactPayload", object())}},
     )
 
     with pytest.raises(
@@ -334,7 +337,7 @@ def test_the_consumer_refuses_every_unconsumed_artifact_channel(channel: str) ->
 def test_the_consumer_refuses_a_wrong_payload_under_the_continuation_key() -> None:
     output = KernelOutput(
         value=jnp.asarray([1.0]),
-        continuations={EGM_CONTINUATION: object()},
+        continuations={EGM_CONTINUATION: cast("ArtifactPayload", object())},
     )
 
     with pytest.raises(
@@ -409,15 +412,17 @@ def test_the_consumer_refuses_a_generated_authority_without_a_policy() -> None:
 def test_the_consumer_refuses_a_known_key_with_the_wrong_payload_type(
     *, channel: str, key: ArtifactKey
 ) -> None:
-    output = KernelOutput(value=jnp.asarray([1.0]), **{channel: {key: object()}})
+    output = KernelOutput(
+        value=jnp.asarray([1.0]), **{channel: {key: cast("ArtifactPayload", object())}}
+    )
 
     with pytest.raises(RuntimeError, match=f"'saving'.*period 2.*{key.type_id}"):
         _consume(output=output, continuation_key=None)
 
 
 def test_the_consumer_refuses_anything_but_a_kernel_output() -> None:
-    with pytest.raises(TypeError, match=r"'saving'.*period 2.*unsupported.*object"):
-        _consume(output=object(), continuation_key=None)
+    with pytest.raises(BeartypeCallHintParamViolation, match="output"):
+        _consume(output=cast("KernelOutput", object()), continuation_key=None)
 
 
 def test_a_period_kernel_returns_a_kernel_output_and_replay_carries_it() -> None:
@@ -586,3 +591,12 @@ def test_a_kernel_output_survives_a_dataclass_replace_of_its_value() -> None:
 
     assert replaced.continuations[EGM_CONTINUATION] is carry
     assert isinstance(replaced.continuations, Mapping)
+
+
+@pytest.mark.parametrize(
+    "field_name", ["continuation_artifacts", "replay_artifacts", "auxiliary_artifacts"]
+)
+def test_consumed_artifact_channels_are_read_only_mappings(field_name: str) -> None:
+    """Each artifact channel of a consumed kernel output is a read-only mapping."""
+    consumed = _consume(output=KernelOutput(value=jnp.zeros(2)), continuation_key=None)
+    assert type(getattr(consumed, field_name)) is MappingProxyType

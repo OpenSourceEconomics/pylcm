@@ -10,6 +10,7 @@ kernel that already publishes that key is refused rather than overwritten.
 
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import pytest
@@ -24,6 +25,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE
 from _lcm.regime_building.processing import _TerminalCarryPeriodKernel
+from _lcm.typing import ArtifactPayload
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
 from lcm.solver_api import (
@@ -135,7 +137,7 @@ def test_the_decorator_adds_the_carry_and_forwards_every_channel():
     )
     flag = jnp.zeros(4, dtype=jnp.bool_)
     auxiliary_key = ArtifactKey(type_id="example.auxiliary")
-    auxiliary = object()
+    auxiliary = cast("ArtifactPayload", object())
     base_output = KernelOutput(
         value=jnp.zeros(4),
         solve_time_artifacts={DISSOLUTION_FLAG: flag},
@@ -156,7 +158,7 @@ def test_the_decorator_adds_the_carry_and_forwards_every_channel():
 
 def test_the_decorator_keeps_a_base_continuation_under_another_key():
     other = ArtifactKey(type_id="example.continuation")
-    payload = object()
+    payload = cast("ArtifactPayload", object())
     base_output = KernelOutput(value=jnp.zeros(4), continuations={other: payload})
 
     output = _call(_wrap(base_output))

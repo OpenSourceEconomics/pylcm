@@ -1,6 +1,6 @@
 """Exact forward diagnostic kernels and their abstract allocation bindings."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
@@ -10,9 +10,10 @@ from jaxtyping import Integer
 
 from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.memory import SimulationMemory
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from _lcm.utils.logging import LogLevel, _owned_values, non_finite_by_regime
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import BoolND, FloatND, Int1D
+from lcm.typing import BoolND, FloatND, Int1D, ReferenceName
 
 
 def period_value_flags(
@@ -63,16 +64,16 @@ def profiled_transition_counts(
 class DiagnosticBinding:
     """One exact operation with abstract inputs; executable out_info owns its shape."""
 
-    function: Callable[..., object]
-    arguments: Mapping[str, object]
-    subject_arg_names: tuple[str, ...]
-    static_arguments: Mapping[str, StaticArgument] = field(
+    function: Callable[..., PytreeValue]
+    arguments: MappingProxyType[ReferenceName, PytreeValue | ShapeDtypePytree]
+    subject_arg_names: tuple[ReferenceName, ...]
+    static_arguments: MappingProxyType[str, StaticArgument] = field(
         default_factory=lambda: MappingProxyType({})
     )
     subject_outputs: bool = False
 
     def __post_init__(self) -> None:
-        """Snapshot metadata and reject accidental ownership of caller arrays."""
+        """Reject accidental ownership of caller arrays."""
         if any(
             not isinstance(leaf, jax.ShapeDtypeStruct)
             for leaf in jax.tree.leaves(self.arguments)
@@ -80,10 +81,6 @@ class DiagnosticBinding:
             raise ExecutionPlanningError(
                 "Diagnostic bindings require abstract operands."
             )
-        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
-        object.__setattr__(
-            self, "static_arguments", MappingProxyType(dict(self.static_arguments))
-        )
 
 
 def diagnostic_bindings(
@@ -109,14 +106,14 @@ def diagnostic_bindings(
         bindings.append(
             DiagnosticBinding(
                 function=period_value_flags,
-                arguments={"values": values, "in_regime": in_regime},
+                arguments=MappingProxyType({"values": values, "in_regime": in_regime}),
                 subject_arg_names=("values", "in_regime"),
             )
         )
         bindings.extend(
             DiagnosticBinding(
                 function=owned_value_nan_count,
-                arguments={"value": value, "in_regime": mask},
+                arguments=MappingProxyType({"value": value, "in_regime": mask}),
                 subject_arg_names=("value", "in_regime"),
             )
             for value, mask in zip(values, in_regime, strict=True)
@@ -125,12 +122,14 @@ def diagnostic_bindings(
         bindings.append(
             DiagnosticBinding(
                 function=transition_counts,
-                arguments={
-                    "prev_regime_ids": prev_regime_ids,
-                    "new_regime_ids": new_regime_ids,
-                },
+                arguments=MappingProxyType(
+                    {
+                        "prev_regime_ids": prev_regime_ids,
+                        "new_regime_ids": new_regime_ids,
+                    }
+                ),
                 subject_arg_names=("prev_regime_ids", "new_regime_ids"),
-                static_arguments={"sorted_ids": sorted_ids},
+                static_arguments=MappingProxyType({"sorted_ids": sorted_ids}),
             )
         )
     return tuple(bindings)

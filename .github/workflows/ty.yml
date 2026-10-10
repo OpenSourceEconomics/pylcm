@@ -39,6 +39,11 @@ jobs:
         # The hook is pixi-backed and therefore runs here rather than on
         # pre-commit.ci, alongside the other static repository contract.
         run: pixi run -e type-checking prek run keyword-only-convention --all-files
+      - name: Enforce precise annotations
+        shell: bash {0}
+        # Every annotation under `src/` and in the `docs/` notebooks names a
+        # precise type, or carries a `# noqa: PANxxx - <reason>`.
+        run: pixi run -e type-checking prek run precise-annotations --all-files
   # A required status check matches by exact check-run name, and `name:` above
   # overrides what gets reported -- so branch protection's context `ty` never
   # matched `Run ty on the codebase on 3.14` and sat "Expected -- Waiting for

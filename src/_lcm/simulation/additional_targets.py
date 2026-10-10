@@ -1,9 +1,9 @@
 """Optional `additional_targets` computation for `SimulationResult.to_dataframe`."""
 
 import inspect
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -14,20 +14,21 @@ from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.engine import Regime
 from _lcm.typing import (
     FlatRegimeParams,
+    QualifiedName,
     RegimeName,
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
-from lcm.typing import BoolND, FloatND, IntND, UserFunction
+from lcm.typing import BoolND, FloatND, FunctionName, IntND, UserFunction
 
 
 def _resolve_targets(
     *,
     additional_targets: list[str] | Literal["all"] | None,
-    available_targets: list[str],
-) -> list[str] | None:
+    available_targets: tuple[FunctionName, ...],
+) -> tuple[str, ...] | None:
     """Resolve and validate additional targets.
 
     Args:
@@ -44,7 +45,7 @@ def _resolve_targets(
     if additional_targets is None:
         return None
     if additional_targets == "all":
-        return available_targets
+        return tuple(available_targets)
 
     invalid = set(additional_targets) - set(available_targets)
     if invalid:
@@ -53,20 +54,20 @@ def _resolve_targets(
             f"Available targets: {available_targets}"
         )
 
-    return additional_targets
+    return tuple(additional_targets)
 
 
 def _collect_all_available_targets(
     regimes: MappingProxyType[RegimeName, Regime],
-) -> set[str]:
+) -> frozenset[str]:
     """Collect all available target names across all regimes."""
-    all_targets: set[str] = set()
+    all_targets: set[FunctionName] = set()
     for regime in regimes.values():
         all_targets.update(_get_available_targets_for_regime(regime))
-    return all_targets
+    return frozenset(all_targets)
 
 
-def _get_available_targets_for_regime(regime: Regime) -> set[str]:
+def _get_available_targets_for_regime(regime: Regime) -> frozenset[str]:
     """Get available target names for a single regime.
 
     Internal machinery is excluded: synthesized internal functions, stochastic
@@ -100,12 +101,14 @@ def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     candidates = {name for name in sim.functions if name not in excluded} | {
         name for name in sim.constraints if name not in excluded
     }
-    return candidates - _decision_only_target_names(
-        regime=regime, candidates=candidates
+    return frozenset(
+        candidates - _decision_only_target_names(regime=regime, candidates=candidates)
     )
 
 
-def _decision_only_target_names(*, regime: Regime, candidates: set[str]) -> set[str]:
+def _decision_only_target_names(
+    *, regime: Regime, candidates: set[str]
+) -> frozenset[str]:
     """Names whose realized recomputation would not be the decision's quantity.
 
     Reading a chosen `next_<state>` does not by itself make a function
@@ -135,7 +138,7 @@ def _decision_only_target_names(*, regime: Regime, candidates: set[str]) -> set[
         regime
     ) | _phase_split_transition_names(regime)
     if not unpublishable or not candidates:
-        return set()
+        return frozenset(set())
     pool = _build_functions_pool(regime)
     dag = dags_dag.create_dag(functions=pool, targets=sorted(candidates))
 
@@ -152,21 +155,23 @@ def _decision_only_target_names(*, regime: Regime, candidates: set[str]) -> set[
             if dependent not in reached:
                 reached.add(dependent)
                 pending.append(dependent)
-    return candidates & reached
+    return frozenset(candidates & reached)
 
 
-def _unresolvable_transition_names(regime: Regime) -> set[str]:
+def _unresolvable_transition_names(regime: Regime) -> frozenset[str]:
     """Transition names the realized-target pool cannot produce."""
     pool = _build_functions_pool(regime)
-    return {
-        transition_name
-        for bundle in regime.simulation.transitions.values()
-        for transition_name in bundle
-        if transition_name not in pool
-    }
+    return frozenset(
+        {
+            transition_name
+            for bundle in regime.simulation.transitions.values()
+            for transition_name in bundle
+            if transition_name not in pool
+        }
+    )
 
 
-def _phase_split_transition_names(regime: Regime) -> set[str]:
+def _phase_split_transition_names(regime: Regime) -> frozenset[str]:
     """Transition names whose perceived (solve) law differs from the true one.
 
     Compared per target and on the *unwrapped* function: canonicalization renames
@@ -176,55 +181,63 @@ def _phase_split_transition_names(regime: Regime) -> set[str]:
     """
     solve_laws = _laws_by_target(regime.solution.transitions)
     simulate_laws = _laws_by_target(regime.simulation.transitions)
-    return {
-        transition_name
-        for transition_name in set(solve_laws) & set(simulate_laws)
-        if solve_laws[transition_name] != simulate_laws[transition_name]
-    }
+    return frozenset(
+        {
+            transition_name
+            for transition_name in set(solve_laws) & set(simulate_laws)
+            if solve_laws[transition_name] != simulate_laws[transition_name]
+        }
+    )
 
 
 def _laws_by_target(
     transitions: TransitionFunctionsMapping,
-) -> dict[TransitionFunctionName, dict[RegimeName, Callable[..., Any]]]:
+) -> MappingProxyType[
+    TransitionFunctionName, MappingProxyType[RegimeName, UserFunction]
+]:
     """Map each transition name to its unwrapped law per target regime."""
-    laws: dict[TransitionFunctionName, dict[RegimeName, Callable[..., Any]]] = {}
+    laws: dict[TransitionFunctionName, dict[RegimeName, UserFunction]] = {}
     for target_regime_name, bundle in transitions.items():
         for transition_name, law in bundle.items():
             laws.setdefault(transition_name, {})[target_regime_name] = inspect.unwrap(
                 law
             )
-    return laws
+    return MappingProxyType(
+        {name: MappingProxyType(by_target) for name, by_target in laws.items()}
+    )
 
 
-def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:
+def _get_stochastic_weight_function_names(regime: Regime) -> frozenset[str]:
     """Get names of internal stochastic weight functions.
 
     These are functions named `weight_{transition_name}` that return probability arrays
     for stochastic state transitions. They should not be exposed as available targets.
     """
     transition_plans = regime.simulation.transition_plans
-    return {
-        f"weight_{target_regime_name}__{transition_name}"
-        for target_regime_name, bundle in (regime.simulation.transitions.items())
-        for transition_name in bundle
-        if transition_plans[target_regime_name].is_lottery(transition_name)
-    }
+    return frozenset(
+        {
+            f"weight_{target_regime_name}__{transition_name}"
+            for target_regime_name, bundle in (regime.simulation.transitions.items())
+            for transition_name in bundle
+            if transition_plans[target_regime_name].is_lottery(transition_name)
+        }
+    )
 
 
 def _filter_targets_for_regime(
     *,
-    targets: list[str],
+    targets: tuple[FunctionName, ...],
     regime: Regime,
-) -> list[str]:
+) -> tuple[str, ...]:
     """Filter targets to only those available in this regime."""
     available = _get_available_targets_for_regime(regime)
-    return [t for t in targets if t in available]
+    return tuple(t for t in targets if t in available)
 
 
 def _compute_targets(
     *,
     data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]],
-    targets: list[str],
+    targets: Sequence[FunctionName],
     regime: Regime,
     regime_params: FlatRegimeParams,
     subject_batch_size: int | None = None,
@@ -302,8 +315,8 @@ def _one_value_per_row(
 
 def _fail_if_targets_depend_on_age_specialized(
     *,
-    targets: list[str],
-    functions_pool: dict[str, UserFunction],
+    targets: Sequence[FunctionName],
+    functions_pool: Mapping[str, UserFunction],
     regime: Regime,
 ) -> None:
     """Reject targets whose DAG reads a policy-specialized function.
@@ -332,21 +345,21 @@ def _fail_if_targets_depend_on_age_specialized(
         )
 
 
-def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:
+def _build_functions_pool(regime: Regime) -> MappingProxyType[str, UserFunction]:
     """Build pool of available functions for target computation."""
     sim = regime.simulation
     pool: dict[str, UserFunction] = {**sim.functions, **sim.constraints}
     if sim.compute_regime_transition_probs is not None:
         pool["regime_transition_probs"] = sim.compute_regime_transition_probs
-    return pool
+    return MappingProxyType(pool)
 
 
 def _create_target_function(
     *,
-    functions_pool: dict[str, UserFunction],
-    targets: list[str],
-) -> UserFunction:
-    """Create combined function for computing targets."""
+    functions_pool: Mapping[str, UserFunction],
+    targets: Sequence[FunctionName],
+) -> Callable[..., Mapping[FunctionName, FloatND | IntND | BoolND]]:
+    """Create combined function for computing targets, keyed by target name."""
     return concatenate_functions(
         functions=functions_pool,
         targets=targets,
@@ -357,8 +370,8 @@ def _create_target_function(
 
 def _get_function_variables(
     *,
-    func: Callable[..., Any],
-    param_names: frozenset[str],
+    func: UserFunction,
+    param_names: frozenset[QualifiedName],
 ) -> tuple[str, ...]:
     """Get variable names from signature, excluding flat param names."""
     return tuple(p for p in inspect.signature(func).parameters if p not in param_names)

@@ -20,6 +20,7 @@ from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.solution.artifacts import OwnedSolutionView
+from _lcm.typing import PytreeByPeriod
 from lcm.exceptions import ExecutionPlanningError
 from tests.simulation.test_finite_policy_budget import _inputs
 from tests.simulation.test_population_allocation_budget import (
@@ -218,7 +219,7 @@ def test_diagnostic_owner_oracle_rejects_an_omitted_preparation_bank(
     hold = SimulationMemory.hold
 
     # keyword-only-exempt: library-callback=SimulationMemory.hold
-    def omit_bank(self: SimulationMemory, tree: object) -> None:
+    def omit_bank(self: SimulationMemory, tree: PytreeByPeriod) -> None:
         if (
             isinstance(tree, tuple)
             and len(tree) == 4

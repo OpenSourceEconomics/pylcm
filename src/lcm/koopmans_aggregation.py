@@ -23,9 +23,7 @@ at exponent `1 - 1/psi`, the other the continuation lottery at exponent
 `1 - risk_aversion` — so both route through one stable evaluation.
 """
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
 
 from _lcm.power_mean import weighted_power_mean_of_pair
 from lcm.typing import FloatND
@@ -33,7 +31,7 @@ from lcm.typing import FloatND
 __all__ = ["CESAggregator", "KoopmansAggregator", "LinearAggregator"]
 
 
-class KoopmansAggregator(ABC):
+class KoopmansAggregator:
     """Base class for Koopmans-aggregator specifications.
 
     Declared on a non-terminal `Regime` via `koopmans_aggregator=...`. The
@@ -48,21 +46,11 @@ class KoopmansAggregator(ABC):
     what an aggregator consumes, which is why this class does not carry a
     parameter-name property the way `CertaintyEquivalent` does. Subclassing is
     a convenience: the slot accepts any callable with the same convention.
+
+    A subclass defines `__call__` with keyword parameters `utility`, `CE` and
+    every further parameter it consumes, and returns the aggregated
+    state-action value in the same units as its inputs.
     """
-
-    @abstractmethod
-    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
-        """Return the state-action value from utility and the continuation.
-
-        Called with `utility=...`, `CE=...`, and every further parameter the
-        concrete signature declares. Subclasses name those parameters
-        explicitly; this declaration only fixes the calling convention.
-
-        Returns:
-            The aggregated state-action value, in the same units as its
-            inputs.
-
-        """
 
 
 @dataclass(frozen=True, kw_only=True)

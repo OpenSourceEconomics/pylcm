@@ -115,7 +115,7 @@ def _evaluate_operands(q: _QAndF) -> Callable[..., Any]:
     @jax.jit
     def evaluate(
         *, cell: dict[str, Any], values: MappingProxyType
-    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    ) -> tuple[jax.Array | bool, jax.Array, jax.Array, jax.Array | bool]:
         utility, feasible = q.U_and_F(**cell)
         continuation, _ = q.compute_CE(
             next_regime_to_V_arr=values,
@@ -126,6 +126,7 @@ def _evaluate_operands(q: _QAndF) -> Callable[..., Any]:
         assert len(aggregation) == 1
         name, discount = next(iter(aggregation.items()))
         assert name.split("__")[-1] == "discount_factor"
+        assert isinstance(discount, jax.Array)
         return utility, continuation, discount, feasible
 
     return evaluate

@@ -23,6 +23,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.regime_building.argmax import NO_ID, max_and_smallest_id
+from _lcm.typing import PytreeValue
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -104,19 +105,23 @@ class ReductionSemantics(ReductionDeclaration, Protocol):
     from a `stakeholder_template` where the others take a `value_template`.
     """
 
-    def initialize(self, **template: FloatND) -> object:
+    def initialize(self, **template: FloatND) -> PytreeValue:
         """Return the empty state, shaped and typed like the family's template."""
         ...
 
-    def add(self, *, accumulator: object, **block: object) -> object:
+    def add(self, *, accumulator: PytreeValue, **block: PytreeValue) -> PytreeValue:
         """Fold one block into `accumulator` and return the new state."""
         ...
 
-    def merge(self, *, left: object, right: object, **binding: object) -> object:
+    def merge(
+        self, *, left: PytreeValue, right: PytreeValue, **binding: PytreeValue
+    ) -> PytreeValue:
         """Combine two partial states into the state covering both their blocks."""
         ...
 
-    def finalize(self, *, accumulator: object, **binding: object) -> object:
+    def finalize(
+        self, *, accumulator: PytreeValue, **binding: PytreeValue
+    ) -> PytreeValue:
         """Publish the reduced result of a complete state."""
         ...
 
@@ -325,7 +330,7 @@ class OuterCandidateAccumulator:
     best_candidate_id: IntND
     """Canonical global identity of the winner, or `-1` while none is seen."""
 
-    carry: object
+    carry: PytreeValue
     """Pytree carry of the current winner, same structure for every block."""
 
 
@@ -334,7 +339,7 @@ class HardMaxWithCarryResult(NamedTuple):
 
     best_value: FloatND
     best_candidate_id: IntND
-    carry: object
+    carry: PytreeValue
 
 
 @dataclass(frozen=True)
@@ -455,7 +460,9 @@ class _CarrySelector:
         return jnp.where(mask, right_leaf, left_leaf)
 
 
-def _select_carry(*, choose_right: BoolND, left: object, right: object) -> object:
+def _select_carry(
+    *, choose_right: BoolND, left: PytreeValue, right: PytreeValue
+) -> PytreeValue:
     """Pick the carry leaf-wise; `None` on either side yields the other side."""
     if left is None:
         return right

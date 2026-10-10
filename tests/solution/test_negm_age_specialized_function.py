@@ -366,7 +366,7 @@ def _early_late_model(*, late_keep: Any, late_start_age: int = _LATE_AGE) -> Mod
     concrete function pinned to one age. `late_start_age` below `_LATE_AGE` adds a
     root in `late` at that age, so `late` is active from there through `_LATE_AGE`.
     """
-    initial_nodes: list[tuple[object, str]] = [(_MIN_AGE, "early")]
+    initial_nodes: list[tuple[int, str]] = [(_MIN_AGE, "early")]
     late_edges: dict[str, Any] = {"dead": _LATE_AGE}
     if late_start_age < _LATE_AGE:
         initial_nodes.append((late_start_age, "late"))

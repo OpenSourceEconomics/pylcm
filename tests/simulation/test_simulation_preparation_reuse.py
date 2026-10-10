@@ -7,6 +7,7 @@ import weakref
 from collections import Counter
 from collections.abc import Generator
 from contextlib import contextmanager
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -17,6 +18,7 @@ import pytest
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.simulation import chunk_profile_inventory, operand_placement, process_grids
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
+from _lcm.typing import PytreeValue
 from lcm import Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import UserInitialConditions, UserParams
@@ -140,7 +142,7 @@ def test_operand_low_budget_refuses_before_placement(
             value_reads=(),
             devices=(device,),
             budget_bytes=1,
-            live_footprint=DeviceBufferFootprint(spans={}),
+            live_footprint=DeviceBufferFootprint(spans=MappingProxyType({})),
             budget_devices=(device,),
         )
     assert attempts == []
@@ -383,7 +385,7 @@ def test_operand_admission_rechecks_growing_live_inventory(
     original = operand_placement._place_operand_leaf
     attempts = []
 
-    def observed(*, leaf: object, sharding: jax.sharding.Sharding) -> object:
+    def observed(*, leaf: PytreeValue, sharding: jax.sharding.Sharding) -> object:
         attempts.append(leaf)
         return original(leaf=leaf, sharding=sharding)
 
@@ -398,7 +400,7 @@ def test_operand_admission_rechecks_growing_live_inventory(
     }
     first = operand_placement.place_simulation_arguments(
         **kwargs,
-        live_footprint=DeviceBufferFootprint(spans={}),
+        live_footprint=DeviceBufferFootprint(spans=MappingProxyType({})),
     )
     np.testing.assert_array_equal(first["state"], value)
     assert len(attempts) == 1
@@ -422,7 +424,7 @@ def test_operand_admission_exact_boundary_and_occurrences(delta: int) -> None:
         "devices": (device,),
         "budget_bytes": required + delta,
         "budget_devices": (device,),
-        "live_footprint": DeviceBufferFootprint(spans={}),
+        "live_footprint": DeviceBufferFootprint(spans=MappingProxyType({})),
     }
     if delta < 0:
         with pytest.raises(ExecutionPlanningError, match="before allocation"):

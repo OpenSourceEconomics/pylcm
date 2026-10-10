@@ -670,7 +670,9 @@ def bind_laws(declared: Mapping[RegimeName, object]) -> RegimeLaws:
                     },
                 )
                 if isinstance(law, Transition)
-                else bind_regime_law(law)
+                # Test declarations arrive untyped; the runtime check on
+                # `bind_regime_law` refuses any value that is not a law.
+                else bind_regime_law(law)  # ty: ignore[invalid-argument-type]
             )
             for name, law in declared.items()
         }

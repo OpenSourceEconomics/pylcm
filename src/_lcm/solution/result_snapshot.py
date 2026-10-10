@@ -10,11 +10,12 @@ artifact templates.
 from collections.abc import Callable, Mapping
 from functools import partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING
 
 import jax
 
 from _lcm.solution.native_values import NativeValueMaterializer
+from _lcm.typing import ArtifactPayload
 from lcm._solver_api.authority import _ArrayCopier
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
@@ -50,42 +51,34 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
     _validate_axes_and_leaves,
 )
-from lcm.typing import RegimeName
+from lcm.typing import FloatND, RegimeName
 
 if TYPE_CHECKING:
-    _ArtifactStoreBoundary: TypeAlias = ArtifactStore  # noqa: UP040
-    _ValueStoreBoundary: TypeAlias = ValueStore  # noqa: UP040
-    _OmissionsInput: TypeAlias = Mapping[  # noqa: UP040
-        ArtifactRef, OmissionReason
-    ]
-    _OmissionsSnapshot: TypeAlias = MappingProxyType[  # noqa: UP040
-        ArtifactRef, OmissionReason
-    ]
-    _AuthoritiesInput: TypeAlias = Mapping[  # noqa: UP040
-        ArtifactRef, ArtifactAuthority
-    ]
-    _AuthoritiesSnapshot: TypeAlias = MappingProxyType[  # noqa: UP040
-        ArtifactRef, ArtifactAuthority
-    ]
+    type _ArtifactStoreBoundary = ArtifactStore
+    type _ValueStoreBoundary = ValueStore
+    type _OmissionsInput = Mapping[ArtifactRef, OmissionReason]
+    type _OmissionsSnapshot = MappingProxyType[ArtifactRef, OmissionReason]
+    type _AuthoritiesInput = Mapping[ArtifactRef, ArtifactAuthority]
+    type _AuthoritiesSnapshot = MappingProxyType[ArtifactRef, ArtifactAuthority]
 else:
     # Explicit body checks own these hostile-input boundaries; runtime annotation
     # traversal must not inspect their contents first.
-    _ArtifactStoreBoundary = object
-    _ValueStoreBoundary = object
-    _OmissionsInput = object
-    _OmissionsSnapshot = object
-    _AuthoritiesInput = object
-    _AuthoritiesSnapshot = object
+    type _ArtifactStoreBoundary = object
+    type _ValueStoreBoundary = object
+    type _OmissionsInput = object
+    type _OmissionsSnapshot = object
+    type _AuthoritiesInput = object
+    type _AuthoritiesSnapshot = object
 
 
 # keyword-only-exempt: primary-argument=mapping
-def capture_exact_mapping[Key, Value](
-    mapping: object,
+def capture_exact_mapping[RawKey, RawValue, Key, Value](
+    mapping: Mapping[RawKey, RawValue],
     *,
     label: str,
-    snapshot_key: Callable[[Any], Key],
-    snapshot_value: Callable[[Any], Value],
-) -> dict[Key, Value]:
+    snapshot_key: Callable[[RawKey], Key],
+    snapshot_value: Callable[[RawValue], Value],
+) -> MappingProxyType[Key, Value]:
     """Own one exact mapping through one canonicalizing item traversal.
 
     ``MappingProxyType`` can proxy an arbitrary ``Mapping`` implementation. Its
@@ -121,7 +114,7 @@ def capture_exact_mapping[Key, Value](
         if key in copied:
             raise ValueError(f"{label} keys collide after exact reconstruction.")
         copied[key] = value
-    return copied
+    return MappingProxyType(copied)
 
 
 def snapshot_artifact_key(key: ArtifactKey) -> ArtifactKey:
@@ -164,6 +157,7 @@ def snapshot_artifact_store(
         snapshot_value=_keep_payload,
     )
     if authorities is not None:
+        detached = dict(entries)
         for ref, payload in entries.items():
             authority = authorities.get(ref)
             if authority is None:
@@ -174,16 +168,17 @@ def snapshot_artifact_store(
                 continue
             else:
                 owned_payload = payload
-            entries[ref] = _canonical_artifact_entry_from_authority(
+            detached[ref] = _canonical_artifact_entry_from_authority(
                 payload=owned_payload,
                 authority=authority,
             )
+        entries = MappingProxyType(detached)
     return ArtifactStore(entries)
 
 
 def own_artifact_store(
     *,
-    entries: Mapping[ArtifactRef, object],
+    entries: Mapping[ArtifactRef, ArtifactPayload],
     authorities: _AuthoritiesInput,
 ) -> _ArtifactStoreBoundary:
     """Build a store around buffers the engine's own solve allocated.
@@ -192,7 +187,7 @@ def own_artifact_store(
     reference rather than copied: nothing outside the engine holds these arrays.
     A payload without an authority is stored as supplied.
     """
-    owned: dict[ArtifactRef, object] = {}
+    owned: dict[ArtifactRef, ArtifactPayload | _LazyEntry] = {}
     for ref, payload in entries.items():
         authority = authorities.get(ref)
         owned[ref] = (
@@ -208,7 +203,7 @@ def own_artifact_store(
 
 
 def own_value_store(
-    values: Mapping[int, Mapping[RegimeName, object]],
+    values: Mapping[int, Mapping[RegimeName, FloatND | _LazyEntry]],
 ) -> _ValueStoreBoundary:
     """Build a value store around the engine's own value arrays, uncopied.
 
@@ -217,7 +212,7 @@ def own_value_store(
     a lazy handle, such as a block-major value assembled when read, is kept as
     it is.
     """
-    entries: dict[tuple[int, RegimeName], object] = {}
+    entries: dict[tuple[int, RegimeName], _LazyEntry] = {}
     regimes_by_period: dict[int, tuple[RegimeName, ...]] = {}
     for period, regime_to_value in values.items():
         # Like the public constructor, a period without a value holds no key.
@@ -264,22 +259,21 @@ def snapshot_value_store(
             if not isinstance(entry.value, jax.Array):
                 raise TypeError("Model solution values must contain JAX arrays.")
         return ValueStore._from_entries_with_copy(  # noqa: SLF001 — trusted store boundary
-            entries=cast("Mapping[object, object]", entries), array_copier=array_copier
+            entries=entries, array_copier=array_copier
         )
-    return ValueStore(cast("Mapping[object, object]", entries))
+    return ValueStore(entries)
 
 
 def snapshot_omissions(
     omissions: _OmissionsInput,
 ) -> _OmissionsSnapshot:
     """Copy omission addresses while retaining exact enum values for later checks."""
-    copied = capture_exact_mapping(
+    return capture_exact_mapping(
         omissions,
         label="Solution omissions",
         snapshot_key=snapshot_artifact_ref,
         snapshot_value=_snapshot_omission_reason,
     )
-    return MappingProxyType(copied)
 
 
 def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
@@ -293,6 +287,7 @@ def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
     model_instance_id = metadata.model_instance_id
     params_fingerprint = metadata.params_fingerprint
     model_fingerprint = metadata.model_fingerprint
+    durable_identity = metadata.durable_identity
     source = metadata.source
     pylcm_version = metadata.pylcm_version
     solver_api_version = metadata.solver_api_version
@@ -347,6 +342,7 @@ def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
         params_fingerprint=params_fingerprint,
         value_schemas=value_schemas,
         model_fingerprint=model_fingerprint,
+        durable_identity=durable_identity,
         solver_identities=solver_identities,
         replay_routes=replay_routes,
         artifact_descriptors=artifact_descriptors,
@@ -412,13 +408,12 @@ def snapshot_artifact_authorities(
     authorities: _AuthoritiesInput,
 ) -> _AuthoritiesSnapshot:
     """Copy private authority wrappers while preserving trusted templates/types."""
-    copied = capture_exact_mapping(
+    return capture_exact_mapping(
         authorities,
         label="Artifact authority",
         snapshot_key=snapshot_artifact_ref,
         snapshot_value=_snapshot_artifact_authority,
     )
-    return MappingProxyType(copied)
 
 
 def snapshot_artifact_template_declaration(
@@ -431,12 +426,6 @@ def snapshot_artifact_template_declaration(
         raise
     except Exception as error:
         raise TypeError("Artifact template cannot be snapshotted exactly.") from error
-
-
-def snapshot_artifact_template(authority: ArtifactAuthority) -> object | None:
-    """Return a callback-only template copy detached from private authority."""
-    snapshot = snapshot_artifact_template_declaration(authority)
-    return None if snapshot is None else snapshot.payload
 
 
 def _snapshot_artifact_authority(authority: ArtifactAuthority) -> ArtifactAuthority:
@@ -585,16 +574,23 @@ def _snapshot_value_array_schema(schema: ValueArraySchema) -> ValueArraySchema:
     )
 
 
-def _snapshot_value_coordinate(coordinate: object) -> tuple[int, str]:
+def _snapshot_value_coordinate(
+    coordinate: tuple[int, RegimeName],
+) -> tuple[int, RegimeName]:
     if type(coordinate) is not tuple or len(coordinate) != 2:  # noqa: PLR2004
         raise TypeError("Solution value coordinates must be exact pairs.")
     period, regime = coordinate
+    if type(period) is not int or type(regime) is not str:
+        raise TypeError(
+            "Solution value coordinates must pair an exact int period with an "
+            "exact str regime."
+        )
     _require_nonnegative_exact_int(period, label="solution value period")
     _require_nonempty_exact_str(regime, label="solution value regime")
-    return cast("int", period), cast("str", regime)
+    return period, regime
 
 
-def _snapshot_omission_reason(reason: object) -> OmissionReason:
+def _snapshot_omission_reason(reason: OmissionReason) -> OmissionReason:
     if type(reason) is not OmissionReason:
         raise TypeError(
             "Solution omission reasons must be exact OmissionReason values."
@@ -602,18 +598,18 @@ def _snapshot_omission_reason(reason: object) -> OmissionReason:
     return reason
 
 
-def _keep_payload(payload: object) -> object:
+def _keep_payload[Payload](payload: Payload) -> Payload:
     """Return a store payload as is; only its address is reconstructed."""
     return payload
 
 
 # keyword-only-exempt: primary-argument=value
-def _snapshot_nonempty_exact_str(value: object, *, label: str) -> str:
+def _snapshot_nonempty_exact_str(value: str, *, label: str) -> str:
     _require_nonempty_exact_str(value, label=label)
-    return cast("str", value)
+    return value
 
 
-def _snapshot_runtime_type(value: object) -> type[object]:
+def _snapshot_runtime_type[Runtime](value: type[Runtime]) -> type[Runtime]:
     if not isinstance(value, type):
         raise TypeError("Artifact container runtime declarations must be types.")
     return value
@@ -649,7 +645,7 @@ def _snapshot_replay_route_identity(
 
 
 def _snapshot_optional_replay_route_identity(
-    identity: object,
+    identity: ReplayRouteIdentity | None,
 ) -> ReplayRouteIdentity | None:
     if identity is None:
         return None
@@ -749,12 +745,11 @@ def _snapshot_leaf_authority(leaf: LeafAuthority) -> LeafAuthority:
     )
 
 
-def _snapshot_tree_path(path: object) -> TreePath:
+def _snapshot_tree_path(path: TreePath) -> TreePath:
     _require_exact_tuple(path, label="tree path")
-    components = cast("tuple[object, ...]", path)
-    if any(type(component) is not str or not component for component in components):
+    if any(type(component) is not str or not component for component in path):
         raise TypeError("Tree paths must contain nonempty exact strs.")
-    return cast("TreePath", tuple(components))
+    return tuple(path)
 
 
 def _validate_solution_metadata_fields(
@@ -771,9 +766,14 @@ def _validate_solution_metadata_fields(
         "model_fingerprint",
         "pylcm_version",
     ):
-        _require_exact_str(getattr(metadata, field_name), label=field_name)
+        # A mutated record can hold any object here, so the check runs before
+        # any typed helper and names the field.
+        if type(getattr(metadata, field_name)) is not str:
+            raise TypeError(f"{field_name} must be an exact str.")
     if type(metadata.source) is not SolutionSource:
         raise TypeError("Solution metadata source must be exact SolutionSource.")
+    if type(metadata.durable_identity) is not bool:
+        raise TypeError("Solution metadata durable_identity must be an exact bool.")
     _require_positive_exact_int(
         metadata.solver_api_version,
         label="solution solver_api_version",
@@ -876,10 +876,10 @@ def _validate_artifact_authority_fields(
 
 def _validate_axis_fields(
     *,
-    name: object,
-    length: object,
-    role: object,
-    coordinates: object,
+    name: str,
+    length: int,
+    role: AxisRole,
+    coordinates: tuple[bool | int | float | str, ...],
     label: str,
 ) -> None:
     _require_nonempty_exact_str(name, label=f"{label} name")
@@ -891,49 +891,49 @@ def _validate_axis_fields(
 
 def _validate_leaf_fields(
     *,
-    path: object,
-    shape: object,
-    dtype: object,
-    axis_names: object,
+    path: TreePath,
+    shape: tuple[int, ...],
+    dtype: str,
+    axis_names: tuple[str, ...],
     label: str,
 ) -> None:
     _snapshot_tree_path(path)
     _require_exact_shape(shape, label=f"{label} shape")
     _require_nonempty_exact_str(dtype, label=f"{label} dtype")
     _require_exact_names(axis_names, label=f"{label} axis_names")
-    typed_shape = cast("tuple[object, ...]", shape)
-    typed_axis_names = cast("tuple[object, ...]", axis_names)
-    if len(typed_axis_names) != len(typed_shape):
+    if len(axis_names) != len(shape):
         raise ValueError(f"{label} axis_names must name every dimension.")
 
 
 # keyword-only-exempt: primary-argument=value
-def _require_exact_mapping(value: object, *, label: str) -> None:
+def _require_exact_mapping[Key, Value](
+    value: Mapping[Key, Value], *, label: str
+) -> None:
     if type(value) is not MappingProxyType:
         raise TypeError(f"{label} must be an immutable exact mapping.")
 
 
 # keyword-only-exempt: primary-argument=value
-def _require_exact_tuple(value: object, *, label: str) -> None:
+def _require_exact_tuple[Item](value: tuple[Item, ...], *, label: str) -> None:
     if type(value) is not tuple:
         raise TypeError(f"{label} must be an exact tuple.")
 
 
 # keyword-only-exempt: primary-argument=value
-def _require_exact_str(value: object, *, label: str) -> None:
+def _require_exact_str(value: str, *, label: str) -> None:
     if type(value) is not str:
         raise TypeError(f"{label} must be an exact str.")
 
 
 # keyword-only-exempt: primary-argument=value
-def _require_nonempty_exact_str(value: object, *, label: str) -> None:
+def _require_nonempty_exact_str(value: str, *, label: str) -> None:
     _require_exact_str(value, label=label)
     if not value:
         raise ValueError(f"{label} must not be empty.")
 
 
 # keyword-only-exempt: primary-argument=value
-def _require_nonnegative_exact_int(value: object, *, label: str) -> None:
+def _require_nonnegative_exact_int(value: int, *, label: str) -> None:
     if type(value) is not int:
         raise TypeError(f"{label} must be an exact int.")
     if value < 0:
@@ -941,7 +941,7 @@ def _require_nonnegative_exact_int(value: object, *, label: str) -> None:
 
 
 # keyword-only-exempt: primary-argument=value
-def _require_positive_exact_int(value: object, *, label: str) -> None:
+def _require_positive_exact_int(value: int, *, label: str) -> None:
     if type(value) is not int:
         raise TypeError(f"{label} must be an exact int.")
     if value < 1:
@@ -949,27 +949,26 @@ def _require_positive_exact_int(value: object, *, label: str) -> None:
 
 
 # keyword-only-exempt: primary-argument=value
-def _require_exact_shape(value: object, *, label: str) -> None:
+def _require_exact_shape(value: tuple[int, ...], *, label: str) -> None:
     _require_exact_tuple(value, label=label)
-    shape = cast("tuple[object, ...]", value)
-    if any(type(size) is not int for size in shape):
+    if any(type(size) is not int for size in value):
         raise TypeError(f"{label} must contain exact ints.")
-    if any(cast("int", size) < 0 for size in shape):
+    if any(size < 0 for size in value):
         raise ValueError(f"{label} must contain nonnegative sizes.")
 
 
 # keyword-only-exempt: primary-argument=value
-def _require_exact_names(value: object, *, label: str) -> None:
+def _require_exact_names(value: tuple[str, ...], *, label: str) -> None:
     _require_exact_tuple(value, label=label)
-    names = cast("tuple[object, ...]", value)
-    if any(type(name) is not str or not name for name in names):
+    if any(type(name) is not str or not name for name in value):
         raise TypeError(f"{label} must contain nonempty exact strs.")
 
 
 # keyword-only-exempt: primary-argument=value
-def _require_exact_json_scalars(value: object, *, label: str) -> None:
+def _require_exact_json_scalars(
+    value: tuple[bool | int | float | str, ...], *, label: str
+) -> None:
     _require_exact_tuple(value, label=label)
-    items = cast("tuple[object, ...]", value)
     allowed = (bool, int, float, str)
-    if any(not any(type(item) is cls for cls in allowed) for item in items):
+    if any(not any(type(item) is cls for cls in allowed) for item in value):
         raise TypeError(f"{label} must contain exact JSON scalars.")

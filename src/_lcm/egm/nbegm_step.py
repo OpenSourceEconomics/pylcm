@@ -41,10 +41,11 @@ strict/non-strict comparison split.
 import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, NamedTuple, overload
+from typing import Literal, NamedTuple, overload
 
 import jax
 import jax.numpy as jnp
+from jaxtyping import Int, Scalar
 
 from _lcm.axis_boundaries import ResolvedAxisPartition, effect_code
 from _lcm.egm.euler import invert_euler
@@ -79,6 +80,11 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
 )
+
+# A jump breakpoint's index into the sorted breakpoints: a Python `int` when the
+# positions are static, a traced 0-d index of JAX's default integer width when
+# they are recovered per cell.
+type JumpPosition = int | Int[Scalar, ""]
 
 # Below this |xi| = |phi (1-rho) - 1| the Euler equation is treated as constant in
 # consumption: the closed-form inversion `c = x^(1/xi)` is undefined at xi = 0, so
@@ -2240,7 +2246,7 @@ def nbegm_unified_step_savings(
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
-    jump_positions: tuple[Any, ...],
+    jump_positions: tuple[JumpPosition, ...],
     extra_savings: Float1D | None = None,
     extra_cont_value: Float1D | None = None,
     arithmetic: ComparisonArithmetic = "certified",

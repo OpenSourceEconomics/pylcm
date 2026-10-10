@@ -83,8 +83,12 @@ from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
+    FlatRegimeParams,
     MaxQOverAFunction,
+    PytreeValue,
+    QAndFArg,
     QAndFFunction,
+    ReferenceName,
     RegimeName,
     StateName,
 )
@@ -93,6 +97,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
+    BoolND,
     FloatND,
 )
 
@@ -702,7 +707,7 @@ class _GridSearchArgumentBuilder:
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     edge_target_regimes: tuple[RegimeName, ...] = ()
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(self, context: CoreBuildContext) -> Mapping[ReferenceName, QAndFArg]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         next_regime_to_V_arr = cast(
@@ -718,7 +723,7 @@ class _GridSearchArgumentBuilder:
                 context.edge_regime_to_V_arr,
             ),
         )
-        arguments: dict[str, object] = {
+        arguments: dict[ReferenceName, QAndFArg] = {
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
             "next_regime_to_V_arr": next_regime_to_V_arr,
@@ -735,7 +740,10 @@ class _GridSearchArgumentBuilder:
                     }
                 )
                 if context.same_period_regime_to_V_arr is None
-                else context.same_period_regime_to_V_arr
+                else cast(
+                    "Mapping[RegimeName, FloatND]",
+                    context.same_period_regime_to_V_arr,
+                )
             )
             arguments["same_period_regime_to_V_arr"] = reference_values
             arguments["same_period_regime_to_params"] = self._same_period_params(
@@ -781,7 +789,11 @@ class _GridSearchArgumentBuilder:
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         flat_params: FlatParams,
-    ) -> dict[str, object]:
+    ) -> dict[
+        ReferenceName,
+        MappingProxyType[RegimeName, FloatND]
+        | MappingProxyType[RegimeName, FlatRegimeParams],
+    ]:
         """Build the edge-reference value and parameter channels."""
         if not self.edge_reference_regimes:
             return {}
@@ -802,7 +814,7 @@ class _GridSearchArgumentBuilder:
 
     def _same_period_params(
         self, *, flat_params: FlatParams
-    ) -> MappingProxyType[RegimeName, Mapping[str, object]]:
+    ) -> MappingProxyType[RegimeName, FlatRegimeParams]:
         """Return each same-period reference regime's own flat parameters."""
         return MappingProxyType(
             {
@@ -875,7 +887,7 @@ class _GridSearchPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -929,9 +941,11 @@ class _GridSearchPeriodKernel:
         )
         out = compiled_cores[core_key](**arguments)
         if program.output_roles == (VALUE, DISSOLUTION_FLAG):
-            V_arr, dissolution = out
+            V_arr, dissolution = cast("tuple[FloatND, BoolND]", out)
             return KernelOutput(
                 value=V_arr,
                 solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},
             )
+        # Every other declared output role tree is the value array alone.
+        out = cast("FloatND", out)
         return KernelOutput(value=out)

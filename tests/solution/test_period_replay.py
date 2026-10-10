@@ -16,6 +16,7 @@ import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import cloudpickle
@@ -23,6 +24,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from jax._src import compilation_cache as jax_compilation_cache
 from jaxlib import (
     _hlo,  # ty: ignore[unresolved-import] - installed native API has no stub
@@ -39,6 +41,7 @@ from tests.regime_building.test_gated_edges_collective_solve import (
     _make_full_topology_regimes,
     _with_full_topology_laws,
 )
+from tests.solution.test_period_core_memory import _StandInRegime
 from tests.test_models.deterministic import base as retirement_model
 from tests.test_models.deterministic.discrete import (
     RegimeId,
@@ -275,6 +278,43 @@ def test_replay_lowers_the_scope_the_solve_dispatched(
     assert observed == [(regime_retains_replay, frozenset())]
 
 
+_REQUIRED_PAYLOAD_KEYS = ("regime", "period", "kernel_kwargs", "core_tile_widths")
+
+
+def _well_formed_payload() -> dict[str, object]:
+    """A capture payload with every required entry at its declared type."""
+    return {
+        "regime": _StandInRegime(),
+        "period": 1,
+        "kernel_kwargs": {},
+        "core_tile_widths": {"main": {"cell": 2}},
+    }
+
+
+def test_is_period_capture_payload_accepts_a_well_formed_payload() -> None:
+    """A payload carrying every required entry at its declared type is admitted."""
+    assert period_replay._is_period_capture_payload(_well_formed_payload())
+
+
+@pytest.mark.parametrize("key", _REQUIRED_PAYLOAD_KEYS)
+def test_is_period_capture_payload_names_a_missing_key(key: str) -> None:
+    """A payload lacking a required entry is refused, naming that entry."""
+    payload = _well_formed_payload()
+    del payload[key]
+
+    with pytest.raises(ValueError, match=re.escape(repr(key))):
+        period_replay._is_period_capture_payload(payload)
+
+
+@pytest.mark.parametrize("key", _REQUIRED_PAYLOAD_KEYS)
+def test_is_period_capture_payload_names_a_wrong_typed_key(key: str) -> None:
+    """A payload holding a required entry at the wrong type is refused, naming it."""
+    payload = {**_well_formed_payload(), key: "not the declared type"}
+
+    with pytest.raises(TypeError, match=re.escape(repr(key))):
+        period_replay._is_period_capture_payload(payload)
+
+
 def _rewrite_capture(*, directory, mutate):
     """Load, mutate, and rewrite one capture payload."""
     path = directory / period_replay._PAYLOAD_NAME
@@ -333,7 +373,7 @@ def test_a_capture_without_tile_widths_is_refused(*, monkeypatch, tmp_path):
     ("widths", "error"),
     [
         ({"main": {"action_product": 0}}, ValueError),
-        ({"main": {"action_product": 2.0}}, TypeError),
+        ({"main": {"action_product": 2.0}}, BeartypeCallHintParamViolation),
         ({"other": {"action_product": 2}}, ValueError),
     ],
     ids=["nonpositive-width", "noninteger-width", "wrong-core-names"],
@@ -802,6 +842,43 @@ def _assert_selected_cache_evidence(
                 for log in records
                 if log.name == "jax._src.compiler"
             )
+
+
+def test_captured_admission_records_round_trip_as_read_only_views(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A captured cell's admission records are a read-only view that JAX rebuilds."""
+    if _gpu_runtime_omits_buffer_assignment():
+        pytest.skip("This GPU runtime refuses public period capture")
+    observed: list[backward_induction._CompiledPrograms] = []
+    original = backward_induction._compile_all_functions
+
+    def observe(**kwargs: Any) -> backward_induction._CompiledPrograms:
+        compiled = original(**kwargs)
+        observed.append(compiled)
+        return compiled
+
+    monkeypatch.setattr(backward_induction, "_compile_all_functions", observe)
+    capture = PeriodCapture(
+        directory=tmp_path,
+        periods=(("working_life", 0),),
+        source_identity={"model": "tiny-public-model-v1"},
+    )
+    _make_public_capture_model().solve(
+        params=retirement_model.get_params(n_periods=_N_PERIODS),
+        log_level="off",
+        period_capture=capture,
+    )
+    records = observed[0].capture_admission[("working_life", 0)]
+    leaves, treedef = jax.tree_util.tree_flatten(records)
+
+    rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+
+    assert (type(records), type(rebuilt), dict(rebuilt)) == (
+        MappingProxyType,
+        MappingProxyType,
+        dict(records),
+    )
 
 
 def _gpu_runtime_omits_buffer_assignment() -> bool:

@@ -17,7 +17,7 @@ from dags import rename_arguments
 import lcm.model as model_module
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
-from _lcm.regime_law import RegimeLaw, bind_regime_law
+from _lcm.regime_law import RegimeLaw, RegimeLawDeclaration, bind_regime_law
 from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
@@ -113,7 +113,7 @@ def _pension_grid() -> LinSpacedGrid:
 
 
 def _build_regime(
-    *, law: object = _next_regime, **overrides: Any
+    *, law: RegimeLawDeclaration = _next_regime, **overrides: Any
 ) -> tuple[UserRegime, RegimeLaw]:
     """A small valid regime validated under `law`; tests override individual slots.
 

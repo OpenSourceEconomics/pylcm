@@ -13,11 +13,12 @@ from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypedDict, runtime_checkable
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 
 from _lcm.execution.footprint import (
     ArtifactFootprint,
@@ -25,7 +26,13 @@ from _lcm.execution.footprint import (
     sharding_device_ids,
 )
 from _lcm.execution.runtime_sharding import runtime_shardings_match
-from _lcm.typing import RegimeName, StateName
+from _lcm.typing import (
+    ArgumentTree,
+    DataclassInstance,
+    HostArray,
+    RegimeName,
+    StateName,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 from lcm.typing import ValueND
@@ -178,7 +185,7 @@ class ValueViewDescriptor:
     """Name of every stored axis, in stored order."""
     stored_shape: tuple[int, ...]
     """Shape of the stored artifact."""
-    dtype: object
+    dtype: DTypeLike
     """Element type of both the stored artifact and the consumer leaf."""
     weak_type: bool
     """Weak typing of the consumer leaf."""
@@ -362,7 +369,17 @@ _select_value_view = jax.jit(
 )
 
 
-def _selection_operands(*, transfer: ResolvedValueTransfer) -> dict[str, object]:
+class _SelectionOperands(TypedDict):
+    """Every argument of the selection executable except the stored value."""
+
+    starts: HostArray
+    axes: tuple[int, ...]
+    widths: tuple[int, ...]
+    kept: tuple[bool, ...]
+    out_sharding: jax.sharding.Sharding
+
+
+def _selection_operands(*, transfer: ResolvedValueTransfer) -> _SelectionOperands:
     """Return every argument of the selection executable except the stored value."""
     view = transfer.view
     if view is None or view.leaf is not ValueViewLeaf.SELECTED:
@@ -542,7 +559,7 @@ class ResolvedValueTransfer:
     stored_sharding: jax.sharding.Sharding
     source_sharding: jax.sharding.Sharding
     expected_shape: tuple[int, ...]
-    expected_dtype: object
+    expected_dtype: DTypeLike
     reused_by_several_consumers: bool = False
     """Whether several source cores of one period read this transfer's result."""
     view: ValueViewDescriptor | None = None
@@ -694,12 +711,37 @@ class ResolvedValueTransfer:
         )
 
 
+@runtime_checkable
+class StoredValueTemplate(Protocol):
+    """A stored value, or the abstract template lowering holds for it.
+
+    A concrete JAX array and a `jax.ShapeDtypeStruct` both satisfy it. A transfer
+    reads the placement, so a template built without one is refused when the
+    transfer is resolved.
+    """
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Return the absolute shape."""
+        ...
+
+    @property
+    def dtype(self) -> DTypeLike:
+        """Return the element dtype."""
+        ...
+
+    @property
+    def sharding(self) -> jax.sharding.Sharding:
+        """Return the placement."""
+        ...
+
+
 def resolve_value_transfer(
     *,
     target: ValueArtifactAddress,
     source: ValueConsumerAddress,
     kind: ValueTransferKind,
-    stored_template: object,
+    stored_template: StoredValueTemplate,
     source_sharding: jax.sharding.Sharding,
     view: ValueViewDescriptor | None = None,
 ) -> ResolvedValueTransfer:
@@ -736,7 +778,7 @@ class MaterializedTransferObserver(Protocol):
 
 def apply_value_transfer(
     *,
-    value: object,
+    value: ArgumentTree,
     transfer: ResolvedValueTransfer,
     on_materialized: MaterializedTransferObserver | None = None,
 ) -> jax.Array:
@@ -780,12 +822,15 @@ def apply_value_transfer(
 
 def apply_value_transfer_plan(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, ArgumentTree],
     plan: Iterable[ResolvedValueTransfer],
     cache: TransferCache | None = None,
     on_materialized: MaterializedTransferObserver | None = None,
-) -> Mapping[str, object]:
+) -> MappingProxyType[str, ArgumentTree]:
     """Apply a transfer plan to an immutable copy of a core-argument tree.
+
+    `arguments` may be the plain keyword dict an executable call receives; the
+    returned copy is frozen.
 
     With a `cache`, a transfer marked as reused by several consumers is
     executed once per cache lifetime and served from the cache afterwards.
@@ -806,7 +851,7 @@ def apply_value_transfer_plan(
         raise TypeError(msg)
     transfers = tuple(plan)
     seen: set[tuple[str, tuple[str | int, ...]]] = set()
-    result: Mapping[str, object] = MappingProxyType(dict(arguments))
+    result = MappingProxyType(dict(arguments))
     for transfer in transfers:
         if not isinstance(transfer, ResolvedValueTransfer):
             msg = "A value-transfer plan may contain only ResolvedValueTransfer items."
@@ -922,13 +967,13 @@ def _named_axes(*, spec: jax.sharding.PartitionSpec) -> tuple[str, ...]:
 
 def _replace_transfer_leaf(
     *,
-    node: object,
+    node: ArgumentTree,
     path: tuple[str | int, ...],
     transfer: ResolvedValueTransfer,
     traversed: tuple[str | int, ...],
     cache: TransferCache | None,
     on_materialized: MaterializedTransferObserver | None,
-) -> object:
+) -> ArgumentTree:
     """Rebuild one supported argument branch and replace its selected leaf."""
     if not path:
         return _transferred_leaf(
@@ -937,10 +982,10 @@ def _replace_transfer_leaf(
     segment, *remaining = path
     rest = tuple(remaining)
     if isinstance(node, Mapping):
-        if segment not in node:
+        if not isinstance(segment, str) or segment not in node:
             msg = f"Value-transfer mapping path {(*traversed, segment)!r} is missing."
             raise KeyError(msg)
-        updated = dict(node)
+        updated: dict[str, ArgumentTree] = dict(node)
         updated[segment] = _replace_transfer_leaf(
             node=node[segment],
             path=rest,
@@ -993,11 +1038,11 @@ def _replace_transfer_leaf(
 
 def _transferred_leaf(
     *,
-    node: object,
+    node: ArgumentTree,
     transfer: ResolvedValueTransfer,
     cache: TransferCache | None,
     on_materialized: MaterializedTransferObserver | None,
-) -> object:
+) -> jax.Array:
     """Apply one transfer to the selected leaf, sharing a copy where one is cached."""
     if cache is None or not transfer.reused_by_several_consumers:
         return apply_value_transfer(
@@ -1018,14 +1063,14 @@ def _transferred_leaf(
 
 def _replace_dataclass_field(
     *,
-    node: object,
+    node: DataclassInstance,
     segment: str | int,
     path: tuple[str | int, ...],
     transfer: ResolvedValueTransfer,
     traversed: tuple[str | int, ...],
     cache: TransferCache | None,
     on_materialized: MaterializedTransferObserver | None,
-) -> object:
+) -> DataclassInstance:
     """Rebuild one dataclass branch field by field around the replaced leaf.
 
     A solver's continuation payload is a frozen dataclass carrying arrays, so
@@ -1038,7 +1083,7 @@ def _replace_dataclass_field(
             f"{traversed!r}, got {segment!r}."
         )
         raise TypeError(msg)
-    declared = {item.name for item in fields(node)}  # ty: ignore[invalid-argument-type]
+    declared = {item.name for item in fields(node)}
     if segment not in declared:
         msg = (
             f"Value-transfer dataclass path {(*traversed, segment)!r} names "
@@ -1046,7 +1091,7 @@ def _replace_dataclass_field(
         )
         raise KeyError(msg)
     return replace(
-        node,  # ty: ignore[invalid-argument-type]
+        node,
         **{
             segment: _replace_transfer_leaf(
                 node=getattr(node, segment),
@@ -1161,9 +1206,9 @@ def _validate_continuation_leaf_identity(
 
 def _assert_value_metadata(
     *,
-    value: object,
+    value: ArgumentTree,
     expected_shape: tuple[int, ...],
-    expected_dtype: object,
+    expected_dtype: DTypeLike,
     expected_sharding: jax.sharding.Sharding,
     label: str,
 ) -> jax.Array:
@@ -1194,7 +1239,7 @@ def _assert_value_metadata(
     return value
 
 
-def _normalize_shape(*, shape: object) -> tuple[int, ...]:
+def _normalize_shape(*, shape: tuple[int, ...]) -> tuple[int, ...]:
     """Return an immutable absolute shape, rejecting symbolic dimensions."""
     if not isinstance(shape, tuple):
         msg = "A resolved transfer shape must be a tuple."
@@ -1207,28 +1252,28 @@ def _normalize_shape(*, shape: object) -> tuple[int, ...]:
     return shape
 
 
-def _require_period(*, period: object, label: str) -> None:
+def _require_period(*, period: int, label: str) -> None:
     """Validate an absolute solve-period coordinate."""
     if type(period) is not int or period < 0:
         msg = f"{label} must be a nonnegative Python int, got {period!r}."
         raise ValueError(msg)
 
 
-def _require_name(*, name: object, label: str) -> None:
+def _require_name(*, name: str | None, label: str) -> None:
     """Validate a nonempty logical name."""
     if not isinstance(name, str) or not name:
         msg = f"{label} must be a nonempty string, got {name!r}."
         raise ValueError(msg)
 
 
-def _require_enum(*, value: object, enum_type: type[StrEnum], label: str) -> None:
+def _require_enum(*, value: StrEnum, enum_type: type[StrEnum], label: str) -> None:
     """Reject untyped strings and future unsupported enum members."""
     if not isinstance(value, enum_type):
         msg = f"{label} must be a {enum_type.__name__}, got {value!r}."
         raise TypeError(msg)
 
 
-def _validate_path_segment(*, segment: object) -> None:
+def _validate_path_segment(*, segment: str | int) -> None:
     """Accept only immutable mapping keys and sequence indices."""
     if isinstance(segment, str):
         if segment:
@@ -1244,7 +1289,7 @@ def _validate_path_segment(*, segment: object) -> None:
     raise TypeError(msg)
 
 
-def _require_sharding(*, sharding: object, label: str) -> None:
+def _require_sharding(*, sharding: jax.sharding.Sharding, label: str) -> None:
     """Require a concrete JAX sharding at both transfer endpoints."""
     if not isinstance(sharding, jax.sharding.Sharding):
         msg = f"The {label} layout must be a concrete JAX sharding."
@@ -1286,7 +1331,7 @@ def _select_stored_block(
         value=selected,
         expected_shape=transfer.consumer_shape,
         expected_dtype=transfer.expected_dtype,
-        expected_sharding=operands["out_sharding"],  # ty: ignore[invalid-argument-type]
+        expected_sharding=operands["out_sharding"],
         label="selected",
     )
     view = transfer.view

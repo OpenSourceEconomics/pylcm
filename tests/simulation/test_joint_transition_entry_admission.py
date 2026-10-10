@@ -8,7 +8,7 @@ import textwrap
 import weakref
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -22,6 +22,7 @@ from _lcm.simulation.residency import (
     measure_buffer_footprint,
     resident_bytes_by_device,
 )
+from _lcm.typing import PytreeValue
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -446,7 +447,7 @@ def test_joint_mapping_owners_expose_all_array_leaves(
     original_set_derived = SimulationMemory.set_derived
 
     # keyword-only-exempt: library-callback=SimulationMemory.set_derived
-    def set_derived_and_record(self: SimulationMemory, tree: object) -> None:
+    def set_derived_and_record(self: SimulationMemory, tree: PytreeValue) -> None:
         leaves = [leaf for leaf in jax.tree.leaves(tree) if isinstance(leaf, jax.Array)]
         if leaves:
             observed_leaf_counts.append(len(leaves))
@@ -478,7 +479,7 @@ def _released_or_charged(
     if not live:
         return True
     missing = resident_bytes_by_device(
-        live=measure_buffer_footprint(tree=live),
+        live=measure_buffer_footprint(tree=tuple(live)),
         arguments=memory.snapshot(),
         devices=memory.devices,
     )
@@ -497,7 +498,9 @@ def test_joint_support_is_charged_through_probability_admission(
     def support_and_record(**kwargs: Any) -> Any:
         support = original_support(**kwargs)
         if support is not None:
-            references[:] = [weakref.ref(leaf) for leaf in support.values()]
+            # This file's support providers return a mapping of arrays.
+            arrays = cast("Mapping[str, jax.Array]", support)
+            references[:] = [weakref.ref(leaf) for leaf in arrays.values()]
         return support
 
     def operation_and_check(**kwargs: Any) -> Any:
@@ -580,7 +583,9 @@ def test_previous_joint_support_is_released_before_next_support_producer(
             observations.append(all(reference() is None for reference in references))
         support = original_support(**kwargs)
         if support is not None:
-            references[:] = [weakref.ref(leaf) for leaf in support.values()]
+            # This file's support providers return a mapping of arrays.
+            arrays = cast("Mapping[str, jax.Array]", support)
+            references[:] = [weakref.ref(leaf) for leaf in arrays.values()]
         return support
 
     monkeypatch.setattr(transition_checks, "_evaluate_joint_support", support_and_check)
@@ -609,7 +614,7 @@ def test_joint_owner_contexts_restore_memory_after_probability_error(
     original_set_derived = SimulationMemory.set_derived
 
     # keyword-only-exempt: library-callback=SimulationMemory.set_derived
-    def set_derived_and_keep(self: SimulationMemory, tree: object) -> None:
+    def set_derived_and_keep(self: SimulationMemory, tree: PytreeValue) -> None:
         if all(self is not memory for memory in memories):
             memories.append(self)
         original_set_derived(self, tree)

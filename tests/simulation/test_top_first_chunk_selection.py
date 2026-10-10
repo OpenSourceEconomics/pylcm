@@ -93,8 +93,8 @@ class _Profiler:
             n_subjects=n_subjects + int(self.malformed == "extent"),
             padded_population=-(-self.population // n_subjects) * n_subjects,
             axis_widths=MappingProxyType(actual_widths),
-            fixed_reservation=costs,
-            output_reservation=dict.fromkeys(self.devices, 5),
+            fixed_reservation=MappingProxyType(costs),
+            output_reservation=MappingProxyType(dict.fromkeys(self.devices, 5)),
             stages=(_stage(devices=stage_devices),),
             host_stages=host_stages,
         )

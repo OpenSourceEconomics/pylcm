@@ -258,9 +258,7 @@ def test_invalid_native_envelope_is_rejected_before_archive_read(
     elif malformed == "coverage":
         coordinates = dict(_native_entries(loaded))
         coordinates.pop(next(reversed(coordinates)))
-        loaded = replace(
-            loaded, values=ValueStore(cast("Mapping[object, object]", coordinates))
-        )
+        loaded = replace(loaded, values=ValueStore(coordinates))
     else:
         schemas = dict(loaded.metadata.value_schemas)
         schemas.pop(next(reversed(schemas)))

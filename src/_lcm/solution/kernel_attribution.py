@@ -24,11 +24,17 @@ diagnostic so a kernel's true peak is not masked — still gets its attribution.
 import logging
 import os
 from collections.abc import Mapping
-from types import MappingProxyType
 
 from _lcm.engine import StateActionSpace
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.typing import RegimeName
+from lcm.typing import (
+    ActionName,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    StateName,
+)
 
 _ENV_VAR = "LCM_LOG_KERNEL_ATTRIBUTION"
 
@@ -107,20 +113,20 @@ def _level(*, logger: logging.Logger) -> int:
 
 
 def _discrete_action_cardinalities(
-    *, discrete_actions: Mapping[str, object] | MappingProxyType
+    *, discrete_actions: Mapping[ActionName, DiscreteAction]
 ) -> dict[str, int]:
     """Return `{action name: cardinality}` for the regime's discrete actions."""
     return {name: _cardinality(value) for name, value in discrete_actions.items()}
 
 
 def _state_cardinalities(
-    *, states: Mapping[str, object] | MappingProxyType
+    *, states: Mapping[StateName, ContinuousState | DiscreteState]
 ) -> dict[str, int]:
     """Return `{state name: cardinality}` for the regime's states."""
     return {name: _cardinality(value) for name, value in states.items()}
 
 
-def _cardinality(value: object) -> int:
+def _cardinality(value: ContinuousState | DiscreteState | DiscreteAction) -> int:
     """Return the leading-axis length of a grid array, or 1 for a scalar."""
     shape = getattr(value, "shape", ())
     return int(shape[0]) if shape else 1

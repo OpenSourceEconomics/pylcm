@@ -326,7 +326,7 @@ def test_native_source_budget_includes_retained_bank_and_future_copy_scratch(
     def prepare(*, retained_footprint: DeviceBufferFootprint, **kwargs: Any) -> object:
         existing = resident_bytes_by_device(
             live=retained_footprint,
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=(source_device,),
         )[source_device]
         assert 0 < existing < budget
@@ -342,7 +342,7 @@ def test_native_source_budget_includes_retained_bank_and_future_copy_scratch(
         assert (
             resident_bytes_by_device(
                 live=live,
-                arguments=DeviceBufferFootprint(spans={}),
+                arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
                 devices=(source_device,),
             )[source_device]
             == budget
@@ -452,7 +452,7 @@ def test_preflight_action_products_use_the_selected_entry_device(  # noqa: PLR09
                 ),
             )
             assert not any(missing.values())
-            nothing = DeviceBufferFootprint(spans={})
+            nothing = DeviceBufferFootprint(spans=MappingProxyType({}))
             complete = union_buffer_footprints(
                 footprints=(active_owners, active_sources)
             )

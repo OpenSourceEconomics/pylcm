@@ -269,7 +269,9 @@ def test_the_kernel_publishes_only_the_selected_public_channels():
 def test_with_fixed_params_rebinds_the_program():
     kernel, _ = _full_kernel()
     program = core_program_graph(kernel=kernel)["main"]
-    fixed = MappingProxyType({_REGIME: MappingProxyType({"discount_factor": 0.9})})
+    fixed = MappingProxyType(
+        {_REGIME: MappingProxyType({"discount_factor": jax.numpy.asarray(0.9)})}
+    )
 
     bound = kernel.with_fixed_params(fixed_flat_params=fixed)
     bound_program = core_program_graph(kernel=bound)["main"]

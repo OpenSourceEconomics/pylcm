@@ -29,6 +29,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime as UserRegime
+from lcm.transition import ModelEdges
 from lcm.typing import FloatND, ScalarInt
 
 BEQUEST_SCALE = 0.8
@@ -116,7 +117,7 @@ def _model(
     working: UserRegime,
     retired: UserRegime,
     values_bequest: bool = False,
-    edges: object = _EDGES,
+    edges: ModelEdges = _EDGES,
 ) -> Model:
     return Model(
         regimes={

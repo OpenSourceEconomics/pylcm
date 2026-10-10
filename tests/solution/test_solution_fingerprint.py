@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from fractions import Fraction
 from functools import partial
-from types import MappingProxyType, ModuleType, SimpleNamespace
+from types import CodeType, MappingProxyType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import dags.exceptions as dags_exceptions
@@ -2188,3 +2188,44 @@ def test_a_function_closing_over_a_lowered_law_is_fingerprinted_by_its_fields(
         for periods in (left, right)
     ]
     assert (digests[0] == digests[1]) is (left == right)
+
+
+class _SlottedCounter:
+    __slots__ = ("count",)
+
+    def __init__(self) -> None:
+        self.count = 3
+
+
+def _reads_attribute_paths() -> bool:
+    return inspect.Parameter.empty is None
+
+
+def _closure_reading_attribute_paths() -> CodeType:
+    counter = _SlottedCounter()
+
+    def read() -> int:
+        return counter.count
+
+    return read.__code__
+
+
+def test_slot_state_is_a_read_only_mapping() -> None:
+    """The slot values the hasher reads come back as a read-only mapping."""
+    assert isinstance(fingerprints._slot_state(_SlottedCounter()), MappingProxyType)
+
+
+def test_referenced_global_attribute_paths_is_a_read_only_mapping() -> None:
+    """A function's global attribute chains come back as a read-only mapping."""
+    paths = fingerprints._referenced_global_attribute_paths(
+        code=_reads_attribute_paths.__code__
+    )
+    assert isinstance(paths, MappingProxyType)
+
+
+def test_referenced_closure_attribute_paths_is_a_read_only_mapping() -> None:
+    """A closure's attribute chains come back as a read-only mapping."""
+    paths = fingerprints._referenced_closure_attribute_paths(
+        code=_closure_reading_attribute_paths()
+    )
+    assert isinstance(paths, MappingProxyType)

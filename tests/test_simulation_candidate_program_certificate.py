@@ -685,7 +685,7 @@ _COMBINED_INPUT_MUTATIONS = {
             "                        independent_taste="
         ),
         (
-            "retained_footprint=DeviceBufferFootprint(spans={}),\n"
+            "retained_footprint=DeviceBufferFootprint(spans=MappingProxyType({})),\n"
             "                        independent_taste="
         ),
     ),
@@ -697,7 +697,7 @@ _COMBINED_INPUT_MUTATIONS = {
     "chunk_admission:retained_values_ignored": (
         "src/_lcm/simulation/chunk_admission.py",
         "            retained_footprint,",
-        "            DeviceBufferFootprint(spans={}),",
+        "            DeviceBufferFootprint(spans=MappingProxyType({})),",
     ),
     "chunk_admission:unpublished_reservation_fulfilled": (
         "src/_lcm/simulation/chunk_admission.py",
@@ -741,8 +741,8 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "chunk_profiles:outer_storage_omitted": (
         "src/_lcm/simulation/chunk_profiles.py",
-        "output_reservation=output_bank,",
-        "output_reservation={},",
+        "output_reservation=MappingProxyType(output_bank),",
+        "output_reservation=MappingProxyType({}),",
     ),
     "chunk_dispatch:reserved_width_remaximized": (
         "src/_lcm/simulation/runtime.py",
@@ -757,7 +757,7 @@ _COMBINED_INPUT_MUTATIONS = {
     "chunk_dispatch:unit_width_handoff_omitted": (
         "src/_lcm/simulation/unit_executor.py",
         "axis_widths=self.axis_widths,",
-        "axis_widths={},",
+        "axis_widths=MappingProxyType({}),",
     ),
     "chunk_dispatch:readmission_before_slice_omitted": (
         "src/_lcm/simulation/simulate.py",
@@ -841,8 +841,8 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "foreign_snapshot:store_dependency_omitted": (
         "src/_lcm/solution/result_snapshot.py",
-        'entries=cast("Mapping[object, object]", entries), array_copier=array_copier',
-        'entries=cast("Mapping[object, object]", entries), array_copier=None',
+        "entries=entries, array_copier=array_copier",
+        "entries=entries, array_copier=None",
     ),
     "foreign_entry:owned_read_dependency_omitted": (
         "src/lcm/_solver_api/entries.py",

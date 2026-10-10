@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from functools import partial, partialmethod
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 from unittest.mock import Mock
 
@@ -28,6 +29,7 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.solution_copies import copy_solution_leaf
 from _lcm.solution.result_snapshot import snapshot_artifact_store
+from _lcm.typing import ArtifactPayload
 from lcm import ExecutionConfig, Model
 from lcm._solver_api import authority as authority_module
 from lcm._solver_api import entries
@@ -172,7 +174,7 @@ def test_foreign_copy_bank_is_live_before_the_next_copy(
     inspected: list[bool] = []
     original = entries._copy_solution_value
 
-    def observe(*, value: object, label: str, **kwargs: Any) -> object:
+    def observe(*, value: ArtifactPayload, label: str, **kwargs: Any) -> object:
         still_live = tuple(leaf for ref in copied if (leaf := ref()) is not None)
         if still_live:
             inspected.append(True)
@@ -247,7 +249,7 @@ def test_generous_budget_foreign_copy_is_valid_and_preserves_originals() -> None
     )
     complete = resident_bytes_by_device(
         live=copied,
-        arguments=DeviceBufferFootprint(spans={}),
+        arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
         devices=tuple(copied.spans),
     )
     assert dict(exclusive) == dict(complete)
@@ -421,10 +423,12 @@ def test_unexpected_supplied_artifact_is_rejected_before_unprofiled_copy(
         authorities={ref: artifact_authority},
     )
     foreign = replace(solution, **{channel: store})
-    object.__setattr__(foreign, "_artifact_authority", {ref: artifact_authority})
+    object.__setattr__(
+        foreign, "_artifact_authority", MappingProxyType({ref: artifact_authority})
+    )
     original = authority_module._copy_artifact_array_leaf
 
-    def guard(*, leaf: object, label: str, **kwargs: Any) -> jax.Array:
+    def guard(*, leaf: jax.Array, label: str, **kwargs: Any) -> jax.Array:
         if kwargs.get("array_copier") is None:
             raise _UnadmittedForeignCopyError(
                 "Unexpected artifact reached unprofiled copy"
@@ -512,7 +516,9 @@ def test_host_value_payload_is_rejected_before_its_unprofiled_copy(
     )
     owned = model.solve(params=params, log_level="off")
     assert isinstance(owned.values, ValueStore)
-    values = dict(owned.values._entries)
+    values: dict[tuple[int, str], np.ndarray | entries._LazyEntry] = dict(
+        owned.values._entries
+    )
     coordinate = next(iter(values))
     original_entry = values[coordinate]
     assert type(original_entry) is entries._CanonicalValueEntry

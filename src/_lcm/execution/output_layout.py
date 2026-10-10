@@ -14,9 +14,11 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 
 from _lcm.execution.internal_outputs import assert_internal_inputs
 from _lcm.execution.pending_work import PendingSolveWork, execute_with_pending_work
@@ -26,8 +28,14 @@ from _lcm.execution.value_transfer import (
     TransferCache,
     apply_value_transfer_plan,
 )
-from _lcm.typing import StateName
+from _lcm.typing import (
+    DataclassInstance,
+    PytreeValue,
+    ShapeDtypePytree,
+    StateName,
+)
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import FloatND, ReferenceName, ValueND
 
 
 class OutputRole(Enum):
@@ -57,7 +65,7 @@ class StateAxesLeading:
     n_free_leading_axes: int = 0
     """Replicated axes in front of the state axes (a branch or candidate axis)."""
 
-    dtype: object | None = None
+    dtype: DTypeLike | None = None
     """Exact dtype the leaf must have, or `None` to leave it unchecked."""
 
     shape: tuple[int, ...] | None = None
@@ -87,6 +95,39 @@ class StateAxesLeading:
 
 type OutputRoleLeaf = OutputRole | StateAxesLeading
 
+if TYPE_CHECKING:
+    # A tree of output roles shaped like the output it declares, with `None` for an
+    # output the program does not publish. A solve program's leaves are
+    # `OutputRoleLeaf`s; a forward-simulation program names each leaf's role with a
+    # string. A registered pytree dataclass, such as `EGMCarry`, shapes the subtree
+    # of the payload it describes.
+    type OutputRoleTree = (
+        OutputRoleLeaf
+        | str
+        | tuple[OutputRoleTree, ...]
+        | Mapping[str, OutputRoleTree]
+        | DataclassInstance
+        | None
+    )
+else:
+    # The claw cannot check this recursive alias, so it checks no role tree; the
+    # resolver validates every leaf itself.
+    type OutputRoleTree = object
+
+# Output shardings laid out like the role tree they place, registered dataclass
+# nodes included.
+type OutputShardingTree = (
+    jax.sharding.Sharding
+    | tuple[OutputShardingTree, ...]
+    | Mapping[str, OutputShardingTree]
+    | DataclassInstance
+    | None
+)
+
+# One entry of a `jax.sharding.PartitionSpec`: the mesh axis an array axis is split
+# over, a tuple of mesh axes, or `None` for a replicated axis.
+type PartitionEntry = str | tuple[str, ...] | None
+
 
 @dataclass(frozen=True, kw_only=True)
 class ExpectedOutputLeaf:
@@ -98,7 +139,7 @@ class ExpectedOutputLeaf:
     shape: tuple[int, ...] | None
     """Absolute shape, or `None` when the role leaves it unchecked."""
 
-    dtype: object | None
+    dtype: DTypeLike | None
     """Exact dtype, or `None` when the role leaves it unchecked."""
 
     sharding: jax.sharding.Sharding
@@ -109,7 +150,7 @@ class ExpectedOutputLeaf:
 class ResolvedOutputLayout:
     """Concrete output shardings and their AOT compilation identity."""
 
-    out_shardings: object
+    out_shardings: OutputShardingTree
     """Pytree accepted by ``jax.jit(..., out_shardings=...)``."""
 
     compilation_key: Hashable
@@ -118,7 +159,7 @@ class ResolvedOutputLayout:
     expected_value_shape: tuple[int, ...]
     """Absolute shape of the V leaf captured from the regime template."""
 
-    expected_value_dtype: object
+    expected_value_dtype: DTypeLike
     """Exact dtype of the V leaf captured from the regime template."""
 
     expected_leaves: tuple[ExpectedOutputLeaf, ...]
@@ -128,9 +169,9 @@ class ResolvedOutputLayout:
 def resolve_output_layout(
     *,
     core_key: str,
-    value_template: object,
+    value_template: FloatND | jax.ShapeDtypeStruct,
     state_order: tuple[StateName, ...],
-    output_roles: object,
+    output_roles: OutputRoleTree,
 ) -> ResolvedOutputLayout:
     """Resolve one program-owned output-role tree on the V-template placement.
 
@@ -187,7 +228,9 @@ def resolve_output_layout(
     )
 
 
-def _require_value_sharding(*, value_template: object) -> jax.sharding.Sharding:
+def _require_value_sharding(
+    *, value_template: FloatND | jax.ShapeDtypeStruct
+) -> jax.sharding.Sharding:
     """Return the concrete sharding required by a program-owned output contract."""
     value_sharding = getattr(value_template, "sharding", None)
     if not isinstance(value_sharding, jax.sharding.Sharding):
@@ -203,7 +246,7 @@ def _state_axis_spec(
     *,
     value_sharding: jax.sharding.Sharding,
     state_order: tuple[StateName, ...],
-) -> tuple[object, ...] | None:
+) -> tuple[PartitionEntry, ...] | None:
     """Read the template's partition entry per canonical state axis.
 
     Returns `None` off a named mesh: a single-device contract still fixes where
@@ -231,13 +274,13 @@ def _state_axis_spec(
 
 def _resolve_output_leaf(
     *,
-    path: tuple[object, ...],
+    path: jax.tree_util.KeyPath,
     role: OutputRoleLeaf,
     value_sharding: jax.sharding.Sharding,
     value_shape: tuple[int, ...],
-    value_dtype: object,
+    value_dtype: DTypeLike,
     state_order: tuple[StateName, ...],
-    state_spec: tuple[object, ...] | None,
+    state_spec: tuple[PartitionEntry, ...] | None,
 ) -> ExpectedOutputLeaf:
     """Map one validated logical role to its concrete contract."""
     if role is VALUE:
@@ -275,7 +318,7 @@ def _state_axes_leading_sharding(
     role: StateAxesLeading,
     value_sharding: jax.sharding.Sharding,
     state_order: tuple[StateName, ...],
-    state_spec: tuple[object, ...] | None,
+    state_spec: tuple[PartitionEntry, ...] | None,
 ) -> jax.sharding.Sharding:
     """Place the named state axes as the template places them; replicate the rest."""
     if state_spec is None:
@@ -295,9 +338,9 @@ def _state_axes_leading_sharding(
 
 def _validate_output_roles(
     *,
-    roles: object,
+    roles: OutputRoleTree,
     core_key: str,
-    value_template: object,
+    value_template: FloatND | jax.ShapeDtypeStruct,
     state_order: tuple[StateName, ...],
 ) -> None:
     """Fail closed outside the supported logical output trees."""
@@ -344,7 +387,7 @@ def _validate_output_roles(
             raise ValueError(msg)
 
 
-def assert_output_layout(*, output: object, layout: ResolvedOutputLayout) -> None:
+def assert_output_layout(*, output: PytreeValue, layout: ResolvedOutputLayout) -> None:
     """Assert that a planned core output was born in its requested layout."""
     output_tree = jax.tree.structure(output)
     planned_tree = jax.tree.structure(layout.out_shardings)
@@ -364,14 +407,14 @@ def assert_output_layout(*, output: object, layout: ResolvedOutputLayout) -> Non
         )
 
 
-def assert_value_leaf_layout(*, value: object, layout: ResolvedOutputLayout) -> None:
+def assert_value_leaf_layout(*, value: FloatND, layout: ResolvedOutputLayout) -> None:
     """Assert that a published period value is the layout's first leaf."""
     _assert_output_leaf(output=value, path="[0]", expected=layout.expected_leaves[0])
 
 
 def _assert_output_leaf(
     *,
-    output: object,
+    output: ValueND,
     path: str,
     expected: ExpectedOutputLeaf,
 ) -> None:
@@ -396,10 +439,10 @@ def _assert_output_leaf(
 
 def _assert_output_metadata(
     *,
-    output: object,
+    output: ValueND,
     label: str,
     expected_shape: tuple[int, ...] | None,
-    expected_dtype: object | None,
+    expected_dtype: DTypeLike | None,
 ) -> None:
     """Check one planned leaf against the absolute metadata its role declares."""
     if expected_shape is not None:
@@ -424,12 +467,14 @@ def _assert_output_metadata(
 class PlannedCore:
     """Callable compiled core carrying the output and input plans used to lower it."""
 
-    compiled: Callable
+    compiled: Callable[..., PytreeValue]
     layout: ResolvedOutputLayout
-    tile_widths: Mapping[str, int]
+    tile_widths: MappingProxyType[str, int]
     """Width this core was lowered at, per execution axis of its program."""
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()
-    internal_input_templates: Mapping[str, object] = MappingProxyType({})
+    internal_input_templates: MappingProxyType[ReferenceName, ShapeDtypePytree] = (
+        MappingProxyType({})
+    )
     """Abstract template per internal input this core was lowered against."""
     transfer_cache: TransferCache | None = None
     """Per-period store shared transfers are served from, or `None` to copy."""
@@ -443,8 +488,8 @@ class PlannedCore:
     """Graph key of the program this core was compiled for."""
 
     def __post_init__(self) -> None:
-        """Snapshot the exact lowering widths and resolved input transfer plan."""
-        widths = dict(self.tile_widths)
+        """Check the lowering widths and snapshot the resolved input transfer plan."""
+        widths = self.tile_widths
         if any(not isinstance(name, str) or not name for name in widths):
             msg = "PlannedCore tile-width names must be non-empty strings."
             raise TypeError(msg)
@@ -454,7 +499,6 @@ class PlannedCore:
         if any(width <= 0 for width in widths.values()):
             msg = "PlannedCore tile widths must be positive."
             raise ValueError(msg)
-        object.__setattr__(self, "tile_widths", MappingProxyType(widths))
 
         plan = tuple(self.input_transfer_plan)
         if any(not isinstance(item, ResolvedValueTransfer) for item in plan):
@@ -462,13 +506,12 @@ class PlannedCore:
             raise TypeError(msg)
         object.__setattr__(self, "input_transfer_plan", plan)
 
-        templates = dict(self.internal_input_templates)
-        if any(not isinstance(name, str) or not name for name in templates):
+        if any(
+            not isinstance(name, str) or not name
+            for name in self.internal_input_templates
+        ):
             msg = "PlannedCore internal-input names must be non-empty strings."
             raise TypeError(msg)
-        object.__setattr__(
-            self, "internal_input_templates", MappingProxyType(templates)
-        )
 
         if self.transfer_cache is not None and not isinstance(
             self.transfer_cache, TransferCache
@@ -476,7 +519,7 @@ class PlannedCore:
             msg = "PlannedCore transfer_cache must be a TransferCache or None."
             raise TypeError(msg)
 
-    def __call__(self, *args: object, **kwargs: object) -> object:
+    def __call__(self, *args: PytreeValue, **kwargs: PytreeValue) -> PytreeValue:
         """Execute and enforce the layout contract at the compiled-core seam."""
         if self.internal_input_templates:
             assert_internal_inputs(

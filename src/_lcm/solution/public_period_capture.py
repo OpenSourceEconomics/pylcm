@@ -10,7 +10,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, NoReturn
+from typing import NoReturn
 
 import jax
 import jaxlib
@@ -25,11 +25,30 @@ from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.persistence.period import read_period_archive, write_period_archive
-from _lcm.solution.period_capture import _period_layouts
+from _lcm.solution.period_capture import PeriodKernelKwargs, _period_layouts
 from _lcm.time import age_at
+from _lcm.typing import DataclassInstance, JSONValue
 from lcm.period_capture import PeriodCapture, PeriodCaptureRecord
 
 _GRID_SEARCH_ROUTE = "_lcm.solution.grid_search._GridSearchPeriodKernel"
+
+# What `plain_metadata` converts: an enum, a dataclass instance, a mapping keyed
+# by name or number, a sequence, a set of names or numbers, or a JSON scalar.
+type _Metadata = (
+    enum.Enum
+    | DataclassInstance
+    | Mapping[str, _Metadata]
+    | Mapping[int, _Metadata]
+    | tuple[_Metadata, ...]
+    | list[_Metadata]
+    | set[str | int]
+    | frozenset[str | int]
+    | str
+    | bool
+    | int
+    | float
+    | None
+)
 
 #: One `name = value : type` entry of a flat MLIR attribute dictionary.
 _ATTRIBUTE_ENTRY = r'[A-Za-z_][\w.$]* = [^{}\[\]"\n,]+'
@@ -45,7 +64,7 @@ class CaptureContext:
     """Carry validated selection and identities through the ordinary solve chain."""
 
     request: PeriodCapture
-    identity: dict[str, Any]
+    identity: Mapping[str, JSONValue]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -123,7 +142,7 @@ def period_identity(
     params_fingerprint: str,
     source_identity: Mapping[str, str],
     execution: ResolvedExecution,
-) -> dict[str, Any]:
+) -> dict[str, JSONValue]:
     """Bind mathematical identity separately from strict execution provenance."""
     source_root = Path(__file__).resolve().parents[2]
     digest = hashlib.sha256()
@@ -172,7 +191,7 @@ def capture_public_entry(
     context: CaptureContext | None,
     regime: Regime,
     period: int,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: PeriodKernelKwargs,
     compiled_cores: Mapping[str, PlannedCore],
     admission: Mapping[str, Mapping[str, int | None]],
 ) -> CapturedEntry | None:
@@ -280,7 +299,7 @@ def load_period_capture(*, directory: Path) -> PeriodCaptureRecord:
 
 def optimized_hlo_records(
     *, compiled_cores: Mapping[str, PlannedCore]
-) -> dict[str, Any]:
+) -> dict[str, dict[str, str]]:
     """Require compiler evidence and identify complete optimized HLO modules."""
     options = _hlo.HloPrintOptions.canonical()
     options.canonicalize_computations = True
@@ -351,7 +370,9 @@ class _BackendJsonNumber(str):
     __slots__ = ()
 
 
-def _backend_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+def _backend_json_object(
+    pairs: list[tuple[str, JSONValue]],
+) -> dict[str, JSONValue]:
     """Reject ambiguous members, including differently escaped duplicate keys."""
     result = {}
     for key, value in pairs:
@@ -366,7 +387,7 @@ def _reject_backend_json_constant(value: str) -> NoReturn:
     raise ValueError(f"Nonstandard backend JSON constant: {value}")
 
 
-def _encode_backend_json(value: object) -> str:
+def _encode_backend_json(value: JSONValue) -> str:
     """Order members while retaining numeric tokens and array order."""
     if isinstance(value, _BackendJsonNumber):
         return str(value)
@@ -423,7 +444,7 @@ def _canonicalize_optimized_hlo(text: str) -> str:
     return "\n".join(line.rstrip() for line in "".join(pieces).splitlines()).rstrip()
 
 
-def plain_metadata(value: Any) -> Any:  # noqa: ANN401
+def plain_metadata(value: _Metadata) -> JSONValue:
     """Convert known metadata containers into non-executable JSON values."""
     if isinstance(value, enum.Enum):
         return plain_metadata(value.value)
@@ -437,6 +458,8 @@ def plain_metadata(value: Any) -> Any:  # noqa: ANN401
     if isinstance(value, (tuple, list, set, frozenset)):
         items = sorted(value) if isinstance(value, (set, frozenset)) else value
         return [plain_metadata(item) for item in items]
-    if value is None or type(value) in (str, bool, int, float):
+    if not isinstance(value, type) and (
+        value is None or type(value) in (str, bool, int, float)
+    ):
         return value
     raise TypeError(f"Unsupported period metadata type: {type(value).__name__}")

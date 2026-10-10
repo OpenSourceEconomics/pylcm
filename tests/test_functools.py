@@ -1,6 +1,7 @@
 import inspect
 import re
 from functools import partial
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
@@ -36,6 +37,15 @@ def test_get_union_of_args_no_args():
     assert got == set()
 
 
+def test_get_union_of_args_returns_a_frozen_set():
+    """The union of argument names is an immutable set."""
+
+    def f(*, a, b):
+        pass
+
+    assert isinstance(get_union_of_args([f]), frozenset)
+
+
 def test_all_as_kwargs():
     got = all_as_kwargs(
         args=(1, 2),
@@ -61,6 +71,12 @@ def test_all_as_kwargs_empty_kwargs():
         arg_names=["a", "b", "c"],
     )
     assert got == {"a": 1, "b": 2, "c": 3}
+
+
+def test_all_as_kwargs_returns_a_read_only_mapping():
+    """The keyword view of the arguments cannot be mutated."""
+    got = all_as_kwargs(args=(1,), kwargs={"b": 2}, arg_names=["a", "b"])
+    assert isinstance(got, MappingProxyType)
 
 
 def test_all_as_args():
@@ -93,7 +109,7 @@ def test_all_as_args_empty_kwargs():
 def test_convert_kwargs_to_args():
     kwargs = {"a": 1, "b": 2, "c": 3}
     parameters = ["c", "a", "b"]
-    exp = [3, 1, 2]
+    exp = (3, 1, 2)
     got = convert_kwargs_to_args(kwargs=kwargs, arg_names=parameters)
     assert got == exp
 

@@ -2,6 +2,7 @@
 
 import inspect
 from fractions import Fraction
+from types import MappingProxyType
 from typing import Any
 
 import jax.numpy as jnp
@@ -21,6 +22,7 @@ from lcm import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
+from lcm.transition import AgeCaseLaw, _period_by_age
 from lcm.typing import AgeSelector
 
 
@@ -199,9 +201,12 @@ _TERMINAL_INSIDE = "marks a terminal regime only as the top-level"
             lambda: ByAge(cases={61: None}),  # ty: ignore[invalid-argument-type]
             _TERMINAL_INSIDE,
         ),
-        (lambda: ByAge(cases={61: "a"}, default=None), _TERMINAL_INSIDE),
         (
-            lambda: ByAge.until(stop_age_exclusive=62, law="a", then=None),
+            lambda: ByAge(cases={61: "a"}, default=None),  # ty: ignore[invalid-argument-type]
+            _TERMINAL_INSIDE,
+        ),
+        (
+            lambda: ByAge.until(stop_age_exclusive=62, law="a", then=None),  # ty: ignore[invalid-argument-type]
             _TERMINAL_INSIDE,
         ),
         (
@@ -236,7 +241,7 @@ _LAWS = {
 }
 
 
-def _phased(*, schedule_side: str, law: object) -> Phased:
+def _phased(*, schedule_side: str, law: AgeCaseLaw) -> Phased:
     schedule = ByAge.until(stop_age_exclusive=63, law=law, then="retired")
     sides = {"solve": "working", "simulate": "working"}
     for side in ("solve", "simulate"):
@@ -392,9 +397,9 @@ def test_until_schedule_resolves_like_its_declaration() -> None:
 
 def test_with_mapped_laws_calls_func_once_per_law() -> None:
     """Mapping the laws evaluates `func` exactly once for each declared law."""
-    calls: list[object] = []
+    calls: list[AgeCaseLaw] = []
 
-    def rename(law: object) -> object:
+    def rename(law: AgeCaseLaw) -> AgeCaseLaw:
         calls.append(law)
         return f"{law}_x"
 
@@ -422,3 +427,13 @@ def test_resolved_schedule_at_matches_exact_ages(
             schedule.at(age)
     else:
         assert schedule.at(age) == expected
+
+
+def test_period_by_age_maps_each_exact_age_to_its_period() -> None:
+    """Each exact age of the grid maps to its computational period."""
+    assert dict(_period_by_age(ANNUAL)) == {60: 0, 61: 1, 62: 2, 63: 3, 64: 4, 65: 5}
+
+
+def test_period_by_age_is_read_only() -> None:
+    """The age-to-period lookup cannot be changed once it is built."""
+    assert isinstance(_period_by_age(ANNUAL), MappingProxyType)

@@ -9,13 +9,18 @@ the constructor consumes, so no equality-based contraction can erase the evidenc
 """
 
 from collections.abc import Iterator, Mapping
+from types import MappingProxyType
 from typing import cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from pandas.testing import assert_frame_equal
 
+from _lcm.typing import ArtifactPayload
+from lcm._solver_api.descriptors import _capture_mapping_item_stream_once
+from lcm._solver_api.stores import _traverse_public_mapping_items
 from lcm.persistence import load_solution
 from lcm.solver_api import (
     SIMULATION_POLICY,
@@ -33,6 +38,10 @@ from lcm.typing import FloatND
 from tests.solution.test_solution_result import _small_grid_search_inputs
 
 _REGIME = "alive"
+# The two public `ValueStore` input forms, to type adversarial mappings.
+type _ValueEntries = (
+    Mapping[tuple[int, str], FloatND] | Mapping[int, Mapping[str, FloatND]]
+)
 _OTHER_REGIME = "retired"
 
 
@@ -124,7 +133,7 @@ def test_value_store_rejects_boolean_period_alias_in_either_order(
         )
 
     with pytest.raises(TypeError, match="exact ints"):
-        ValueStore(stream)
+        ValueStore(cast("_ValueEntries", stream))
 
 
 @pytest.mark.parametrize("form", ["flat", "nested-period", "nested-regime"])
@@ -141,7 +150,7 @@ def test_value_store_rejects_a_repeated_logical_coordinate(*, form: str) -> None
         )
 
     with pytest.raises(ValueError, match="twice"):
-        ValueStore(stream)
+        ValueStore(cast("_ValueEntries", stream))
 
 
 def test_value_store_rejects_mixed_flat_and_nested_keys() -> None:
@@ -151,14 +160,14 @@ def test_value_store_rejects_mixed_flat_and_nested_keys() -> None:
     )
 
     with pytest.raises(TypeError, match="either"):
-        ValueStore(stream)
+        ValueStore(cast("_ValueEntries", stream))
 
 
 def test_value_store_rejects_a_nested_period_whose_value_is_not_a_mapping() -> None:
     stream = _ItemStream(items=[(0, _payload(1.0))])
 
     with pytest.raises(TypeError, match="mapping of regime names"):
-        ValueStore(stream)
+        ValueStore(cast("_ValueEntries", stream))
 
 
 @pytest.mark.parametrize("form", ["flat", "nested"])
@@ -173,7 +182,7 @@ def test_value_store_reads_its_form_and_coordinates_from_the_item_traversal(
     else:
         stream = _ItemStream(items=[(0, {_REGIME: payload})], keys=[(0, _REGIME)])
 
-    store = ValueStore(stream)
+    store = ValueStore(cast("_ValueEntries", stream))
 
     assert list(store) == [0]
     assert list(store[0]) == [_REGIME]
@@ -183,7 +192,7 @@ def test_value_store_reads_its_form_and_coordinates_from_the_item_traversal(
 def test_value_store_consumes_exactly_one_item_traversal() -> None:
     stream = _ItemStream(items=[((0, _REGIME), _payload(1.0))], max_traversals=1)
 
-    store = ValueStore(stream)
+    store = ValueStore(cast("_ValueEntries", stream))
 
     assert stream.traversals == 1
     assert (0, _REGIME) in {
@@ -201,19 +210,17 @@ def test_value_store_preserves_every_addressed_payload_of_a_valid_mapping(
         for period in range(2)
         for index, regime in enumerate((_REGIME, _OTHER_REGIME))
     }
+    source: _ValueEntries
     if form == "flat":
-        source = cast("Mapping[object, object]", dict(expected))
+        source = dict(expected)
     else:
-        source = cast(
-            "Mapping[object, object]",
-            {
-                period: {
-                    regime: expected[(period, regime)]
-                    for regime in (_REGIME, _OTHER_REGIME)
-                }
-                for period in range(2)
-            },
-        )
+        source = {
+            period: {
+                regime: expected[(period, regime)]
+                for regime in (_REGIME, _OTHER_REGIME)
+            }
+            for period in range(2)
+        }
 
     store = ValueStore(source)
 
@@ -293,15 +300,15 @@ def test_artifact_store_rejects_a_repeated_address_at_construction() -> None:
     stream = _ItemStream(items=[(_ref(period=0), object()), (_ref(period=0), object())])
 
     with pytest.raises(ValueError, match="twice"):
-        ArtifactStore(cast("Mapping[ArtifactRef, object]", stream))
+        ArtifactStore(cast("Mapping[ArtifactRef, ArtifactPayload]", stream))
 
 
 def test_artifact_store_rejects_a_nonexact_address_at_construction() -> None:
     """A tuple that spells an address is not an `ArtifactRef` and never enters."""
     stream = _ItemStream(items=[((0, _REGIME, ArtifactKey(type_id="x")), object())])
 
-    with pytest.raises(TypeError, match="exact ArtifactRef"):
-        ArtifactStore(cast("Mapping[ArtifactRef, object]", stream))
+    with pytest.raises(TypeError, match=r"parameter ref=.*ArtifactRef"):
+        ArtifactStore(cast("Mapping[ArtifactRef, ArtifactPayload]", stream))
 
 
 def test_artifact_store_consumes_exactly_one_item_traversal() -> None:
@@ -309,7 +316,7 @@ def test_artifact_store_consumes_exactly_one_item_traversal() -> None:
         items=[(_ref(period=0), object()), (_ref(period=1), object())], max_traversals=1
     )
 
-    store = ArtifactStore(cast("Mapping[ArtifactRef, object]", stream))
+    store = ArtifactStore(cast("Mapping[ArtifactRef, ArtifactPayload]", stream))
 
     assert stream.traversals == 1
     assert set(store) == {_ref(period=0), _ref(period=1)}
@@ -318,7 +325,7 @@ def test_artifact_store_consumes_exactly_one_item_traversal() -> None:
 def test_solution_result_rejects_a_nonexact_omission_address_at_construction() -> None:
     values = ValueStore({(0, _REGIME): _payload(1.0)})
 
-    with pytest.raises(TypeError, match="exact ArtifactRef"):
+    with pytest.raises(TypeError, match=r"parameter ref=.*ArtifactRef"):
         SolutionResult(
             values=values,
             metadata=_metadata(),
@@ -358,3 +365,39 @@ def test_solution_result_rejects_a_nonexact_omission_reason_at_construction() ->
                 {_ref(period=0): OmissionReason.NOT_REQUESTED.value},
             ),
         )
+
+
+def test_traverse_public_mapping_items_returns_an_immutable_tuple_of_pairs() -> None:
+    """The one item traversal a store constructor reads is owned as a tuple."""
+    stream = _ItemStream(items=[(0, "zero"), (1, "one")])
+
+    pairs = _traverse_public_mapping_items(mapping=stream, label="Example entries")
+
+    assert pairs == ((0, "zero"), (1, "one"))
+
+
+def _capture_example_domains() -> MappingProxyType[str, str]:
+    return _capture_mapping_item_stream_once(
+        mapping={"health": "bad", "work": "full"},
+        label="Example domains",
+        snapshot_key=str,
+        snapshot_value=str,
+    )
+
+
+def test_capture_mapping_item_stream_once_returns_a_read_only_mapping() -> None:
+    """A captured descriptor mapping is a read-only view, not a mutable dict."""
+    assert type(_capture_example_domains()) is MappingProxyType
+
+
+def test_captured_mapping_round_trips_through_jax_tree_utilities() -> None:
+    """A captured read-only mapping flattens and rebuilds with the same items."""
+    captured = _capture_example_domains()
+    leaves, treedef = jax.tree_util.tree_flatten(captured)
+
+    rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+
+    assert (type(rebuilt), dict(rebuilt)) == (
+        MappingProxyType,
+        {"health": "bad", "work": "full"},
+    )

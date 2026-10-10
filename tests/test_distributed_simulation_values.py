@@ -6,6 +6,7 @@ Run this module alone so its four-CPU-device topology precedes JAX initializatio
 # Test-model declarations must run after the four-device configuration below.
 # ruff: noqa: PLC0415
 from functools import cache
+from types import MappingProxyType
 from typing import cast
 
 import jax
@@ -71,17 +72,19 @@ def test_abstract_read_preserves_required_ordered_device_identity(
         target=aligned.target,
         source=aligned.source,
         kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
-        stored_template=program.arguments["extra"],
+        stored_template=cast("jax.ShapeDtypeStruct", program.arguments["extra"]),
         source_sharding=required,
     )
     candidate = replace(
         program,
-        arguments={
-            "next_regime_to_V_arr": {
-                "future": jax.ShapeDtypeStruct((3,), jnp.float32, sharding=observed)
-            },
-            "extra": program.arguments["extra"],
-        },
+        arguments=MappingProxyType(
+            {
+                "next_regime_to_V_arr": {
+                    "future": jax.ShapeDtypeStruct((3,), jnp.float32, sharding=observed)
+                },
+                "extra": program.arguments["extra"],
+            }
+        ),
     )
 
     def forbid_copy(*_args: object, **_kwargs: object) -> object:

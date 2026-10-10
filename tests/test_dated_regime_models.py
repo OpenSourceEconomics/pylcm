@@ -37,13 +37,13 @@ from lcm.exceptions import (
 )
 from lcm.phased import Phased
 from lcm.regime import Regime
-from lcm.transition import TransitionLaw
+from lcm.transition import AgeSelector, ModelEdges, PhaseEdges, TransitionLaw
 from lcm.typing import BoolND, DiscreteState, FloatND, Period, ScalarInt
 from tests.regime_building.test_gate_output_dtype import _boolean_gate
 from tests.regime_building.test_gate_output_dtype import _make_model as _gated_model
 
 AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
-ROOTS: dict[object, str] = {25: "working"}
+ROOTS: dict[AgeSelector, str] = {25: "working"}
 DATED_TARGETS = {"working": (25, 35, 45), "dead": (25, 35, 45), "retirement": 55}
 CHOICE_TARGETS = {"working": (25, 35, 45), "retirement": 55, "dead": 55}
 # Working may die at every age and retires at 55: two outgoing edges at each age.
@@ -122,7 +122,7 @@ def _dated_edges(
     }
 
 
-def _choice_edges(*, working_law: TransitionLaw) -> dict[str, object]:
+def _choice_edges(*, working_law: TransitionLaw) -> PhaseEdges:
     """Working stays until 55, where `working_law` picks retirement or death."""
     return {
         "working": Transition(targets=CHOICE_TARGETS, law=working_law),
@@ -130,7 +130,7 @@ def _choice_edges(*, working_law: TransitionLaw) -> dict[str, object]:
     }
 
 
-def _dated_model(*, edges: object = None, **overrides: Regime) -> Model:
+def _dated_model(*, edges: ModelEdges | None = None, **overrides: Regime) -> Model:
     regimes = {"working": _regime(), "retirement": _regime(), "dead": DEAD}
     return Model(
         regimes=regimes | overrides,
@@ -882,7 +882,7 @@ def test_a_phased_pair_of_transitions_names_the_supported_form() -> None:
         ),
     ):
         _dated_model(
-            edges={
+            edges={  # ty: ignore[invalid-argument-type]
                 "working": Phased(
                     solve=Transition(targets=TWO_EDGE_TARGETS, law=law),
                     simulate=Transition(targets=TWO_EDGE_TARGETS, law=law),

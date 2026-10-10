@@ -19,10 +19,11 @@ models' global state are outside this known payload inventory. Canonical descrip
 metadata contains no payload arrays. Host NumPy storage is not JAX device storage.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from fractions import Fraction
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import jax
 import numpy as np
@@ -45,6 +46,46 @@ from lcm._solver_api.entries import (
 from lcm._solver_api.result import SolutionResult
 from lcm._solver_api.stores import ArtifactStore, ValueStore
 from lcm.exceptions import ExecutionPlanningError
+
+if TYPE_CHECKING:
+    from _lcm.simulation.replay_inputs import PreparedReplayReader
+    from _lcm.typing import ArtifactPayload
+    from lcm._solver_api.identity import ArtifactKey
+    from lcm.solver_api import ArtifactRef
+    from lcm.typing import RegimeName
+
+    type _SolutionInput = SolutionResult
+    # A value the budget walk reaches: a store, entry, authority, owned view or
+    # prepared reader, a payload or inert metadata, or a container of those.
+    type _RetainedValue = (
+        ArtifactPayload
+        | ValueStore
+        | ArtifactStore
+        | _LazyEntry
+        | authority_module.ArtifactAuthority
+        | SolutionAuthority
+        | OwnedSolutionView
+        | PreparedReplayReader
+        | complex
+        | str
+        | bytes
+        | Fraction
+        | tuple[_RetainedValue, ...]
+        | list[_RetainedValue]
+        | Mapping[int, _RetainedValue]
+        | Mapping[RegimeName, _RetainedValue]
+        | Mapping[tuple[int, RegimeName], _RetainedValue]
+        | Mapping[tuple[str, str], _RetainedValue]
+        | Mapping[ArtifactRef, _RetainedValue]
+        | Mapping[ArtifactKey, _RetainedValue]
+        | None
+    )
+else:
+    # The walk refuses a result or storage outside its known inventory with the
+    # budget planning error; the claw checks nothing here so that refusal stays
+    # reachable for any value.
+    type _SolutionInput = object
+    type _RetainedValue = object
 
 _PAYLOAD_RECORDS = (
     EGMCarry,
@@ -71,7 +112,7 @@ type _PayloadRecord = (
 )
 
 
-def retained_solution_buffers(*, solution: object) -> tuple[jax.Array, ...]:
+def retained_solution_buffers(*, solution: _SolutionInput) -> tuple[jax.Array, ...]:
     """Borrow all known arrays held by an already-resolved exact solution result."""
     if type(solution) is not SolutionResult:
         raise _unsupported(solution)
@@ -97,7 +138,7 @@ class _RetainedBuffers:
     arrays: dict[int, jax.Array] = field(default_factory=dict)
     seen: set[int] = field(default_factory=set)
 
-    def collect(self, value: object) -> None:  # noqa: C901, PLR0912
+    def collect(self, value: _RetainedValue) -> None:  # noqa: C901, PLR0912
         """Read only explicit payload owners, never an arbitrary object's fields."""
         if isinstance(value, jax.Array):
             self.arrays[id(value)] = value
@@ -114,14 +155,13 @@ class _RetainedBuffers:
         if type(value) in (ValueStore, ArtifactStore):
             store = cast("ValueStore | ArtifactStore", value)
             self.collect(store._entries)  # noqa: SLF001
-        elif type(value) in (dict, MappingProxyType):
-            mapping = cast(
-                "dict[object, object] | MappingProxyType[object, object]", value
-            )
-            for child in mapping.values():
+        elif type(value) in (dict, MappingProxyType) and isinstance(
+            value, dict | MappingProxyType
+        ):
+            for child in value.values():
                 self.collect(child)
-        elif type(value) in (tuple, list):
-            for child in cast("tuple[object, ...] | list[object]", value):
+        elif type(value) in (tuple, list) and isinstance(value, tuple | list):
+            for child in value:
                 self.collect(child)
         elif type(value) is _CanonicalValueEntry:
             self.collect(value.value)
@@ -196,7 +236,7 @@ class _RetainedBuffers:
         if snapshot is not None:
             self.collect(snapshot.leaves)
 
-    def collect_reader(self, value: object) -> None:
+    def collect_reader(self, value: _RetainedValue) -> None:
         """Read prepared snapshot/context roots without building the route's reader."""
         # Model imports the ownership boundary before simulation readers are complete.
         from _lcm.simulation.replay_inputs import PreparedReplayReader  # noqa: PLC0415
@@ -209,7 +249,7 @@ class _RetainedBuffers:
         self.collect(value.context.action_nodes)
 
 
-def _unsupported(value: object) -> ExecutionPlanningError:
+def _unsupported(value: object) -> ExecutionPlanningError:  # noqa: PAN001 - names the type of any value outside the known payload inventory
     """Refuse incomplete budget provenance rather than reporting fictitious zero."""
     return ExecutionPlanningError(
         "Budgeted simulation encountered unsupported retained solution storage: "

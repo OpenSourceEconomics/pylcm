@@ -43,6 +43,7 @@ from _lcm.solution.backward_induction import (
     _classify_dispatch_value_artifacts,
     _ProgramExecutionMetadata,
 )
+from _lcm.typing import PytreeValue
 from lcm.solver_api import EGM_CONTINUATION
 from lcm.solvers import EGM
 from tests.conftest import DECIMAL_PRECISION
@@ -54,16 +55,16 @@ from tests.test_models.dcegm_paper_twin import build_dcegm_model
 class _Builder:
     """An argument builder returning a fixed argument tree."""
 
-    arguments: Mapping[str, object]
+    arguments: Mapping[str, PytreeValue]
     """The exact kwargs the program is materialized and called with."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(self, context: CoreBuildContext) -> Mapping[str, PytreeValue]:
         """Return the fixed arguments, ignoring the build context."""
         del context
         return MappingProxyType(dict(self.arguments))
 
 
-def _core(**_kwargs: object) -> object:
+def _core(**_kwargs: object) -> jax.Array:
     """A core whose value is one row, independent of its arguments."""
     return jnp.zeros(1)
 
@@ -71,12 +72,12 @@ def _core(**_kwargs: object) -> object:
 def _context() -> CoreBuildContext:
     """A build context with every channel empty."""
     return CoreBuildContext(
-        state_action_space=object(),
+        state_action_space=None,
         next_regime_to_V_arr=MappingProxyType({}),
         next_regime_to_continuation=MappingProxyType({}),
         flat_params=MappingProxyType({}),
         period=3,
-        ages=object(),
+        ages=None,
     )
 
 
@@ -88,7 +89,7 @@ def _replicated_sharding() -> jax.NamedSharding:
 
 
 def _program(
-    *, reads: tuple[ValueRead, ...], arguments: Mapping[str, object]
+    *, reads: tuple[ValueRead, ...], arguments: Mapping[str, PytreeValue]
 ) -> CoreProgram:
     """A dense one-program graph declaring `reads` over `arguments`."""
     return CoreProgram(
@@ -103,7 +104,7 @@ def _program(
 
 
 def _materialize(
-    *, reads: tuple[ValueRead, ...], arguments: Mapping[str, object]
+    *, reads: tuple[ValueRead, ...], arguments: Mapping[str, PytreeValue]
 ) -> MaterializedCoreProgram:
     """Materialize one dense program declaring `reads` over `arguments`."""
     return materialize_core_program(
@@ -112,13 +113,13 @@ def _materialize(
 
 
 def _resolve(
-    *, reads: tuple[ValueRead, ...], arguments: Mapping[str, object]
+    *, reads: tuple[ValueRead, ...], arguments: Mapping[str, PytreeValue]
 ) -> ResolvedCoreProgram:
     """Materialize and resolve one dense program declaring `reads`."""
     return resolve_core_program(program=_materialize(reads=reads, arguments=arguments))
 
 
-def _carry_arguments() -> Mapping[str, object]:
+def _carry_arguments() -> Mapping[str, PytreeValue]:
     """The continuation channel holding `retired`'s five-row carry template."""
     return {
         ValueInputChannel.CONTINUATION_LEAF.value: MappingProxyType(

@@ -49,6 +49,7 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
     union_buffer_footprints,
 )
+from _lcm.typing import FootprintTree, PytreeValue
 from benchmarks.asv._simulation_witnesses import dissolution
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
@@ -267,7 +268,7 @@ def _footprint(
     *, device: jax.Device, spans: tuple[tuple[int, int], ...]
 ) -> DeviceBufferFootprint:
     """Bind explicit address ranges on one actual device."""
-    return DeviceBufferFootprint(spans={device: spans})
+    return DeviceBufferFootprint(spans=MappingProxyType({device: spans}))
 
 
 def test_folding_a_new_owner_yields_the_full_re_merge_exactly() -> None:
@@ -360,11 +361,11 @@ class _ChargeWitness:
         device = scope.devices[0]
         charged = resident_bytes_by_device(
             live=charged_footprint,
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=scope.devices,
         )[device]
         owner = scope.period_owner
-        trees: list[object] = [
+        trees: list[FootprintTree] = [
             tuple(scope._held),
             scope.unit_inputs,
             scope.derived,
@@ -375,7 +376,7 @@ class _ChargeWitness:
                 footprints=tuple(measure_buffer_footprint(tree=tree) for tree in trees),
                 devices=scope.devices,
             ),
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=scope.devices,
         )[device]
         self.samples.append((charged, fresh))
@@ -390,7 +391,7 @@ def test_the_charge_never_falls_below_a_fresh_measurement_of_the_live_owners(
 
     # keyword-only-exempt: library-callback=SimulationMemory.budget_snapshot
     def observed(
-        self: SimulationMemory, *, additional: object = ()
+        self: SimulationMemory, *, additional: PytreeValue = ()
     ) -> DeviceBufferFootprint:
         result = original(self, additional=additional)
         witness.observe(scope=self, charged_footprint=result)
@@ -415,7 +416,7 @@ def test_the_charge_never_falls_below_a_fresh_measurement_of_the_live_owners(
 # ------------------------------------------------------------------ operand charging
 
 
-def _placement_arguments(*, device: jax.Device) -> Mapping[str, object]:
+def _placement_arguments(*, device: jax.Device) -> Mapping[str, PytreeValue]:
     """Mix an already-placed array with leaves placement still has to move."""
     return MappingProxyType(
         {
@@ -431,12 +432,12 @@ def _placement_arguments(*, device: jax.Device) -> Mapping[str, object]:
 
 def _place(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, PytreeValue],
     device: jax.Device,
     budget_bytes: int,
     live: DeviceBufferFootprint,
     argument_footprint: DeviceBufferFootprint | None = None,
-) -> Mapping[str, object]:
+) -> Mapping[str, PytreeValue]:
     """Place the same operands under the two spellings of the live inventory."""
     return place_simulation_arguments(
         arguments=arguments,

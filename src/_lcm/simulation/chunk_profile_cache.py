@@ -29,7 +29,6 @@ import weakref
 from collections import OrderedDict
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass
-from typing import cast
 
 from _lcm.simulation.chunk_planning import SimulationChunkProfile
 
@@ -52,7 +51,7 @@ class ProfileCacheToken:
     __slots__ = ("__weakref__",)
 
 
-def _estimate_metadata_bytes(*, profile: object) -> int:
+def _estimate_metadata_bytes[ProfileT](*, profile: ProfileT) -> int:
     """Approximate this profile's own bookkeeping footprint, not device bytes.
 
     This sizes the cached Python/metadata object graph (stage count, device
@@ -76,12 +75,12 @@ def _estimate_metadata_bytes(*, profile: object) -> int:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ProfileCacheEntry:
-    profile: object
+class _ProfileCacheEntry[ProfileT]:
+    profile: ProfileT
     metadata_bytes: int
 
 
-class ChunkProfileCacheRegistry:
+class ChunkProfileCacheRegistry[ProfileT]:
     """Process-wide, aggregate-bounded LRU shared by every `SimulationRuntime`.
 
     Keys are `(token_id, canonical_key)` pairs, where `token_id` is the
@@ -97,9 +96,9 @@ class ChunkProfileCacheRegistry:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._entries: OrderedDict[tuple[int, Hashable], _ProfileCacheEntry] = (
-            OrderedDict()
-        )
+        self._entries: OrderedDict[
+            tuple[int, Hashable], _ProfileCacheEntry[ProfileT]
+        ] = OrderedDict()
         self._metadata_bytes = 0
         self._in_flight: dict[tuple[int, Hashable], threading.Event] = {}
         self._watched_token_ids: set[int] = set()
@@ -146,10 +145,10 @@ class ChunkProfileCacheRegistry:
             for full_key in [k for k in self._entries if k[0] in dropped]:
                 self._metadata_bytes -= self._entries.pop(full_key).metadata_bytes
 
-    def get_or_build[ProfileT](
+    def get_or_build(
         self,
         *,
-        runtime_token: object,
+        runtime_token: ProfileCacheToken,
         key: Hashable,
         build: Callable[[], ProfileT],
     ) -> ProfileT:
@@ -161,7 +160,6 @@ class ChunkProfileCacheRegistry:
         retries, which either finds a profile another caller published or
         makes the waiter the next builder and surfaces the failure to it.
 
-        Entries are stored untyped because one registry serves every caller.
         A published entry was produced by a builder invoked under the same
         `(runtime_token, key)`, and the key carries the runtime's own identity
         plus the caller's canonical argument metadata, so a hit returns what
@@ -174,7 +172,7 @@ class ChunkProfileCacheRegistry:
                 cached = self._entries.get(full_key)
                 if cached is not None:
                     self._entries.move_to_end(full_key)
-                    return cast("ProfileT", cached.profile)
+                    return cached.profile
                 event = self._in_flight.get(full_key)
                 if event is None:
                     event = threading.Event()
@@ -201,25 +199,16 @@ class ChunkProfileCacheRegistry:
             event.set()
             return profile
 
-    def _watch(self, *, runtime_token: object) -> None:
-        """Arrange for this token's entries to be released when it dies.
-
-        A token that does not support weak references (only plain stand-in
-        values in this module's own unit tests; every production token is a
-        `ProfileCacheToken`) is simply left to the aggregate LRU bounds.
-        """
+    def _watch(self, *, runtime_token: ProfileCacheToken) -> None:
+        """Arrange for this token's entries to be released when it dies."""
         token_id = id(runtime_token)
         with self._lock:
             if token_id in self._watched_token_ids:
                 return
             self._watched_token_ids.add(token_id)
-        try:
-            weakref.finalize(runtime_token, self._released_token_ids.append, token_id)
-        except TypeError:
-            with self._lock:
-                self._watched_token_ids.discard(token_id)
+        weakref.finalize(runtime_token, self._released_token_ids.append, token_id)
 
-    def _publish(self, *, full_key: tuple[int, Hashable], profile: object) -> None:
+    def _publish(self, *, full_key: tuple[int, Hashable], profile: ProfileT) -> None:
         """Insert one entry and evict LRU entries until both bounds hold."""
         metadata_bytes = _estimate_metadata_bytes(profile=profile)
         self._entries[full_key] = _ProfileCacheEntry(
@@ -235,9 +224,9 @@ class ChunkProfileCacheRegistry:
             self._metadata_bytes -= evicted.metadata_bytes
 
 
-_REGISTRY = ChunkProfileCacheRegistry()
+_REGISTRY = ChunkProfileCacheRegistry[SimulationChunkProfile]()
 
 
-def profile_cache_registry() -> ChunkProfileCacheRegistry:
+def profile_cache_registry() -> ChunkProfileCacheRegistry[SimulationChunkProfile]:
     """Return the one process-wide registry shared by every model runtime."""
     return _REGISTRY

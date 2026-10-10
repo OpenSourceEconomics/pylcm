@@ -16,8 +16,10 @@ from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 from _lcm.execution.core_program import CoreBuildContext, CoreProgram, TiledOutputAxis
+from _lcm.execution.output_layout import OutputRoleTree
 from _lcm.simulation.subject_groups import SubjectGroupingRoute
-from _lcm.typing import RegimeName, StateOrActionName
+from _lcm.typing import PytreeValue, RegimeName, ShapeDtypePytree, StateOrActionName
+from lcm.typing import ReferenceName
 
 # Planner name of the per-subject axis every simulation program tiles.
 SUBJECT_AXIS = "subject"
@@ -58,15 +60,8 @@ UNRESOLVED_SUBJECT_EXTENT = 1
 class SimulationBuildContext(CoreBuildContext):
     """Complete dynamic arguments for one forward program invocation."""
 
-    call_arguments: Mapping[str, object]
+    call_arguments: MappingProxyType[ReferenceName, PytreeValue | ShapeDtypePytree]
     """Subject states, action operands, parameters, keys and addressed value reads."""
-
-    def __post_init__(self) -> None:
-        """Snapshot the call arguments together with the common core context."""
-        super().__post_init__()
-        object.__setattr__(
-            self, "call_arguments", MappingProxyType(dict(self.call_arguments))
-        )
 
 
 @runtime_checkable
@@ -77,10 +72,10 @@ class SimulationProgramExecutor(Protocol):
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
-    ) -> object:
+    ) -> PytreeValue:
         """Select and invoke the executable for this argument signature."""
         ...
 
@@ -89,13 +84,13 @@ class SimulationProgramExecutor(Protocol):
 class _PerSubjectFunction:
     """One simulation body at a single subject's state cell."""
 
-    function: Callable[..., object]
+    function: Callable[..., PytreeValue]
     """The body, taking one subject's states and actions as scalars."""
 
-    subject_arg_names: tuple[str, ...]
+    subject_arg_names: tuple[ReferenceName, ...]
     """Arguments carrying a per-subject leading axis, which the tile splits."""
 
-    output_roles: object
+    output_roles: OutputRoleTree
     """Role tree of the same structure as the body's output, one role per leaf."""
 
 
@@ -153,23 +148,6 @@ class SimulationPrograms:
 
     executor: SimulationProgramExecutor | None = None
     """Call-local lowering and dispatch owner, absent from model declarations."""
-
-    def __post_init__(self) -> None:
-        """Snapshot the caller-owned program mappings."""
-        for field in (
-            "type_local_decision",
-            "action_values",
-            "decision",
-            "transition",
-            "route",
-            "gate_fold",
-            "gate_route",
-            "policy_prepare",
-            "policy_rank",
-        ):
-            object.__setattr__(
-                self, field, MappingProxyType(dict(getattr(self, field)))
-            )
 
     @property
     def forward_decision(self) -> MappingProxyType[int, CoreProgram]:

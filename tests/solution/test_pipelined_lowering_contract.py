@@ -10,6 +10,7 @@ import logging
 import threading
 from collections.abc import Callable, Hashable
 from concurrent.futures import Future, ThreadPoolExecutor, wait
+from types import MappingProxyType
 from typing import Any, ClassVar
 
 import jax
@@ -47,13 +48,13 @@ def _wave_kwargs(
         candidate: ResolvedCoreProgram(
             name=str(key),
             function=_program,
-            arguments={"wealth": wealth},
-            static_kwargs={"scale": i + 1},
+            arguments=MappingProxyType({"wealth": wealth}),
+            static_kwargs=MappingProxyType({"scale": i + 1}),
             requirements=CoreExecutionRequirements(),
             output_roles=VALUE,
             disposition=CoreExecutionDisposition.PLANNED,
             donation_candidates=(),
-            tile_widths={},
+            tile_widths=MappingProxyType({}),
             specialization_key=(),
             input_transfer_plan=(),
         )

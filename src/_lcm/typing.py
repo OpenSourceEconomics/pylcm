@@ -7,12 +7,24 @@ they are re-exported here so engine-internal code can import everything from
 `_lcm.typing`.
 """
 
-from collections.abc import Mapping
+import types
+from collections.abc import Hashable, Mapping, Sequence
+from dataclasses import Field
 from types import MappingProxyType
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    ClassVar,
+    Literal,
+    Protocol,
+    TypeAliasType,
+    runtime_checkable,
+)
 
+import jax
+import numpy as np
+import numpy.typing as npt
 from jax import Array
-from jaxtyping import Key
+from jaxtyping import Int, Key
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
@@ -40,12 +52,19 @@ from lcm.typing import (
     IntND,
     Period,
     ProcessName,  # noqa: F401
+    ReferenceName,
     RegimeName,
     ScalarInt,
     StateName,
     StateOrActionName,  # noqa: F401
     TransitionFunctionName,
+    ValueND,
 )
+
+# A `__`-joined path through the params or function namespace, such as
+# `"utility__risk_aversion"`. Flat params are keyed by these names, while a
+# `ParameterName` names one parameter on its own.
+type QualifiedName = str
 
 type RegimeNamesToIds = MappingProxyType[RegimeName, ScalarInt]
 type RegimeIdsToNames = MappingProxyType[int, RegimeName]
@@ -79,14 +98,298 @@ type PRNGKeyND = Key[Array, "..."]
 # Post-canonicalization leaf type — output of
 # `cast_params_to_canonical_dtypes`. Only canonical-dtype JAX arrays and
 # canonical-narrow `MappingLeaf` / `SequenceLeaf` instances survive.
-type _ParamsLeaf = FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
+type ParamsLeaf = FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
 
 # One argument of a user economic function, exactly as `EconFunction.__call__`
-# accepts it. Named so a call site binding such arguments can say so.
-type EconFunctionArg = FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf
+# accepts it. Named so a call site binding such arguments can say so. Integer
+# arrays may have any width: with x64 enabled, states, actions and indices are
+# int64.
+type EconFunctionArg = (
+    FloatND | Int[Array, "..."] | BoolND | float | MappingLeaf | SequenceLeaf
+)
+
+# The arguments of a user economic function, keyed by the names they reference.
+type EconFunctionKwargs = Mapping[ReferenceName, EconFunctionArg]
+
+# One argument of a generated `QAndFFunction` or `MaxQOverAFunction`: an argument
+# of a user function, or a per-regime mapping of value arrays or of flat params.
+type QAndFArg = (
+    EconFunctionArg
+    | Mapping[RegimeName, FloatND]
+    | Mapping[RegimeName, Mapping[QualifiedName, ParamsLeaf]]
+)
+type QAndFKwargs = Mapping[ReferenceName, QAndFArg]
+
+# A value tree as the engine hands it to JAX: arrays and Python scalars at the
+# leaves, nested in tuples, lists and string-keyed mappings. The beartype claw
+# checks the outer levels of a recursive alias; ty checks every level.
+type ArrayTree = (
+    ValueND
+    | bool
+    | int
+    | float
+    | tuple[ArrayTree, ...]
+    | list[ArrayTree]
+    | Mapping[str, ArrayTree]
+    | None
+)
+
+# The abstract counterpart of an `ArrayTree`, for lowering and memory profiling.
+type ShapeDtypeTree = (
+    jax.ShapeDtypeStruct
+    | tuple[ShapeDtypeTree, ...]
+    | list[ShapeDtypeTree]
+    | Mapping[str, ShapeDtypeTree]
+    | None
+)
+
+# A value tree as JAX flattens it, wider than `ArrayTree` at both ends:
+# - a node may also be a registered pytree class: a params leaf, or a dataclass such
+#   as `EGMCarry` or a published policy, which the claw checks as a whole;
+# - a leaf may also be a host NumPy array or scalar.
+# Every `ArrayTree` is a `PytreeValue`; naming it as a member keeps that true for
+# ty, which would otherwise hold `list[ArrayTree]` apart from `list[PytreeValue]`.
+type PytreeValue = (
+    ArrayTree
+    | ValueND
+    | HostArray
+    | np.generic
+    | bool
+    | int
+    | float
+    | MappingLeaf
+    | SequenceLeaf
+    | DataclassInstance
+    | _PluginPytree
+    | tuple[PytreeValue, ...]
+    | list[PytreeValue]
+    | Mapping[str, PytreeValue]
+    | None
+)
+
+if TYPE_CHECKING:
+    # ty does not prove that every `PytreeValue` matches `PytreeByPeriod`'s members,
+    # so the alias names it as a member of its own.
+    type _PytreeValueForTy = PytreeValue
+else:
+    # beartype cannot build a check for a recursive alias that names `PytreeValue`
+    # beside further self-references; every `PytreeValue` already matches
+    # `PytreeByPeriod`'s other members, so the claw checks the same trees.
+    type _PytreeValueForTy = None
+
+# A value tree whose mapping levels may be keyed by name or by period, at any depth,
+# as the solve and the simulation hold their per-period inputs, outputs and
+# intermediates: inside tuples of roots, below a regime name, or in a list of chunk
+# results. It names `PytreeValue`'s members itself rather than `PytreeValue`: beartype
+# cannot build a check for an alias over `PytreeValue` with further
+# self-references, and this self-contained form stays checkable in any union. The
+# beartype claw checks only the outer levels of a recursive alias; ty checks every
+# level.
+type PytreeByPeriod = (
+    _PytreeValueForTy
+    | ArrayTree
+    | ValueND
+    | HostArray
+    | np.generic
+    | bool
+    | int
+    | float
+    | MappingLeaf
+    | SequenceLeaf
+    | DataclassInstance
+    | _PluginPytree
+    | tuple[PytreeByPeriod, ...]
+    | list[PytreeByPeriod]
+    | Mapping[str, PytreeByPeriod]
+    | Mapping[int, PytreeByPeriod]
+    | None
+)
+
+# The abstract counterpart of a `PytreeValue`, for lowering and memory profiling.
+type ShapeDtypePytree = (
+    ShapeDtypeTree
+    | jax.ShapeDtypeStruct
+    | MappingLeaf
+    | SequenceLeaf
+    | DataclassInstance
+    | tuple[ShapeDtypePytree, ...]
+    | list[ShapeDtypePytree]
+    | Mapping[str, ShapeDtypePytree]
+    | None
+)
+
+if TYPE_CHECKING:
+    # ty does not prove that every `PytreeValue` or `ShapeDtypePytree` matches
+    # `ArgumentTree`'s members, so the alias names both as members of its own.
+    type _ArgumentValueForTy = PytreeValue | ShapeDtypePytree
+else:
+    # beartype cannot build a check for a recursive alias that names `PytreeValue`
+    # beside further self-references; every such tree already matches
+    # `ArgumentTree`'s other members, so the claw checks the same trees.
+    type _ArgumentValueForTy = None
+
+# The arguments of a core program, concrete or abstract: name-keyed trees whose
+# leaves are arrays, host values or `jax.ShapeDtypeStruct` templates, mixed in one
+# tree while a plan rebuilds a branch. It names its members itself so the beartype
+# claw can check it; the claw checks only the outer levels of a recursive alias.
+type ArgumentTree = (
+    _ArgumentValueForTy
+    | ArrayTree
+    | ShapeDtypeTree
+    | ValueND
+    | HostArray
+    | jax.ShapeDtypeStruct
+    | np.generic
+    | bool
+    | int
+    | float
+    | MappingLeaf
+    | SequenceLeaf
+    | DataclassInstance
+    | _PluginPytree
+    | tuple[ArgumentTree, ...]
+    | list[ArgumentTree]
+    | Mapping[str, ArgumentTree]
+    | None
+)
+
+if TYPE_CHECKING:
+    from lcm.solver_api import ArtifactKey
+
+    # ty keeps mapping keys invariant, so `Mapping[Hashable, ...]` admits no mapping
+    # with narrower keys; the key types that reach a footprint are named for ty.
+    type _FootprintValueForTy = (
+        PytreeByPeriod
+        | ArgumentTree
+        | Mapping[tuple[str, str], FootprintTree]
+        | Mapping[tuple[str, ArtifactKey], FootprintTree]
+        | Mapping[int, FootprintTree]
+        | Mapping[str, FootprintTree]
+    )
+else:
+    # beartype checks `Mapping[Hashable, ...]` below against any key type; naming the
+    # other recursive aliases here would stop it from building the check.
+    type _FootprintValueForTy = None
+
+# A tree whose device buffers are measured or registered: any JAX pytree of arrays,
+# host values (complex process-grid scalars among them) and `jax.ShapeDtypeStruct`
+# templates (which own no device bytes), with mapping levels keyed by names,
+# periods, edges or other hashable keys. The beartype claw checks only the outer
+# levels of a recursive alias.
+type FootprintTree = (
+    _FootprintValueForTy
+    | ArrayTree
+    | ShapeDtypeTree
+    | ValueND
+    | HostArray
+    | jax.ShapeDtypeStruct
+    | np.generic
+    | bool
+    | int
+    | float
+    | complex
+    | MappingLeaf
+    | SequenceLeaf
+    | DataclassInstance
+    | _PluginPytree
+    | tuple[FootprintTree, ...]
+    | list[FootprintTree]
+    | Mapping[Hashable, FootprintTree]
+    | None
+)
+
+if TYPE_CHECKING:
+    from _lcm.solution.solver_diagnostics import SolverDiagnostics
+    from lcm._solver_api.replay import ContinuationArtifact
+
+    # A payload a solver publishes under an artifact key: a simulation policy, a
+    # continuation artifact, solver diagnostics, or a value tree.
+    type ArtifactPayload = (
+        SimulationPolicy | ContinuationArtifact | SolverDiagnostics | PytreeValue
+    )
+    # A solver plugin's continuation artifact, which a value tree may carry.
+    type _PluginPytree = ContinuationArtifact
+else:
+    # Solver plugins publish payload classes of their own; the claw checks nothing
+    # here rather than run `isinstance` against a protocol on plugin objects.
+    type ArtifactPayload = object
+    # A plugin artifact inside a value tree is checked as the registered
+    # dataclass it is, never against the protocol.
+    type _PluginPytree = DataclassInstance
+
+if TYPE_CHECKING:
+    from lcm._solver_api.authority import _ArtifactLeafToken
+
+    # A child handed to a registered pytree's `unflatten`:
+    # - a concrete or traced array, or a host array or scalar, during calls;
+    # - a `jax.ShapeDtypeStruct` or a `jax.stages.ArgInfo` during AOT lowering;
+    # - a `jax.sharding.Sharding` when JAX lays shardings out like the tree;
+    # - the artifact authority's opaque token when it compiles a payload template;
+    # - `None` for an absent leaf.
+    type PytreeChild = (
+        ValueND
+        | HostArray
+        | np.generic
+        | jax.ShapeDtypeStruct
+        | jax.stages.ArgInfo
+        | jax.sharding.Sharding
+        | _ArtifactLeafToken
+        | bool
+        | int
+        | float
+        | None
+    )
+else:
+    # JAX also unflattens with placeholder leaves of its own (`PytreeLeaf` proxies,
+    # `object()` sentinels), so the claw accepts any child.
+    type PytreeChild = object
+
+# A runtime annotation object: a class, a `type` alias, a subscripted generic, an
+# `X | Y` union, or a string forward reference.
+type AnnotationForm = type | TypeAliasType | types.GenericAlias | types.UnionType | str  # noqa: PAN006 - an annotation may name any class
+
+# Shardings laid out like the tree they place.
+type ShardingTree = (
+    jax.sharding.Sharding
+    | tuple[ShardingTree, ...]
+    | list[ShardingTree]
+    | Mapping[str, ShardingTree]
+    | None
+)
+
+# A copied lowering descriptor: strings, integers, Booleans, bytes and `None` at
+# the leaves, nested in tuples, frozensets and read-only mappings. It retains no
+# live payload.
+type LoweringDescriptor = (
+    str
+    | int
+    | bool
+    | bytes
+    | tuple[LoweringDescriptor, ...]
+    | frozenset[LoweringDescriptor]
+    | MappingProxyType[LoweringDescriptor, LoweringDescriptor]
+    | None
+)
+
+# A value that `json.dumps` writes and `json.loads` reads back.
+type JSONValue = (
+    bool | int | float | str | Sequence[JSONValue] | Mapping[str, JSONValue] | None
+)
+
+# A host NumPy operand, as opposed to a device `jax.Array`.
+type HostArray = npt.NDArray[np.generic]
+
+
+@runtime_checkable
+class DataclassInstance(Protocol):
+    """An instance of any dataclass."""
+
+    __dataclass_fields__: ClassVar[dict[str, Field[object]]]  # noqa: PAN001 - a dataclass field may hold any value
+
+
 type Params = Mapping[
     str,
-    _ParamsLeaf | Mapping[str, _ParamsLeaf | Mapping[str, _ParamsLeaf]],
+    ParamsLeaf | Mapping[str, ParamsLeaf | Mapping[str, ParamsLeaf]],
 ]
 
 # Internal regime parameters: A flat mapping with function-qualified names.
@@ -94,7 +397,7 @@ type Params = Mapping[
 # "koopmans_aggregator__discount_factor"). Values are canonical-dtype JAX arrays or
 # canonical-narrow container leaves.
 type FlatRegimeParams = MappingProxyType[
-    str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
+    QualifiedName, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
 ]
 # The `edges` level of the internal params: per source regime, the flat params of
 # the callables its edges declare, keyed by their declaration path below
@@ -262,7 +565,7 @@ class QAndFFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: QAndFArg,
     ) -> tuple[FloatND, BoolND]: ...
 
 
@@ -282,7 +585,7 @@ class MaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: QAndFArg,
     ) -> FloatND | tuple[FloatND, BoolND]: ...
 
 
@@ -293,7 +596,9 @@ class EGMStepFunction(Protocol):
     Consumes the regime's exogenous state grids, the rolling EGM-carry
     mapping, and the regime's flat params; returns the regime's value-function
     array on the exogenous state grid, the carry its parents interpolate, and
-    the published consumption policy simulation interpolates off-grid.
+    the published consumption policy simulation interpolates off-grid. The
+    `_lcm_*` keywords are the static block widths the execution plan tiles the
+    kernel's loops with.
 
     Used for both type checking and beartype runtime checks.
 
@@ -303,7 +608,12 @@ class EGMStepFunction(Protocol):
         self,
         *,
         next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-        **kwargs: Any,  # noqa: ANN401
+        _lcm_stochastic_node_width: int | None = None,
+        _lcm_cell_width: int | None = None,
+        _lcm_savings_point_width: int | None = None,
+        _lcm_euler_point_width: int | None = None,
+        _lcm_envelope_cell_width: int = 1,
+        **kwargs: EconFunctionArg,
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]: ...
 
 
@@ -322,7 +632,7 @@ class EGMCarryProducer(Protocol):
         self,
         *,
         V_arr: FloatND,
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: EconFunctionArg,
     ) -> EGMCarry: ...
 
 
@@ -340,7 +650,7 @@ class ArgmaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: QAndFArg,
     ) -> tuple[IntND, FloatND]: ...
 
 
@@ -370,3 +680,18 @@ class NextStateSimulationFunction(Protocol):
     ) -> MappingProxyType[
         RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
     ]: ...
+
+
+@runtime_checkable
+class NextStateSolutionFunction(Protocol):
+    """The function that computes one target's next states during the solution.
+
+    Returns a flat mapping `{next_<state>: array}`. The mapping is the plain
+    dict the `dags` composition returns.
+
+    """
+
+    def __call__(
+        self,
+        **kwargs: EconFunctionArg,
+    ) -> Mapping[TransitionFunctionName, DiscreteState | ContinuousState]: ...

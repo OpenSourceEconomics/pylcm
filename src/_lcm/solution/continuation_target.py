@@ -6,8 +6,6 @@ target regime each active period continues into, and bind or admit the union
 of the source's and target's flat params in the kernel build.
 """
 
-from collections.abc import Mapping
-
 from dags.tree import qname_from_tree_path
 
 from _lcm.params.edges import regime_kernel_params
@@ -16,6 +14,9 @@ from _lcm.solution.contract import (
 )
 from _lcm.typing import (
     FlatParams,
+    FlatRegimeParams,
+    ParamsLeaf,
+    QualifiedName,
     RegimeName,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -56,15 +57,14 @@ def union_free_params(
     flat_params: FlatParams,
     regime_name: RegimeName,
     transition_target_names: tuple[RegimeName, ...],
-) -> dict[str, object]:
+) -> dict[QualifiedName, ParamsLeaf]:
     """Union the regime's free params with its transition targets' free params.
 
     The boundary step evaluates the target regime's transition params (e.g. the
     pension payout factor the source never reads), so the core needs the union;
     captured functions read only the keys they need.
     """
-    # Leaves of several regimes, passed through untouched.
-    params: dict[str, object] = dict(
+    params: dict[QualifiedName, ParamsLeaf] = dict(
         regime_kernel_params(flat_params, regime_name=regime_name)
     )
     for target_name in transition_target_names:
@@ -82,10 +82,9 @@ def union_fixed_params(
     fixed_flat_params: FlatParams,
     regime_name: RegimeName,
     transition_target_names: tuple[RegimeName, ...],
-) -> dict[str, object]:
+) -> dict[QualifiedName, ParamsLeaf]:
     """Union the regime's and its targets' fixed params for core binding."""
-    # Leaves of several regimes, passed through untouched.
-    bound: dict[str, object] = dict(
+    bound: dict[QualifiedName, ParamsLeaf] = dict(
         regime_kernel_params(fixed_flat_params, regime_name=regime_name)
     )
     for target_name in transition_target_names:
@@ -99,7 +98,7 @@ def union_fixed_params(
 
 
 def _namespace_target_param_names(
-    *, target_name: RegimeName, param_names: frozenset[str]
+    *, target_name: RegimeName, param_names: frozenset[QualifiedName]
 ) -> frozenset[str]:
     """Prefix a target regime's flat parameter names with its regime identity."""
     return frozenset(
@@ -108,8 +107,8 @@ def _namespace_target_param_names(
 
 
 def _namespace_target_params(
-    *, target_name: RegimeName, params: Mapping[str, object]
-) -> dict[str, object]:
+    *, target_name: RegimeName, params: FlatRegimeParams
+) -> dict[QualifiedName, ParamsLeaf]:
     """Return target parameters under keys that retain the target regime name."""
     return {
         qname_from_tree_path((target_name, param_name)): value
