@@ -14,11 +14,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from lcm.typing import FloatND, IntND
+from lcm.typing import FloatND, IntND, ValueND
 
 _INT32_MIN = int(np.iinfo(np.int32).min)
 _INT32_MAX = int(np.iinfo(np.int32).max)
 _FLOAT32_MAX = float(np.finfo(np.float32).max)
+
+# A numeric value crossing the boundary: a Python or NumPy scalar, or a host or
+# device array.
+type _NumericValue = int | float | np.integer | np.floating | np.ndarray | ValueND
 
 
 @runtime_checkable
@@ -32,7 +36,7 @@ class CanonicalArrayWriter(Protocol):
         ...
 
 
-def canonical_float_dtype() -> type:
+def canonical_float_dtype() -> type:  # noqa: PAN006 - JAX's scalar types are classes of a private metaclass, `Any` in JAX's stubs
     """Return pylcm's canonical float dtype, derived from `jax_enable_x64`.
 
     Returns `jnp.float64` if `jax.config.jax_enable_x64` is True,
@@ -45,7 +49,7 @@ def canonical_float_dtype() -> type:
 
 
 def safe_to_int_dtype(
-    *, value: object, name: str, array_writer: CanonicalArrayWriter | None = None
+    *, value: _NumericValue, name: str, array_writer: CanonicalArrayWriter | None = None
 ) -> IntND:
     """Cast a scalar, sequence, or array to `jnp.int32`, checking int32 range.
 
@@ -89,7 +93,7 @@ def safe_to_int_dtype(
 
 
 def safe_to_float_dtype(
-    *, value: object, name: str, array_writer: CanonicalArrayWriter | None = None
+    *, value: _NumericValue, name: str, array_writer: CanonicalArrayWriter | None = None
 ) -> FloatND:
     """Cast a scalar, sequence, or array to the canonical float dtype.
 

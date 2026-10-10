@@ -3,11 +3,19 @@
 from collections.abc import Iterator, Mapping
 
 from _lcm.params.temporal import temporal_parameter_names
+from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaws
 from _lcm.time import TimeAxis, coordinate_kind
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
-from lcm.regime import Regime
+from lcm.regime import (
+    ActionEntry,
+    ConstraintEntry,
+    FunctionEntry,
+    Regime,
+    StateEntry,
+    StateTransitionEntry,
+)
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -16,8 +24,20 @@ from lcm.transition import (
     PeriodSpecializedGrid,
 )
 
+# A declaration the walk visits: a regime slot value or a regime law, or a
+# mapping of them.
+type _Declaration = (
+    FunctionEntry
+    | ConstraintEntry
+    | StateEntry
+    | ActionEntry
+    | StateTransitionEntry
+    | RegimeTransitionLaw
+    | Mapping[str, _Declaration]
+)
 
-def _declarations(value: object) -> Iterator[object]:
+
+def _declarations(value: _Declaration) -> Iterator[_Declaration]:
     if isinstance(value, Mapping):
         for item in value.values():
             yield from _declarations(item)

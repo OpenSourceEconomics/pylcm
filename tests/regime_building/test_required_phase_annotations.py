@@ -28,6 +28,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
+from lcm.transition import AgeSelector
 from lcm.typing import ContinuousState, FloatND, IntND, ScalarInt, UserFunction
 
 
@@ -82,7 +83,7 @@ def _demand_model(
     perceived = ByAge(
         cases={age: DeterministicTransition(func=choice) for age, choice in choices}
     )
-    roots: dict[object, str] = {(0, 1): "source"}
+    roots: dict[AgeSelector, str] = {(0, 1): "source"}
     if promote:
         roots[promote] = "perceived"
     return Model(
