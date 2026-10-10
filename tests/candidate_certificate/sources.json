@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "101e077e9f2fb87009fa001a4b5b5e2d92757d6c2f4c319b5d7eba41f3bd3ca3",
+  "source_inventory_sha256": "f8de54aede049aa15818ac89c62dad74b17fa62a38acd40cf34f39628f97fce4",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -126,7 +126,7 @@
     },
     {
       "path": "src/_lcm/persistence/solution.py",
-      "sha256": "722756066074796c202d72f7820b29a6f01b3552ba0cf64a9d7d3e649682ce29"
+      "sha256": "e0aed70f130ed2a13760ecf6cb88d5381f9cc95eeffacc4f1caacd043fc9f947"
     },
     {
       "path": "src/_lcm/probability.py",
@@ -386,11 +386,11 @@
     },
     {
       "path": "src/_lcm/solution/model_authority.py",
-      "sha256": "8b7506a1059feec48228ba3f31689ff325061db852e69b8a3ee5ed5003498137"
+      "sha256": "d4fd964df15c011f057043aa2f7c341dc18811eb646017a1beac8c4cea674a4e"
     },
     {
       "path": "src/_lcm/solution/native_values.py",
-      "sha256": "f3f04d2c90ff3a2506b0fc41b89753433c31eb412f8b8572584ca263e4151f45"
+      "sha256": "4e7302d6cacb53a20f6a0a08e7f57d6e074dedddd8f6a95944a9ed1ed4df7bda"
     },
     {
       "path": "src/_lcm/solution/nbegm.py",
@@ -406,11 +406,11 @@
     },
     {
       "path": "src/_lcm/solution/result_snapshot.py",
-      "sha256": "87cf247efc21c724f39b327e70abfbb0464a830037ffba5fa996c4572558cbf9"
+      "sha256": "cd99175fe3efbeca00774abaf09dedaaa0978d085b68cb4c2d0fa8fe4d4e7036"
     },
     {
       "path": "src/_lcm/solution/retained_buffers.py",
-      "sha256": "139389ee4e5160c0610b087001abeed9868dda7a6f076fe57a19c13af182df89"
+      "sha256": "ff70f53aa60b37acda0e851d7ee319b7d3d0c935ab1013227f671b44d39610af"
     },
     {
       "path": "src/_lcm/solution/structural_blueprints.py",
