@@ -38,11 +38,11 @@ type _Spans = tuple[tuple[int, int], ...]
 class DeviceBufferFootprint:
     """A union of half-open payload address intervals on each actual device."""
 
-    spans: Mapping[jax.Device, _Spans]
+    spans: MappingProxyType[jax.Device, _Spans]
     """Merged address intervals; CPU0 and GPU0 remain different device keys."""
 
     def __post_init__(self) -> None:
-        """Own normalized immutable interval metadata without retaining arrays."""
+        """Merge each device's caller intervals into normalized spans."""
         object.__setattr__(
             self,
             "spans",
@@ -82,7 +82,9 @@ def measure_buffer_footprint(*, tree: FootprintTree) -> DeviceBufferFootprint:
                     (start, start + size)
                 )
     return DeviceBufferFootprint(
-        spans={device: tuple(spans) for device, spans in spans_by_device.items()}
+        spans=MappingProxyType(
+            {device: tuple(spans) for device, spans in spans_by_device.items()}
+        )
     )
 
 
@@ -104,7 +106,9 @@ def union_buffer_footprints(
             spans = footprint.spans.get(device, ())
             spans_by_device.setdefault(device, []).extend(spans)
     return DeviceBufferFootprint(
-        spans={device: tuple(spans) for device, spans in spans_by_device.items()}
+        spans=MappingProxyType(
+            {device: tuple(spans) for device, spans in spans_by_device.items()}
+        )
     )
 
 
@@ -184,7 +188,9 @@ def require_transfer_headroom(
                 "Transfer destination and scratch bytes must be nonnegative integers."
             )
     resident = resident_bytes_by_device(
-        live=live, arguments=DeviceBufferFootprint(spans={}), devices=devices
+        live=live,
+        arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
+        devices=devices,
     )
     for device in devices:
         required = (

@@ -98,7 +98,7 @@ def _dispatch(
         else SimulationDispatchContext(
             live_footprint=_empty_footprint,
             budget_devices=(jax.devices()[0],),
-            axis_widths={"subject": reserved},
+            axis_widths=MappingProxyType({"subject": reserved}),
         )
     )
     return _dispatch_widths(

@@ -121,7 +121,7 @@ def test_last_device_retained_owner_refuses_before_numerical_dispatch(
                     tree=(retained, source)
                 ),
                 budget_devices=devices,
-                axis_widths={"subject": 3},
+                axis_widths=MappingProxyType({"subject": 3}),
             ),
         )
     assert calls == []

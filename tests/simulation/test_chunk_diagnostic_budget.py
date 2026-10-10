@@ -420,6 +420,6 @@ def test_diagnostic_bindings_lower_actual_operations_without_allocating(
     with pytest.raises(ExecutionPlanningError, match="abstract"):
         diagnostics.DiagnosticBinding(
             function=diagnostics.owned_value_nan_count,
-            arguments={"value": value, "in_regime": mask},
+            arguments=MappingProxyType({"value": value, "in_regime": mask}),
             subject_arg_names=("value", "in_regime"),
         )

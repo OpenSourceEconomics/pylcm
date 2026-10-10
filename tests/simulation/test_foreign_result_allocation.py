@@ -249,7 +249,7 @@ def test_generous_budget_foreign_copy_is_valid_and_preserves_originals() -> None
     )
     complete = resident_bytes_by_device(
         live=copied,
-        arguments=DeviceBufferFootprint(spans={}),
+        arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
         devices=tuple(copied.spans),
     )
     assert dict(exclusive) == dict(complete)

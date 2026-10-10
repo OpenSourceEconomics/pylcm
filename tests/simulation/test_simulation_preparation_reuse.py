@@ -7,6 +7,7 @@ import weakref
 from collections import Counter
 from collections.abc import Generator
 from contextlib import contextmanager
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -141,7 +142,7 @@ def test_operand_low_budget_refuses_before_placement(
             value_reads=(),
             devices=(device,),
             budget_bytes=1,
-            live_footprint=DeviceBufferFootprint(spans={}),
+            live_footprint=DeviceBufferFootprint(spans=MappingProxyType({})),
             budget_devices=(device,),
         )
     assert attempts == []
@@ -399,7 +400,7 @@ def test_operand_admission_rechecks_growing_live_inventory(
     }
     first = operand_placement.place_simulation_arguments(
         **kwargs,
-        live_footprint=DeviceBufferFootprint(spans={}),
+        live_footprint=DeviceBufferFootprint(spans=MappingProxyType({})),
     )
     np.testing.assert_array_equal(first["state"], value)
     assert len(attempts) == 1
@@ -423,7 +424,7 @@ def test_operand_admission_exact_boundary_and_occurrences(delta: int) -> None:
         "devices": (device,),
         "budget_bytes": required + delta,
         "budget_devices": (device,),
-        "live_footprint": DeviceBufferFootprint(spans={}),
+        "live_footprint": DeviceBufferFootprint(spans=MappingProxyType({})),
     }
     if delta < 0:
         with pytest.raises(ExecutionPlanningError, match="before allocation"):

@@ -1,5 +1,6 @@
 """Projected residency preserves byte accounting without revisiting other devices."""
 
+from types import MappingProxyType
 from typing import cast
 from unittest.mock import Mock
 
@@ -55,9 +56,11 @@ def test_projected_union_matches_independent_byte_oracle(seed: int) -> None:
             bounds = rng.integers(0, 64, size=(12, 2))
             spans[device] = tuple((int(min(a, b)), int(max(a, b))) for a, b in bounds)
         sources.append(spans)
-    footprints = tuple(residency.DeviceBufferFootprint(spans=s) for s in sources)
+    footprints = tuple(
+        residency.DeviceBufferFootprint(spans=MappingProxyType(s)) for s in sources
+    )
     arguments = residency.DeviceBufferFootprint(
-        spans=dict.fromkeys(devices, ((10, 35), (30, 50)))
+        spans=MappingProxyType(dict.fromkeys(devices, ((10, 35), (30, 50))))
     )
     for selected in ((), devices[:1], devices[1:], devices):
         projected = residency.union_buffer_footprints(
@@ -83,7 +86,9 @@ def test_budget_projection_keeps_foreign_gpu_and_full_cpu_inventory() -> None:
     gpu = _device(platform="gpu", index=0)
     other_gpu = _device(platform="gpu", index=1)
     live = residency.DeviceBufferFootprint(
-        spans={cpu: ((0, 200),), gpu: ((0, 30),), other_gpu: ((0, 50),)}
+        spans=MappingProxyType(
+            {cpu: ((0, 200),), gpu: ((0, 30),), other_gpu: ((0, 50),)}
+        )
     )
     budget_devices = residency.resolve_budget_devices(
         execution_devices=(gpu,), live=live
@@ -104,10 +109,10 @@ def test_budget_snapshot_interval_work_excludes_unselected_history(
     """Count normalized intervals instead of asserting noisy wall-clock speed."""
     cpu = _device(platform="cpu", index=0)
     gpu = _device(platform="gpu", index=0)
-    live = residency.DeviceBufferFootprint(spans={gpu: ((10, 20),)})
+    live = residency.DeviceBufferFootprint(spans=MappingProxyType({gpu: ((10, 20),)}))
     scope = _scope(devices=(gpu,), inputs=live)
     scope.outputs = residency.DeviceBufferFootprint(
-        spans={cpu: tuple((i * 4, i * 4 + 2) for i in range(history))}
+        spans=MappingProxyType({cpu: tuple((i * 4, i * 4 + 2) for i in range(history))})
     )
     merge = Mock(wraps=residency._merge_spans)
     monkeypatch.setattr(residency, "_merge_spans", merge)
@@ -122,7 +127,10 @@ def test_budget_snapshot_interval_work_excludes_unselected_history(
 def test_budget_snapshot_rereads_live_roots_after_previous_snapshot() -> None:
     """A previous metadata query neither owns arrays nor caches later live roots."""
     device = jax.devices()[0]
-    scope = _scope(devices=(device,), inputs=residency.DeviceBufferFootprint(spans={}))
+    scope = _scope(
+        devices=(device,),
+        inputs=residency.DeviceBufferFootprint(spans=MappingProxyType({})),
+    )
     first = jnp.arange(2, dtype=jnp.int32)
     scope.hold(tree=first)
     previous = scope.budget_snapshot()
@@ -130,7 +138,7 @@ def test_budget_snapshot_rereads_live_roots_after_previous_snapshot() -> None:
     second = jnp.arange(5, dtype=jnp.int32)
     scope.hold(tree=second)
     current = scope.budget_snapshot()
-    empty = residency.DeviceBufferFootprint(spans={})
+    empty = residency.DeviceBufferFootprint(spans=MappingProxyType({}))
     assert dict(
         residency.resident_bytes_by_device(
             live=previous, arguments=empty, devices=(device,)
@@ -149,7 +157,9 @@ def test_run_passes_projected_live_callback_to_host_operations(
     """The profiled operation sees current budget metadata, not foreign history."""
     cpu = _device(platform="cpu", index=0)
     gpu = _device(platform="gpu", index=0)
-    live = residency.DeviceBufferFootprint(spans={cpu: ((0, 200),), gpu: ((0, 30),)})
+    live = residency.DeviceBufferFootprint(
+        spans=MappingProxyType({cpu: ((0, 200),), gpu: ((0, 30),)})
+    )
     scope = _scope(devices=(gpu,), inputs=live)
     dispatch = Mock(return_value=None)
     monkeypatch.setattr(ProfiledSimulationOperations, "dispatch", dispatch)

@@ -82,7 +82,9 @@ def _materialized(*, n_subjects: int, program: CoreProgram | None = None):
             flat_params={},
             period=0,
             ages=None,
-            call_arguments={"state": jnp.zeros(n_subjects, dtype=jnp.float32)},
+            call_arguments=MappingProxyType(
+                {"state": jnp.zeros(n_subjects, dtype=jnp.float32)}
+            ),
         ),
     )
 

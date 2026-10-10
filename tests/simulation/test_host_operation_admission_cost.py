@@ -268,7 +268,7 @@ def _footprint(
     *, device: jax.Device, spans: tuple[tuple[int, int], ...]
 ) -> DeviceBufferFootprint:
     """Bind explicit address ranges on one actual device."""
-    return DeviceBufferFootprint(spans={device: spans})
+    return DeviceBufferFootprint(spans=MappingProxyType({device: spans}))
 
 
 def test_folding_a_new_owner_yields_the_full_re_merge_exactly() -> None:
@@ -361,7 +361,7 @@ class _ChargeWitness:
         device = scope.devices[0]
         charged = resident_bytes_by_device(
             live=charged_footprint,
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=scope.devices,
         )[device]
         owner = scope.period_owner
@@ -376,7 +376,7 @@ class _ChargeWitness:
                 footprints=tuple(measure_buffer_footprint(tree=tree) for tree in trees),
                 devices=scope.devices,
             ),
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=scope.devices,
         )[device]
         self.samples.append((charged, fresh))

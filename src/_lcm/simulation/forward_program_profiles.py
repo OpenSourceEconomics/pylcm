@@ -69,17 +69,16 @@ class AbstractSimulationProfile:
     """
 
     executable: jax.stages.Compiled
-    arguments: Mapping[ReferenceName, ShapeDtypePytree]
+    arguments: MappingProxyType[ReferenceName, ShapeDtypePytree]
     memory: CompilerMemoryReservation
 
     def __post_init__(self) -> None:
-        """Reject caller owners and snapshot only their immutable descriptors."""
+        """Reject caller owners; a profile keeps only immutable descriptors."""
         if any(
             not isinstance(leaf, jax.ShapeDtypeStruct)
             for leaf in jax.tree.leaves(self.arguments)
         ):
             raise ExecutionPlanningError("Forward profiles require abstract arguments.")
-        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -396,12 +395,14 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             indices = jax.ShapeDtypeStruct(
                 (n_subjects,), indices.dtype, sharding=subject
             )
-        decoder_arguments = {
-            "flat_indices": _placed_abstract(
-                leaf=indices, sharding=subject if indices.ndim else shared
-            ),
-            "grids": _shared_tree(tree=base.actions, devices=devices),
-        }
+        decoder_arguments = MappingProxyType(
+            {
+                "flat_indices": _placed_abstract(
+                    leaf=indices, sharding=subject if indices.ndim else shared
+                ),
+                "grids": _shared_tree(tree=base.actions, devices=devices),
+            }
+        )
         subject_arg_names = ("flat_indices",) if indices.ndim else ()
         if wave is None:
             decoded = runtime.operations.prepare_abstract(
@@ -634,7 +635,9 @@ def _profile_program(
     return ForwardProgramProfile(
         executable=cast("jax.stages.Compiled", compiled.executable),
         # Preparation refused any argument leaf that is not a shape descriptor.
-        arguments=cast("Mapping[ReferenceName, ShapeDtypePytree]", arguments),
+        arguments=MappingProxyType(
+            dict(cast("Mapping[ReferenceName, ShapeDtypePytree]", arguments))
+        ),
         memory=compiled.memory,
     )
 
