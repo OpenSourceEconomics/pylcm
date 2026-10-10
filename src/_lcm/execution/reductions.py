@@ -105,19 +105,23 @@ class ReductionSemantics(ReductionDeclaration, Protocol):
     from a `stakeholder_template` where the others take a `value_template`.
     """
 
-    def initialize(self, **template: FloatND) -> object:
+    def initialize(self, **template: FloatND) -> PytreeValue:
         """Return the empty state, shaped and typed like the family's template."""
         ...
 
-    def add(self, *, accumulator: object, **block: object) -> object:
+    def add(self, *, accumulator: PytreeValue, **block: PytreeValue) -> PytreeValue:
         """Fold one block into `accumulator` and return the new state."""
         ...
 
-    def merge(self, *, left: object, right: object, **binding: object) -> object:
+    def merge(
+        self, *, left: PytreeValue, right: PytreeValue, **binding: PytreeValue
+    ) -> PytreeValue:
         """Combine two partial states into the state covering both their blocks."""
         ...
 
-    def finalize(self, *, accumulator: object, **binding: object) -> object:
+    def finalize(
+        self, *, accumulator: PytreeValue, **binding: PytreeValue
+    ) -> PytreeValue:
         """Publish the reduced result of a complete state."""
         ...
 

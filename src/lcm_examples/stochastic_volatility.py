@@ -35,6 +35,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 
 
@@ -150,7 +151,7 @@ def get_params(
     interest_rate: float = 0.03,
     discount_factor: float = 0.95,
     persistence: float = 0.9,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Parameters for the stochastic-volatility model.
 
     The per-regime income sigmas are baked into the process at construction; only the

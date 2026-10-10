@@ -9,18 +9,19 @@ and `dags` see the function they stand in for.
 """
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, TypeVar, cast
+from typing import TypeVar, cast
 
-from _lcm.typing import ArrayTree
-from lcm.typing import ReferenceName
+from _lcm.typing import ArrayTree, PytreeValue
+from lcm.typing import ReferenceName, UserFunction
 
 ReturnType = TypeVar("ReturnType")
 
 # Names `functools.wraps` copies, minus the deferred annotations (PEP 649):
-# an adapter's own `(*args: Any, **kwargs: Any)` annotations must stay in force
-# so that the beartype claw never enforces user-model types on a forwarder.
+# an adapter's own `(*args: PytreeValue, **kwargs: PytreeValue)` annotations
+# must stay in force so that the beartype claw never enforces user-model types
+# on a forwarder.
 _WRAPPER_ASSIGNMENTS: tuple[str, ...] = (
     "__module__",
     "__name__",
@@ -180,7 +181,7 @@ def publish_signature(
     object.__setattr__(target, "__signature__", signature)
 
 
-def get_union_of_args(list_of_functions: list[Callable[..., Any]]) -> set[str]:
+def get_union_of_args(list_of_functions: Sequence[UserFunction]) -> set[str]:
     """Return the union of arguments of a list of functions.
 
     Args:
@@ -279,7 +280,7 @@ class _WrappedCallable[R]:
             self, "__annotations__", dict(type(self).__call__.__annotations__)
         )
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: PytreeValue, **kwargs: PytreeValue) -> R:
         raise NotImplementedError
 
 
@@ -294,7 +295,7 @@ class _KeywordOnlyAdapter[R](_WrappedCallable[R]):
     enforce: bool
     """Whether an argument `func` does not take is an error."""
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: PytreeValue, **kwargs: PytreeValue) -> R:
         if args:
             raise ValueError(
                 (
@@ -346,7 +347,7 @@ class _PositionalAdapter[R](_WrappedCallable[R]):
     accepts_variadic: bool
     """Whether `func` takes `*args` or `**kwargs`, so no argument count is too many."""
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: PytreeValue, **kwargs: PytreeValue) -> R:
         parameters = self.original_signature.parameters
         if len(args) + len(kwargs) > len(parameters) and not self.accepts_variadic:
             raise ValueError("Too many arguments provided.")

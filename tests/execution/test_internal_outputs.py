@@ -471,8 +471,8 @@ def test_a_non_array_internal_input_leaf_is_refused_by_name() -> None:
     """A handed-over leaf without a shape and a dtype is refused, naming the leaf."""
     with pytest.raises(ValueError, match="shape and a dtype"):
         assert_internal_inputs(
-            arguments={"upstream_value": jnp.zeros((3,), dtype=jnp.float32)},
-            templates={"upstream_value": "not an array"},
+            arguments={"upstream_value": 3},
+            templates={"upstream_value": jax.ShapeDtypeStruct((), jnp.int32)},
             label="consumer",
         )
 

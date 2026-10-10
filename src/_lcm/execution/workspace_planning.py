@@ -13,9 +13,11 @@ import math
 import operator
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
+from enum import Enum, auto
 from types import MappingProxyType
 from typing import Protocol, SupportsIndex, cast
 
+from _lcm.execution.compiler_memory import CompilerMemoryReport
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import WidthSearch, WidthSearchPolicy
@@ -25,7 +27,14 @@ _logger = logging.getLogger("lcm")
 # The policy a caller who declares none plans under: today's ranked walk.
 _EXHAUSTIVE_POLICY = WidthSearchPolicy()
 
-_MISSING = object()
+
+class _Missing(Enum):
+    """Marks a field a compiler memory report does not carry."""
+
+    MISSING = auto()
+
+
+_MISSING = _Missing.MISSING
 
 # The single candidate of a program that declares no width axis.
 _NO_WIDTHS: MappingProxyType[str, int] = MappingProxyType({})
@@ -48,7 +57,7 @@ BOOTSTRAP_BLOCK_CAP = BOOTSTRAP_WIDTH_CAP * BOOTSTRAP_TILE_WIDTH_CAP
 class _MemoryAnalyzable(Protocol):
     """Compiler result exposing JAX-style memory analysis."""
 
-    def memory_analysis(self) -> object:
+    def memory_analysis(self) -> CompilerMemoryReport:
         """Return compiler workspace statistics."""
         ...
 
@@ -314,7 +323,8 @@ def plan_workspace_bounded[Compiled](
     resident_bytes_for: Callable[[Compiled], int] | None = None,
     policy: WidthSearchPolicy = _EXHAUSTIVE_POLICY,
     hint: Mapping[str, int] | None = None,
-    cached_analysis_for: Callable[[Mapping[str, int]], object | None] | None = None,
+    cached_analysis_for: Callable[[Mapping[str, int]], CompilerMemoryReport | None]
+    | None = None,
     covered_axes: Collection[str] = (),
 ) -> WorkspacePlan[Compiled]:
     """Search a bounded number of widths for one the budget admits.
@@ -462,10 +472,10 @@ class _Evaluation[Compiled]:
 class _CachedReport:
     """A compiler report the caller already holds, shaped like an executable."""
 
-    def __init__(self, *, analysis: object) -> None:
+    def __init__(self, *, analysis: CompilerMemoryReport) -> None:
         self.analysis = analysis
 
-    def memory_analysis(self) -> object:
+    def memory_analysis(self) -> CompilerMemoryReport:
         """Return the report the caller handed the planner."""
         return self.analysis
 
@@ -830,7 +840,9 @@ class _BoundedWidthSearch[Compiled]:
     resident: int
     resident_bytes_for: Callable[[Compiled], int] | None
     policy: WidthSearchPolicy
-    cached_analysis_for: Callable[[Mapping[str, int]], object | None] | None
+    cached_analysis_for: (
+        Callable[[Mapping[str, int]], CompilerMemoryReport | None] | None
+    )
     covered_axes: Collection[str]
 
     def run(self, *, hint: Mapping[str, int] | None) -> WorkspacePlan[Compiled]:
@@ -1490,7 +1502,7 @@ def compiler_peak_bytes[Compiled](
 
 def _compiler_memory_analysis[Compiled](
     *, compiled: Compiled, widths: Mapping[str, int]
-) -> object:
+) -> CompilerMemoryReport:
     """Read an executable report once without numerical dispatch."""
     try:
         analyze = cast("_MemoryAnalyzable", compiled).memory_analysis
@@ -1507,7 +1519,9 @@ def _compiler_memory_analysis[Compiled](
         raise ExecutionPlanningError(msg) from exc
 
 
-def _allocation_records(*, analysis: object) -> tuple[object, ...]:
+def _allocation_records(
+    *, analysis: CompilerMemoryReport
+) -> tuple[CompilerMemoryReport, ...]:
     """Keep fields paired within their record before reducing across devices."""
     if _peak_field(record=analysis) is not _MISSING:
         return (analysis,)
@@ -1522,7 +1536,7 @@ def _allocation_records(*, analysis: object) -> tuple[object, ...]:
     return records
 
 
-def _allocation_record(*, record: object) -> CompilerMemoryRecord:
+def _allocation_record(*, record: CompilerMemoryReport) -> CompilerMemoryRecord:
     """Validate a scalar device record and its separately reported host space."""
     names = (
         "peak_memory_in_bytes",
@@ -1567,7 +1581,7 @@ def _fail_if_host_allocations(*, values: Mapping[str, int]) -> None:
         raise ValueError("Mixed host/default allocation spaces are unsupported.")
 
 
-def _peak_from_analysis(*, analysis: object) -> int:
+def _peak_from_analysis(*, analysis: CompilerMemoryReport) -> int:
     """Normalize one JAX-style record or nonempty per-device record collection."""
     peak = _peak_field(record=analysis)
     if peak is not _MISSING:
@@ -1586,7 +1600,7 @@ def _peak_from_analysis(*, analysis: object) -> int:
     return max(_peak_from_device_record(record=record) for record in records)
 
 
-def _peak_from_device_record(*, record: object) -> int:
+def _peak_from_device_record(*, record: CompilerMemoryReport) -> int:
     """Read the required peak field from one per-device analysis record."""
     peak = _peak_field(record=record)
     if peak is _MISSING:
@@ -1595,14 +1609,14 @@ def _peak_from_device_record(*, record: object) -> int:
     return _normalize_peak_field(value=peak)
 
 
-def _peak_field(*, record: object) -> object:
+def _peak_field(*, record: CompilerMemoryReport) -> CompilerMemoryReport:
     """Read a peak field from an attribute record or a string-keyed mapping."""
     if isinstance(record, Mapping):
         return record.get("peak_memory_in_bytes", _MISSING)
     return getattr(record, "peak_memory_in_bytes", _MISSING)
 
 
-def _normalize_peak_field(*, value: object) -> int:
+def _normalize_peak_field(*, value: CompilerMemoryReport) -> int:
     """Normalize one integral peak or nonempty collection of per-device peaks."""
     if isinstance(value, Mapping):
         peaks = tuple(value.values())
@@ -1616,7 +1630,7 @@ def _normalize_peak_field(*, value: object) -> int:
     return max(_non_negative_bytes(value=peak) for peak in peaks)
 
 
-def _non_negative_bytes(*, value: object) -> int:
+def _non_negative_bytes(*, value: CompilerMemoryReport) -> int:
     """Accept integer-like byte counts while rejecting booleans and lossy casts."""
     if isinstance(value, bool):
         msg = "A compiler memory counter must be an integer byte count, not bool."

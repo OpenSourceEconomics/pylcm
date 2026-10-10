@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "7ea000fb261b9c171198de47d937b803b2334622d73559e6e53d01e493fcf121",
+  "source_inventory_sha256": "6ae7b9f5fc7480c98b95ace32fa58b867cd0ffaa13c80da8f17852e3affb8793",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -30,7 +30,7 @@
     },
     {
       "path": "src/_lcm/execution/abstract_program_inputs.py",
-      "sha256": "3363c3449c71a0e965877633eb8dba2db2532f2ca30ae881b5e1c6e88cc3c1bb"
+      "sha256": "1ade513e829c0bd8e053b90ab312e53f7b51a5a4da6ae1000079c5684a8017e4"
     },
     {
       "path": "src/_lcm/execution/compiler_inputs.py",
@@ -38,27 +38,27 @@
     },
     {
       "path": "src/_lcm/execution/core_program.py",
-      "sha256": "ef0f34d005c517a2ba7543ff66f70df8f90dea93c976288c6d6c0e68f521f5ff"
+      "sha256": "5a4fa83b1710399974251168451b4cea637bd76f013e03c26b24d07de5361435"
     },
     {
       "path": "src/_lcm/execution/eager_core.py",
-      "sha256": "0417cdf295ccf1ba73b42647f8be5241ce7c6bdeef28d9b83c47d30b3130dfa5"
+      "sha256": "d0049c2a38d3b77abc1c4cff1300f20ca034dff37b77edf7183537471d1cdb90"
     },
     {
       "path": "src/_lcm/execution/footprint.py",
-      "sha256": "1de0c905590726f9df472165f7dfbf7b118e09715a26c56f4dcf7958fe55299d"
+      "sha256": "db2e6d1c0f36f37d1aa73274a2903234b202410c2912f63bf765132d9c425c60"
     },
     {
       "path": "src/_lcm/execution/internal_outputs.py",
-      "sha256": "258a24fbb34cd7d9872a6570a48094c6ada2142de86b3d137b0ed1bbc453dfd6"
+      "sha256": "295ef18576013685f0dd70fe6f6ceb42acd777ca30d1daa397ab7a43191bae32"
     },
     {
       "path": "src/_lcm/execution/liveness.py",
-      "sha256": "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada"
+      "sha256": "056bda4d48f26768ed8615925ce8ff89665bb8eed94b59d69f02701a95943dff"
     },
     {
       "path": "src/_lcm/execution/output_layout.py",
-      "sha256": "372bdc8cd14882d3e8932f01553a0eaf75640eb605228e6fe4f96a2543ddf61e"
+      "sha256": "06c64fdba2a77e10f1ae8ac6a2338edd090fa7727bcf9fb6647469ef59fcea6e"
     },
     {
       "path": "src/_lcm/execution/pending_work.py",
@@ -66,19 +66,19 @@
     },
     {
       "path": "src/_lcm/execution/runtime_sharding.py",
-      "sha256": "0e7f276d6abad69469ba42707a4dcfc78e9eefd3fb78ed9aad7942559553df9a"
+      "sha256": "13f6b68846532c6631f27db1c84b47f6c866a992e037dfd8e40c791c16f50f90"
     },
     {
       "path": "src/_lcm/execution/scheduler.py",
-      "sha256": "10dffccdd836331e1ea3ef8beab0d1c0d130ff847bb3d8ed7c118e8fd8decdb8"
+      "sha256": "b5eb17b3df8fcaf5ab06ee7abf8703ce2b9ff589d596c0a0ed1d462d7c4f3a52"
     },
     {
       "path": "src/_lcm/execution/value_transfer.py",
-      "sha256": "8a15d6260072127e1930bfcea1d0cc3deb7af63eef8ee29dbaa77bc1f90a2bd1"
+      "sha256": "a1cc299560699825518bef7ee3d904543853b916a450e49b075e23d2367bd967"
     },
     {
       "path": "src/_lcm/execution/workspace_planning.py",
-      "sha256": "2709a680429d3527c970043f27c091dc9d0ef1d9d4b7244eb97bb25c2322e3bd"
+      "sha256": "438126621214bcc3c8ebe360ac334caabe72333adfaaa5368ae8ee27ffce1026"
     },
     {
       "path": "src/_lcm/grids/__init__.py",
@@ -90,7 +90,7 @@
     },
     {
       "path": "src/_lcm/grids/continuous.py",
-      "sha256": "290117471f35b55c9a610ba70bb0eee581775a3211a77d9d5deacb507c8b9b3a"
+      "sha256": "a2b2c4f6a956e473193b46d7ba451a9e93f5c40fbb57130ecc2aa067e444c16a"
     },
     {
       "path": "src/_lcm/grids/coordinates.py",
@@ -350,7 +350,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "f357b6832586843080707dbfb73ac9edbe420a4095fa952d53487bb71cdbb38f"
+      "sha256": "c027178eadd1a065137df2162aef7be26707fef81b6e7c243140dc67906459c0"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -434,15 +434,15 @@
     },
     {
       "path": "src/_lcm/utils/containers.py",
-      "sha256": "a2b0346ef6592a349e9697d4ee0d7d43c4ae1ddd80b9b1d4bfe1bdd0b86bb35e"
+      "sha256": "80f08f16c256512daa43b38bf9a6366a01413325607ecb2297aca6f1343f08e6"
     },
     {
       "path": "src/_lcm/utils/dispatchers.py",
-      "sha256": "a1db00ec0ce958e52c68cc3b1f8363624d49d19724610aeb96c1b4c3d4479faa"
+      "sha256": "3d5731223dc0a93f94c3ebdff9b89be3c2b6db2de82e80e5413de8bebab240d8"
     },
     {
       "path": "src/_lcm/utils/functools.py",
-      "sha256": "b8af0284bc4c155126d9254de5a487626e9b8d34a96806e4a9fae271225925b0"
+      "sha256": "7b584e236071ff9a7dfaaf1bd3abbe801853ad3e0592a7f40322aa530f9040b3"
     },
     {
       "path": "src/_lcm/utils/logging.py",

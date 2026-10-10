@@ -20,9 +20,22 @@ from _lcm.execution.core_program import (
     ResolvedCoreProgram,
     _topological_program_order,
 )
-from _lcm.typing import PytreeValue, ShapeDtypePytree
+from _lcm.typing import DataclassInstance, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
+
+# Shape, dtype name and weak typing of one array leaf: what a consumer traces against.
+type _LeafSignature = tuple[tuple[int, ...], str, bool]
+
+# A published output tree with every array leaf replaced by its signature.
+type _SignatureTree = (
+    _LeafSignature
+    | tuple[_SignatureTree, ...]
+    | list[_SignatureTree]
+    | Mapping[str, _SignatureTree]
+    | DataclassInstance
+    | None
+)
 
 
 # The ordering lives beside the graph validation that needs it, and `core_program`
@@ -145,7 +158,10 @@ def internal_input_templates(
 
 
 def assert_internal_inputs(
-    *, arguments: Mapping[str, object], templates: Mapping[str, object], label: str
+    *,
+    arguments: Mapping[ReferenceName, PytreeValue],
+    templates: Mapping[ReferenceName, ShapeDtypePytree],
+    label: str,
 ) -> None:
     """Fail when a handed-over internal input departs from its declared template."""
     for name, template in templates.items():
@@ -227,7 +243,7 @@ def _declared_output(
 
 def _published_signature(
     *, record: ResolvedProducer, spec: InternalOutputSpec
-) -> object:
+) -> _SignatureTree:
     """Return the tracing-relevant array metadata tree a label publishes."""
     return jax.tree.map(
         _leaf_signature,
@@ -240,7 +256,7 @@ def _published_signature(
     )
 
 
-def _leaf_signature(leaf: object) -> tuple[tuple[int, ...], str, bool]:
+def _leaf_signature(leaf: PytreeValue | ShapeDtypePytree) -> _LeafSignature:
     """Return shape, dtype and weak typing, which govern consumer tracing.
 
     Weak typing is not decoration: a weakly typed leaf takes the other operand's

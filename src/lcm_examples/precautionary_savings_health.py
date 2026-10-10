@@ -27,6 +27,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 
 
@@ -178,7 +179,7 @@ def get_model(retirement_age: int = 24) -> Model:
     )
 
 
-def get_params(retirement_age: int = 24) -> dict:
+def get_params(retirement_age: int = 24) -> dict[str, UserParamsNode]:
     """Get default parameters for the health model.
 
     Args:

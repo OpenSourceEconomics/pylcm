@@ -135,7 +135,7 @@ class _GraphKernel:
         *,
         compiled_cores: Mapping[str, object],
         state_action_space: object,
-        next_regime_to_V_arr: Mapping[str, object],
+        next_regime_to_V_arr: Mapping[str, FloatND],
         next_regime_to_continuation: Mapping[str, object],
         flat_params: Mapping[str, object],
         period: int,

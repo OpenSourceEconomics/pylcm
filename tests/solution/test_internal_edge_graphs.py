@@ -40,7 +40,7 @@ from _lcm.execution.core_program import (
     InternalOutputSpec,
 )
 from _lcm.execution.internal_outputs import topological_program_order
-from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.solution.period_replay import replay_period
 from _lcm.typing import FlatParams, FloatND, PytreeValue
@@ -217,7 +217,7 @@ class _GraphKernel:
         *,
         compiled_cores: Mapping[str, Any],
         state_action_space: object,
-        next_regime_to_V_arr: Mapping[str, object],
+        next_regime_to_V_arr: Mapping[str, FloatND],
         next_regime_to_continuation: Mapping[str, object],
         flat_params: FlatParams,
         period: int,
@@ -309,7 +309,7 @@ def _program(
     builder: CoreArgumentBuilder,
     internal_inputs: Mapping[str, InternalInputRef],
     internal_outputs: tuple[InternalOutputSpec, ...],
-    output_roles: object,
+    output_roles: OutputRoleTree,
     planned: bool,
 ) -> CoreProgram:
     """Declare one program of a test graph, dense unless it streams candidates."""

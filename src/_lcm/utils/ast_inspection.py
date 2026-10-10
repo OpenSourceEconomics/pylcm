@@ -3,13 +3,12 @@
 import ast
 import inspect
 import textwrap
-from collections.abc import Callable
 
-from lcm.typing import ParameterName, ReferenceName
+from lcm.typing import ParameterName, ReferenceName, UserFunction
 
 
 def time_index_names(
-    *, func: Callable, array_param_name: ParameterName
+    *, func: UserFunction, array_param_name: ParameterName
 ) -> frozenset[str]:
     """Find visible age/period reads even in computed or multiple subscripts."""
     sources = getattr(inspect.unwrap(func), "__lcm_sources__", None)
@@ -35,7 +34,7 @@ def time_index_names(
 
 def _get_func_indexing_params(
     *,
-    func: Callable,
+    func: UserFunction,
     array_param_name: ParameterName,
 ) -> list[str]:
     """Return indexing parameter names by inspecting array subscripts.
@@ -129,7 +128,7 @@ def _get_func_indexing_params(
     return []
 
 
-def _source_of(func: Callable) -> str | None:
+def _source_of(func: UserFunction) -> str | None:
     """Return the source that describes `func`'s call, or `None` if unavailable.
 
     A callable that `inspect.getsource` cannot read is retried through its
@@ -147,7 +146,7 @@ def _source_of(func: Callable) -> str | None:
     return None
 
 
-def _display_name(func: Callable) -> str:
+def _display_name(func: UserFunction) -> str:
     """Return the name to use for `func` in error messages.
 
     A callable object has no `__name__`; naming its class is what lets the
@@ -225,7 +224,7 @@ def _extract_bare_names(slice_node: ast.expr) -> list[str] | None:
 
 
 def _indexing_params_of_sources(
-    *, sources: tuple[Callable, ...], array_param_name: ParameterName
+    *, sources: tuple[UserFunction, ...], array_param_name: ParameterName
 ) -> list[str]:
     """Return the indexing shared by every wrapped law that reads the array."""
     found = {

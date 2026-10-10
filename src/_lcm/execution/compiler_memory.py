@@ -4,6 +4,11 @@ import dataclasses
 import functools
 from typing import Any
 
+# A compiler memory report, one of its per-device records, or one of their fields.
+# Backends differ: an attribute record, a string-keyed mapping, or one record per
+# device; every reader validates the fields it reads.
+type CompilerMemoryReport = object  # noqa: PAN001 - JAX types `Compiled.memory_analysis()` as `Any`
+
 
 @dataclasses.dataclass(frozen=True)
 class CompilerMemoryBytes:
@@ -56,7 +61,7 @@ def compiler_memory_bytes(*, compiled: Any) -> CompilerMemoryBytes | None:
     )
 
 
-def _optional_bytes(*, stats: Any, name: str) -> int | None:
+def _optional_bytes(*, stats: CompilerMemoryReport, name: str) -> int | None:
     """Read one optional byte count off a backend memory-analysis object."""
     value = getattr(stats, name, None)
     return None if value is None else int(value)

@@ -27,7 +27,7 @@ from _lcm.execution.value_transfer import (
     resolve_value_transfer,
 )
 from _lcm.solution.backward_induction import _abstract_arguments_key
-from _lcm.typing import PytreeValue
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from tests.test_dropped_models_release_nested_functions import _live_nested_functions
 
 
@@ -44,7 +44,9 @@ def _identity(
     return payload, scalar
 
 
-def _program(arguments: dict[str, object]) -> MaterializedCoreProgram:
+def _program(
+    arguments: dict[str, PytreeValue | ShapeDtypePytree],
+) -> MaterializedCoreProgram:
     return MaterializedCoreProgram(
         name="main",
         function=_identity,
@@ -166,7 +168,7 @@ def test_canonical_array_and_descriptor_metadata_requires_no_new_trace(
     "value", [3, 3.0, np.int64(3), np.asarray([3.0], dtype=np.float64)]
 )
 def test_host_metadata_keeps_jax_dtype_and_weak_type_without_upload(
-    *, monkeypatch: pytest.MonkeyPatch, value: object
+    *, monkeypatch: pytest.MonkeyPatch, value: PytreeValue
 ) -> None:
     expected = jax.eval_shape(lambda item: item, value)
     layout = jax.sharding.SingleDeviceSharding(jax.devices()[0])

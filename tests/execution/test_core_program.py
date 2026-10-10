@@ -10,6 +10,7 @@ from typing import Literal, cast
 import jax
 import jax.numpy as jnp
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from numpy.testing import assert_array_equal
 
 from _lcm.execution.core_program import (
@@ -47,6 +48,7 @@ from _lcm.solution.backward_induction import (
     _build_continuation_templates,
     _resolve_value_input_transfer_plan,
 )
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.solvers import GridSearch
 from lcm.typing import ContinuousState, FloatND
 from tests.regime_building.test_collective_feasibility_is_shared import (
@@ -114,7 +116,7 @@ def _axis(
 def _program(
     *,
     axis: ReducedAxis | None = None,
-    arguments: Mapping[str, object] | None = None,
+    arguments: Mapping[str, PytreeValue | ShapeDtypePytree] | None = None,
     disposition: CoreExecutionDisposition = CoreExecutionDisposition.PLANNED,
     disposition_reason: str | None = None,
 ) -> MaterializedCoreProgram:
@@ -234,7 +236,7 @@ def _value_access(
 def _value_consumer_program(
     *,
     accesses: tuple[ValueRead, ...],
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, PytreeValue | ShapeDtypePytree],
 ) -> MaterializedCoreProgram:
     """Build a synthetic program around exact value-consumer declarations."""
     return MaterializedCoreProgram(
@@ -330,8 +332,8 @@ def test_value_input_planning_rejects_consistently_wrong_consumer_node() -> None
         ),
         pytest.param(
             "non-array-leaf",
-            TypeError,
-            "array-like leaf",
+            BeartypeCallHintParamViolation,
+            "parameter arguments",
             id="non-array-leaf",
         ),
     ],
@@ -354,14 +356,13 @@ def test_value_input_planning_independently_resolves_argument_leaf(
             ValueInputChannel.NEXT_REGIME_VALUE.value: {"target": object()},
         },
     }
-    program = _value_consumer_program(
-        accesses=(access,),
-        arguments=argument_variants[defect],
-    )
 
     with pytest.raises(error, match=message):
         _resolve_value_input_transfer_plan(
-            program=program,
+            program=_value_consumer_program(
+                accesses=(access,),
+                arguments=argument_variants[defect],  # ty: ignore[invalid-argument-type]
+            ),
             source_value_template=value,
             source=_SCHEDULED_SOURCE,
         )
@@ -763,7 +764,7 @@ def test_candidate_resolutions_preserve_width_order_identity_and_values() -> Non
 
 
 @pytest.mark.parametrize("invalid_width", [0, 7, True])
-def test_candidate_resolutions_validate_later_widths(invalid_width: object) -> None:
+def test_candidate_resolutions_validate_later_widths(invalid_width: int) -> None:
     """A valid first tile leaves every later tile subject to its axis contract."""
     with pytest.raises((TypeError, ValueError), match=r"[Tt]ile width"):
         resolve_core_program_candidates(
@@ -887,7 +888,7 @@ def test_unbudgeted_width_candidate_is_the_fixed_width() -> None:
     ("tile_width", "error", "message"),
     [
         (True, TypeError, "Tile width.*must be an integer"),
-        (1.5, TypeError, "Tile width.*must be an integer"),
+        (1.5, BeartypeCallHintParamViolation, "parameter tile_widths"),
         (0, ValueError, "Tile width.*must be positive"),
         (-1, ValueError, "Tile width.*must be positive"),
         (7, ValueError, "exceeds its product extent"),
@@ -895,7 +896,7 @@ def test_unbudgeted_width_candidate_is_the_fixed_width() -> None:
     ids=["bool", "float", "zero", "negative", "beyond-extent"],
 )
 def test_resolver_rejects_invalid_planner_widths(
-    *, tile_width: object, error: type[Exception], message: str
+    *, tile_width: int, error: type[Exception], message: str
 ) -> None:
     """A planner width outside the declared product is refused before lowering."""
     with pytest.raises(error, match=message):
@@ -906,7 +907,7 @@ def test_resolver_rejects_invalid_planner_widths(
 
 
 def test_program_and_resolution_snapshot_their_input_mappings() -> None:
-    raw_arguments: dict[str, object] = {
+    raw_arguments: dict[str, PytreeValue | ShapeDtypePytree] = {
         "first": jnp.asarray([0, 1]),
         "second": jnp.asarray([10, 20, 30]),
     }
@@ -984,7 +985,7 @@ def test_resolver_rejects_a_non_canonical_product_order() -> None:
     ("width", "error", "message"),
     [
         (True, TypeError, "width.*integer"),
-        (1.5, TypeError, "width.*integer"),
+        (1.5, BeartypeCallHintParamViolation, "parameter tile_widths"),
         (0, ValueError, "width.*positive"),
         (-1, ValueError, "width.*positive"),
         (7, ValueError, "width.*extent"),
