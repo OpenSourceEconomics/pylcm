@@ -535,7 +535,7 @@ def _convert_edge_params(
     required_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     reachability: ModelReachability | None = None,
     declarations_by_phase: Mapping[Phase, Transition] | None = None,
-) -> dict[str, _ConvertedParamsNode]:
+) -> MappingProxyType[str, _ConvertedParamsNode]:
     """Convert the Series leaves of one source's `edges` slots.
 
     A slot's key is the declaration path of the callable reading it, so that
@@ -610,7 +610,7 @@ def _convert_edge_params(
                 ),
             ),
         )
-    return converted
+    return MappingProxyType(converted)
 
 
 def _regime_param_periods(
@@ -1166,7 +1166,7 @@ def _resolve_categoricals(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_name: RegimeName | None,
-) -> dict[str, DiscreteGrid]:
+) -> MappingProxyType[str, DiscreteGrid]:
     """Build combined categorical lookup from model grids and regime overrides.
 
     Collect discrete state and action grids, then merge in the regime's
@@ -1215,7 +1215,7 @@ def _resolve_categoricals(
                     )
                     raise ValueError(msg)
                 grids[name] = grid
-    return grids
+    return MappingProxyType(grids)
 
 
 def _is_runtime_grid_param(*, func_name: FunctionName, user_regime: UserRegime) -> bool:
@@ -1326,7 +1326,7 @@ def _grid_level_mapping(*, name: str, grid: DiscreteGrid) -> _LevelMapping:
 def _build_level_mappings_for_param(
     *,
     indexing_params: list[str],
-    grids: dict[str, DiscreteGrid],
+    grids: Mapping[str, DiscreteGrid],
     ages: TimeAxis,
 ) -> tuple[_LevelMapping, ...]:
     """Build level mappings for `array_from_series` from indexing params.
@@ -1362,7 +1362,7 @@ def _build_level_mappings_for_param(
 def _build_outcome_mapping(
     *,
     func_name: FunctionName,
-    grids: dict[str, DiscreteGrid],
+    grids: Mapping[str, DiscreteGrid],
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
 ) -> _LevelMapping:
@@ -1622,7 +1622,7 @@ def _collect_state_names(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     initial_regimes: list[RegimeName],
-) -> set[str]:
+) -> frozenset[str]:
     """Collect all state names from initial regimes.
 
     Continuous stochastic processes count as states and are included.
@@ -1635,12 +1635,12 @@ def _collect_state_names(
     names: set[str] = set(PSEUDO_STATE_NAMES)
     for regime_name in set(initial_regimes):
         names.update(user_regimes[regime_name].states.keys())
-    return names
+    return frozenset(names)
 
 
 def _state_grids_with_carried_domains(
     states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
-) -> dict[StateName, Grid | AgeSpecializedGrid]:
+) -> MappingProxyType[StateName, Grid | AgeSpecializedGrid]:
     """Replace each carried-state declaration by its simulate-phase grid.
 
     A carried value (declared via `Phased(solve=..., simulate=Grid)`) is a
@@ -1650,16 +1650,18 @@ def _state_grids_with_carried_domains(
     `AgeSpecializedGrid` is passed through unchanged — it is a continuous state,
     so every consumer (all of which filter for `DiscreteGrid`) skips it.
     """
-    return {
-        name: cast("Grid", spec.simulate) if isinstance(spec, Phased) else spec
-        for name, spec in states.items()
-        if spec is not None
-    }
+    return MappingProxyType(
+        {
+            name: cast("Grid", spec.simulate) if isinstance(spec, Phased) else spec
+            for name, spec in states.items()
+            if spec is not None
+        }
+    )
 
 
 def _build_discrete_grid_lookup(
     user_regimes: Mapping[RegimeName, UserRegime],
-) -> dict[str, DiscreteGrid]:
+) -> MappingProxyType[str, DiscreteGrid]:
     """Collect all DiscreteGrid instances from states and actions across regimes.
 
     Args:
@@ -1691,7 +1693,7 @@ def _build_discrete_grid_lookup(
                             raise ValueError(msg)
                     else:
                         lookup[var_name] = grid
-    return lookup
+    return MappingProxyType(lookup)
 
 
 # Pseudo-function keys in the params template whose parameters are declared as a

@@ -35,7 +35,7 @@ from _lcm.params.processing import (
     find_param_candidates,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.regime_building.schedules import ProbabilityCell
+from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaw, RegimeLaws, bind_regime_law
 from _lcm.typing import (
     EconFunctionArg,
@@ -53,7 +53,14 @@ from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StateTransitionEntry
 from lcm.temporal import TimeVarying
-from lcm.transition import ByAge, JointTransition, StochasticTransition
+from lcm.transition import (
+    AgeCaseLaw,
+    ByAge,
+    JointTransition,
+    PhaseTransitionLaw,
+    StochasticTransition,
+    TargetLawCell,
+)
 from lcm.typing import ReferenceName, UserFunction, UserParams, UserParamsLeaf
 
 type Side = Literal["solve", "simulate"]
@@ -169,7 +176,7 @@ def _prune_regime_transition(
     regime: UserRegime,
     law: RegimeLaw,
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
-) -> tuple[object, dict[Side, frozenset[str]], frozenset[str]]:
+) -> tuple[RegimeTransitionLaw, MappingProxyType[Side, frozenset[str]], frozenset[str]]:
     """Remove zero cells, keeping a joint-lottery edge in both phases or neither.
 
     A joint kernel is declared once for both phases, so its edge can leave the
@@ -185,18 +192,19 @@ def _prune_regime_transition(
         consumed: set[str] = set()
         transition = _prune_law(
             law=law.transition,
-            side=None,
             regime_name=regime_name,
             regime=regime,
             fixed_flat=fixed_flat,
             consumed=consumed,
             protected=protected,
         )
-        removed: dict[Side, frozenset[str]] = {
-            side: _targets(law=law.transition, side=side)
-            - _targets(law=transition, side=side)
-            for side in ("solve", "simulate")
-        }
+        removed: MappingProxyType[Side, frozenset[str]] = MappingProxyType(
+            {
+                side: _targets(law=law.transition, side=side)
+                - _targets(law=transition, side=side)
+                for side in ("solve", "simulate")
+            }
+        )
         one_phase_joint = frozenset(regime.joint_transitions) & (
             removed["solve"] ^ removed["simulate"]
         )
@@ -235,15 +243,15 @@ def _states_covered_only_by_removed_joints(
     )
 
 
-def _joint_outputs(joints: _JointDeclarations) -> set[str]:
+def _joint_outputs(joints: _JointDeclarations) -> frozenset[str]:
     """Every state any kernel of `joints` produces, in either phase."""
-    return {
+    return frozenset(
         output
         for kernels in joints.values()
         for raw in kernels.values()
         for _, kernel in _joint_kernels(raw)
         for output in kernel.outputs
-    }
+    )
 
 
 def _trim_joint_transitions(
@@ -297,19 +305,17 @@ def _trim_joint_transitions(
 
 def _prune_law(
     *,
-    law: object,
-    side: Side | None,
+    law: RegimeTransitionLaw,
     regime_name: RegimeName,
     regime: UserRegime,
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     protected: frozenset[str],
-) -> object:
+) -> RegimeTransitionLaw:
     if isinstance(law, ByAge):
         return law.with_mapped_laws(
-            func=lambda case: _prune_law(
+            func=lambda case: _prune_case(
                 law=case,
-                side=side,
                 regime_name=regime_name,
                 regime=regime,
                 fixed_flat=fixed_flat,
@@ -317,9 +323,30 @@ def _prune_law(
                 protected=protected,
             )
         )
+    if law is None:
+        return None
+    return _prune_case(
+        law=law,
+        regime_name=regime_name,
+        regime=regime,
+        fixed_flat=fixed_flat,
+        consumed=consumed,
+        protected=protected,
+    )
+
+
+def _prune_case(
+    *,
+    law: AgeCaseLaw,
+    regime_name: RegimeName,
+    regime: UserRegime,
+    fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
+    consumed: set[str],
+    protected: frozenset[str],
+) -> AgeCaseLaw:
     if isinstance(law, Phased):
         return Phased(
-            solve=_prune_law(
+            solve=_prune_phase(
                 law=law.solve,
                 side="solve",
                 regime_name=regime_name,
@@ -328,7 +355,7 @@ def _prune_law(
                 consumed=consumed,
                 protected=protected,
             ),
-            simulate=_prune_law(
+            simulate=_prune_phase(
                 law=law.simulate,
                 side="simulate",
                 regime_name=regime_name,
@@ -340,34 +367,65 @@ def _prune_law(
         )
     if not isinstance(law, Mapping):
         return law
-    if side is None:
-        # A shared law can read phase-specific helpers, so its structural zeros
-        # must be proved independently in each phase.
-        solve = _prune_law(
-            law=law,
-            side="solve",
-            regime_name=regime_name,
-            regime=regime,
-            fixed_flat=fixed_flat,
-            consumed=consumed,
-            protected=protected,
-        )
-        simulate = _prune_law(
-            law=law,
-            side="simulate",
-            regime_name=regime_name,
-            regime=regime,
-            fixed_flat=fixed_flat,
-            consumed=consumed,
-            protected=protected,
-        )
-        return (
-            solve
-            if set(cast("Mapping[RegimeName, ProbabilityCell]", solve))
-            == set(cast("Mapping[RegimeName, ProbabilityCell]", simulate))
-            else Phased(solve=solve, simulate=simulate)
-        )
-    retained: dict[RegimeName, ProbabilityCell] = {}
+    # A shared law can read phase-specific helpers, so its structural zeros
+    # must be proved independently in each phase.
+    solve = _prune_cells(
+        law=law,
+        side="solve",
+        regime_name=regime_name,
+        regime=regime,
+        fixed_flat=fixed_flat,
+        consumed=consumed,
+        protected=protected,
+    )
+    simulate = _prune_cells(
+        law=law,
+        side="simulate",
+        regime_name=regime_name,
+        regime=regime,
+        fixed_flat=fixed_flat,
+        consumed=consumed,
+        protected=protected,
+    )
+    return (
+        solve if set(solve) == set(simulate) else Phased(solve=solve, simulate=simulate)
+    )
+
+
+def _prune_phase(
+    *,
+    law: PhaseTransitionLaw,
+    side: Side,
+    regime_name: RegimeName,
+    regime: UserRegime,
+    fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
+    consumed: set[str],
+    protected: frozenset[str],
+) -> PhaseTransitionLaw:
+    if not isinstance(law, Mapping):
+        return law
+    return _prune_cells(
+        law=law,
+        side=side,
+        regime_name=regime_name,
+        regime=regime,
+        fixed_flat=fixed_flat,
+        consumed=consumed,
+        protected=protected,
+    )
+
+
+def _prune_cells(
+    *,
+    law: Mapping[RegimeName, TargetLawCell],
+    side: Side,
+    regime_name: RegimeName,
+    regime: UserRegime,
+    fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
+    consumed: set[str],
+    protected: frozenset[str],
+) -> Mapping[RegimeName, TargetLawCell]:
+    retained: dict[RegimeName, TargetLawCell] = {}
     removed_keys: set[str] = set()
     for target, cell in law.items():
         evaluated = (
@@ -525,7 +583,7 @@ def _canonicalize_fixed_leaf(
     return cast("FlatRegimeParams", canonical[regime_name])[qname]
 
 
-def _targets(*, law: object, side: Side) -> frozenset[str]:
+def _targets(*, law: RegimeTransitionLaw, side: Side) -> frozenset[str]:
     """Collect one phase's target names across every age case."""
     if isinstance(law, ByAge):
         return frozenset(
