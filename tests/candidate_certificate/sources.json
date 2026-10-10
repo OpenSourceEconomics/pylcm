@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "2bdf9c28031573a1074e484dce932abe380e503d632d75368e33f83a4bc2244c",
+  "source_inventory_sha256": "be8dcf86a57a2bbef1563dd00593a37b2393397565fdf18540ae893dc361e454",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -38,7 +38,7 @@
     },
     {
       "path": "src/_lcm/execution/core_program.py",
-      "sha256": "72da61c4f58820e021da27a1c52bc386859ac509d7d375b401c1fd195f352b1e"
+      "sha256": "21e86cda882a227086aa6550a63daa9492071f7a14a9e56565e751a67ffae2b1"
     },
     {
       "path": "src/_lcm/execution/eager_core.py",
@@ -46,7 +46,7 @@
     },
     {
       "path": "src/_lcm/execution/footprint.py",
-      "sha256": "c3b9647be1af3baed70868dcc5016730b341d7c87d7d991b5483bee87cadb1d9"
+      "sha256": "0a7b5ee82a12039d4c0d0b7c54eae755923b66f052aa90868614a6ba2b9eb787"
     },
     {
       "path": "src/_lcm/execution/internal_outputs.py",
@@ -350,7 +350,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "15807b44d4e99a7f1389e622cefb83760f10a450d8f80537908a5dc56a1bab03"
+      "sha256": "f4c3d5bb26f469215e0e866ade213ac74fb425804bc1ac87f56a641ca0a3aead"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
