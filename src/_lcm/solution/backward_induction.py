@@ -237,6 +237,7 @@ from _lcm.typing import (
     HostArray,
     ParamsLeaf,
     PRNGKeyND,
+    PytreeByPeriod,
     PytreeValue,
     QAndFArg,
     QualifiedName,
@@ -323,6 +324,20 @@ type _ArgumentLeaf = (
     | float
 )
 
+# One dispatch's outputs, as the period loop collects them before a donation is
+# retired: the value array, the continuation, the continuation, replay and auxiliary
+# artifacts, the simulation policy, the dissolution flags and the diagnostic arrays.
+type _DispatchOutputs = tuple[
+    FloatND,
+    ContinuationPayload | None,
+    Mapping[ArtifactKey, ArtifactPayload],
+    Mapping[ArtifactKey, ArtifactPayload],
+    Mapping[ArtifactKey, ArtifactPayload],
+    SimulationPolicy | None,
+    BoolND | None,
+    tuple[FloatND | IntND | BoolND | None, ...],
+]
+
 # Metadata spelled into a lowering or admission key: a tree structure, a leaf's
 # dtype or sharding, an output role, or a regime-code table.
 type _KeyMetadata = (
@@ -379,7 +394,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retain_replay: bool = True,
     retain_all_artifacts: bool = False,
     persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
-    retained_input_arrays: object = (),
+    retained_input_arrays: PytreeByPeriod = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     call_id: CallId | None = None,
     gather_checks: GatherChecks | None = None,
@@ -708,10 +723,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     tuple[RegimeName, ArtifactKey], ArtifactPayload
                 ] = {}
                 period_replay_artifacts: dict[
-                    tuple[RegimeName, ArtifactKey], object
+                    tuple[RegimeName, ArtifactKey], ArtifactPayload
                 ] = {}
                 period_auxiliary_artifacts: dict[
-                    tuple[RegimeName, ArtifactKey], object
+                    tuple[RegimeName, ArtifactKey], ArtifactPayload
                 ] = {}
 
                 period_inputs = SolveInputMappings(
@@ -2667,7 +2682,7 @@ def _retire_donated_inputs(
     dispatch: _InputDispatch,
     inputs: SolveInputMappings,
     templates: SolveInputMappings,
-    pending_outputs: Sequence[object],
+    pending_outputs: tuple[tuple[ValueND, ...], _DispatchOutputs],
     registry: BufferRegistry,
     logger: logging.Logger,
     before_delete: BeforeArrayDelete | None = None,
@@ -3713,7 +3728,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     max_compilation_workers: int | None,
     logger: logging.Logger,
     call_id: CallId | None = None,
-    fixed_input_arrays: object = (),
+    fixed_input_arrays: PytreeByPeriod = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     gather_checks: GatherChecks | None = None,
     executable_cache: ExecutableCache | None = None,

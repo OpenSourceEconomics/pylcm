@@ -83,7 +83,7 @@ class SimulationMemory:
 
     def __post_init__(self) -> None:
         """Own the call's selected common specialization independently of its caller."""
-        self._held: list[object] = []
+        self._held: list[PytreeByPeriod] = []
         self._period_generation: int | None = None
         self._period_footprint = _EMPTY_FOOTPRINT
         self._period_stable = True
@@ -185,7 +185,7 @@ class SimulationMemory:
         """Replace the current host adapter's live derived-input snapshot."""
         self.derived = tree
 
-    def hold(self, tree: object) -> None:
+    def hold(self, tree: PytreeByPeriod) -> None:
         """Keep host intermediates alive and counted through the unit's commit.
 
         The owner joins the unit's live list and its spans are measured once here,

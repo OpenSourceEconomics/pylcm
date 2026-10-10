@@ -28,6 +28,7 @@ from types import MappingProxyType
 
 import jax
 
+from _lcm.typing import PytreeByPeriod
 from lcm.exceptions import ExecutionPlanningError
 
 type _Spans = tuple[tuple[int, int], ...]
@@ -277,7 +278,7 @@ class OwnerLedger:
         self._bindings[owner] = footprint
         self._extend(footprint=footprint)
 
-    def measure(self, *, owner: str, tree: object) -> None:
+    def measure(self, *, owner: str, tree: PytreeByPeriod) -> None:
         """Await and measure one owner tree exactly once, at its placement.
 
         The readiness barrier moves to the binding instead of repeating on every
