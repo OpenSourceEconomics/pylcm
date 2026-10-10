@@ -25,6 +25,13 @@ resolved configuration.
 There are no flag-selected tuple returns. Pass the complete result to
 `model.simulate(solution=...)`; omitting `solution` asks simulation to solve first.
 
+For models whose callables cannot be fingerprinted, set
+`Model(..., durable_identity=False)` to solve and simulate locally with the same model
+instance in the same process. This skips callable fingerprinting and binding-seal
+checks. Keep callable code, dependencies, and captured values stable throughout the
+session. Solutions and simulation archives from this mode cannot be saved; period
+capture/replay and component jobs require the default `durable_identity=True`.
+
 (api-period-capture)=
 
 ### Capturing and replaying one production period

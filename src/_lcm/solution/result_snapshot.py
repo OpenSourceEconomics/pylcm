@@ -293,6 +293,7 @@ def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
     model_instance_id = metadata.model_instance_id
     params_fingerprint = metadata.params_fingerprint
     model_fingerprint = metadata.model_fingerprint
+    durable_identity = metadata.durable_identity
     source = metadata.source
     pylcm_version = metadata.pylcm_version
     solver_api_version = metadata.solver_api_version
@@ -347,6 +348,7 @@ def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
         params_fingerprint=params_fingerprint,
         value_schemas=value_schemas,
         model_fingerprint=model_fingerprint,
+        durable_identity=durable_identity,
         solver_identities=solver_identities,
         replay_routes=replay_routes,
         artifact_descriptors=artifact_descriptors,
@@ -774,6 +776,8 @@ def _validate_solution_metadata_fields(
         _require_exact_str(getattr(metadata, field_name), label=field_name)
     if type(metadata.source) is not SolutionSource:
         raise TypeError("Solution metadata source must be exact SolutionSource.")
+    if type(metadata.durable_identity) is not bool:
+        raise TypeError("Solution metadata durable_identity must be an exact bool.")
     _require_positive_exact_int(
         metadata.solver_api_version,
         label="solution solver_api_version",

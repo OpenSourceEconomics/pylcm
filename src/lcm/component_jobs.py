@@ -599,6 +599,11 @@ def collect_component_jobs(
 
 def _fail_if_not_block_major(*, model: Model) -> None:
     """Refuse a model whose solve is not the block-major schedule."""
+    if not model.durable_identity:
+        raise ExecutionPlanningError(
+            "Component jobs cannot use an ephemeral model; durable_identity=True "
+            "is required."
+        )
     if not model._solves_block_major:  # noqa: SLF001
         msg = (
             "Component jobs run the block-major engine, but the model's "

@@ -98,6 +98,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     model_instance_id: str,
     params_fingerprint: str,
     model_fingerprint: str,
+    durable_identity: bool = True,
     authority: SolutionAuthority,
     component_values: RetainedComponentValues | None = None,
 ) -> SolutionResult:
@@ -289,6 +290,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
             model_instance_id=model_instance_id,
             params_fingerprint=params_fingerprint,
             model_fingerprint=model_fingerprint,
+            durable_identity=durable_identity,
             solver_identities=MappingProxyType(
                 {
                     regime_name: user_regime.solver.identity

@@ -2,8 +2,10 @@
 
 import dataclasses
 import functools
+import hashlib
 import logging
 import operator
+import os
 import threading
 import uuid
 from collections import OrderedDict
@@ -631,6 +633,7 @@ class Model:
         regimes: Mapping[RegimeName, UserRegime],
         regime_id_class: type,
         enable_jit: bool = True,
+        durable_identity: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
         derived_categoricals: Mapping[FunctionName, DiscreteGrid] = MappingProxyType(
             {}
@@ -661,6 +664,8 @@ class Model:
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to JIT-compile the functions of the internal
                 regimes.
+            durable_identity: Whether to require a persistable semantic identity.
+                Set to `False` for local solve and simulate with this model instance.
             initial_nodes: Admissible starts as `InitialNodes(by_age=...)` or
                 `InitialNodes(by_period=...)`, matching the model's clock.
                 Legacy exact age-regime pairs and age-selector mappings are
@@ -711,6 +716,8 @@ class Model:
 
         """
         self.description = description
+        self.durable_identity = durable_identity
+        self._identity_process_id = os.getpid()
         self.ages = ages
         self._time = ModelTime.from_inputs(ages=ages, n_periods=n_periods)
         self.n_periods = self._time.n_periods
@@ -1100,16 +1107,18 @@ class Model:
         return self._execution.device_ids
 
     def _seal(self) -> None:
-        """Fix the model's durable identity and record the bindings it read.
+        """Fix the model's identity and record its callable bindings.
 
-        The structure digest covers everything the model fixes at build, so it
-        is the same for every parameter vector this instance is ever solved
-        with; computing it walks every declared user callable once, here. The
-        walk also records each global and closure binding those callables
-        read, and `solve` and `simulate` refuse to run once one has been
-        rebound, since the digest would then describe code the model no longer
-        runs.
+        Durable identity walks the declared callables and records their bindings.
+        Local identity uses the model instance token and an empty binding seal.
         """
+        if not self.durable_identity:
+            identity = f"pylcm-ephemeral:{self._solution_model_instance_id}"
+            self._model_structure_fingerprint = hashlib.sha256(
+                identity.encode()
+            ).hexdigest()
+            self._sealed_bindings = SealedBindings(bindings=())
+            return
         recorder = BindingRecorder()
         try:
             self._model_structure_fingerprint: str = fingerprint_model_structure(
@@ -1128,6 +1137,24 @@ class Model:
             )
             raise ModelInitializationError(msg) from error
         self._sealed_bindings: SealedBindings = recorder.sealed()
+
+    def _check_identity_runtime(self) -> None:
+        """Check the binding seal or the ephemeral model's originating process."""
+        if not self.durable_identity and self._identity_process_id != os.getpid():
+            raise UnsupportedOperationError(
+                "An ephemeral model cannot be used in another process. "
+                "Build a new model and solve it there."
+            )
+        self._sealed_bindings.fail_if_moved()
+
+    def _fail_if_ephemeral_operation(self, *, operation: str) -> None:
+        """Require durable identity for public period archives."""
+        if not self.durable_identity:
+            msg = (
+                f"Public {operation} cannot use an ephemeral model. Build the model "
+                "with durable_identity=True, or use ordinary local solve()/simulate()."
+            )
+            raise UnsupportedOperationError(msg)
 
     def __repr__(self) -> str:
         """Summarize the model; mention pruning when any regime was pruned."""
@@ -1168,12 +1195,13 @@ class Model:
     def __setstate__(self, state: dict[str, object]) -> None:
         """Restore transient state and reseal the model in this process.
 
-        The structure digest the model was pickled with stays its identity, so
-        results it labelled before remain compatible; the walk after
-        unpickling records which bindings this process's copies of the
-        callables read.
+        Durable models retain their saved structure digest and result compatibility.
+        Ephemeral models receive a fresh identity for results made in this process.
+        Resealing records the bindings read by this process's copies of the callables.
         """
         self.__dict__.update(state)
+        if "durable_identity" not in state:
+            self.durable_identity = True
         if "_time" not in state:
             if not isinstance(self.ages, AgeGrid):
                 raise ModelInitializationError(
@@ -1185,8 +1213,9 @@ class Model:
         self.initial_nodes = InitialNodes._from_pairs(  # noqa: SLF001
             pairs=self._resolved_initial_nodes, kind=self._time.kind
         )
-        if "_solution_model_instance_id" not in state:
+        if not self.durable_identity or "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
+        self._identity_process_id = os.getpid()
         self._simulate_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
@@ -1198,7 +1227,7 @@ class Model:
         self._solution_param_projection = solution_param_projection(self._regimes)
         stored_structure = state.get("_model_structure_fingerprint")
         self._seal()
-        if type(stored_structure) is str:
+        if self.durable_identity and type(stored_structure) is str:
             self._model_structure_fingerprint = stored_structure
 
     def _declared_solution_authority(
@@ -1252,7 +1281,7 @@ class Model:
         flat_params: FlatParams,
         process_grid_resolver: ProcessGridResolver | None = None,
     ) -> str:
-        """Digest the durable model identity under these parameters."""
+        """Digest the model identity under these parameters."""
         return fingerprint_model(
             ages=self._time,
             regimes=self._regimes,
@@ -1385,7 +1414,9 @@ class Model:
             An immutable labelled result containing values, metadata, retained replay
             and diagnostic artifacts, plus explicit artifact-omission reasons.
         """
-        self._sealed_bindings.fail_if_moved()
+        if period_capture is not None:
+            self._fail_if_ephemeral_operation(operation="period_capture")
+        self._check_identity_runtime()
         if self._solves_block_major and log_path is not None:
             msg = (
                 "log_path snapshots of a block-major solve would hold every value "
@@ -1454,7 +1485,8 @@ class Model:
         GPU replay requires actual serialized buffer-assignment metadata.
         Missing runtime metadata is refused before selected-period dispatch.
         """
-        self._sealed_bindings.fail_if_moved()
+        self._fail_if_ephemeral_operation(operation="replay_period")
+        self._check_identity_runtime()
         flat_params = self._process_params(params)
         return replay_public_period(
             directory=Path(directory),
@@ -1501,7 +1533,7 @@ class Model:
         Returns:
             Owned StableHLO bytes and immutable diagnostic descriptors.
         """
-        self._sealed_bindings.fail_if_moved()
+        self._check_identity_runtime()
         if self._solves_block_major or not self.enable_jit:
             raise ExecutionPlanningError(
                 "Candidate lowering requires the period-major JIT solve schedule."
@@ -1699,6 +1731,7 @@ class Model:
                 model_instance_id=self._solution_model_instance_id,
                 params_fingerprint=self._params_fingerprint(flat_params=flat_params),
                 model_fingerprint=preparation.model_fingerprint,
+                durable_identity=self.durable_identity,
                 authority=authority,
                 component_values=component_values,
             )
@@ -1939,6 +1972,18 @@ class Model:
         if type(solution) is not SolutionResult:
             msg = "SolutionResult has the wrong exact container type."
             raise InvalidSimulationInputError(msg)
+        if not self.durable_identity and (
+            type(solution.metadata) is not SolutionMetadata
+            or solution.metadata.source is not SolutionSource.IN_MEMORY
+            or solution.metadata.durable_identity is not False
+            or not _same_exactly_typed(
+                actual=solution.metadata.model_instance_id,
+                expected=self._solution_model_instance_id,
+            )
+        ):
+            raise InvalidSimulationInputError(
+                "An ephemeral solution belongs to its originating model and runtime."
+            )
         expected_fingerprint = self._params_fingerprint(flat_params=flat_params)
         memo_key = (self._solution_model_instance_id, expected_fingerprint)
         consumed_views = solution._consumed_views  # noqa: SLF001
@@ -1949,6 +1994,7 @@ class Model:
         if (
             type(engine_view) is OwnedSolutionView
             and engine_view.model_instance_id == self._solution_model_instance_id
+            and solution.metadata.durable_identity is self.durable_identity
         ):
             if engine_view.params_fingerprint != expected_fingerprint:
                 msg = (
@@ -2331,7 +2377,19 @@ class Model:
             )
         if type(metadata.source) is not SolutionSource:
             metadata_defects.append("source has the wrong exact type")
-        elif metadata.source is SolutionSource.IN_MEMORY and not (
+        elif (
+            not self.durable_identity
+            and metadata.source is not SolutionSource.IN_MEMORY
+        ):
+            metadata_defects.append("ephemeral solution cannot be restored")
+        if type(metadata.durable_identity) is not bool:
+            metadata_defects.append("durable_identity has the wrong exact type")
+        elif metadata.durable_identity is not self.durable_identity:
+            metadata_defects.append("durable_identity does not match this model")
+        check_instance = (
+            not self.durable_identity or metadata.source is SolutionSource.IN_MEMORY
+        )
+        if check_instance and not (
             _same_exactly_typed(
                 actual=metadata.model_instance_id,
                 expected=self._solution_model_instance_id,
@@ -3137,7 +3195,7 @@ class Model:
             optionally with additional_targets.
 
         """
-        self._sealed_bindings.fail_if_moved()
+        self._check_identity_runtime()
         _fail_if_invalid_taste_shock_seed(taste_shock_seed=taste_shock_seed)
         initial_conditions = lower_initial_time(
             initial_conditions=initial_conditions, ages=self._time
@@ -3524,6 +3582,7 @@ class Model:
                 if simulate_regimes is not self._regimes:
                     result._regimes = self._regimes  # noqa: SLF001
                 result._solution = solution  # noqa: SLF001
+                result._durable_identity = self.durable_identity  # noqa: SLF001
                 if log_path is not None and validation_raises(log):
                     _save_simulate_snapshot(
                         model=self,
@@ -3675,7 +3734,7 @@ class Model:
             `return_action_values`, also `Q` and `F`.
 
         """
-        self._sealed_bindings.fail_if_moved()
+        self._check_identity_runtime()
         regime = self._regimes.get(regime_name)
         if regime is None:
             msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
@@ -4113,7 +4172,7 @@ class Model:
         params: UserParams,
     ) -> tuple[InitialConditions, FlatParams]:
         """Canonicalize public feasibility inputs without allocation accounting."""
-        self._sealed_bindings.fail_if_moved()
+        self._check_identity_runtime()
         initial_conditions = lower_initial_time(
             initial_conditions=initial_conditions, ages=self._time
         )
