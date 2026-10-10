@@ -34,7 +34,12 @@ type TimeLabel = PeriodLabel | AgeLabel
 from lcm.params import TimeVarying, UserMappingLeaf, UserSequenceLeaf  # noqa: E402
 
 if TYPE_CHECKING:
-    from _lcm.typing import EconFunction
+    from _lcm.typing import (
+        EconFunction,
+        EconFunctionsMapping,  # noqa: F401 - Public lazy re-export.
+        FlatParams,  # noqa: F401 - Public lazy re-export.
+        FlatRegimeParams,  # noqa: F401 - Public lazy re-export.
+    )
     from lcm.initial_nodes import InitialNodes, UserInitialNodes  # noqa: F401
 
     # Defined beside `AgeRange` in `lcm.transition`, which imports this module;

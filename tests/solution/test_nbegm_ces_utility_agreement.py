@@ -19,6 +19,7 @@ from collections.abc import Mapping
 import numpy as np
 import pytest
 
+from lcm.typing import FloatND, RegimeName
 from tests.test_models import nbegm_ces_utility_toy as toy
 
 _N_LIQUID = 120
@@ -43,7 +44,7 @@ def _interior_for_wage(*, wage: float, breakpoint_kind: str) -> np.ndarray:
 
 def _solve(
     *, variant: str, breakpoint_kind: str, n_consumption: int = 160
-) -> Mapping[int, Mapping]:
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the CES-utility ride-along toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -60,7 +61,9 @@ def _solve(
     return model.solve(params=params, log_level="debug").values
 
 
-def _terminal_adjacent_period(solved: Mapping[int, Mapping]) -> int:
+def _terminal_adjacent_period(
+    solved: Mapping[int, Mapping[RegimeName, FloatND]],
+) -> int:
     """The largest period in which `alive` is active (its continuation is bequest)."""
     return max(period for period in solved if "alive" in solved[period])
 

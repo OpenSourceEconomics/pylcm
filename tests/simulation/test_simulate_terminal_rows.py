@@ -14,6 +14,7 @@ import pytest
 
 from lcm import PowerMean
 from lcm.result import SimulationResult
+from lcm.typing import FunctionName
 from lcm_examples.epstein_zin import EZRegimeId, HealthStatus, get_model, get_params
 
 N_PERIODS = 4
@@ -85,7 +86,7 @@ def test_first_composes_with_integer_codes(result: SimulationResult) -> None:
 def test_saved_terminal_panel_matches_default_and_loaded_projection(
     *,
     tmp_path: Path,
-    df_additional_targets: list[str] | None,
+    df_additional_targets: list[FunctionName] | None,
     use_labels: bool,
 ) -> None:
     """Saved and restored panels keep one entry row per terminal subject."""

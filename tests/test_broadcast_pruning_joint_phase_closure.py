@@ -15,12 +15,13 @@ first.
 """
 
 import inspect
-from collections.abc import Callable, Mapping
-from typing import Any, cast
+from collections.abc import Mapping
+from typing import Unpack
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from typing_extensions import TypedDict
 
 from _lcm.model_graph import bind_edge_laws
 from _lcm.regime_building.broadcast import (
@@ -28,8 +29,9 @@ from _lcm.regime_building.broadcast import (
     _joint_phase_closure,
     merge_model_slots,
 )
-from _lcm.regime_building.phases import normalize_regime_phases
+from _lcm.regime_building.phases import PhasedRegimeSpec, normalize_regime_phases
 from _lcm.regime_building.schedules import resolve_regime_schedules
+from _lcm.regime_law import RegimeLaws
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -43,7 +45,17 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from lcm.regime import RegimeReplacement, StateTransitionEntry
+from lcm.typing import (
+    FloatND,
+    ReferenceName,
+    RegimeName,
+    ScalarFloat,
+    ScalarInt,
+    StateName,
+    StateOrActionName,
+    UserFunction,
+)
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -140,7 +152,7 @@ def _entry_uniform() -> FloatND:
     return jnp.asarray([0.5, 0.5])
 
 
-def _law_reads(*, law: object) -> frozenset[str]:
+def _law_reads(*, law: StateTransitionEntry) -> frozenset[ReferenceName]:
     """Collect every argument name a `state_transitions` entry reads.
 
     A law is a plain callable, a `StochasticTransition`, a per-target mapping of
@@ -149,29 +161,26 @@ def _law_reads(*, law: object) -> frozenset[str]:
     if isinstance(law, Phased):
         return _law_reads(law=law.solve) | _law_reads(law=law.simulate)
     if isinstance(law, Mapping):
-        reads: frozenset[str] = frozenset()
+        reads: frozenset[ReferenceName] = frozenset()
         for cell in law.values():
             reads |= _law_reads(law=cell)
         return reads
     if law is None:
         return frozenset()
-    func = cast(
-        "Callable[..., object]",
-        law.func if isinstance(law, StochasticTransition) else law,
-    )
+    func = law.func if isinstance(law, StochasticTransition) else law
     return frozenset(inspect.signature(func).parameters)
 
 
 def _dangling_reads(
-    *, regime: Regime, state_name: str, model_variables: frozenset[str]
-) -> frozenset[str]:
+    *, regime: Regime, state_name: StateName, model_variables: frozenset[ReferenceName]
+) -> frozenset[ReferenceName]:
     """Return the model variables a regime's law reads but can no longer supply."""
     reads = _law_reads(law=regime.state_transitions[state_name])
     supplied = set(regime.states) | set(regime.actions) | set(regime.functions)
     return frozenset(reads & model_variables) - supplied
 
 
-def _retained_variables(*, model: Model) -> dict[str, frozenset[str]]:
+def _retained_variables(*, model: Model) -> dict[str, frozenset[ReferenceName]]:
     """Return, per regime, the states and actions that survived pruning."""
     return {
         regime_name: frozenset(regime.states) | frozenset(regime.actions)
@@ -179,7 +188,7 @@ def _retained_variables(*, model: Model) -> dict[str, frozenset[str]]:
     }
 
 
-def _entry_targets(*, regime: Regime, state_name: str, phase: str) -> set[str]:
+def _entry_targets(*, regime: Regime, state_name: StateName, phase: str) -> set[str]:
     """Return the targets one phase side of a keyed entry law names."""
     law = regime.state_transitions[state_name]
     cell = (
@@ -205,8 +214,10 @@ _PHASED_HEALTH_LAW_FORMS = {
 }
 
 
-def _working_regime(*, health_law: object, **overrides: Any) -> Regime:
-    spec: dict[str, Any] = {
+def _working_regime(
+    *, health_law: StateTransitionEntry, **overrides: Unpack[RegimeReplacement]
+) -> Regime:
+    spec: RegimeReplacement = {
         "states": {"wealth": _WEALTH_GRID},
         "actions": {"consumption": _CONSUMPTION_GRID},
         "functions": {"utility": _utility_from_consumption},
@@ -220,9 +231,9 @@ def _working_regime(*, health_law: object, **overrides: Any) -> Regime:
     return Regime(**spec)
 
 
-def _retired_regime(**overrides: Any) -> Regime:
+def _retired_regime(**overrides: Unpack[RegimeReplacement]) -> Regime:
     """A regime whose payoff reads `health` on the simulation side only."""
-    spec: dict[str, Any] = {
+    spec: RegimeReplacement = {
         "states": {"wealth": _WEALTH_GRID},
         "functions": {"utility": Phased(solve=_bequest, simulate=_bequest_with_health)},
     }
@@ -231,7 +242,7 @@ def _retired_regime(**overrides: Any) -> Regime:
 
 
 def _phased_model(
-    *, health_law: object = _PHASED_HEALTH_LAW_FORMS["phased-keyed"]
+    *, health_law: StateTransitionEntry = _PHASED_HEALTH_LAW_FORMS["phased-keyed"]
 ) -> Model:
     """`health` and `endowment` promoted to model-level states."""
     return Model(
@@ -248,7 +259,7 @@ def _phased_model(
 
 
 def _regime_level_model(
-    *, health_law: object = _PHASED_HEALTH_LAW_FORMS["phased-keyed"]
+    *, health_law: StateTransitionEntry = _PHASED_HEALTH_LAW_FORMS["phased-keyed"]
 ) -> Model:
     """The same model with both states declared on the regimes that use them.
 
@@ -392,7 +403,7 @@ def test_two_targets_keeping_different_states_both_rescue_their_law_inputs() -> 
     ("state_name", "target"), [("health", "widow"), ("pension", "widower")]
 )
 def test_each_entry_law_survives_toward_the_target_that_keeps_its_state(
-    *, state_name: str, target: str
+    *, state_name: StateName, target: RegimeName
 ) -> None:
     """Each keyed law is restricted to the one target that keeps its state."""
     assert _entry_targets(
@@ -406,7 +417,7 @@ def test_each_entry_law_survives_toward_the_target_that_keeps_its_state(
     ("regime_name", "state_name"), [("widow", "health"), ("widower", "pension")]
 )
 def test_a_target_keeps_only_the_state_its_own_payoff_reads(
-    *, regime_name: str, state_name: str
+    *, regime_name: RegimeName, state_name: StateName
 ) -> None:
     """Neither widowed regime carries the other's state."""
     assert _retained_variables(model=_couple_model())[regime_name] == frozenset(
@@ -492,13 +503,27 @@ def _chain_model() -> Model:
     ("regime_name", "state_name"), [("middle", "flag"), ("early", "endowment")]
 )
 def test_an_alternating_dependency_chain_is_closed_to_its_end(
-    *, regime_name: str, state_name: str
+    *, regime_name: RegimeName, state_name: StateName
 ) -> None:
     """A chain whose hops alternate phases is followed past its second hop."""
     assert state_name in _chain_model().user_regimes[regime_name].states
 
 
-def _closure_arguments() -> dict[str, Any]:
+class _ClosureArguments(TypedDict, closed=True):
+    """Arguments shared by both phase orders of the pruning closure."""
+
+    specs: Mapping[RegimeName, PhasedRegimeSpec]
+    user_regimes: Mapping[RegimeName, Regime]
+    laws: RegimeLaws
+    broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]]
+    koopmans_aggregator: UserFunction
+    kept: Mapping[RegimeName, frozenset[StateOrActionName]]
+    all_regime_names: frozenset[RegimeName]
+    ages: AgeGrid
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]]
+
+
+def _closure_arguments() -> _ClosureArguments:
     """Assemble the arguments the joint closure takes for the chain model."""
     regimes = _chain_regimes()
     laws, _ = bind_edge_laws(edges=_CHAIN_EDGES, regimes=regimes, ages=_CHAIN_AGES)

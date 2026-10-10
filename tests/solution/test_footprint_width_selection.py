@@ -15,14 +15,15 @@ ones stream narrower.
 import dataclasses
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
 import pytest
 
+from _lcm.execution import footprint
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
@@ -52,8 +53,24 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import FloatND, ScalarInt, UserParamsNode
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
+from tests.solution._candidate_census import _CompilationKwargs
+
+type _TemplateNode = str | Mapping[str, _TemplateNode]
+
+
+class _InventoryKwargs(TypedDict):
+    waves_by_period: Mapping[int, tuple[tuple[footprint.ScheduledUnit, ...], ...]]
+    fold_dispatches: Mapping[
+        tuple[int, backward_induction.RegimeName, backward_induction.RegimeName],
+        Hashable,
+    ]
+    ledger: backward_induction.PlannedInputLiveness[
+        backward_induction._InputDispatch, ValueArtifactAddress
+    ]
+    footprints: Mapping[Hashable, footprint.ArtifactFootprint]
+
 
 # Points of the wealth grid, so one regime value is this many elements.
 _N_WEALTH = 64
@@ -136,21 +153,38 @@ def _fixed_fixture_bytes() -> int:
 
 
 def _fake_peak(
-    *, compiled: object, widths: Mapping[str, int]
+    *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
 ) -> CompilerMemoryReservation:
     """Report a compiler peak proportional to the streamed width product."""
     del compiled
     return synthetic_memory(_value_bytes() * math.prod(widths.values()))
 
 
+def _filled_template(
+    *, template: Mapping[str, _TemplateNode], path: tuple[str, ...] = ()
+) -> dict[str, UserParamsNode]:
+    """Fill the fixture's sole parameter while retaining its empty namespaces."""
+    filled: dict[str, UserParamsNode] = {}
+    for name, value in template.items():
+        child_path = (*path, name)
+        if isinstance(value, Mapping):
+            filled[name] = _filled_template(template=value, path=child_path)
+        else:
+            assert child_path == ("acting", "koopmans_aggregator", "discount_factor")
+            filled[name] = 0.5
+    return filled
+
+
 def _solve_capturing_compilation(
     *, monkeypatch: pytest.MonkeyPatch, budget_bytes: int | None
-) -> tuple[Mapping[str, Any], backward_induction._CompiledPrograms]:
+) -> tuple[_CompilationKwargs, backward_induction._CompiledPrograms]:
     """Solve the model and return the compilation call's inputs and its result."""
-    calls: list[tuple[Mapping[str, Any], backward_induction._CompiledPrograms]] = []
+    calls: list[tuple[_CompilationKwargs, backward_induction._CompiledPrograms]] = []
     original = backward_induction._compile_all_functions
 
-    def capture(**kwargs: Any) -> backward_induction._CompiledPrograms:
+    def capture(
+        **kwargs: Unpack[_CompilationKwargs],
+    ) -> backward_induction._CompiledPrograms:
         result = original(**kwargs)
         calls.append((kwargs, result))
         return result
@@ -160,8 +194,7 @@ def _solve_capturing_compilation(
     model = _build_model(
         execution_config=ExecutionConfig(device_memory_bytes=budget_bytes)
     )
-    params = cast("dict[str, Any]", model.get_params_template())
-    params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
+    params = _filled_template(template=model.get_params_template())
     model.solve(
         params=params,
         log_level="debug",
@@ -321,10 +354,14 @@ def test_a_solve_without_a_budget_does_not_walk_the_schedule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No budget consults no peak, so no position is predicted for any core."""
-    walks: list[object] = []
+    walks: list[_InventoryKwargs] = []
     original = backward_induction.plan_resident_inventory
 
-    def record(**kwargs: Any) -> object:
+    def record(
+        **kwargs: Unpack[_InventoryKwargs],
+    ) -> MappingProxyType[
+        tuple[int, backward_induction.RegimeName], footprint.ResidentInventory
+    ]:
         walks.append(kwargs)
         return original(**kwargs)
 
@@ -345,7 +382,9 @@ def test_a_cell_the_budget_cannot_host_never_enters_a_compilation_wave(
     lowered: set[tuple[str, int]] = set()
     original = backward_induction._count_triples_per_lowering_key
 
-    def record(*, lowering_keys: Mapping[Any, Any]) -> Any:
+    def record(
+        *, lowering_keys: Mapping[backward_induction._CoreCandidate, Hashable]
+    ) -> MappingProxyType[Hashable, int]:
         lowered.update((triple[0], triple[1]) for triple, _width in lowering_keys)
         return original(lowering_keys=lowering_keys)
 
@@ -412,10 +451,14 @@ def test_a_solve_with_a_budget_walks_the_schedule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A budget is spent against a position, so every core's position is predicted."""
-    walks: list[object] = []
+    walks: list[_InventoryKwargs] = []
     original = backward_induction.plan_resident_inventory
 
-    def record(**kwargs: Any) -> object:
+    def record(
+        **kwargs: Unpack[_InventoryKwargs],
+    ) -> MappingProxyType[
+        tuple[int, backward_induction.RegimeName], footprint.ResidentInventory
+    ]:
         walks.append(kwargs)
         return original(**kwargs)
 
@@ -432,7 +475,9 @@ def test_a_cell_the_budget_can_host_enters_a_compilation_wave(
     lowered: set[tuple[str, int]] = set()
     original = backward_induction._count_triples_per_lowering_key
 
-    def record(*, lowering_keys: Mapping[Any, Any]) -> Any:
+    def record(
+        *, lowering_keys: Mapping[backward_induction._CoreCandidate, Hashable]
+    ) -> MappingProxyType[Hashable, int]:
         lowered.update((triple[0], triple[1]) for triple, _width in lowering_keys)
         return original(lowering_keys=lowering_keys)
 

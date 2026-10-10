@@ -49,6 +49,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 
 MIN_AGE = 20
@@ -357,7 +358,7 @@ def build_dcegm_model(
     )
 
 
-def get_params(*, taste_shock_scale: float = 0.2) -> dict:
+def get_params(*, taste_shock_scale: float = 0.2) -> dict[str, UserParamsNode]:
     """Params matching the fixture run in `tests/data/dcegm_reference/`."""
     return {
         "discount_factor": 0.95,

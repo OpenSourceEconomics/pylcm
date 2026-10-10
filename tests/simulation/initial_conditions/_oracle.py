@@ -8,20 +8,33 @@ oracle can arbitrate the vectorized kernel.
 
 import inspect
 import itertools
-from collections.abc import Callable, Mapping
-from typing import cast
+from collections.abc import Mapping
+from typing import TypeGuard
 
 import numpy as np
 import pandas as pd
 
 from lcm import DiscreteGrid, LinSpacedGrid, Model
+from lcm.regime import ActionEntry, ConstraintEntry
+from lcm.typing import (
+    FunctionName,
+    ReferenceName,
+    RegimeName,
+    UserFunction,
+    UserParams,
+    UserParamsLeaf,
+)
+
+
+def _is_callable_constraint(value: ConstraintEntry) -> TypeGuard[UserFunction]:
+    return callable(value)
 
 
 def exhaustive_scalar_feasibility(
     *,
     model: Model,
     initial_conditions: pd.DataFrame,
-    params: Mapping[str, object],
+    params: UserParams,
 ) -> np.ndarray:
     """Return the per-subject feasibility mask by brute-force scalar enumeration.
 
@@ -43,7 +56,7 @@ def exhaustive_scalar_feasibility(
         action_grids = {
             name: _grid_points(grid) for name, grid in regime.actions.items()
         }
-        combos: list[dict[str, object]] = [
+        combos: list[dict[ReferenceName, UserParamsLeaf]] = [
             dict(zip(action_grids, values, strict=True))
             for values in itertools.product(*action_grids.values())
         ]
@@ -51,7 +64,7 @@ def exhaustive_scalar_feasibility(
             any(
                 all(
                     _call_scalar(
-                        func=cast("Callable[..., object]", constraint),
+                        func=constraint,
                         available={
                             **subject,
                             **combo,
@@ -71,7 +84,7 @@ def exhaustive_scalar_feasibility(
     return np.asarray(verdicts, dtype=bool)
 
 
-def _grid_points(grid: object) -> list[object]:
+def _grid_points(grid: ActionEntry) -> list[int | float]:
     if isinstance(grid, LinSpacedGrid):
         return list(np.linspace(grid.start, grid.stop, grid.n_points).tolist())
     if isinstance(grid, DiscreteGrid):
@@ -81,10 +94,10 @@ def _grid_points(grid: object) -> list[object]:
 
 
 def _subject_kwargs(
-    *, model: Model, regime_name: str, row: pd.Series
-) -> dict[str, object]:
+    *, model: Model, regime_name: RegimeName, row: pd.Series
+) -> dict[ReferenceName, UserParamsLeaf]:
     regime = model.user_regimes[regime_name]
-    kwargs: dict[str, object] = {}
+    kwargs: dict[ReferenceName, UserParamsLeaf] = {}
     for name, grid in regime.states.items():
         value = row[name]
         if isinstance(grid, DiscreteGrid) and isinstance(value, str):
@@ -99,13 +112,13 @@ def _subject_kwargs(
 
 def _params_for(
     *,
-    params: Mapping[str, object],
-    fixed_params: Mapping[str, object],
-    regime_name: str,
-    func_name: str,
-) -> dict[str, object]:
+    params: UserParams,
+    fixed_params: UserParams,
+    regime_name: RegimeName,
+    func_name: FunctionName,
+) -> dict[ReferenceName, UserParamsLeaf]:
     """Collect scalar parameters visible to one constraint; runtime binds over fixed."""
-    found: dict[str, object] = {}
+    found: dict[ReferenceName, UserParamsLeaf] = {}
     for source in (fixed_params, params):
         regime_tree = source.get(regime_name, {})
         func_tree = (
@@ -120,7 +133,9 @@ def _params_for(
 
 
 def _call_scalar(
-    *, func: Callable[..., object], available: Mapping[str, object]
+    *, func: ConstraintEntry, available: Mapping[ReferenceName, UserParamsLeaf]
 ) -> bool:
+    if not _is_callable_constraint(func):
+        raise TypeError("The scalar oracle requires a callable constraint.")
     names = inspect.signature(func).parameters
     return bool(func(**{name: available[name] for name in names}))

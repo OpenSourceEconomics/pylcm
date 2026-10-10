@@ -26,6 +26,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserInitialConditions,
 )
 
 
@@ -90,7 +91,7 @@ _MODEL = Model(
 _PARAMS = {"discount_factor": 0.95}
 
 
-def _simulate(initial_conditions: dict) -> None:
+def _simulate(initial_conditions: UserInitialConditions) -> None:
     _MODEL.simulate(
         params=_PARAMS,
         solution=_MODEL.solve(params=_PARAMS, log_level="off"),

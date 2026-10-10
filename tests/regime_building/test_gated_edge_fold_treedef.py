@@ -24,10 +24,11 @@ from _lcm.regime_building.gated_edges import (
     build_same_period_mapping_for_fold,
 )
 from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
-from lcm.typing import BoolND, ContinuousState, FloatND
 
 # The collective target's value: three wage nodes by two stakeholders. Its
 # dissolution flag lives on the state axes alone, so it is one axis shorter.
+from lcm.typing import BoolND, ContinuousState, FloatND, RegimeName
+
 _TARGET_V = jnp.asarray([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
 _TARGET_D = jnp.asarray([False, True, False])
 
@@ -77,7 +78,9 @@ def test_gate_reading_the_flag_without_one_supplied_is_refused():
         _build_mapping(gate=_dissolution_gate, supply_flag=False)
 
 
-def _build_mapping(*, gate, supply_flag: bool) -> MappingProxyType:
+def _build_mapping(
+    *, gate, supply_flag: bool
+) -> MappingProxyType[RegimeName, FloatND | BoolND]:
     """Assemble the fold's same-period mapping for a one-leg collective edge.
 
     Args:

@@ -105,7 +105,7 @@ def test_last_device_retained_owner_refuses_before_numerical_dispatch(
 
     def observe(
         self: CompiledSimulationProgram, **arguments: PytreeValue | ShapeDtypePytree
-    ) -> object:
+    ) -> PytreeValue:
         calls.append(None)
         return original(self, **arguments)
 

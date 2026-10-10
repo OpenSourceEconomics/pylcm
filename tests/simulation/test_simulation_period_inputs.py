@@ -20,6 +20,7 @@ from _lcm.simulation.period_inputs import (
     unit_value_reads,
 )
 from _lcm.simulation.value_reads import PeriodSimulationReads
+from _lcm.typing import ArgumentTree
 from lcm.solver_api import SIMULATION_POLICY, ActionOutput
 from tests.regime_building.test_collective_regime_simulate import _solve_dissolution
 
@@ -62,7 +63,7 @@ def test_gate_occurrences_resolve_to_actual_raw_operands(dissolution) -> None:
         arguments = {"edge_values": edge_values, "edge_flags": edge_flags}
         for read in selected:
             assert read.source.argument is not None
-            actual: object = arguments[read.source.argument]
+            actual: ArgumentTree = arguments[read.source.argument]
             for component in read.source.path:
                 assert isinstance(actual, Mapping)
                 assert isinstance(component, str)

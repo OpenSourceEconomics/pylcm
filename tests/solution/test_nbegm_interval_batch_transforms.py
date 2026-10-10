@@ -7,6 +7,8 @@ blocking. Each case here fixes one of those and varies only the batch width,
 including widths that leave a remainder and widths wider than the interval count.
 """
 
+from typing import NotRequired, TypedDict, Unpack
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -14,7 +16,29 @@ import pytest
 
 from _lcm.egm import nbegm_step
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
+from _lcm.egm.preferences import Preferences
+from lcm.typing import Float1D, FloatND, ScalarFloat
 from tests.solution._crra_preferences import crra_preferences
+
+
+class _Inputs(TypedDict):
+    cont_value: FloatND
+    cont_marginal: FloatND
+    liquid_grid: Float1D
+    savings_grid: Float1D
+    discount_factor: ScalarFloat
+    preferences: Preferences
+    coh_slopes: Float1D
+    coh_intercepts: Float1D
+    breakpoints: Float1D
+
+
+class _Options(TypedDict):
+    coh_grid: NotRequired[Float1D | None]
+    extra_savings: NotRequired[FloatND | None]
+    extra_cont_value: NotRequired[FloatND | None]
+    envelope_segment_width: NotRequired[int]
+
 
 _CRRA = 2.0
 _DISCOUNT = 0.96
@@ -22,7 +46,7 @@ _N_SAVINGS = 50
 _N_LIQUID = 40
 
 
-def _build_inputs(n_intervals: int) -> dict:
+def _build_inputs(n_intervals: int) -> _Inputs:
     base_value = -1.0 / jnp.linspace(0.5, 5.0, _N_SAVINGS)
     base_marginal = jnp.linspace(2.0, 0.05, _N_SAVINGS)
     shift = jnp.linspace(0.0, 1.0, n_intervals)[:, None]
@@ -39,7 +63,7 @@ def _build_inputs(n_intervals: int) -> dict:
     }
 
 
-def _assert_same(*, got: tuple, expected: tuple) -> None:
+def _assert_same(*, got: tuple[FloatND, ...], expected: tuple[FloatND, ...]) -> None:
     for candidate, reference in zip(got, expected, strict=True):
         np.testing.assert_allclose(
             np.asarray(candidate),
@@ -50,7 +74,9 @@ def _assert_same(*, got: tuple, expected: tuple) -> None:
         )
 
 
-def _solve_at(*, inputs: dict, chunk_size: int, monkeypatch, **extra) -> tuple:
+def _solve_at(
+    *, inputs: _Inputs, chunk_size: int, monkeypatch, **extra: Unpack[_Options]
+) -> tuple[Float1D, Float1D, Float1D]:
     monkeypatch.setattr(nbegm_step, "_CHUNK_SIZE", chunk_size)
     return nbegm_per_interval_continuation_step_savings(**inputs, **extra)
 
@@ -160,7 +186,10 @@ def test_save_to_cliff_candidates_are_invariant_to_the_batch_width(
     extra_cont_value = jnp.broadcast_to(
         -1.0 / jnp.linspace(0.6, 4.0, 12), (n_intervals, 12)
     )
-    extra = {"extra_savings": extra_savings, "extra_cont_value": extra_cont_value}
+    extra: _Options = {
+        "extra_savings": extra_savings,
+        "extra_cont_value": extra_cont_value,
+    }
     reference = _solve_at(inputs=inputs, chunk_size=1, monkeypatch=monkeypatch, **extra)
     got = _solve_at(
         inputs=inputs, chunk_size=chunk_size, monkeypatch=monkeypatch, **extra

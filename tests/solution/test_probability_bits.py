@@ -15,8 +15,6 @@ of two changes no answer and leaves every downstream multiplication with
 operands the dtype can use.
 """
 
-from typing import Any
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -34,6 +32,7 @@ from _lcm.probability import (
     scaled_by_power_of_two,
     scaled_exact_product,
 )
+from lcm.typing import BoolND, FloatND
 
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
@@ -54,7 +53,7 @@ def test_target_probabilities_form_a_distribution(
 ) -> None:
     """Targets carry unit mass and no negative, infinite or NaN weight."""
 
-    def evaluate() -> Any:
+    def evaluate() -> BoolND:
         return probability.probabilities_form_distribution(
             probabilities=(jnp.asarray(weight, dtype=_dtype()) for weight in weights),
             dtype=_dtype(),
@@ -75,7 +74,7 @@ def test_negative_subnormal_invalidates_each_target_lottery(*, compiled: bool) -
     assert bool(is_negative(weights)[1])
     assert not bool(is_represented_zero(weights)[0])
 
-    def evaluate(weights: Any) -> Any:
+    def evaluate(weights: FloatND) -> BoolND:
         return probability.probabilities_form_distribution(
             probabilities=iter((jnp.asarray(1.0, dtype=_dtype()), weights)),
             dtype=_dtype(),
@@ -85,27 +84,29 @@ def test_negative_subnormal_invalidates_each_target_lottery(*, compiled: bool) -
     np.testing.assert_array_equal(got, [True, False, True] * len(magnitudes))
 
 
-def _dtype() -> np.dtype:
+def _dtype() -> np.dtype[np.float32 | np.float64]:
     """The precision the suite is running at."""
     return np.dtype(jnp.zeros(()).dtype)
 
 
-def _smallest_subnormal() -> Any:
+def _smallest_subnormal() -> np.float32 | np.float64:
     dtype = _dtype()
     return np.nextafter(dtype.type(0.0), dtype.type(1.0), dtype=dtype)
 
 
-def _largest_subnormal() -> Any:
+def _largest_subnormal() -> np.float32 | np.float64:
     dtype = _dtype()
     return np.nextafter(dtype.type(np.finfo(dtype).tiny), dtype.type(0.0), dtype=dtype)
 
 
-def _interior_subnormal() -> Any:
+def _interior_subnormal() -> np.float32 | np.float64:
     """A subnormal from the middle of the range, not either end of it."""
     dtype = _dtype()
     mantissa_bits = 23 if dtype.itemsize == 4 else 52
     int_dtype = np.int32 if dtype.itemsize == 4 else np.int64
-    return np.asarray(1 << (mantissa_bits // 2), dtype=int_dtype).view(dtype)[()]
+    value = np.asarray(1 << (mantissa_bits // 2), dtype=int_dtype).view(dtype)[()]
+    assert isinstance(value, np.floating)
+    return value
 
 
 _SUBNORMALS = [
@@ -294,7 +295,7 @@ def test_scaling_carries_the_slope_it_stands_for(*, shift: int, mode: str) -> No
     """
     dtype = _dtype()
 
-    def scale(value: Any) -> Any:
+    def scale(value: FloatND) -> FloatND:
         return scaled_by_power_of_two(
             values=value, shift=jnp.asarray(shift, dtype=jnp.int32)
         )

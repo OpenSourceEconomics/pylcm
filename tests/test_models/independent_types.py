@@ -38,6 +38,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 
 # Integer wealth nodes `0..10`; consumption uses the same nodes.
@@ -144,7 +145,7 @@ def get_params(
     *,
     type_params: Mapping[str, Sequence[float]] = TYPE_PARAMS,
     discount_factor: float = DISCOUNT_FACTOR,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Return the parameters `get_model()` solves with.
 
     Args:

@@ -25,7 +25,9 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.typing import ScalarFloat, ScalarInt
+from lcm.typing import ScalarFloat, ScalarInt, UserParams
+
+type SourceText = str
 
 
 def test_an_edge_is_the_declared_support_at_its_period() -> None:
@@ -233,7 +235,7 @@ def _program_bundle_names(tree: ast.AST) -> set[str]:
     return {name for name, count in bundle_bindings.items() if count == bindings[name]}
 
 
-def _raw_transition_reads(source: str) -> list[ast.Attribute]:
+def _raw_transition_reads(source: SourceText) -> list[ast.Attribute]:
     """Reject raw declaration reads while admitting proved program-family reads."""
     tree = ast.parse(source)
     program_names = _program_bundle_names(tree)
@@ -296,7 +298,7 @@ def _raw_transition_reads(source: str) -> list[ast.Attribute]:
     ],
 )
 def test_raw_transition_guard_distinguishes_program_bundles(
-    *, source: str, expected_reads: list[str]
+    *, source: SourceText, expected_reads: list[str]
 ) -> None:
     """Only canonical program receivers pass; declaration and shadowed names fail."""
     assert [
@@ -344,7 +346,9 @@ def test_continuation_targets_are_not_derived_from_law_bundle_keys() -> None:
     "fixed_params",
     [{"probability": 0.0}, {"edges": {"source": {"high": {"probability": 0.0}}}}],
 )
-def test_fixed_zero_probability_removes_target_problem(fixed_params: dict) -> None:
+def test_fixed_zero_probability_removes_target_problem(
+    fixed_params: UserParams,
+) -> None:
     """A fixed zero cell creates neither a physical visit nor a value problem."""
 
     @categorical(ordered=False)
@@ -447,7 +451,7 @@ def test_fixed_probability_retains_runtime_dependencies_without_evaluating(
 
     evaluated: list[str] = []
 
-    def forbidden_probability(**_kwargs: object) -> ScalarFloat:
+    def forbidden_probability[Ignored](**_kwargs: Ignored) -> ScalarFloat:
         evaluated.append("probability")
         raise AssertionError("A runtime-dependent cell must not be evaluated.")
 

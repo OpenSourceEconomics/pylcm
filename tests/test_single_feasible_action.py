@@ -47,6 +47,8 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserInitialConditions,
+    UserParams,
 )
 
 
@@ -89,7 +91,7 @@ def _build_model(
     consumption_hi: float,
     n_consumption: int,
     n_periods: int,
-) -> tuple[Model, dict]:
+) -> tuple[Model, UserParams]:
     """Build a 2-regime (alive, dead) model with runtime consumption points.
 
     The wealth grid is fixed-LinSpaced (so changing it doesn't perturb the
@@ -354,7 +356,7 @@ def _build_alive_dead_model(
     coefficient_rra: tuple[float, float],
     consumption_weight: tuple[float, float],
     n_periods: int = 3,
-) -> tuple[Model, dict]:
+) -> tuple[Model, UserParams]:
     last_alive_age = n_periods - 2
 
     alive = UserRegime(
@@ -482,7 +484,7 @@ def test_irreg_coordinate_divides_by_zero_on_duplicate_grid_points():
     )
 
 
-def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
+def _runtime_state_grid_model() -> tuple[Model, UserParams, UserInitialConditions]:
     """Build a 2-regime model with a runtime-supplied IrregSpacedGrid *state*.
 
     Reproduces the failure mode where `validate_initial_conditions` reads

@@ -22,7 +22,7 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserParams
 
 
 @categorical(ordered=False)
@@ -43,7 +43,7 @@ def identity(shock: ScalarFloat) -> FloatND:
     return shock
 
 
-def source_value(*, model: Model, params: dict) -> float:
+def source_value(*, model: Model, params: UserParams) -> float:
     solution = model.solve(params=params, log_level="debug").values
     p = max(period for period, regimes in solution.items() if "source" in regimes)
     return float(np.asarray(solution[p]["source"]).ravel()[0])

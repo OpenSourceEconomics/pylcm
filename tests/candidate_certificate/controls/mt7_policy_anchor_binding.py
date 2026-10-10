@@ -10,8 +10,6 @@ Exit 1 means the binding is fail-open. Exit 0 means every perturbation is reject
 Exit 2 means the control itself failed.
 """
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import json
@@ -19,8 +17,42 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, NotRequired, TypedDict
+
+if TYPE_CHECKING:
+    from tests.candidate_certificate.verify import _VerificationReport
+
+
+class _ControlCase(TypedDict):
+    exit: int
+    errors: list[str]
+
+
+class _ProcessOutput(TypedDict):
+    stdout: str
+    stderr: str
+    errors: NotRequired[list[str]]
+
+
+type _VerifierPayload = _VerificationReport | _ProcessOutput
+
+
+type SourcePath = str
+type PolicyTarget = str
+
+
+class _PolicyProfile(TypedDict, total=False):
+    candidate_source: SourcePath | None
+    candidate_source_digest: str | None
+
+
+class _Policy(TypedDict):
+    contract_version: str
+    target: PolicyTarget
+    profiles: dict[str, _PolicyProfile]
+
 
 CONTRACT = Path(".pro-audit/profile-contract.yaml")
 GENERATOR = Path("tests/candidate_certificate/generate_sources.py")
@@ -29,16 +61,16 @@ VERIFIER = Path("tests/candidate_certificate/verify.py")
 PROFILES = ("fast", "certified")
 
 
-def _emit(payload: dict[str, Any]) -> None:
+def _emit[PayloadValue](payload: Mapping[str, PayloadValue]) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
-def _compile_policy(contract: Path) -> dict[str, Any]:
+def _compile_policy(contract: Path) -> _Policy:
     """Project the contract as a bundler does: one source and digest per profile."""
-    profiles: dict[str, Any] = {}
+    profiles: dict[str, _PolicyProfile] = {}
     current: str | None = None
     candidate_indent: int | None = None
-    source: str | None = None
+    source: SourcePath | None = None
     digest: str | None = None
 
     def flush() -> None:
@@ -79,9 +111,7 @@ def _compile_policy(contract: Path) -> dict[str, Any]:
     return {"contract_version": "1", "target": "", "profiles": profiles}
 
 
-def _run_join(
-    *, root: Path, policy_payload: dict[str, Any]
-) -> tuple[int, dict[str, Any]]:
+def _run_join(*, root: Path, policy_payload: _Policy) -> tuple[int, _VerifierPayload]:
     policy_path = root / "compiled-policy.json"
     policy_path.write_text(json.dumps(policy_payload, indent=2), encoding="utf-8")
     completed = subprocess.run(
@@ -100,7 +130,7 @@ def _run_join(
         check=False,
     )
     try:
-        payload = json.loads(completed.stdout)
+        payload: _VerifierPayload = json.loads(completed.stdout)
     except json.JSONDecodeError:
         payload = {"stdout": completed.stdout, "stderr": completed.stderr}
     return completed.returncode, payload
@@ -142,7 +172,7 @@ def main() -> int:
                 root=root, policy_payload=clean_policy
             )
 
-            cases: dict[str, dict[str, Any]] = {}
+            cases: dict[str, _ControlCase] = {}
 
             # Every certified source must move the anchor when its bytes change.
             for path in certified:
@@ -160,7 +190,7 @@ def main() -> int:
 
             # A policy naming one certified source instead of the inventory is stale.
             for path in certified:
-                stale = {
+                stale: _Policy = {
                     "contract_version": "1",
                     "target": "",
                     "profiles": {
@@ -180,7 +210,7 @@ def main() -> int:
                 }
 
             # A policy that declares no anchor at all must not pass.
-            empty = {
+            empty: _Policy = {
                 "contract_version": "1",
                 "target": "",
                 "profiles": {profile: {} for profile in PROFILES},

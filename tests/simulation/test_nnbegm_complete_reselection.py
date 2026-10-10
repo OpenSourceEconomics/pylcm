@@ -16,7 +16,7 @@ from _lcm.engine import Regime
 class _StubRegime(Regime):
     """Engine regime carrying only the fields the fallback selector reaches."""
 
-    def __init__(self, *, simulation: object) -> None:
+    def __init__(self, *, simulation: SimpleNamespace) -> None:
         object.__setattr__(self, "simulation", simulation)
 
 

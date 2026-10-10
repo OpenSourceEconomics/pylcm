@@ -7,13 +7,14 @@ post-decision savings grid and map back to the liquid grid. Run against the DS p
 brute solve, the step matches the dense grid-search retired value where the grid covers.
 """
 
-from typing import Any
+from typing import TypedDict
 
 import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.one_asset_egm_step import egm_one_asset_step
 from _lcm.egm.preferences import Preferences
+from lcm.typing import FloatND
 from tests.solution._crra_preferences import crra_preferences
 from tests.test_models.deterministic.ds_pension import get_model, get_params
 
@@ -22,7 +23,16 @@ _LIQUID_GRID = jnp.linspace(0.1, 20.0, 12)
 _SAVINGS_GRID = jnp.linspace(0.0, 20.0, 40)
 _RETURN_LIQUID = 0.02
 _INCOME = 0.50
-_P: dict[str, Any] = {
+
+
+class _StepParams(TypedDict):
+    discount_factor: float
+    preferences: Preferences
+    next_liquid: FloatND
+    marginal_return: FloatND
+
+
+_P: _StepParams = {
     "discount_factor": 0.98,
     "preferences": crra_preferences(crra=_CRRA),
     # The step takes the law's readings rather than a return and an income: where

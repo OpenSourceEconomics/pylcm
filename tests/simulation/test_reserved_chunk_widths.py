@@ -1,7 +1,7 @@
 """An outer reservation fixes code even when instantaneous residency is smaller."""
 
 from types import MappingProxyType
-from typing import Any
+from typing import NotRequired, TypedDict, Unpack
 
 import jax
 import numpy as np
@@ -11,14 +11,25 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    MaterializedCoreProgram,
     TiledOutputAxis,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.residency import measure_buffer_footprint
-from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
+from _lcm.simulation.runtime import (
+    CompiledSimulationProgram,
+    SimulationDispatchContext,
+    SimulationRuntime,
+)
 from lcm.exceptions import ExecutionPlanningError
+
+
+class _MaterializedPreparation(TypedDict):
+    program: MaterializedCoreProgram
+    n_subjects: int
+    residency: NotRequired[SimulationDispatchContext | None]
 
 
 def _increment(*, x: jax.Array) -> jax.Array:
@@ -70,7 +81,9 @@ def test_actual_dispatch_preserves_the_outer_reserved_width(
     selected: list[int] = []
     prepare = SimulationRuntime._prepare_materialized
 
-    def observe(self: SimulationRuntime, **call: Any) -> object:
+    def observe(
+        self: SimulationRuntime, **call: Unpack[_MaterializedPreparation]
+    ) -> CompiledSimulationProgram:
         compiled = prepare(self, **call)
         selected.append(compiled.widths["subject"])
         return compiled

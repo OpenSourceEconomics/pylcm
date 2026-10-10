@@ -2,6 +2,8 @@
 
 # ruff: noqa: SLF001
 
+from collections.abc import Callable
+
 import pytest
 
 from benchmarks.asv import _gpu_mem, bench_collective_household
@@ -14,13 +16,18 @@ _CLASSES = [
 
 @pytest.mark.parametrize("benchmark_class", _CLASSES)
 def test_each_class_reads_its_shared_cache(
-    *, monkeypatch: pytest.MonkeyPatch, benchmark_class: type
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    benchmark_class: type[
+        bench_collective_household.CollectiveHouseholdConstruct
+        | bench_collective_household.CollectiveHouseholdSolve
+    ],
 ) -> None:
     """setup_cache is the sole producer; the trackers only read it."""
     calls: list[tuple[str, str]] = []
 
     def _fake_measure_combined_with_warm_samples(
-        *, bench_module, bench_class, warm_samples
+        *, bench_module: str, bench_class: str, warm_samples: int
     ):
         calls.append((bench_module, bench_class))
         return {
@@ -79,12 +86,20 @@ def test_solve_still_tracks_compilation_time(monkeypatch: pytest.MonkeyPatch) ->
     ],
 )
 def test_parameterized_classes_track_the_median_warm_call(
-    *, monkeypatch: pytest.MonkeyPatch, benchmark_class: type, param: int
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    benchmark_class: type[
+        bench_collective_household.CollectiveHouseholdSimulate
+        | bench_collective_household.ReferenceChainSolve
+    ],
+    param: int,
 ) -> None:
     """Execution time is the median of the shared warm-call timer, as elsewhere."""
     calls = []
 
-    def _fake_warm_call_seconds(*, execute, warm_samples):
+    def _fake_warm_call_seconds(
+        *, execute: Callable[[], None], warm_samples: int
+    ) -> list[float]:
         calls.append((execute, warm_samples))
         return [3.0, 1.0, 2.0]
 

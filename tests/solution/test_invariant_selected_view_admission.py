@@ -7,8 +7,8 @@ inventory interfaces as test_continuous_transfer_admission.py.
 
 import dataclasses
 import math
+from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -36,12 +36,15 @@ from _lcm.execution.value_transfer import (
     ValueViewLeaf,
 )
 from _lcm.execution.workspace_planning import (
+    WorkspacePlan,
     compiler_memory_reservation,
     plan_workspace,
 )
 from _lcm.solution import backward_induction as bi
+from _lcm.typing import ShapeDtypePytree
 from lcm import ExecutionConfig
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName, RegimeName
 from tests.solution.test_invariant_blocking import _independent_types_model
 from tests.test_models import independent_types
 
@@ -54,9 +57,19 @@ def test_public_blocked_solve_never_credits_a_selected_input_as_its_owner(
     original = bi._candidate_resident_bytes
     checked: list[tuple[int, int]] = []
 
-    def observe(**kwargs: Any) -> int:
-        got = original(**kwargs)
-        program = kwargs["program"]
+    def observe(
+        *,
+        compiled: jax.stages.Compiled,
+        program: ResolvedCoreProgram,
+        internal_arguments: Mapping[ReferenceName, ShapeDtypePytree],
+        inventory: ResidentInventory,
+    ) -> int:
+        got = original(
+            compiled=compiled,
+            program=program,
+            internal_arguments=internal_arguments,
+            inventory=inventory,
+        )
         transfers = program.input_transfer_plan
         # Isolate a normal unshared selected read, not a mixed/shared graph.
         if transfers and all(
@@ -65,12 +78,12 @@ def test_public_blocked_solve_never_credits_a_selected_input_as_its_owner(
             and not t.reused_by_several_consumers
             for t in transfers
         ):
-            shardings = kwargs["compiled"].input_shardings[1]
+            shardings = compiled.input_shardings[1]
             if all(
                 bi._compiler_reads_source(shardings=shardings, source=t.source)
                 for t in transfers
             ):
-                expected = kwargs["inventory"].resident_bytes(
+                expected = inventory.resident_bytes(
                     consumes=(),
                     consumed_copies=frozenset(),
                     temporary_bytes={},
@@ -94,7 +107,7 @@ def test_public_blocked_solve_never_credits_a_selected_input_as_its_owner(
     assert checked, "The public witness must reach a compiler-live selected read."
 
 
-def _shape_only(*, next_regime_to_V_arr: dict[str, jax.Array]) -> jax.Array:
+def _shape_only(*, next_regime_to_V_arr: dict[RegimeName, jax.Array]) -> jax.Array:
     value = next_regime_to_V_arr["terminal"]
     return jnp.arange(value.size, dtype=value.dtype).reshape(value.shape)
 
@@ -102,9 +115,9 @@ def _shape_only(*, next_regime_to_V_arr: dict[str, jax.Array]) -> jax.Array:
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _Case:
     program: ResolvedCoreProgram
-    compiled: Any
+    compiled: jax.stages.Compiled
     inventory: ResidentInventory
-    metadata: dict
+    metadata: dict[tuple[RegimeName, int, str], bi._ProgramExecutionMetadata]
     owner: jax.Array
     owner_bytes: int
     block_bytes: int
@@ -291,7 +304,9 @@ def test_pruned_selected_view_has_the_exact_conservative_admission_threshold(
     assert resident(case.inventory) == expected_resident
     ceiling = case.compiler_bytes + expected_resident
 
-    def plan(*, budget: int, inventory: ResidentInventory) -> Any:
+    def plan(
+        *, budget: int, inventory: ResidentInventory
+    ) -> WorkspacePlan[jax.stages.Compiled]:
         return plan_workspace(
             axes=(),
             compile_candidate=lambda _widths: case.compiled,

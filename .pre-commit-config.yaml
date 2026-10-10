@@ -39,7 +39,7 @@ repos:
       - id: name-tests-test
         args:
           - --pytest-test-first
-        exclude: tests/mock_regime.py|tests/collective_fixtures.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/egm/_|^tests/solution/_|^tests/simulation/_|^tests/simulation/initial_conditions/_|^tests/ci/|^tests/candidate_certificate/|^tests/conformance_solver/
+        exclude: tests/mock_regime.py|tests/collective_fixtures.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/egm/_|^tests/execution/_|^tests/solution/_|^tests/simulation/_|^tests/simulation/initial_conditions/_|^tests/ci/|^tests/candidate_certificate/|^tests/conformance_solver/
       - id: no-commit-to-branch
         args:
           - --branch
@@ -184,7 +184,7 @@ repos:
         name: annotations name precise types
         entry: pixi run -e type-checking python -m tests.ci.precise_annotations
         language: system
-        files: ^(src/.*\.py|docs/.*\.ipynb)$
+        files: ^((src|tests|benchmarks)/.*\.py|docs/.*\.ipynb)$
         require_serial: true
       - id: no-hardcoded-user-paths
         name: no hardcoded user-specific absolute paths

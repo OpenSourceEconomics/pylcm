@@ -6,21 +6,33 @@ unified verifier detects both the pinned all-feasible omission and a generated
 intermediate-mask omission. Exit 2 means an instrument error.
 """
 
-from __future__ import annotations
-
 import argparse
 import ast
 import json
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Never, TypedDict
+
+if TYPE_CHECKING:
+    from tests.candidate_certificate.verify import (
+        _SelfTests,
+        _Witness,
+    )
+
+
+class _SelfTestPayload(TypedDict, total=False):
+    self_test: _SelfTests
+    raw_stdout: str
+    raw_stderr: str
+
 
 CERTIFICATE = Path("tests/test_grid_search_candidate_certificate.py")
 VERIFIER = Path("tests/candidate_certificate/verify.py")
 
 
-def _emit(payload: dict[str, Any]) -> None:
+def _emit[PayloadValue](payload: Mapping[str, PayloadValue]) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
@@ -73,7 +85,7 @@ def _fixture_constraint(*, tree: ast.Module, name: str) -> str | None:
     return None
 
 
-def _finite_witness() -> dict[str, Any]:
+def _finite_witness() -> _Witness:
     q = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
     before = [True] * 6
     after = [True, True, True, True, True, False]
@@ -162,11 +174,11 @@ def main() -> int:
             check=False,
         )
         try:
-            payload = json.loads(process.stdout)
+            payload: _SelfTestPayload = json.loads(process.stdout)
         except json.JSONDecodeError:
             payload = {"raw_stdout": process.stdout, "raw_stderr": process.stderr}
         raw_self_tests = payload.get("self_test")
-        self_tests: dict[str, Any] = (
+        self_tests: _SelfTests | dict[str, Never] = (
             raw_self_tests if isinstance(raw_self_tests, dict) else {}
         )
         masks = self_tests.get("mask_neighborhood_perturbations", {})

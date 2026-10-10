@@ -11,7 +11,6 @@ budget and continuation. The brute variant (`GridSearch`) productmaps over
 `(liquid, kind, consumption)` and is the dense agreement oracle.
 """
 
-from collections.abc import Mapping
 from dataclasses import replace
 
 import jax.numpy as jnp
@@ -24,8 +23,10 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
+    NBEGMKwargs,
     crra_utility,
     feasible,
     make_alive_dead_model,
@@ -106,7 +107,7 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 150,
     savings_max: float = 28.0,
-    nbegm_overrides: Mapping[str, object] | None = None,
+    nbegm_overrides: NBEGMKwargs | None = None,
     distributed_kind: bool = False,
     execution_config: lcm.ExecutionConfig = lcm.ExecutionConfig(),  # noqa: B008
 ) -> Model:
@@ -143,7 +144,7 @@ def build_model(
     alive_solver = resolve_solver(
         variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
-        **(dict(nbegm_overrides) if nbegm_overrides else {}),
+        **(nbegm_overrides or {}),
     )
     # The liquid law is stated as a function of the post-decision savings node,
     # which is what NBEGM inverts the Euler equation against. `GridSearch` reads
@@ -201,7 +202,7 @@ def build_params(
     base_income_hi: float = 4.0,
     tax_rate: float = 0.3,
     tax_exemption: float = 12.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the ride-along tax toy.
 
     `base_income` is a length-2 array indexed by the `kind` code (`lo`, `hi`), so

@@ -1,6 +1,6 @@
 """Production-seam tests for solve-input liveness commits."""
 
-from typing import Any
+from typing import Never
 
 import pytest
 
@@ -66,7 +66,7 @@ def test_failed_real_period_kernel_records_no_dispatch_commit(
         observed.append(dispatch)
         return real_commit(self, dispatch=dispatch)
 
-    def fail_before_return(**_kwargs: Any) -> object:
+    def fail_before_return[Ignored](**_kwargs: Ignored) -> Never:
         msg = "injected period-kernel failure"
         raise RuntimeError(msg)
 

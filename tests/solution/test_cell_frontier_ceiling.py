@@ -6,10 +6,9 @@ output shape changes, and every other axis keeps the widths it had. Solve cell a
 and simulate subject axes are both bound, budgeted or not.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
 
 import cloudpickle
 import jax.numpy as jnp
@@ -20,6 +19,7 @@ from beartype.roar import BeartypeCallHintViolation
 
 import _lcm.simulation.runtime as simulation_runtime
 from _lcm.execution.workspace_planning import (
+    WorkspacePlan,
     bootstrap_widths,
     workspace_width_candidates,
 )
@@ -210,12 +210,17 @@ def _simulate_recording_widths(
     selected: list[Mapping[str, int]] = []
     plan_workspace = simulation_runtime.plan_workspace
 
-    def record(**arguments: Any) -> Any:
-        plan = plan_workspace(**arguments)
-        selected.append(plan.widths)
-        return plan
+    def record[**P, Compiled](
+        planner: Callable[P, WorkspacePlan[Compiled]],
+    ) -> Callable[P, WorkspacePlan[Compiled]]:
+        def observe(*args: P.args, **kwargs: P.kwargs) -> WorkspacePlan[Compiled]:
+            plan = planner(*args, **kwargs)
+            selected.append(plan.widths)
+            return plan
 
-    monkeypatch.setattr(simulation_runtime, "plan_workspace", record)
+        return observe
+
+    monkeypatch.setattr(simulation_runtime, "plan_workspace", record(plan_workspace))
     model = _model(
         axis_width_ceilings=axis_width_ceilings, device_memory_bytes=device_memory_bytes
     )

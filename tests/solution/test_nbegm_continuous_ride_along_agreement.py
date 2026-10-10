@@ -18,6 +18,7 @@ from collections.abc import Mapping
 
 import numpy as np
 
+from lcm.typing import FloatND, RegimeName
 from tests.test_models import nbegm_continuous_ride_along_toy as toy
 
 _N_LIQUID = 120
@@ -34,7 +35,9 @@ def _interior_for_wage(wage: float) -> np.ndarray:
     return _EDGE & away_from_cliff
 
 
-def _solve(*, variant: str, n_consumption: int = 160) -> Mapping[int, Mapping]:
+def _solve(
+    *, variant: str, n_consumption: int = 160
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the continuous-ride-along toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -49,7 +52,9 @@ def _solve(*, variant: str, n_consumption: int = 160) -> Mapping[int, Mapping]:
     return model.solve(params=toy.build_params(), log_level="debug").values
 
 
-def _terminal_adjacent_period(solved: Mapping[int, Mapping]) -> int:
+def _terminal_adjacent_period(
+    solved: Mapping[int, Mapping[RegimeName, FloatND]],
+) -> int:
     """The largest period in which `alive` is active (its continuation is bequest)."""
     return max(period for period in solved if "alive" in solved[period])
 

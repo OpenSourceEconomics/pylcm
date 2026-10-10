@@ -45,27 +45,46 @@ Each distinct solve runs once per worker and is shared across tests.
 
 import functools
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Literal, TypedDict, TypeGuard
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from numpy.typing import NDArray
 
 from lcm import DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.execution import WidthSearch, WidthSearchPolicy
+from lcm.solver_api import ArtifactRef, ArtifactStore, SolutionResult
 from lcm.solvers import ACTION_PRODUCT_AXIS, BRANCH_AXIS
-from lcm.typing import UserParams
+from lcm.typing import RegimeName, UserParams
 from tests.solution._candidate_census import Census, CensusRecorder
 from tests.test_models import nbegm_multi_discrete_toy
 from tests.test_models.deterministic import regression
+
+
+class _ToySizes(TypedDict, total=False):
+    n_periods: int
+    n_liquid: int
+    n_savings: int
+    n_consumption: int
+
+
+type _PublishedArrayKey = (
+    tuple[Literal["value"], int, RegimeName]
+    | tuple[Literal["replay", "auxiliary"], ArtifactRef, int]
+)
+
 
 _EXTENT = 20
 _SEED = 16
 _BUDGET = 10**9
 _DEFAULT_SIZE_BUDGET = 40 * 1024**3
-_MAX_ULP = {np.dtype(np.float64): 4, np.dtype(np.float32): 1}
+_MAX_ULP: Mapping[np.dtype[np.generic], int] = {
+    np.dtype(np.float64): 4,
+    np.dtype(np.float32): 1,
+}
 _NBEGM = "nbegm"
 _GRID_SEARCH = "grid_search"
 _AXIS = {_NBEGM: BRANCH_AXIS, _GRID_SEARCH: ACTION_PRODUCT_AXIS}
@@ -89,7 +108,7 @@ _SIMULATION_PARAMS: dict[str, dict[str, float]] = {
 }
 _N_SUBJECTS = 400
 _SIMULATION_SEED = 1
-_NON_FINITE_CLASSES: dict[str, Callable[[np.ndarray], np.ndarray]] = {
+_NON_FINITE_CLASSES: dict[str, Callable[[NDArray[np.floating]], NDArray[np.bool_]]] = {
     "nan": np.isnan,
     "posinf": np.isposinf,
     "neginf": np.isneginf,
@@ -102,7 +121,7 @@ def _case_id(case: tuple[str, str]) -> str:
 
 
 @functools.cache
-def _solve(*, solver: str, arm: str, covered: bool) -> tuple[Any, Census]:
+def _solve(*, solver: str, arm: str, covered: bool) -> tuple[SolutionResult, Census]:
     """Solve one model under one arm; return the result and the planner census."""
     execution = ExecutionConfig(
         device_memory_bytes=_ARM_BUDGET[arm],
@@ -113,7 +132,9 @@ def _solve(*, solver: str, arm: str, covered: bool) -> tuple[Any, Census]:
     return _solve_with_census(model=model, params=params)
 
 
-def _solve_with_census(*, model: Model, params: UserParams) -> tuple[Any, Census]:
+def _solve_with_census(
+    *, model: Model, params: UserParams
+) -> tuple[SolutionResult, Census]:
     """Solve `model`; return the result and the planner census of the solve."""
     recorder = CensusRecorder()
     with pytest.MonkeyPatch.context() as monkeypatch:
@@ -131,7 +152,7 @@ def _build(
 ) -> tuple[Model, UserParams]:
     """Build one of the models under `execution` and its parameters."""
     if solver == _NBEGM:
-        sizes: dict[str, Any] = (
+        sizes: _ToySizes = (
             {}
             if arm == _DEFAULT_SIZE
             else {"n_periods": 2, "n_liquid": 8, "n_savings": 10, "n_consumption": 12}
@@ -155,7 +176,9 @@ def _build(
     return model, params
 
 
-def _covered_and_uncovered(case: tuple[str, str]) -> tuple[Any, Any]:
+def _covered_and_uncovered(
+    case: tuple[str, str],
+) -> tuple[SolutionResult, SolutionResult]:
     """Return the covered and the uncovered result of one case."""
     solver, arm = case
     covered, _ = _solve(solver=solver, arm=arm, covered=True)
@@ -239,32 +262,43 @@ def _dispatched_widths(*, census: Census, axis: str) -> set[int]:
     }
 
 
-def _published_arrays(result) -> dict[object, np.ndarray]:
+def _published_arrays(
+    result: SolutionResult,
+) -> dict[_PublishedArrayKey, NDArray[np.generic]]:
     """Collect every array leaf the solve publishes, keyed by where it is published."""
-    arrays: dict[object, np.ndarray] = {}
+    arrays: dict[_PublishedArrayKey, NDArray[np.generic]] = {}
     for period, by_regime in result.values.items():
         for regime, value in by_regime.items():
             arrays[("value", period, regime)] = np.asarray(value)
-    for channel, store in (
+    channels: tuple[tuple[Literal["replay", "auxiliary"], ArtifactStore], ...] = (
         ("replay", result.replay_artifacts),
         ("auxiliary", result.auxiliary_artifacts),
-    ):
+    )
+    for channel, store in channels:
         for ref, artifact in store.items():
             for index, leaf in enumerate(jax.tree_util.tree_leaves(artifact)):
                 arrays[(channel, ref, index)] = np.asarray(leaf)
     return arrays
 
 
-def _float_arrays(result) -> dict[object, np.ndarray]:
+def _is_float_array[Scalar: np.generic](
+    array: NDArray[Scalar],
+) -> TypeGuard[NDArray[np.floating]]:
+    return np.issubdtype(array.dtype, np.floating)
+
+
+def _float_arrays(
+    result: SolutionResult,
+) -> dict[_PublishedArrayKey, NDArray[np.floating]]:
     """The published arrays of a floating dtype."""
     return {
         key: array
         for key, array in _published_arrays(result).items()
-        if np.issubdtype(array.dtype, np.floating)
+        if _is_float_array(array)
     }
 
 
-def _discrete_bytes(result) -> dict[object, bytes]:
+def _discrete_bytes(result: SolutionResult) -> dict[_PublishedArrayKey, bytes]:
     """Raw bytes of every published integer or boolean array."""
     return {
         key: array.tobytes()
@@ -273,7 +307,9 @@ def _discrete_bytes(result) -> dict[object, bytes]:
     }
 
 
-def _bytes(result) -> dict[object, tuple[tuple[int, ...], np.dtype, bytes]]:
+def _bytes(
+    result: SolutionResult,
+) -> dict[_PublishedArrayKey, tuple[tuple[int, ...], np.dtype[np.generic], bytes]]:
     """Shape, dtype and raw bytes of every published array, for bitwise comparison."""
     return {
         key: (array.shape, array.dtype, array.tobytes())
@@ -281,7 +317,9 @@ def _bytes(result) -> dict[object, tuple[tuple[int, ...], np.dtype, bytes]]:
     }
 
 
-def _shapes_and_dtypes(result) -> dict[object, tuple[tuple[int, ...], np.dtype]]:
+def _shapes_and_dtypes(
+    result: SolutionResult,
+) -> dict[_PublishedArrayKey, tuple[tuple[int, ...], np.dtype[np.generic]]]:
     """Shape and dtype of every published array."""
     return {
         key: (array.shape, array.dtype)
@@ -289,7 +327,7 @@ def _shapes_and_dtypes(result) -> dict[object, tuple[tuple[int, ...], np.dtype]]
     }
 
 
-def _class_masks(*, result, non_finite: str) -> dict[object, bytes]:
+def _class_masks(*, result, non_finite: str) -> dict[_PublishedArrayKey, bytes]:
     """Where each float array holds the `non_finite` class, as raw mask bytes."""
     predicate = _NON_FINITE_CLASSES[non_finite]
     return {
@@ -297,9 +335,9 @@ def _class_masks(*, result, non_finite: str) -> dict[object, bytes]:
     }
 
 
-def _ulp_excess(*, covered, uncovered) -> dict[object, tuple[int, int]]:
+def _ulp_excess(*, covered, uncovered) -> dict[_PublishedArrayKey, tuple[int, int]]:
     """Worst ULP distance and bound of every float array that exceeds its bound."""
-    excess: dict[object, tuple[int, int]] = {}
+    excess: dict[_PublishedArrayKey, tuple[int, int]] = {}
     reference = _float_arrays(uncovered)
     for key, a in _float_arrays(covered).items():
         b = reference[key]

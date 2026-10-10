@@ -1,7 +1,6 @@
 """Compiler-live paths describe actual dynamic leaves, including repeated aliases."""
 
-from collections.abc import Mapping
-from typing import Any
+from typing import Never, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -12,8 +11,13 @@ from _lcm.typing import ArgumentTree
 from lcm.exceptions import ExecutionPlanningError
 
 
+class _Payload(TypedDict):
+    pair: tuple[jax.Array, jax.Array]
+    unused: jax.Array
+
+
 def _nested_operation(
-    *, payload: Mapping[str, Any], offset: jax.Array, first: bool
+    *, payload: _Payload, offset: jax.Array, first: bool
 ) -> jax.Array:
     pair = payload["pair"]
     return pair[0] + pair[1] + offset if first else payload["unused"]
@@ -106,7 +110,7 @@ def test_unavailable_compiler_input_metadata_is_refused(
     compiled = jax.jit(_shape_only).lower(**arguments).compile()
     original = RuntimeError("compiler metadata unavailable")
 
-    def unavailable(_compiled: jax.stages.Compiled) -> object:
+    def unavailable(_compiled: jax.stages.Compiled) -> Never:
         raise original
 
     monkeypatch.setattr(jax.stages.Compiled, "input_shardings", property(unavailable))

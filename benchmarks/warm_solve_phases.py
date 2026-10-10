@@ -28,6 +28,12 @@ import sys
 import time
 from collections.abc import Iterator, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lcm import Model
+    from lcm.solver_api import SolutionResult
+    from lcm.typing import UserParams
 
 if not __package__:
     # Run as a path (`python benchmarks/warm_solve_phases.py`), the repository
@@ -191,7 +197,7 @@ class CallReport:
     """
 
 
-def _build_precautionary_savings() -> tuple[object, object]:
+def _build_precautionary_savings() -> tuple[Model, UserParams]:
     """Build the precautionary-savings model and its parameters."""
     from lcm_examples import precautionary_savings
 
@@ -208,14 +214,14 @@ def _build_precautionary_savings() -> tuple[object, object]:
     return model, params
 
 
-def _build_iskhakov() -> tuple[object, object]:
+def _build_iskhakov() -> tuple[Model, UserParams]:
     """Build the taste-shock retirement model and its parameters."""
     from benchmarks.asv.bench_iskhakov_et_al_2017 import _make_model_and_params
 
     return _make_model_and_params(wealth_n_points=100, consumption_n_points=100)
 
 
-def _build_aca_reduced() -> tuple[object, object]:
+def _build_aca_reduced() -> tuple[Model, UserParams]:
     """Build the benchmark-sized ACA baseline model and its parameters."""
     try:
         from aca_model.agent.preferences import BenchmarkPrefType
@@ -235,7 +241,7 @@ def _build_aca_reduced() -> tuple[object, object]:
     return model, get_benchmark_params(model=model)[2]
 
 
-def _build_independent_types() -> tuple[object, object]:
+def _build_independent_types() -> tuple[Model, UserParams]:
     """Build the fixed-preference-type cake-eating model and its parameters."""
     from tests.test_models import independent_types
 
@@ -306,21 +312,21 @@ def _writing_plan_records(*, path: Path | None) -> Iterator[None]:
 
 def _run_calls(
     *,
-    model: object,
-    params: object,
+    model: Model,
+    params: UserParams,
     n_calls: int,
     release_previous: bool,
     log_level: str = LOG_LEVEL,
 ) -> tuple[CallReport, ...]:
     """Solve `n_calls` times, reading each call's phases and counters back."""
     reports: list[CallReport] = []
-    retained: list[object] = []
+    retained: list[SolutionResult] = []
     for index in range(n_calls):
         if release_previous:
             retained.clear()
             gc.collect()
         with _collecting_lcm_records() as lines, count_compile_requests() as counts:
-            result = model.solve(params=params, log_level=log_level)  # ty: ignore[unresolved-attribute]
+            result = model.solve(params=params, log_level=log_level)
         retained.append(result)
         calls = parse_phase_records(lines=lines)
         if len(calls) != 1:
@@ -349,11 +355,11 @@ def _run_calls(
     return tuple(reports)
 
 
-def _time_without_handler(*, model: object, params: object, n_calls: int) -> float:
+def _time_without_handler(*, model: Model, params: UserParams, n_calls: int) -> float:
     """Return the total seconds of `n_calls` solves with nothing attached."""
     start = time.monotonic()
     for _ in range(n_calls):
-        model.solve(params=params, log_level=LOG_LEVEL)  # ty: ignore[unresolved-attribute]
+        model.solve(params=params, log_level=LOG_LEVEL)
     return time.monotonic() - start
 
 

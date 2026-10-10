@@ -32,6 +32,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     bequest,
@@ -247,7 +248,7 @@ def build_params(
     tax_rate: float = 0.3,
     tax_exemption: float = 12.0,
     final_age_alive: float = 3.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the multi-target tax toy.
 
     `alive_b` carries a higher `base_income` (shifted by `base_income_shift_b`)
@@ -258,7 +259,7 @@ def build_params(
     base_b = base_a + base_income_shift_b
     budget = {"return_liquid": return_liquid, "income": income}
 
-    def living(base_income: FloatND) -> dict:
+    def living(base_income: FloatND) -> dict[str, UserParamsNode]:
         return {
             "utility": {"crra": crra},
             "koopmans_aggregator": {"discount_factor": discount_factor},

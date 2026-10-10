@@ -29,7 +29,6 @@ retirement; `1 + return_pension` by default) and `retirement_income_in_first_per
 (whether `retirement_income` is received in the first retired period).
 """
 
-from collections.abc import Callable
 from typing import cast
 
 import jax.numpy as jnp
@@ -58,6 +57,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
     UserFunction,
+    UserParamsNode,
 )
 
 type _StateGrid = ContinuousGrid | AgeSpecializedGrid
@@ -242,7 +242,7 @@ def get_model(
     retired_liquid_grid: _StateGrid | None = None,
     dead_liquid_grid: ContinuousGrid | None = None,
     solvers: dict[str, Solver] | None = None,
-    laws: dict[str, Callable] | None = None,
+    laws: dict[str, UserFunction] | None = None,
     koopmans_aggregator: UserFunction = LinearAggregator(),
     analytic_inverse_marginal_utility: bool = True,
     enable_jit: bool = True,
@@ -422,7 +422,7 @@ def _edges(*, ages: AgeGrid, retirement_period: int, retired_law: ByAge) -> Phas
 
 def _euler_inversion_functions(
     *, solver: Solver, analytic: bool
-) -> dict[str, Callable]:
+) -> dict[str, UserFunction]:
     """The closed-form `(u')^-1` entry a regime declares, if it needs one."""
     if solver.required_continuation_keys and analytic:
         return {"inverse_marginal_utility": inverse_marginal_utility}
@@ -441,7 +441,7 @@ def get_params(
     retirement_income: float = 0.50,
     final_age_alive: float = 4.0,
     pension_payout_return: float | None = None,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the DS pension model (faithful calibration from `SetupPar.m`).
 
     `pension_payout_return` defaults to `1 + return_pension` (the pension balance is

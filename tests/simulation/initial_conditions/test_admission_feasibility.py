@@ -4,7 +4,7 @@ import dataclasses
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Never, cast
 
 import jax
 import jax.numpy as jnp
@@ -12,8 +12,10 @@ import numpy as np
 import pytest
 
 import lcm
+from _lcm.execution.compiler_memory import CompilerMemoryReport
 from _lcm.simulation import initial_conditions as preflight
 from _lcm.simulation.initial_conditions import _SerialValidationRequired
+from _lcm.typing import JSONValue, PytreeValue
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -157,12 +159,16 @@ def compiler_boundary(monkeypatch: pytest.MonkeyPatch) -> _CompilerBoundary:
     analyze_program = jax.stages.Compiled.memory_analysis
     dispatch_program = jax.stages.Compiled.__call__
 
-    def analyze_and_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def analyze_and_record(
+        self: jax.stages.Compiled, *args: Never, **kwargs: Never
+    ) -> CompilerMemoryReport | None:
         stats = analyze_program(self, *args, **kwargs)
         observed.profiled.append((self, len(observed.dispatched)))
         return stats
 
-    def dispatch_and_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def dispatch_and_record(
+        self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         observed.dispatched.append(self)
         return dispatch_program(self, *args, **kwargs)
 
@@ -191,7 +197,7 @@ def test_simulate_refuses_feasibility_workspace_before_diagnostics(
     wide_solution: SolutionResult,
     compiler_boundary: _CompilerBoundary,
     monkeypatch: pytest.MonkeyPatch,
-    record_property: Callable[[str, object], None],
+    record_property: Callable[[str, JSONValue], None],
 ) -> None:
     """The actual constraint workspace must fit before its predicate is evaluated."""
     assert (
@@ -203,7 +209,7 @@ def test_simulate_refuses_feasibility_workspace_before_diagnostics(
     model, params, initial = _inputs(budget=budget, n_actions=1024)
     if serial:
 
-        def require_serial(**kwargs: Any) -> None:
+        def require_serial[Ignored](**kwargs: Ignored) -> None:
             del kwargs
             raise _SerialValidationRequired
 
@@ -348,11 +354,11 @@ def test_feasibility_resource_errors_escape_without_serial_retry(
 ) -> None:
     failure = error_type("feasibility producer unavailable")
 
-    def fail(**kwargs: Any) -> None:
+    def fail[Ignored](**kwargs: Ignored) -> None:
         del kwargs
         raise failure
 
-    def forbidden(**kwargs: Any) -> None:
+    def forbidden[Ignored](**kwargs: Ignored) -> None:
         del kwargs
         pytest.fail("A resource exception entered serial validation.")
 

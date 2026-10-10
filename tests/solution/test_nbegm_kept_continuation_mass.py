@@ -39,7 +39,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
 
 _FIRST_AGE = 20
@@ -174,8 +174,8 @@ def _build_model(
     )
 
 
-def _params(*, certainty_equivalent: str) -> dict:
-    alive: dict = {
+def _params(*, certainty_equivalent: str) -> UserParams:
+    alive: dict[str, dict[str, float]] = {
         "koopmans_aggregator": {"discount_factor": 0.95},
         "resources": {"base_income": 1.0},
         "income": {"mu": 0.0, "sigma": 0.2},

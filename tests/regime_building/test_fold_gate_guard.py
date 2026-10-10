@@ -24,14 +24,18 @@ here is a singleton, and the collective fixtures serve as the unfolded pins.
 `test_fold_guard_complete.py` covers the guard's remaining roles.
 """
 
+from collections.abc import Mapping
 from types import MappingProxyType
+from typing import TypedDict
 
 import jax.numpy as jnp
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_building.processing import PreparedModelStructure, process_regimes
+from _lcm.regime_law import RegimeLawDeclaration
+from _lcm.typing import RegimeNamesToIds
 from lcm import (
     AgeRange,
     ByAge,
@@ -49,8 +53,16 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import StochasticTransition, Transition
-from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import BoolND, DiscreteAction, FloatND, RegimeName, ScalarInt
 from tests.conftest import bind_laws, build_prepared_structure
+
+
+class _ProcessKwargs(TypedDict):
+    user_regimes: Mapping[RegimeName, Regime]
+    ages: AgeGrid
+    regime_names_to_ids: RegimeNamesToIds
+    enable_jit: bool
+    prepared_structure: PreparedModelStructure
 
 
 @categorical(ordered=True)
@@ -91,9 +103,11 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
 
 def _solve_kwargs(
     *,
-    regimes_and_laws: tuple[dict[str, Regime], dict[str, object]],
+    regimes_and_laws: tuple[
+        dict[str, Regime], dict[RegimeName, RegimeLawDeclaration | Transition]
+    ],
     ages: AgeGrid,
-) -> dict:
+) -> _ProcessKwargs:
     regimes, declared_transitions = regimes_and_laws
     laws = bind_laws(declared_transitions)
     names = list(regimes)
@@ -122,7 +136,7 @@ _AGES_2P = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 def _make_gated_target_regimes(
     *, fold: bool
-) -> tuple[dict[str, Regime], dict[str, object]]:
+) -> tuple[dict[str, Regime], dict[RegimeName, RegimeLawDeclaration | Transition]]:
     """`source` --gated_edges--> `target` (collective, folds `wage_shock`)."""
     source = Regime(
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -185,7 +199,7 @@ def _dummy_constraint(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
 
 def _make_same_period_ref_regimes(
     *, fold: bool
-) -> tuple[dict[str, Regime], dict[str, object]]:
+) -> tuple[dict[str, Regime], dict[RegimeName, RegimeLawDeclaration | Transition]]:
     """`reader` (collective) --same_period_refs--> `ref_target` (collective, folded)."""
     ref_target = Regime(
         states={"wage_shock": _shock(fold=fold)},
@@ -250,7 +264,7 @@ def test_unfolded_collective_same_period_reference_still_constructs():
 
 def _make_gate_refs_regimes(
     *, fold: bool
-) -> tuple[dict[str, Regime], dict[str, object]]:
+) -> tuple[dict[str, Regime], dict[RegimeName, RegimeLawDeclaration | Transition]]:
     """`source`'s gate reads `gate_refs['V_ref']` -> `ref_target` (singleton, folded).
 
     `target` (the gated-edge TARGET) is a plain, unfolded collective regime, so
