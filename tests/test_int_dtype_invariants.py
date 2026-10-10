@@ -135,7 +135,7 @@ def test_process_params_casts_int64_array_to_int32() -> None:
     """An `int64` array param leaf is normalised to `jnp.int32`.
 
     Built with `np.asarray`: a JAX `int64` array is rejected at the beartype
-    boundary (`_ParamsLeaf` pins JAX integer leaves to `int32`), so the
+    boundary (`ParamsLeaf` pins JAX integer leaves to `int32`), so the
     realistic raw-data path for a wider-dtype input is a numpy array.
     """
     template = _as_template({"regime_a": {"fun": {"schedule": "Array"}}})

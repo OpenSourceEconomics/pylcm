@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 import jax
 
 if TYPE_CHECKING:
-    from _lcm.typing import _ParamsLeaf
-    from lcm.typing import _UserParamsLeaf
+    from _lcm.typing import ParamsLeaf
+    from lcm.typing import UserParamsLeaf
 
 
 class UserSequenceLeaf:
@@ -32,7 +32,7 @@ class UserSequenceLeaf:
     __slots__ = ("data",)
 
     if TYPE_CHECKING:
-        data: tuple[_UserParamsLeaf, ...]
+        data: tuple[UserParamsLeaf, ...]
 
     def __init__(self, data: Sequence[Any]) -> None:
         from _lcm.utils.containers import _make_immutable  # noqa: PLC0415
@@ -68,7 +68,7 @@ class SequenceLeaf(UserSequenceLeaf):
     __slots__ = ()
 
     if TYPE_CHECKING:
-        data: tuple[_ParamsLeaf, ...]
+        data: tuple[ParamsLeaf, ...]
 
 
 def _user_flatten(leaf: UserSequenceLeaf) -> tuple[list[Any], None]:

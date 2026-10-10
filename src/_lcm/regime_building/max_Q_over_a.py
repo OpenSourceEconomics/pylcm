@@ -40,10 +40,10 @@ from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
     MaxQOverAFunction,
+    ParamsLeaf,
     QualifiedName,
     RegimeName,
     StateName,
-    _ParamsLeaf,
 )
 from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d
 from _lcm.utils.functools import allow_args, allow_only_kwargs
@@ -56,7 +56,7 @@ TASTE_SHOCK_SCALE_PARAM = "taste_shocks__scale"
 def _evaluate_pareto_weights(
     *,
     pareto_weights: ParetoWeights | None,
-    states_actions_params: Mapping[str, _ParamsLeaf],
+    states_actions_params: Mapping[str, ParamsLeaf],
 ) -> dict[str, FloatND]:
     """Evaluate the household's Pareto weights at one cell.
 
@@ -1072,7 +1072,7 @@ def _wrap_with_fold_reduction(
     )
     def folded(
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: _ParamsLeaf,
+        **states_actions_params: ParamsLeaf,
     ) -> FloatND:
         V_arr = mapped(
             next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params

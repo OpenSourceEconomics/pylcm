@@ -403,8 +403,8 @@ _SOURCE_SEALS = {
     SIMULATION_RUNTIME_SOURCE: "016c77f3d3d801a0d4ea071fbf942dd49d9aa2e0bb643c622ee2f219e4fc95b9",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "681a7fe6d5a31497945ade5190da4134abd344d92bf5905345f5547d296c693a",
-    COLLECTIVE_SOURCE: "e414cfb6d138f79adca1b618eb64e45154c6fb810c62f10bf81afc4d94f1ffd0",
-    MAX_Q_SOURCE: "215a53b030e14960f0355713beb470eaed3a846a01e9616242d442555ce40e2c",
+    COLLECTIVE_SOURCE: "4e0a6a75cf8c68557e4874cb226f452bfad0fcaae4b5824f3f9bf876c2a78c86",
+    MAX_Q_SOURCE: "e3351bb09eb4780cdb3bd5686d8fd5d6d83a5d9846a9d389d6020db3769319b7",
     PROCESSING_SOURCE: "b0003c13ac1d57f72fa61f75c405c52147f20a08e87358e2c2752803f3707e45",
     GRID_SEARCH_SOURCE: "a644001646f0a082127b1f8f305c195fee9a90686f2b3fad6d1379a41f7103d6",
     CORE_PROGRAM_SOURCE: "cd462fa33531ba9ddbbea5acea539094314a5d5f44eba87d3942d98bdf9be197",
@@ -1671,7 +1671,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MAX_Q_SOURCE: (
-        "94e5e6c620e60ecbf451993474962f6212ceaa0e1c507e4e652e4fb6e516c828",
+        "0f7f6978a51cf11db308ef02427fcb0615bb11b52c0a4c398c1971fdb4a76646",
         {
             "get_action_partitioned_max_Q_over_a": "9443177495a4aa17b12aed6bda675dace04c1422b7d37a96e6fc76df8e46c30e",
             "_ActionPartitionedMaxQOverA.__call__": "42b11107cae7f2d6ddcf098584a4bf01e358b5c333b6e94c785c0d525ef42d30",
@@ -1683,7 +1683,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "get_streaming_max_Q_over_a": "f6049aafdb1361ab3dc07245c3e201f35719fe199c7278fb748c7658ac5f8a63",
             "_fail_if_full_V_streaming_route_is_unsupported": "cd4c96d572ec7df9dc269f5fa2bfc1ec5c16fe0a78de3be56adc28c15f065d2c",
             "_fail_if_streaming_co_map_layout_is_invalid": "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979",
-            "_wrap_with_fold_reduction": "f3fb924c100154c7bb451996ce913b01b989a8f73a8b5f23625a59d142930e40",
+            "_wrap_with_fold_reduction": "20dee195475a290e229948d79aa1b0b65a0c20a59f0412468637039809b32f07",
             "_StreamedMaxQOverA.__call__": "33ce3d55caed7206385b8bb20c93dcd387f2c7eaf1f6127b71476811595e85d4",
         },
     ),
