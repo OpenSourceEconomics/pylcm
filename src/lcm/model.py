@@ -230,6 +230,7 @@ from _lcm.time_validation import validate_time_declarations
 from _lcm.transition_checks import validate_regime_selection, validate_transitions
 from _lcm.typing import (
     ActionName,
+    ArtifactPayload,
     FlatParams,
     FunctionName,
     InitialConditions,
@@ -259,6 +260,7 @@ from _lcm.utils.logging import (
 )
 from _lcm.variables import carried_state_grids, from_regime, get_grids
 from lcm._solver_api.authority import _ArrayCopier
+from lcm._solver_api.contract import ArtifactContractValue
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import (
@@ -344,7 +346,9 @@ else:
     type _ArtifactStoreBoundary = object
 
 
-def _same_exactly_typed(*, actual: object, expected: object) -> bool:
+def _same_exactly_typed(
+    *, actual: ArtifactContractValue, expected: ArtifactContractValue
+) -> bool:
     """Compare trusted metadata without admitting equal values of another type."""
     return _same_exact_artifact_contract(
         actual=actual,
@@ -377,7 +381,9 @@ type _ResolvedSolution = tuple[
 class _ReplayPayloadSource(Protocol):
     """How a plugin replay payload is obtained from a consumed solution."""
 
-    def __call__(self, *, ref: ArtifactRef, authority: ArtifactAuthority) -> object:
+    def __call__(
+        self, *, ref: ArtifactRef, authority: ArtifactAuthority
+    ) -> ArtifactPayload:
         """Return the payload stored at `ref` in the form `authority` declares."""
 
 
@@ -2013,7 +2019,7 @@ class Model:
         consumed_views = solution._consumed_views  # noqa: SLF001
         remembered = consumed_views.get(memo_key)
         if remembered is not None:
-            return cast("_ResolvedSolution", remembered)
+            return remembered
         engine_view = solution._engine_view  # noqa: SLF001
         if (
             type(engine_view) is OwnedSolutionView
@@ -2084,7 +2090,9 @@ class Model:
         )
         replay_artifacts = engine_view.replay_artifacts
 
-        def owned_payload(*, ref: ArtifactRef, authority: ArtifactAuthority) -> object:
+        def owned_payload(
+            *, ref: ArtifactRef, authority: ArtifactAuthority
+        ) -> ArtifactPayload:
             del authority
             return replay_artifacts[ref]
 
@@ -2155,7 +2163,7 @@ class Model:
 
         def validated_payload(
             *, ref: ArtifactRef, authority: ArtifactAuthority
-        ) -> object:
+        ) -> ArtifactPayload:
             materialized = replay_store._materialize_from_template_snapshot(  # noqa: SLF001
                 ref,
                 template_snapshot=snapshot_artifact_template_declaration(authority),
@@ -2896,7 +2904,7 @@ class Model:
                         f"({period}, {regime_name!r})."
                     )
 
-                snapshot_artifacts: dict[ArtifactKey, object] = {}
+                snapshot_artifacts: dict[ArtifactKey, ArtifactPayload] = {}
                 snapshot_authorities: dict[ArtifactKey, ArtifactAuthority] = {}
                 defects: list[str] = []
                 for key, declared_authority in declared.items():

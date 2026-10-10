@@ -524,7 +524,7 @@ class RetainedComponentValues:
     def value_store(self) -> _ValueStoreBoundary:
         """Return the complete logical store, one lazy entry per solved value."""
         self._coverage.fail_if_incomplete()
-        entries: dict[object, object] = {
+        entries: dict[_Coordinate, _ComponentValueEntry] = {
             coordinate: _ComponentValueEntry(
                 owner=self, period=coordinate[0], regime=coordinate[1]
             )

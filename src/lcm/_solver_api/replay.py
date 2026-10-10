@@ -21,6 +21,8 @@ from lcm._solver_api.contract import (
 )
 from lcm._solver_api.identity import (
     ArtifactKey,
+    ArtifactPayload,
+    ArtifactRuntimeType,
     ReplayRouteIdentity,
     SolverIdentity,
 )
@@ -36,7 +38,7 @@ class ReplayRouteSnapshot:
     exact placed snapshot and context again immediately before building its reader.
     """
 
-    artifacts: Mapping[ArtifactKey, object]
+    artifacts: Mapping[ArtifactKey, ArtifactPayload]
     """Materialized payloads of the cell, keyed by artifact key."""
     authorities: Mapping[ArtifactKey, ArtifactAuthority]
     """Model-built authority of each payload."""
@@ -163,7 +165,7 @@ class ReplayReader(Protocol):
     def __call__(
         self,
         *,
-        states: Mapping[str, object],
+        states: Mapping[StateName, FloatND | IntND],
         fallback_actions: Mapping[ActionName, ValueND],
     ) -> ActionOutput:
         """Return each named action as a scalar or per-subject-broadcastable array.
@@ -206,7 +208,7 @@ class ReplayRoute(Protocol):
         ...
 
     @property
-    def payload_type(self) -> type[object] | None:
+    def payload_type(self) -> ArtifactRuntimeType | None:
         """Exact class of the retained payload, `None` when none is kept."""
         ...
 
@@ -378,16 +380,18 @@ class KernelOutput:
     value: FloatND | Float[np.ndarray, "*shape"]
     """The regime's value-function array on its exogenous state grid."""
 
-    continuations: Mapping[ArtifactKey, object] = field(default_factory=dict)
+    continuations: Mapping[ArtifactKey, ArtifactPayload] = field(default_factory=dict)
     """Cross-period artifacts required while backward induction is running."""
 
-    solve_time_artifacts: Mapping[ArtifactKey, object] = field(default_factory=dict)
+    solve_time_artifacts: Mapping[ArtifactKey, ArtifactPayload] = field(
+        default_factory=dict
+    )
     """Other artifacts consumed by the solve before the period rolls."""
 
-    replay: Mapping[ArtifactKey, object] = field(default_factory=dict)
+    replay: Mapping[ArtifactKey, ArtifactPayload] = field(default_factory=dict)
     """Artifacts a later simulation or policy replay may consume."""
 
-    auxiliary: Mapping[ArtifactKey, object] = field(default_factory=dict)
+    auxiliary: Mapping[ArtifactKey, ArtifactPayload] = field(default_factory=dict)
     """Optional, solver-defined artifacts for inspection or persistence."""
 
     def __post_init__(self) -> None:

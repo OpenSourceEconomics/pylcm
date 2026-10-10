@@ -10,11 +10,12 @@ artifact templates.
 from collections.abc import Callable, Mapping
 from functools import partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import jax
 
 from _lcm.solution.native_values import NativeValueMaterializer
+from _lcm.typing import ArtifactPayload
 from lcm._solver_api.authority import _ArrayCopier
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
@@ -175,7 +176,7 @@ def snapshot_artifact_store(
 
 def own_artifact_store(
     *,
-    entries: Mapping[ArtifactRef, object],
+    entries: Mapping[ArtifactRef, ArtifactPayload],
     authorities: _AuthoritiesInput,
 ) -> _ArtifactStoreBoundary:
     """Build a store around buffers the engine's own solve allocated.
@@ -184,7 +185,7 @@ def own_artifact_store(
     reference rather than copied: nothing outside the engine holds these arrays.
     A payload without an authority is stored as supplied.
     """
-    owned: dict[ArtifactRef, object] = {}
+    owned: dict[ArtifactRef, ArtifactPayload | _LazyEntry] = {}
     for ref, payload in entries.items():
         authority = authorities.get(ref)
         owned[ref] = (
@@ -256,9 +257,9 @@ def snapshot_value_store(
             if not isinstance(entry.value, jax.Array):
                 raise TypeError("Model solution values must contain JAX arrays.")
         return ValueStore._from_entries_with_copy(  # noqa: SLF001 — trusted store boundary
-            entries=cast("Mapping[object, object]", entries), array_copier=array_copier
+            entries=entries, array_copier=array_copier
         )
-    return ValueStore(cast("Mapping[object, object]", entries))
+    return ValueStore(entries)
 
 
 def snapshot_omissions(

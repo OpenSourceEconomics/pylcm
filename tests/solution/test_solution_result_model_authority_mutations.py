@@ -15,6 +15,7 @@ import lcm.model as model_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy, OuterPolicyBank
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.regime_building import processing as regime_processing
+from _lcm.typing import ArtifactPayload
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -81,7 +82,7 @@ class _AlternatingProjectArtifactStore(ArtifactStore):
         """Number of simulation-policy projections requested by the consumer."""
         return cast("int", getattr(self, "_project_calls", 0))
 
-    def project(self, key: ArtifactKey) -> Mapping[int, Mapping[str, object]]:
+    def project(self, key: ArtifactKey) -> Mapping[int, Mapping[str, ArtifactPayload]]:
         if key != SIMULATION_POLICY:
             return super().project(key)
         calls = self.project_calls + 1
@@ -103,7 +104,7 @@ def _fixture():
     return model, solution, ref, policy
 
 
-def _with_policy(*, solution, ref: ArtifactRef, policy: object):
+def _with_policy(*, solution, ref: ArtifactRef, policy: ArtifactPayload):
     """Replace one replay policy without changing any other result channel."""
     return replace(
         solution,

@@ -20,6 +20,7 @@ from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution import fingerprint as fingerprint_module
 from _lcm.solution import period_replay as period_replay_module
 from _lcm.solution.fingerprint import fingerprint_solution_support
+from _lcm.typing import ArtifactPayload
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -154,10 +155,13 @@ class _ChangingLazyEntry(solver_api_module._LazyEntry):
             LoadState.UNLOADED if self.materialization_count == 0 else LoadState.LOADED
         )
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
         """Change the returned object after the first materialization."""
         self.materialization_count += 1
-        return self.first if self.materialization_count == 1 else self.subsequent
+        return cast(
+            "ArtifactPayload",
+            self.first if self.materialization_count == 1 else self.subsequent,
+        )
 
 
 class _FailingLazyEntry(solver_api_module._LazyEntry):
@@ -173,7 +177,7 @@ class _FailingLazyEntry(solver_api_module._LazyEntry):
             LoadState.UNLOADED if self.materialization_count == 0 else LoadState.LOADED
         )
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
         """Raise the low-level decoder error simulation must normalize."""
         self.materialization_count += 1
         raise TypeError("hostile lazy decoder")
@@ -198,7 +202,7 @@ class _MetadataMutatingLazyEntry(solver_api_module._LazyEntry):
         """Report that the adversarial entry has not materialized."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
         """Replace a mapping and mutate one nested frozen identity wrapper."""
         object.__setattr__(
             self._solver_identity,
@@ -210,7 +214,7 @@ class _MetadataMutatingLazyEntry(solver_api_module._LazyEntry):
             "solver_types",
             MappingProxyType({"hostile": "replacement"}),
         )
-        return self._value
+        return cast("ArtifactPayload", self._value)
 
 
 class _CachedAuthorityMutatingLazyEntry(solver_api_module._LazyEntry):
@@ -237,7 +241,7 @@ class _CachedAuthorityMutatingLazyEntry(solver_api_module._LazyEntry):
             LoadState.UNLOADED if self.materialization_count == 0 else LoadState.LOADED
         )
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
         """Corrupt a cached nested authority wrapper after preflight copied it."""
         self.materialization_count += 1
         authority = self._model._declared_authority_cache[self._fingerprint]
@@ -246,7 +250,7 @@ class _CachedAuthorityMutatingLazyEntry(solver_api_module._LazyEntry):
             "payload_runtime_type",
             tuple,
         )
-        return self._value
+        return cast("ArtifactPayload", self._value)
 
 
 class _TemplateMutatingLazyEntry(solver_api_module._LazyEntry):
@@ -263,7 +267,7 @@ class _TemplateMutatingLazyEntry(solver_api_module._LazyEntry):
             LoadState.UNLOADED if self.materialization_count == 0 else LoadState.LOADED
         )
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:
         """Corrupt only the decoder-facing copy of a frozen plugin template."""
         self.materialization_count += 1
         if type(template) is not Policy:
@@ -298,13 +302,13 @@ class _EnvelopeMutatingLazyEntry(solver_api_module._LazyEntry):
         """Report that the adversarial entry has not materialized."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
         """Replace result channels after preflight has begun."""
         if self.target is None:
             raise AssertionError("The adversarial lazy entry has no target result.")
         object.__setattr__(self.target, "replay_artifacts", self._replacement_replay)
         object.__setattr__(self.target, "omissions", self._replacement_omissions)
-        return self._value
+        return cast("ArtifactPayload", self._value)
 
 
 def _moving_wealth_grid(age: float) -> LinSpacedGrid:
@@ -1319,7 +1323,7 @@ def test_simulation_materializes_each_value_and_replay_artifact_once() -> None:
     """Preflight validates the exact immutable objects consumed by simulation."""
     model = _model(solver=ReferenceSolver())
     solution = _solve(model=model)
-    value_entries: dict[object, object] = {}
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {}
     changing_values: list[_ChangingLazyEntry] = []
     for period, regime_to_value in solution.values.items():
         for regime_name, value in regime_to_value.items():
@@ -1330,7 +1334,9 @@ def test_simulation_materializes_each_value_and_replay_artifact_once() -> None:
             value_entries[(period, regime_name)] = entry
             changing_values.append(entry)
 
-    replay_entries: dict[ArtifactRef, object] = {}
+    replay_entries: dict[
+        ArtifactRef, ArtifactPayload | solver_api_module._LazyEntry
+    ] = {}
     changing_artifacts: list[_ChangingLazyEntry] = []
     for ref, payload in solution.replay_artifacts.items():
         if ref.key == POLICY_KEY:
@@ -1381,7 +1387,7 @@ def test_lazy_value_cannot_mutate_cached_model_authority_used_for_replay() -> No
     )
     model._declared_authority_cache[fingerprint] = cached_authority
     policy_ref = next(ref for ref in solution.replay_artifacts if ref.key == POLICY_KEY)
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime_name): value
         for period, regime_to_value in solution.values.items()
         for regime_name, value in regime_to_value.items()
@@ -1474,7 +1480,7 @@ def test_hostile_descriptor_key_is_rejected_before_value_materialization() -> No
         "artifact_descriptors",
         MappingProxyType(descriptors),
     )
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime_name): value
         for period, regime_to_value in solution.values.items()
         for regime_name, value in regime_to_value.items()
@@ -1531,7 +1537,7 @@ def test_hostile_cached_value_shape_is_rejected_before_materialization() -> None
             for index, size in enumerate(value_descriptor.shape)
         ),
     )
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime_name): value
         for period, regime_to_value in solution.values.items()
         for regime_name, value in regime_to_value.items()
@@ -1696,7 +1702,7 @@ def test_lazy_value_cannot_replace_metadata_seen_by_external_route(
         regime: identity.plugin_version
         for regime, identity in supplied_metadata.solver_identities.items()
     }
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime_name): value
         for period, regime_to_value in solution.values.items()
         for regime_name, value in regime_to_value.items()
@@ -1757,7 +1763,7 @@ def test_lazy_value_cannot_swap_result_channels_after_envelope_snapshot() -> Non
     replacement_omissions = MappingProxyType(
         dict(solution.omissions) | {policy_ref: OmissionReason.UNSUPPORTED}
     )
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime_name): value
         for period, regime_to_value in solution.values.items()
         for regime_name, value in regime_to_value.items()

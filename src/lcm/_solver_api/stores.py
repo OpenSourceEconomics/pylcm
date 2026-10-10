@@ -9,8 +9,10 @@ from typing import (
 )
 
 import jax
+from beartype import beartype
 
 from lcm._solver_api.authority import _ArrayCopier, _CanonicalArtifactTemplate
+from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.contract import (
     ArtifactRef,
     _same_exact_artifact_contract,
@@ -21,6 +23,7 @@ from lcm._solver_api.entries import (
     _copy_solution_value,
     _LazyEntry,
     _materialize_entry,
+    _SolutionValue,
     _ValueMaterializer,
 )
 from lcm._solver_api.identity import (
@@ -31,6 +34,11 @@ from lcm._solver_api.identity import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, RegimeName
 
+# The exact address of one value-store entry.
+type _ValueCoordinate = tuple[int, RegimeName]
+# One value-store entry as supplied: a numerical value or a lazy handle to one.
+type _ValueEntry = _SolutionValue | _LazyEntry
+
 if TYPE_CHECKING:
     type _FloatValueBoundary = FloatND
     type _RegimeValuesBoundary = Mapping[RegimeName, FloatND]
@@ -38,12 +46,11 @@ if TYPE_CHECKING:
         int, MappingProxyType[str, FloatND]
     ]
     type _ValueStoreBoundary = ValueStore
-    type _ArtifactStoreBoundary = ArtifactStore
-    type _ValuePeriodBoundary = int
-    type _RegimeNameBoundary = RegimeName
-    type _ArtifactRefBoundary = ArtifactRef
-    type _ArtifactKeyBoundary = ArtifactKey
-    type _ArtifactEntriesBoundary = Mapping[ArtifactRef, object]
+    type _ValueEntriesInput = (
+        Mapping[_ValueCoordinate, _ValueEntry]
+        | Mapping[int, Mapping[RegimeName, _ValueEntry]]
+    )
+    type _ArtifactEntriesInput = Mapping[ArtifactRef, ArtifactPayload | _LazyEntry]
 else:
     # Lazy stores own their validation and materialization boundaries. Runtime
     # annotation traversal would load them before those explicit checks run.
@@ -51,12 +58,11 @@ else:
     type _RegimeValuesBoundary = object
     type _MaterializedValuesBoundary = object
     type _ValueStoreBoundary = object
-    type _ArtifactStoreBoundary = object  # noqa: PYI047
-    type _ValuePeriodBoundary = object
-    type _RegimeNameBoundary = object
-    type _ArtifactRefBoundary = object
-    type _ArtifactKeyBoundary = object
-    type _ArtifactEntriesBoundary = object
+    # Store constructors read a public mapping through exactly one item traversal
+    # and check each raw key before hashing it; beartype's mapping check calls
+    # `len`, iterates the key view and indexes an entry first.
+    type _ValueEntriesInput = object
+    type _ArtifactEntriesInput = object
 
 
 def _traverse_public_mapping_items[K, V](
@@ -82,7 +88,8 @@ def _traverse_public_mapping_items[K, V](
     return items
 
 
-def _require_exact_value_period(period: object) -> int:
+@beartype(conf=SOLVER_API_CONF)
+def _require_exact_value_period(period: int) -> int:
     if type(period) is not int:
         raise TypeError("Value periods must be exact ints.")
     if period < 0:
@@ -90,7 +97,8 @@ def _require_exact_value_period(period: object) -> int:
     return period
 
 
-def _require_exact_regime_name(regime: object) -> RegimeName:
+@beartype(conf=SOLVER_API_CONF)
+def _require_exact_regime_name(regime: RegimeName) -> RegimeName:
     if type(regime) is not str:
         raise TypeError("Value regime names must be exact strs.")
     if not regime:
@@ -98,7 +106,8 @@ def _require_exact_regime_name(regime: object) -> RegimeName:
     return regime
 
 
-def _require_exact_artifact_key(key: _ArtifactKeyBoundary) -> ArtifactKey:
+@beartype(conf=SOLVER_API_CONF)
+def _require_exact_artifact_key(key: ArtifactKey) -> ArtifactKey:
     if type(key) is not ArtifactKey:
         raise TypeError("Artifact keys must be exact ArtifactKey objects.")
     if type(key.type_id) is not str or not key.type_id:
@@ -108,7 +117,8 @@ def _require_exact_artifact_key(key: _ArtifactKeyBoundary) -> ArtifactKey:
     return key
 
 
-def _require_exact_artifact_ref(ref: _ArtifactRefBoundary) -> ArtifactRef:
+@beartype(conf=SOLVER_API_CONF)
+def _require_exact_artifact_ref(ref: ArtifactRef) -> ArtifactRef:
     if type(ref) is not ArtifactRef:
         raise TypeError("Artifact addresses must be exact ArtifactRef objects.")
     _require_exact_value_period(ref.period)
@@ -117,6 +127,7 @@ def _require_exact_artifact_ref(ref: _ArtifactRefBoundary) -> ArtifactRef:
     return ref
 
 
+@beartype(conf=SOLVER_API_CONF)
 @dataclass(frozen=True, eq=False)
 class _ValuePeriodView(Mapping[RegimeName, FloatND]):
     """Read-through view of one period in a :class:`ValueStore`."""
@@ -124,7 +135,7 @@ class _ValuePeriodView(Mapping[RegimeName, FloatND]):
     store: _ValueStoreBoundary
     period: int
 
-    def __getitem__(self, regime: _RegimeNameBoundary) -> _FloatValueBoundary:
+    def __getitem__(self, regime: RegimeName) -> _FloatValueBoundary:
         return self.store._load(period=self.period, regime=regime)  # noqa: SLF001
 
     def __iter__(self) -> Iterator[RegimeName]:
@@ -140,12 +151,13 @@ class _ValuePeriodView(Mapping[RegimeName, FloatND]):
         return regime in self.store._regimes_by_period[self.period]  # noqa: SLF001
 
 
+@beartype(conf=SOLVER_API_CONF)
 def _admit_value_entry(
     *,
-    period: object,
-    regime: object,
-    value: object,
-    entries: dict[tuple[int, RegimeName], _LazyEntry],
+    period: int,
+    regime: RegimeName,
+    value: _ValueEntry,
+    entries: dict[_ValueCoordinate, _LazyEntry],
     regimes_by_period: dict[int, list[RegimeName]],
     array_copier: _ArrayCopier | None = None,
 ) -> None:
@@ -164,7 +176,8 @@ def _admit_value_entry(
     regimes_by_period.setdefault(coordinate[0], []).append(coordinate[1])
 
 
-@dataclass(frozen=True, eq=False)
+@beartype(conf=SOLVER_API_CONF)
+@dataclass(frozen=True, eq=False, init=False)
 class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     """Immutable, independently materializable value-function store.
 
@@ -173,17 +186,20 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     load state never reads a numerical payload.
     """
 
-    _entries: Mapping[object, object] = field(default_factory=dict, repr=False)
-    _regimes_by_period: Mapping[int, tuple[RegimeName, ...]] = field(
-        default_factory=dict, init=False, repr=False
-    )
+    _entries: Mapping[_ValueCoordinate, _LazyEntry] = field(repr=False)
+    _regimes_by_period: Mapping[int, tuple[RegimeName, ...]] = field(repr=False)
+
+    def __init__(self, _entries: _ValueEntriesInput = MappingProxyType({})) -> None:
+        # `__post_init__` replaces the supplied mapping with its canonical form.
+        object.__setattr__(self, "_entries", _entries)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         self._initialize()
 
     @staticmethod
     def _from_entries_with_copy(
-        *, entries: Mapping[object, object], array_copier: _ArrayCopier
+        *, entries: _ValueEntriesInput, array_copier: _ArrayCopier
     ) -> _ValueStoreBoundary:
         """Use the public constructor's checks with an ephemeral copy dependency."""
         store = object.__new__(ValueStore)
@@ -197,8 +213,10 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         # from those same items, and every raw coordinate is checked exactly and for
         # uniqueness before it is inserted, so ``True`` cannot overwrite ``1`` and a
         # repeated address cannot be contracted into one.
+        # `_entries` holds the supplied mapping until this method replaces it.
+        supplied = cast("_ValueEntriesInput", self._entries)
         items = _traverse_public_mapping_items(
-            mapping=self._entries, label="ValueStore entries"
+            mapping=supplied, label="ValueStore entries"
         )
         is_flat = [type(key) is tuple for key, _ in items]
         if any(is_flat) and not all(is_flat):
@@ -207,19 +225,18 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                 "or by periods, not by both."
             )
 
-        entries: dict[tuple[int, RegimeName], _LazyEntry] = {}
+        entries: dict[_ValueCoordinate, _LazyEntry] = {}
         regimes_by_period: dict[int, list[RegimeName]] = {}
 
         if all(is_flat):
             for coordinate, value in items:
-                typed_coordinate = cast("tuple[object, ...]", coordinate)
-                if len(typed_coordinate) != 2:  # noqa: PLR2004
+                if len(coordinate) != 2:  # noqa: PLR2004
                     raise ValueError("A ValueStore coordinate must have two entries.")
                 _admit_value_entry(
                     entries=entries,
                     regimes_by_period=regimes_by_period,
-                    period=typed_coordinate[0],
-                    regime=typed_coordinate[1],
+                    period=coordinate[0],
+                    regime=coordinate[1],
                     value=value,
                     array_copier=array_copier,
                 )
@@ -255,7 +272,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
             ),
         )
 
-    def __getitem__(self, period: _ValuePeriodBoundary) -> _RegimeValuesBoundary:
+    def __getitem__(self, period: int) -> _RegimeValuesBoundary:
         period = _require_exact_value_period(period)
         if period not in self._regimes_by_period:
             raise KeyError(period)
@@ -276,8 +293,8 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     def _load(
         self,
         *,
-        period: _ValuePeriodBoundary,
-        regime: _RegimeNameBoundary,
+        period: int,
+        regime: RegimeName,
         array_copier: _ArrayCopier | None = None,
         value_materializer: _ValueMaterializer | None = None,
     ) -> _FloatValueBoundary:
@@ -325,17 +342,13 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
             ]
         )
 
-    def _raw(
-        self, *, period: _ValuePeriodBoundary, regime: _RegimeNameBoundary
-    ) -> object:
-        """Return one eager value or lazy handle without materializing it."""
+    def _raw(self, *, period: int, regime: RegimeName) -> _LazyEntry:
+        """Return one value's entry without materializing it."""
         period = _require_exact_value_period(period)
         regime = _require_exact_regime_name(regime)
         return self._entries[(period, regime)]
 
-    def load_state(
-        self, *, period: _ValuePeriodBoundary, regime: _RegimeNameBoundary
-    ) -> LoadState:
+    def load_state(self, *, period: int, regime: RegimeName) -> LoadState:
         """Return one value entry's state without materializing it."""
         period = _require_exact_value_period(period)
         regime = _require_exact_regime_name(regime)
@@ -382,8 +395,9 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         )
 
 
+@beartype(conf=SOLVER_API_CONF)
 @dataclass(frozen=True, eq=False)
-class ArtifactStore(Mapping[ArtifactRef, object]):
+class ArtifactStore(Mapping[ArtifactRef, ArtifactPayload]):
     """Immutable store of explicitly addressed solution artifacts.
 
     The mapping interface keeps artifacts solver-extensible. ``project`` gives engine
@@ -393,12 +407,12 @@ class ArtifactStore(Mapping[ArtifactRef, object]):
 
     # ``__post_init__`` is the one admission boundary, so the runtime annotation
     # check does not traverse the key view.
-    _entries: _ArtifactEntriesBoundary = field(default_factory=dict, repr=False)
+    _entries: _ArtifactEntriesInput = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         # One item traversal; each raw address is an exact ``ArtifactRef`` and unique
         # before it is inserted, so no equality alias or repeat can contract.
-        entries: dict[ArtifactRef, object] = {}
+        entries: dict[ArtifactRef, ArtifactPayload | _LazyEntry] = {}
         for raw_ref, payload in _traverse_public_mapping_items(
             mapping=self._entries, label="ArtifactStore entries"
         ):
@@ -408,7 +422,7 @@ class ArtifactStore(Mapping[ArtifactRef, object]):
             entries[ref] = payload
         object.__setattr__(self, "_entries", MappingProxyType(entries))
 
-    def __getitem__(self, ref: _ArtifactRefBoundary) -> object:
+    def __getitem__(self, ref: ArtifactRef) -> ArtifactPayload:
         ref = _require_exact_artifact_ref(ref)
         return _materialize_entry(entry=self._entries[ref])
 
@@ -429,11 +443,11 @@ class ArtifactStore(Mapping[ArtifactRef, object]):
         return ref in self._entries
 
     def project(
-        self, key: _ArtifactKeyBoundary
-    ) -> Mapping[int, Mapping[RegimeName, object]]:
+        self, key: ArtifactKey
+    ) -> Mapping[int, Mapping[RegimeName, ArtifactPayload]]:
         """Project one artifact schema to an immutable nested period mapping."""
         key = _require_exact_artifact_key(key)
-        projected: dict[int, dict[RegimeName, object]] = {}
+        projected: dict[int, dict[RegimeName, ArtifactPayload]] = {}
         for ref in self._entries:
             _require_exact_artifact_ref(ref)
             if _same_exact_artifact_contract(actual=ref.key, expected=key):
@@ -445,12 +459,12 @@ class ArtifactStore(Mapping[ArtifactRef, object]):
             }
         )
 
-    def _raw(self, ref: _ArtifactRefBoundary) -> object:
+    def _raw(self, ref: ArtifactRef) -> ArtifactPayload | _LazyEntry:
         """Return one eager payload or lazy handle without materializing it."""
         ref = _require_exact_artifact_ref(ref)
         return self._entries[ref]
 
-    def load_state(self, ref: _ArtifactRefBoundary) -> LoadState:
+    def load_state(self, ref: ArtifactRef) -> LoadState:
         """Return one artifact entry's state without materializing it."""
         ref = _require_exact_artifact_ref(ref)
         entry = self._entries[ref]
@@ -458,8 +472,8 @@ class ArtifactStore(Mapping[ArtifactRef, object]):
 
     # keyword-only-exempt: primary-argument=ref
     def materialize(
-        self, ref: _ArtifactRefBoundary, *, template: ArtifactPayload | None = None
-    ) -> object:
+        self, ref: ArtifactRef, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
         """Load one entry and optionally rebuild its declared PyTree shape."""
         ref = _require_exact_artifact_ref(ref)
         return _materialize_entry(
@@ -470,10 +484,10 @@ class ArtifactStore(Mapping[ArtifactRef, object]):
     # keyword-only-exempt: primary-argument=ref
     def _materialize_from_template_snapshot(
         self,
-        ref: _ArtifactRefBoundary,
+        ref: ArtifactRef,
         *,
         template_snapshot: _CanonicalArtifactTemplate | None,
-    ) -> object:
+    ) -> ArtifactPayload:
         """Load one entry through an engine-owned cached PyTree declaration."""
         ref = _require_exact_artifact_ref(ref)
         return _materialize_entry(

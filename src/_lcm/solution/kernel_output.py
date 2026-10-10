@@ -261,7 +261,7 @@ def consume_kernel_output(
 def _consume_declared_artifacts(
     *,
     channel: ArtifactChannel,
-    artifacts: dict[ArtifactKey, object],
+    artifacts: dict[ArtifactKey, ArtifactPayload],
     authorities: Mapping[ArtifactKey, ArtifactAuthority],
     regime_name: RegimeName,
     period: int,
@@ -324,7 +324,7 @@ def _canonicalize_declared_artifact(
 def _pop_typed_artifact[Payload](
     *,
     channel: str,
-    artifacts: dict[ArtifactKey, object],
+    artifacts: dict[ArtifactKey, ArtifactPayload],
     key: ArtifactKey,
     expected_types: tuple[type[Payload], ...],
     regime_name: RegimeName,

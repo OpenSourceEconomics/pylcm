@@ -548,7 +548,7 @@ _ARTIFACT_CONTRACT_DATACLASS_FIELDS: tuple[
 
 
 def _artifact_contract_dataclass_fields(
-    cls: type[object],
+    cls: type[ArtifactContractValue],
 ) -> tuple[str, ...] | None:
     """Look up one contract wrapper by class identity."""
     for registered, field_names in _ARTIFACT_CONTRACT_DATACLASS_FIELDS:
@@ -559,8 +559,8 @@ def _artifact_contract_dataclass_fields(
 
 def _same_exact_artifact_contract(  # noqa: C901, PLR0911, PLR0912
     *,
-    actual: object,
-    expected: object,
+    actual: ArtifactContractValue,
+    expected: ArtifactContractValue,
     _active_pairs: set[tuple[int, int]] | None = None,
 ) -> bool:
     """Compare the closed artifact contract without weak or user-defined equality."""

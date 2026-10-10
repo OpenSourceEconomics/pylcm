@@ -230,6 +230,7 @@ from _lcm.solution.v_topology import (
 )
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import (
+    ArtifactPayload,
     FlatParams,
     HostArray,
     ParamsLeaf,
@@ -586,9 +587,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     ] = {}
     dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
     solver_diagnostics: dict[int, MappingProxyType[RegimeName, SolverDiagnostics]] = {}
-    retained_continuations: dict[ArtifactRef, object] = {}
-    replay_artifacts: dict[ArtifactRef, object] = {}
-    auxiliary_artifacts: dict[ArtifactRef, object] = {}
+    retained_continuations: dict[ArtifactRef, ArtifactPayload] = {}
+    replay_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
+    auxiliary_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
 
     # Every collective kernel publishes `D`, but only two things read the
     # ACCUMULATED per-period mapping: forward simulation, for a gate that

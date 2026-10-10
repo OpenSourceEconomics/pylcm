@@ -841,8 +841,8 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "foreign_snapshot:store_dependency_omitted": (
         "src/_lcm/solution/result_snapshot.py",
-        'entries=cast("Mapping[object, object]", entries), array_copier=array_copier',
-        'entries=cast("Mapping[object, object]", entries), array_copier=None',
+        "entries=entries, array_copier=array_copier",
+        "entries=entries, array_copier=None",
     ),
     "foreign_entry:owned_read_dependency_omitted": (
         "src/lcm/_solver_api/entries.py",
