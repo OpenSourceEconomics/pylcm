@@ -9,6 +9,7 @@ from typing import (
 )
 
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Float
 
 from lcm._solver_api.authority import (
@@ -23,7 +24,7 @@ from lcm._solver_api.identity import (
     ReplayRouteIdentity,
     SolverIdentity,
 )
-from lcm.typing import ActionName, FloatND, IntND, RegimeName, StateName
+from lcm.typing import ActionName, FloatND, IntND, RegimeName, StateName, ValueND
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -146,8 +147,10 @@ class SimulationBuildContext:
 class ActionOutput:
     """Named action arrays returned by an external replay reader."""
 
-    actions: Mapping[str, object]
-    """Immutable mapping of action names to their per-subject values."""
+    actions: Mapping[
+        ActionName, ValueND | npt.NDArray[np.generic] | np.generic | float | int | bool
+    ]
+    """Immutable mapping of action names to their scalar or per-subject values."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "actions", MappingProxyType(dict(self.actions)))
@@ -158,7 +161,10 @@ class ReplayReader(Protocol):
     """JAX-transformable reader built from a validated replay snapshot."""
 
     def __call__(
-        self, *, states: Mapping[str, object], fallback_actions: Mapping[str, object]
+        self,
+        *,
+        states: Mapping[str, object],
+        fallback_actions: Mapping[ActionName, ValueND],
     ) -> ActionOutput:
         """Return each named action as a scalar or per-subject-broadcastable array.
 
