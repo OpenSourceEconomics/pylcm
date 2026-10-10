@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 import lcm.solver_api as solver_api_module
 from _lcm.engine import StateActionSpace
@@ -23,12 +24,11 @@ from _lcm.solution.result_snapshot import (
     snapshot_artifact_template_declaration,
     snapshot_solution_metadata,
 )
-from _lcm.typing import ArtifactPayload
+from _lcm.typing import ArtifactPayload, JSONValue
 from lcm import ExecutionConfig, LinSpacedGrid, Model
 from lcm.exceptions import (
     IncompatibleSolutionError,
     InvalidSimulationInputError,
-    SolutionIntegrityError,
 )
 from lcm.persistence import save_solution
 from lcm.solver_api import (
@@ -1099,9 +1099,9 @@ def test_mapping_key_scalar_grammar_uses_runtime_type_identity() -> None:
 
 def test_persistence_json_scalar_grammar_uses_runtime_type_identity() -> None:
     """A spoofing metaclass cannot enter the archive's scalar grammar."""
-    with pytest.raises(SolutionIntegrityError, match="exact JSON scalar"):
+    with pytest.raises(BeartypeCallHintParamViolation, match="value"):
         solution_persistence._require_exact_json_scalar(
-            value=_IntegerSpoof(),
+            value=cast("JSONValue", _IntegerSpoof()),
             label="spoof",
         )
 

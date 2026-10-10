@@ -34,7 +34,7 @@ def _find_project_root() -> Path | None:
     return None
 
 
-def _save_pkl(*, path: Path, obj: object) -> None:
+def _save_pkl(*, path: Path, obj: object) -> None:  # noqa: PAN001 - cloudpickle serializes any picklable object
     """Save an object to a pickle file atomically."""
     _atomic_dump(obj=obj, path=path, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -165,7 +165,7 @@ class _SnapshotCounterKey:
         return _snapshot_counter(entry=entry, prefix=self.prefix)
 
 
-def _atomic_dump(*, obj: object, path: str | Path, protocol: int) -> Path:
+def _atomic_dump(*, obj: object, path: str | Path, protocol: int) -> Path:  # noqa: PAN001 - cloudpickle serializes any picklable object
     """Serialize `obj` to `path` in an atomic (all-or-nothing) way.
 
     Args:

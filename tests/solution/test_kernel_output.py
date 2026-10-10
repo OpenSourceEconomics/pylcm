@@ -14,12 +14,13 @@ import inspect
 import itertools
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any, get_args, get_type_hints
+from typing import Any, cast, get_args, get_type_hints
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from jaxtyping import Float
 
 from _lcm.continuation import EGMContinuationSpec
@@ -89,7 +90,7 @@ def _policy() -> EGMSimPolicy:
 
 
 def _consume(
-    *, output: object, continuation_key: ArtifactKey | None = EGM_CONTINUATION
+    *, output: KernelOutput, continuation_key: ArtifactKey | None = EGM_CONTINUATION
 ) -> ConsumedKernelOutput:
     return consume_kernel_output(
         output=output,
@@ -416,8 +417,8 @@ def test_the_consumer_refuses_a_known_key_with_the_wrong_payload_type(
 
 
 def test_the_consumer_refuses_anything_but_a_kernel_output() -> None:
-    with pytest.raises(TypeError, match=r"'saving'.*period 2.*unsupported.*object"):
-        _consume(output=object(), continuation_key=None)
+    with pytest.raises(BeartypeCallHintParamViolation, match="output"):
+        _consume(output=cast("KernelOutput", object()), continuation_key=None)
 
 
 def test_a_period_kernel_returns_a_kernel_output_and_replay_carries_it() -> None:

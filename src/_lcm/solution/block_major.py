@@ -47,15 +47,25 @@ from _lcm.engine import Regime
 from _lcm.execution.core_program import InvariantBinding, core_program_graph
 from _lcm.execution.footprint import layout_footprint
 from _lcm.execution.invariant_blocks import block_state_action_space
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import ExecutableCache
-from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.contract import BackwardInductionResult, PeriodKernel
 from _lcm.solution.grid_search import _GridSearchPeriodKernel
-from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
-from _lcm.typing import FlatParams, RegimeName, StateName
+from _lcm.solution.solver_diagnostics import SolverDiagnostics
+from _lcm.solution.v_topology import (
+    _get_regime_V_shapes_and_shardings,
+    _RegimeVTopology,
+)
+from _lcm.typing import (
+    FlatParams,
+    PeriodToRegimeToSimulationPolicy,
+    RegimeName,
+    StateName,
+)
 from lcm._solver_api.entries import _LazyEntry
 from lcm._solver_api.identity import LoadState
-from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
+from lcm._solver_api.stores import ArtifactStore, ValueStore, _ValueStoreBoundary
 from lcm.exceptions import ExecutionPlanningError
 
 if TYPE_CHECKING:
@@ -71,6 +81,14 @@ _REMEDY = (
 )
 
 type _Coordinate = tuple[int, RegimeName]
+
+# One payload channel a solve result publishes: per-period, per-regime payloads
+# or an addressed artifact store.
+type _PublishedChannel = (
+    PeriodToRegimeToSimulationPolicy
+    | MappingProxyType[int, MappingProxyType[RegimeName, SolverDiagnostics]]
+    | ArtifactStore
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -171,8 +189,8 @@ def _component_binding(*, component: InvariantComponent) -> InvariantBinding:
 
 
 def _component_kernel(
-    *, kernel: object, component: InvariantComponent, regime_name: RegimeName
-) -> object:
+    *, kernel: PeriodKernel, component: InvariantComponent, regime_name: RegimeName
+) -> PeriodKernel:
     """Keep the kernel's program for the component's code, at position zero."""
     graph = core_program_graph(kernel=kernel)
     if all(program.invariant_binding is None for program in graph.values()):
@@ -629,7 +647,7 @@ class _ComponentValueEntry(_LazyEntry):
         """Nothing of a block-major value is resident until it is read."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(self, *, template: object | None = None) -> jax.Array:
         """Assemble the value on the layout the period-major solve publishes."""
         del template
         return self.owner.assemble_value(period=self.period, regime=self.regime)
@@ -692,7 +710,7 @@ class ComponentSchedule:
         state_name: StateName,
         flat_params: FlatParams,
         device_ids: tuple[int, ...],
-        process_grid_resolver: object | None,
+        process_grid_resolver: ProcessGridResolver | None,
         budget_bytes: int | None,
         solve: Callable[..., BackwardInductionResult],
         logger: logging.Logger,
@@ -754,7 +772,7 @@ class ComponentSchedule:
                     regimes=regimes,
                     flat_params=flat_params,
                     device_ids=device_ids,
-                    process_grid_resolver=process_grid_resolver,  # ty: ignore[invalid-argument-type]
+                    process_grid_resolver=process_grid_resolver,
                 ),
             ),
             budget_bytes=budget_bytes,
@@ -846,14 +864,11 @@ class ComponentSchedule:
         return self._retained
 
 
-def _has_payload(store: object) -> bool:
+def _has_payload(store: _PublishedChannel) -> bool:
     """Return whether a published artifact mapping holds any payload."""
-    if isinstance(store, Mapping):
-        return any(
-            bool(inner) if isinstance(inner, Mapping) else True
-            for inner in store.values()
-        )
-    return bool(len(store))  # ty: ignore[invalid-argument-type]
+    return any(
+        bool(inner) if isinstance(inner, Mapping) else True for inner in store.values()
+    )
 
 
 class SolvingComponentValues:
@@ -1026,7 +1041,7 @@ def value_layouts(
     *,
     regimes: Mapping[RegimeName, Regime],
     state_name: StateName,
-    topology: Mapping[RegimeName, object],
+    topology: Mapping[RegimeName, _RegimeVTopology],
 ) -> MappingProxyType[_Coordinate, ValueLayout]:
     """Return the published layout of every value the solve publishes.
 
@@ -1044,9 +1059,9 @@ def value_layouts(
     return MappingProxyType(
         {
             (period, name): ValueLayout(
-                shape=tuple(topology[name].shape),  # ty: ignore[unresolved-attribute]
+                shape=tuple(topology[name].shape),
                 axis=axes[name].index(state_name),
-                sharding=topology[name].sharding,  # ty: ignore[unresolved-attribute]
+                sharding=topology[name].sharding,
             )
             for name, regime in regimes.items()
             for period in sorted(regime.active_periods)
