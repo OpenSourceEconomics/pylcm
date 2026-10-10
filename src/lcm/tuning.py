@@ -57,9 +57,10 @@ from _lcm.execution.hlo_fusions import (  # noqa: F401
 )
 from _lcm.params.edges import flat_namespaces
 from _lcm.solution.fingerprint import _param_shape_signature
+from _lcm.typing import DataclassInstance, JSONValue
 from _lcm.version import __version__ as pylcm_version
 from lcm.exceptions import ExecutionPlanningError
-from lcm.execution import ExecutionConfig
+from lcm.execution import AxisWidth, ExecutionConfig
 from lcm.model import Model
 from lcm.solver_api import ResultRetention
 from lcm.typing import UserParams
@@ -177,7 +178,7 @@ class TunedSettings:
     """Whether a candidate replaced the baseline."""
     reason: str
     """Why the winner won, or why nothing changed."""
-    axis_widths: Mapping[str, Any]
+    axis_widths: Mapping[str, AxisWidth]
     """`ExecutionConfig.axis_widths` of the verdict."""
     axis_width_ceilings: Mapping[str, int]
     """`ExecutionConfig.axis_width_ceilings` of the verdict."""
@@ -737,7 +738,14 @@ def _settings_key(
     )
 
 
-def _jsonable(value: object) -> object:
+# A tuning-record value on its way to JSON: a JSON value, or a dataclass, enum or
+# read-only mapping that `_jsonable` encodes further.
+type _RecordValue = JSONValue | DataclassInstance | Enum | Mapping[str, _RecordValue]
+
+
+def _jsonable(
+    value: DataclassInstance | Enum | Mapping[str, _RecordValue],
+) -> _RecordValue:
     """Encode the record's dataclasses, enums and read-only mappings."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {
@@ -752,7 +760,7 @@ def _jsonable(value: object) -> object:
     raise TypeError(msg)
 
 
-def _frozen(value: object) -> object:
+def _frozen(value: JSONValue) -> JSONValue:
     """Freeze decoded JSON mappings the way `ExecutionConfig` stores them."""
     if isinstance(value, dict):
         return MappingProxyType({key: _frozen(child) for key, child in value.items()})

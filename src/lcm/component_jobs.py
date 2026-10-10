@@ -93,7 +93,13 @@ from lcm.exceptions import ExecutionPlanningError, SolutionIntegrityError
 from lcm.model import _VALUES_RETAINED_ON_THE_HOST, Model
 from lcm.result import SimulationResult
 from lcm.solver_api import ResultRetention, SolutionResult
-from lcm.typing import RegimeName, StateName, UserInitialConditions, UserParams
+from lcm.typing import (
+    RegimeName,
+    StateName,
+    UserInitialConditions,
+    UserParams,
+    ValueND,
+)
 
 __all__ = [
     "CollectedComponentJobs",
@@ -1017,9 +1023,9 @@ def _simulate_job(
 
 def _data_leaves(
     *, regime: RegimeName, period: int, data: PeriodRegimeSimulationData
-) -> tuple[tuple[LeafAddress, object], ...]:
+) -> tuple[tuple[LeafAddress, ValueND], ...]:
     """Return every leaf of one regime-period's raw result with its address."""
-    leaves: list[tuple[LeafAddress, object]] = []
+    leaves: list[tuple[LeafAddress, ValueND]] = []
     for field in fields(PeriodRegimeSimulationData):
         value = getattr(data, field.name)
         if isinstance(value, Mapping):
@@ -1377,15 +1383,13 @@ def _selected_devices(*, model: Model) -> tuple[jax.Device, ...]:
 
 
 def _leaf_layout(
-    *, leaf: object, devices: tuple[jax.Device, ...]
+    *, leaf: ValueND, devices: tuple[jax.Device, ...]
 ) -> dict[str, JSONValue]:
     """Describe one raw leaf's layout in positions of the selected devices.
 
     A layout on devices outside the selection or of an unsupported sharding is
     described as such; collection refuses it where it would be needed.
     """
-    if not isinstance(leaf, jax.Array):
-        return {"kind": "unsupported", "sharding": type(leaf).__name__}
     sharding = leaf.sharding
     position = {device: index for index, device in enumerate(devices)}
     if not sharding.device_set <= set(devices):
@@ -1555,7 +1559,7 @@ def _rebuild_data(
     An array field has its leaf under the key `None`; a mapping field has one
     leaf per entry, in the entries' order, and none when it is empty.
     """
-    values: dict[str, object] = {}
+    values: dict[str, ValueND | MappingProxyType[str, ValueND]] = {}
     for field in fields(PeriodRegimeSimulationData):
         keyed = fields_by_name.get(field.name, {})
         values[field.name] = (

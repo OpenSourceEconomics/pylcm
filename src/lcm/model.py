@@ -275,8 +275,14 @@ from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
 from lcm.phased import Phased
+from lcm.regime import (
+    ActionEntry,
+    ConstraintEntry,
+    FunctionEntry,
+    StateEntry,
+    StateTransitionEntry,
+)
 from lcm.regime import Regime as UserRegime
-from lcm.regime import StateTransitionEntry
 from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
@@ -309,6 +315,7 @@ from lcm.solver_api import (
 )
 from lcm.solvers import GridSearch
 from lcm.transition import (
+    DeclaredModelEdges,
     ModelEdges,
     Periods,
     PhaseEdges,
@@ -324,6 +331,7 @@ from lcm.typing import (
     UserFunction,
     UserInitialConditions,
     UserParams,
+    ValueND,
 )
 
 if TYPE_CHECKING:
@@ -343,6 +351,14 @@ def _same_exactly_typed(*, actual: object, expected: object) -> bool:
         expected=expected,
     )
 
+
+# The caller inputs a budgeted public call owns: a simulation's initial
+# conditions, or a policy lookup's states and action grids.
+type _EntryInputs = (
+    UserInitialConditions
+    | pd.DataFrame
+    | tuple[Mapping[StateName, jax.Array], Mapping[ActionName, jax.Array] | None]
+)
 
 type _PeriodToRegimeToReplayReader = MappingProxyType[
     int, MappingProxyType[RegimeName, PreparedReplayReader]
@@ -640,18 +656,18 @@ class Model:
         derived_categoricals: Mapping[FunctionName, DiscreteGrid] = MappingProxyType(
             {}
         ),
-        functions: Mapping[str, object] = MappingProxyType({}),
-        constraints: Mapping[str, object] = MappingProxyType({}),
-        states: Mapping[str, object] = MappingProxyType({}),
+        functions: Mapping[FunctionName, FunctionEntry] = MappingProxyType({}),
+        constraints: Mapping[FunctionName, ConstraintEntry] = MappingProxyType({}),
+        states: Mapping[StateName, StateEntry] = MappingProxyType({}),
         state_transitions: Mapping[StateName, StateTransitionEntry] = MappingProxyType(
             {}
         ),
-        actions: Mapping[str, object] = MappingProxyType({}),
+        actions: Mapping[ActionName, ActionEntry] = MappingProxyType({}),
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
         initial_nodes: UserInitialNodes,
-        edges: object,
+        edges: DeclaredModelEdges,
     ) -> None:
         """Initialize the Model.
 
@@ -740,9 +756,9 @@ class Model:
         (
             regimes,
             fixed_params,
-            states,
+            factored_states,
             state_transitions,
-            functions,
+            factored_functions,
             self._fixed_component_splits,
         ) = factor_fixed_components(
             regimes=regimes,
@@ -793,9 +809,9 @@ class Model:
             for name, code in get_field_names_and_values(regime_id_class).items()
         }
         model_slots = {
-            "functions": functions,
+            "functions": factored_functions,
             "constraints": constraints,
-            "states": states,
+            "states": factored_states,
             "state_transitions": state_transitions,
             "actions": actions,
         }
@@ -910,7 +926,7 @@ class Model:
             config=execution_config,
             visible_device_ids=visible_device_ids(),
             device_pool_limit_bytes=visible_device_pool_limits(),
-            state_names=frozenset(states)
+            state_names=frozenset(factored_states)
             | frozenset(
                 name for regime in self.user_regimes.values() for name in regime.states
             ),
@@ -924,7 +940,7 @@ class Model:
         continuous_sharded_state = _validate_sharded_state_capability(
             user_regimes=self.user_regimes,
             laws=laws,
-            model_states=states,
+            model_states=factored_states,
             sharded_states=self._execution.sharded_states,
         )
         self._execution = dataclasses.replace(
@@ -1915,7 +1931,11 @@ class Model:
             return self._simulate_runtime_regimes[compile_batch_size]
 
     def _open_entry_allocations(
-        self, *, params: object, inputs: object, solution: object | None
+        self,
+        *,
+        params: UserParams,
+        inputs: _EntryInputs,
+        solution: _SolutionResultBoundary | None,
     ) -> SimulationEntryAllocations | None:
         """Own a budgeted public call's original inputs, solution and model roots.
 
@@ -4458,7 +4478,7 @@ def _with_action_extents(
 def _fail_if_off_grid(
     *,
     kind: str,
-    given: Mapping[str, object],
+    given: Mapping[str, ValueND],
     declared: Mapping[str, jax.Array],
     require_all: bool,
     check_range: bool,
@@ -4513,7 +4533,11 @@ def _missing_policy_message(
     )
 
 
-def _readable_template(value: object) -> object:
+# A params-template node: a parameter's type string, or a mapping of nodes.
+type _TemplateNode = str | Mapping[str, _TemplateNode]
+
+
+def _readable_template(value: _TemplateNode) -> _TemplateNode:
     """Replace every leaf of a params template by its name or string form."""
     if isinstance(value, Mapping):
         return {key: _readable_template(inner) for key, inner in value.items()}
@@ -4783,7 +4807,7 @@ def _place_values_on_subject_devices[T](
     A value already in that layout is returned as is, without a copy.
     """
 
-    def place(leaf: object) -> object:
+    def place[L](leaf: L) -> L | ValueND:
         if not isinstance(leaf, jax.Array):
             return leaf
         required = simulation_value_sharding(
