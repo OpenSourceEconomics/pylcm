@@ -1629,7 +1629,7 @@ def test_numpy_dispatcher_version_participates_in_the_fingerprint(
 def test_numpy_dispatcher_implementation_defaults_participate(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    implementation = vars(np.linspace)["_implementation"]
+    implementation = getattr(np.linspace, "_implementation", None)
     assert isinstance(implementation, FunctionType)
     baseline = fingerprints._semantic_fingerprint(_uses_np_linspace)
     monkeypatch.setattr(implementation, "__defaults__", (4,))
@@ -1665,7 +1665,7 @@ def test_numpy_dispatcher_changed_implementation_code_fails_closed(
     def replacement(*args: object, **kwargs: object) -> int:  # noqa: ARG001, PAN001 - Uncalled impostor accepts arbitrary inputs.
         return 1
 
-    implementation = vars(np.linspace)["_implementation"]
+    implementation = getattr(np.linspace, "_implementation", None)
     assert isinstance(implementation, FunctionType)
     fingerprints._semantic_fingerprint(_uses_np_linspace)
     monkeypatch.setattr(implementation, "__code__", replacement.__code__)
