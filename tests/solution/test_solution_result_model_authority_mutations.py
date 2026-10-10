@@ -1,6 +1,5 @@
 """Class-level mutation matrix for model-owned solution descriptors."""
 
-from collections.abc import Mapping
 from dataclasses import replace
 from fractions import Fraction
 from types import MappingProxyType
@@ -82,7 +81,9 @@ class _AlternatingProjectArtifactStore(ArtifactStore):
         """Number of simulation-policy projections requested by the consumer."""
         return cast("int", getattr(self, "_project_calls", 0))
 
-    def project(self, key: ArtifactKey) -> Mapping[int, Mapping[str, ArtifactPayload]]:
+    def project(
+        self, key: ArtifactKey
+    ) -> MappingProxyType[int, MappingProxyType[str, ArtifactPayload]]:
         if key != SIMULATION_POLICY:
             return super().project(key)
         calls = self.project_calls + 1

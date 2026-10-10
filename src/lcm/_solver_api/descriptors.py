@@ -75,7 +75,7 @@ def _capture_mapping_item_stream_once[K, V](
     label: str,
     snapshot_key: Callable[[K], K],
     snapshot_value: Callable[[V], V],
-) -> dict[K, V]:
+) -> MappingProxyType[K, V]:
     """Own and canonicalize one mapping through exactly one item iterator."""
     if not isinstance(mapping, Mapping):
         raise TypeError(f"{label} must be a mapping.")
@@ -100,7 +100,7 @@ def _capture_mapping_item_stream_once[K, V](
         if key in copied:
             raise ValueError(f"{label} keys collide after exact reconstruction.")
         copied[key] = value
-    return copied
+    return MappingProxyType(copied)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -130,7 +130,9 @@ class ArtifactDescriptor:
     """Names of the model states the leading axes index, in order."""
     action_roles: tuple[str, ...] = ()
     """Names of the model actions some axes index, in order."""
-    categorical_domains: _CategoricalDomainsBoundary = field(default_factory=dict)
+    categorical_domains: _CategoricalDomainsBoundary = field(
+        default=MappingProxyType({})
+    )
     """Exact label domain of each categorical state or action role."""
     required_for: frozenset[ReplayRouteIdentity] = frozenset()
     """Replay routes that cannot run without this payload."""
@@ -232,7 +234,7 @@ class ArtifactDescriptor:
         object.__setattr__(self, "named_axes", axes)
         object.__setattr__(self, "state_roles", state_roles)
         object.__setattr__(self, "action_roles", action_roles)
-        object.__setattr__(self, "categorical_domains", MappingProxyType(categories))
+        object.__setattr__(self, "categorical_domains", categories)
         object.__setattr__(self, "required_for", required_for)
 
 
