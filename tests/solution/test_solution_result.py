@@ -66,7 +66,7 @@ from lcm.solver_api import (
     ValueStore,
 )
 from lcm.solvers import MSSEnvelope
-from lcm.typing import FloatND, ScalarInt, UserInitialConditions, UserParams
+from lcm.typing import FloatND, IntND, ScalarInt, UserInitialConditions, UserParams
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
     _make_dissolution_model,
@@ -1748,6 +1748,67 @@ def test_value_frame_scalar_and_collective() -> None:
     }
     with pytest.raises(KeyError):
         result.value_frame(period=2, regime="alone")
+
+
+@pytest.mark.parametrize("collective", [False, True])
+@pytest.mark.parametrize("categorical_state", [False, True])
+def test_value_frame_preserves_state_named_stakeholder(
+    *, collective: bool, categorical_state: bool
+) -> None:
+    """The collective axis is appended after the ordinary state axes."""
+
+    @categorical(ordered=False)
+    class Alive:
+        alive: ScalarInt
+
+    @categorical(ordered=False)
+    class Kind:
+        low: ScalarInt
+        high: ScalarInt
+
+    def utility(*, stakeholder: FloatND | IntND) -> FloatND:
+        return stakeholder.astype(float)
+
+    grid = (
+        DiscreteGrid(Kind)
+        if categorical_state
+        else LinSpacedGrid(start=1, stop=3, n_points=3)
+    )
+    coordinates = [0, 1] if categorical_state else [1, 2, 3]
+
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"stakeholder": grid},
+                functions={
+                    "utility": (
+                        CollectiveUtility(utilities={"f": utility, "m": utility})
+                        if collective
+                        else utility
+                    )
+                },
+            )
+        },
+        ages=AgeGrid(exact_values=(18,)),
+        regime_id_class=Alive,
+        edges={},
+        initial_nodes=((18, "alive"),),
+    )
+    result = model.solve(params={}, log_level="off")
+    axes = result.metadata.value_schemas[0, "alive"].named_axes
+    assert axes[0].role is AxisRole.STATE
+    if collective:
+        assert axes[-1].role is AxisRole.STAKEHOLDER
+        np.testing.assert_array_equal(
+            result.value(period=0, regime="alive"),
+            np.repeat(np.asarray(coordinates)[:, None], 2, axis=1),
+        )
+        with pytest.raises(ValueError, match="unique"):
+            result.value_frame(period=0, regime="alive")
+    else:
+        frame = result.value_frame(period=0, regime="alive", use_labels=False)
+        np.testing.assert_array_equal(frame["stakeholder"], coordinates)
+        np.testing.assert_array_equal(frame["V"], coordinates)
 
 
 @pytest.mark.parametrize("grid_kind", ["process", "age"])

@@ -474,8 +474,8 @@ def _value_axes(
     if period_axes is not None:
         states = {**states, **period_axes.get(period, {})}
     axes = []
-    for name in axis_names:
-        stakeholder = name == "stakeholder"
+    for index, name in enumerate(axis_names):
+        stakeholder = regime.stakeholders is not None and index == len(axis_names) - 1
         if stakeholder:
             if regime.stakeholders is None:
                 raise ValueError("A stakeholder value axis requires stakeholder names.")

@@ -339,7 +339,11 @@ class ValueArraySchema:
         if not domains.keys() <= set(self.axis_names):
             raise ValueError("ValueArraySchema categorical domains must name axes.")
         for axis in self.named_axes:
-            if axis.name in domains and axis.coordinates != domains[axis.name].codes:
+            if (
+                axis.role is AxisRole.STATE
+                and axis.name in domains
+                and axis.coordinates != domains[axis.name].codes
+            ):
                 raise ValueError(
                     "ValueArraySchema category codes must match coordinates."
                 )
