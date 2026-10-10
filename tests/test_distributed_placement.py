@@ -85,8 +85,7 @@ from lcm.execution import ExecutionConfig
 from lcm.model import Model
 from lcm.persistence import PeriodCapture
 from lcm.regime import Regime as UserRegime
-from lcm.result import SolutionResult
-from lcm.solver_api import ContinuationReader
+from lcm.solver_api import ContinuationReader, SolutionResult
 from lcm.solvers import GridSearch, Solver
 from lcm.typing import (
     ContinuousAction,
