@@ -42,10 +42,10 @@ def test_every_shipped_period_kernel_is_core_program_graph_aware(
     *, case: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Each built-in kernel publishes its own graph of declared programs."""
-    kernels: list[object] = []
+    kernels: list[CoreProgramGraphAware] = []
     original = backward_induction.core_program_graph
 
-    def recording(*, kernel: object) -> Any:
+    def recording(*, kernel: CoreProgramGraphAware) -> Any:
         kernels.append(kernel)
         return original(kernel=kernel)
 

@@ -423,9 +423,9 @@ def test_planned_core_applies_and_retains_its_absolute_input_transfer_plan() -> 
         output_roles=VALUE,
     )
 
-    def compiled(**kwargs: object) -> object:
+    def compiled(**kwargs: object) -> jax.Array:
         values = cast(
-            "Mapping[str, object]", kwargs[ValueInputChannel.NEXT_REGIME_VALUE.value]
+            "Mapping[str, jax.Array]", kwargs[ValueInputChannel.NEXT_REGIME_VALUE.value]
         )
         return values["target"]
 

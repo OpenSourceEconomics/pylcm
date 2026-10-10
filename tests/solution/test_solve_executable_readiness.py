@@ -36,7 +36,7 @@ from lcm.solvers import (
     SolverBuildContext,
     StateAxesLeading,
 )
-from lcm.typing import ReferenceName, RegimeName, ScalarInt
+from lcm.typing import FloatND, ReferenceName, RegimeName, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution import test_donation_solve as counter_fixture
 from tests.test_models.initial_nodes import initial_nodes_of
@@ -98,7 +98,7 @@ class _TwoProgramKernel:
         *,
         compiled_cores: Mapping[str, Callable[..., object]],
         state_action_space: object,
-        next_regime_to_V_arr: Mapping[str, object],
+        next_regime_to_V_arr: Mapping[str, FloatND],
         next_regime_to_continuation: Mapping[str, object],
         flat_params: Mapping[str, object],
         period: int,
