@@ -59,6 +59,7 @@ from typing import Literal
 
 import jax.numpy as jnp
 
+from _lcm.typing import DataclassInstance
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -110,7 +111,7 @@ class HousingFuesRegimeId:
     dead: ScalarInt
 
 
-def _make_housing_levels(*, n_housing: int) -> type:
+def _make_housing_levels(*, n_housing: int) -> type[DataclassInstance]:
     """Create an ordered categorical with one field per discrete housing level."""
     annotations = {f"h{i}": ScalarInt for i in range(n_housing)}
     cls = type("HousingLevels", (), {"__annotations__": annotations})

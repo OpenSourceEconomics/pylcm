@@ -8,6 +8,7 @@ auto-assigned `ScalarInt` codes; `validate_category_class` is the check
 import functools
 from collections.abc import Callable
 from dataclasses import dataclass, field, is_dataclass
+from typing import TYPE_CHECKING, dataclass_transform
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +21,15 @@ from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import CategoricalDefinitionError, GridInitializationError
 from lcm.typing import ScalarInt
 
+if TYPE_CHECKING:
+    from _lcm.typing import DataclassInstance
+else:
+    # `_lcm.typing` imports the grids, so the protocol is not importable here at
+    # load time; `validate_category_class` refuses a class that is no dataclass.
+    type DataclassInstance = object
 
+
+@dataclass_transform(frozen_default=True)
 @beartype(conf=CATEGORICAL_CONF)
 def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
     """Create a categorical class with auto-assigned `ScalarInt` values.
@@ -118,7 +127,7 @@ def _categorical_dtype(
     return pd.CategoricalDtype(categories=list(category_names), ordered=ordered)
 
 
-def validate_category_class(category_class: type) -> list[str]:
+def validate_category_class(category_class: type[DataclassInstance]) -> list[str]:
     """Validate a category class has proper structure for discrete grids.
 
     This validates that:
@@ -190,7 +199,7 @@ def _is_scalar_int(value: object) -> bool:  # noqa: PAN001 - a dataclass field m
     )
 
 
-def _validate_discrete_grid(category_class: type) -> None:
+def _validate_discrete_grid(category_class: type[DataclassInstance]) -> None:
     """Validate the field names and values of the category_class passed to DiscreteGrid.
 
     Args:
