@@ -73,6 +73,7 @@ from _lcm.typing import (
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
+    PytreeValue,
     QAndFFunction,
     QualifiedName,
     RegimeName,
@@ -636,7 +637,7 @@ class PeriodKernel(Protocol):
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1086,10 +1087,15 @@ class TwoMarginSolver(Solver):
         """Return an immutable solver copy bound to both margins."""
 
 
-_BOUND_TYPES: dict[tuple[type, type], type] = {}
+_BOUND_TYPES: dict[tuple[type[Solver], type[Solver]], type[Solver]] = {}
 
 
-def bind_roles(*, solver: Solver, role_type: type, **roles: object) -> Solver:
+def bind_roles(
+    *,
+    solver: Solver,
+    role_type: type[Solver],
+    **roles: StateOrActionName | FunctionName | Solver | None,
+) -> Solver:
     """Return a copy of `solver` carrying `roles`, keeping its own type.
 
     The regime resolves a solver's DAG role names and hands them back to the

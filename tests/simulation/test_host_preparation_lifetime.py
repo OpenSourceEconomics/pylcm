@@ -244,7 +244,7 @@ def test_value_dependent_operation_checks_still_raise(log_level: LogLevel) -> No
     with pytest.raises(host_operations.ExecutionPlanningError):
         host_operations._validated_static_arguments(
             function=_pure_operation,
-            arguments={"value": object()},
+            arguments={"value": 0},
             static_arguments={"value": 1},
             subject_outputs=False,
         )

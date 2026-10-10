@@ -16,10 +16,43 @@ import dataclasses
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Hashable, Mapping
+from enum import Enum
 
 import jax
 
+from _lcm.typing import (
+    DataclassInstance,
+    PytreeChild,
+    PytreeValue,
+    RegimeName,
+    ShapeDtypePytree,
+)
+from lcm.typing import FloatND
+
 _DEFAULT_MAX_ENTRIES = 4
+
+# A tree `abstract_schema` describes: a value tree, its abstract counterpart, or
+# continuation values keyed by their `(source, target)` edge.
+type _SchemaTree = (
+    PytreeValue | ShapeDtypePytree | Mapping[tuple[RegimeName, RegimeName], FloatND]
+)
+
+# An execution-policy value `frozen_policy` renders: a number, string, Boolean,
+# enum member or `None`, a dataclass, or a mapping, sequence or set of these.
+type _PolicyValue = (
+    str
+    | int
+    | float
+    | bool
+    | Enum
+    | DataclassInstance
+    | Mapping[str, _PolicyValue]
+    | list[_PolicyValue]
+    | tuple[_PolicyValue, ...]
+    | set[_PolicyValue]
+    | frozenset[_PolicyValue]
+    | None
+)
 
 
 class UncacheableSchemaError(TypeError):
@@ -77,7 +110,7 @@ class StructuralBlueprintCache[Blueprint]:
         return len(self._entries)
 
 
-def abstract_schema(tree: object) -> Hashable:
+def abstract_schema(tree: _SchemaTree) -> Hashable:
     """Describe a tree by its structure and per-leaf abstract metadata.
 
     A leaf contributes its shape, canonical dtype, weak typing, and — for a JAX
@@ -97,7 +130,7 @@ def abstract_schema(tree: object) -> Hashable:
     return schema
 
 
-def _leaf_schema(leaf: object) -> Hashable:
+def _leaf_schema(leaf: PytreeChild) -> Hashable:
     """Return one leaf's abstract metadata."""
     if isinstance(leaf, jax.Array):
         return (
@@ -119,7 +152,7 @@ def _leaf_schema(leaf: object) -> Hashable:
     return ("host", type(leaf), aval.shape, aval.dtype, aval.weak_type)
 
 
-def frozen_policy(value: object) -> Hashable:
+def frozen_policy(value: _PolicyValue) -> Hashable:
     """Return a hashable, order-independent rendering of a policy value.
 
     Mappings become key-sorted item tuples, dataclasses their type and field

@@ -4,6 +4,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
+import jax
+
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.typing import ArrayTree
 from lcm.typing import ActionName, FloatND, IntND
@@ -18,7 +20,7 @@ class PreflightActionGrids:
     build: Callable[..., Mapping[ActionName, FloatND | IntND]]
     """Module-level numerical producer using the declared Cartesian order."""
     bindings: dict[
-        tuple[object, ...],
+        tuple[tuple[ActionName, ...], tuple[tuple[int, jax.sharding.Sharding], ...]],
         tuple[
             MappingProxyType[ActionName, FloatND | IntND],
             Mapping[ActionName, FloatND | IntND],

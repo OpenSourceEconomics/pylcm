@@ -1,5 +1,6 @@
 """Validate a numerical capture against a fresh model and replay one adapter."""
 
+import logging
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -22,6 +23,7 @@ from _lcm.solution.backward_induction import (
 from _lcm.solution.period_capture import (
     CoreLayoutDescriptor,
     LeafLayoutDescriptor,
+    PeriodKernelContext,
     PeriodKernelKwargs,
     PeriodLayouts,
     ShardingDescriptor,
@@ -38,9 +40,22 @@ from _lcm.solution.public_period_capture import (
 )
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, JSONValue
+from _lcm.typing import FlatParams, HostArray, JSONValue, RegimeName
 from _lcm.utils.logging import get_logger
 from lcm.period_capture import CapturedPeriodReplay
+
+
+class _HostKernelKwargs(PeriodKernelContext):
+    """Period kernel arguments whose value arrays are still host NumPy arrays."""
+
+    next_regime_to_V_arr: MappingProxyType[RegimeName, HostArray]
+    """Next period's persisted value array per regime."""
+
+    logger: logging.Logger
+    """Logger the adapter reports through."""
+
+    period_solution: Mapping[RegimeName, HostArray]
+    """Persisted value arrays of the regimes already solved in this period."""
 
 
 def replay_public_period(
@@ -181,7 +196,7 @@ def _restore_public_inputs(
     period: int,
     ages: TimeAxis,
     retain_replay: bool,
-) -> dict[str, Any]:
+) -> _HostKernelKwargs:
     """Validate persisted values against fresh topology and rebuild adapter inputs."""
     topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes,
@@ -228,7 +243,7 @@ def _restore_public_inputs(
 
 def _restore_array_leaves(
     *,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: _HostKernelKwargs,
     leaves: tuple[LeafLayoutDescriptor, ...],
     device_by_recorded_id: Mapping[int, jax.Device],
 ) -> PeriodKernelKwargs:

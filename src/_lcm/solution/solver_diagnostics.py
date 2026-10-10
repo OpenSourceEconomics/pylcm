@@ -19,12 +19,13 @@ does not publish a payload at all.
 import dataclasses
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.typing import PytreeChild
 from lcm.solver_api import (
     SOLVER_DIAGNOSTICS,
     ArtifactChannel,
@@ -127,13 +128,13 @@ assert set(_LEAF_DTYPE_KINDS) == set(_DIAGNOSTICS_FIELDS)  # noqa: S101
 
 def _flatten_diagnostics(
     diagnostics: SolverDiagnostics,
-) -> tuple[tuple[Any, ...], None]:
+) -> tuple[tuple[PytreeChild, ...], None]:
     return tuple(getattr(diagnostics, name) for name in _DIAGNOSTICS_FIELDS), None
 
 
 def _flatten_diagnostics_with_keys(
     diagnostics: SolverDiagnostics,
-) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, Any], ...], None]:
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
     """Flatten with field-named keys so a leaf path reads `.unresolved_mask`."""
     return (
         tuple(
@@ -145,7 +146,9 @@ def _flatten_diagnostics_with_keys(
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
-def _unflatten_diagnostics(_aux: None, children: Iterable[Any]) -> SolverDiagnostics:
+def _unflatten_diagnostics(
+    _aux: None, children: Iterable[PytreeChild]
+) -> SolverDiagnostics:
     diagnostics = object.__new__(SolverDiagnostics)
     for name, child in zip(_DIAGNOSTICS_FIELDS, children, strict=True):
         object.__setattr__(diagnostics, name, child)
@@ -237,15 +240,13 @@ def diagnostics_template_from_descriptor(  # noqa: C901
     )
     if missing:
         raise ValueError(f"{label} is missing the fields {missing!r}.")
-    fields: dict[str, Any] = {
-        name: (
-            None
-            if name not in leaves
-            else _zero_leaf(leaf=leaves[name], name=name, label=label)
-        )
-        for name in _DIAGNOSTICS_FIELDS
-    }
-    return SolverDiagnostics(**fields)
+    # An absent field is an optional one, which defaults to `None`.
+    return SolverDiagnostics(
+        **{
+            name: _zero_leaf(leaf=leaf, name=name, label=label)
+            for name, leaf in leaves.items()
+        }
+    )
 
 
 def _zero_leaf(*, leaf: LeafDescriptor, name: str, label: str) -> jax.Array:
