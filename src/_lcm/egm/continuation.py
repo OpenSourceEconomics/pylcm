@@ -331,7 +331,7 @@ class ContinuationPlan:
     scalar_targets: tuple[RegimeName, ...]
     """Stateless targets contributing a constant continuation value."""
 
-    child_reads: Mapping[RegimeName, _ChildRead]
+    child_reads: MappingProxyType[RegimeName, _ChildRead]
     """Per-carry-target statics of the child carry read."""
 
     compute_regime_transition_probs: RegimeTransitionFunction
