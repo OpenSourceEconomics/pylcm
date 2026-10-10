@@ -644,6 +644,7 @@
   "tests/test_tiled_productmap.py",
   "tests/test_transition_checks.py",
   "tests/test_transition_targets.py",
+  "tests/test_tree_aliases.py",
   "tests/test_tuning.py",
   "tests/test_ulp_assertion.py",
   "tests/test_user_regime.py",
@@ -1158,6 +1159,7 @@
     "tests/test_temporal_params.py",
     "tests/test_tiled_productmap.py",
     "tests/test_transition_targets.py",
+    "tests/test_tree_aliases.py",
     "tests/test_tuning.py",
     "tests/test_ulp_assertion.py",
     "tests/test_validate_regime_transition_probs.py",
@@ -1765,6 +1767,7 @@
     "tests/test_taste_shocks.py",
     "tests/test_temporal_params.py",
     "tests/test_transition_targets.py",
+    "tests/test_tree_aliases.py",
     "tests/test_validate_regime_transition_probs.py"
    ],
    "predicted_payload_minutes": 10.82
@@ -1993,6 +1996,7 @@
     "tests/test_taste_shocks.py",
     "tests/test_temporal_params.py",
     "tests/test_transition_targets.py",
+    "tests/test_tree_aliases.py",
     "tests/test_tuning.py"
    ],
    "predicted_payload_minutes": 13.34
@@ -2756,6 +2760,7 @@
     "tests/test_temporal_params.py",
     "tests/test_tiled_productmap.py",
     "tests/test_transition_targets.py",
+    "tests/test_tree_aliases.py",
     "tests/test_ulp_assertion.py",
     "tests/test_utils.py",
     "tests/test_validate_param_types.py",
@@ -15571,6 +15576,7 @@
   "tests/test_subprocess_precision.py",
   "tests/test_temporal_params.py",
   "tests/test_transition_targets.py",
+  "tests/test_tree_aliases.py",
   "tests/test_tuning.py"
  ],
  "excluded_files": {
