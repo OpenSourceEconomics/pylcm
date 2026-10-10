@@ -469,7 +469,7 @@ class ResolvedStakeholderRoute:
     the two separately (`StakeholderRoute(fallback=Phased(...))`); `None` where one
     reference serves both. Read `realized_fallback` rather than this field."""
 
-    fallback_state_projector: Callable[..., Mapping[StateName, FloatND]] = (
+    fallback_state_projector: Callable[..., MappingProxyType[StateName, FloatND]] = (
         _uncompiled_edge_callable
     )
     """This leg's FALLBACK state projector.
@@ -1905,7 +1905,7 @@ def build_fallback_state_projector(
     ],
     route: str,
     phase: Literal["solve", "simulate"] | None,
-) -> Callable[..., Mapping[StateName, FloatND]]:
+) -> Callable[..., MappingProxyType[StateName, FloatND]]:
     """Project a target-grid point onto one edge leg's FALLBACK state coordinates.
 
     Companion to `_build_same_period_ref_reader`
@@ -2387,16 +2387,18 @@ class _FallbackStateProjector:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: ParamsLeaf) -> Mapping[StateName, FloatND]:
+    def __call__(self, **kwargs: ParamsLeaf) -> MappingProxyType[StateName, FloatND]:
         _fail_if_arguments_do_not_match(
             kwargs=kwargs, arg_names=self.arg_names, name="project"
         )
-        return {
-            state_name: self.projection_funcs[state_name](
-                **{arg: kwargs[arg] for arg in self.projection_args[state_name]}
-            )
-            for state_name in self.fallback_simulate_state_names
-        }
+        return MappingProxyType(
+            {
+                state_name: self.projection_funcs[state_name](
+                    **{arg: kwargs[arg] for arg in self.projection_args[state_name]}
+                )
+                for state_name in self.fallback_simulate_state_names
+            }
+        )
 
 
 def _fail_if_arguments_do_not_match(
@@ -2602,7 +2604,7 @@ def build_reference_params_mapping_for_fold(
     *,
     edge: ResolvedGatedEdge,
     flat_params: FlatParams,
-) -> MappingProxyType[RegimeName, Mapping[str, ParamsLeaf]]:
+) -> MappingProxyType[RegimeName, MappingProxyType[str, ParamsLeaf]]:
     """Assemble `SAME_PERIOD_PARAMS_ARG` for one edge's reference readers.
 
     The params counterpart of `build_same_period_mapping_for_fold`, over the
