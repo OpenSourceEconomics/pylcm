@@ -14,6 +14,7 @@ from types import MappingProxyType
 from typing import Any, TypeVar, cast
 
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
+from lcm.typing import ScalarInt
 
 T = TypeVar("T")
 
@@ -97,7 +98,9 @@ def get_field_names_and_values(dc: object) -> MappingProxyType[str, Any]:
     )
 
 
-def invert_regime_ids[K](mapping: Mapping[K, Any]) -> MappingProxyType[int, K]:
+def invert_regime_ids[K](
+    mapping: Mapping[K, ScalarInt | int],
+) -> MappingProxyType[int, K]:
     """Return the inverse of a regime-name → id mapping, with Python-`int` keys.
 
     `@categorical` assigns `jnp.int32` scalars to class attributes, so

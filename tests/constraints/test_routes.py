@@ -39,8 +39,14 @@ from _lcm.constraints.routes import (
     ConstraintSite,
     plan_constraints,
 )
+from _lcm.egm.nbegm_constraint_boundaries import NBEGMFeasibilityBoundaryProgram
 from lcm import ref
 from lcm.typing import FloatND
+
+# A compiled payload the planner carries without reading it.
+_PAYLOAD = NBEGMFeasibilityBoundaryProgram(
+    constraint_name="borrowing", liquid_state="wealth", surfaces=()
+)
 
 
 def _spendable(*, wealth: FloatND, consumption: FloatND) -> FloatND:
@@ -236,7 +242,7 @@ def test_a_plan_exposes_only_its_compiled_boundary_dispositions() -> None:
     ) -> CompileBoundary:
         return CompileBoundary(
             constraint=bound.constraint,
-            program=BoundaryProgram(surfaces=(), payload=None),
+            program=BoundaryProgram(surfaces=(), payload=_PAYLOAD),
         )
 
     compiled = _route(_site(boundary_compilers=(compiler,)), path="compiled")
@@ -278,7 +284,7 @@ def test_a_boundary_compiler_at_a_site_compiles_the_constraint() -> None:
     ) -> CompileBoundary:
         return CompileBoundary(
             constraint=bound.constraint,
-            program=BoundaryProgram(surfaces=(), payload=None),
+            program=BoundaryProgram(surfaces=(), payload=_PAYLOAD),
         )
 
     route = _route(_site(boundary_compilers=(compiler,)))
@@ -406,7 +412,7 @@ def test_a_proof_is_consulted_before_a_boundary_compiler() -> None:
     ) -> CompileBoundary:
         return CompileBoundary(
             constraint=bound.constraint,
-            program=BoundaryProgram(surfaces=(), payload=None),
+            program=BoundaryProgram(surfaces=(), payload=_PAYLOAD),
         )
 
     route = _route(

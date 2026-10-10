@@ -12,33 +12,25 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
-from typing import Any, Literal, TypeVar, cast
+from typing import Literal, TypeVar, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import vmap
 
-from _lcm.typing import ActionName, ArrayTree, QAndFArg, StateName
+from _lcm.typing import ActionName, ArrayTree, PytreeValue, QAndFArg, StateName
 from _lcm.utils.containers import find_duplicates
 from _lcm.utils.functools import allow_args, allow_only_kwargs, publish_signature
 from lcm.exceptions import FunctionDispatchError
-from lcm.typing import BoolND, FloatND, IntND, ReferenceName, RegimeName, ValueND
+from lcm.typing import FloatND, ReferenceName, RegimeName, ValueND
 
 _MAX_FLAT_CELL_INDEX = 2**31 - 1
 
-# What a dispatched function returns: an array, a pair of arrays, or arrays
-# keyed by name one or two levels deep.
-type _ArrayReturn = (
-    FloatND
-    | IntND
-    | BoolND
-    | tuple[FloatND | IntND | BoolND, FloatND | IntND | BoolND]
-    | MappingProxyType[str, FloatND | IntND]
-    | MappingProxyType[str, MappingProxyType[str, FloatND | IntND]]
-)
-
+# A dispatched function returns any tree of arrays: the maps stack every leaf
+# along the mapped axes, whatever the tree's shape.
 FunctionWithArrayReturn = TypeVar(
-    "FunctionWithArrayReturn", bound=Callable[..., _ArrayReturn]
+    "FunctionWithArrayReturn", bound=Callable[..., ArrayTree]
 )
 
 
@@ -214,7 +206,9 @@ def vmap_1d(
         # should be mapped over the leading axis of the input. A `co_mapped_in_axes`
         # entry overrides the default for that argument — a scalar axis index there
         # maps that axis of every pytree leaf, co-mapping it with the variables.
-        in_axes_for_vmap: list[Any] = [None] * len(parameters)
+        in_axes_for_vmap: list[
+            int | MappingProxyType[RegimeName, int | None] | None
+        ] = [None] * len(parameters)
         for p in positions:
             in_axes_for_vmap[p] = 0
         for name, axes in co_mapped_in_axes.items():
@@ -400,12 +394,12 @@ class _CountBroadcastExtentInWidth:
     width_keyword: str
     """Static keyword naming the width in points of the whole product."""
 
-    def __call__(self, **kwargs: Any) -> ArrayTree:
+    def __call__(self, **kwargs: QAndFArg) -> ArrayTree:
         width = kwargs.get(self.width_keyword, 1)
         # An invalid width passes through unchanged for the cell mapper to refuse.
         if type(width) is int and width >= 1:
             extent = math.prod(
-                jnp.atleast_1d(kwargs[name]).shape[0] for name in self.variables
+                _axis_values(kwargs[name]).shape[0] for name in self.variables
             )
             if width % extent != 0:
                 return self.plain(**kwargs)
@@ -422,7 +416,7 @@ class _RestoreProductAxisOrder:
     axes: tuple[int, ...]
     """Permutation from mapped state axes to the original declared order."""
 
-    def __call__(self, **kwargs: Any) -> ArrayTree:
+    def __call__(self, **kwargs: QAndFArg) -> ArrayTree:
         return jax.tree.map(
             partial(_transpose_product_axes, axes=self.axes), self.func(**kwargs)
         )
@@ -445,14 +439,14 @@ class _TiledProductMap:
     width_keyword: str
     """Static keyword consumed by this mapping boundary."""
 
-    def __call__(self, **kwargs: Any) -> ArrayTree:
+    def __call__(self, **kwargs: QAndFArg) -> ArrayTree:
         width = kwargs.pop(self.width_keyword, 1)
         if type(width) is not int or width < 1:
             msg = f"Tile width must be a positive static integer, got {width!r}."
             raise ValueError(msg)
         if not self.variables:
             return self.func(**kwargs)
-        coordinates = tuple(jnp.atleast_1d(kwargs[name]) for name in self.variables)
+        coordinates = tuple(_axis_values(kwargs[name]) for name in self.variables)
         shape = tuple(coordinate.shape[0] for coordinate in coordinates)
         n_cells = math.prod(shape)
         if n_cells < 1 or n_cells > _MAX_FLAT_CELL_INDEX:
@@ -552,7 +546,7 @@ class _MapOverFinalCoordinate:
     width: int
     """Active final-coordinate window within the requested cell budget."""
 
-    def __call__(self, **kwargs: Any) -> ArrayTree:
+    def __call__(self, **kwargs: QAndFArg) -> ArrayTree:
         evaluate = _EvaluateTiledCell(
             func=self.func,
             variables=(self.variable,),
@@ -583,23 +577,12 @@ def _map_whole_product(
     the same values either way, so results are unchanged.
     """
     mapped = productmap(
-        func=cast("Callable[..., _ArrayReturn]", func),
+        func=func,
         variables=variables,
         batch_sizes=dict.fromkeys(variables, 0),
     )
     named = dict(zip(variables, coordinates, strict=True))
     return mapped(**arguments, **named)
-
-
-def _final_mapper(
-    *, mapper: _MapOverFinalCoordinate, extent: int
-) -> Callable[..., Any]:
-    """Drop the final coordinate's flat decode once its window covers the grid."""
-    if mapper.width < extent:
-        return mapper
-    return _MapWholeCoordinate(
-        func=mapper.func, variable=mapper.variable, coordinate=mapper.coordinate
-    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -613,13 +596,24 @@ class _MapWholeCoordinate:
     coordinate: jax.Array
     """Separate final-coordinate grid, mapped in full."""
 
-    def __call__(self, **kwargs: Any) -> ArrayTree:
+    def __call__(self, **kwargs: QAndFArg) -> ArrayTree:
         return _map_whole_product(
             func=self.func,
             variables=(self.variable,),
             coordinates=(self.coordinate,),
             arguments=MappingProxyType(kwargs),
         )
+
+
+def _final_mapper(
+    *, mapper: _MapOverFinalCoordinate, extent: int
+) -> _MapOverFinalCoordinate | _MapWholeCoordinate:
+    """Drop the final coordinate's flat decode once its window covers the grid."""
+    if mapper.width < extent:
+        return mapper
+    return _MapWholeCoordinate(
+        func=mapper.func, variable=mapper.variable, coordinate=mapper.coordinate
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -724,7 +718,7 @@ class _ProductMapBatched:
                 getattr(self.func, attribute, type(self).__qualname__),
             )
 
-    def __call__(self, **kwargs: Any) -> ArrayTree:
+    def __call__(self, **kwargs: PytreeValue) -> ArrayTree:
         non_array_kwargs = {
             key: val for key, val in kwargs.items() if key not in self.product_axes
         }
@@ -739,7 +733,7 @@ class _ProductMapBatched:
                 _MappedOverOneMoreAxis(
                     loop_func=loop_func,
                     axis=axis,
-                    axis_values=kwargs[axis],
+                    axis_values=_axis_values(kwargs[axis]),
                     batch_size=self.batch_sizes[axis],
                 ),
             )
@@ -754,7 +748,7 @@ class _MappedOverOneMoreAxis:
     """The function evaluated once per value of `axis`."""
     axis: str
     """The argument of `loop_func` that takes one value of the axis per evaluation."""
-    axis_values: Any
+    axis_values: ValueND
     """The values of the axis, mapped over their leading dimension."""
     batch_size: int
     """The `jax.lax.map` batch size, `0` for one vectorized pass."""
@@ -777,9 +771,17 @@ class _MappedOverOneMoreAxis:
         )
 
 
+def _axis_values(value: PytreeValue) -> ValueND:
+    """Return the values of a product axis with at least one leading dimension."""
+    if isinstance(value, jax.Array | np.ndarray | np.bool | np.number | int | float):
+        return jnp.atleast_1d(value)
+    msg = f"A product axis takes an array or a number, got {type(value).__name__}."
+    raise FunctionDispatchError(msg)
+
+
 # keyword-only-exempt: library-callback=jax.lax.map
 def _evaluate_at_axis_value(
-    axis_value: Any,
+    axis_value: ValueND,
     *,
     loop_func: Callable[..., ArrayTree],
     axis: str,
