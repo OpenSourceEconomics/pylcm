@@ -115,6 +115,8 @@ class NormalIIDProcess(_IIDProcess):
     it uses `n_points` equally spaced points spanning
     $\mu_\varepsilon \pm n_\text{std} \cdot \sigma_\varepsilon$.
 
+    Gauss-Hermite supports even and odd `n_points`; only odd counts include the mean.
+
     """
 
     gauss_hermite: bool
@@ -187,7 +189,10 @@ class NormalIIDProcess(_IIDProcess):
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class LogNormalIIDProcess(_IIDProcess):
-    r"""Discretized IID log-normal process: $\ln X \sim N(\mu, \sigma^2)$."""
+    r"""Discretized IID log-normal process: $\ln X \sim N(\mu, \sigma^2)$.
+
+    Gauss-Hermite supports even and odd `n_points`; only odd counts include `exp(mu)`.
+    """
 
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
