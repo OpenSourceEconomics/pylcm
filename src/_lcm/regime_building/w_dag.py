@@ -18,18 +18,18 @@ This module exposes:
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, no_type_check
+from typing import no_type_check
 
 from dags import concatenate_functions
 
-from _lcm.typing import EconFunctionArg, FunctionName, QAndFKwargs
+from _lcm.typing import EconFunction, EconFunctionArg, FunctionName, QAndFKwargs
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import ReferenceName, UserFunction
+from lcm.typing import FloatND, IntND, ReferenceName, UserFunction
 
 
 def get_dag_targets_consumed_by_W(
     *,
-    functions: Mapping[FunctionName, Callable[..., Any]],
+    functions: Mapping[FunctionName, EconFunction],
     koopmans_aggregator: UserFunction | None,
 ) -> frozenset[FunctionName]:
     """Return names of regime functions whose outputs W consumes.
@@ -57,7 +57,7 @@ def get_dag_targets_consumed_by_W(
 
 def _get_build_W_kwargs(
     *,
-    functions: Mapping[FunctionName, Callable[..., Any]],
+    functions: Mapping[FunctionName, EconFunction],
     koopmans_aggregator: UserFunction,
 ) -> Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]:
     """Return a closure that builds `W_kwargs` from `states_actions_params`.
@@ -105,7 +105,7 @@ class _BuildWKwargs:
 
     passthrough: frozenset[FunctionName]
     """Names W accepts directly from states, actions, and flat user params."""
-    dag_func: Callable[..., dict[str, Any]] | None
+    dag_func: Callable[..., dict[FunctionName, FloatND | IntND]] | None
     """Compiled DAG computing W's regime-function inputs, or `None` if it has none."""
 
     # The kernel is traced with whatever leaves its caller supplies -- tracers,

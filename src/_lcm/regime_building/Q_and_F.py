@@ -83,9 +83,18 @@ from lcm.typing import (
     DiscreteState,
     Float1D,
     FloatND,
+    Int1D,
     IntND,
     ReferenceName,
+    UserFunction,
 )
+
+# What a diagnostic intermediates closure returns at a cell: utility,
+# feasibility (a Python `bool` for a regime without constraints), the
+# continuation `CE`, `Q`, and the active regimes' transition probabilities.
+type Intermediates = tuple[
+    FloatND, BoolND | bool, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
+]
 
 
 def _compare_swap_values(
@@ -404,7 +413,7 @@ def get_Q_and_F(
 
 
 def _continuation_reads(
-    *, deps: tuple[Callable[..., Any], ...], arg_names: frozenset[ReferenceName]
+    *, deps: tuple[Callable[..., ArrayTree], ...], arg_names: frozenset[ReferenceName]
 ) -> frozenset[str] | None:
     """Every argument `compute_CE` reads from the cell, or `None` if unknowable.
 
@@ -516,7 +525,7 @@ def get_compute_intermediates(
     gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
         {}
     ),
-) -> Callable:
+) -> Callable[..., Intermediates]:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
     Mirrors `get_Q_and_F` but returns all intermediates instead of just
@@ -627,9 +636,7 @@ class _ComputeIntermediates:
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: ParamsLeaf,
-    ) -> tuple[
-        FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
-    ]:
+    ) -> Intermediates:
         """Compute all Q_and_F intermediates."""
         U_arr, F_arr = self.U_and_F(**states_actions_params)
         CE, active_regime_probs = self.compute_CE(
@@ -1008,7 +1015,7 @@ class ResolvedProjectedRegimeValue:
     regime: RegimeName
     """Name of the reference regime whose same-period V is read."""
 
-    projection: Mapping[StateName, Callable[..., Any]]
+    projection: Mapping[StateName, UserFunction]
     """Per-reference-state projection functions (user vocabulary, DAG-resolved)."""
 
     stakeholder_index: int | None
@@ -1025,7 +1032,7 @@ class ResolvedProjectedRegimeValue:
 
 def projection_func_or_fail(
     *, ref: ResolvedProjectedRegimeValue, state_name: StateName
-) -> Callable[..., Any]:
+) -> UserFunction:
     """Return the coordinate function a reference's projection gives one state.
 
     Model build rejects an incomplete projection before any kernel exists, so
@@ -1276,7 +1283,7 @@ def _reference_interpolator_param_qnames(
 def _lookup_reference_params(
     *,
     qnames: Mapping[str, str],
-    regime_to_params: object,
+    regime_to_params: Mapping[RegimeName, Mapping[str, ParamsLeaf]],
     ref_regime: RegimeName,
 ) -> dict[str, ParamsLeaf]:
     """Resolve a reader's interpolation helpers in the REFERENCE regime's params.
@@ -1289,18 +1296,15 @@ def _lookup_reference_params(
     """
     if not qnames:
         return {}
-    params_per_regime = cast(
-        "Mapping[RegimeName, Mapping[str, ParamsLeaf]]", regime_to_params
-    )
-    if ref_regime not in params_per_regime:
+    if ref_regime not in regime_to_params:
         msg = (
             f"Reading regime '{ref_regime}''s same-period V requires that "
             f"regime's own params (it declares runtime grid points), but "
             f"'{ref_regime}' is missing from '{SAME_PERIOD_PARAMS_ARG}' "
-            f"(present: {sorted(params_per_regime)})."
+            f"(present: {sorted(regime_to_params)})."
         )
         raise KeyError(msg)
-    ref_params = params_per_regime[ref_regime]
+    ref_params = regime_to_params[ref_regime]
     resolved: dict[str, ParamsLeaf] = {}
     for arg, qname in qnames.items():
         if qname not in ref_params:
@@ -2897,7 +2901,7 @@ def _get_interpolator_resolving_draws(
     functions: EconFunctionsMapping,
     stochastic_names: tuple[TransitionFunctionName, ...],
     draw_dependent_names: tuple[TransitionFunctionName, ...],
-    node_values: MappingProxyType[TransitionFunctionName, Any],
+    node_values: MappingProxyType[TransitionFunctionName, Int1D | Float1D],
     support_provider_names: MappingProxyType[TransitionFunctionName, str],
 ) -> _NodeDrawResolution:
     """Wrap the interpolator so draw-dependent laws resolve on the node axis.
@@ -2986,7 +2990,7 @@ class _ResolveAtNode:
     """Stochastic laws whose node value a dependent law reads."""
     support_provider_names: Mapping[TransitionFunctionName, str]
     """Per joint lottery, the DAG node supplying its support."""
-    node_values: Mapping[TransitionFunctionName, Any]
+    node_values: Mapping[TransitionFunctionName, Int1D | Float1D]
     """Per stochastic law, its nodes indexed by the draw's value."""
     resolve: Callable[..., Mapping[str, FloatND]]
     """The dependent laws, concatenated with the DAG."""

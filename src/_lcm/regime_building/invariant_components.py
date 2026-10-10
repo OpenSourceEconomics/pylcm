@@ -31,7 +31,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from _lcm.engine import GridRecomputationRoute, Regime
-from _lcm.grids import DiscreteGrid
+from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.reachability import ModelReachability, PhaseReachability
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -45,8 +45,13 @@ from _lcm.regime_law import RegimeLaws
 from _lcm.time import TimeAxis
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
+from lcm.transition import AgeSpecializedGrid, StochasticTransition
+from lcm.typing import UserFunction
 
 type Phase = Literal["solve", "simulate"]
+# A law a phase slice declares for a state toward one target, or the marker of
+# the joint kernel that owns the cell.
+type _DeclaredLaw = str | UserFunction | StochasticTransition | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -366,7 +371,7 @@ def _grid_refusals(
 
 def _law_toward(
     *, phase_slice: RegimePhaseSpec, state_name: StateName, target: RegimeName
-) -> object:
+) -> _DeclaredLaw:
     """Return the law a slice declares for a state toward one target.
 
     A joint kernel that outputs the state toward the target owns that cell; a
@@ -420,7 +425,7 @@ def _channel_refusals(
 
 def _first_grid(
     *, specs: Mapping[RegimeName, PhasedRegimeSpec], state_name: StateName
-) -> object:
+) -> Grid | AgeSpecializedGrid | None:
     """Return the state's grid in the first carrier, solve phase before simulate."""
     return next(
         (
@@ -447,7 +452,7 @@ def _original_codes_by_group(split: FixedComponentSplit) -> tuple[tuple[int, ...
     )
 
 
-def _describe(law: object) -> str:
+def _describe(law: _DeclaredLaw) -> str:
     """Name a declared law for a refusal message."""
     if law is None:
         return "none"

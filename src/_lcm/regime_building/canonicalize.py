@@ -178,7 +178,7 @@ def canonicalize_phased_regimes(
             errors += slice_errors + joint_errors
             canonical_slice = dataclasses.replace(
                 phase_slice,
-                state_transitions=cast("MappingProxyType", canonical_transitions),
+                state_transitions=canonical_transitions,
                 markov_draw_laws=MappingProxyType(
                     {
                         state_name: law
@@ -440,7 +440,7 @@ def _per_target_law_errors(
 
 def _declared_target_errors(
     *,
-    regime_transition: object,
+    regime_transition: _PhaseRegimeTransition,
     all_regime_names: frozenset[RegimeName],
     source_label: str,
 ) -> tuple[frozenset[RegimeName], list[str]]:

@@ -19,10 +19,10 @@ edge:
 """
 
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -34,10 +34,13 @@ from _lcm.params.processing import (
     find_param_candidates,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.regime_building.schedules import ProbabilityCell
 from _lcm.regime_law import RegimeLaw, RegimeLaws, bind_regime_law
 from _lcm.typing import (
     EconFunctionArg,
     FlatParams,
+    FlatRegimeParams,
+    ParamsLeaf,
     QualifiedName,
     RegimeName,
     StateName,
@@ -49,9 +52,13 @@ from lcm.regime import Regime as UserRegime
 from lcm.regime import StateTransitionEntry
 from lcm.temporal import TimeVarying
 from lcm.transition import ByAge, JointTransition, StochasticTransition
-from lcm.typing import ReferenceName, UserParams, UserParamsLeaf
+from lcm.typing import ReferenceName, UserFunction, UserParams, UserParamsLeaf
 
 type Side = Literal["solve", "simulate"]
+# A joint kernel as a regime declares it toward one target: one kernel for both
+# phases, or a `Phased` pair of kernels.
+type _JointDeclaration = JointTransition | Phased
+type _JointDeclarations = Mapping[RegimeName, Mapping[str, _JointDeclaration]]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -196,18 +203,18 @@ def _prune_regime_transition(
         protected |= one_phase_joint
 
 
-def _joint_kernels(raw: object) -> tuple[tuple[Side, JointTransition], ...]:
+def _joint_kernels(raw: _JointDeclaration) -> tuple[tuple[Side, JointTransition], ...]:
     """Pair each phase with the joint kernel a declaration uses there."""
     return tuple(
         (side, cast("JointTransition", getattr(raw, side)))
         if isinstance(raw, Phased)
-        else (side, cast("JointTransition", raw))
+        else (side, raw)
         for side in ("solve", "simulate")
     )
 
 
 def _states_covered_only_by_removed_joints(
-    *, regime: UserRegime, joint_transitions: Mapping[str, object]
+    *, regime: UserRegime, joint_transitions: _JointDeclarations
 ) -> tuple[StateName, ...]:
     """Source states whose only authored law is a removed joint kernel's output.
 
@@ -226,12 +233,12 @@ def _states_covered_only_by_removed_joints(
     )
 
 
-def _joint_outputs(joints: Mapping[str, object]) -> set[str]:
+def _joint_outputs(joints: _JointDeclarations) -> set[str]:
     """Every state any kernel of `joints` produces, in either phase."""
     return {
         output
         for kernels in joints.values()
-        for raw in cast("Mapping[str, object]", kernels).values()
+        for raw in kernels.values()
         for _, kernel in _joint_kernels(raw)
         for output in kernel.outputs
     }
@@ -245,7 +252,7 @@ def _trim_joint_transitions(
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     reads: dict[RegimeName, set[str]],
-) -> MappingProxyType[str, object]:
+) -> MappingProxyType[RegimeName, Mapping[str, _JointDeclaration]]:
     """Omit joint kernels toward targets removed in both phases at every age."""
     node_names = frozenset(
         kernel_name
@@ -354,11 +361,11 @@ def _prune_law(
         )
         return (
             solve
-            if set(cast("Mapping[str, object]", solve))
-            == set(cast("Mapping[str, object]", simulate))
+            if set(cast("Mapping[RegimeName, ProbabilityCell]", solve))
+            == set(cast("Mapping[RegimeName, ProbabilityCell]", simulate))
             else Phased(solve=solve, simulate=simulate)
         )
-    retained: dict[str, object] = {}
+    retained: dict[RegimeName, ProbabilityCell] = {}
     removed_keys: set[str] = set()
     for target, cell in law.items():
         evaluated = (
@@ -400,13 +407,13 @@ def _prune_law(
 
 def _evaluate_fixed_function(
     *,
-    func: Callable[..., Any],
+    func: UserFunction,
     path: tuple[str, ...],
     side: Side,
     regime: UserRegime,
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     ancestors: tuple[str, ...],
-) -> tuple[Any, frozenset[str]] | None:
+) -> tuple[EconFunctionArg, frozenset[str]] | None:
     """Evaluate a complete fixed DAG, or retain an unresolved conditional edge."""
     arguments: dict[ReferenceName, EconFunctionArg] = {}
     keys: set[str] = set()
@@ -447,7 +454,7 @@ def _resolve_fixed_argument(
     regime: UserRegime,
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     ancestors: tuple[str, ...],
-) -> tuple[Any, frozenset[str]] | None:
+) -> tuple[EconFunctionArg, frozenset[str]] | None:
     """Resolve one argument through its helper DAG or a fixed parameter leaf.
 
     `path` is the params path of the callable reading the argument: a regime
@@ -501,7 +508,7 @@ def _is_runtime_argument(*, arg_name: ReferenceName, regime: UserRegime) -> bool
 
 def _canonicalize_fixed_leaf(
     *, regime_name: RegimeName, qname: QualifiedName, value: UserParamsLeaf
-) -> object:
+) -> ParamsLeaf:
     """Apply the parameter dtype boundary before executing a fixed callable."""
     canonical = cast_params_to_canonical_dtypes(
         cast(
@@ -509,7 +516,8 @@ def _canonicalize_fixed_leaf(
             MappingProxyType({regime_name: MappingProxyType({qname: value})}),
         )
     )
-    return canonical[regime_name][qname]
+    # The cast input holds one regime level only, so no edge level comes back.
+    return cast("FlatRegimeParams", canonical[regime_name])[qname]
 
 
 def _targets(*, law: object, side: Side) -> frozenset[str]:
@@ -590,7 +598,7 @@ def _trim_state_side(
 
 def _record_removed_state_keys(
     *,
-    law: object,
+    law: StateTransitionEntry,
     removed: frozenset[str],
     regime_name: RegimeName,
     state: StateName,
@@ -621,7 +629,7 @@ def _record_removed_state_keys(
 
 def _get_declared_fixed_keys(
     *,
-    func: Callable[..., Any],
+    func: UserFunction,
     path: tuple[str, ...],
     side: Side,
     regime: UserRegime,
