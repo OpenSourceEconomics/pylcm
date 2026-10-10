@@ -19,7 +19,7 @@ from _lcm.regime_building.gated_edges import edge_may_fold_at_period
 from _lcm.simulation.replay_inputs import PreparedReplayReader, replay_payload_reads
 from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution.continuation_reads import rekeyed_value_reads
-from _lcm.typing import QAndFArg, QAndFKwargs
+from _lcm.typing import QAndFArg, QAndFKwargs, SimulationPolicy
 from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY, ReplayReader
 from lcm.typing import FloatND, ReferenceName, RegimeName
 
@@ -32,7 +32,7 @@ def decision_reads(
     *,
     regime: Regime,
     period: int,
-    policy: object,
+    policy: SimulationPolicy | None,
     reader: PreparedReplayReader | ReplayReader | None,
 ) -> tuple[ValueRead, ...]:
     """Name the actual decision adapter selected for this unit."""
@@ -60,7 +60,7 @@ def unit_value_reads(
     period: int,
     values: Mapping[int, Mapping[str, jax.Array]],
     flags: Mapping[int, Mapping[str, jax.Array]],
-    policy: object,
+    policy: SimulationPolicy | None,
     reader: PreparedReplayReader | ReplayReader | None,
 ) -> tuple[ValueRead, ...]:
     """Declare every occurrence, while the owner counts distinct regime units."""

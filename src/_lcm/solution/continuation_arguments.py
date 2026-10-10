@@ -50,7 +50,7 @@ class MarginalLeafArguments:
 class MarginalLeafCore:
     """Rebuild the original carry inside tracing, without copying an array."""
 
-    core: Callable
+    core: Callable[..., PytreeValue]
     target: RegimeName
 
     def __call__(self, **arguments: PytreeValue) -> PytreeValue:

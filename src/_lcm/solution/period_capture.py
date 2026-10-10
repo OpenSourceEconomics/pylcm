@@ -44,14 +44,30 @@ from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.value_transfer import ResolvedValueTransfer
 from _lcm.persistence.io import _save_pkl
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, FloatND, RegimeName
+from _lcm.typing import (
+    DataclassInstance,
+    FlatParams,
+    FloatND,
+    RegimeName,
+    ShardingTree,
+)
 from lcm.solver_api import ArtifactKey
 
 type PeriodCaptureTarget = tuple[RegimeName, int]
 
+# Shardings laid out like a compiled executable's inputs or outputs, whose nodes
+# may be registered dataclasses such as `EGMCarry`.
+type CompiledShardingTree = (
+    ShardingTree
+    | DataclassInstance
+    | tuple[CompiledShardingTree, ...]
+    | list[CompiledShardingTree]
+    | Mapping[str, CompiledShardingTree]
+)
 
-class PeriodCompileInputs(TypedDict):
-    """The inputs one regime-period's cores are lowered against."""
+
+class PeriodKernelContext(TypedDict):
+    """The inputs of one regime-period other than its own and next value arrays."""
 
     regime_name: RegimeName
     """Regime whose period adapter runs."""
@@ -68,9 +84,6 @@ class PeriodCompileInputs(TypedDict):
     ages: TimeAxis
     """The model's time axis."""
 
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
-    """Next period's value array per regime."""
-
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload]
     """Next period's continuation payload per publishing regime."""
 
@@ -82,6 +95,13 @@ class PeriodCompileInputs(TypedDict):
 
     selected_artifact_keys: frozenset[ArtifactKey]
     """Artifacts the result retention selects."""
+
+
+class PeriodCompileInputs(PeriodKernelContext):
+    """The inputs one regime-period's cores are lowered against."""
+
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
+    """Next period's value array per regime."""
 
 
 class PeriodKernelKwargs(PeriodCompileInputs):
@@ -250,7 +270,7 @@ def resolve_capture_target() -> PeriodCaptureTarget | None:
     return regime_name, int(period)
 
 
-def describe_sharding(*, sharding: object) -> ShardingDescriptor:
+def describe_sharding(*, sharding: jax.sharding.Sharding) -> ShardingDescriptor:
     """Render one concrete placement as portable data.
 
     A `NamedSharding` keeps its mesh shape and `PartitionSpec`, so the same
@@ -442,7 +462,7 @@ def _layout_device_ids(
 
 
 def _describe_named_shardings(
-    *, tree: object
+    *, tree: CompiledShardingTree
 ) -> tuple[tuple[str, ShardingDescriptor], ...]:
     """Describe every concrete sharding of a compiled executable's placement tree."""
     described: list[tuple[str, ShardingDescriptor]] = []

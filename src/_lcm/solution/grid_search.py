@@ -85,6 +85,7 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     MaxQOverAFunction,
+    PytreeValue,
     QAndFArg,
     QAndFFunction,
     ReferenceName,
@@ -96,6 +97,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
+    BoolND,
     FloatND,
 )
 
@@ -885,7 +887,7 @@ class _GridSearchPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -939,9 +941,11 @@ class _GridSearchPeriodKernel:
         )
         out = compiled_cores[core_key](**arguments)
         if program.output_roles == (VALUE, DISSOLUTION_FLAG):
-            V_arr, dissolution = out
+            V_arr, dissolution = cast("tuple[FloatND, BoolND]", out)
             return KernelOutput(
                 value=V_arr,
                 solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},
             )
+        # Every other declared output role tree is the value array alone.
+        out = cast("FloatND", out)
         return KernelOutput(value=out)

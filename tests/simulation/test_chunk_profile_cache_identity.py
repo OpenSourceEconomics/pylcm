@@ -278,7 +278,7 @@ def test_key_is_stable_and_versioned() -> None:
     assert first[0] == ("chunk-profile-key", 1)
 
 
-_RUNTIME_MARKER = "test-runtime-marker"
+_RUNTIME_MARKER = ProfileCacheToken()
 
 
 def test_concurrent_requests_share_one_immutable_build() -> None:
@@ -384,12 +384,9 @@ def test_no_caller_arrays_or_results_are_retained() -> None:
 def test_bounded_aggregate_entries_across_heterogeneous_runtimes() -> None:
     """The aggregate LRU is bounded across many distinct runtimes, not per-runtime."""
     registry = ChunkProfileCacheRegistry()
-    for shape in range(PROFILE_CACHE_MAX_ENTRIES + 20):
-        registry.get_or_build(
-            runtime_token=f"runtime-{shape}",
-            key=f"key-{shape}",
-            build=object,
-        )
+    tokens = [ProfileCacheToken() for _ in range(PROFILE_CACHE_MAX_ENTRIES + 20)]
+    for shape, token in enumerate(tokens):
+        registry.get_or_build(runtime_token=token, key=f"key-{shape}", build=object)
     assert len(registry) <= PROFILE_CACHE_MAX_ENTRIES
 
 

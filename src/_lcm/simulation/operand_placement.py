@@ -4,7 +4,7 @@ import dataclasses
 import math
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 import jax
 import numpy as np
@@ -18,6 +18,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
+from _lcm.typing import HostArray
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 
@@ -32,9 +33,9 @@ class SubjectArgumentNames(Protocol):
         ...
 
 
-def place_simulation_arguments(
+def place_simulation_arguments[T](
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, T],
     subject_arg_names: tuple[ReferenceName, ...],
     value_reads: tuple[ValueRead, ...],
     devices: tuple[jax.Device, ...],
@@ -42,12 +43,16 @@ def place_simulation_arguments(
     live_footprint: DeviceBufferFootprint | None = None,
     argument_footprint: DeviceBufferFootprint | None = None,
     budget_devices: tuple[jax.Device, ...] = (),
-) -> Mapping[str, object]:
+) -> Mapping[str, T]:
     """Share scalars/grids/params and shard subjects on the declared device order.
 
     Addressed value leaves are already supplied by the period's value owner and
     pass through unchanged. Placement is call-local; this module caches no arrays.
     An already-correct array passes through by identity, including subject states.
+
+    Each argument comes back with its own container structure; only its numeric
+    leaves are replaced by device arrays, so a tree of device arrays keeps its
+    exact type and a host leaf comes back as the device array it was placed as.
 
     A budgeted caller supplies the live inventory in `live_footprint`; the
     operands are charged on top of it here. A caller that already measured
@@ -106,7 +111,8 @@ def place_simulation_arguments(
         # placements finish. Subsequent compiler planning therefore has no
         # outstanding scratch from these operand copies.
         jax.block_until_ready(placed)
-    return placed
+    # Rebuilding a container keeps its structure and places its leaves.
+    return cast("Mapping[str, T]", placed)
 
 
 def _require_operand_headroom(
@@ -174,7 +180,11 @@ def subject_operand_sharding(
     return jax.NamedSharding(mesh, jax.P("X"))
 
 
-def _required_operand_bytes(*, leaf: object, sharding: jax.sharding.Sharding) -> int:
+def _required_operand_bytes(
+    *,
+    leaf: jax.Array | HostArray | np.generic | complex,
+    sharding: jax.sharding.Sharding,
+) -> int:
     """Size canonical numeric payloads without materializing a device array."""
     if isinstance(leaf, jax.Array):
         shape = tuple(leaf.shape)

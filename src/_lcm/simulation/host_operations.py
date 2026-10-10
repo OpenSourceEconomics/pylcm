@@ -46,11 +46,29 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _lowering_key
-from _lcm.typing import PytreeValue, ShapeDtypePytree
+from _lcm.transition_plans import TargetTransitionPlan
+from _lcm.typing import (
+    ConstraintFunction,
+    EconFunction,
+    PytreeChild,
+    PytreeValue,
+    ShapeDtypePytree,
+    TransitionFunction,
+)
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import ReferenceName
+from lcm.typing import ReferenceName, RegimeName
 
 type StaticArgument = bool | int | float | str | tuple[StaticArgument, ...] | None
+
+# A model-owned input a `built` composer reads: a regime name, or one of the
+# regime's function, constraint, transition or transition-plan mappings.
+type _BuilderInput = (
+    RegimeName
+    | Mapping[
+        str,
+        EconFunction | ConstraintFunction | TransitionFunction | TargetTransitionPlan,
+    ]
+)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -82,7 +100,9 @@ class ProfiledSimulationOperations:
     in_flight: dict[Hashable, Future[_ProfiledOperation]] = dataclasses.field(
         default_factory=dict, repr=False
     )
-    builds: dict[Hashable, object] = dataclasses.field(default_factory=dict, repr=False)
+    builds: dict[Hashable, Callable[..., PytreeValue]] = dataclasses.field(
+        default_factory=dict, repr=False
+    )
     """Callables composed by `built`, keyed by builder and input identities."""
     lock: threading.Lock = dataclasses.field(default_factory=threading.Lock, repr=False)
 
@@ -96,7 +116,7 @@ class ProfiledSimulationOperations:
         live_footprint: Callable[[], DeviceBufferFootprint],
         budget_devices: tuple[jax.Device, ...],
         budget_bytes: int,
-        static_arguments: Mapping[str, object] = MappingProxyType({}),
+        static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
         subject_outputs: bool = False,
     ) -> PytreeValue:
         """Place once, inspect current residency, and execute the admitted code."""
@@ -175,7 +195,7 @@ class ProfiledSimulationOperations:
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         subject_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
-        static_arguments: Mapping[str, object] = MappingProxyType({}),
+        static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
         subject_outputs: bool = False,
     ) -> _ProfiledOperation:
         """Profile already-placed shape descriptors without allocating or admitting.
@@ -282,7 +302,9 @@ class ProfiledSimulationOperations:
         )
         return plan.compiled.executable
 
-    def built[T](self, *, builder: Callable[..., T], **inputs: object) -> T:
+    def built[T: Callable[..., PytreeValue]](
+        self, *, builder: Callable[..., T], **inputs: _BuilderInput
+    ) -> T:
         """Return the callable `builder` composes from these input objects.
 
         Inputs are identified by typed value where they have one and by object
@@ -388,7 +410,7 @@ def _abstract_operation(
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     subject_arg_names: tuple[ReferenceName, ...],
     devices: tuple[jax.Device, ...],
-    static_arguments: Mapping[str, object],
+    static_arguments: Mapping[str, StaticArgument],
     subject_outputs: bool,
 ) -> tuple[
     Hashable,
@@ -449,7 +471,7 @@ def _lower_operation(
     return jitted.lower(**arguments)
 
 
-def _abstract_operand(value: object) -> object:
+def _abstract_operand(value: PytreeChild) -> PytreeChild:
     """Preserve exact placed shape, weak type and ordered device layout."""
     if isinstance(value, jax.Array):
         return jax.ShapeDtypeStruct(
@@ -496,8 +518,8 @@ def _validated_operation_function(
 def _validated_static_arguments(
     *,
     function: Callable[..., PytreeValue],
-    arguments: Mapping[str, object],
-    static_arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+    static_arguments: Mapping[str, StaticArgument],
     subject_outputs: bool,
 ) -> Mapping[ReferenceName, StaticArgument]:
     """Use one pure-function and immutable-binding contract for both entry paths."""
@@ -511,8 +533,7 @@ def _validated_static_arguments(
         _static_identity(value)
     if arguments.keys() & static.keys():
         raise ExecutionPlanningError("Dynamic and static operation arguments overlap.")
-    # `_static_identity` has accepted every value as a `StaticArgument`.
-    return cast("Mapping[ReferenceName, StaticArgument]", static)
+    return static
 
 
 def _operation_key(
@@ -558,7 +579,7 @@ def _program_identity(function: Callable[..., PytreeValue]) -> Hashable:
     )
 
 
-def _bound_identity(value: object) -> Hashable:
+def _bound_identity(value: object) -> Hashable:  # noqa: PAN001 - any value a dispatched partial binds; one without a typed value is held by identity
     """Identify a bound value by typed value, else by the object it is."""
     try:
         return _static_identity(value)
@@ -574,7 +595,7 @@ class _HeldObject:
     long as the key exists.
     """
 
-    value: object
+    value: object  # noqa: PAN001 - any value a dispatched partial binds, held by identity
 
     def __eq__(self, other: object) -> bool:
         """Equal only to a holder of the very same object."""
@@ -586,7 +607,7 @@ class _HeldObject:
 
 
 def _abstract_operation_tree(
-    *, tree: object, required: jax.sharding.Sharding
+    *, tree: PytreeValue | ShapeDtypePytree, required: jax.sharding.Sharding
 ) -> ShapeDtypePytree:
     """Mirror placed containers while verifying every abstract leaf's layout."""
     if isinstance(tree, Mapping):
@@ -623,7 +644,7 @@ def _abstract_operation_tree(
     return tree
 
 
-def _static_identity(value: object) -> Hashable:
+def _static_identity(value: object) -> Hashable:  # noqa: PAN001 - classifies any bound value or function default; a non-static one raises the error its callers rely on
     """Refuse owners and distinguish equal scalar values with different types."""
     if type(value) is float:
         return (float, struct.pack("!d", value))

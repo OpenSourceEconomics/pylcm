@@ -23,15 +23,33 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_director
 from _lcm.regime_building.age_specialization import INVARIANT
 from _lcm.solution.cuda_lowering_identity import capture_cuda_lowering_identity
 from _lcm.solution.fingerprint import _semantic_fingerprint
-from _lcm.typing import JSONValue
+from _lcm.typing import HostArray, JSONValue
 from lcm.exceptions import ExecutionPlanningError
 
+# A copied lowering descriptor: strings, integers, Booleans, bytes and `None` at
+# the leaves, nested in tuples, frozensets and read-only mappings. It retains no
+# live payload.
+type LoweringDescriptor = (
+    str
+    | int
+    | bool
+    | bytes
+    | tuple[LoweringDescriptor, ...]
+    | frozenset[LoweringDescriptor]
+    | MappingProxyType[LoweringDescriptor, LoweringDescriptor]
+    | None
+)
 
-def describe_lowering_value(value: object) -> object:
+
+def describe_lowering_value(
+    value: object,  # noqa: PAN001 - copies JAX tree-definition node data, whose auxiliary part JAX leaves untyped
+) -> LoweringDescriptor:
     """Copy descriptor data; reject unknown live objects instead of retaining them."""
     if isinstance(value, enum.Enum):
         return ("enum", type(value).__module__, type(value).__qualname__, value.name)
-    if value is None or type(value) in (str, bool, int, bytes):
+    if value is None or (
+        isinstance(value, str | int | bytes) and type(value) in (str, bool, int, bytes)
+    ):
         return value
     if isinstance(value, float):
         return ("float", value.hex())
@@ -42,7 +60,14 @@ def describe_lowering_value(value: object) -> object:
     return _describe_tree(value)
 
 
-def _describe_jax(value: object) -> object:
+def _describe_jax(
+    value: jax.Array
+    | jax.ShapeDtypeStruct
+    | HostArray
+    | jax.tree_util.PyTreeDef
+    | jax.sharding.Sharding
+    | jax.sharding.AbstractMesh,
+) -> LoweringDescriptor:
     """Copy supported JAX descriptors without retaining their live payloads."""
     if isinstance(value, (jax.Array, jax.ShapeDtypeStruct, np.ndarray)):
         return (
@@ -93,7 +118,9 @@ def _describe_jax(value: object) -> object:
     raise ExecutionPlanningError(f"Unspecified JAX descriptor type: {type(value)}")
 
 
-def _describe_tree(value: object) -> object:
+def _describe_tree(
+    value: object,  # noqa: PAN001 - copies JAX tree-definition node data, whose auxiliary part JAX leaves untyped
+) -> LoweringDescriptor:
     """Copy structural containers without saving their live leaves."""
     if value is INVARIANT:
         return ("singleton", "_lcm.regime_building.age_specialization", "INVARIANT")
