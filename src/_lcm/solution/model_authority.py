@@ -1906,7 +1906,7 @@ def _authority_from_observed_template(
     )
 
 
-def _payload_type_id(payload_runtime_type: type[object]) -> str:
+def _payload_type_id(payload_runtime_type: ArtifactRuntimeType) -> str:
     """Return one stable descriptive type id without importing plugin code later."""
     if payload_runtime_type is Array:
         return "jax.Array"
