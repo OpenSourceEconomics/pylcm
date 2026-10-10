@@ -28,6 +28,7 @@ from lcm.tuning import (
     _count_materialised,
     _paired_timing,
     _relative_repeat_spread,
+    _solve_values,
     classify_reduce_fusions,
     evaluate_execution_settings,
 )
@@ -398,6 +399,16 @@ def test_tuned_settings_carries_the_baseline_ceilings_on_no_change() -> None:
     record = _evaluate(candidates=(_CEILING_ABOVE_EVERY_CELL_COUNT,))
 
     assert record.axis_width_ceilings == MappingProxyType({})
+
+
+def test_solve_values_returns_a_read_only_mapping() -> None:
+    """The values compared across solves cannot be rebound after the solve."""
+    values = _solve_values(
+        model=_unperturbed(_BASELINE),
+        params=get_graph_only_params(n_periods=_N_PERIODS),
+    )
+
+    assert isinstance(values, MappingProxyType)
 
 
 def _steps(*, start: float, n_steps: int, toward: float, dtype: type) -> np.ndarray:

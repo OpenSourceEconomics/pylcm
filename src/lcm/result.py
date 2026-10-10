@@ -545,7 +545,7 @@ def _coerce_jax_scalar_for_arrow[T](value: T) -> T | bool | int | float:
 def _collect_array_tree_leaf_sizes(
     *,
     tree: Mapping[str, ArrayTree],
-) -> list[_ArrayTreeLeaf]:
+) -> tuple[_ArrayTreeLeaf, ...]:
     """Walk `tree` and return one `_ArrayTreeLeaf` per `jax.Array` leaf.
 
     Results come back sorted by `n_bytes` descending so callers can log the
@@ -554,8 +554,7 @@ def _collect_array_tree_leaf_sizes(
     """
     leaves: list[_ArrayTreeLeaf] = []
     _walk_tree(node=tree, path_parts=(), leaves=leaves)
-    leaves.sort(key=operator.attrgetter("n_bytes"), reverse=True)
-    return leaves
+    return tuple(sorted(leaves, key=operator.attrgetter("n_bytes"), reverse=True))
 
 
 def _walk_tree(

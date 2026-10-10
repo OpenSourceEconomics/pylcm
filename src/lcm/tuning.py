@@ -58,6 +58,8 @@ from _lcm.execution.hlo_fusions import (  # noqa: F401
 from _lcm.params.edges import flat_namespaces
 from _lcm.solution.fingerprint import _param_shape_signature
 from _lcm.typing import DataclassInstance, JSONValue
+from _lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.utils.logging import LogLevel
 from _lcm.version import __version__ as pylcm_version
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import AxisWidth, ExecutionConfig
@@ -178,9 +180,9 @@ class TunedSettings:
     """Whether a candidate replaced the baseline."""
     reason: str
     """Why the winner won, or why nothing changed."""
-    axis_widths: Mapping[str, AxisWidth]
+    axis_widths: MappingProxyType[str, AxisWidth]
     """`ExecutionConfig.axis_widths` of the verdict."""
-    axis_width_ceilings: Mapping[str, int]
+    axis_width_ceilings: MappingProxyType[str, int]
     """`ExecutionConfig.axis_width_ceilings` of the verdict."""
     ulp_allowance: int | None
     """Declared ULP allowance; `None` means exact equality was required."""
@@ -325,8 +327,10 @@ def evaluate_execution_settings(
         objective=objective,
         changed=winner is not None,
         reason=_reason(outcomes=outcomes, winner=winner),
-        axis_widths=verdict.axis_widths,
-        axis_width_ceilings=verdict.axis_width_ceilings,
+        axis_widths=ensure_containers_are_immutable(verdict.axis_widths),
+        axis_width_ceilings=ensure_containers_are_immutable(
+            verdict.axis_width_ceilings
+        ),
         ulp_allowance=ulp_allowance,
         baseline_ulp_gap=baseline_ulp_gap,
         baseline_resolved_widths=baseline_widths,
@@ -605,7 +609,9 @@ class _CompiledLabels(logging.Handler):
 
 def _prepare(
     *, model: Model, params: UserParams, collect_programs: bool
-) -> tuple[tuple[str, ...], dict[tuple[int, str], np.ndarray], tuple[str, ...]]:
+) -> tuple[
+    tuple[str, ...], MappingProxyType[tuple[int, str], np.ndarray], tuple[str, ...]
+]:
     """Solve once, untimed, returning program labels, values and optimized HLO.
 
     A label names its regime, core, representative age and tile widths. Two
@@ -638,20 +644,22 @@ def _program_text(program: jax.stages.Compiled) -> str:
 
 
 def _solve_values(
-    *, model: Model, params: UserParams, log_level: str = "off"
-) -> dict[tuple[int, str], np.ndarray]:
+    *, model: Model, params: UserParams, log_level: LogLevel = "off"
+) -> MappingProxyType[tuple[int, str], np.ndarray]:
     """Solve, retaining values only, and return them keyed by period and regime."""
     result = model.solve(
         params=params,
-        log_level=log_level,  # ty: ignore[invalid-argument-type]
+        log_level=log_level,
         retention=ResultRetention.VALUES,
     )
     values = result.values
-    return {
-        (period, regime): np.asarray(array)
-        for period in values.keys()  # noqa: SIM118
-        for regime, array in values[period].items()
-    }
+    return MappingProxyType(
+        {
+            (period, regime): np.asarray(array)
+            for period in values.keys()  # noqa: SIM118
+            for regime, array in values[period].items()
+        }
+    )
 
 
 def _ulp_gap(
@@ -754,6 +762,8 @@ def _jsonable(
     raise TypeError(msg)
 
 
+# The records as `json.loads` returns them: lists and dicts, which `from_json`
+# freezes into the tuples and read-only mappings the dataclasses hold.
 class _SettingsKeyJSON(TypedDict):
     """A `SettingsKey` as `TunedSettings.to_json` writes it."""
 
