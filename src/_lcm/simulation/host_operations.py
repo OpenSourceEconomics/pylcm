@@ -393,7 +393,7 @@ class _OperationCompiler:
     key: Hashable
     function: Callable[..., PytreeValue]
     arguments: Mapping[ReferenceName, ShapeDtypePytree]
-    static_arguments: Mapping[ReferenceName, StaticArgument]
+    static_arguments: MappingProxyType[ReferenceName, StaticArgument]
     output_sharding: jax.sharding.Sharding | None
 
     def __call__(self, widths: Mapping[str, int]) -> _ProfiledOperation:
@@ -421,8 +421,8 @@ def _abstract_operation(
     subject_outputs: bool,
 ) -> tuple[
     Hashable,
-    Mapping[ReferenceName, ShapeDtypePytree],
-    Mapping[ReferenceName, StaticArgument],
+    MappingProxyType[ReferenceName, ShapeDtypePytree],
+    MappingProxyType[ReferenceName, StaticArgument],
     jax.sharding.Sharding | None,
 ]:
     """Canonicalize one operation's placed descriptors and derive its cache key.
@@ -440,13 +440,15 @@ def _abstract_operation(
     )
     subject = subject_operand_sharding(devices=devices)
     shared = simulation_value_sharding(stored_sharding=subject, devices=devices)
-    abstract = {
-        name: _abstract_operation_tree(
-            tree=value,
-            required=subject if name in subject_arg_names else shared,
-        )
-        for name, value in sorted(arguments.items())
-    }
+    abstract = MappingProxyType(
+        {
+            name: _abstract_operation_tree(
+                tree=value,
+                required=subject if name in subject_arg_names else shared,
+            )
+            for name, value in sorted(arguments.items())
+        }
+    )
     key = _operation_key(
         function=function,
         arguments=abstract,
@@ -528,7 +530,7 @@ def _validated_static_arguments(
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     static_arguments: Mapping[str, StaticArgument],
     subject_outputs: bool,
-) -> Mapping[ReferenceName, StaticArgument]:
+) -> MappingProxyType[ReferenceName, StaticArgument]:
     """Use one pure-function and immutable-binding contract for both entry paths."""
     if type(subject_outputs) is not bool:
         raise ExecutionPlanningError("Subject-output metadata must be a bool.")

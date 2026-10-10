@@ -309,7 +309,7 @@ def test_model_with_bad_arg_raises_project_exception() -> None:
         Model(
             ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),
             regimes="not a mapping",  # ty: ignore[invalid-argument-type]
-            regime_id_class=int,
+            regime_id_class=int,  # ty: ignore[invalid-argument-type]
             initial_nodes={25: "n"},
             edges={},
         )

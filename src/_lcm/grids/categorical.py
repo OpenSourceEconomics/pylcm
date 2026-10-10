@@ -127,7 +127,7 @@ def _categorical_dtype(
     return pd.CategoricalDtype(categories=list(category_names), ordered=ordered)
 
 
-def validate_category_class(category_class: type[DataclassInstance]) -> list[str]:
+def validate_category_class(category_class: type[DataclassInstance]) -> tuple[str, ...]:
     """Validate a category class has proper structure for discrete grids.
 
     This validates that:
@@ -142,7 +142,7 @@ def validate_category_class(category_class: type[DataclassInstance]) -> list[str
             whose values are unique `ScalarInt`s.
 
     Returns:
-        A list of error messages. Empty list if validation passes.
+        The error messages, empty if validation passes.
 
     """
     error_messages: list[str] = []
@@ -152,7 +152,7 @@ def validate_category_class(category_class: type[DataclassInstance]) -> list[str
             "category_class must be a dataclass with `ScalarInt` fields, "
             f"but is {category_class}."
         )
-        return error_messages
+        return tuple(error_messages)
 
     names_and_values = get_field_names_and_values(category_class)
 
@@ -170,7 +170,7 @@ def validate_category_class(category_class: type[DataclassInstance]) -> list[str
         )
         # The remaining checks coerce via `int(...)`; bail out if any value
         # cannot be coerced cleanly.
-        return error_messages
+        return tuple(error_messages)
 
     values_as_py = [int(v) for v in names_and_values.values()]
 
@@ -187,7 +187,7 @@ def validate_category_class(category_class: type[DataclassInstance]) -> list[str
             "starting from 0 (e.g., 0, 1, 2, ...)."
         )
 
-    return error_messages
+    return tuple(error_messages)
 
 
 def _is_scalar_int(value: object) -> bool:  # noqa: PAN001 - a dataclass field may hold any value

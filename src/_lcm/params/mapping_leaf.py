@@ -80,10 +80,11 @@ class MappingLeaf(UserMappingLeaf):
         data: Mapping[str, ParamsLeaf]
 
 
-def _user_flatten(leaf: UserMappingLeaf) -> tuple[list[LeafEntry], tuple[str, ...]]:
+def _user_flatten(
+    leaf: UserMappingLeaf,
+) -> tuple[tuple[LeafEntry, ...], tuple[str, ...]]:
     keys = tuple(sorted(leaf.data.keys()))
-    values = [leaf.data[k] for k in keys]
-    return values, keys
+    return tuple(leaf.data[k] for k in keys), keys
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node

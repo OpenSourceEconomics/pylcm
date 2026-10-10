@@ -1,12 +1,12 @@
 """Internal validation plumbing for assembling error messages."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 from dags.tree import QNAME_DELIMITER
 
 
-def format_messages(errors: str | list[str]) -> str:
-    """Convert message or list of messages into a single string."""
+def format_messages(errors: str | Sequence[str]) -> str:
+    """Convert message or sequence of messages into a single string."""
     if isinstance(errors, str):
         formatted = errors
     elif len(errors) == 1:

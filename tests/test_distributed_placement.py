@@ -72,7 +72,7 @@ from _lcm.simulation.residency import (
 from _lcm.solution import backward_induction
 from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
-from _lcm.typing import PytreeValue, RegimeName
+from _lcm.typing import ArgumentTree, PytreeValue, RegimeName
 from _lcm.utils.logging import LogLevel
 from lcm import DeterministicTransition, Transition, fixed_transition
 from lcm.ages import AgeGrid
@@ -251,7 +251,7 @@ def test_eager_ordered_mesh_preserves_owners_and_outputs_at_birth(
         return tree
 
     function = functools.partial(body, offset=fixed)
-    arguments: dict[str, object] = {
+    arguments: dict[str, ArgumentTree] = {
         "value": jax.ShapeDtypeStruct(source.shape, source.dtype, sharding=expected)
     }
     adapter = make_eager_core(
@@ -610,7 +610,7 @@ def test_solve_planning_keeps_descriptors_instead_of_transferred_buffers(
 
     def observe_transfer(
         *,
-        value: object,
+        value: ArgumentTree,
         transfer: ResolvedValueTransfer,
         on_materialized: MaterializedTransferObserver | None = None,
     ) -> jax.Array:
@@ -1551,7 +1551,7 @@ def test_pruned_transfer_destinations_remain_budgeted_before_dispatch(
 
     def observe(
         *,
-        value: object,
+        value: ArgumentTree,
         transfer: ResolvedValueTransfer,
         on_materialized: MaterializedTransferObserver | None = None,
     ) -> jax.Array:
@@ -1593,9 +1593,9 @@ def test_pruned_transfer_destinations_remain_budgeted_before_dispatch(
     assert isinstance(output, jax.Array)
     jax.block_until_ready((output, copies_made))
     assert len(copies_made) == copy_count
-    assert concrete_device_bytes(tree=copies_made)[2] == copy_count * payload
+    assert concrete_device_bytes(tree=tuple(copies_made))[2] == copy_count * payload
     assert (
-        concrete_device_bytes(tree=(output, copies_made))[2]
+        concrete_device_bytes(tree=(output, tuple(copies_made)))[2]
         == (copy_count + 1) * payload
     )
     assert output.devices() == {jax.devices()[2]}

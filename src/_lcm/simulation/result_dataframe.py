@@ -28,7 +28,7 @@ def _create_flat_dataframe(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     metadata: ResultMetadata,
-    additional_targets: list[FunctionName] | None,
+    additional_targets: tuple[FunctionName, ...] | None,
     ages: TimeAxis,
     subject_batch_size: int | None = None,
 ) -> pd.DataFrame:
@@ -114,7 +114,7 @@ def _process_regime(
     regime_params: FlatRegimeParams,
     stakeholders: tuple[str, ...] | None,
     publishes_role: bool,
-    additional_targets: list[FunctionName] | None,
+    additional_targets: tuple[FunctionName, ...] | None,
     ages: TimeAxis,
     subject_batch_size: int | None = None,
 ) -> pd.DataFrame:

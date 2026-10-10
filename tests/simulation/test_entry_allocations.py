@@ -29,7 +29,7 @@ from _lcm.simulation.residency import (
     measure_buffer_footprint,
     resident_bytes_by_device,
 )
-from _lcm.typing import FlatParams
+from _lcm.typing import FlatParams, FootprintTree
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError, InvalidParamsError
 from tests.solution.test_solution_result import _small_grid_search_inputs
@@ -60,7 +60,7 @@ class _RecordingWriter:
 
 @dataclass(kw_only=True)
 class _ResolvedCopies:
-    values: object | None = None
+    values: FootprintTree | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -124,9 +124,9 @@ def _copy_resolved_values(
     self: Model,
     *,
     observed: _ResolvedCopies,
-    original: Callable[..., tuple[object, object, object, object]],
+    original: Callable[..., tuple[FootprintTree, object, object, object]],
     **arguments: Any,
-) -> tuple[object, object, object, object]:
+) -> tuple[FootprintTree, object, object, object]:
     values, policies, flags, readers = original(self, **arguments)
     copied = jax.tree.map(jnp.copy, values)
     jax.block_until_ready(copied)
