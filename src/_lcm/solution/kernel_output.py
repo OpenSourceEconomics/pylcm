@@ -329,7 +329,7 @@ def _pop_typed_artifact(
     expected_types: tuple[type, ...],
     regime_name: RegimeName,
     period: int,
-) -> Any:  # noqa: ANN401
+) -> Any:
     """Remove the artifact under `key` from `artifacts` after checking its type.
 
     Returns `None` when the key is absent; a present artifact of a type the

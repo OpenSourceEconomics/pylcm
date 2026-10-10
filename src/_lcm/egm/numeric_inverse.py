@@ -187,7 +187,7 @@ def numeric_inverse_marginal_utility(
 
 # keyword-only-exempt: library-callback=jax.lax.fori_loop
 def _expand_upper_bracket(
-    _index: Any,  # noqa: ANN401  -- the loop index follows the x64 policy
+    _index: Any,  # the loop index follows the x64 policy
     state: tuple[ScalarFloat, ScalarFloat],
     *,
     marginal_continuation: ScalarFloat,

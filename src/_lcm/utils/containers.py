@@ -129,7 +129,7 @@ def first_non_none(*args: T | None) -> T:
     raise ValueError("All arguments are None")
 
 
-def _make_immutable(value: Any) -> Any:  # noqa: ANN401
+def _make_immutable(value: Any) -> Any:
     """Recursively convert a value to its immutable equivalent."""
     if isinstance(value, (UserMappingLeaf, UserSequenceLeaf)):
         return value  # already immutable by construction
@@ -144,7 +144,7 @@ def _make_immutable(value: Any) -> Any:  # noqa: ANN401
     return value
 
 
-def _make_mutable(value: Any) -> Any:  # noqa: ANN401, PLR0911
+def _make_mutable(value: Any) -> Any:  # noqa: PLR0911
     """Recursively convert a value to its mutable equivalent."""
     if isinstance(value, UserMappingLeaf):
         return {k: _make_mutable(v) for k, v in value.data.items()}

@@ -312,7 +312,7 @@ def _require_exact_core_tile_widths(
 
 def _project_axis_widths(
     *,
-    program: Any,  # noqa: ANN401 - the materialized CoreProgram, circular to import
+    program: Any,  # the materialized CoreProgram, circular to import
     axis_widths: Mapping[str, int],
 ) -> MappingProxyType[str, int]:
     """Bind one program's declared axes from a model-wide width mapping.
@@ -331,7 +331,7 @@ def _project_axis_widths(
 
 def _compile_cores_for_one_period(
     *,
-    regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
+    regime: Any,  # the canonical Regime, circular to import here
     period: int,
     kernel_kwargs: dict[str, Any],
     core_tile_widths: object,
@@ -498,7 +498,7 @@ def _compile_cores_for_one_period(
 
 def _core_build_context_for_one_period(
     *,
-    regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
+    regime: Any,  # the canonical Regime, circular to import here
     period: int,
     kernel_kwargs: dict[str, Any],
 ) -> CoreBuildContext:
@@ -902,7 +902,7 @@ def _restore_state_action_space_layout(
         else None
     )
 
-    def placed(*, name: str, grid: Any) -> Any:  # noqa: ANN401
+    def placed(*, name: str, grid: Any) -> Any:
         points = regime_params.get(f"{name}__points")
         if points is not None:
             if not np.array_equal(np.asarray(points), np.asarray(grid)):
@@ -1202,7 +1202,7 @@ def _require_declared_regime(
     regimes: Mapping[RegimeName, Any],
     regime_name: RegimeName,
     period: int,
-) -> Any:  # noqa: ANN401 - the canonical Regime, circular to import here
+) -> Any:  # the canonical Regime, circular to import here
     """Return the regime, refusing a name or a period it does not declare."""
     if regime_name not in regimes:
         msg = (
@@ -1222,7 +1222,7 @@ def _require_declared_regime(
 
 def _declared_axis_names(
     *,
-    regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
+    regime: Any,  # the canonical Regime, circular to import here
     period: int,
     kernel_kwargs: dict[str, Any],
 ) -> frozenset[str]:

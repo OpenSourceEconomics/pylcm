@@ -421,7 +421,7 @@ def _get_compute_node(
     discount_factor: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-    dtype: Any,  # noqa: ANN401
+    dtype: Any,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:

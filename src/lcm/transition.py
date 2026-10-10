@@ -325,7 +325,7 @@ class StochasticTransition:
             self, "__annotations__", getattr(self.func, "__annotations__", {})
         )
 
-    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
+    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:
         return self.func(*args, **kwargs)
 
 
@@ -358,7 +358,7 @@ class DeterministicTransition:
             self, "__annotations__", getattr(self.func, "__annotations__", {})
         )
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self.func(*args, **kwargs)
 
 
@@ -392,7 +392,7 @@ def stochastic_transition(
     return decorate
 
 
-def _freeze_joint_support(value: Any) -> Any:  # noqa: ANN401
+def _freeze_joint_support(value: Any) -> Any:
     """Freeze the container structure of a literal joint-support pytree."""
     if isinstance(value, Mapping):
         return MappingProxyType(
@@ -404,7 +404,7 @@ def _freeze_joint_support(value: Any) -> Any:  # noqa: ANN401
 
 
 def _literal_joint_support_schema(
-    support: Any,  # noqa: ANN401
+    support: Any,
 ) -> tuple[object, tuple[tuple[tuple[int, ...], object], ...]] | None:
     """Return a literal support's pytree and leaf event-shape/dtype schema."""
     if callable(support):
@@ -573,7 +573,7 @@ class _AgeSpecialized:
     `AgeSpecializedFunction`; cross-checked against the resolved nodes at build
     time for `AgeSpecializedGrid`. See the class docstrings."""
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ARG002
         msg = (
             f"{type(self).__name__} is a build-time marker and must be resolved to a "
             "concrete object via build(age) before it is used."

@@ -260,7 +260,7 @@ def build_streaming_ev1_max_Q_over_a(
     action_names: tuple[str, ...],
     n_discrete_action_axes: int,
     block_width: int,
-    scale: Any,  # noqa: ANN401
+    scale: Any,
 ) -> Callable[..., LogSumExpResult]:
     """Build the fixed-state EV1 expected-maximum callable.
 
@@ -348,7 +348,7 @@ class _StreamingHardMax:
     action_names: tuple[str, ...]
     block_width: int
 
-    def __call__(self, **kwargs: Any) -> HardMaxResult:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> HardMaxResult:
         if not self.action_names:
             return _reduce_no_action(Q_and_F=self.Q_and_F, kwargs=kwargs)
 
@@ -386,7 +386,7 @@ class _PartitionedStreamingHardMax:
     n_partitions: int
     axis_name: str
 
-    def __call__(self, **kwargs: Any) -> HardMaxResult:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> HardMaxResult:
         """Reduce this member's partition, exchange accumulators and merge them."""
         partition = jax.lax.axis_index(self.axis_name).astype(jnp.int32)
         local = self.local(partition=partition, **kwargs)
@@ -395,7 +395,7 @@ class _PartitionedStreamingHardMax:
             accumulators=gathered, order=tuple(range(self.n_partitions))
         )
 
-    def local(self, *, partition: jax.Array, **kwargs: Any) -> HardMaxAccumulator:  # noqa: ANN401
+    def local(self, *, partition: jax.Array, **kwargs: Any) -> HardMaxAccumulator:
         """Reduce the blocks one partition owns into an unfinalized accumulator."""
         action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
             action_names=self.action_names,
@@ -454,7 +454,7 @@ class _StreamingEV1ExpectedMax:
     block_width: int
     scale: Any
 
-    def __call__(self, **kwargs: Any) -> LogSumExpResult:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> LogSumExpResult:
         action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
             action_names=self.action_names,
             kwargs=kwargs,
@@ -528,7 +528,7 @@ class _StreamingCollectiveHardMax:
     stakeholders: tuple[str, ...]
     weights: Mapping[str, Any]
 
-    def __call__(self, **kwargs: Any) -> CollectiveHardMaxResult:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> CollectiveHardMaxResult:
         if not self.action_names:
             return _reduce_collective_no_action(
                 Q_and_F=self.Q_and_F,

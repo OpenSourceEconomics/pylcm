@@ -22,7 +22,7 @@ class CompilerMemoryBytes:
     host_temp_size_in_bytes: int | None
 
 
-def compiler_memory_bytes(*, compiled: Any) -> CompilerMemoryBytes | None:  # noqa: ANN401
+def compiler_memory_bytes(*, compiled: Any) -> CompilerMemoryBytes | None:
     """Normalize a backend memory-analysis object to stable integer byte fields.
 
     Memory reporting is an optional backend capability. Unsupported executables,
@@ -56,7 +56,7 @@ def compiler_memory_bytes(*, compiled: Any) -> CompilerMemoryBytes | None:  # no
     )
 
 
-def _optional_bytes(*, stats: Any, name: str) -> int | None:  # noqa: ANN401
+def _optional_bytes(*, stats: Any, name: str) -> int | None:
     """Read one optional byte count off a backend memory-analysis object."""
     value = getattr(stats, name, None)
     return None if value is None else int(value)

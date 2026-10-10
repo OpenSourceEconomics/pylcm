@@ -151,8 +151,9 @@
     "PAN001": 4
   },
   "src/_lcm/pandas_utils.py": {
-    "PAN001": 8,
-    "PAN002": 9
+    "PAN001": 13,
+    "PAN002": 8,
+    "PAN003": 3
   },
   "src/_lcm/params/edges.py": {
     "PAN001": 3
@@ -171,6 +172,10 @@
   },
   "src/_lcm/params/sequence_leaf.py": {
     "PAN002": 4
+  },
+  "src/_lcm/params/temporal.py": {
+    "PAN001": 1,
+    "PAN002": 2
   },
   "src/_lcm/persistence/io.py": {
     "PAN001": 2
@@ -248,7 +253,7 @@
     "PAN003": 1
   },
   "src/_lcm/regime_building/schedules.py": {
-    "PAN001": 43,
+    "PAN001": 45,
     "PAN002": 35
   },
   "src/_lcm/regime_building/stochastic_state_transitions.py": {
@@ -480,6 +485,9 @@
     "PAN001": 2,
     "PAN002": 6
   },
+  "src/_lcm/time_validation.py": {
+    "PAN001": 1
+  },
   "src/_lcm/transition_checks.py": {
     "PAN001": 38,
     "PAN002": 13
@@ -553,7 +561,7 @@
     "PAN001": 1
   },
   "src/lcm/initial_nodes.py": {
-    "PAN001": 5
+    "PAN001": 6
   },
   "src/lcm/koopmans_aggregation.py": {
     "PAN002": 2
@@ -562,7 +570,7 @@
     "PAN001": 2
   },
   "src/lcm/model.py": {
-    "PAN001": 34,
+    "PAN001": 35,
     "PAN003": 1
   },
   "src/lcm/params.py": {
@@ -581,8 +589,12 @@
     "PAN001": 4,
     "PAN002": 5
   },
+  "src/lcm/temporal.py": {
+    "PAN001": 2,
+    "PAN002": 8
+  },
   "src/lcm/transition.py": {
-    "PAN001": 19,
+    "PAN001": 21,
     "PAN002": 14
   },
   "src/lcm/tuning.py": {

@@ -230,7 +230,7 @@ def _fail_if_any_process_law_field_varies(
             )
 
 
-def _fail_if_a_process_law_field_varies(*, value: Any, qname: str) -> None:  # noqa: ANN401
+def _fail_if_a_process_law_field_varies(*, value: Any, qname: str) -> None:
     """Reject a process law field given more than one number.
 
     Args:
@@ -257,7 +257,7 @@ def _fail_if_a_process_law_field_varies(*, value: Any, qname: str) -> None:  # n
     raise InvalidParamsError(msg)
 
 
-def _as_process_field(*, value: Any, qname: str) -> float | int | bool:  # noqa: ANN401
+def _as_process_field(*, value: Any, qname: str) -> float | int | bool:
     """Return a canonically cast leaf as the Python scalar a process field takes.
 
     A process's distribution fields are Python scalars, and it computes its nodes
