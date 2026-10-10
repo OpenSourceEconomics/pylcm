@@ -1,22 +1,22 @@
-"""Average a target's value function over a bill subtracted from one of its states.
+"""Average a target's value function over a shock added to one of its states.
 
-A law declared as `lcm.SubtractedBill` reads `next_<state> = resources - bill`,
-where the bill reads draws of next period's stochastic states. The continuation
-then needs `E_k[V(resources - bill_k, ...)]` at every source point, and every node
-of every draw the bill reads moves the interpolation coordinate.
+A law declared as `lcm.AdditiveShockTransition` reads `next_<state> = base + shock`,
+where the shock reads draws of next period's stochastic states. The continuation
+then needs `E_k[V(base + shock_k, ...)]` at every source point, and every node of
+every draw the shock reads moves the interpolation coordinate.
 
 This module takes the draws the target does not store — transition-local draws,
 such as a folded shock that only the transition reads — out of that per-point
-expectation. Once per call it forms, for every combination of the bill's
-conditioners and of the stored draws the bill reads,
+expectation. Once per call it forms, for every combination of the shock's
+conditioners and of the stored draws the shock reads,
 
-$$W(z) = \\sum_k w_k V(z - \\text{bill}_k),$$
+$$W(z) = \\sum_k w_k V(z + \\text{shock}_k),$$
 
-and the continuation reads `W` at `z = resources`: one coordinate per stored node
-rather than one per node of every draw. Linear interpolation makes `V` linear
-between its grid points `a_j`, so `W` is linear between the merged points
-`{a_j + bill_k}`. Storing `W` there is exact, and reading it with the same linear
-interpolation reproduces the per-node expectation up to rounding.
+and the continuation reads `W` at `z = base`: one coordinate per stored node rather
+than one per node of every draw. Linear interpolation makes `V` linear between its
+grid points `a_j`, so `W` is linear between the merged points `{a_j - shock_k}`.
+Storing `W` there is exact, and reading it with the same linear interpolation
+reproduces the per-node expectation up to rounding.
 """
 
 import dataclasses
@@ -31,6 +31,7 @@ import numpy as np
 from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
+from _lcm.additive_shock_transition import AdditiveShockTransition
 from _lcm.grids.continuous import IrregSpacedGrid
 from _lcm.probability import is_represented_zero
 from _lcm.regime_building.V import (
@@ -40,7 +41,6 @@ from _lcm.regime_building.V import (
     _get_lookup_function,
     _publish_signature,
 )
-from _lcm.subtracted_bill import SubtractedBill
 from _lcm.transition_plans import (
     LotteryLifetime,
     TargetTransitionPlan,
@@ -61,58 +61,59 @@ _TIME_NAMES = frozenset({"period", "age"})
 _HIGHEST = jax.lax.Precision.HIGHEST
 
 
-def average_over_bill(
+def average_over_shock(
     *,
     values: FloatND,
     points: Float1D,
     coordinate: Callable[[FloatND], FloatND],
-    bills: Float1D,
+    shocks: Float1D,
     weights: Float1D,
 ) -> tuple[Float1D, FloatND]:
-    """Average values over a bill subtracted from the last axis's coordinate.
+    """Average values over a shock added to the last axis's coordinate.
 
     Args:
-        values: Values on a grid, the bill's axis last.
+        values: Values on a grid, the shocked axis last.
         points: The grid points of the last axis, ascending.
         coordinate: Map from a value of the last axis to its fractional grid
             coordinate, as the value function's interpolator computes it.
-        bills: One bill per node of the averaged draws.
+        shocks: One shock per node of the averaged draws.
         weights: The nodes' probabilities.
 
     Returns:
         Tuple of the merged points, ascending, and the average at those points,
         the last axis of `values` replaced by them. A point that coincides with
         another is kept once; its copy moves above the largest point, where the
-        average is linear, so there are always `len(points) * len(bills)` points.
+        average is linear, so there are always `len(points) * len(shocks)` points.
 
     """
-    knots, averaging = bill_averaging_matrix(
-        points=points, coordinate=coordinate, bills=bills, weights=weights
+    knots, averaging = shock_averaging_matrix(
+        points=points, coordinate=coordinate, shocks=shocks, weights=weights
     )
     return knots, apply_averaging(
         values=values, averaging=averaging, subscripts="...n,nm->...m"
     )
 
 
-def bill_averaging_matrix(
+def shock_averaging_matrix(
     *,
     points: Float1D,
     coordinate: Callable[[FloatND], FloatND],
-    bills: Float1D,
+    shocks: Float1D,
     weights: Float1D,
 ) -> tuple[Float1D, FloatND]:
     """Return the merged points and the matrix averaging a grid onto them.
 
     Row `j` and column `m` hold the weight the grid's node `j` receives in the
-    average at merged point `m`: each bill's linear-interpolation stencil at
-    `m - bill_k`, times the bill's probability, normalized by the probabilities'
-    sum. A second slab marks the entries some stencil reaches under a nonzero
-    weight, which decides whether a non-finite node reaches the average.
+    average at merged point `m`: each shock's linear-interpolation stencil at
+    `m + shock_k`, times the shock's probability, normalized by the
+    probabilities' sum. A second slab marks the entries some stencil reaches
+    under a nonzero weight, which decides whether a non-finite node reaches the
+    average.
 
     Args:
         points: The grid points, ascending.
         coordinate: Map from a value to its fractional grid coordinate.
-        bills: One bill per node of the averaged draws.
+        shocks: One shock per node of the averaged draws.
         weights: The nodes' probabilities.
 
     Returns:
@@ -120,8 +121,8 @@ def bill_averaging_matrix(
         averaging weights and the reach indicator.
 
     """
-    knots = _merged_knots(points=points, bills=bills)
-    coordinates = jax.vmap(lambda bill: coordinate(knots - bill))(bills)
+    knots = _merged_knots(points=points, shocks=shocks)
+    coordinates = jax.vmap(lambda shock: coordinate(knots + shock))(shocks)
     n_points = points.shape[0]
     lower = jnp.clip(jnp.floor(coordinates), 0, n_points - 2).astype(jnp.int32)
     upper_weight = coordinates - lower
@@ -152,7 +153,7 @@ def apply_averaging(*, values: FloatND, averaging: FloatND, subscripts: str) -> 
 
     Args:
         values: The values, holding the grid axis named `n` in `subscripts`.
-        averaging: The `[2, ..., n, M]` output of `bill_averaging_matrix`, with
+        averaging: The `[2, ..., n, M]` output of `shock_averaging_matrix`, with
             any batch axes it shares with `values`.
         subscripts: The `einsum` contraction of `values` with one slab.
 
@@ -191,28 +192,28 @@ def apply_averaging(*, values: FloatND, averaging: FloatND, subscripts: str) -> 
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class AveragedBillPlan:
-    """How one target's continuation averages its value over a subtracted bill."""
+class ShockAveragePlan:
+    """How one target's continuation averages its value over an additive shock."""
 
-    law: SubtractedBill
+    law: AdditiveShockTransition
     """The declared law."""
     law_name: TransitionFunctionName
     """The `next_<state>` name of the law."""
     state_name: StateName
-    """The target's continuous state the bill is subtracted from."""
+    """The target's continuous state the shock is added to."""
     conditioners: tuple[tuple[str, tuple[int | bool, ...]], ...]
-    """The declared conditioners the bill reads, each with its support."""
+    """The declared conditioners the shock reads, each with its support."""
     function_conditioners: tuple[str, ...]
     """The conditioners that are functions, evaluated with the next states."""
     integrated_draws: tuple[TransitionFunctionName, ...]
-    """Transition-local draws the bill reads, averaged into the stored value."""
+    """Transition-local draws the shock reads, averaged into the stored value."""
     kept_draws: tuple[TransitionFunctionName, ...]
-    """Stored draws the bill reads, each an axis of the target's value."""
-    bill_param_names: tuple[str, ...]
-    """What the bill reads besides its conditioners and the draws."""
+    """Stored draws the shock reads, each an axis of the target's value."""
+    shock_param_names: tuple[str, ...]
+    """What the shock reads besides its conditioners and the draws."""
 
 
-def plan_averaged_bill(
+def plan_shock_average(
     *,
     target_regime_name: RegimeName,
     bundle: Mapping[TransitionFunctionName, TransitionFunction],
@@ -223,8 +224,8 @@ def plan_averaged_bill(
     dependencies_by_law: Mapping[TransitionFunctionName, frozenset[str]],
     allowed_inputs: frozenset[str] | None,
     co_map_state_names: tuple[StateName, ...],
-) -> AveragedBillPlan | None:
-    """Return how a target averages over its subtracted bill, or `None` without one.
+) -> ShockAveragePlan | None:
+    """Return how a target averages over its additive shock, or `None` without one.
 
     Args:
         target_regime_name: Regime the continuation leads into.
@@ -235,20 +236,23 @@ def plan_averaged_bill(
         v_interpolation_info: The target's V-interpolation info.
         lottery_variables: The target's stochastic `next_<state>` names.
         dependencies_by_law: Per draw-dependent law, the draws it reads.
-        allowed_inputs: Names the bill may read besides its conditioners, the
+        allowed_inputs: Names the shock may read besides its conditioners, the
             draws and the time coordinates: the source's parameters. `None`
             skips that check.
         co_map_state_names: States whose axes are sliced off the value array.
 
     Returns:
-        The plan, or `None` when no law of the bundle is a subtracted bill.
+        The plan, or `None` when no law of the bundle is an additive shock
+        transition.
 
     Raises:
         ModelInitializationError: If the declaration cannot be averaged exactly.
 
     """
     laws = {
-        name: law for name, law in bundle.items() if isinstance(law, SubtractedBill)
+        name: law
+        for name, law in bundle.items()
+        if isinstance(law, AdditiveShockTransition)
     }
     if not laws:
         return None
@@ -263,17 +267,17 @@ def plan_averaged_bill(
         _fail(
             target_regime_name=target_regime_name,
             reason=(
-                f"is subtracted from '{state_name}', which the target does not carry "
+                f"is added to '{state_name}', which the target does not carry "
                 "as a continuous state"
             ),
         )
     if state_name in co_map_state_names:
         _fail(
             target_regime_name=target_regime_name,
-            reason=f"is subtracted from the sliced axis '{state_name}'",
+            reason=f"is added to the sliced axis '{state_name}'",
         )
 
-    integrated, kept = _split_bill_draws(
+    integrated, kept = _split_shock_draws(
         target_regime_name=target_regime_name,
         law_name=law_name,
         plans=transition_plans[target_regime_name],
@@ -284,34 +288,32 @@ def plan_averaged_bill(
         co_map_state_names=co_map_state_names,
     )
 
-    resources_reads = _reads(
-        functions=functions, bundle=bundle, targets=(law.resources,)
-    )
-    if resources_reads & set(lottery_variables):
+    base_reads = _reads(functions=functions, bundle=bundle, targets=(law.base,))
+    if base_reads & set(lottery_variables):
         _fail(
             target_regime_name=target_regime_name,
             reason=(
-                f"has resources '{law.resources}' that read the draws "
-                f"{sorted(resources_reads & set(lottery_variables))}"
+                f"has a base '{law.base}' that reads the draws "
+                f"{sorted(base_reads & set(lottery_variables))}"
             ),
         )
 
-    bill_args = get_union_of_args([_bill_function(functions=functions, law=law)])
+    shock_args = get_union_of_args([_shock_function(functions=functions, law=law)])
     conditioners = tuple(
         (name, support)
         for name, support in law.conditioners.items()
-        if name in bill_args
+        if name in shock_args
     )
-    bill_param_names = tuple(
-        sorted(bill_args - set(law.conditioners) - set(lottery_variables))
+    shock_param_names = tuple(
+        sorted(shock_args - set(law.conditioners) - set(lottery_variables))
     )
     if allowed_inputs is not None:
-        unexplained = sorted(set(bill_param_names) - allowed_inputs - _TIME_NAMES)
+        unexplained = sorted(set(shock_param_names) - allowed_inputs - _TIME_NAMES)
         if unexplained:
             _fail(
                 target_regime_name=target_regime_name,
                 reason=(
-                    f"reads the source's {unexplained} through '{law.bill}'; declare "
+                    f"reads the source's {unexplained} through '{law.shock}'; declare "
                     "each such input, or a function of it, as a conditioner with its "
                     "finite support"
                 ),
@@ -328,7 +330,7 @@ def plan_averaged_bill(
                 f"{sorted(conditioner_reads & set(lottery_variables))}"
             ),
         )
-    return AveragedBillPlan(
+    return ShockAveragePlan(
         law=law,
         law_name=law_name,
         state_name=state_name,
@@ -336,11 +338,11 @@ def plan_averaged_bill(
         function_conditioners=function_conditioners,
         integrated_draws=integrated,
         kept_draws=kept,
-        bill_param_names=bill_param_names,
+        shock_param_names=shock_param_names,
     )
 
 
-def _split_bill_draws(
+def _split_shock_draws(
     *,
     target_regime_name: RegimeName,
     law_name: TransitionFunctionName,
@@ -351,7 +353,7 @@ def _split_bill_draws(
     allowed_inputs: frozenset[str] | None,
     co_map_state_names: tuple[StateName, ...],
 ) -> tuple[tuple[TransitionFunctionName, ...], tuple[TransitionFunctionName, ...]]:
-    """Split the draws a bill reads into those averaged and those kept as axes.
+    """Split the draws a shock reads into those averaged and those kept as axes.
 
     Returns:
         Tuple of the averaged draws and the kept draws, in lottery order.
@@ -363,7 +365,7 @@ def _split_bill_draws(
     """
     read_draws = dependencies_by_law.get(law_name, frozenset())
     # A draw the transition alone makes, with probabilities no source point
-    # moves, is averaged into the stored value. Every other draw the bill reads
+    # moves, is averaged into the stored value. Every other draw the shock reads
     # keeps its node axis, and the averaged value gets one axis per node.
     integrated = tuple(
         name
@@ -416,20 +418,20 @@ def _split_bill_draws(
     return integrated, kept
 
 
-def get_averaged_bill_reader(
+def get_shock_average_reader(
     *,
-    plan: AveragedBillPlan,
+    plan: ShockAveragePlan,
     functions: EconFunctionsMapping,
     target_regime_name: RegimeName,
     transition_plans: TargetTransitionPlans,
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
     V_arr_name: str,
-) -> _AveragedBillReader:
-    """Build the reader of one target's value averaged over its bill.
+) -> _ShockAverageReader:
+    """Build the reader of one target's value averaged over its shock.
 
     Args:
-        plan: How the target averages over its bill.
+        plan: How the target averages over its shock.
         functions: Immutable mapping of function names to internal user functions.
         target_regime_name: Regime the continuation leads into.
         transition_plans: Immutable mapping of target regime names to their
@@ -547,22 +549,22 @@ def get_averaged_bill_reader(
     )
     arg_names = sorted(
         (inner_args - {averaged_coordinate, averaged_points, *condition_index_names})
-        | {plan.law.resources, *(name for name, _ in plan.conditioners)}
+        | {plan.law.base, *(name for name, _ in plan.conditioners)}
         | {draw.weight_name for draw in integrated}
         | {draw.support_name for draw in integrated}
         | {draw.support_name for draw in kept if draw.support_name is not None}
         | {draw.name for draw in kept}
-        | set(plan.bill_param_names)
+        | set(plan.shock_param_names)
         | ({points_param} if points_param is not None else set())
     )
-    return _AveragedBillReader(
+    return _ShockAverageReader(
         inner=inner,
         inner_args=inner_args,
         V_arr_name=V_arr_name,
         averaged_coordinate=averaged_coordinate,
         averaged_points=averaged_points,
         condition_index_names=condition_index_names,
-        resources_name=plan.law.resources,
+        base_name=plan.law.base,
         array_state_names=array_state_names,
         state_name=plan.state_name,
         find_coordinate=_get_coordinate_finder(
@@ -573,8 +575,8 @@ def get_averaged_bill_reader(
         conditioners=plan.conditioners,
         kept=kept,
         integrated=integrated,
-        bill=_bill_function(functions=functions, law=plan.law),
-        bill_param_names=plan.bill_param_names,
+        shock=_shock_function(functions=functions, law=plan.law),
+        shock_param_names=plan.shock_param_names,
         arg_names=tuple(arg_names),
     )
 
@@ -584,7 +586,7 @@ class _IntegratedDraw:
     """A transition-local draw averaged into the stored value."""
 
     name: TransitionFunctionName
-    """The draw's `next_<state>` name, under which the bill reads its value."""
+    """The draw's `next_<state>` name, under which the shock reads its value."""
     weight_name: str
     """Argument carrying the draw's node probabilities."""
     support_name: str
@@ -593,7 +595,7 @@ class _IntegratedDraw:
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
 class _KeptDraw:
-    """A stored draw the bill reads, an axis of the target's value."""
+    """A stored draw the shock reads, an axis of the target's value."""
 
     name: TransitionFunctionName
     """The draw's `next_<state>` name; its argument is the node index."""
@@ -609,8 +611,8 @@ class _KeptDraw:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
-class _AveragedBillReader:
-    """Read a target's value averaged over a subtracted bill, at one node."""
+class _ShockAverageReader:
+    """Read a target's value averaged over an additive shock, at one node."""
 
     inner: Callable[..., FloatND]
     """Interpolator of the averaged value on the merged points."""
@@ -619,17 +621,17 @@ class _AveragedBillReader:
     V_arr_name: str
     """Argument carrying the target's value array."""
     averaged_coordinate: str
-    """Argument of `inner` taking the resources."""
+    """Argument of `inner` taking the base."""
     averaged_points: str
     """Argument of `inner` taking the merged points."""
     condition_index_names: tuple[str, ...]
     """Arguments of `inner` taking each conditioner's index in its support."""
-    resources_name: str
-    """Argument carrying the resources."""
+    base_name: str
+    """Argument carrying the base."""
     array_state_names: tuple[StateName, ...]
     """States of the received value array, in axis order."""
     state_name: StateName
-    """The state the bill is subtracted from."""
+    """The state the shock is added to."""
     find_coordinate: Callable[..., FloatND]
     """The coordinate finder of the state's grid."""
     grid_points: Float1D | None
@@ -637,15 +639,15 @@ class _AveragedBillReader:
     points_param: str | None
     """Argument carrying the state's runtime grid points, if any."""
     conditioners: tuple[tuple[str, tuple[int | bool, ...]], ...]
-    """The bill's conditioners with their supports."""
+    """The shock's conditioners with their supports."""
     kept: tuple[_KeptDraw, ...]
-    """Stored draws the bill reads."""
+    """Stored draws the shock reads."""
     integrated: tuple[_IntegratedDraw, ...]
     """Transition-local draws averaged into the stored value."""
-    bill: Callable[..., FloatND]
-    """The bill as a function of conditioners, draws and parameters."""
-    bill_param_names: tuple[str, ...]
-    """What the bill reads besides its conditioners and the draws."""
+    shock: Callable[..., FloatND]
+    """The shock as a function of conditioners, draws and parameters."""
+    shock_param_names: tuple[str, ...]
+    """What the shock reads besides its conditioners and the draws."""
     arg_names: tuple[str, ...]
     """The published argument names."""
 
@@ -654,7 +656,7 @@ class _AveragedBillReader:
             target=self,
             args=dict.fromkeys(self.arg_names, "FloatND"),
             return_annotation="FloatND",
-            name="read_averaged_bill",
+            name="read_shock_average",
         )
 
     @no_type_check
@@ -673,7 +675,7 @@ class _AveragedBillReader:
             name: kwargs[name] for name in self.inner_args if name in kwargs
         }
         inner_kwargs[self.V_arr_name] = averaged
-        inner_kwargs[self.averaged_coordinate] = kwargs[self.resources_name]
+        inner_kwargs[self.averaged_coordinate] = kwargs[self.base_name]
         inner_kwargs[self.averaged_points] = knots[(*condition_index, *kept_index)]
         inner_kwargs.update(
             zip(self.condition_index_names, condition_index, strict=True)
@@ -685,13 +687,13 @@ class _AveragedBillReader:
         """Return the averaged value and its merged points for every combination.
 
         The averaged value carries the conditioners' supports as leading axes,
-        then the received value array's axes with the bill's state replaced by
+        then the received value array's axes with the shock's state replaced by
         the merged points. The merged points carry the conditioners' axes and
-        one axis per stored draw the bill reads. Neither depends on the source
+        one axis per stored draw the shock reads. Neither depends on the source
         point, so under the point map both are formed once.
         """
         values = kwargs[self.V_arr_name]
-        fixed = {name: kwargs[name] for name in self.bill_param_names}
+        fixed = {name: kwargs[name] for name in self.shock_param_names}
 
         supports = [support for _, support in self.conditioners]
         combos = list(itertools.product(*supports))
@@ -732,8 +734,8 @@ class _AveragedBillReader:
             draw_values = {}
             weights = jnp.ones(1, dtype=values.dtype)
 
-        def bill_at(index: Mapping[str, Any]) -> FloatND:
-            return self.bill(
+        def shock_at(index: Mapping[str, Any]) -> FloatND:
+            return self.shock(
                 **{name: v[index["c"]] for name, v in condition_values.items()},
                 **{name: v[index["j"]] for name, v in kept_values.items()},
                 **{name: v[index["k"]] for name, v in draw_values.items()},
@@ -742,7 +744,7 @@ class _AveragedBillReader:
 
         shape = (len(combos), len(kept_combos), weights.shape[0])
         grid = jnp.meshgrid(*(jnp.arange(n) for n in shape), indexing="ij")
-        bills = jax.vmap(bill_at)(
+        shocks = jax.vmap(shock_at)(
             {key: axis.ravel() for key, axis in zip("cjk", grid, strict=True)}
         ).reshape(shape)
         points = (
@@ -759,12 +761,12 @@ class _AveragedBillReader:
                 **{f"next_{self.state_name}": value}, **points_kwargs
             )
 
-        def matrix(bills_row: Float1D) -> tuple[Float1D, FloatND]:
-            return bill_averaging_matrix(
-                points=points, coordinate=coordinate, bills=bills_row, weights=weights
+        def matrix(shocks_row: Float1D) -> tuple[Float1D, FloatND]:
+            return shock_averaging_matrix(
+                points=points, coordinate=coordinate, shocks=shocks_row, weights=weights
             )
 
-        knots, averaging = jax.vmap(jax.vmap(matrix))(bills)
+        knots, averaging = jax.vmap(jax.vmap(matrix))(shocks)
         condition_sizes = [len(support) for support in supports]
         n_knots = knots.shape[-1]
         knots = knots.reshape(*condition_sizes, *kept_sizes, n_knots)
@@ -804,14 +806,14 @@ class _AveragedBillReader:
         return f"{value_letters},{condition_letters}{kept_letters}nm->{output_letters}"
 
 
-def _merged_knots(*, points: Float1D, bills: Float1D) -> Float1D:
-    """Return `{a_j + bill_k}` ascending, every coincident copy moved above the top.
+def _merged_knots(*, points: Float1D, shocks: Float1D) -> Float1D:
+    """Return `{a_j - shock_k}` ascending, every coincident copy moved above the top.
 
     Above the largest merged point every term of the average extrapolates along
     the grid's last segment, so the average is linear there, and a point placed
     in that region costs no exactness.
     """
-    merged = jnp.sort((points[:, None] + bills[None, :]).ravel())
+    merged = jnp.sort((points[:, None] - shocks[None, :]).ravel())
     is_copy = jnp.concatenate([jnp.zeros(1, dtype=bool), merged[1:] <= merged[:-1]])
     top = merged[-1]
     span = top - merged[0] + 1
@@ -819,17 +821,17 @@ def _merged_knots(*, points: Float1D, bills: Float1D) -> Float1D:
     return jnp.sort(jnp.where(is_copy, lifted, merged))
 
 
-def _bill_function(
-    *, functions: EconFunctionsMapping, law: SubtractedBill
+def _shock_function(
+    *, functions: EconFunctionsMapping, law: AdditiveShockTransition
 ) -> Callable[..., FloatND]:
-    """Return the bill as a function of its conditioners, draws and parameters."""
+    """Return the shock as a function of its conditioners, draws and parameters."""
     return concatenate_functions(
         functions={
             name: func
             for name, func in functions.items()
             if name not in law.conditioners
         },
-        targets=law.bill,
+        targets=law.shock,
         enforce_signature=False,
         set_annotations=True,
     )
@@ -876,9 +878,10 @@ def _support_name(
 
 def _fail(*, target_regime_name: RegimeName, reason: str) -> NoReturn:
     msg = (
-        f"The subtracted bill toward regime '{target_regime_name}' {reason}. The "
-        "average over the bill is exact only when the law is `resources - bill`, "
-        "the resources read no draw, and the bill reads nothing but its declared "
-        "conditioners, next period's draws, the period or age, and parameters."
+        f"The additive shock transition toward regime '{target_regime_name}' "
+        f"{reason}. The average over the shock is exact only when the law is "
+        "`base + shock`, the base reads no draw, and the shock reads nothing but "
+        "its declared conditioners, next period's draws, the period or age, and "
+        "parameters."
     )
     raise ModelInitializationError(msg)
