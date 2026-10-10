@@ -13,7 +13,7 @@ import logging
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax
 import numpy as np
@@ -37,6 +37,10 @@ from _lcm.solution.egm import _EGMPeriodKernel
 from _lcm.solution.period_replay import replay_period
 from _lcm.typing import (
     ArgumentTree,
+    FlatEdgeParams,
+    FlatParams,
+    FlatRegimeParams,
+    ParamsLeaf,
     PytreeValue,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -135,7 +139,9 @@ def test_the_builder_refuses_a_law_falling_in_savings():
     flat_params = _flat_params(
         {
             regime: {
-                name: (-1.5 if name.endswith("return_liquid") else value)
+                name: (
+                    jax.numpy.asarray(-1.5) if name.endswith("return_liquid") else value
+                )
                 for name, value in regime_params.items()
             }
             for regime, regime_params in context["flat_params"].items()
@@ -190,12 +196,24 @@ def test_with_fixed_params_rebinds_the_program_and_its_builder():
 
 
 def _flat_params(
-    tree: Mapping[str, Mapping[str, Any]],
-) -> MappingProxyType[str, MappingProxyType[str, Any]]:
+    tree: Mapping[str, Mapping[str, ParamsLeaf | FlatRegimeParams]],
+) -> FlatParams:
     """Freeze edited per-namespace params into the engine's read-only layout."""
-    return MappingProxyType(
-        {name: MappingProxyType(dict(params)) for name, params in tree.items()}
-    )
+    frozen: dict[str, FlatRegimeParams | FlatEdgeParams] = {}
+    for namespace, params in tree.items():
+        if namespace == "edges":
+            edges: dict[str, FlatRegimeParams] = {}
+            for name, value in params.items():
+                assert isinstance(value, MappingProxyType)
+                edges[name] = value
+            frozen[namespace] = MappingProxyType(edges)
+        else:
+            leaves: dict[str, ParamsLeaf] = {}
+            for name, value in params.items():
+                assert not isinstance(value, MappingProxyType)
+                leaves[name] = value
+            frozen[namespace] = MappingProxyType(leaves)
+    return MappingProxyType(frozen)
 
 
 def test_a_replay_lowers_the_program_the_solve_ran(

@@ -9,10 +9,11 @@ values variant through the public output rather than through a legacy result.
 
 import functools
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
+from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax
 import numpy as np
@@ -23,6 +24,8 @@ from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
+    CoreProgram,
+    CoreProgramGraphAware,
     ProgramScope,
     core_program_graph,
     materialize_core_program,
@@ -30,11 +33,14 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.regime_building import processing as regime_processing
 from _lcm.solution import period_replay
+from _lcm.solution.contract import PeriodKernel
 from _lcm.solution.dcegm import _DCEGMArgumentBuilder, _DCEGMPeriodKernel
 from _lcm.solution.period_replay import replay_period
+from _lcm.typing import PytreeValue
 from lcm.solver_api import (
     EGM_CONTINUATION,
     SIMULATION_POLICY,
+    ArtifactKey,
     ArtifactRef,
     KernelOutput,
     OmissionReason,
@@ -90,12 +96,19 @@ def _build_context(context: OracleContext) -> CoreBuildContext:
     )
 
 
-def _run(*, kernel: Any, context: OracleContext, name: str = "main") -> tuple:
+def _run(
+    *,
+    kernel: PeriodKernel | CoreProgramGraphAware,
+    context: OracleContext,
+    name: str = "main",
+) -> tuple[PytreeValue, ...]:
     program = core_program_graph(kernel=kernel)[name]
     materialized = materialize_core_program(
         program=program, context=_build_context(context)
     )
-    return tuple(jax.jit(materialized.function)(**materialized.arguments))
+    result = jax.jit(materialized.function)(**materialized.arguments)
+    assert isinstance(result, tuple)
+    return result
 
 
 def test_the_graph_publishes_planned_values_and_replay_variants():
@@ -164,10 +177,9 @@ def test_model_authority_rejects_a_policy_type_conflicting_with_the_route(
 def test_variants_publish_only_their_retained_outputs_by_their_row_axes():
     """Carry and policy rows lead with the discrete and passive state axes."""
     kernel, _ = _passive_kernel()
-    value_role, carry_roles, policy_roles = cast(
-        "tuple[Any, Any, Any]",
-        core_program_graph(kernel=kernel)["replay"].output_roles,
-    )
+    roles = core_program_graph(kernel=kernel)["replay"].output_roles
+    assert isinstance(roles, tuple)
+    value_role, carry_roles, policy_roles = roles
     assert core_program_graph(kernel=kernel)["main"].output_roles == (
         value_role,
         carry_roles,
@@ -203,7 +215,7 @@ def test_variants_publish_only_their_retained_outputs_by_their_row_axes():
 @pytest.mark.parametrize("build", [_full_kernel, _passive_kernel])
 @pytest.mark.parametrize("name", ["main", "replay"])
 def test_the_declared_roles_share_the_runtime_outputs_pytree_structure(
-    *, build, name: str
+    *, build: Callable[[], tuple[_DCEGMPeriodKernel, OracleContext]], name: str
 ):
     """The role tree is the output tree with roles for leaves, aux data included."""
     kernel, context = build()
@@ -222,9 +234,8 @@ def test_the_builder_omits_target_values_and_filters_the_carry():
     )
 
     assert "next_regime_to_V_arr" not in materialized.arguments
-    carry = cast(
-        "Mapping[str, Any]", materialized.arguments["next_regime_to_continuation"]
-    )
+    carry = materialized.arguments["next_regime_to_continuation"]
+    assert isinstance(carry, Mapping)
     assert set(carry) == set(kernel.stateful_targets)
 
 
@@ -280,7 +291,7 @@ def test_with_fixed_params_rebinds_the_program():
     bound = kernel.with_fixed_params(fixed_flat_params=fixed)
     bound_program = core_program_graph(kernel=bound)["main"]
 
-    function = cast("functools.partial", bound_program.function)
+    function = bound_program.function
     assert isinstance(function, functools.partial)
     assert function.func is program.function
     assert function.keywords["discount_factor"] == 0.9
@@ -288,7 +299,9 @@ def test_with_fixed_params_rebinds_the_program():
     assert kernel.with_fixed_params(fixed_flat_params=MappingProxyType({})) is kernel
 
 
-def test_a_replay_lowers_the_dense_program_the_solve_ran(*, monkeypatch, tmp_path):
+def test_a_replay_lowers_the_dense_program_the_solve_ran(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", f"{_REGIME}@{_PERIOD}")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     solution = get_full_model(solver="dcegm", n_periods=_N_PERIODS).solve(
@@ -297,8 +310,17 @@ def test_a_replay_lowers_the_dense_program_the_solve_ran(*, monkeypatch, tmp_pat
     selected_names: list[str] = []
     real_select = period_replay.select_programs
 
-    def record_select(**kwargs: Any) -> Any:
-        selected = real_select(**kwargs)
+    def record_select(
+        *,
+        graph: Mapping[str, CoreProgram],
+        retain_replay: bool,
+        selected_artifact_keys: frozenset[ArtifactKey] = frozenset(),
+    ) -> MappingProxyType[str, CoreProgram]:
+        selected = real_select(
+            graph=graph,
+            retain_replay=retain_replay,
+            selected_artifact_keys=selected_artifact_keys,
+        )
         selected_names.extend(selected)
         return selected
 

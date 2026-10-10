@@ -15,6 +15,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 from types import ModuleType
 from typing import (
@@ -936,10 +937,11 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         "log_level": "off",
     }
 
-    def solve() -> SolutionResult | tuple[_SolutionTree, _SolutionTree]:
-        if _has_legacy_solve(model=model):
-            return model.solve(**solve_kwargs, return_dissolution_flags=True)
-        return model.solve(**solve_kwargs)
+    solve: Callable[[], SolutionResult | tuple[_SolutionTree, _SolutionTree]]
+    if _has_legacy_solve(model=model):
+        solve = partial(model.solve, **solve_kwargs, return_dissolution_flags=True)
+    else:
+        solve = partial(model.solve, **solve_kwargs)
 
     memory_before_solve = _read_proc_memory()
     with ExitStack() as stack:

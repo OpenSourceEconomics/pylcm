@@ -17,12 +17,13 @@ they pin the decision but not the wiring that assembles the census for it.
 
 import dataclasses
 import itertools
+import logging
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -62,6 +63,7 @@ from lcm.solver_api import (
     ArtifactKey,
     ContinuationArtifact,
     ContinuationCapabilities,
+    SolutionResult,
     SolverExecutionCapabilities,
 )
 from lcm.solvers import (
@@ -82,6 +84,7 @@ from lcm.solvers import (
     CoreExecutionRequirements as PublicRequirements,
 )
 from lcm.typing import Float1D, FloatND, ReferenceName, RegimeName, StateName
+from tests.solution._callback_types import ConsumeOutputKwargs
 from tests.test_solver_api_out_of_tree import _N_PERIODS, _two_regime_model
 
 _KEY = ArtifactKey(type_id="tests.donation_read_multiplicity", schema_version=1)
@@ -139,32 +142,38 @@ def _sibling_sum(*, wealth: Float1D, other: FloatND) -> Float1D:
     return wealth + other
 
 
-def _one_read_arguments(build: object) -> Mapping[ReferenceName, PytreeValue]:
+def _one_read_arguments(build: CoreBuildContext) -> Mapping[ReferenceName, PytreeValue]:
     """Feed the state grid and the target's published count to the program."""
-    payload = build.next_regime_to_continuation["alive"]  # ty: ignore[unresolved-attribute]
+    payload = build.next_regime_to_continuation["alive"]
+    assert isinstance(payload, _Counter)
+    assert build.state_action_space is not None
     _DISPATCHED.append(payload.count)
     return {
-        "wealth": build.state_action_space.states["wealth"],  # ty: ignore[unresolved-attribute]
+        "wealth": build.state_action_space.states["wealth"],
         "count": payload.count,
     }
 
 
-def _two_read_arguments(build: object) -> Mapping[ReferenceName, PytreeValue]:
+def _two_read_arguments(build: CoreBuildContext) -> Mapping[ReferenceName, PytreeValue]:
     """Feed one published count array to two declared arguments of one core."""
-    payload = build.next_regime_to_continuation["alive"]  # ty: ignore[unresolved-attribute]
+    payload = build.next_regime_to_continuation["alive"]
+    assert isinstance(payload, _Counter)
+    assert build.state_action_space is not None
     _DISPATCHED.append(payload.count)
     return {
-        "wealth": build.state_action_space.states["wealth"],  # ty: ignore[unresolved-attribute]
+        "wealth": build.state_action_space.states["wealth"],
         "count": payload.count,
         "other": payload.count,
     }
 
 
-def _sibling_arguments(build: object) -> Mapping[ReferenceName, PytreeValue]:
+def _sibling_arguments(build: CoreBuildContext) -> Mapping[ReferenceName, PytreeValue]:
     """Feed the same published count array to the non-donating sibling core."""
-    payload = build.next_regime_to_continuation["alive"]  # ty: ignore[unresolved-attribute]
+    payload = build.next_regime_to_continuation["alive"]
+    assert isinstance(payload, _Counter)
+    assert build.state_action_space is not None
     return {
-        "wealth": build.state_action_space.states["wealth"],  # ty: ignore[unresolved-attribute]
+        "wealth": build.state_action_space.states["wealth"],
         "other": payload.count,
     }
 
@@ -179,22 +188,22 @@ class _MainKernel:
         """Return the core graph the planner resolves."""
         return self.programs
 
-    def with_fixed_params(self, *, fixed_flat_params: object) -> _MainKernel:  # noqa: ARG002
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _MainKernel:  # noqa: ARG002
         """Return this parameter-free kernel unchanged."""
         return self
 
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable[..., object]],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationArtifact],
         flat_params: FlatParams,
         period: int,
         ages: TimeAxis,
-        logger: object,  # noqa: ARG002
-        **_unused: object,
+        logger: logging.Logger,  # noqa: ARG002
+        **_unused: Mapping[RegimeName, FloatND],
     ) -> KernelOutput:
         """Dispatch every compiled core, publishing the main core's outputs."""
         context = CoreBuildContext(
@@ -353,7 +362,7 @@ class _TwoDonorSolver(_LeafReadingSolver):
     sibling_donates = True
 
 
-def _solve(*, solver: Solver) -> object:
+def _solve(*, solver: Solver) -> SolutionResult:
     """Solve the self-looping two-regime model with the given solver."""
     _DISPATCHED.clear()
     return _two_regime_model(solver=solver, self_looping=True).solve(
@@ -365,7 +374,7 @@ def published_values(*, solver: Solver) -> dict[int, np.ndarray]:
     """Return the `alive` value array one solver publishes in every period."""
     solution = _solve(solver=solver)
     return {
-        period: np.asarray(solution.values[period]["alive"])  # ty: ignore[unresolved-attribute]
+        period: np.asarray(solution.values[period]["alive"])
         for period in range(_N_PERIODS)
     }
 
@@ -434,8 +443,8 @@ def _reads_deleted_at_dispatch(
     observed: list[tuple[int, bool]] = []
     consume = backward_induction.consume_kernel_output
 
-    def _observe(**kwargs: object) -> ConsumedKernelOutput:
-        result = consume(**kwargs)  # ty: ignore[invalid-argument-type]
+    def _observe(**kwargs: Unpack[ConsumeOutputKwargs]) -> ConsumedKernelOutput:
+        result = consume(**kwargs)
         if kwargs["regime_name"] == "alive":
             period = kwargs["period"]
             assert isinstance(period, int)

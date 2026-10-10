@@ -16,12 +16,13 @@ from pathlib import Path
 from typing import TypedDict
 
 type SourceRecord = dict[str, str]
+type SourcePath = str
 type ProfileName = str
 
 
 class ProfileEntry(TypedDict, total=False):
     inventory: str
-    exclude_sources: list[str]
+    exclude_sources: list[SourcePath]
     candidate_sources: list[SourceRecord]
     source_count: int
 

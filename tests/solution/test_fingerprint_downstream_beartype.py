@@ -147,7 +147,7 @@ def test_downstream_guard_whose_code_beartype_does_not_regenerate_is_refused(
         fingerprints._semantic_fingerprint(guarded)
 
 
-def _adapted(func: Callable[[], FloatND]) -> Callable[..., FloatND]:
+def _adapted[**P](func: Callable[P, FloatND]) -> Callable[P, FloatND]:
     """`func` behind a forwarding adapter, the way the engine adapts a callee.
 
     `functools.wraps` copies the callee's attributes onto the adapter, beartype's
@@ -155,7 +155,7 @@ def _adapted(func: Callable[[], FloatND]) -> Callable[..., FloatND]:
     """
 
     @functools.wraps(func)
-    def adapted(*args: object, **kwargs: object) -> FloatND:
+    def adapted(*args: P.args, **kwargs: P.kwargs) -> FloatND:
         return func(*args, **kwargs)
 
     return adapted

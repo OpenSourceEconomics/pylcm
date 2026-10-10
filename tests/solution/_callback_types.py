@@ -230,3 +230,77 @@ def filled_toy_params[Input](params: Input) -> TypeGuard[UserParams]:
         )
         for name, value in params.items()
     )
+
+
+class RunPeriodKernelKwargs(TypedDict):
+    regime: backward_induction.Regime
+    regime_name: backward_induction.RegimeName
+    period: int
+    compiled_cores: backward_induction.MappingProxyType[
+        str, backward_induction.PlannedCore
+    ]
+    capture_target: backward_induction.PeriodCaptureTarget | None
+    state_action_space: backward_induction.StateActionSpace
+    flat_params: backward_induction.FlatParams
+    ages: backward_induction.TimeAxis
+    next_regime_to_V_arr: backward_induction.MappingProxyType[
+        backward_induction.RegimeName, backward_induction.FloatND
+    ]
+    next_regime_to_continuation: backward_induction.MappingProxyType[
+        backward_induction.RegimeName, backward_induction.ContinuationPayload
+    ]
+    logger: backward_induction.logging.Logger
+    next_edge_to_V_arr: backward_induction.MappingProxyType[
+        backward_induction._EdgeKey, backward_induction.FloatND
+    ]
+    period_solution: backward_induction.Mapping[
+        backward_induction.RegimeName, backward_induction.FloatND
+    ]
+    retain_replay: bool
+    selected_artifact_keys: frozenset[backward_induction.ArtifactKey]
+    period_capture: NotRequired[backward_induction.CaptureContext | None]
+    captured_admission: NotRequired[
+        backward_induction.Mapping[str, backward_induction.Mapping[str, int | None]]
+    ]
+
+
+type RunPeriodKernelResult = backward_induction.KernelOutput
+
+
+class RetireDonatedInputsKwargs(TypedDict):
+    donated_inputs: tuple[backward_induction._DonatedInput, ...]
+    dispatch: backward_induction._InputDispatch
+    inputs: backward_induction.SolveInputMappings
+    templates: backward_induction.SolveInputMappings
+    pending_outputs: tuple[
+        tuple[backward_induction.ValueND, ...],
+        backward_induction._DispatchOutputs,
+    ]
+    registry: backward_induction.BufferRegistry
+    logger: backward_induction.logging.Logger
+    before_delete: NotRequired[backward_induction.BeforeArrayDelete | None]
+
+
+type RetireDonatedInputsResult = tuple[
+    backward_induction.MappingProxyType[
+        backward_induction.RegimeName, backward_induction.FloatND
+    ],
+    backward_induction.MappingProxyType[
+        backward_induction.RegimeName, backward_induction.ContinuationPayload
+    ],
+    backward_induction.MappingProxyType[
+        backward_induction._EdgeKey, backward_induction.FloatND
+    ],
+]
+
+
+class CandidateResidentKwargs(TypedDict):
+    compiled: backward_induction.jax.stages.Compiled
+    program: backward_induction.ResolvedCoreProgram
+    internal_arguments: backward_induction.Mapping[
+        backward_induction.ReferenceName, backward_induction.ShapeDtypePytree
+    ]
+    inventory: backward_induction.ResidentInventory
+
+
+type CandidateResidentResult = int

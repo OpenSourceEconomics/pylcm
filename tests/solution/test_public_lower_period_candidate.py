@@ -14,8 +14,8 @@ import sys
 from collections.abc import Callable, Hashable, Mapping
 from importlib.metadata import distribution
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any, Never, TypedDict, Unpack
+from types import MappingProxyType, ModuleType
+from typing import Literal, Never, Protocol, TypedDict, Unpack, overload
 
 import jax
 import numpy as np
@@ -34,7 +34,184 @@ from _lcm.typing import HostArray, JSONValue, LoweringDescriptor
 from lcm.exceptions import ExecutionPlanningError
 from lcm.model import _SolutionPreparation
 from lcm.solver_api import EGM_CONTINUATION, ResultRetention
+from lcm.typing import RegimeName, UserParams
+from tests.solution._callback_types import PlanningKwargs as _ContextKwargs
+from tests.solution._callback_types import PlanningResult as _ResolvedContexts
+from tests.solution._candidate_census import _WaveKwargs
+from tests.solution.test_solution_result import _KernelKwargs
 from tests.test_models import nbegm_ride_along_toy
+
+
+class _ContextResolver(Protocol):
+    def __call__(
+        self,
+        *,
+        all_programs: Mapping[engine._CoreTriple, engine.CoreProgram],
+        regimes: MappingProxyType[engine.RegimeName, engine.Regime],
+        program_fingerprint: str,
+        flat_params: engine.FlatParams,
+        ages: engine.TimeAxis,
+        next_regime_to_V_arr: MappingProxyType[engine.RegimeName, engine.FloatND],
+        next_regime_to_continuation: MappingProxyType[
+            engine.RegimeName, engine.ContinuationPayload
+        ],
+        next_edge_to_V_arr: MappingProxyType[engine._EdgeKey, engine.FloatND],
+        budget_bytes: int | None,
+        execution_widths: engine.ResolvedExecution,
+        enable_jit: bool,
+        continuous_sharded_state: engine.StateName | None = ...,
+        donate_buffers: bool = ...,
+        retain_all_artifacts: bool,
+        persistable_artifact_refs: frozenset[engine.ArtifactRef],
+        process_grid_resolver: engine.ProcessGridResolver | None = ...,
+        structural_blueprints: engine.StructuralBlueprintCache[
+            engine._StructuralBlueprint
+        ]
+        | None = ...,
+        base_state_action_spaces: Mapping[engine.RegimeName, engine.StateActionSpace]
+        | None = ...,
+        logger: logging.Logger | None = ...,
+    ) -> _ResolvedContexts: ...
+
+
+class _PublicLowerCallback(Protocol):
+    def __call__(
+        self,
+        *,
+        params: UserParams,
+        log_level: Literal["off"],
+        candidate: lcm.PeriodCandidate,
+        retention: ResultRetention,
+    ) -> lcm.LoweredPeriodCandidate: ...
+
+
+type _Manifest = MappingProxyType[str, LoweringDescriptor | JSONValue]
+type _Authority = dict[str, LoweringDescriptor | JSONValue]
+type _Contexts = dict[engine._CoreCandidate, _Manifest]
+type _Active = list[_Manifest | None]
+type _Observed = list[tuple[_Manifest, bytes]]
+type _DispatchAddress = tuple[
+    str, int, str, tuple[tuple[str, int], ...], tuple[str, ...]
+]
+
+
+class _LowerKwargs(TypedDict):
+    resolved: engine.ResolvedCoreProgram
+    layout: engine.ResolvedOutputLayout
+    donated: tuple[str, ...]
+    internal_templates: Mapping[engine.ReferenceName, engine.ShapeDtypePytree]
+    label: str
+
+
+class _LowerCallback(Protocol):
+    def __call__(
+        self,
+        *,
+        resolved: engine.ResolvedCoreProgram,
+        layout: engine.ResolvedOutputLayout,
+        donated: tuple[str, ...],
+        internal_templates: Mapping[engine.ReferenceName, engine.ShapeDtypePytree],
+        label: str,
+    ) -> jax.stages.Lowered: ...
+
+
+class _WaveCallback(Protocol):
+    def __call__(
+        self,
+        *,
+        new_lowerings: Mapping[Hashable, engine._CoreCandidate],
+        resolved_programs: Mapping[engine._CoreCandidate, engine.ResolvedCoreProgram],
+        all_layouts: Mapping[engine._CoreTriple, engine.ResolvedOutputLayout],
+        internal_templates: Mapping[
+            engine._CoreCandidate,
+            Mapping[engine.ReferenceName, engine.ShapeDtypePytree],
+        ],
+        donations: Mapping[engine._CoreCandidate, tuple[engine.ResolvedDonation, ...]],
+        ages: engine.TimeAxis,
+        n_triples_per_lowering: Mapping[Hashable, int],
+        log_kernel_memory: bool,
+        n_workers: int,
+        logger: logging.Logger,
+        compiled: dict[Hashable, jax.stages.Compiled],
+        labels: dict[Hashable, str],
+    ) -> None: ...
+
+
+class _DispatchCallback(Protocol):
+    def __call__(
+        self,
+        *,
+        regime: engine.Regime,
+        regime_name: engine.RegimeName,
+        period: int,
+        compiled_cores: MappingProxyType[str, engine.PlannedCore],
+        capture_target: engine.PeriodCaptureTarget | None,
+        state_action_space: engine.StateActionSpace,
+        flat_params: engine.FlatParams,
+        ages: engine.TimeAxis,
+        next_regime_to_V_arr: MappingProxyType[engine.RegimeName, engine.FloatND],
+        next_regime_to_continuation: MappingProxyType[
+            engine.RegimeName, engine.ContinuationPayload
+        ],
+        logger: logging.Logger,
+        next_edge_to_V_arr: MappingProxyType[engine._EdgeKey, engine.FloatND],
+        period_solution: Mapping[engine.RegimeName, engine.FloatND],
+        retain_replay: bool,
+        selected_artifact_keys: frozenset[engine.ArtifactKey],
+        period_capture: engine.CaptureContext | None = ...,
+        captured_admission: Mapping[str, Mapping[str, int | None]] = ...,
+    ) -> engine.KernelOutput: ...
+
+
+def _candidate_address(manifest: _Manifest) -> _DispatchAddress:
+    regime, period, core = manifest["regime"], manifest["period"], manifest["core"]
+    assert isinstance(regime, str)
+    assert isinstance(period, int)
+    assert isinstance(core, str)
+    widths = manifest["widths"]
+    assert isinstance(widths, Mapping)
+    width_items: list[tuple[str, int]] = []
+    for name, width in widths.items():
+        assert isinstance(name, str)
+        assert isinstance(width, int)
+        width_items.append((name, width))
+    donated = manifest["primary_donated"]
+    assert isinstance(donated, tuple)
+    names: list[str] = []
+    for name in donated:
+        assert isinstance(name, str)
+        names.append(name)
+    return (
+        regime,
+        period,
+        core,
+        tuple(sorted(width_items)),
+        tuple(names),
+    )
+
+
+def _selected_artifact_keys(manifest: _Manifest) -> frozenset[LoweringDescriptor]:
+    value = manifest["selected_artifact_keys"]
+    assert isinstance(value, frozenset)
+    return value
+
+
+class _CandidateKwargs(TypedDict):
+    regime: RegimeName
+    period: int
+    core: str
+    widths: dict[str, int]
+
+
+def _candidate_kwargs(manifest: _Manifest) -> _CandidateKwargs:
+    regime, period, core, widths, _donated = _candidate_address(manifest=manifest)
+    return {"regime": regime, "period": period, "core": core, "widths": dict(widths)}
+
+
+def _manifest_text(*, manifest: _Manifest, key: str) -> str:
+    value = manifest[key]
+    assert isinstance(value, str)
+    return value
 
 
 class _PrepareKwargs(TypedDict):
@@ -192,12 +369,12 @@ def test_public_lower_period_candidate_matches_solve(
     )
     params = nbegm_ride_along_toy.build_params()
     # These containers hold copied descriptors, integer identities and raw bytes only.
-    authority: dict[str, Any] = {}
-    contexts: dict[Any, Any] = {}
-    active: list[Any] = []
-    fallback_contexts: dict[Any, str] = {}
-    observed: list[Any] = []
-    dispatched: set[Any] = set()
+    authority: _Authority = {}
+    contexts: _Contexts = {}
+    active: _Active = []
+    fallback_contexts: dict[engine._CoreCandidate, str] = {}
+    observed: _Observed = []
+    dispatched: set[_DispatchAddress] = set()
     prepare = lcm.Model._prepare_solution
     bind_fallbacks = engine._LazyCandidateFrontier.bind_fallbacks
     identities = _capture_source_runtime_identity()
@@ -267,15 +444,8 @@ def test_public_lower_period_candidate_matches_solve(
     matches = [
         (manifest, ir)
         for manifest, ir in observed
-        if (
-            manifest["regime"],
-            manifest["period"],
-            manifest["core"],
-            tuple(sorted(manifest["widths"].items())),
-            manifest["primary_donated"],
-        )
-        in dispatched
-        and manifest["period"] < model.n_periods - 1
+        if _candidate_address(manifest=manifest) in dispatched
+        and _candidate_address(manifest=manifest)[1] < model.n_periods - 1
         and bool(manifest["primary_donated"])
         == (retention is ResultRetention.VALUES_AND_REPLAY)
     ]
@@ -283,17 +453,14 @@ def test_public_lower_period_candidate_matches_solve(
     expected, expected_ir = matches[0]
     assert expected["continuation"]
     if retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS:
-        assert _describe(EGM_CONTINUATION) in expected["selected_artifact_keys"]
+        assert _describe(EGM_CONTINUATION) in _selected_artifact_keys(manifest=expected)
         assert expected["primary_donated"] == ()
     else:
         assert expected["primary_donated"]
 
     # Missing public behavior is reached only after the real reference is qualified.
     candidate = _require_public_member(owner=lcm, name="PeriodCandidate")(
-        regime=expected["regime"],
-        period=expected["period"],
-        core=expected["core"],
-        widths=expected["widths"],
+        **_candidate_kwargs(manifest=expected)
     )
     with monkeypatch.context() as bounded:
         bounded.setattr(engine.CompilationWave, "_submit", _forbid_candidate_execution)
@@ -411,7 +578,9 @@ def _capture_source_runtime_identity() -> Mapping[str, JSONValue]:
     )
 
 
-def _observe_context(*, resolve: Any, contexts: Any, **kwargs: Any) -> Any:
+def _observe_context(
+    *, resolve: _ContextResolver, contexts: _Contexts, **kwargs: Unpack[_ContextKwargs]
+) -> _ResolvedContexts:
     result = resolve(**kwargs)
     _layouts, keys, programs, _internal, _liveness, donations, _metadata, frontier = (
         result
@@ -428,7 +597,7 @@ def _observe_context(*, resolve: Any, contexts: Any, **kwargs: Any) -> Any:
             for ref in kwargs["persistable_artifact_refs"]
             if ref.regime == regime and ref.period == period
         )
-        context = {
+        context: dict[str, LoweringDescriptor | JSONValue] = {
             "primary_key": _semantic_fingerprint(_describe(keys[candidate])),
             "regime": regime,
             "period": period,
@@ -452,8 +621,13 @@ def _observe_context(*, resolve: Any, contexts: Any, **kwargs: Any) -> Any:
 
 
 def _observe_wave(
-    *, run_wave: Any, contexts: Any, fallback_contexts: Any, active: Any, **kwargs: Any
-) -> Any:
+    *,
+    run_wave: _WaveCallback,
+    contexts: _Contexts,
+    fallback_contexts: dict[engine._CoreCandidate, str],
+    active: _Active,
+    **kwargs: Unpack[_WaveKwargs],
+) -> None:
     assert not active
     for key, candidate in kwargs["new_lowerings"].items():
         context = contexts.get(candidate)
@@ -486,14 +660,14 @@ def _observe_wave(
 
 def _observe_lower(
     *,
-    lower: Any,
-    active: Any,
-    authority: Any,
-    identities: Any,
-    retention: Any,
-    observed: Any,
-    **kwargs: Any,
-) -> Any:
+    lower: _LowerCallback,
+    active: _Active,
+    authority: _Authority,
+    identities: Mapping[str, JSONValue],
+    retention: ResultRetention,
+    observed: _Observed,
+    **kwargs: Unpack[_LowerKwargs],
+) -> jax.stages.Lowered:
     result = lower(**kwargs)
     assert active, "Lowering outside the observed real wave"
     context = active.pop(0)
@@ -528,7 +702,12 @@ def _observe_lower(
     return result  # SAME real Lowered; no copy, alternate lower or saved reference.
 
 
-def _observe_dispatch(*, dispatch: Any, dispatched: Any, **kwargs: Any) -> Any:
+def _observe_dispatch(
+    *,
+    dispatch: _DispatchCallback,
+    dispatched: set[_DispatchAddress],
+    **kwargs: Unpack[_KernelKwargs],
+) -> engine.KernelOutput:
     for core_name, core in kwargs["compiled_cores"].items():
         dispatched.add(
             (
@@ -542,10 +721,28 @@ def _observe_dispatch(*, dispatch: Any, dispatched: Any, **kwargs: Any) -> Any:
     return dispatch(**kwargs)
 
 
-def _require_public_member(*, owner: object, name: str) -> Any:
+@overload
+def _require_public_member(
+    *, owner: ModuleType, name: Literal["PeriodCandidate"]
+) -> type[lcm.PeriodCandidate]: ...
+
+
+@overload
+def _require_public_member(
+    *, owner: lcm.Model, name: Literal["lower_period_candidate"]
+) -> _PublicLowerCallback: ...
+
+
+def _require_public_member(
+    *,
+    owner: ModuleType | lcm.Model,
+    name: Literal["PeriodCandidate", "lower_period_candidate"],
+) -> type[lcm.PeriodCandidate] | _PublicLowerCallback:
     """Require the proposed public behavior after the real reference qualifies."""
     assert hasattr(owner, name), f"Missing public API: {name}"
-    return getattr(owner, name)
+    member = getattr(owner, name)
+    assert callable(member)
+    return member
 
 
 def test_public_lower_period_candidate_rejects_absent_members_before_lowering(
@@ -556,7 +753,7 @@ def test_public_lower_period_candidate_rejects_absent_members_before_lowering(
         variant="nbegm", n_liquid=8, n_savings=10, n_consumption=12
     )
     params = nbegm_ride_along_toy.build_params()
-    dispatched: set[Any] = set()
+    dispatched: set[_DispatchAddress] = set()
     observe_dispatch = functools.partial(
         _observe_dispatch, dispatch=engine._run_period_kernel, dispatched=dispatched
     )

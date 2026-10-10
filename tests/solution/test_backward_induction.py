@@ -31,6 +31,7 @@ from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.solution.backward_induction import (
+    _CoreCandidate,
     _count_triples_per_lowering_key,
     _drain_V_arr_shards,
     _group_cores_by_regime_period,
@@ -47,7 +48,8 @@ from _lcm.typing import FlatRegimeParams, MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import RegimeName
+from lcm.solver_api import ArtifactAuthority, ArtifactKey
+from lcm.typing import Float1D, FloatND, RegimeName
 
 
 @dataclasses.dataclass(frozen=True)
@@ -68,14 +70,16 @@ class MockSolutionPhase:
     """These dense fixture state axes have no declared device sharding."""
     action_partitions: int = 1
     """No regime's actions are shared over devices."""
-    compute_intermediates: dict = dataclasses.field(default_factory=dict)
-    artifact_authorities: MappingProxyType = dataclasses.field(
-        default_factory=lambda: MappingProxyType({})
+    compute_intermediates: dict[
+        int, Callable[..., Mapping[str, FloatND | Mapping[RegimeName, FloatND]]]
+    ] = dataclasses.field(default_factory=dict)
+    artifact_authorities: MappingProxyType[ArtifactKey, ArtifactAuthority] = (
+        dataclasses.field(default_factory=lambda: MappingProxyType({}))
     )
     continuation_template: None = None
     continuation_spec: None = None
     period_state_axes: (
-        MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
+        MappingProxyType[int, MappingProxyType[StateOrActionName, Float1D]] | None
     ) = None
     reachability: PhaseReachability = dataclasses.field(
         default_factory=lambda: _single_regime_reachability(n_periods=2)
@@ -89,14 +93,14 @@ class MockSolutionPhase:
         return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
 
     @property
-    def period_signatures(self) -> MappingProxyType[int, object]:
+    def period_signatures(self) -> MappingProxyType[int, tuple[str, int]]:
         """One signature per period: the mock builds a kernel per period."""
         return MappingProxyType(
             {period: ("mock", period) for period in self.period_kernels}
         )
 
     @property
-    def solver_period_group_keys(self) -> MappingProxyType[int, object]:
+    def solver_period_group_keys(self) -> MappingProxyType[int, Hashable]:
         """No solver-side grouping; the per-period signature decides alone."""
         return MappingProxyType({})
 
@@ -429,7 +433,7 @@ def _program(*, transfer: ResolvedValueTransfer) -> ResolvedCoreProgram:
     )
 
 
-def _marks(*, marked: dict) -> list[bool]:
+def _marks(*, marked: Mapping[_CoreCandidate, ResolvedCoreProgram]) -> list[bool]:
     """The reuse mark of every transfer in a marked program set, in plan order."""
     return [
         transfer.reused_by_several_consumers
@@ -519,16 +523,16 @@ _PLANNING_MAPS = pytest.mark.parametrize(
 
 
 @_PLANNING_MAPS
-def test_planning_maps_are_read_only(
-    build: Callable[[], Mapping[Hashable, object]],
+def test_planning_maps_are_read_only[T](
+    build: Callable[[], Mapping[Hashable, T]],
 ) -> None:
     """Planning maps handed from one compile stage to the next are read-only views."""
     assert type(build()) is MappingProxyType
 
 
 @_PLANNING_MAPS
-def test_planning_maps_round_trip_through_jax_tree_utilities(
-    build: Callable[[], Mapping[Hashable, object]],
+def test_planning_maps_round_trip_through_jax_tree_utilities[T](
+    build: Callable[[], Mapping[Hashable, T]],
 ) -> None:
     """A planning map flattens and rebuilds as a read-only view of the same items."""
     built = build()

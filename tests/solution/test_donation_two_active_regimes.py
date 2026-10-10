@@ -15,13 +15,16 @@ order, nothing handed to the compiler. Its published values are the reference.
 
 import dataclasses
 import functools
-from collections.abc import Mapping
+import logging
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
+from typing import NotRequired, Protocol, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from _lcm.execution.scheduler import DispatchUnit
 from _lcm.execution.value_transfer import ValueArtifactAddress
@@ -69,6 +72,25 @@ from lcm.typing import (
 )
 from tests.test_solver_api_out_of_tree import TerminalPublisher
 
+
+class _DonatedKwargs(TypedDict):
+    donations: backward_induction.Mapping[
+        backward_induction._CoreTriple, tuple[backward_induction.ResolvedDonation, ...]
+    ]
+    unit: backward_induction.DispatchUnit
+    inputs: backward_induction.SolveInputMappings
+    templates: backward_induction.SolveInputMappings
+    registry: backward_induction.BufferRegistry
+
+
+class _ExtraKernelKwargs(TypedDict):
+    regime_name: NotRequired[RegimeName]
+    next_edge_to_V_arr: NotRequired[Mapping[backward_induction._EdgeKey, FloatND]]
+    period_solution: NotRequired[Mapping[RegimeName, FloatND]]
+    retain_replay: NotRequired[bool]
+    selected_artifact_keys: NotRequired[frozenset[ArtifactKey]]
+
+
 _N_PERIODS = 3
 _WEALTH = LinSpacedGrid(start=1.0, stop=5.0, n_points=5)
 _ACTING_REGIMES = ("early", "late")
@@ -86,10 +108,10 @@ class RegimeId:
 
 @jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
-class _ReadableCounter:
+class _ReadableCounter[Count: FloatND | StateAxesLeading]:
     """A one-leaf continuation that answers the reader protocol."""
 
-    count: FloatND
+    count: Count
 
     @property
     def artifact_key(self) -> ArtifactKey:
@@ -109,7 +131,7 @@ class _ReadableCounter:
         """Refuse a marginal query: this payload publishes leaves only."""
         raise NotImplementedError
 
-    def leaves(self) -> MappingProxyType[tuple[str, ...], FloatND]:
+    def leaves(self) -> MappingProxyType[tuple[str, ...], Count]:
         """Return the one addressable array of this payload."""
         return MappingProxyType({("count",): self.count})
 
@@ -126,7 +148,7 @@ def _next_wealth(wealth: ScalarFloat) -> ScalarFloat:
 
 def _counting_value(
     *, wealth: Float1D, count: FloatND
-) -> tuple[Float1D, _ReadableCounter]:
+) -> tuple[Float1D, _ReadableCounter[FloatND]]:
     """Publish wealth plus the running count, and the count incremented."""
     return wealth + count, _ReadableCounter(count=count + 1.0)
 
@@ -142,6 +164,17 @@ def _counting_arguments(
     }
 
 
+class _CountingCore(Protocol):
+    def __call__(
+        self, *, wealth: Float1D, count: FloatND
+    ) -> tuple[Float1D, _ReadableCounter[FloatND]]: ...
+
+
+class _CountingArguments(TypedDict):
+    wealth: Float1D
+    count: FloatND
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _GraphKernel:
     """A period kernel dispatching its single declared program."""
@@ -153,22 +186,22 @@ class _GraphKernel:
         """Expose the one program the engine compiles and dispatches."""
         return MappingProxyType({"main": self.program})
 
-    def with_fixed_params(self, *, fixed_flat_params: object) -> _GraphKernel:  # noqa: ARG002
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _GraphKernel:  # noqa: ARG002
         """Return itself: the fixture reads no fixed parameter."""
         return self
 
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, object],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationArtifact],
         flat_params: FlatParams,
         period: int,
         ages: TimeAxis,
-        logger: object,  # noqa: ARG002
-        **_unused: object,
+        logger: logging.Logger,  # noqa: ARG002
+        **_unused: Unpack[_ExtraKernelKwargs],
     ) -> KernelOutput:
         """Build the program's arguments and dispatch its compiled core."""
         context = CoreBuildContext(
@@ -179,8 +212,8 @@ class _GraphKernel:
             period=period,
             ages=ages,
         )
-        value, artifact = compiled_cores["main"](  # ty: ignore[call-non-callable]
-            **self.program.argument_builder(context)
+        value, artifact = cast("_CountingCore", compiled_cores["main"])(
+            **cast("_CountingArguments", self.program.argument_builder(context))
         )
         return KernelOutput(value=value, continuations={_COUNTER: artifact})
 
@@ -230,9 +263,7 @@ class _CounterSolver(Solver):
                 ),
                 output_roles=(
                     OutputRole.VALUE,
-                    _ReadableCounter(
-                        count=StateAxesLeading(state_names=(), shape=())  # ty: ignore[invalid-argument-type]
-                    ),
+                    _ReadableCounter(count=StateAxesLeading(state_names=(), shape=())),
                 ),
                 disposition=CoreExecutionDisposition.DENSE,
                 disposition_reason="one_row_per_state_node",
@@ -286,7 +317,7 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
 
 def _published(
     *, solver_class: type[_CounterSolver]
-) -> dict[tuple[int, str], np.ndarray]:
+) -> dict[tuple[int, RegimeName], NDArray[np.float32 | np.float64]]:
     """Solve and return every published value array, keyed by period and regime."""
     solution = _model(solver_class=solver_class).solve(
         params={"discount_factor": 1.0}, log_level="off"
@@ -300,7 +331,8 @@ def _published(
 
 @pytest.fixture(scope="module")
 def published_values() -> tuple[
-    dict[tuple[int, str], np.ndarray], dict[tuple[int, str], np.ndarray]
+    dict[tuple[int, RegimeName], NDArray[np.float32 | np.float64]],
+    dict[tuple[int, RegimeName], NDArray[np.float32 | np.float64]],
 ]:
     """The values the donating solve and its non-donating twin publish."""
     return (
@@ -318,7 +350,8 @@ def test_donation_by_the_first_of_two_acting_regimes_changes_no_value(
     period: int,
     regime: RegimeName,
     published_values: tuple[
-        dict[tuple[int, str], np.ndarray], dict[tuple[int, str], np.ndarray]
+        dict[tuple[int, RegimeName], NDArray[np.float32 | np.float64]],
+        dict[tuple[int, RegimeName], NDArray[np.float32 | np.float64]],
     ],
 ) -> None:
     """Both regimes publish bit-identical values with and without donation."""
@@ -342,13 +375,15 @@ def _record_unit_inputs(*, monkeypatch: pytest.MonkeyPatch) -> list[_UnitInputs]
     recorded: list[_UnitInputs] = []
     donate = backward_induction._donated_input_arrays
 
-    def _observe(**kwargs: object) -> tuple[object, ...]:
-        donated = donate(**kwargs)  # ty: ignore[invalid-argument-type]
+    def _observe(
+        **kwargs: Unpack[_DonatedKwargs],
+    ) -> tuple[backward_induction._DonatedInput, ...]:
+        donated = donate(**kwargs)
         recorded.append(
             _UnitInputs(
-                unit=kwargs["unit"],  # ty: ignore[invalid-argument-type]
-                inputs=kwargs["inputs"],  # ty: ignore[invalid-argument-type]
-                templates=kwargs["templates"],  # ty: ignore[invalid-argument-type]
+                unit=kwargs["unit"],
+                inputs=kwargs["inputs"],
+                templates=kwargs["templates"],
                 donated=tuple(item.artifact for item in donated),
             )
         )

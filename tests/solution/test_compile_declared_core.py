@@ -9,6 +9,7 @@ compiles nothing else.
 
 import re
 from types import MappingProxyType
+from typing import Never
 
 import jax
 import pytest
@@ -23,6 +24,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.workspace_planning import bootstrap_width, bootstrap_widths
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.period_replay import _project_axis_widths
+from _lcm.typing import PytreeValue
 from lcm import Model
 from tests.test_models.deterministic.discrete import get_model, get_params
 
@@ -128,7 +130,10 @@ def test_compiling_a_declared_position_dispatches_nothing(
 ) -> None:
     """An abstract compilation must never become a runtime claim."""
 
-    def refuse(self: object, *args: object, **kwargs: object) -> object:  # noqa: ARG001
+    def refuse(
+        _self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> Never:
+        del args, kwargs
         pytest.fail("A compile-only call reached numerical dispatch.")
 
     monkeypatch.setattr(jax.stages.Compiled, "__call__", refuse)

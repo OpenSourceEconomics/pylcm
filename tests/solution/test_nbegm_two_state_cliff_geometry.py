@@ -21,7 +21,7 @@ The exact centres come from `_cliff_pullback_reference`.
 
 from collections.abc import Callable
 from fractions import Fraction
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -37,6 +37,7 @@ from tests.solution._cliff_pullback_reference import (
 )
 from tests.solution.test_nbegm_draw_conditioned_cliffs import (
     _exact,
+    _ModelParams,
     _params,
     _solved_seam,
     _targets,
@@ -138,8 +139,8 @@ def _model(
     reverse_declaration_order: bool = False,
     fixed_geometry_state: bool = False,
 ) -> Model:
-    income: Callable[..., object] = gross_income
-    subsidy: Callable[..., object] = _scalar_threshold_subsidy
+    income: Callable[..., FloatND] = gross_income
+    subsidy: Callable[..., FloatND] = _scalar_threshold_subsidy
     if geometry == "indexed":
         subsidy = (
             kind_indexed_subsidy if geometry_state == "kind" else _shock_indexed_subsidy
@@ -187,7 +188,7 @@ def _model(
     )
 
 
-def _model_params(*, geometry: _Geometry) -> dict[str, Any]:
+def _model_params(*, geometry: _Geometry) -> _ModelParams:
     """Thresholds putting the child liquid cliffs at 9 and 6 (9 when invariant)."""
     fpl_cliff = jnp.asarray((11.0, 8.0)) if geometry == "indexed" else 11.0
     params = _params(fpl_cliff=fpl_cliff, law_slope=1.0, law_offset=(0.0, 0.0))
