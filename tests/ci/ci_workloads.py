@@ -29,31 +29,114 @@ records its own measurement provenance in `junit_source`; updating one leg does
 not advance the root freeze or imply that other legs were re-measured.
 """
 
-from __future__ import annotations
-
 import json
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
+
+
+class _InvocationEnvironment(TypedDict, total=False):
+    runner_os: str
+    precision: int
+    backend: str
+    devices: int
+    workers: int
+    isolation: str
+    policy: dict[str, bool | str]
+
+
+class _InvocationShard(TypedDict):
+    leg: str
+    index: int
+    count: int
+    assignment: str
+
+
+class Invocation(TypedDict, total=False):
+    id: str
+    job: str
+    step: str
+    environment: _InvocationEnvironment
+    selection: str
+    shard: _InvocationShard
+    deselect: list[str]
+    ignore: list[str]
+    junit: str
+    files: list[str]
+    nodeids: list[str]
+    no_skips_required: bool
+    note: str
+    portability_controls: list[str]
+    predicted_payload_minutes: float
+    reclassified_files: list[str]
+    source_only: bool
+    unchained: bool
+
+
+class _FileWeight(TypedDict):
+    seconds: float
+    count: int
+
+
+class _LegWeight(TypedDict):
+    junit_source: str
+    measurement: str
+    seconds: dict[str, float]
+    counts: dict[str, int]
+
+
+class _ShardConfig(TypedDict):
+    shards: int
+    workers: int
+
+
+class _LaneSummary(TypedDict):
+    job: str
+    workers: int
+    weighted_minutes: float
+    unweighted_file_count: int
+    largest_file: str | None
+    largest_file_seconds: float | None
+
+
+class _CeilingBacklog(TypedDict):
+    file: str
+    seconds_per_test: float
+    reason: str
+
+
+class WorkloadManifest(TypedDict):
+    schema_version: str
+    frozen_head: str
+    source: dict[str, str]
+    guardrails: dict[str, float]
+    shard_layout: dict[str, dict[str, _ShardConfig]]
+    coverage_contributors: list[str]
+    general_shard_universe: list[str]
+    per_test_ceiling_backlog: list[_CeilingBacklog]
+    invocations: list[Invocation]
+    file_weights: dict[str, _FileWeight]
+    leg_weights: dict[str, _LegWeight]
+    unweighted_files: list[str]
+    excluded_files: dict[str, str]
+
 
 MANIFEST_PATH = Path(__file__).with_name("ci-workloads.json")
 
 
 @lru_cache(maxsize=1)
-def load_manifest(*, path: Path = MANIFEST_PATH) -> Mapping[str, Any]:
+def load_manifest(*, path: Path = MANIFEST_PATH) -> WorkloadManifest:
     """Return the parsed manifest, cached for the process lifetime."""
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def invocations(*, path: Path = MANIFEST_PATH) -> tuple[Mapping[str, Any], ...]:
+def invocations(*, path: Path = MANIFEST_PATH) -> tuple[Invocation, ...]:
     """Return every recorded pytest invocation, in manifest order."""
     return tuple(load_manifest(path=path)["invocations"])
 
 
-def invocation_by_id(
-    *, invocation_id: str, path: Path = MANIFEST_PATH
-) -> Mapping[str, Any]:
+def invocation_by_id(*, invocation_id: str, path: Path = MANIFEST_PATH) -> Invocation:
     """Return one invocation record by its manifest `id`."""
     for inv in invocations(path=path):
         if inv["id"] == invocation_id:
@@ -94,12 +177,12 @@ def guardrails(*, path: Path = MANIFEST_PATH) -> Mapping[str, float]:
 
 def invocations_for_job(
     *, job: str, path: Path = MANIFEST_PATH
-) -> tuple[Mapping[str, Any], ...]:
+) -> tuple[Invocation, ...]:
     """Return every invocation recorded under one `cpu.yml` job name."""
     return tuple(inv for inv in invocations(path=path) if inv["job"] == job)
 
 
-def lane_summary(*, path: Path = MANIFEST_PATH) -> dict[str, dict[str, Any]]:
+def lane_summary(*, path: Path = MANIFEST_PATH) -> dict[str, _LaneSummary]:
     """Return per-invocation worker count and weighted-minutes total.
 
     Files with no observed weight are counted separately (`unweighted_files`
@@ -107,7 +190,7 @@ def lane_summary(*, path: Path = MANIFEST_PATH) -> dict[str, dict[str, Any]]:
     """
     manifest = load_manifest(path=path)
     weights = manifest["file_weights"]
-    summary: dict[str, dict[str, Any]] = {}
+    summary: dict[str, _LaneSummary] = {}
     for inv in manifest["invocations"]:
         weighted_seconds = 0.0
         unweighted = 0
@@ -170,7 +253,9 @@ def coverage_contributors(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
     return tuple(load_manifest(path=path)["coverage_contributors"])
 
 
-def shard_layout(*, path: Path = MANIFEST_PATH) -> Mapping[str, Any]:
+def shard_layout(
+    *, path: Path = MANIFEST_PATH
+) -> Mapping[str, Mapping[str, _ShardConfig]]:
     """Return the recorded shard counts and worker counts per lane family."""
     return load_manifest(path=path)["shard_layout"]
 

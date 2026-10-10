@@ -13,13 +13,94 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from pathlib import Path
 from types import ModuleType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Protocol
 
 from benchmarks.grid_search_pair_scenarios import EXTERNAL_HARNESS_SOURCES
+
+if TYPE_CHECKING:
+    import logging
+    from importlib.machinery import ModuleSpec
+
+    from jax import Array
+    from jax.stages import Compiled
+    from numpy import generic
+    from numpy.typing import NDArray
+
+    from _lcm.execution.core_program import ResolvedCoreProgram
+    from _lcm.solution.contract import PeriodKernel
+    from _lcm.typing import JSONValue
+    from benchmarks.grid_search_pair import (
+        _ArrayManifest,
+        _CompiledCore,
+        _DeviceMemory,
+        _Dimensions,
+        _HloCensus,
+        _KernelExecution,
+        _KernelRow,
+        _ProcMemory,
+        _RouteMetadata,
+        _VersionShim,
+        _WorkerMetrics,
+    )
+    from benchmarks.grid_search_pair_scenarios import ScenarioSpec
+    from lcm import Model
+    from lcm.solver_api import SolutionResult
+    from lcm.typing import RegimeName
+
+
+class _GridExtent(Protocol):
+    @property
+    def n_points(self) -> int: ...
+
+
+class _JaxConfig(Protocol):
+    def read(self, name: str) -> bool: ...
+
+
+class _JaxPrecision(Protocol):
+    @property
+    def config(self) -> _JaxConfig: ...
+
+
+class _ReadyLeaf(Protocol):
+    def block_until_ready(self) -> _ReadyLeaf | None: ...
+
+
+class _ReplayKey(Protocol):
+    @property
+    def type_id(self) -> str: ...
+
+
+class _ReplayRef(Protocol):
+    @property
+    def key(self) -> _ReplayKey: ...
+    @property
+    def period(self) -> int: ...
+    @property
+    def regime(self) -> str: ...
+
+
+type _GitArg = str
+
+
+type _SolutionTree = Mapping[int, Mapping[RegimeName, _ReadyLeaf]]
+
+
+class _ProjectedResult[Ref: _ReplayRef](Protocol):
+    @property
+    def values(self) -> _SolutionTree: ...
+    @property
+    def replay_artifacts(self) -> Mapping[Ref, _ReadyLeaf]: ...
+
+
+type _WorkerResult[Ref: _ReplayRef] = (
+    SolutionResult | _ProjectedResult[Ref] | tuple[_SolutionTree, _SolutionTree]
+)
+
 
 _MEMORY_FIELDS = (
     "generated_code_size_in_bytes",
@@ -71,7 +152,7 @@ _VERSION_SHIM_EXPORTS = (
 )
 
 
-def _version_shim_identity() -> dict[str, Any]:
+def _version_shim_identity() -> _VersionShim:
     identity = {
         "module": _VERSION_SHIM_MODULE,
         "origin": _VERSION_SHIM_ORIGIN,
@@ -95,7 +176,7 @@ class _VersionShimFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         fullname: str,
         path: Sequence[str] | None,
         target: ModuleType | None = None,
-    ) -> Any:
+    ) -> ModuleSpec | None:
         del path, target
         if fullname != _VERSION_SHIM_MODULE:
             return None
@@ -105,7 +186,7 @@ class _VersionShimFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
             origin=_VERSION_SHIM_ORIGIN,
         )
 
-    def create_module(self, spec: Any) -> None:
+    def create_module(self, spec: ModuleSpec) -> None:
         del spec
 
     def exec_module(self, module: ModuleType) -> None:
@@ -122,7 +203,7 @@ class _VersionShimFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 
 def _import_lcm_with_version_shim(
     *, target_src: Path
-) -> tuple[ModuleType, dict[str, Any]]:
+) -> tuple[ModuleType, _VersionShim]:
     """Import target ``lcm`` with identical build metadata for both revisions.
 
     Hatch's VCS hook generates ``src/_lcm/version.py`` while building the package,
@@ -199,7 +280,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _git(*, checkout: Path, args: Iterable[str]) -> str:
+def _git(*, checkout: Path, args: Iterable[_GitArg]) -> str:
     result = subprocess.run(
         ["git", "-C", str(checkout), *args],
         capture_output=True,
@@ -233,7 +314,7 @@ def _sha256_files(*, root: Path, relative_paths: Iterable[str]) -> str:
     return digest.hexdigest()
 
 
-def _read_proc_memory() -> dict[str, int | None]:
+def _read_proc_memory() -> _ProcMemory:
     fields = {"VmRSS": None, "VmHWM": None}
     try:
         lines = Path("/proc/self/status").read_text().splitlines()
@@ -250,7 +331,7 @@ def _read_proc_memory() -> dict[str, int | None]:
     return {"rss_bytes": fields["VmRSS"], "hwm_bytes": fields["VmHWM"]}
 
 
-def _memory_analysis(compiled: Any) -> dict[str, int | None] | None:
+def _memory_analysis(compiled: Compiled) -> dict[str, int | None] | None:
     try:
         stats = compiled.memory_analysis()
     except Exception:
@@ -265,7 +346,7 @@ def _memory_analysis(compiled: Any) -> dict[str, int | None] | None:
     }
 
 
-def _hlo_census(text: str) -> dict[str, Any]:
+def _hlo_census(text: str) -> _HloCensus:
     lowered = text.lower()
     instruction_count = sum(
         1
@@ -309,7 +390,7 @@ def _safe_stem(label: str) -> str:
     return stem[:100] or "core"
 
 
-def _grid_extent(grid: Any) -> int:
+def _grid_extent(grid: _GridExtent) -> int:
     """Return a grid width without requiring runtime-supplied points."""
     n_points = getattr(grid, "n_points", None)
     if n_points is not None:
@@ -317,7 +398,7 @@ def _grid_extent(grid: Any) -> int:
     return int(grid.to_jax().shape[0])
 
 
-def _kernel_execution_metadata(kernel: Any) -> dict[str, Any]:
+def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
     """Describe one kernel through its native graph or the historical declaration."""
     graph_provider = getattr(kernel, "core_programs", None)
     if callable(graph_provider):
@@ -351,8 +432,8 @@ def _kernel_execution_metadata(kernel: Any) -> dict[str, Any]:
     }
 
 
-def _route_metadata(model: Any) -> dict[str, Any]:
-    rows: list[dict[str, Any]] = []
+def _route_metadata(model: Model) -> _RouteMetadata:
+    rows: list[_KernelRow] = []
     folded_regimes: list[str] = []
     distributed_regimes: list[str] = []
     collective_regimes: list[str] = []
@@ -409,7 +490,7 @@ def _route_metadata(model: Any) -> dict[str, Any]:
     }
 
 
-def _scenario_dimensions(model: Any) -> dict[str, Any]:
+def _scenario_dimensions(model: Model) -> _Dimensions:
     return {
         "n_periods": int(model.n_periods),
         "regimes": {
@@ -425,7 +506,7 @@ def _scenario_dimensions(model: Any) -> dict[str, Any]:
     }
 
 
-def _assert_scenario_identity(*, spec: Any, routes: Mapping[str, Any]) -> None:
+def _assert_scenario_identity(*, spec: ScenarioSpec, routes: _RouteMetadata) -> None:
     observed = {
         "folded": bool(routes["folded_regimes"]),
         "collective": bool(routes["collective_regimes"]),
@@ -448,7 +529,10 @@ def _assert_scenario_identity(*, spec: Any, routes: Mapping[str, Any]) -> None:
 
 
 def _executed_float_dtype(
-    *, precision: str, jax: Any, arrays: Mapping[str, Any]
+    *,
+    precision: str,
+    jax: _JaxPrecision,
+    arrays: Mapping[str, Array | NDArray[generic]],
 ) -> str:
     """Return the float dtype the run executed at, failing on precision drift.
 
@@ -494,16 +578,18 @@ def _executed_float_dtype(
     return expected
 
 
-def _flatten_arrays(*, result: Any) -> dict[str, Any]:
+def _flatten_arrays[Ref: _ReplayRef](
+    *, result: _WorkerResult[Ref]
+) -> dict[str, _ReadyLeaf]:
     if isinstance(result, tuple):
         values, dissolution_flags = result
     else:
         values = result.values
-        dissolution_flags: dict[int, dict[str, Any]] = {}
+        dissolution_flags: dict[int, dict[RegimeName, _ReadyLeaf]] = {}
         for ref, payload in result.replay_artifacts.items():
             if ref.key.type_id == "pylcm.collective.dissolution_flag":
                 dissolution_flags.setdefault(ref.period, {})[ref.regime] = payload
-    flattened: dict[str, Any] = {}
+    flattened: dict[str, _ReadyLeaf] = {}
     for prefix, tree in (("value", values), ("dissolution", dissolution_flags)):
         for period, by_regime in sorted(tree.items()):
             for regime, array in sorted(by_regime.items()):
@@ -512,13 +598,13 @@ def _flatten_arrays(*, result: Any) -> dict[str, Any]:
     return flattened
 
 
-def _block_result(result: Any) -> None:
+def _block_result[Ref: _ReplayRef](result: _WorkerResult[Ref]) -> None:
     """Wait for every published result leaf, including MappingProxyType trees."""
     for array in _flatten_arrays(result=result).values():
         array.block_until_ready()
 
 
-def _partition_entry(value: Any) -> str | list[str] | None:
+def _partition_entry[PartitionEntry](value: PartitionEntry) -> str | list[str] | None:
     if value is None or isinstance(value, str):
         return value
     if isinstance(value, tuple) and all(isinstance(item, str) for item in value):
@@ -527,7 +613,7 @@ def _partition_entry(value: Any) -> str | list[str] | None:
     raise TypeError(msg)
 
 
-def _sharding_descriptor(*, array: Any, jax: Any) -> dict[str, Any]:
+def _sharding_descriptor(*, array: Array, jax: ModuleType) -> dict[str, JSONValue]:
     sharding = getattr(array, "sharding", None)
     if isinstance(sharding, jax.sharding.NamedSharding):
         axis_names = [str(name) for name in sharding.mesh.axis_names]
@@ -558,8 +644,8 @@ def _sharding_descriptor(*, array: Any, jax: Any) -> dict[str, Any]:
 
 
 def _write_arrays(
-    *, path: Path, arrays: Mapping[str, Any], jax: Any
-) -> list[dict[str, Any]]:
+    *, path: Path, arrays: Mapping[str, Array], jax: ModuleType
+) -> list[_ArrayManifest]:
     import numpy as np
 
     descriptors = {
@@ -581,7 +667,7 @@ def _write_arrays(
     ]
 
 
-def _device_memory(jax: Any) -> list[dict[str, Any]]:
+def _device_memory(jax: ModuleType) -> list[_DeviceMemory]:
     result = []
     for device in jax.devices():
         try:
@@ -741,15 +827,15 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         raise RuntimeError(f"Requested backend {args.backend!r}, got {devices}.")
 
     build_started = time.perf_counter_ns()
-    model, params = build_scenario(name=cast("Any", spec.name))
+    model, params = build_scenario(name=spec.name)
     build_wall_ns = time.perf_counter_ns() - build_started
     _executed_float_dtype(precision=args.precision, jax=jax, arrays={})
     routes = _route_metadata(model)
     _assert_scenario_identity(spec=spec, routes=routes)
     dimensions = _scenario_dimensions(model)
 
-    compiled_refs: list[tuple[str, Any]] = []
-    resolved_plans: list[Any] = []
+    compiled_refs: list[tuple[str, Compiled]] = []
+    resolved_plans: list[ResolvedCoreProgram] = []
     compile_phase_ns: list[int] = []
     capture_cold = True
     capture_lock = threading.Lock()
@@ -758,23 +844,44 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     original_log_memory = backward_induction._log_kernel_memory  # noqa: SLF001
     original_resolve_program = getattr(backward_induction, "resolve_core_program", None)
 
-    def timed_compile_all(*call_args: Any, **call_kwargs: Any) -> Any:
-        started = time.perf_counter_ns()
-        try:
-            return original_compile_all(*call_args, **call_kwargs)
-        finally:
-            compile_phase_ns.append(time.perf_counter_ns() - started)
+    def observe_compile[**P, R](original: Callable[P, R]) -> Callable[P, R]:
+        def timed_compile_all(*call_args: P.args, **call_kwargs: P.kwargs) -> R:
+            started = time.perf_counter_ns()
+            try:
+                return original(*call_args, **call_kwargs)
+            finally:
+                compile_phase_ns.append(time.perf_counter_ns() - started)
 
-    def retain_compiled(*, compiled: Any, label: str, logger: Any) -> None:  # noqa: ARG001
+        return timed_compile_all
+
+    timed_compile_all = observe_compile(original_compile_all)
+
+    def retain_compiled(
+        *, compiled: Compiled, label: str, logger: logging.Logger
+    ) -> None:
+        del logger
         if capture_cold:
             with capture_lock:
                 compiled_refs.append((label, compiled))
 
-    def retain_plan(*call_args: Any, **call_kwargs: Any) -> Any:
-        result = original_resolve_program(*call_args, **call_kwargs)
-        if capture_cold:
-            resolved_plans.append(result)
-        return result
+    def observe_plan[**P](
+        original: Callable[P, ResolvedCoreProgram],
+    ) -> Callable[P, ResolvedCoreProgram]:
+        def retain_plan(
+            *call_args: P.args, **call_kwargs: P.kwargs
+        ) -> ResolvedCoreProgram:
+            result = original(*call_args, **call_kwargs)
+            if capture_cold:
+                resolved_plans.append(result)
+            return result
+
+        return retain_plan
+
+    retain_plan = (
+        None
+        if original_resolve_program is None
+        else observe_plan(original_resolve_program)
+    )
 
     solve_kwargs = {
         "params": params,
@@ -850,7 +957,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
 
     hlo_dir = args.output / "hlo"
     hlo_dir.mkdir()
-    core_records: list[dict[str, Any]] = []
+    core_records: list[_CompiledCore] = []
     ordered_compiled = sorted(compiled_refs, key=lambda item: item[0])
     for ordinal, (label, compiled) in enumerate(ordered_compiled):
         text = compiled.as_text()
@@ -876,7 +983,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         )
 
     final_memory = _read_proc_memory()
-    metrics = {
+    metrics: _WorkerMetrics = {
         "schema_version": "1.0",
         "scenario": spec.name,
         "revision": args.expected_revision,

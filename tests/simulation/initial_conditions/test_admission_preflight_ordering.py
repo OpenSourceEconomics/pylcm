@@ -6,7 +6,6 @@ future implementation helper serves as the expected-result oracle.
 
 import dataclasses
 import logging
-from collections.abc import Callable
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -18,6 +17,7 @@ from _lcm.params.processing import process_params
 from _lcm.simulation.initial_conditions import validate_simulation_inputs
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
+    ConstraintFunction,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     InitialConditions,
@@ -41,6 +41,8 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
+    ScalarFloat,
     ScalarInt,
 )
 from tests.simulation.initial_conditions._models import (
@@ -95,7 +97,7 @@ def test_earlier_initial_errors_prevent_every_feasibility_build(
     if missing:
         del initial["wealth"]
 
-    def forbidden(**_kwargs: object) -> None:
+    def forbidden[Ignored](**_kwargs: Ignored) -> None:
         raise AssertionError("A feasibility builder was reached before validation.")
 
     monkeypatch.setattr(initial_module, "_get_feasibility", forbidden)
@@ -140,7 +142,7 @@ def test_unused_regime_feasibility_is_neither_built_nor_traced(
 
     def observe(
         *, functions: EconFunctionsMapping, constraints: ConstraintFunctionsMapping
-    ) -> Callable[..., object]:
+    ) -> ConstraintFunction:
         assert constraints is not unused, "Unused-regime constraints were composed."
         visited.append(constraints)
         return original(functions=functions, constraints=constraints)
@@ -200,8 +202,11 @@ def test_changed_transition_params_are_validated_again_on_the_same_model() -> No
     regime = model._regimes["alive"]
 
     def bound_probs(
-        *, probability: FloatND, age: object, period: object
-    ) -> MappingProxyType:
+        *,
+        probability: FloatND,
+        age: float | ScalarInt | ScalarFloat,
+        period: int | ScalarInt,
+    ) -> MappingProxyType[RegimeName, FloatND]:
         del age, period
         return MappingProxyType({"terminal": probability})
 
@@ -369,7 +374,9 @@ def test_earlier_transition_failure_precedes_a_later_python_exception(
     model = _model_with_state_probs(state_law)
     regime = model._regimes["alive"]
 
-    def invalid_regime_probs(*, age: object, period: object) -> MappingProxyType:
+    def invalid_regime_probs(
+        *, age: float | ScalarInt | ScalarFloat, period: int | ScalarInt
+    ) -> MappingProxyType[RegimeName, FloatND]:
         del age, period
         return MappingProxyType({"terminal": jnp.array(-1.0)})
 

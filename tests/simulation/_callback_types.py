@@ -1,12 +1,16 @@
 """Declared keyword maps forwarded by simulation observers."""
 
 from collections.abc import Callable, Collection, Mapping
-from typing import NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 import jax
 
 import _lcm.simulation.chunk_profile_inventory as inventory
+import _lcm.simulation.initial_conditions as initial_module
 import _lcm.simulation.simulate as simulation
+import _lcm.solution.validate_V as validation
+import _lcm.utils.logging as lcm_logging
+import lcm.model as model_module
 from _lcm.execution.core_program import (
     CoreProgram,
     ReducedAxis,
@@ -262,3 +266,114 @@ type ChunkResults = dict[
 ]
 type EntryCaptureResult = entry_inputs.SimulationEntryInputs | None
 type ChunkPreparationResult = chunk_admission.PreparedSimulationChunks
+
+
+class ProducerAdmission(TypedDict):
+    function: host_operations.Callable[..., host_operations.PytreeValue]
+    arguments: host_operations.Mapping[
+        host_operations.ReferenceName, host_operations.ShapeDtypePytree
+    ]
+    devices: tuple[host_operations.jax.Device, ...]
+    output_sharding: host_operations.jax.sharding.Sharding | None
+    budget_bytes: int
+    resident_bytes: int
+
+
+class MemoryCreation(TypedDict):
+    budget_bytes: int
+    devices: tuple[memory.jax.Device, ...]
+    subject_devices: tuple[memory.jax.Device, ...]
+    operations: memory.ProfiledSimulationOperations
+    inputs: memory.DeviceBufferFootprint
+    producers: NotRequired[memory.ProfiledSimulationOperations]
+    axis_widths: NotRequired[memory.MappingProxyType[str, int]]
+    outputs: NotRequired[memory.DeviceBufferFootprint]
+    chunk_inputs: NotRequired[memory.DeviceBufferFootprint]
+    unit_inputs: NotRequired[memory.ArrayTree]
+    derived: NotRequired[memory.PytreeValue]
+    period_owner: NotRequired[memory.PeriodSimulationReads | None]
+    ledger: NotRequired[memory.OwnerLedger]
+
+
+class PeriodValidation(TypedDict):
+    logger: simulation.logging.Logger
+    age: simulation.ScalarInt | simulation.ScalarFloat
+    period_results: tuple[
+        tuple[simulation.RegimeName, simulation.PeriodRegimeSimulationData], ...
+    ]
+    memory: NotRequired[simulation.SimulationMemory | None]
+    time_kind: NotRequired[Literal["age", "period"]]
+
+
+class ValueValidation(TypedDict):
+    value: simulation.FloatND
+    subject_ids_in_regime: simulation.BoolND
+    age: simulation.ScalarInt | simulation.ScalarFloat
+    regime_name: simulation.RegimeName
+    logger: simulation.logging.Logger
+    memory: NotRequired[simulation.SimulationMemory | None]
+    time_kind: NotRequired[Literal["age", "period"]]
+
+
+class TransitionCountsValidation(TypedDict):
+    logger: lcm_logging.logging.Logger
+    prev_regime_ids: lcm_logging.Int1D
+    new_regime_ids: lcm_logging.Int1D
+    regime_ids_to_names: lcm_logging.RegimeIdsToNames
+    counts_factory: NotRequired[lcm_logging.Callable[[], list[list[int]]] | None]
+
+
+class DiagnosticEnrichment(TypedDict):
+    exc: validation.InvalidValueFunctionError
+    compute_intermediates: validation.Callable[..., validation._Reductions]
+    state_action_space: validation.StateActionSpace
+    next_regime_to_V_arr: (
+        validation.MappingProxyType[validation.RegimeName, validation.FloatND] | None
+    )
+    flat_params: validation.FlatRegimeParams | None
+    regime_name: validation.RegimeName
+    age: float
+    period: int | None
+    time_kind: NotRequired[Literal["age", "period"]]
+
+
+class DiagnosticInputs(TypedDict, total=False):
+    logger: lcm_logging.logging.Logger
+    age: simulation.ScalarInt | simulation.ScalarFloat
+    period_results: tuple[
+        tuple[simulation.RegimeName, simulation.PeriodRegimeSimulationData], ...
+    ]
+    memory: simulation.SimulationMemory | None
+    time_kind: Literal["age", "period"]
+    value: simulation.FloatND
+    subject_ids_in_regime: simulation.BoolND
+    regime_name: simulation.RegimeName
+    prev_regime_ids: lcm_logging.Int1D
+    new_regime_ids: lcm_logging.Int1D
+    regime_ids_to_names: lcm_logging.RegimeIdsToNames
+    counts_factory: lcm_logging.Callable[[], list[list[int]]] | None
+
+
+class SolutionResolution(TypedDict):
+    solution: model_module._SolutionResultBoundary
+    flat_params: model_module.FlatParams
+    entry_allocations: NotRequired[model_module.SimulationEntryAllocations | None]
+    process_grid_resolver: NotRequired[model_module.ProcessGridResolver | None]
+
+
+class InputValidation(TypedDict):
+    initial_conditions: initial_module.InitialConditions
+    regimes: initial_module.MappingProxyType[
+        initial_module.RegimeName, initial_module.Regime
+    ]
+    regime_names_to_ids: initial_module.RegimeNamesToIds
+    flat_params: initial_module.FlatParams
+    ages: initial_module.TimeAxis
+    logger: initial_module.logging.Logger
+    execution: NotRequired[initial_module.ResolvedExecution | None]
+    process_grid_resolver: NotRequired[initial_module.ProcessGridResolver | None]
+    producers: NotRequired[initial_module.ProfiledSimulationOperations | None]
+
+
+class WholeInputValidation(InputValidation):
+    retained_footprint: NotRequired[DeviceBufferFootprint | None]

@@ -9,15 +9,16 @@ operations (see `host_operations._operation_memory`).
 """
 
 from collections import Counter
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from types import MappingProxyType
-from typing import Any
+from typing import Never
 
 import jax
 import pytest
 
 from _lcm.execution import workspace_planning
+from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.simulation import chunk_admission, host_operations, runtime
 from lcm import (
     AgeGrid,
@@ -28,6 +29,9 @@ from lcm import (
     Regime,
 )
 from lcm.exceptions import ExecutionPlanningError
+from lcm.result import SimulationResult
+from lcm.solver_api import SolutionResult
+from lcm.typing import UserInitialConditions, UserParams
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 from tests.simulation.test_normal_process_grid_admission import _inputs
@@ -52,9 +56,11 @@ def _count_memory_reads(*, monkeypatch: pytest.MonkeyPatch) -> Generator[Counter
     counts: Counter[str] = Counter()
     original = workspace_planning.compiler_memory_reservation
 
-    def counted(**kwargs: Any) -> Any:
+    def counted[Compiled](
+        *, compiled: Compiled, widths: Mapping[str, int]
+    ) -> CompilerMemoryReservation:
         counts["reservation_reads"] += 1
-        return original(**kwargs)
+        return original(compiled=compiled, widths=widths)
 
     with monkeypatch.context() as observe:
         observe.setattr(workspace_planning, "compiler_memory_reservation", counted)
@@ -64,14 +70,14 @@ def _count_memory_reads(*, monkeypatch: pytest.MonkeyPatch) -> Generator[Counter
 
 
 @pytest.fixture
-def budgeted_case() -> tuple[Any, Any, Any, Any]:
+def budgeted_case() -> tuple[Model, UserParams, UserInitialConditions, SolutionResult]:
     """A small budgeted model whose forward simulation is actually compiled."""
     model, params, initial = _inputs(budget=2**28)
     solution = model.solve(params=params, log_level="off")
     return model, params, initial, solution
 
 
-def _executable_cache_size(*, model: Any) -> int:
+def _executable_cache_size(*, model: Model) -> int:
     """Read the number of distinct compiled executables every cache retains.
 
     A dispatch reads the compiler report from independent caches: the
@@ -87,6 +93,7 @@ def _executable_cache_size(*, model: Any) -> int:
     (regimes,) = model._simulate_runtime_regimes.values()
     regime = next(iter(regimes.values()))
     executor = regime.simulation.programs.executor
+    assert isinstance(executor, runtime.SimulationRuntime)
     return (
         len(executor.cache)
         + len(executor.operations.cache)
@@ -95,8 +102,13 @@ def _executable_cache_size(*, model: Any) -> int:
 
 
 def _simulate(
-    *, model: Any, params: Any, initial: Any, solution: Any, seed: int
-) -> Any:
+    *,
+    model: Model,
+    params: UserParams,
+    initial: UserInitialConditions,
+    solution: SolutionResult,
+    seed: int,
+) -> SimulationResult:
     return model.simulate(
         params=params,
         initial_conditions=initial,
@@ -108,7 +120,7 @@ def _simulate(
 
 def test_warm_repeated_simulate_reads_the_report_per_executable(
     *,
-    budgeted_case: tuple[Any, Any, Any, Any],
+    budgeted_case: tuple[Model, UserParams, UserInitialConditions, SolutionResult],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A second warm call reuses every executable, so no new report is read."""
@@ -130,7 +142,7 @@ def test_warm_repeated_simulate_reads_the_report_per_executable(
 
 def test_first_dispatch_reads_the_report_once_per_distinct_executable(
     *,
-    budgeted_case: tuple[Any, Any, Any, Any],
+    budgeted_case: tuple[Model, UserParams, UserInitialConditions, SolutionResult],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The cold call compiles fresh code, so exactly one read per new executable."""
@@ -186,7 +198,7 @@ def test_cached_memory_is_returned_without_recomputation(
         memory=memory,
     )
 
-    def forbidden(**_kwargs: Any) -> Any:
+    def forbidden[Ignored](**_kwargs: Ignored) -> Never:
         raise AssertionError("_simulation_memory recomputed a cached report.")
 
     monkeypatch.setattr(runtime, "compiler_memory_reservation", forbidden)
@@ -222,7 +234,7 @@ def _axis_width_case(
     axis_widths: dict[str, int],
     budget: int = 2**28,
     population: int = 8,
-) -> tuple[Any, Any, Any]:
+) -> tuple[Model, UserParams, UserInitialConditions]:
     """One model pinned to an explicit inner subject width and population.
 
     Since the top-first planner (`_resolve_subject_anchor_width` in
@@ -268,7 +280,9 @@ def _axis_width_case(
     return model, params, initial
 
 
-def _top_first_descent_case(*, budget: int) -> tuple[Any, Any, Any]:
+def _top_first_descent_case(
+    *, budget: int
+) -> tuple[Model, UserParams, UserInitialConditions]:
     """A 64-subject population pinned to an 8-subject anchor under `budget`.
 
     This gives the top-first planner (`_plan_independent_chunks`) an outer
@@ -302,9 +316,17 @@ def _find_top_first_descent_budget() -> int | None:
     original = chunk_admission._profile_independent_candidate
     visited: list[int] = []
 
-    def counted(**kwargs: Any) -> Any:
-        visited.append(kwargs["n_subjects"])
-        return original(**kwargs)
+    def counted(
+        *,
+        profiler: chunk_admission._ChunkProfiler,
+        n_subjects: int,
+        widths: Mapping[str, int],
+        attempts: list[chunk_admission.ChunkCandidateReceipt],
+    ) -> chunk_admission.SimulationChunkPlan | None:
+        visited.append(n_subjects)
+        return original(
+            profiler=profiler, n_subjects=n_subjects, widths=widths, attempts=attempts
+        )
 
     with pytest.MonkeyPatch.context() as observe:
         observe.setattr(chunk_admission, "_profile_independent_candidate", counted)
@@ -428,7 +450,7 @@ def test_changed_width_map_produces_a_fresh_report(
 
 
 def test_fresh_larger_retained_owner_still_causes_refusal(
-    budgeted_case: tuple[Any, Any, Any, Any],
+    budgeted_case: tuple[Model, UserParams, UserInitialConditions, SolutionResult],
 ) -> None:
     """Admission still consults live residency; a cached memory report never
     masks it."""

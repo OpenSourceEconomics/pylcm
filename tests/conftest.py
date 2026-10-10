@@ -6,7 +6,7 @@ import logging
 import os
 import pathlib
 import platform
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import make_dataclass
 from types import MappingProxyType
 from typing import NotRequired, cast
@@ -26,6 +26,7 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import (
 )
 from _lcm.engine import PeriodRegimeSimulationData, Regime
 from _lcm.execution.core_program import MaterializedCoreProgram
+from _lcm.execution.output_layout import ResolvedOutputLayout
 from _lcm.execution.pending_work import PendingSolveWork
 from _lcm.execution.value_transfer import (
     MaterializedTransferObserver,
@@ -60,6 +61,7 @@ from _lcm.typing import (
     RegimeIdsToNames,
     RegimeName,
     RegimeNamesToIds,
+    ShapeDtypePytree,
 )
 from lcm.ages import AgeGrid
 from lcm.collective import Gate
@@ -965,3 +967,15 @@ class SubjectChunkKwargs(TypedDict, closed=True):
 
 
 type SubjectChunkResults = dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
+
+
+class AttachResolvedOutputLayoutKwargs(TypedDict, closed=True):
+    """Keywords observed when a compiled core receives its resolved output layout."""
+
+    compiled: Callable[..., PytreeValue]
+    layout: ResolvedOutputLayout
+    tile_widths: Mapping[str, int]
+    input_transfer_plan: NotRequired[tuple[ResolvedValueTransfer, ...]]
+    internal_input_templates: NotRequired[Mapping[ReferenceName, ShapeDtypePytree]]
+    donated_arguments: NotRequired[tuple[str, ...]]
+    name: str

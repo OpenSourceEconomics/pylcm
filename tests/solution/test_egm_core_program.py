@@ -11,6 +11,7 @@ carry are born in their planned placement, and a replay lowers the same program.
 import functools
 import logging
 from collections.abc import Mapping
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -23,14 +24,21 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
+    CoreProgram,
+    CoreProgramGraphAware,
     ProgramScope,
     core_program_graph,
     materialize_core_program,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.solution import period_replay
+from _lcm.solution.contract import PeriodKernel
 from _lcm.solution.egm import _EGMPeriodKernel
 from _lcm.solution.period_replay import replay_period
+from _lcm.typing import (
+    ArgumentTree,
+    PytreeValue,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.solvers import EGM
 from lcm.typing import UserFunction
@@ -85,9 +93,9 @@ def test_the_graph_publishes_one_planned_main_program():
 
 def test_main_publishes_the_value_and_a_one_row_carry():
     kernel, _ = _kernel()
-    value_role, carry_roles = cast(
-        "tuple[Any, Any]", core_program_graph(kernel=kernel)["main"].output_roles
-    )
+    roles = core_program_graph(kernel=kernel)["main"].output_roles
+    assert isinstance(roles, tuple)
+    value_role, carry_roles = roles
 
     row = StateAxesLeading(state_names=())
     assert value_role is VALUE
@@ -106,9 +114,9 @@ def test_the_runtime_call_hands_the_core_exactly_the_builders_arguments():
     materialized = materialize_core_program(
         program=program, context=_build_context(context)
     )
-    received: list[Mapping[str, Any]] = []
+    received: list[Mapping[str, ArgumentTree]] = []
 
-    def recording_core(**kwargs: Any) -> Any:
+    def recording_core(**kwargs: ArgumentTree) -> PytreeValue:
         received.append(kwargs)
         return program.function(**kwargs)
 
@@ -154,7 +162,7 @@ def test_with_fixed_params_rebinds_the_program_and_its_builder():
     bound = kernel.with_fixed_params(fixed_flat_params=fixed)
     bound_program = core_program_graph(kernel=bound)["main"]
 
-    function = cast("functools.partial", bound_program.function)
+    function = bound_program.function
     assert isinstance(function, functools.partial)
     assert function.func is program.function
     assert function.keywords["crra"] == 2.0
@@ -190,7 +198,9 @@ def _flat_params(
     )
 
 
-def test_a_replay_lowers_the_program_the_solve_ran(*, monkeypatch, tmp_path):
+def test_a_replay_lowers_the_program_the_solve_ran(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", f"{_REGIME}@{_PERIOD}")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     solution = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
@@ -199,8 +209,10 @@ def test_a_replay_lowers_the_program_the_solve_ran(*, monkeypatch, tmp_path):
     dispositions: list[CoreExecutionDisposition] = []
     real_graph = period_replay.core_program_graph
 
-    def record_graph(**kwargs: Any) -> Any:
-        graph = real_graph(**kwargs)
+    def record_graph(
+        *, kernel: PeriodKernel | CoreProgramGraphAware
+    ) -> MappingProxyType[str, CoreProgram]:
+        graph = real_graph(kernel=kernel)
         dispositions.extend(program.disposition for program in graph.values())
         return graph
 
@@ -237,7 +249,7 @@ def test_the_kernel_runs_under_jit_from_its_declared_program():
         np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))
 
 
-def _single_liquid_nbegm_graph() -> Mapping[str, Any]:
+def _single_liquid_nbegm_graph() -> Mapping[str, CoreProgram]:
     """The graph NB-EGM builds for a regime whose only ride axis is liquid."""
     from tests.test_nbegm_constraint_validation import (  # noqa: PLC0415
         _build_smooth_model,
@@ -259,7 +271,10 @@ def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints():
 
     assert tuple(graph) == ("main",)
     assert graph["main"].disposition_reason is None
-    _, carry_roles = cast("tuple[Any, Any]", graph["main"].output_roles)
+    roles = graph["main"].output_roles
+    assert isinstance(roles, tuple)
+    _, carry_roles = roles
+    assert isinstance(carry_roles, EGMCarry)
     assert carry_roles.breakpoints == StateAxesLeading(state_names=())
     assert carry_roles.policy is None
 
