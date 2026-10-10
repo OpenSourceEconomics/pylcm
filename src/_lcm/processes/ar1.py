@@ -86,6 +86,7 @@ class TauchenAR1Process(_AR1Process):
     def __post_init__(self) -> None:
         super().__post_init__()
         _validate_gauss_hermite_grid(
+            n_points=self.n_points,
             gauss_hermite=self.gauss_hermite,
             n_std=self.n_std,
         )

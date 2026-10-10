@@ -288,10 +288,14 @@ class _ContinuousStochasticProcess(ContinuousGrid):
 
 def _validate_gauss_hermite_grid(
     *,
+    n_points: int,
     gauss_hermite: bool,
     n_std: float | None,
 ) -> None:
-    """Validate `gauss_hermite` / `n_std` consistency."""
+    """Validate Gauss-Hermite node counts and mutually exclusive grid options."""
+    if gauss_hermite and n_points < 1:
+        msg = f"n_points must be positive (got {n_points})."
+        raise GridInitializationError(msg)
     if gauss_hermite and n_std is not None:
         msg = "gauss_hermite=True and n_std are mutually exclusive."
         raise GridInitializationError(msg)

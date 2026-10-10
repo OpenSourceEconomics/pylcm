@@ -46,8 +46,8 @@ NormalIIDProcess(n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0)
 - `n_std`: Number of standard deviations for the grid boundary. Mutually exclusive with
   `gauss_hermite=True`.
 
-With `gauss_hermite=True`, both even and odd `n_points` are supported. The examples use
-odd counts, which include a node at the mean; even counts have no mean node.
+With `gauss_hermite=True`, positive even and odd `n_points` are supported. The examples
+use odd counts, which include a node at the mean; even counts have no mean node.
 
 ### LogNormalIIDProcess
 

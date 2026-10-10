@@ -138,7 +138,9 @@ class NormalIIDProcess(_IIDProcess):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        _validate_gauss_hermite_grid(gauss_hermite=self.gauss_hermite, n_std=self.n_std)
+        _validate_gauss_hermite_grid(
+            n_points=self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
+        )
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
@@ -210,7 +212,9 @@ class LogNormalIIDProcess(_IIDProcess):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        _validate_gauss_hermite_grid(gauss_hermite=self.gauss_hermite, n_std=self.n_std)
+        _validate_gauss_hermite_grid(
+            n_points=self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
+        )
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:

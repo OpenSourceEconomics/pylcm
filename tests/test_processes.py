@@ -15,6 +15,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 from quantecon.markov.approximation import rouwenhorst as qe_rouwenhorst
 from quantecon.markov.approximation import tauchen as qe_tauchen
+from scipy.special import ndtr
 
 from _lcm.config import TEST_DATA
 from lcm import (
@@ -293,6 +294,29 @@ def test_even_n_points_accepted_for_gauss_hermite(
             decimal=DECIMAL_PRECISION,
         )
         aaae(probabilities[0] @ got**2, mu**2 + sigma**2, decimal=DECIMAL_PRECISION)
+    else:
+        boundaries = np.concatenate(
+            ([-np.inf], (expected[:-1] + expected[1:]) / 2, [np.inf])
+        )
+        conditional_mean = mu + rho * expected
+        expected_probabilities = np.diff(
+            ndtr((boundaries[None, :] - conditional_mean[:, None]) / sigma), axis=1
+        )
+        aaae(probabilities, expected_probabilities, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize(
+    "grid_cls", [NormalIIDProcess, LogNormalIIDProcess, TauchenAR1Process]
+)
+@pytest.mark.parametrize("n_points", [0, -1, -2])
+def test_gauss_hermite_rejects_nonpositive_node_counts(
+    *,
+    grid_cls: type[NormalIIDProcess | LogNormalIIDProcess | TauchenAR1Process],
+    n_points: int,
+) -> None:
+    """A Gauss-Hermite support requires a positive node count at construction."""
+    with pytest.raises(GridInitializationError, match="n_points must be positive"):
+        grid_cls(n_points=n_points, gauss_hermite=True)
 
 
 @pytest.mark.parametrize(
