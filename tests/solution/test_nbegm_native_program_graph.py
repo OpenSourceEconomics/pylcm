@@ -25,9 +25,10 @@ from _lcm.execution.core_program import (
     materialize_core_program,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
 from lcm.solver_api import SIMULATION_POLICY
 from lcm.solvers import CELL_AXIS
-from tests.solution._nbegm_direct_oracle import ride_along_kernel
+from tests.solution._nbegm_direct_oracle import OracleContext, ride_along_kernel
 from tests.test_models import (
     nbegm_jump_ride_along_toy,
     nbegm_ride_along_toy,
@@ -37,33 +38,41 @@ from tests.test_models import (
 _SMALL: dict[str, Any] = {"n_liquid": 12, "n_savings": 16}
 
 
-def _smooth_kernel(**overrides: Any) -> tuple[Any, dict[str, Any]]:
+def _smooth_kernel(
+    **overrides: Any,
+) -> tuple[_RideAlongNBEGMPeriodKernel, OracleContext]:
     model = nbegm_ride_along_toy.build_model(
         variant="nbegm", n_periods=3, **_SMALL, **overrides
     )
-    return ride_along_kernel(
+    kernel, context = ride_along_kernel(
         model=model,
         params=nbegm_ride_along_toy.build_params(),
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
+    return kernel, context
 
 
-def _discrete_kernel() -> tuple[Any, dict[str, Any]]:
+def _discrete_kernel() -> tuple[_RideAlongNBEGMPeriodKernel, OracleContext]:
     model = nbegm_ride_discrete_toy.build_model(
         variant="nbegm", n_periods=3, n_liquid=12, n_savings=16, n_consumption=24
     )
-    return ride_along_kernel(
+    kernel, context = ride_along_kernel(
         model=model,
         params=nbegm_ride_discrete_toy.build_params(),
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
+    return kernel, context
 
 
-def _jump_kernel() -> tuple[Any, dict[str, Any]]:
+def _jump_kernel() -> tuple[_RideAlongNBEGMPeriodKernel, OracleContext]:
     model = nbegm_jump_ride_along_toy.build_model(
         variant="nbegm", n_periods=4, **_SMALL
     )
-    return ride_along_kernel(
+    kernel, context = ride_along_kernel(
         model=model, params=nbegm_jump_ride_along_toy.build_params()
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
+    return kernel, context
 
 
 def _value_state_order(kernel: Any) -> tuple[str, ...]:
@@ -79,7 +88,7 @@ def _roles(*, kernel: Any, name: str) -> tuple[Any, ...]:
     return cast("tuple[Any, ...]", core_program_graph(kernel=kernel)[name].output_roles)
 
 
-def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
+def _build_context(context: OracleContext) -> CoreBuildContext:
     return CoreBuildContext(
         state_action_space=context["state_action_space"],
         next_regime_to_V_arr=context["next_regime_to_V_arr"],
@@ -90,7 +99,7 @@ def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
     )
 
 
-def _run(*, kernel: Any, context: Mapping[str, Any], name: str) -> tuple:
+def _run(*, kernel: Any, context: OracleContext, name: str) -> tuple:
     program = core_program_graph(kernel=kernel)[name]
     materialized = materialize_core_program(
         program=program, context=_build_context(context)

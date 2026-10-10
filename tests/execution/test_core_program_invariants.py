@@ -35,6 +35,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.typing import PytreeValue, ShapeDtypePytree
+from lcm.typing import RegimeName
 
 _WIDTH_KEYWORD = "_test_action_tile_width"
 
@@ -136,11 +137,11 @@ def _program(
     )
 
 
-def _core_with_values(
+def _core_with_values[Ignored](
     *,
     choice: jax.Array,
     _test_action_tile_width: int,
-    **_value_inputs: object,
+    **_value_inputs: Ignored,
 ) -> jax.Array:
     """Keep transfer inputs dynamic while reusing the scalar test core."""
     return _core(
@@ -182,8 +183,8 @@ def _access_and_transfer(
     *,
     value: jax.Array,
     source_period: int = 0,
-    source_regime: str = "source",
-    target_regime: str = "target",
+    source_regime: RegimeName = "source",
+    target_regime: RegimeName = "target",
     channel: ValueInputChannel = ValueInputChannel.NEXT_REGIME_VALUE,
     path: tuple[str | int, ...] = ("target",),
     source_sharding: jax.sharding.Sharding | None = None,

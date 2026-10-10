@@ -9,7 +9,7 @@ same values and an invalid law at a feasible row raises in both.
 
 from collections.abc import Mapping
 from fractions import Fraction
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -30,6 +30,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.phased import Phased
+from lcm.regime import ConstraintEntry, FunctionEntry
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt, UserFunction
 
 
@@ -108,7 +109,7 @@ def _uses_limit(
     return consumption <= spending_limit
 
 
-def _leaf_names(*, tree: Any) -> set[str]:
+def _leaf_names(*, tree: _TemplateNode) -> set[str]:
     if not isinstance(tree, Mapping):
         return set()
     return {
@@ -130,13 +131,13 @@ def _make_model(
     bad_feasible: bool = False,
 ) -> Model:
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_points)
-    functions: dict[str, Any] = {"utility": _consumption}
+    functions: dict[str, FunctionEntry] = {"utility": _consumption}
     if representation == "helper":
         functions["spending_limit"] = AgeSpecializedFunction(
             build=_helper_factory,
             signature=_age_signature,
         )
-        constraints: dict[str, Any] = {"budget": _uses_limit}
+        constraints: dict[str, ConstraintEntry] = {"budget": _uses_limit}
     else:
         constraints = {
             "budget": AgeSpecializedFunction(
@@ -355,3 +356,6 @@ def test_fixed_binding_order_does_not_change_equal_shape_economics(
                 log_level="off",
             )
             np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+type _TemplateNode = str | Mapping[str, _TemplateNode]

@@ -29,7 +29,8 @@ import pytest
 
 import lcm
 from lcm import DiscreteGrid, LinSpacedGrid, Model
-from lcm.typing import ContinuousState, DiscreteState, FloatND
+from lcm.regime import StateTransitionEntry
+from lcm.typing import ContinuousState, DiscreteState, FloatND, StateName
 from tests.solution._cliff_pullback_reference import (
     child_cliff_preimages,
     sibling_draw_preimages,
@@ -150,7 +151,7 @@ def _model(
             else _income_derived_from_shock
         )
     state_order = ("shock", "kind") if reverse_declaration_order else ("kind", "shock")
-    transitions: dict[str, object] = {
+    transitions: dict[StateName, StateTransitionEntry] = {
         "kind": lcm.StochasticTransition(func=_kind_probabilities),
         "shock": lcm.StochasticTransition(func=_shock_probabilities),
     }

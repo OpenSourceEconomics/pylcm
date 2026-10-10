@@ -48,6 +48,8 @@ from pathlib import Path
 
 import pytest
 
+from lcm.typing import FunctionName, ReferenceName
+
 SRC = Path(__file__).resolve().parents[2] / "src"
 
 PHASE_ARGS = frozenset({"continuation_functions"})
@@ -128,7 +130,7 @@ def _resolver_name(node: ast.AST) -> str | None:
     return None
 
 
-def assignment_value(*, node: ast.AST, target_name: str) -> ast.AST:
+def assignment_value(*, node: ast.AST, target_name: ReferenceName) -> ast.AST:
     for child in ast.walk(node):
         if isinstance(child, ast.Assign) and any(
             isinstance(target, ast.Name) and target.id == target_name
@@ -387,7 +389,9 @@ class Mutation:
     apply: Callable[..., None]
 
 
-def remove_kwonly_arg(*, func_name: str, arg_name: str) -> Callable:
+def remove_kwonly_arg(
+    *, func_name: FunctionName, arg_name: ReferenceName
+) -> Callable[..., None]:
     def mutate(*, q_tree, p_tree, others):
         _ = p_tree, others
         func = functions(q_tree)[func_name]
@@ -400,7 +404,9 @@ def remove_kwonly_arg(*, func_name: str, arg_name: str) -> Callable:
     return mutate
 
 
-def remove_call_keyword(*, callee: str, keyword: str, occurrence: int = 0) -> Callable:
+def remove_call_keyword(
+    *, callee: str, keyword: str, occurrence: int = 0
+) -> Callable[..., None]:
     def mutate(*, q_tree, p_tree, others):
         _ = q_tree, others
         call = call_named(node=p_tree, name=callee)[occurrence]
@@ -415,9 +421,9 @@ def replace_assignment(
     *,
     name: str,
     expression: str,
-    func_name: str = "get_Q_and_F_collective",
+    func_name: FunctionName = "get_Q_and_F_collective",
     occurrence: int = 0,
-) -> Callable:
+) -> Callable[..., None]:
     def mutate(*, q_tree, p_tree, others):
         _ = p_tree, others
         func = functions(q_tree)[func_name]
@@ -435,8 +441,8 @@ def replace_assignment(
 
 
 def replace_call_keyword_in(
-    *, func_name: str, callee: str, keyword: str, expression: str
-) -> Callable:
+    *, func_name: FunctionName, callee: str, keyword: str, expression: str
+) -> Callable[..., None]:
     """Rebind one keyword of one call inside one function of `Q_and_F.py`.
 
     Takes the enclosing function by name because a role-level bypass now lives in
@@ -456,7 +462,7 @@ def replace_call_keyword_in(
 
 def replace_call_keyword_in_collective(
     *, callee: str, keyword: str, expression: str
-) -> Callable:
+) -> Callable[..., None]:
     return replace_call_keyword_in(
         func_name="get_Q_and_F_collective",
         callee=callee,

@@ -55,6 +55,7 @@ from _lcm.execution.value_views import (
 )
 from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import StateName
 
 _STATES = ("pref_type", "assets", "health")
 _SHAPE = (3, 4, 2)
@@ -112,7 +113,7 @@ def _selected_view(
     required: jax.sharding.Sharding,
     axis_names: tuple[str, ...] = _STATES,
     shape: tuple[int, ...] = _SHAPE,
-    state: str = "pref_type",
+    state: StateName = "pref_type",
     keep_axis: bool = False,
     width: int = 1,
 ) -> ValueViewDescriptor:

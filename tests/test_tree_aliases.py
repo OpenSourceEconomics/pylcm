@@ -47,7 +47,8 @@ def test_argument_tree_admits_concrete_and_abstract_name_keyed_trees(
     ids=["string", "name-over-string", "period-keyed", "object"],
 )
 def test_argument_tree_rejects_strings_period_keys_and_objects(
-    *, tree: str | Mapping[str, str] | Mapping[int, jax.Array] | object
+    *,
+    tree: str | Mapping[str, str] | Mapping[int, jax.Array] | object,  # noqa: PAN001 - includes a literal object to test rejection
 ) -> None:
     """A string leaf, a period-keyed level or an arbitrary object fails the check."""
     with pytest.raises(BeartypeCallHintParamViolation):
@@ -86,7 +87,8 @@ def test_footprint_tree_admits_any_hashable_keys_and_abstract_leaves(
     ids=["string", "name-over-string", "object"],
 )
 def test_footprint_tree_rejects_strings_and_objects(
-    *, tree: str | Mapping[str, str] | object
+    *,
+    tree: str | Mapping[str, str] | object,  # noqa: PAN001 - includes a literal object to test rejection
 ) -> None:
     """A string leaf or an arbitrary object fails the check."""
     with pytest.raises(BeartypeCallHintParamViolation):

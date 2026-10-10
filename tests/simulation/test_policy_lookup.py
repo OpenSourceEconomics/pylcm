@@ -327,7 +327,9 @@ def test_state_grid_scales_shock_nodes_with_runtime_sigma(sigma):
     model = build_shock_model()
     params = build_shock_params()
     unit = model.state_grid(params=params, regime_name="alive", state_name="income")
-    params["alive"]["income"] = {"mu": 0.0, "sigma": sigma}
+    alive = params["alive"]
+    assert isinstance(alive, dict)
+    alive["income"] = {"mu": 0.0, "sigma": sigma}
     got = model.state_grid(params=params, regime_name="alive", state_name="income")
     np.testing.assert_allclose(got, sigma * np.asarray(unit), rtol=1e-6)
 

@@ -175,7 +175,7 @@ def test_repeated_original_does_not_hide_an_invalid_second_descriptor() -> None:
     target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     source = jnp.asarray(1.0, dtype=jnp.float32)
 
-    def forbidden(**_arguments: object) -> NoReturn:
+    def forbidden[Ignored](**_arguments: Ignored) -> NoReturn:
         pytest.fail("invalid alias metadata reached the numerical body")
 
     adapter = make_eager_core(

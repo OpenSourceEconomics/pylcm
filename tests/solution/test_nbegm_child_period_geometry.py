@@ -39,6 +39,7 @@ from _lcm.execution.core_program import (
     materialize_core_program,
 )
 from _lcm.solution.nbegm import _cliff_savings_targets as production_targets
+from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
 from lcm import AgeSpecializedFunction, AgeSpecializedGrid, DiscreteGrid, LinSpacedGrid
 from lcm.typing import ContinuousState, FloatND
 from tests.solution._cliff_pullback_reference import (
@@ -219,6 +220,7 @@ def _build_seam(
 ) -> dict[str, Any]:
     """The source's period-0 kernel, its solved inputs and the cell it reads."""
     kernel, context = ride_along_kernel(model=model, params=params, period=0)
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     replay = core_program_graph(kernel=kernel)["replay"]
     materialized = materialize_core_program(
         program=replay, context=CoreBuildContext(**context)

@@ -186,6 +186,7 @@ def test_axis_width_gate_bounds_the_cancellation_entry_by_its_operands(
     real parity test and a 512-step move fails it.
     """
     _, solution = axis_parity._solve_and_collect_widths(config=ExecutionConfig())
+    assert solution._engine_view is not None
     expected_values = solution._engine_view.values
     period, regime = axis_parity._CANCELLATION_LEAF
     leaf = np.array(expected_values[period][regime])

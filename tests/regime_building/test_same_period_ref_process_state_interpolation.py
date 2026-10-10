@@ -56,6 +56,7 @@ from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import FlatParams
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -72,7 +73,7 @@ from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.transition import StochasticTransition
-from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import BoolND, DiscreteAction, FloatND, RegimeName, ScalarInt
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
@@ -122,7 +123,7 @@ def _project_shock(wage: FloatND) -> FloatND:
     return wage / 2.0 - 0.7
 
 
-def _to_at_age_zero(target: str) -> ByAge:
+def _to_at_age_zero(target: RegimeName) -> ByAge:
     """Move to `target` with probability one at age 0."""
     return ByAge(
         cases={
@@ -294,7 +295,7 @@ def _make_regimes() -> dict[str, Regime]:
     return regimes
 
 
-def _flat_params() -> MappingProxyType:
+def _flat_params() -> FlatParams:
     return MappingProxyType(
         {
             "shock_ref": MappingProxyType(

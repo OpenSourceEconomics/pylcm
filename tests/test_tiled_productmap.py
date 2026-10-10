@@ -2,12 +2,13 @@
 
 import functools
 from collections.abc import Callable
-from typing import Any, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.extend.core import ClosedJaxpr, Jaxpr
 from numpy.testing import assert_array_equal
 
 from _lcm.utils import dispatchers
@@ -22,12 +23,12 @@ def _evaluate_grouped_cell(
     return jnp.sqrt(first + second) + jnp.exp(last)
 
 
-def _primitive_input_shapes(*, graph: Any, name: str) -> list[tuple[int, ...]]:
+def _primitive_input_shapes(
+    *, graph: Jaxpr | ClosedJaxpr, name: str
+) -> list[tuple[int, ...]]:
     """Collect operand shapes through nested mapping and reduction bodies."""
-    if not hasattr(graph, "eqns"):
-        if hasattr(graph, "jaxpr"):
-            return _primitive_input_shapes(graph=graph.jaxpr, name=name)
-        return []
+    if isinstance(graph, ClosedJaxpr):
+        return _primitive_input_shapes(graph=graph.jaxpr, name=name)
     shapes = []
     for equation in graph.eqns:
         if equation.primitive.name == name:
@@ -37,7 +38,8 @@ def _primitive_input_shapes(*, graph: Any, name: str) -> list[tuple[int, ...]]:
                 parameter if isinstance(parameter, tuple | list) else (parameter,)
             )
             for child in children:
-                shapes.extend(_primitive_input_shapes(graph=child, name=name))
+                if isinstance(child, Jaxpr | ClosedJaxpr):
+                    shapes.extend(_primitive_input_shapes(graph=child, name=name))
     return shapes
 
 
@@ -46,7 +48,7 @@ def test_tiled_product_limits_coordinate_only_nonlinear_work(*, width: int) -> N
     """Grouped final-coordinate work fits its grid; flat work fits the window."""
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=("first", "second", "last"),
@@ -71,7 +73,7 @@ def test_partial_product_bounds_prefix_nonlinear_rank() -> None:
     """A partial window's prefix work adds at most one batch axis to the scalar body."""
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=("first", "second", "last"),
@@ -94,7 +96,7 @@ def test_grouped_product_respects_combined_window(*, width: int) -> None:
     """The two independent nonlinear operand windows fit the admitted cell width."""
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=("first", "second", "last"),
@@ -149,7 +151,7 @@ def test_grouped_product_matches_scalar_enumeration(
         expected = expected.transpose((2, 1, 0))
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=variables,
@@ -177,9 +179,12 @@ def _build_mapper(
     variables: tuple[str, ...],
     untiled_variables: tuple[str, ...] = (),
     broadcast_variables: tuple[str, ...] = (),
-) -> Callable[..., Any]:
+) -> Callable[..., tuple[FloatND, BoolND]]:
     """Obtain the new mapping boundary without hiding a missing implementation."""
-    build = cast("Callable[..., Callable[..., Any]]", dispatchers.tiled_productmap)
+    build = cast(
+        "Callable[..., Callable[..., tuple[FloatND, BoolND]]]",
+        dispatchers.tiled_productmap,
+    )
     return build(
         func=_evaluate_cell,
         variables=variables,
@@ -341,12 +346,10 @@ def test_untiled_outer_axes_restore_exact_flag_order(
     assert_array_equal(flags, np.asarray([[False, False, False], [True, False, False]]))
 
 
-def _primitive_count(*, graph: Any, name: str) -> int:
+def _primitive_count(*, graph: Jaxpr | ClosedJaxpr, name: str) -> int:
     """Count one primitive across nested mapping and reduction bodies."""
-    if not hasattr(graph, "eqns"):
-        if hasattr(graph, "jaxpr"):
-            return _primitive_count(graph=graph.jaxpr, name=name)
-        return 0
+    if isinstance(graph, ClosedJaxpr):
+        return _primitive_count(graph=graph.jaxpr, name=name)
     total = 0
     for equation in graph.eqns:
         total += equation.primitive.name == name
@@ -354,7 +357,11 @@ def _primitive_count(*, graph: Any, name: str) -> int:
             children = (
                 parameter if isinstance(parameter, tuple | list) else (parameter,)
             )
-            total += sum(_primitive_count(graph=child, name=name) for child in children)
+            total += sum(
+                _primitive_count(graph=child, name=name)
+                for child in children
+                if isinstance(child, Jaxpr | ClosedJaxpr)
+            )
     return total
 
 
@@ -394,7 +401,7 @@ def test_whole_coordinate_windows_read_their_grid_without_an_index_gather(
     }
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=variables,
@@ -419,7 +426,7 @@ def test_whole_coordinate_windows_do_not_move_a_single_bit(
         "last": jnp.asarray([0.25]),
     }
     mapped = cast(
-        "Callable[..., Any]",
+        "Callable[..., FloatND]",
         dispatchers.tiled_productmap(
             func=_evaluate_grouped_cell,
             variables=variables,
@@ -427,7 +434,7 @@ def test_whole_coordinate_windows_do_not_move_a_single_bit(
         ),
     )
     untiled = cast(
-        "Callable[..., Any]",
+        "Callable[..., FloatND]",
         dispatchers.productmap(
             func=_evaluate_grouped_cell,
             variables=variables,
@@ -473,7 +480,7 @@ def _max_operand_size(*, width: int, broadcast: tuple[str, ...], primitive: str)
     """Largest operand of `primitive` in the traced 2 x 3 x 5 product."""
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_first_blind_work,
                 variables=("first", "second", "last"),

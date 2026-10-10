@@ -6,6 +6,7 @@ import itertools
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 from _lcm.regime_building.Q_and_F import (
@@ -31,7 +32,7 @@ def _x64(*, enabled: bool):
         jax.config.update("jax_enable_x64", previous)
 
 
-def _bits(values: object) -> np.ndarray:
+def _bits(values: npt.ArrayLike) -> npt.NDArray[np.uint32 | np.uint64]:
     arr = np.asarray(values)
     return arr.view(np.uint32 if arr.dtype == np.float32 else np.uint64)
 

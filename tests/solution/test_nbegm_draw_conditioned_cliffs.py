@@ -31,7 +31,7 @@ from _lcm.execution.core_program import (
     core_program_graph,
     materialize_core_program,
 )
-from _lcm.solution.nbegm import _cliff_savings_targets
+from _lcm.solution.nbegm import _cliff_savings_targets, _RideAlongNBEGMPeriodKernel
 from lcm import DiscreteGrid, LinSpacedGrid, Model
 from lcm.typing import ContinuousState, DiscreteState, FloatND, UserFunction
 from tests.solution._cliff_pullback_reference import (
@@ -176,6 +176,7 @@ def _solved_seam(*, model: Model, params: dict[str, Any]) -> dict[str, Any]:
     kernel, context = ride_along_kernel(
         model=model, params=params, regime_name="alive", period=0
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     replay = core_program_graph(kernel=kernel)["replay"]
     materialized = materialize_core_program(
         program=replay, context=CoreBuildContext(**context)
@@ -452,6 +453,7 @@ def test_period_kernel_agrees_with_the_child_carry_oracle(
         regime_name="alive",
         period=0,
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     assert_kernel_agrees_with_oracle(
         kernel=kernel,
         context=context,
@@ -624,6 +626,7 @@ def test_child_row_kernels_agree_with_the_oracle(
     kernel, context = ride_along_kernel(
         model=model, params=params, regime_name="alive", period=0
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     assert_kernel_agrees_with_oracle(
         kernel=kernel,
         context=context,
@@ -643,6 +646,7 @@ def test_age_reading_kernel_agrees_with_the_oracle() -> None:
     kernel, context = ride_along_kernel(
         model=model, params=params, regime_name="alive", period=0
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     assert_kernel_agrees_with_oracle(
         kernel=kernel,
         context=context,
@@ -754,6 +758,7 @@ def test_sibling_draw_kernel_agrees_with_the_oracle() -> None:
     kernel, context = ride_along_kernel(
         model=model, params=_sibling_params(), regime_name="alive", period=0
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     assert_kernel_agrees_with_oracle(
         kernel=kernel,
         context=context,

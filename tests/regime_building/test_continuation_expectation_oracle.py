@@ -17,10 +17,10 @@ primitives.
 
 import itertools
 from types import MappingProxyType
-from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 from lcm import (
@@ -36,7 +36,8 @@ from lcm import (
 )
 from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import Regime
+from lcm.regime import Regime, StateTransitionEntry
+from lcm.solver_api import SolutionResult
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -44,6 +45,9 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    StateName,
+    UserParams,
+    UserParamsNode,
 )
 
 
@@ -229,7 +233,12 @@ def _final_utility(
 
 
 def _final_utility_np(
-    *, wealth: np.ndarray, income: Any, bonus: Any, health: Any, pref: Any
+    *,
+    wealth: np.ndarray,
+    income: float | npt.NDArray[np.number],
+    bonus: float | npt.NDArray[np.number],
+    health: float | npt.NDArray[np.number],
+    pref: float | npt.NDArray[np.number],
 ) -> np.ndarray:
     return (
         np.sqrt(wealth + 2.0) * (1.0 + 0.3 * health + 0.2 * pref)
@@ -251,10 +260,10 @@ def _model(
     reads: _Reads,
     slice_draws: bool,
     certainty_equivalent: CertaintyEquivalent | None = None,
-    health_law: Any = None,
+    health_law: StateTransitionEntry = None,
 ) -> Model:
     drawn = _drawn_states(reads=reads, slice_draws=slice_draws)
-    laws: dict[str, Any] = {
+    laws: dict[StateName, StateTransitionEntry] = {
         name: StochasticTransition(func=_PROBABILITY_LAWS[name])
         if name in drawn
         else _IDENTITY_LAWS[name]
@@ -293,8 +302,8 @@ def _model(
     )
 
 
-def _params(*, power_mean: bool = False) -> dict[str, Any]:
-    alive: dict[str, Any] = {
+def _params(*, power_mean: bool = False) -> dict[str, UserParamsNode]:
+    alive: dict[str, dict[str, float]] = {
         "koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR}
     }
     if power_mean:
@@ -384,14 +393,16 @@ def _oracle(
     )
 
 
-def _solved_alive_values(*, model: Model, solution: Any) -> np.ndarray:
+def _solved_alive_values(*, model: Model, solution: SolutionResult) -> np.ndarray:
     names = model.state_names(regime_name="alive")
     return np.transpose(
         np.asarray(solution.values[0]["alive"]), [names.index(name) for name in _AXES]
     )
 
 
-def _policy_on_the_grid(*, model: Model, solution: Any, params: Any) -> np.ndarray:
+def _policy_on_the_grid(
+    *, model: Model, solution: SolutionResult, params: UserParams
+) -> np.ndarray:
     """Return the consumption the decision program picks at every grid state."""
     grids = np.meshgrid(
         np.linspace(*_WEALTH),
@@ -667,11 +678,15 @@ def _finite_range_model(
     )
 
 
-def _finite_range_params(*, model: Model, peak: np.floating) -> Any:
-    params: Any = model.get_params_template()
-    params["alive"]["koopmans_aggregator"]["discount_factor"] = 1.0
-    params["final"]["utility"]["peak"] = jnp.asarray(peak)
-    return params
+def _finite_range_params(*, model: Model, peak: np.floating) -> UserParams:
+    template = model.get_params_template()
+    assert template["alive"]["koopmans_aggregator"] == {"discount_factor": "float"}
+    assert set(template["final"]["utility"]) == {"peak"}
+    return {
+        **{name: {} for name in template},
+        "alive": {"koopmans_aggregator": {"discount_factor": 1.0}},
+        "final": {"utility": {"peak": jnp.asarray(peak)}},
+    }
 
 
 _FINITE_RANGE_PRECISIONS = [
@@ -853,11 +868,15 @@ def _outer_weighted_model(
     )
 
 
-def _outer_weighted_params(*, model: Model, peak: np.floating) -> Any:
-    params: Any = model.get_params_template()
-    params["alive"]["koopmans_aggregator"]["discount_factor"] = 1.0
-    params["high"]["utility"]["peak"] = jnp.asarray(peak)
-    return params
+def _outer_weighted_params(*, model: Model, peak: np.floating) -> UserParams:
+    template = model.get_params_template()
+    assert template["alive"]["koopmans_aggregator"] == {"discount_factor": "float"}
+    assert set(template["high"]["utility"]) == {"peak"}
+    return {
+        **{name: {} for name in template},
+        "alive": {"koopmans_aggregator": {"discount_factor": 1.0}},
+        "high": {"utility": {"peak": jnp.asarray(peak)}},
+    }
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])

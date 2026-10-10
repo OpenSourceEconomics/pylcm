@@ -2,13 +2,14 @@ import ctypes
 import ctypes.util
 import functools
 import json
+import logging
 import os
 import pathlib
 import platform
 from collections.abc import Iterator, Mapping
 from dataclasses import make_dataclass
 from types import MappingProxyType
-from typing import cast
+from typing import NotRequired, cast
 
 import jax
 import jax.numpy as jnp
@@ -17,12 +18,23 @@ import pytest
 from jax import config as jax_config
 from jax.experimental.compilation_cache import compilation_cache
 from numpy.typing import ArrayLike
+from typing_extensions import TypedDict
+from xdist.workermanage import WorkerController
 
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
     kernel_built_for_current_backend,
 )
+from _lcm.engine import PeriodRegimeSimulationData, Regime
+from _lcm.execution.core_program import MaterializedCoreProgram
+from _lcm.execution.pending_work import PendingSolveWork
+from _lcm.execution.value_transfer import (
+    MaterializedTransferObserver,
+    ResolvedValueTransfer,
+    TransferCache,
+)
 from _lcm.gated_edge import gated_edge_from_gate
 from _lcm.params.regime_template import create_edge_vocabulary
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
@@ -33,13 +45,36 @@ from _lcm.regime_building.schedules import (
     lower_demanded_transitions,
     resolve_regime_schedules,
 )
-from _lcm.regime_law import RegimeLaws, bind_regime_law
-from _lcm.typing import RegimeName
+from _lcm.regime_law import RegimeLawDeclaration, RegimeLaws, bind_regime_law
+from _lcm.simulation.chunk_inputs import SimulationCallInputs
+from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.runtime import SimulationDispatchContext
+from _lcm.simulation.simulate import _PeriodToRegimeToReplayReader
+from _lcm.simulation.subject_groups import SubjectRows
+from _lcm.time import TimeAxis
+from _lcm.typing import (
+    ArgumentTree,
+    FlatParams,
+    PeriodToRegimeToSimulationPolicy,
+    PytreeValue,
+    RegimeIdsToNames,
+    RegimeName,
+    RegimeNamesToIds,
+)
 from lcm.ages import AgeGrid
 from lcm.collective import Gate
 from lcm.transition import Transition, TransitionLaw
 from lcm.tuning import _array_ulp_gap
-from lcm.typing import ScalarInt
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ReferenceName,
+    ScalarInt,
+    StateOrActionName,
+)
 from tests.ci import pytest_policy
 from tests.ci.cpu_suite_invocations import ignore_implicit_eight_device_collection
 from tests.ci.receipt_plugin import maybe_register as maybe_register_receipt_plugin
@@ -259,7 +294,11 @@ def assert_agrees_to_ulp(
         raise AssertionError(msg)
 
 
-def assert_general_values_agree(*, got: Mapping, expected: Mapping) -> None:
+def assert_general_values_agree(
+    *,
+    got: Mapping[int, Mapping[RegimeName, FloatND]],
+    expected: Mapping[int, Mapping[RegimeName, FloatND]],
+) -> None:
     """Require exact value coordinates and metadata, with at most eight ULP per cell."""
     assert {period: tuple(regimes) for period, regimes in got.items()} == {
         period: tuple(regimes) for period, regimes in expected.items()
@@ -401,7 +440,10 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 
 # keyword-only-exempt: library-callback=xdist.newhooks.pytest_testnodedown
 @pytest.hookimpl(optionalhook=True)
-def pytest_testnodedown(node: object, error: object) -> None:  # noqa: ARG001
+def pytest_testnodedown(
+    node: WorkerController,
+    error: str | BaseException | pytest.ExceptionInfo[BaseException] | None,  # noqa: ARG001
+) -> None:
     """Collect exact-kernel skips reported by an xdist worker."""
     records = getattr(node, "workeroutput", {}).get("lcm_exact_kernel_skips", [])
     _CONTROLLER_EXACT_KERNEL_SKIPS.extend(records)
@@ -653,7 +695,28 @@ def pytest_runtest_teardown(item, nextitem):
     session._lcm_mib_at_last_release = resident_mebibytes() or 0
 
 
-def bind_laws(declared: Mapping[RegimeName, object]) -> RegimeLaws:
+class ExecuteWithPendingWorkKwargs(TypedDict, closed=True):
+    """Operands accepted by completion-lifetime execution observers."""
+
+    owner: PendingSolveWork
+    compiled: jax.stages.Compiled
+    arguments: Mapping[ReferenceName, PytreeValue]
+    transfers: tuple[ResolvedValueTransfer, ...]
+    cache: TransferCache | None
+    donates: bool
+
+
+class ApplyValueTransferKwargs(TypedDict, closed=True):
+    """Operands accepted by observers of one resolved continuation transfer."""
+
+    value: ArgumentTree
+    transfer: ResolvedValueTransfer
+    on_materialized: NotRequired[MaterializedTransferObserver | None]
+
+
+def bind_laws(
+    declared: Mapping[RegimeName, RegimeLawDeclaration | Transition],
+) -> RegimeLaws:
     """Bind each regime's declared law the way `Model(edges=...)` binds it.
 
     `declared` maps every regime to its law between regimes, `None` for a
@@ -670,9 +733,7 @@ def bind_laws(declared: Mapping[RegimeName, object]) -> RegimeLaws:
                     },
                 )
                 if isinstance(law, Transition)
-                # Test declarations arrive untyped; the runtime check on
-                # `bind_regime_law` refuses any value that is not a law.
-                else bind_regime_law(law)  # ty: ignore[invalid-argument-type]
+                else bind_regime_law(law)
             )
             for name, law in declared.items()
         }
@@ -858,3 +919,49 @@ def _reset_test_compilation_cache(*, enabled: bool) -> None:
     jax.config.update("jax_enable_compilation_cache", enabled)
     compilation_cache.reset_cache()
     jax.clear_caches()
+
+
+class PrepareMaterializedKwargs(TypedDict, closed=True):
+    """Keywords received by `SimulationRuntime._prepare_materialized`."""
+
+    program: MaterializedCoreProgram
+    n_subjects: int
+    residency: NotRequired[SimulationDispatchContext | None]
+
+
+class SubjectChunkKwargs(TypedDict, closed=True):
+    """Keywords received by `_simulate_subject_chunk`."""
+
+    initial_states: dict[StateOrActionName, Float1D | IntND]
+    initial_regime_ids: Int1D
+    starting_periods: Int1D
+    n_subjects: int
+    subject_slice: slice | SubjectRows
+    code: NotRequired[int | None]
+    stored_codes: NotRequired[tuple[int, ...] | None]
+    original_n_subjects: NotRequired[int | None]
+    regimes: MappingProxyType[RegimeName, Regime]
+    regime_names_to_ids: RegimeNamesToIds
+    regime_ids_to_names: RegimeIdsToNames
+    period_to_regime_to_V_arr: MappingProxyType[
+        int, MappingProxyType[RegimeName, FloatND]
+    ]
+    period_to_regime_to_dissolution_flags: MappingProxyType[
+        int, MappingProxyType[RegimeName, BoolND]
+    ]
+    flat_params: FlatParams
+    ages: TimeAxis
+    seed: int
+    logger: logging.Logger
+    initial_own_stakeholder: Int1D
+    period_to_regime_to_sim_policy: NotRequired[PeriodToRegimeToSimulationPolicy | None]
+    period_to_regime_to_replay_reader: NotRequired[_PeriodToRegimeToReplayReader]
+    device_ids: NotRequired[tuple[int, ...]]
+    memory: NotRequired[SimulationMemory | None]
+    call_inputs: NotRequired[SimulationCallInputs | None]
+    taste_shock_seed: NotRequired[int | None]
+    taste_addresses: NotRequired[Mapping[tuple[int, RegimeName], tuple[int, ...]]]
+    process_grid_resolver: NotRequired[ProcessGridResolver | None]
+
+
+type SubjectChunkResults = dict[RegimeName, dict[int, PeriodRegimeSimulationData]]

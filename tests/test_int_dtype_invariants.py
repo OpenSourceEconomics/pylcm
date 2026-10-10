@@ -31,7 +31,7 @@ from tests.test_models.deterministic.regression import (
 )
 
 
-def _as_template(plain: dict) -> ParamsTemplate:
+def _as_template(plain: dict[str, dict[str, dict[str, str]]]) -> ParamsTemplate:
     """Deep-freeze a plain nested dict into a `ParamsTemplate` for tests."""
     return cast("ParamsTemplate", ensure_containers_are_immutable(plain))
 

@@ -9,13 +9,14 @@ values, raw bytes and the public panel exactly.
 import json
 import tempfile
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, NotRequired, TypedDict, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
+from _lcm.typing import JSONValue
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -41,12 +42,23 @@ from lcm.typing import (
     ScalarInt,
 )
 
+
 # Each case names the selected devices, chunk width, population codes and job
 # layout. They cover a non-default selected CPU, one chunk, the width boundary
 # and its tail, several codes whose total fits one width, empty codes, permuted
 # rows and job completion, one versus several jobs, eager execution, the default
 # device and an eight-device subject layout.
-CASES: tuple[dict[str, object], ...] = (
+class _Case(TypedDict):
+    devices: tuple[int, ...]
+    width: int
+    codes: tuple[int, ...]
+    enable_jit: NotRequired[bool]
+    simulation_sharding: NotRequired[Literal["legacy", "subjects"]]
+    assignment: NotRequired[tuple[tuple[int, ...], ...]]
+    reverse_workers: NotRequired[bool]
+
+
+CASES: tuple[_Case, ...] = (
     {"devices": (1,), "width": 1, "codes": (2, 0, 2)},
     {"devices": (1,), "width": 1, "codes": (0,)},
     {"devices": (1,), "width": 2, "codes": (2, 2)},
@@ -148,7 +160,7 @@ def _bytes(array: jax.Array) -> tuple[str, tuple[int, ...], bytes]:
     return host.dtype.str, host.shape, host.tobytes()
 
 
-def _layout(array: jax.Array) -> dict[str, object]:
+def _layout(array: jax.Array) -> dict[str, JSONValue]:
     sharding = array.sharding
     mesh = (
         None
@@ -254,13 +266,13 @@ def _run_case(
 
 def main() -> None:
     """Run every case and print the misplaced leaves and errors of each."""
-    report: dict[str, dict[str, object]] = {}
+    report: dict[str, dict[str, JSONValue]] = {}
     with tempfile.TemporaryDirectory() as work:
         for index, case in enumerate(CASES):
             try:
                 mismatches: list[str] = _run_case(
                     directory=Path(work) / f"case-{index}",
-                    **case,  # ty: ignore[invalid-argument-type]
+                    **case,
                 )
                 error = None
             except Exception as exception:  # noqa: BLE001

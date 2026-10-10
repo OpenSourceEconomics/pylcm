@@ -58,6 +58,7 @@ from _lcm.solution.negm import (
     _KEEPER_CARRY,
     _KEEPER_VALUE,
     _OUTER_NODES,
+    _NEGMPeriodKernel,
     _NodeSolver,
     _OuterCostAtCell,
     _with_outer_post_decision,
@@ -73,7 +74,7 @@ from lcm.solvers import (
     SAVINGS_POINT_AXIS,
 )
 from tests.conftest import X64_ENABLED, assert_agrees_to_ulp
-from tests.solution._nbegm_direct_oracle import ride_along_kernel
+from tests.solution._nbegm_direct_oracle import OracleContext, ride_along_kernel
 from tests.test_models import negm_kinked_toy
 
 _REGIME = "alive"
@@ -89,17 +90,19 @@ _INVARIANCE_ULP = 16
 
 
 @pytest.fixture(scope="module")
-def captured() -> tuple[Any, dict[str, Any]]:
+def captured() -> tuple[_NEGMPeriodKernel, OracleContext]:
     """The kinked toy's NEGM kernel at one period and the solve's inputs to it."""
-    return ride_along_kernel(
+    kernel, context = ride_along_kernel(
         model=negm_kinked_toy.build_model(),
         params=_PARAMS,
         regime_name=_REGIME,
         period=_PERIOD,
     )
+    assert isinstance(kernel, _NEGMPeriodKernel)
+    return kernel, context
 
 
-def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
+def _build_context(context: OracleContext) -> CoreBuildContext:
     return CoreBuildContext(
         state_action_space=context["state_action_space"],
         next_regime_to_V_arr=context["next_regime_to_V_arr"],
@@ -132,7 +135,7 @@ def _aligned_transfer_plan(*, program: Any) -> tuple[ResolvedValueTransfer, ...]
 
 
 def _compiled_cores(
-    *, kernel: Any, context: Mapping[str, Any], width: int
+    *, kernel: Any, context: OracleContext, width: int
 ) -> dict[str, Any]:
     """Compile every program of the graph the way the solve loop does.
 
@@ -178,7 +181,7 @@ def _compiled_cores(
 
 
 def _call(
-    *, kernel: Any, context: Mapping[str, Any], width: int = _N_OUTER
+    *, kernel: Any, context: OracleContext, width: int = _N_OUTER
 ) -> KernelOutput:
     return cast(
         "KernelOutput",
@@ -191,7 +194,7 @@ def _call(
 
 
 def _keeper_then_per_node_loop(
-    *, kernel: Any, context: Mapping[str, Any]
+    *, kernel: Any, context: OracleContext
 ) -> tuple[Any, EGMCarry]:
     """The keeper followed by one adjuster solve per outer node.
 

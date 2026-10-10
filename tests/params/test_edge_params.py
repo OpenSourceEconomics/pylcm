@@ -47,10 +47,14 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserFunction,
     UserParams,
 )
+
+type TemplateNode = str | Mapping[str, TemplateNode]
+
 
 _AGES = AgeGrid(start=60, inclusive_stop=63, step="Y")
 _WEALTH = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
@@ -526,7 +530,7 @@ def test_parametrized_coarse_case_beside_per_target_cases_is_rejected():
         )
 
 
-def _leaf_paths(branch: Mapping[str, object]) -> set[tuple[str, ...]]:
+def _leaf_paths(branch: Mapping[str, TemplateNode]) -> set[tuple[str, ...]]:
     """Return the path of every leaf of a params-template branch.
 
     Args:
@@ -718,7 +722,7 @@ def _horizon_retirement_model(*, n_periods: int) -> Model:
     retires; the declaration is the same at every horizon.
     """
     last_source_age = 58 + n_periods
-    targets: dict[str, AgeRange] = {"retired": AgeRange(start=60)}
+    targets: dict[RegimeName, AgeRange] = {"retired": AgeRange(start=60)}
     if last_source_age > 60:
         targets["working"] = AgeRange(start=60, exclusive_stop=last_source_age)
     return Model(
@@ -770,7 +774,7 @@ def _dormant_selector_model(*, variable: str, n_periods: int) -> Model:
     """
     last_age = n_periods - 1
     last_source_age = last_age - 1
-    targets: dict[str, AgeRange] = {"dead": AgeRange(start=0)}
+    targets: dict[RegimeName, AgeRange] = {"dead": AgeRange(start=0)}
     if last_source_age > 0:
         targets["alive"] = AgeRange(start=0, exclusive_stop=last_source_age)
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
@@ -818,7 +822,7 @@ def _dormant_scored_selector_model(*, function_level: str, n_periods: int) -> Mo
     """
     last_age = n_periods - 1
     last_source_age = last_age - 1
-    targets: dict[str, AgeRange] = {"dead": AgeRange(start=0)}
+    targets: dict[RegimeName, AgeRange] = {"dead": AgeRange(start=0)}
     if last_source_age > 0:
         targets["alive"] = AgeRange(start=0, exclusive_stop=last_source_age)
     on_regime = function_level == "regime"
@@ -912,7 +916,9 @@ class _EdgesNamedId:
     dead: ScalarInt
 
 
-def _named_model(*, regime_name: str, functions: Mapping[str, UserFunction]) -> Model:
+def _named_model(
+    *, regime_name: RegimeName, functions: Mapping[str, UserFunction]
+) -> Model:
     """A source regime with the given name and functions, then a terminal one."""
     source = Regime(
         states={"wealth": _WEALTH},

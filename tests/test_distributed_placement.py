@@ -83,7 +83,7 @@ from lcm.persistence import PeriodCapture
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import ContinuationReader
 from lcm.solvers import GridSearch, Solver
-from lcm.typing import Float1D, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, ScalarFloat, ScalarInt, UserParams
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_eager_core import eager_program, internal_eager_program
 from tests.simulation._profile_comparison import (
@@ -1334,7 +1334,7 @@ def _nbegm_toy(*, distributed_kind: bool) -> Model:
     )
 
 
-def _nbegm_toy_params() -> dict[str, float]:
+def _nbegm_toy_params() -> UserParams:
     """The toy's parameters."""
     from tests.test_models import nbegm_ride_along_toy  # noqa: PLC0415
 

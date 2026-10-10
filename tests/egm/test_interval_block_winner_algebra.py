@@ -18,7 +18,7 @@ from _interval_block_winner_oracle import (
     winner_signature,
 )
 
-_CandidateFactory = Callable[..., tuple[Candidate, ...]]
+type _CandidateFactory = Callable[..., tuple[Candidate, ...]]
 
 ROOT = Path(__file__).resolve().parents[2]
 QUERY_SOURCE = ROOT / "src/_lcm/egm/upper_envelope/query.py"

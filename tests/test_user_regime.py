@@ -51,6 +51,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserFunction,
 )
 
 
@@ -331,11 +332,11 @@ def _gated_edge_model(
     *,
     route_key: str = "only",
     gate_reference_key: str = "outside_value",
-    utility: Callable = _wage_utility,
-    probability: Callable = _probability_one,
-    gate: Callable = _gate_open,
-    gate_reference_projection: Callable = _project_wage,
-    fallback_projection: Callable = _project_wage,
+    utility: UserFunction = _wage_utility,
+    probability: Callable[..., FloatND] = _probability_one,
+    gate: UserFunction = _gate_open,
+    gate_reference_projection: UserFunction = _project_wage,
+    fallback_projection: UserFunction = _project_wage,
 ) -> Model:
     """Build a singleton source whose edge into `target` is gated."""
     source = UserRegime(
@@ -392,7 +393,7 @@ def _next_regime(*, age: float, scale: float) -> ScalarInt:
     return jnp.where(age >= scale, _LawRegimeId.retired, _LawRegimeId.working)
 
 
-def _law_model(*, law: Callable) -> Model:
+def _law_model(*, law: UserFunction) -> Model:
     """Build a working regime whose regime-transition law is `law`."""
     working = UserRegime(
         functions={"utility": utility},
@@ -416,7 +417,9 @@ def _law_model(*, law: Callable) -> Model:
     )
 
 
-_PARAMETER_CARRIERS: dict[str, tuple[Callable, Callable[[Callable], Model]]] = {
+_PARAMETER_CARRIERS: dict[
+    str, tuple[Callable[..., FloatND], Callable[[Callable[..., FloatND]], Model]]
+] = {
     "utility": (_wage_utility, lambda func: _gated_edge_model(utility=func)),
     "regime_transition_law": (_next_regime, lambda func: _law_model(law=func)),
     "probability": (

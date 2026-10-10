@@ -34,21 +34,24 @@ from _lcm.execution.core_program import (
 )
 from _lcm.solution import nnbegm as nnbegm_module
 from _lcm.solution.negm import _with_outer_post_decision
+from _lcm.solution.nnbegm import _NNBEGMPeriodKernel
 from lcm.solver_api import SIMULATION_POLICY
 from tests.simulation.test_nnbegm_split_workflow_parity import _MESH, _PARAMS
-from tests.solution._nbegm_direct_oracle import ride_along_kernel
+from tests.solution._nbegm_direct_oracle import OracleContext, ride_along_kernel
 from tests.test_models import n_nbegm_toy as toy
 
 _ROUTES = {"finite": None, "adaptive": _MESH}
 
 
 @functools.cache
-def _kernel(route: str) -> tuple[Any, dict[str, Any]]:
+def _kernel(route: str) -> tuple[_NNBEGMPeriodKernel, OracleContext]:
     model = toy.build_model(variant="n_nbegm", n_periods=3, outer_search=_ROUTES[route])
-    return ride_along_kernel(model=model, params=_PARAMS)
+    kernel, context = ride_along_kernel(model=model, params=_PARAMS)
+    assert isinstance(kernel, _NNBEGMPeriodKernel)
+    return kernel, context
 
 
-def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
+def _build_context(context: OracleContext) -> CoreBuildContext:
     return CoreBuildContext(
         state_action_space=context["state_action_space"],
         next_regime_to_V_arr=context["next_regime_to_V_arr"],

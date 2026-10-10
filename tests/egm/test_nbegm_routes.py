@@ -28,7 +28,13 @@ from _lcm.constraints.dispositions import (
 )
 from _lcm.constraints.materialize import transitive_arg_names
 from _lcm.constraints.processed import normalize_constraints
-from _lcm.constraints.routes import ConstraintRoute, plan_constraints
+from _lcm.constraints.routes import (
+    BoundaryCompiler,
+    ConstraintRoute,
+    ConstraintRouteKey,
+    StructuralProof,
+    plan_constraints,
+)
 from _lcm.egm.nbegm_routes import case_piece_routes
 from _lcm.engine import VariableInfo, Variables
 from _lcm.solution.contract import (
@@ -37,6 +43,7 @@ from _lcm.solution.contract import (
     _BoundOuterContinuousMargin,
     simulation_route,
 )
+from _lcm.typing import EconFunctionsMapping
 from lcm import LinSpacedGrid
 from lcm.consumption_savings_regime import (
     LiquidMargin,
@@ -44,6 +51,16 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
 from lcm.typing import BoolND, ContinuousAction, ContinuousState
+
+type SiteField = (
+    str
+    | EconFunctionsMapping
+    | frozenset[str]
+    | StructuralProof
+    | BoundaryCompiler
+    | tuple[SiteField, ...]
+    | None
+)
 
 _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=10)
 _MARGIN = LiquidMargin(
@@ -316,7 +333,9 @@ def test_the_nested_solver_walks_one_route_per_rewritten_pool():
     }
 
 
-def _route_shape(route: ConstraintRoute) -> tuple:
+def _route_shape(
+    route: ConstraintRoute,
+) -> tuple[ConstraintRouteKey, tuple[tuple[SiteField, ...], ...]]:
     """Every field of a route and of each of its sites, in declaration order.
 
     Built by reflection rather than by naming the fields, so a field added to
@@ -332,7 +351,7 @@ def _route_shape(route: ConstraintRoute) -> tuple:
     )
 
 
-def _comparable(value: object) -> object:
+def _comparable(value: SiteField) -> SiteField:
     """A value that compares by what it is, not by identity.
 
     A proof is built fresh per call, so two routes carrying the same proof hold

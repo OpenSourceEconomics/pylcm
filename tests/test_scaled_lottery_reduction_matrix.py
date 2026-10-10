@@ -17,12 +17,12 @@ implementation under test.
 
 import itertools
 from fractions import Fraction
-from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import DTypeLike
 
 from lcm import LinearExpectation, QuasiArithmeticMean
 
@@ -33,7 +33,7 @@ _SIGNIFICANDS = (1.0, 1.5, 1.9)
 _VALUE_FRACTIONS = (0.0, 1.0, 0.75)
 
 
-def _dtype_case() -> tuple[Any, tuple[int, ...]]:
+def _dtype_case() -> tuple[np.dtype, tuple[int, ...]]:
     """The working dtype and a spread of shifts its exponent field reaches."""
     dtype = jnp.zeros(()).dtype
     if dtype.itemsize == 4:
@@ -41,7 +41,7 @@ def _dtype_case() -> tuple[Any, tuple[int, ...]]:
     return dtype, (0, 64, 200, 512, 800, 1020)
 
 
-def _value(*, fraction: float, dtype: Any) -> float:
+def _value(*, fraction: float, dtype: DTypeLike) -> float:
     """Turn a value fraction into a concrete value of the working dtype."""
     if fraction == 1.0:
         return 1.0

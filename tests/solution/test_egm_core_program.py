@@ -29,12 +29,13 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.solution import period_replay
+from _lcm.solution.egm import _EGMPeriodKernel
 from _lcm.solution.period_replay import replay_period
 from lcm.exceptions import RegimeInitializationError
 from lcm.solvers import EGM
 from lcm.typing import UserFunction
 from tests.conftest import assert_agrees_to_ulp
-from tests.solution._nbegm_direct_oracle import ride_along_kernel
+from tests.solution._nbegm_direct_oracle import OracleContext, ride_along_kernel
 from tests.solution.test_egm_solver import _SAVINGS_GRID, _model, _params
 
 _REGIME = "saving"
@@ -42,17 +43,19 @@ _PERIOD = 1
 _LOGGER = logging.getLogger(__name__)
 
 
-def _kernel() -> tuple[Any, dict[str, Any]]:
+def _kernel() -> tuple[_EGMPeriodKernel, OracleContext]:
     """The EGM kernel of the middle active period and the inputs the solve gave it."""
-    return ride_along_kernel(
+    kernel, context = ride_along_kernel(
         model=_model(solver=EGM(savings_grid=_SAVINGS_GRID)),
         params=_params(),
         regime_name=_REGIME,
         period=_PERIOD,
     )
+    assert isinstance(kernel, _EGMPeriodKernel)
+    return kernel, context
 
 
-def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
+def _build_context(context: OracleContext) -> CoreBuildContext:
     return CoreBuildContext(
         state_action_space=context["state_action_space"],
         next_regime_to_V_arr=context["next_regime_to_V_arr"],

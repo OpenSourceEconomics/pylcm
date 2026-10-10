@@ -8,8 +8,6 @@ preference type held fixed by `fixed_transition` makes every type an
 independent continuation problem.
 """
 
-from typing import Any
-
 import jax.numpy as jnp
 
 from lcm import (
@@ -30,6 +28,8 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsLeaf,
+    UserParamsNode,
 )
 
 N_WEALTH_POINTS = 8
@@ -143,10 +143,12 @@ def get_model(
     )
 
 
-def get_params(*, typed: bool = False, scale: float = 1.0) -> dict[str, Any]:
+def get_params(*, typed: bool = False, scale: float = 1.0) -> dict[str, UserParamsNode]:
     """Return parameters; `scale` moves the disutility of work."""
-    working: dict[str, dict[str, Any]] = {"utility": {"disutility": 0.3 * scale}}
-    dead: dict[str, dict[str, Any]] = {}
+    working: dict[str, dict[str, UserParamsLeaf]] = {
+        "utility": {"disutility": 0.3 * scale}
+    }
+    dead: dict[str, dict[str, UserParamsLeaf]] = {}
     if typed:
         working["utility"]["curvature"] = jnp.asarray([0.3, 0.5, 0.7])
         dead = {"utility": {"bequest_weight": jnp.asarray([1.0, 0.8, 0.6])}}

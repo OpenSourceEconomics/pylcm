@@ -2,6 +2,7 @@
 
 import dataclasses
 import functools
+import logging
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Literal, Self, cast
@@ -10,6 +11,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.time import TimeAxis
+from _lcm.typing import FlatParams, PytreeValue
 from lcm.solver_api import (
     ActionOutput,
     ArtifactAuthority,
@@ -56,7 +59,7 @@ from lcm.solvers import (
     ValueInputChannel,
     ValueRead,
 )
-from lcm.typing import Float1D, FloatND, RegimeName
+from lcm.typing import ActionName, Float1D, FloatND, RegimeName, StateName
 
 COUNTER_KEY = ArtifactKey(
     type_id="tests.conformance_solver.counter",
@@ -102,7 +105,7 @@ class Counter:
         return COUNTER_KEY
 
 
-def _counter_authority(*, template: Counter) -> ArtifactAuthority:
+def _counter_authority(*, template: Counter) -> ArtifactAuthority:  # noqa: PAN006 - Counter is the concrete continuation dataclass, not collections.Counter.
     """Describe the shared scalar continuation through the public API."""
     dtype = str(template.count.dtype)
     leaf = LeafAuthority(
@@ -171,7 +174,7 @@ def _value_and_counter(
     wealth: Float1D,
     productivity: Float1D,
     next_count: FloatND,
-) -> tuple[FloatND, Counter]:
+) -> tuple[FloatND, Counter]:  # noqa: PAN006 - Counter is the concrete continuation dataclass, not collections.Counter.
     """Return the common value and continuation without replay assembly."""
     count = next_count + 1.0
     value = count * (wealth[:, None] + 0.0 * productivity[None, :])
@@ -185,7 +188,7 @@ def _solve_values_core(
     consumption: Float1D,  # noqa: ARG001
     next_count: FloatND,
     candidate_width: int,  # noqa: ARG001
-) -> tuple[FloatND, Counter]:
+) -> tuple[FloatND, Counter]:  # noqa: PAN006 - Counter is the concrete continuation dataclass, not collections.Counter.
     """Solve values while deliberately constructing no replay payload."""
     return _value_and_counter(
         wealth=wealth,
@@ -201,7 +204,7 @@ def _solve_replay_core(
     consumption: Float1D,
     next_count: FloatND,
     candidate_width: int,  # noqa: ARG001
-) -> tuple[FloatND, Counter, Policy, FloatND]:
+) -> tuple[FloatND, Counter, Policy, FloatND]:  # noqa: PAN006 - Counter is the concrete continuation dataclass, not collections.Counter.
     """Solve values and assemble the selected replay artifact."""
     value, counter = _value_and_counter(
         wealth=wealth,
@@ -236,7 +239,7 @@ def _build_scratch_core(
     return value, jnp.zeros_like(value)
 
 
-def _terminal_value_and_counter() -> tuple[FloatND, Counter]:
+def _terminal_value_and_counter() -> tuple[FloatND, Counter]:  # noqa: PAN006 - Counter is the concrete continuation dataclass, not collections.Counter.
     """Publish the terminal scalar value and the counter's zero boundary."""
     zero = jnp.asarray(0.0)
     return zero, Counter(count=zero)
@@ -261,7 +264,7 @@ class _ArgumentBuilder:
         """Read only public state, action, and continuation views."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         continuation = cast(
-            "Counter",
+            "Counter",  # noqa: PAN006 - Counter is the concrete continuation dataclass, not collections.Counter.
             context.next_regime_to_continuation[self.regime_name],
         )
         return MappingProxyType(
@@ -287,23 +290,23 @@ class _PeriodKernel:
     def with_fixed_params(
         self,
         *,
-        fixed_flat_params: object,  # noqa: ARG002
+        fixed_flat_params: FlatParams,  # noqa: ARG002
     ) -> Self:
         """Return this parameter-free kernel unchanged."""
         return self
 
-    def __call__(
+    def __call__[Ignored](
         self,
         *,
-        compiled_cores: Mapping[str, Callable[..., object]],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[str, FloatND],
-        next_regime_to_continuation: Mapping[str, ContinuationArtifact],
-        flat_params: Mapping[str, object],  # noqa: ARG002
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationArtifact],
+        flat_params: FlatParams,  # noqa: ARG002
         period: int,
-        ages: object,  # noqa: ARG002
-        logger: object,  # noqa: ARG002
-        **_unused: object,
+        ages: TimeAxis,  # noqa: ARG002
+        logger: logging.Logger,  # noqa: ARG002
+        **_unused: Ignored,
     ) -> KernelOutput:
         """Execute only the planner-selected retention-scoped core."""
         context = CoreBuildContext(
@@ -319,7 +322,8 @@ class _PeriodKernel:
         raw_output = compiled_cores[selected_name](**arguments)
         if selected_name == "replay":
             value, continuation, policy, optional_replay = cast(
-                "tuple[FloatND, Counter, Policy, FloatND]", raw_output
+                "tuple[FloatND, Counter, Policy, FloatND]",  # noqa: PAN006 - Counter is the concrete continuation dataclass, not collections.Counter.
+                raw_output,
             )
             scratch = (
                 cast(
@@ -338,7 +342,7 @@ class _PeriodKernel:
                 },
                 auxiliary={} if scratch is None else {SCRATCH_KEY: scratch},
             )
-        value, continuation = cast("tuple[FloatND, Counter]", raw_output)
+        value, continuation = cast("tuple[FloatND, Counter]", raw_output)  # noqa: PAN006 - Counter is the concrete continuation dataclass, not collections.Counter.
         return KernelOutput(
             value=value,
             continuations={COUNTER_KEY: continuation},
@@ -414,8 +418,8 @@ class _ReferenceReader:
     def __call__(
         self,
         *,
-        states: Mapping[str, object],
-        fallback_actions: Mapping[str, object],  # noqa: ARG002
+        states: Mapping[StateName, FloatND],
+        fallback_actions: Mapping[ActionName, FloatND],  # noqa: ARG002
     ) -> ActionOutput:
         """Read the stored policy at each simulated wealth value."""
         wealth = jnp.asarray(states["wealth"])
@@ -430,7 +434,7 @@ class _SnapshotObservation:
 
     metadata_identity: int
     authority_identities: tuple[tuple[ArtifactKey, int], ...]
-    payload_type: type
+    payload_type: type[Policy]
     values: np.ndarray
     device_ids: tuple[int, ...]
 
@@ -510,7 +514,7 @@ class ReferenceReplayRoute(ExecutableReplayRoute):
         return ReplayMode.EXACT_REPLAY
 
     @property
-    def payload_type(self) -> type[object]:
+    def payload_type(self) -> type[Policy]:
         """Return the exact plugin-defined policy PyTree type."""
         return Policy
 
@@ -864,9 +868,9 @@ def _target_value_core(
     *,
     wealth: Float1D,
     productivity: Float1D,
-    next_regime_to_V_arr: Mapping[str, FloatND],
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
     next_count: FloatND,
-) -> tuple[FloatND, Counter]:
+) -> tuple[FloatND, Counter]:  # noqa: PAN006 - Counter is the concrete continuation dataclass, not collections.Counter.
     """Add the best next-period value of every target to the wealth grid.
 
     `next_regime_to_V_arr` is the engine's target-value channel: one stored
@@ -894,7 +898,7 @@ class _TargetValueArgumentBuilder:
         """Read public states, the counter, and the declared targets' values."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         continuation = cast(
-            "Counter",
+            "Counter",  # noqa: PAN006 - Counter is the concrete continuation dataclass, not collections.Counter.
             context.next_regime_to_continuation[self.regime_name],
         )
         return MappingProxyType(

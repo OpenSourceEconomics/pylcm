@@ -8,14 +8,19 @@ transitions, the process-time AST subscript-order check, and the way the
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType
+from typing import NotRequired, Unpack
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from typing_extensions import TypedDict
 
+from _lcm.engine import Regime
+from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.simulation import initial_conditions as initial_conditions_module
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
+from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -23,7 +28,8 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
 )
 from _lcm.solution import backward_induction as backward_induction_module
-from _lcm.typing import FootprintTree
+from _lcm.time import TimeAxis
+from _lcm.typing import FlatParams, FootprintTree, InitialConditions, RegimeNamesToIds
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -44,6 +50,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 
@@ -598,7 +605,7 @@ def _income(wealth: ContinuousState) -> FloatND:
 
 
 def _model_with_function_reading_health_probs(
-    *, next_health_func, phased: bool = False, **model_options: Any
+    *, next_health_func, phased: bool = False, **model_options: Unpack[_ModelOptions]
 ) -> Model:
     """Build a model whose `health` law reads regime-function outputs.
 
@@ -736,7 +743,9 @@ def _health_from_stray_share(
     return _health_from_share(health=health, carried_share=2.0 * carried_share - 0.5)
 
 
-def _model_with_carried_share_health_probs(*, simulate_law: Callable) -> Model:
+def _model_with_carried_share_health_probs(
+    *, simulate_law: Callable[..., FloatND]
+) -> Model:
     """Build a model whose `health` laws read the carried state `carried_share`.
 
     `carried_share` is the function `0.5` in the solve phase and the grid
@@ -890,7 +899,7 @@ def test_simulation_preflight_charges_derived_categorical_codes(
     memories: list[SimulationMemory] = []
     original = initial_conditions_module._preflight_memory
 
-    def record(**arguments: Any) -> SimulationMemory | None:
+    def record(**arguments: Unpack[_PreflightKwargs]) -> SimulationMemory | None:
         memory = original(**arguments)
         assert memory is not None
         memories.append(memory)
@@ -919,9 +928,11 @@ def test_solve_fixed_inventory_charges_derived_categorical_codes(
     model = _budgeted_model_with_derived_law(phased=phased)
     codes = _derived_code_footprint(model=model, phased=phased)
     trees: list[FootprintTree] = []
-    original: Callable[..., object] = backward_induction_module.concrete_device_bytes
+    original: Callable[..., MappingProxyType[int, int]] = (
+        backward_induction_module.concrete_device_bytes
+    )
 
-    def record(*, tree: FootprintTree) -> object:
+    def record(*, tree: FootprintTree) -> MappingProxyType[int, int]:
         trees.append(tree)
         return original(tree=tree)
 
@@ -935,3 +946,18 @@ def test_solve_fixed_inventory_charges_derived_categorical_codes(
         )
         for tree in trees
     ] == [0] * len(trees)
+
+
+class _ModelOptions(TypedDict):
+    execution_config: NotRequired[ExecutionConfig]
+
+
+class _PreflightKwargs(TypedDict, closed=True):
+    execution: ResolvedExecution | None
+    retained_footprint: DeviceBufferFootprint | None
+    producers: NotRequired[ProfiledSimulationOperations | None]
+    initial_conditions: InitialConditions
+    flat_params: FlatParams
+    regimes: MappingProxyType[RegimeName, Regime]
+    regime_names_to_ids: RegimeNamesToIds
+    ages: TimeAxis

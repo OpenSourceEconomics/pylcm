@@ -30,7 +30,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.regime_building import processing as regime_processing
 from _lcm.solution import period_replay
-from _lcm.solution.dcegm import _DCEGMArgumentBuilder
+from _lcm.solution.dcegm import _DCEGMArgumentBuilder, _DCEGMPeriodKernel
 from _lcm.solution.period_replay import replay_period
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -42,7 +42,7 @@ from lcm.solver_api import (
 )
 from lcm.solvers import ENVELOPE_CELL_AXIS, SAVINGS_POINT_AXIS, MSSEnvelope
 from tests.conftest import assert_agrees_to_ulp
-from tests.solution._nbegm_direct_oracle import ride_along_kernel
+from tests.solution._nbegm_direct_oracle import OracleContext, ride_along_kernel
 from tests.solution.test_egm_passive import _get_model as _passive_model
 from tests.solution.test_egm_passive import _get_params as _passive_params
 from tests.test_models.deterministic.dcegm_variants import (
@@ -56,26 +56,30 @@ _PERIOD = 1
 _LOGGER = logging.getLogger(__name__)
 
 
-def _full_kernel() -> tuple[Any, dict[str, Any]]:
+def _full_kernel() -> tuple[_DCEGMPeriodKernel, OracleContext]:
     """The worker regime's DC-EGM kernel of the full model and its solve inputs."""
-    return ride_along_kernel(
+    kernel, context = ride_along_kernel(
         model=get_full_model(solver="dcegm", n_periods=_N_PERIODS),
         params=get_full_params(n_periods=_N_PERIODS),
         regime_name=_REGIME,
         period=_PERIOD,
     )
+    assert isinstance(kernel, _DCEGMPeriodKernel)
+    return kernel, context
 
 
-def _passive_kernel() -> tuple[Any, dict[str, Any]]:
+def _passive_kernel() -> tuple[_DCEGMPeriodKernel, OracleContext]:
     """The kernel of a regime with a passive state and a discrete action."""
-    return ride_along_kernel(
+    kernel, context = ride_along_kernel(
         model=_passive_model("dcegm"),
         params=_passive_params(),
         regime_name=_REGIME,
     )
+    assert isinstance(kernel, _DCEGMPeriodKernel)
+    return kernel, context
 
 
-def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
+def _build_context(context: OracleContext) -> CoreBuildContext:
     return CoreBuildContext(
         state_action_space=context["state_action_space"],
         next_regime_to_V_arr=context["next_regime_to_V_arr"],
@@ -86,7 +90,7 @@ def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
     )
 
 
-def _run(*, kernel: Any, context: Mapping[str, Any], name: str = "main") -> tuple:
+def _run(*, kernel: Any, context: OracleContext, name: str = "main") -> tuple:
     program = core_program_graph(kernel=kernel)[name]
     materialized = materialize_core_program(
         program=program, context=_build_context(context)

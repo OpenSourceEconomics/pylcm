@@ -46,6 +46,7 @@ from _lcm.solution.backward_induction import (
 from _lcm.typing import PytreeValue
 from lcm.solver_api import EGM_CONTINUATION
 from lcm.solvers import EGM
+from lcm.typing import RegimeName
 from tests.conftest import DECIMAL_PRECISION
 from tests.solution.test_egm_solver import _SAVINGS_GRID, _model
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
@@ -64,7 +65,7 @@ class _Builder:
         return MappingProxyType(dict(self.arguments))
 
 
-def _core(**_kwargs: object) -> jax.Array:
+def _core[Ignored](**_kwargs: Ignored) -> jax.Array:
     """A core whose value is one row, independent of its arguments."""
     return jnp.zeros(1)
 
@@ -410,7 +411,7 @@ _LAST_NON_TERMINAL_PERIOD = 8
 
 @pytest.mark.parametrize("regime", ["working_life", "retirement"])
 def test_dcegm_declares_reads_only_for_regimes_reachable_at_the_next_period(
-    *, regime: str
+    *, regime: RegimeName
 ) -> None:
     """At the last non-terminal period, the read set names only reachable targets.
 

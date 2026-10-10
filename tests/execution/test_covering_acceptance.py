@@ -11,7 +11,7 @@ refused covered seed strictly down.
 
 from collections.abc import Iterator, Mapping
 from itertools import product
-from typing import Any, Literal
+from typing import Literal, TypedDict
 
 import pytest
 
@@ -25,6 +25,16 @@ from _lcm.execution.workspace_planning import (
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import WidthSearch, WidthSearchPolicy
+
+
+class _WidthCase(TypedDict):
+    extent: int
+    alignment: int
+    minimum: int
+    ceiling: int | None
+    pin: int | None
+    covered: bool
+
 
 _REDUCED_CAP = 64
 _TILED_CAP = 1024
@@ -80,7 +90,7 @@ def _expected_seed(
     return max(below) if below else min(legal)
 
 
-def _cases() -> Iterator[dict[str, Any]]:
+def _cases() -> Iterator[_WidthCase]:
     """Enumerate a boundary family of extents, floors, alignments, ceilings and pins."""
     for extent, alignment, half_floor, capped, pinned, covered in product(
         (2, 3, 5, 8, 10, 20, 31, 32, 63, 64, 65, 100),
@@ -100,7 +110,7 @@ def _cases() -> Iterator[dict[str, Any]]:
         }
 
 
-def _has_legal_width(case: Mapping[str, Any]) -> bool:
+def _has_legal_width(case: _WidthCase) -> bool:
     """Report whether a case leaves the axis at least one legal width."""
     return bool(
         _legal_widths(
@@ -116,7 +126,7 @@ _ADMITTED = tuple(case for case in _cases() if _has_legal_width(case))
 _REFUSED = tuple(case for case in _cases() if not _has_legal_width(case))
 
 
-def _case_id(case: Mapping[str, Any]) -> str:
+def _case_id(case: _WidthCase) -> str:
     """Name a case by its fields."""
     return "-".join(f"{key}={value}" for key, value in case.items())
 
@@ -135,7 +145,7 @@ def _axis(*, extent: int, minimum: int = 1, alignment: int = 1) -> ReducedAxis:
     )
 
 
-def _bootstrap_case(case: Mapping[str, Any]) -> Mapping[str, int]:
+def _bootstrap_case(case: _WidthCase) -> Mapping[str, int]:
     """Seed one reference case through the planner."""
     return bootstrap_widths(
         axes=(
@@ -157,16 +167,14 @@ def test_boundary_family_holds_admitted_and_refused_cases() -> None:
 
 
 @pytest.mark.parametrize("case", _ADMITTED, ids=_case_id)
-def test_bootstrap_widths_matches_the_legal_set_projection(
-    *, case: dict[str, Any]
-) -> None:
+def test_bootstrap_widths_matches_the_legal_set_projection(*, case: _WidthCase) -> None:
     """The planner seeds every case at the reference's legal-set projection."""
     assert dict(_bootstrap_case(case)) == {"branch": _expected_seed(**case)}
 
 
 @pytest.mark.parametrize("case", _REFUSED, ids=_case_id)
 def test_bootstrap_widths_refuses_a_ceiling_that_leaves_no_legal_width(
-    *, case: dict[str, Any]
+    *, case: _WidthCase
 ) -> None:
     """A ceiling below every legal width is refused at planning."""
     with pytest.raises(ExecutionPlanningError):

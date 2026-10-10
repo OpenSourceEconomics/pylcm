@@ -7,8 +7,6 @@ problem reads (`reachability.nodes`). A value read adds a solved problem, not a
 visit, and simulation-only routes out of a value-only problem are not followed.
 """
 
-from typing import Any
-
 import jax.numpy as jnp
 import pytest
 
@@ -32,8 +30,9 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.initial_nodes import UserInitialNodes
 from lcm.phased import Phased
-from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from lcm.typing import AgeLabel, BoolND, ContinuousState, FloatND, RegimeName, ScalarInt
 from tests.regime_building.test_same_period_ref_period_axes import (
     _make_model as _make_outside_option_model,
 )
@@ -83,7 +82,7 @@ def _die() -> FloatND:
     return jnp.asarray(0.1)
 
 
-def _life_model(initial_nodes: Any) -> Model:
+def _life_model(initial_nodes: UserInitialNodes) -> Model:
     return Model(
         regimes={
             "working": _nonterminal(),
@@ -143,7 +142,7 @@ _WORKING_LIFE = frozenset(
     ids=["first-age", "late-root", "zero-node-regime", "terminal-only", "islands"],
 )
 def test_reachability_nodes_are_the_closure_of_the_starts(
-    *, initial_nodes: Any, expected: frozenset
+    *, initial_nodes: UserInitialNodes, expected: frozenset[tuple[AgeLabel, RegimeName]]
 ) -> None:
     """Solved pairs are exactly those a start can reach; no other age is solved."""
     assert _life_model(initial_nodes).reachability.nodes == expected
@@ -155,7 +154,7 @@ def test_reachability_nodes_are_the_closure_of_the_starts(
     ids=["first-age", "late-root", "zero-node-regime", "terminal-only"],
 )
 def test_solve_returns_values_exactly_at_the_demanded_pairs(
-    initial_nodes: Any,
+    initial_nodes: UserInitialNodes,
 ) -> None:
     """Every demanded pair has a value array, and no other pair has one."""
     model = _life_model(initial_nodes)
@@ -192,7 +191,7 @@ def test_coverage_of_an_unreached_regime_is_empty() -> None:
     ids=["nonterminal-at-last-age", "no-law-at-root-age"],
 )
 def test_a_start_without_an_available_problem_fails(
-    *, initial_nodes: Any, match: str
+    *, initial_nodes: UserInitialNodes, match: str
 ) -> None:
     """A start needs a local law and, if nonterminal, a next age."""
     with pytest.raises(ModelInitializationError, match=match):
@@ -246,7 +245,7 @@ class PhasedId:
 _PHASED_AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
 
-def _phased_model(initial_nodes: Any) -> Model:
+def _phased_model(initial_nodes: UserInitialNodes) -> Model:
     return Model(
         regimes={
             "source": _nonterminal(),

@@ -3,7 +3,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import replace as dataclasses_replace
 from types import MappingProxyType
-from typing import cast
+from typing import NotRequired, TypedDict, cast
 
 import jax.numpy as jnp
 import pytest
@@ -38,10 +38,18 @@ from lcm import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.model import Model
+from lcm.regime import ActionEntry, StateEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import EGM_CONTINUATION
 from lcm.solvers import DCEGM, EGM, NBEGM, NEGM, GridSearch, Solver
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import (
+    ActionName,
+    FloatND,
+    FunctionName,
+    ScalarInt,
+    StateName,
+    UserFunction,
+)
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.mock_regime import MockRegime
 from tests.solution.test_egm_solver import _SAVINGS_GRID as EGM_SAVINGS_GRID
@@ -53,6 +61,13 @@ from tests.test_models.deterministic.regression import (
     graph_bound_working_life_transitions,
 )
 from tests.test_nbegm_constraint_validation import _build_smooth_model
+
+
+class _FixtureKwargs(TypedDict):
+    states: dict[StateName, StateEntry]
+    state_transitions: dict[StateName, StateTransitionEntry]
+    actions: NotRequired[dict[ActionName, ActionEntry]]
+    functions: dict[FunctionName, UserFunction]
 
 
 def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
@@ -504,7 +519,7 @@ def test_mock_regime_get_all_functions_matches_real_regime():
     def utility(wealth: float) -> FloatND:
         return jnp.asarray(wealth)
 
-    kwargs: dict = {
+    kwargs: _FixtureKwargs = {
         "states": {
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "pension_wealth": Phased(

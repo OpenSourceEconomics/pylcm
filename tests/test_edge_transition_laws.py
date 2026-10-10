@@ -1,7 +1,5 @@
 """Regime transitions declared only on the model graph: structure and law."""
 
-from typing import Any
-
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -29,6 +27,7 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 
@@ -122,7 +121,7 @@ def _model(*, edges: ModelEdges) -> Model:
     )
 
 
-def _values(model: Model) -> dict[tuple[int, str], Any]:
+def _values(model: Model) -> dict[tuple[int, RegimeName], np.ndarray]:
     solved = model.solve(params=PARAMS, log_level="off").values
     return {
         (period, regime): np.asarray(values)

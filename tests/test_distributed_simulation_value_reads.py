@@ -3,7 +3,7 @@
 import dataclasses
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Never, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -14,6 +14,7 @@ from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.execution.core_program import ValueRead
 from _lcm.execution.scheduler import shares_a_buffer
 from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
@@ -35,6 +36,7 @@ from _lcm.typing import StatesPerRegime
 from lcm import ExecutionConfig
 from lcm.solver_api import SIMULATION_POLICY
 from lcm.typing import Bool1D, Int1D
+from tests.conftest import ApplyValueTransferKwargs
 
 try:
     jax.config.update("jax_num_cpu_devices", 4)
@@ -112,7 +114,7 @@ def test_finite_profile_reserves_addressed_policy_copies_once_on_ordered_submesh
     logical_bytes = sum(leaf.size * leaf.dtype.itemsize for leaf in sources.values())
     with monkeypatch.context() as guard:
 
-        def forbid(*_args: object, **_kwargs: object) -> object:
+        def forbid(*_args: Never, **_kwargs: Never) -> Never:
             raise AssertionError("A copy reservation allocated a device buffer")
 
         guard.setattr(jax, "device_put", forbid)
@@ -137,7 +139,7 @@ def test_finite_profile_reserves_addressed_policy_copies_once_on_ordered_submesh
     actual_transfer = value_reads.apply_value_transfer
     copied_addresses = []
 
-    def observe_copy(**call: Any) -> jax.Array:
+    def observe_copy(**call: Unpack[ApplyValueTransferKwargs]) -> jax.Array:
         copied_addresses.append(call["transfer"].target)
         return actual_transfer(**call)
 
@@ -243,7 +245,9 @@ def test_finite_policy_transfer_refuses_before_its_ordered_copy_allocates(
     live = measure_buffer_footprint(tree=source)
     observed = []
 
-    def before_transfer(*, transfer: Any, live_values: tuple[jax.Array, ...]) -> None:
+    def before_transfer(
+        *, transfer: ResolvedValueTransfer, live_values: tuple[jax.Array, ...]
+    ) -> None:
         observed.append(transfer)
         destination = transfer.source_sharding.device_set
         require_transfer_headroom(
@@ -259,7 +263,7 @@ def test_finite_policy_transfer_refuses_before_its_ordered_copy_allocates(
             devices=tuple(jax.devices()),
         )
 
-    def forbid_copy(**_call: Any) -> jax.Array:
+    def forbid_copy(**_call: Unpack[ApplyValueTransferKwargs]) -> jax.Array:
         raise AssertionError("The refused policy transfer allocated")
 
     owner = PeriodSimulationReads(
@@ -303,8 +307,12 @@ def test_host_replay_has_no_allocation_on_an_excluded_default_device(
     allocations: list[tuple[int, ...]] = []
     actual_put = jax.device_put
 
-    def observe(*args: Any, **kwargs: Any) -> jax.Array:
-        placed = actual_put(*args, **kwargs)
+    # keyword-only-exempt: library-callback=jax.device_put
+    def observe(
+        value: jax.Array | np.ndarray,
+        device: jax.Device | jax.sharding.Sharding | None = None,
+    ) -> jax.Array:
+        placed = actual_put(value, device)
         if isinstance(placed.sharding, jax.NamedSharding):
             allocations.append(
                 tuple(device.id for device in placed.sharding.mesh.devices.flat)

@@ -24,6 +24,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.typing import ArgumentTree
 from lcm.solver_api import EGM_CONTINUATION
+from lcm.typing import RegimeName
 
 
 def _mesh() -> jax.sharding.Mesh:
@@ -56,7 +57,7 @@ def _target(
 def _source(
     *,
     source_period: int = 2,
-    source_regime: str = "working",
+    source_regime: RegimeName = "working",
     channel: ValueInputChannel = ValueInputChannel.NEXT_REGIME_VALUE,
     path: tuple[str | int, ...] = ("working",),
 ) -> ValueConsumerAddress:

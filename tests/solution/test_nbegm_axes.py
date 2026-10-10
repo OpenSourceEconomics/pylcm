@@ -9,6 +9,7 @@ import jax
 import numpy as np
 import pytest
 
+from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.execution.core_program import (
@@ -21,6 +22,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueTransferKind
 from _lcm.execution.workspace_planning import bootstrap_width
+from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
 from lcm import ExecutionConfig, LinSpacedGrid, Model, Regime
 from lcm.exceptions import ExecutionPlanningError, RegimeInitializationError
 from lcm.solver_api import SolutionResult
@@ -315,6 +317,7 @@ def test_width_changes_the_lowered_computation(axis: str) -> None:
     """A declared width changes executable work, beyond the planner's metadata."""
     model, params = _small_model(route=axis, arithmetic="ordinary", widths={})
     kernel, context = ride_along_kernel(model=model, params=params, period=0)
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     materialized = materialize_core_program(
         program=core_program_graph(kernel=kernel)["replay"],
         context=CoreBuildContext(**context),
@@ -385,17 +388,16 @@ def test_interval_coordinates_do_not_replace_a_legal_user_state() -> None:
     Regime(states={name: grid})
     model, params = _small_model(route=INTERVAL_AXIS, arithmetic="ordinary", widths={})
     kernel, context = ride_along_kernel(model=model, params=params, period=0)
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     points = grid.to_jax()
     space = context["state_action_space"]
     materialized = materialize_core_program(
         program=core_program_graph(kernel=kernel)["replay"],
-        context=CoreBuildContext(
-            **{
-                **context,
-                "state_action_space": replace(
-                    space, states=MappingProxyType({**space.states, name: points})
-                ),
-            }
+        context=replace(
+            CoreBuildContext(**context),
+            state_action_space=replace(
+                space, states=MappingProxyType({**space.states, name: points})
+            ),
         ),
     )
     assert materialized.arguments[name] is points
@@ -438,8 +440,10 @@ def test_default_interval_stream_preserves_the_dense_period(
     """Default streaming agrees with the preserved one-shot step on one carry."""
     model, params = _small_model(route=INTERVAL_AXIS, arithmetic=arithmetic, widths={})
     kernel, context = ride_along_kernel(model=model, params=params, period=0)
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     assert kernel.cliff_candidates
     child = context["next_regime_to_continuation"]["alive"]
+    assert isinstance(child, EGMCarry)
     assert child.breakpoints is not None
     assert np.isfinite(np.asarray(child.breakpoints)).any()
     materialized = materialize_core_program(

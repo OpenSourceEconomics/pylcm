@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pytest
 
+type PythonSource = str
+
+
 _ROOT = Path(__file__).parents[1]
 _PROCESS_GRIDS = "src/_lcm/simulation/process_grids.py"
 
@@ -34,7 +37,7 @@ def _definition(*, tree: ast.Module, name: str) -> ast.FunctionDef:
     return matches[0]
 
 
-def _mutate_definition(*, source: str, name: str, old: str, new: str) -> str:
+def _mutate_definition(*, source: PythonSource, name: str, old: str, new: str) -> str:
     tree = ast.parse(source)
     node = _definition(tree=tree, name=name)
     lines = source.splitlines(keepends=True)
@@ -47,7 +50,7 @@ def _mutate_definition(*, source: str, name: str, old: str, new: str) -> str:
 
 
 def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
-    *, source: str
+    *, source: PythonSource
 ) -> list[str]:
     tree = ast.parse(source)
     errors: list[str] = []
