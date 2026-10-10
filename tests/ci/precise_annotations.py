@@ -11,7 +11,8 @@ attributes, type aliases, type-parameter bounds and defaults, class bases and
   argument name, whose alias is picked by hand;
 - `PAN006`: a generic without its type arguments (`Callable`, `dict`, ...),
   which leaves them `Any`;
-- `PAN007`: a type alias not written as a `type X = ...` statement.
+- `PAN007`: a type alias not written as a `type X = ...` statement;
+- `PAN008`: a `# noqa` naming a `PAN` code that its line does not report.
 
 Two placements are exempt by rule:
 
@@ -292,6 +293,18 @@ def _findings_for_source(*, source: str) -> list[_Finding]:
     )
     visitor.visit(ast.parse(source))
     findings: list[_Finding] = []
+    reported = {(finding.line, finding.code) for finding in visitor.findings}
+    for line, (comment, _) in comments.items():
+        findings.extend(
+            _Finding(
+                line=line,
+                code="PAN008",
+                construct="noqa",
+                detail=f"`# noqa: {code}` matches no finding on this line; remove it",
+            )
+            for code in _noqa_reason(comment=comment)
+            if code.startswith("PAN") and (line, code) not in reported
+        )
     for finding in visitor.findings:
         noqa = _noqa_reason(comment=comments.get(finding.line, ("", False))[0])
         reason = noqa.get(finding.code)
