@@ -28,6 +28,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime
+from lcm.transition import ModelEdges, PhaseEdges
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 
 # Four ages: transitions happen out of ages 0, 1 and 2.
@@ -224,14 +225,14 @@ def test_gate_declared_in_one_phase_only_is_refused():
         )
 
 
-def _model(alive_edges: object) -> Model:
+def _model(alive_edges: Transition | Phased[PhaseEdges, PhaseEdges]) -> Model:
     """Build a four-regime model whose `alive` source has `alive_edges`."""
     return _model_with_edges(
         edges=alive_edges if isinstance(alive_edges, Phased) else {"alive": alive_edges}
     )
 
 
-def _model_with_edges(*, edges: object) -> Model:
+def _model_with_edges(*, edges: ModelEdges) -> Model:
     """Build the four-regime model with `edges`."""
     return Model(
         regimes={

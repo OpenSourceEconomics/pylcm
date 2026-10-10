@@ -35,11 +35,17 @@ from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
 from lcm.typing import BoolND, FloatND, FunctionName
 
 if TYPE_CHECKING:
+    from lcm.solver_api import SolutionResult
+
     type _PeriodValuesBoundary = Mapping[int, Mapping[RegimeName, FloatND]]
+    type _SolutionResultBoundary = SolutionResult
 else:
     # A block-major simulation holds a `ValueStore` whose values are assembled
     # only when read; the runtime annotation check must not read them all.
     type _PeriodValuesBoundary = object
+    # The solution a simulation keeps is the caller-visible result it replayed,
+    # whose lazy contents the runtime annotation check must not inspect.
+    type _SolutionResultBoundary = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -90,7 +96,7 @@ class SimulationResult:
         self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
         self._subject_batch_size = subject_batch_size
-        self._solution: object | None = None
+        self._solution: _SolutionResultBoundary | None = None
         self._durable_identity = True
         self._plan_summary: SimulationPlanSummary | None = None
         # The original rows of a simulation of selected codes, which holds
@@ -134,7 +140,7 @@ class SimulationResult:
         return self._period_to_regime_to_V_arr
 
     @property
-    def solution(self) -> object | None:
+    def solution(self) -> _SolutionResultBoundary | None:
         """The complete `SolutionResult` this simulation replayed.
 
         The result `Model.simulate` consumed, whether the caller passed it or
@@ -529,7 +535,7 @@ def _keep_first_terminal_row(
     return df.loc[keep].reset_index(drop=True)
 
 
-def _coerce_jax_scalar_for_arrow(value: object) -> object:
+def _coerce_jax_scalar_for_arrow[T](value: T) -> T | bool | int | float:
     """Convert a 0-d JAX array to a Python scalar; pass everything else through."""
     if isinstance(value, jax.Array) and value.ndim == 0:
         return value.item()
@@ -554,7 +560,7 @@ def _collect_array_tree_leaf_sizes(
 
 def _walk_tree(
     *,
-    node: object,
+    node: ArrayTree,
     path_parts: tuple[str, ...],
     leaves: list[_ArrayTreeLeaf],
 ) -> None:
@@ -649,7 +655,9 @@ def _restore_array_tree(*, input_dir: Path) -> dict[str, Any]:
     """Restore recorded placements using explicit CPU backend device lookup."""
     checkpointer = ocp.StandardCheckpointer()
 
-    def restore_target(leaf: object) -> object:
+    def restore_target(
+        leaf: ocp.metadata.value.Metadata,
+    ) -> ocp.metadata.value.Metadata | jax.ShapeDtypeStruct:
         if not isinstance(leaf, ocp.metadata.value.ArrayMetadata):
             return leaf
         sharding = leaf.sharding
