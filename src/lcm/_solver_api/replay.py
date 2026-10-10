@@ -38,19 +38,12 @@ class ReplayRouteSnapshot:
     exact placed snapshot and context again immediately before building its reader.
     """
 
-    # Callers pass any mapping; `__post_init__` stores a read-only copy.
-    artifacts: Mapping[ArtifactKey, ArtifactPayload]
+    artifacts: MappingProxyType[ArtifactKey, ArtifactPayload]
     """Materialized payloads of the cell, keyed by artifact key."""
-    authorities: Mapping[ArtifactKey, ArtifactAuthority]
+    authorities: MappingProxyType[ArtifactKey, ArtifactAuthority]
     """Model-built authority of each payload."""
     metadata: SolutionMetadata
     """Descriptive metadata of the consumed result."""
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "artifacts", MappingProxyType(dict(self.artifacts)))
-        object.__setattr__(
-            self, "authorities", MappingProxyType(dict(self.authorities))
-        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -72,11 +65,10 @@ class ReplayModelContext:
     action_names: tuple[ActionName, ...]
     """Solution-action names in canonical product-map order."""
 
-    # Callers pass any mapping; `__post_init__` stores a read-only copy.
-    state_nodes: Mapping[str, FloatND | IntND]
+    state_nodes: MappingProxyType[str, FloatND | IntND]
     """Period-specific grid nodes keyed exactly by ``state_names``."""
 
-    action_nodes: Mapping[str, FloatND | IntND]
+    action_nodes: MappingProxyType[str, FloatND | IntND]
     """Period-specific grid nodes keyed exactly by ``action_names``."""
 
     def __post_init__(self) -> None:
@@ -86,12 +78,6 @@ class ReplayModelContext:
             raise TypeError("ReplayModelContext.period must be a nonnegative int.")
         object.__setattr__(self, "state_names", tuple(self.state_names))
         object.__setattr__(self, "action_names", tuple(self.action_names))
-        object.__setattr__(
-            self, "state_nodes", MappingProxyType(dict(self.state_nodes))
-        )
-        object.__setattr__(
-            self, "action_nodes", MappingProxyType(dict(self.action_nodes))
-        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -130,22 +116,15 @@ class SimulationBuildContext:
     action_names: tuple[ActionName, ...]
     """Solution-action names in canonical product-map order."""
 
-    # Callers pass any mapping; `__post_init__` stores a read-only copy.
-    state_nodes: Mapping[str, FloatND | IntND]
+    state_nodes: MappingProxyType[str, FloatND | IntND]
     """Period-specific grid nodes keyed exactly by ``state_names``."""
 
-    action_nodes: Mapping[str, FloatND | IntND]
+    action_nodes: MappingProxyType[str, FloatND | IntND]
     """Period-specific grid nodes keyed exactly by ``action_names``."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "state_names", tuple(self.state_names))
         object.__setattr__(self, "action_names", tuple(self.action_names))
-        object.__setattr__(
-            self, "state_nodes", MappingProxyType(dict(self.state_nodes))
-        )
-        object.__setattr__(
-            self, "action_nodes", MappingProxyType(dict(self.action_nodes))
-        )
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -1174,8 +1174,8 @@ def test_custom_reader_is_jax_transformable() -> None:
     ref = ArtifactRef(period=0, regime="active", key=POLICY_KEY)
     authority = solution._artifact_authority[ref]
     snapshot = ReplayRouteSnapshot(
-        artifacts={POLICY_KEY: solution.replay_artifacts[ref]},
-        authorities={POLICY_KEY: authority},
+        artifacts=MappingProxyType({POLICY_KEY: solution.replay_artifacts[ref]}),
+        authorities=MappingProxyType({POLICY_KEY: authority}),
         metadata=solution.metadata,
     )
     context = SimulationBuildContext(
@@ -1183,11 +1183,13 @@ def test_custom_reader_is_jax_transformable() -> None:
         regime_name="active",
         state_names=("wealth", "productivity"),
         action_names=("consumption",),
-        state_nodes={
-            "wealth": _WEALTH_GRID.to_jax(),
-            "productivity": _PRODUCTIVITY_GRID.to_jax(),
-        },
-        action_nodes={"consumption": _ACTION_GRID.to_jax()},
+        state_nodes=MappingProxyType(
+            {
+                "wealth": _WEALTH_GRID.to_jax(),
+                "productivity": _PRODUCTIVITY_GRID.to_jax(),
+            }
+        ),
+        action_nodes=MappingProxyType({"consumption": _ACTION_GRID.to_jax()}),
     )
     requirements = route.requirements(
         context=ReplayModelContext(
