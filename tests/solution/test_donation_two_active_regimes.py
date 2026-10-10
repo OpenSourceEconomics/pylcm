@@ -28,7 +28,8 @@ from _lcm.execution.value_transfer import ValueArtifactAddress
 from _lcm.solution import backward_induction
 from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.solve_inputs import SolveInputMappings, locate_artifact
-from _lcm.typing import PytreeValue
+from _lcm.time import TimeAxis
+from _lcm.typing import FlatParams, PytreeValue
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -162,9 +163,9 @@ class _GraphKernel:
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[str, FloatND],
         next_regime_to_continuation: Mapping[str, ContinuationArtifact],
-        flat_params: Mapping[str, object],
+        flat_params: FlatParams,
         period: int,
-        ages: object,
+        ages: TimeAxis,
         logger: object,  # noqa: ARG002
         **_unused: object,
     ) -> KernelOutput:

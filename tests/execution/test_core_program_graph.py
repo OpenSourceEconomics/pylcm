@@ -54,7 +54,7 @@ def _context() -> CoreBuildContext:
         next_regime_to_continuation=MappingProxyType({}),
         flat_params=MappingProxyType({}),
         period=0,
-        ages=object(),
+        ages=None,
     )
 
 
@@ -712,3 +712,15 @@ def test_native_graph_rejects_a_scope_outside_the_enumeration() -> None:
 
     with pytest.raises(TypeError, match="scope"):
         core_program_graph(kernel=_NativeKernel({"main": program}))
+
+
+def test_core_build_context_refuses_ages_that_are_no_time_axis() -> None:
+    """A build context's ages are a time axis or absent, never another object."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="ages"):
+        dataclasses.replace(_context(), ages=object())
+
+
+def test_core_build_context_refuses_a_regime_level_that_is_no_mapping() -> None:
+    """Each regime's flat params are a mapping of parameter leaves, never a string."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="flat_params"):
+        dataclasses.replace(_context(), flat_params=MappingProxyType({"working": "x"}))

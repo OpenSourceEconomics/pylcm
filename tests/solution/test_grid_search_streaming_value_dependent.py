@@ -295,7 +295,7 @@ def _observable_route() -> tuple[Callable[..., object], MaterializedCoreProgram]
             next_regime_to_continuation={},
             flat_params={},
             period=0,
-            ages=object(),
+            ages=None,
         ),
     )
     return dense, program

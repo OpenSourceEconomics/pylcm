@@ -12,7 +12,8 @@ import pytest
 
 from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.solution import backward_induction
-from _lcm.typing import ArgumentTree, FlatRegimeParams, PytreeValue
+from _lcm.time import TimeAxis
+from _lcm.typing import ArgumentTree, FlatParams, FlatRegimeParams, PytreeValue
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -106,9 +107,9 @@ class _TwoProgramKernel:
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[str, FloatND],
         next_regime_to_continuation: Mapping[str, ContinuationArtifact],
-        flat_params: Mapping[str, object],
+        flat_params: FlatParams,
         period: int,
-        ages: object,
+        ages: TimeAxis,
         **_unused: object,
     ) -> KernelOutput:
         context = CoreBuildContext(

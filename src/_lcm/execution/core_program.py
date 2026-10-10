@@ -28,10 +28,13 @@ from _lcm.execution.value_transfer import (
     ValueViewDescriptor,
     apply_value_transfer_plan,
 )
+from _lcm.time import TimeAxis
 from _lcm.typing import (
     ActionName,
     ArgumentTree,
     ArtifactPayload,
+    FlatEdgeParams,
+    FlatRegimeParams,
     PytreeValue,
     ShapeDtypePytree,
     StateName,
@@ -412,9 +415,9 @@ class CoreBuildContext:
     state_action_space: StateActionSpace | None
     next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
-    flat_params: Mapping[str, object]
+    flat_params: Mapping[RegimeName, FlatRegimeParams | FlatEdgeParams]
     period: int
-    ages: object
+    ages: TimeAxis | None
     edge_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None = (
         None
     )
