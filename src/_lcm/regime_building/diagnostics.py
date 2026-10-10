@@ -53,7 +53,9 @@ from lcm.typing import BoolND, FloatND, IntND
 # The NaN and feasibility reductions of one period's intermediates:
 # `{Y}_overall` scalars and `{Y}_by_{name}` vectors, plus `regime_probs`, the mean
 # transition probability of each target regime.
-type DiagnosticReductions = dict[str, FloatND | dict[RegimeName, FloatND]]
+type DiagnosticReductions = MappingProxyType[
+    str, FloatND | MappingProxyType[RegimeName, FloatND]
+]
 
 
 def _build_compute_intermediates_per_period(
@@ -232,10 +234,10 @@ def _wrap_with_reduction(
             `{metric}_by_{name}` reductions.
 
     Returns:
-        Callable taking the same kwargs as `func` and returning a dict with
-        `{Y}_overall` scalars and `{Y}_by_{name}` vectors for `Y` in
-        {`U_nan`, `CE_nan`, `Q_nan`, `F_feasible`}, plus `regime_probs` as
-        a dict of per-target scalar means. The `{U,CE,Q}_nan_*` fractions
+        Callable taking the same kwargs as `func` and returning a read-only
+        mapping with `{Y}_overall` scalars and `{Y}_by_{name}` vectors for `Y`
+        in {`U_nan`, `CE_nan`, `Q_nan`, `F_feasible`}, plus `regime_probs` as
+        a read-only mapping of per-target scalar means. The `{U,CE,Q}_nan_*` fractions
         are conditional on feasibility (numerator restricted to feasible
         cells, denominator is the feasible-cell count); `F_feasible_*`
         is the plain mean over all cells.
@@ -277,7 +279,7 @@ class _ReducedIntermediates:
             "Q_nan": jnp.isnan(Q_arr).astype(float) * F_float,
         }
 
-        out: DiagnosticReductions = {}
+        out: dict[str, FloatND | MappingProxyType[RegimeName, FloatND]] = {}
         F_total = jnp.maximum(jnp.sum(F_float), 1.0)
         for key, arr in nan_arrays.items():
             out[f"{key}_overall"] = jnp.sum(arr) / F_total
@@ -295,8 +297,10 @@ class _ReducedIntermediates:
                 axes = tuple(j for j in range(F_float.ndim) if j != i)
                 out[f"F_feasible_by_{name}"] = jnp.mean(F_float, axis=axes)
 
-        out["regime_probs"] = {k: jnp.mean(v) for k, v in regime_probs.items()}
-        return out
+        out["regime_probs"] = MappingProxyType(
+            {k: jnp.mean(v) for k, v in regime_probs.items()}
+        )
+        return MappingProxyType(out)
 
 
 def _productmap_over_state_action_space(

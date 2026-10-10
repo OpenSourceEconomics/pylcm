@@ -20,6 +20,7 @@ child's.
 """
 
 import functools
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -31,6 +32,7 @@ from _lcm.egm.continuation import (
     _ChildEulerState,
     _RowQueriesAndGradients,
     child_resources_params,
+    euler_draw_nodes,
 )
 from _lcm.execution.core_program import core_program_graph
 from lcm import (
@@ -374,3 +376,16 @@ def test_age_invariant_source_shares_a_child_read_only_for_an_invariant_child(
         for period in (0, 1)
     ]
     assert (reads[0] is reads[1]) == (not slope and not transfer)
+
+
+def test_child_reads_hand_back_immutable_mappings() -> None:
+    """The child's resources params and its Euler draw nodes are read-only mappings."""
+    model = _source_child_model(slope=1.0, transfer=10.0, liquid_law=identity_liquid)
+    read = _continuation_plan(model=model, regime="source", period=0).child_reads[
+        "child"
+    ]
+    pool = {"period": jnp.int32(0)}
+    assert (
+        type(child_resources_params(read=read, combo_pool=pool)),
+        type(euler_draw_nodes(read=read, combo_pool=pool)),
+    ) == (MappingProxyType, MappingProxyType)

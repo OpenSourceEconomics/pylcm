@@ -6,7 +6,7 @@ from dags.tree import QNAME_DELIMITER
 
 
 def format_messages(errors: str | Sequence[str]) -> str:
-    """Convert message or list of messages into a single string."""
+    """Convert message or sequence of messages into a single string."""
     if isinstance(errors, str):
         formatted = errors
     elif len(errors) == 1:

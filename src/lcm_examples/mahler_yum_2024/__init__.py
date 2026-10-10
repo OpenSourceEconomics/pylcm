@@ -1024,9 +1024,9 @@ def create_adjustment_cost_envelope(*, adjustment_cost: Sequence[float]) -> pd.S
     return pd.Series(values, index=pd.Index(age_values, name="age"))
 
 
-def _category_names(category_class: type[DataclassInstance]) -> list[str]:
+def _category_names(category_class: type[DataclassInstance]) -> tuple[str, ...]:
     """Return the category names of a `@categorical` class, in declaration order."""
-    return [f.name for f in dataclasses.fields(category_class)]
+    return tuple(f.name for f in dataclasses.fields(category_class))
 
 
 EFFORT_FIELD_NAMES = np.array(_category_names(Effort))
