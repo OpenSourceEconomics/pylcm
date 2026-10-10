@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 import jax
 import jax.numpy as jnp
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -527,10 +528,10 @@ def test_a_planned_core_names_itself_when_an_internal_input_is_misshapen() -> No
     core = PlannedCore(
         compiled=_consumer_function,
         layout=layout,
-        tile_widths={},
-        internal_input_templates={
-            "upstream_value": jax.ShapeDtypeStruct((3,), template.dtype)
-        },
+        tile_widths=MappingProxyType({}),
+        internal_input_templates=MappingProxyType(
+            {"upstream_value": jax.ShapeDtypeStruct((3,), template.dtype)}
+        ),
         name="consumer",
     )
 
@@ -791,3 +792,23 @@ def test_dispatching_an_internal_input_of_the_declared_weak_typing_is_admitted(
         )
         is None
     )
+
+
+@pytest.mark.parametrize("field_name", ["internal_input_templates", "static_kwargs"])
+def test_resolved_producer_refuses_a_plain_dict_for_its_mappings(
+    field_name: str,
+) -> None:
+    """A resolved producer holds read-only mappings; a plain dict is refused."""
+    arguments = {
+        "internal_input_templates": MappingProxyType({}),
+        "static_kwargs": MappingProxyType({}),
+        field_name: {},
+    }
+    with pytest.raises(BeartypeCallHintParamViolation, match=field_name):
+        ResolvedProducer(
+            name="producer",
+            function=lambda: jnp.zeros(1),
+            internal_outputs=(),
+            abstract_output=jax.ShapeDtypeStruct((1,), jnp.float32),
+            **arguments,
+        )

@@ -477,7 +477,7 @@ def _planned_core(*, name: str) -> PlannedCore:
             state_order=("wealth",),
             output_roles=VALUE,
         ),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         name=name,
     )
 

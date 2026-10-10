@@ -2,6 +2,7 @@
 
 import functools
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import cast
 
 import jax
@@ -396,7 +397,7 @@ def test_published_value_placement_is_asserted_not_repaired():
     core = PlannedCore(
         compiled=lambda **_kwargs: replicated,
         layout=layout,
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         name="main",
     )
 
@@ -601,3 +602,27 @@ def test_assert_value_leaf_layout_checks_only_the_value_leaf():
     )
     with pytest.raises(AssertionError, match="output sharding"):
         assert_value_leaf_layout(value=replicated, layout=resolved)
+
+
+@pytest.mark.parametrize("field_name", ["tile_widths", "internal_input_templates"])
+def test_planned_core_refuses_a_plain_dict_for_its_mappings(field_name: str) -> None:
+    """A planned core holds read-only mappings; a plain dict is refused."""
+    template = _template()
+    layout = resolve_output_layout(
+        core_key="main",
+        value_template=template,
+        state_order=("kind", "wealth"),
+        output_roles=VALUE,
+    )
+    arguments = {
+        "tile_widths": MappingProxyType({}),
+        "internal_input_templates": MappingProxyType({}),
+        field_name: {},
+    }
+    with pytest.raises(BeartypeCallHintParamViolation, match=field_name):
+        PlannedCore(
+            compiled=lambda **_kwargs: template,
+            layout=layout,
+            name="main",
+            **arguments,  # ty: ignore[invalid-argument-type]
+        )

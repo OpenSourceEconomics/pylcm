@@ -55,19 +55,11 @@ class PlacementRequest:
 class SubmeshPlacement:
     """The device ids each regime's nodes run on."""
 
-    device_ids_by_regime: Mapping[RegimeName, tuple[int, ...]]
+    device_ids_by_regime: MappingProxyType[RegimeName, tuple[int, ...]]
     """Device ids per regime, ascending; one id for a single-device regime."""
 
     n_devices: int
     """Number of visible devices the plan was made for."""
-
-    def __post_init__(self) -> None:
-        """Freeze the mapping."""
-        object.__setattr__(
-            self,
-            "device_ids_by_regime",
-            MappingProxyType(dict(self.device_ids_by_regime)),
-        )
 
     def devices_for(self, *, regime_name: RegimeName) -> tuple[int, ...]:
         """Return the device ids of one regime's nodes."""
@@ -171,7 +163,9 @@ def plan_submesh_placement(
             device = min(range(n_devices), key=_FootprintRank(footprint=footprint))
         device_ids[request.regime_name] = (device,)
         footprint[device] += request.template_bytes
-    return SubmeshPlacement(device_ids_by_regime=device_ids, n_devices=n_devices)
+    return SubmeshPlacement(
+        device_ids_by_regime=MappingProxyType(device_ids), n_devices=n_devices
+    )
 
 
 def _device_block_size(*, request: PlacementRequest, n_devices: int) -> int:

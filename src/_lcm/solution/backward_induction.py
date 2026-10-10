@@ -4858,7 +4858,7 @@ def _bounded_plan(
     executable = compiled_by_width[_width_key(widths=widths)]
     memory = memory_by_compiled_id[id(executable)]
     return WorkspacePlan(
-        widths=widths,
+        widths=MappingProxyType(dict(widths)),
         peak_bytes=memory.peak_bytes,
         reservation_bytes=memory.reservation_bytes,
         compiled=executable,
@@ -7175,6 +7175,8 @@ def _attach_resolved_output_layout(
     name: str,
 ) -> PlannedCore:
     """Carry one node's resolved output and input plans to runtime dispatch."""
+    tile_widths = MappingProxyType(dict(tile_widths))
+    internal_input_templates = MappingProxyType(dict(internal_input_templates))
     return PlannedCore(
         compiled=compiled,
         layout=layout,

@@ -67,10 +67,10 @@ class ResolvedProducer:
     function: Callable[..., PytreeValue]
     """The exact callable the engine lowers for this program."""
 
-    internal_input_templates: Mapping[ReferenceName, ShapeDtypePytree]
+    internal_input_templates: MappingProxyType[ReferenceName, ShapeDtypePytree]
     """Abstract subtrees the program reads from its own producers."""
 
-    static_kwargs: Mapping[str, int]
+    static_kwargs: MappingProxyType[str, int]
     """Planner-owned width bindings, passed to JAX as static keyword arguments."""
 
     internal_outputs: tuple[InternalOutputSpec, ...]
@@ -80,15 +80,7 @@ class ResolvedProducer:
     """The complete invocation's `jax.eval_shape`, traced once."""
 
     def __post_init__(self) -> None:
-        """Snapshot the caller-owned invocation mappings and declarations."""
-        object.__setattr__(
-            self,
-            "internal_input_templates",
-            MappingProxyType(dict(self.internal_input_templates)),
-        )
-        object.__setattr__(
-            self, "static_kwargs", MappingProxyType(dict(self.static_kwargs))
-        )
+        """Snapshot the caller-owned output declarations."""
         object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
 
 
@@ -112,8 +104,8 @@ def resolve_producer(
     return ResolvedProducer(
         name=program.name,
         function=program.function,
-        internal_input_templates=templates,
-        static_kwargs=program.static_kwargs,
+        internal_input_templates=MappingProxyType(dict(templates)),
+        static_kwargs=MappingProxyType(dict(program.static_kwargs)),
         internal_outputs=program.internal_outputs,
         abstract_output=jax.eval_shape(invocation, **program.arguments, **templates),
     )

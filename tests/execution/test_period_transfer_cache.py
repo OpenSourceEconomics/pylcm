@@ -479,7 +479,7 @@ def _planned_core(*, name: str, transfer: ResolvedValueTransfer) -> PlannedCore:
             state_order=("wealth",),
             output_roles=VALUE,
         ),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         input_transfer_plan=(transfer,),
         name=name,
     )

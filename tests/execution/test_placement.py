@@ -4,6 +4,7 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.engine import placed_devices_for_ids
 from _lcm.execution.placement import (
@@ -240,5 +241,11 @@ def test_a_single_device_yields_device_zero_for_every_regime() -> None:
     )
 
     assert placement == SubmeshPlacement(
-        device_ids_by_regime={"a": (0,), "b": (0,)}, n_devices=1
+        device_ids_by_regime=MappingProxyType({"a": (0,), "b": (0,)}), n_devices=1
     )
+
+
+def test_submesh_placement_refuses_a_plain_dict_of_device_ids() -> None:
+    """A placement holds a read-only mapping of device ids; a plain dict is refused."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="device_ids_by_regime"):
+        SubmeshPlacement(device_ids_by_regime={"a": (0,)}, n_devices=1)  # ty: ignore[invalid-argument-type]
