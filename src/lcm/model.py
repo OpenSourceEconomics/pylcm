@@ -1249,19 +1249,17 @@ class Model:
         Leaves out runtime executors and their lock, declared-authority state,
         the parameter projection, the creating process, the published initial
         nodes, and sealed bindings that name this process's namespaces and
-        closure cells. `__setstate__` rebuilds them.
+        closure cells. `__setstate__` rebuilds them. The attributes an archive may
+        lack are written only when the model holds them.
         """
-        return _PickledModel(
+        state = _PickledModel(
             description=self.description,
-            durable_identity=self.durable_identity,
             ages=self.ages,
-            _time=self._time,
             n_periods=self.n_periods,
             fixed_params=self.fixed_params,
             _edges=self._edges,
             _declared_transitions=self._declared_transitions,
             _fixed_component_splits=self._fixed_component_splits,
-            _solution_model_instance_id=self._solution_model_instance_id,
             _declared_edge_vocabulary=self._declared_edge_vocabulary,
             _cells_without_edges=self._cells_without_edges,
             pruned_variables=self.pruned_variables,
@@ -1275,8 +1273,17 @@ class Model:
             stakeholder_names_to_ids=self.stakeholder_names_to_ids,
             enable_jit=self.enable_jit,
             simulation_output_dtypes=self.simulation_output_dtypes,
-            _model_structure_fingerprint=self._model_structure_fingerprint,
         )
+        held = vars(self)
+        if "durable_identity" in held:
+            state["durable_identity"] = self.durable_identity
+        if "_time" in held:
+            state["_time"] = self._time
+        if "_solution_model_instance_id" in held:
+            state["_solution_model_instance_id"] = self._solution_model_instance_id
+        if "_model_structure_fingerprint" in held:
+            state["_model_structure_fingerprint"] = self._model_structure_fingerprint
+        return state
 
     def __setstate__(self, state: _PickledModel) -> None:
         """Restore transient state and reseal the model in this process.
