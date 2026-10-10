@@ -72,12 +72,12 @@ from _lcm.typing import (
     ConstraintFunction,
     EconFunctionsMapping,
     FunctionName,
+    ParamsLeaf,
     QualifiedName,
     RegimeName,
     StateName,
     TransitionFunction,
     TransitionFunctionName,
-    _ParamsLeaf,
 )
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
@@ -2109,7 +2109,7 @@ class _EdgeSurfaces:
     # Python scalars, arrays of either integer width -- so its annotations
     # document the contract and are not enforced at call time.
     @no_type_check
-    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+    def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
         same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
         # Direct (un-interpolated) reads of the target's own value and flag, so a
         # `-inf` dissolution cell never poisons a neighbour through interpolation.
@@ -2163,7 +2163,7 @@ class _EdgeBranchCombine:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+    def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
         stacked = cast("FloatND", kwargs[EDGE_CHANNELS_ARG])
         gate_kwargs = _assemble_gate_kwargs(
             gate_arg_names=self.gate_arg_names,
@@ -2269,7 +2269,7 @@ class _SimulateGateEvaluator:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: _ParamsLeaf) -> BoolND:
+    def __call__(self, **kwargs: ParamsLeaf) -> BoolND:
         _fail_if_arguments_do_not_match(
             kwargs=kwargs, arg_names=self.arg_names, name="evaluate_simulate_gate"
         )
@@ -2371,7 +2371,7 @@ class _FallbackStateProjector:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: _ParamsLeaf) -> Mapping[StateName, FloatND]:
+    def __call__(self, **kwargs: ParamsLeaf) -> Mapping[StateName, FloatND]:
         _fail_if_arguments_do_not_match(
             kwargs=kwargs, arg_names=self.arg_names, name="project"
         )
@@ -2587,7 +2587,7 @@ def build_reference_params_mapping_for_fold(
     edge: ResolvedGatedEdge,
     # `object` leaves: the claw would otherwise check every leaf on every call.
     flat_params: Mapping[str, object],
-) -> MappingProxyType[RegimeName, Mapping[str, _ParamsLeaf]]:
+) -> MappingProxyType[RegimeName, Mapping[str, ParamsLeaf]]:
     """Assemble `SAME_PERIOD_PARAMS_ARG` for one edge's reference readers.
 
     The params counterpart of `build_same_period_mapping_for_fold`, over the

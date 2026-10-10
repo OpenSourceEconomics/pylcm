@@ -110,7 +110,7 @@ type UserInitialConditions = Mapping[
 
 # Boundary leaf type — accepted by `Model.__init__` / `Model.solve` /
 # `Model.simulate` and canonicalized by `cast_params_to_canonical_dtypes`.
-type _UserParamsLeaf = (
+type UserParamsLeaf = (
     bool
     | int
     | float
@@ -131,8 +131,8 @@ type _UserParamsLeaf = (
 # `{regime: {function: {parameter: value}}}`; target-owned laws add a target
 # level, and a `JointTransition` kernel adds its `support`/`probabilities` role
 # before reaching parameter leaves.
-type _UserParamsNode = _UserParamsLeaf | Mapping[str, _UserParamsNode]
-type UserParams = Mapping[str, _UserParamsNode]
+type UserParamsNode = UserParamsLeaf | Mapping[str, UserParamsNode]
+type UserParams = Mapping[str, UserParamsNode]
 
 
 # User-facing templates keep the first regime and function/target levels

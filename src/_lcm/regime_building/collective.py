@@ -26,7 +26,7 @@ from _lcm.regime_building.argmax import (
     _move_axes_to_back,
     argmax_and_max,
 )
-from _lcm.typing import FunctionName, QualifiedName, RegimeName, StateName, _ParamsLeaf
+from _lcm.typing import FunctionName, ParamsLeaf, QualifiedName, RegimeName, StateName
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import sum_in_value_order, zero_safe_weighted_term
 from lcm.collective import ParetoObjective
@@ -371,14 +371,14 @@ def build_pareto_weights(
     normalization = "pointwise" if objective is None else objective.normalization
 
     @with_signature(args=list(arg_names), return_annotation="dict")
-    def declared_weights(**kwargs: _ParamsLeaf) -> dict[str, FloatND]:
+    def declared_weights(**kwargs: ParamsLeaf) -> dict[str, FloatND]:
         return {
             name: jnp.asarray(func(**{arg: kwargs[arg] for arg in args}))
             for name, (func, args) in per_stakeholder.items()
         }
 
     @with_signature(args=list(arg_names), return_annotation="dict")
-    def compute(**kwargs: _ParamsLeaf) -> dict[str, FloatND]:
+    def compute(**kwargs: ParamsLeaf) -> dict[str, FloatND]:
         raw = declared_weights(**kwargs)
         if normalization == "pointwise" and len(raw) > 1:
             stacked = jnp.stack(jnp.broadcast_arrays(*raw.values()), axis=0)
