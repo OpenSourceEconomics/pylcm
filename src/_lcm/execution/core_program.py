@@ -16,6 +16,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 import jax
+from jax.typing import DTypeLike
 
 from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.value_transfer import (
@@ -137,8 +138,8 @@ class _TransferArgumentLeaf(Protocol):
     """Array-like dynamic leaf validated before transfer planning."""
 
     shape: tuple[int, ...]
-    dtype: object
-    sharding: object
+    dtype: DTypeLike
+    sharding: jax.sharding.Sharding | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -517,7 +518,7 @@ class MaterializedCoreProgram:
 
     name: str
     function: Callable[..., PytreeValue]
-    arguments: Mapping[str, object]
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     requirements: CoreExecutionRequirements
     output_roles: object
     disposition: CoreExecutionDisposition
@@ -703,7 +704,7 @@ def _validate_selected_internal_edges(
             raise ValueError(msg)
 
 
-def _reject_native_duplicate_authorities(*, kernel: object) -> None:
+def _reject_native_duplicate_authorities(*, kernel: CoreProgramGraphAware) -> None:
     """Fail when a native graph publisher retains any parallel declaration seam."""
     duplicate_names = tuple(
         name
@@ -1424,12 +1425,12 @@ def _value_read_argument_leaf(
         msg = f"Value-read argument {root!r} is missing from program arguments."
         raise ValueError(msg)
 
-    value: object = program.arguments[root]
+    value: PytreeValue | ShapeDtypePytree = program.arguments[root]
     traversed: list[str | int] = []
     for segment in read.source.path:
         traversed.append(segment)
         if isinstance(value, Mapping):
-            if segment not in value:
+            if type(segment) is not str or segment not in value:
                 msg = f"Value-read argument path {(root, *traversed)!r} is missing."
                 raise ValueError(msg)
             value = value[segment]
@@ -1526,7 +1527,7 @@ def _validate_abstract_inputs(*, program: MaterializedCoreProgram) -> None:
         )
 
 
-def _fail_if_axis_name_invalid(*, name: object) -> None:
+def _fail_if_axis_name_invalid(*, name: str) -> None:
     """Require an exact, non-empty spelling for a planner-visible axis name."""
     if type(name) is not str or not name:
         msg = "An execution axis name must be a non-empty string."
@@ -1534,7 +1535,7 @@ def _fail_if_axis_name_invalid(*, name: object) -> None:
 
 
 def _fail_if_width_policy_invalid(
-    *, name: str, extent: int, minimum_width: object, alignment: object
+    *, name: str, extent: int, minimum_width: int, alignment: int
 ) -> None:
     """Require a width floor and an alignment the axis extent can actually serve.
 

@@ -53,6 +53,7 @@ from _lcm.execution.value_views import (
     fail_if_value_transfer_exceeds_budget,
     plan_value_transfer_footprint,
 )
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 
 _STATES = ("pref_type", "assets", "health")
@@ -859,13 +860,16 @@ def test_a_transfer_exactly_at_the_budget_is_admitted() -> None:
 
 
 def _program_reading(
-    *, stored: jax.Array, read: ValueRead, argument_leaf: object
+    *,
+    stored: jax.Array,
+    read: ValueRead,
+    argument_branch: PytreeValue | ShapeDtypePytree,
 ) -> MaterializedCoreProgram:
     del stored
     return MaterializedCoreProgram(
         name="main",
         function=_consume,
-        arguments={"next_regime_to_V_arr": {"retired": argument_leaf}},
+        arguments={"next_regime_to_V_arr": argument_branch},
         requirements=CoreExecutionRequirements(value_reads=(read,)),
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
@@ -885,7 +889,9 @@ def test_a_resolved_program_receives_the_selected_block() -> None:
     read = ValueRead(target=_ARTIFACT, source=_source(), view=transfer.view)
 
     resolved = resolve_core_program(
-        program=_program_reading(stored=stored, read=read, argument_leaf=stored),
+        program=_program_reading(
+            stored=stored, read=read, argument_branch={"retired": stored}
+        ),
         input_transfer_plan=(transfer,),
     )
 
@@ -906,7 +912,9 @@ def test_a_read_and_its_transfer_must_declare_the_same_view() -> None:
 
     with pytest.raises(ValueError, match="view"):
         resolve_core_program(
-            program=_program_reading(stored=stored, read=read, argument_leaf=stored),
+            program=_program_reading(
+                stored=stored, read=read, argument_branch={"retired": stored}
+            ),
             input_transfer_plan=(_selected_transfer(stored=stored, code=1),),
         )
 
@@ -918,7 +926,9 @@ def test_a_plain_read_cannot_be_planned_with_a_view() -> None:
 
     with pytest.raises(ValueError, match="view"):
         resolve_core_program(
-            program=_program_reading(stored=stored, read=read, argument_leaf=stored),
+            program=_program_reading(
+                stored=stored, read=read, argument_branch={"retired": stored}
+            ),
             input_transfer_plan=(_selected_transfer(stored=stored, code=1),),
         )
 
@@ -950,12 +960,17 @@ def test_an_abstract_view_input_has_the_consumer_shape() -> None:
     read = ValueRead(target=_ARTIFACT, source=_source(), view=transfer.view)
 
     described = abstract_program_inputs(
-        program=_program_reading(stored=stored, read=read, argument_leaf=stored),
+        program=_program_reading(
+            stored=stored, read=read, argument_branch={"retired": stored}
+        ),
         transfers=(transfer,),
         execution_sharding=_single(),
     )
 
-    leaf = described.arguments["next_regime_to_V_arr"]["retired"]  # ty: ignore[not-subscriptable]
+    branch = described.arguments["next_regime_to_V_arr"]
+    assert isinstance(branch, Mapping)
+    leaf = branch["retired"]
+    assert isinstance(leaf, jax.ShapeDtypeStruct)
     assert (leaf.shape, leaf.sharding) == ((4, 2), _single())
 
 
@@ -968,7 +983,9 @@ def test_an_abstract_view_input_with_the_stored_shape_is_refused() -> None:
 
     with pytest.raises(ValueError, match="shape mismatch"):
         resolve_core_program(
-            program=_program_reading(stored=stored, read=read, argument_leaf=stale),
+            program=_program_reading(
+                stored=stored, read=read, argument_branch={"retired": stale}
+            ),
             input_transfer_plan=(transfer,),
             abstract_inputs=True,
         )

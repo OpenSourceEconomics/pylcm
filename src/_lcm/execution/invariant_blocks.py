@@ -74,13 +74,15 @@ def block_state_action_space[SpaceT](
     )
 
 
-def block_value_template(*, template: object, axis: int) -> jax.ShapeDtypeStruct:
+def block_value_template(
+    *, template: FloatND | jax.ShapeDtypeStruct, axis: int
+) -> jax.ShapeDtypeStruct:
     """Describe one block of a regime value: the bound axis at length one."""
-    shape = tuple(int(size) for size in template.shape)  # ty: ignore[unresolved-attribute]
+    shape = tuple(int(size) for size in template.shape)
     return jax.ShapeDtypeStruct(
         (*shape[:axis], 1, *shape[axis + 1 :]),
-        template.dtype,  # ty: ignore[unresolved-attribute]
-        sharding=template.sharding,  # ty: ignore[unresolved-attribute]
+        template.dtype,
+        sharding=template.sharding,
     )
 
 
