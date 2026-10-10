@@ -85,7 +85,7 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
-from _lcm.processes.ar1 import RouwenhorstAR1Process, TauchenAR1Process
+from _lcm.processes.ar1 import RouwenhorstAR1Process, TauchenAR1Process, _AR1Process
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
@@ -4543,6 +4543,19 @@ class Model:
         )
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
+        for regime_name, regime in self._regimes.items():
+            for phase in (regime.solution, regime.simulation):
+                for state_name, grid in phase.grids.items():
+                    if (
+                        isinstance(grid, _AR1Process)
+                        and "rho" in grid.params_to_pass_at_runtime
+                    ):
+                        grid.fail_if_nonstationary_rho(
+                            rho=cast(
+                                "FloatND | IntND",
+                                flat_params[regime_name][f"{state_name}__rho"],
+                            )
+                        )
         if array_writer is None:
             # Under entry admission the caller validates after the process
             # grids are admitted; see `simulate`.

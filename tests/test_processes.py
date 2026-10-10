@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 import pytest
@@ -211,6 +211,44 @@ def test_process_grid_fully_specified_with_all_params(*, grid_cls, kwargs):
 
 
 _AR1_GRID_CLASSES = [TauchenAR1Process, RouwenhorstAR1Process]
+
+
+@pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
+@pytest.mark.parametrize("rho", [1.0, 1.2, -1.0, -1.2])
+def test_ar1_rejects_nonstationary_persistence(
+    *, grid_cls: type[TauchenAR1Process | RouwenhorstAR1Process], rho: float
+) -> None:
+    """A stationary grid cannot represent a unit-root or explosive process."""
+    kwargs = {"gauss_hermite": True} if grid_cls is TauchenAR1Process else {}
+    with pytest.raises(
+        GridInitializationError,
+        match=rf"{grid_cls.__name__}.*rho={rho}.*no stationary distribution",
+    ):
+        grid_cls(n_points=5, rho=rho, sigma=0.5, mu=0.0, **kwargs)
+
+
+@pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
+@pytest.mark.parametrize("rho", [-0.9, 0.0, 0.9])
+def test_ar1_stationary_nodes_are_finite(
+    *, grid_cls: type[TauchenAR1Process | RouwenhorstAR1Process], rho: float
+) -> None:
+    """Stationary persistence gives finite grid nodes."""
+    kwargs = {"gauss_hermite": True} if grid_cls is TauchenAR1Process else {}
+    grid = grid_cls(n_points=5, rho=rho, sigma=0.5, mu=0.0, **kwargs)
+    assert jnp.isfinite(grid.get_gridpoints()).all()
+
+
+@pytest.mark.parametrize("distribution_type", ["tauchen", "rouwenhorst"])
+@pytest.mark.parametrize("rho", [1.0, 1.2, -1.0, -1.2])
+def test_ar1_solve_rejects_nonstationary_runtime_persistence(
+    *, distribution_type: Literal["tauchen", "rouwenhorst"], rho: float
+) -> None:
+    """Runtime persistence is checked before a solve places its process grid."""
+    model = get_model(n_periods=2, distribution_type=distribution_type)
+    params = get_params(distribution_type)
+    params["alive"]["income"] = {**params["alive"]["income"], "rho": rho}
+    with pytest.raises(GridInitializationError, match="no stationary distribution"):
+        model.solve(params=params, log_level="off")
 
 
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)

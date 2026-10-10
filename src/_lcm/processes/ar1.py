@@ -12,6 +12,7 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from beartype import beartype
 from jax.scipy.stats.norm import cdf
 
@@ -26,12 +27,32 @@ from _lcm.processes.base import (
     standard_normal,
 )
 from _lcm.typing import PRNGKeyND
-from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
+from lcm.exceptions import GridInitializationError
+from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
 
 @dataclass(frozen=True, kw_only=True)
 class _AR1Process(_ContinuousStochasticProcess):
     """Base for AR(1) processes — draw depends on previous value."""
+
+    rho: float | int | None = None
+    """Persistence parameter of the stationary AR(1) process."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.rho is not None:
+            self.fail_if_nonstationary_rho(rho=self.rho)
+
+    def fail_if_nonstationary_rho(self, *, rho: float | FloatND | IntND) -> None:
+        """Reject persistence that cannot place a stationary grid at entry."""
+        values = np.asarray(rho)
+        if not np.all((values > -1) & (values < 1)):
+            msg = (
+                f"{type(self).__name__} with rho={rho} has no stationary distribution "
+                "to place a grid on: unit-root or explosive persistence requires "
+                "a process on user-supplied nodes."
+            )
+            raise GridInitializationError(msg)
 
     @abstractmethod
     def draw_shock(
@@ -63,9 +84,6 @@ class TauchenAR1Process(_AR1Process):
 
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
-
-    rho: float | int | None = None
-    """Persistence parameter of the AR(1) process."""
 
     sigma: float | int | StateConditioned | None = None
     """Standard deviation of the innovation.
@@ -163,9 +181,6 @@ class RouwenhorstAR1Process(_AR1Process):
 
     """
 
-    rho: float | int | None = None
-    """Persistence parameter of the AR(1) process."""
-
     sigma: float | int | StateConditioned | None = None
     """Standard deviation of the innovation.
 
@@ -240,9 +255,6 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
     Section 4.3 / Eq. 21.
 
     """
-
-    rho: float | int | None = None
-    """Persistence parameter of the AR(1) process."""
 
     mu: float | int | None = None
     """Intercept (drift) of the AR(1) process."""
