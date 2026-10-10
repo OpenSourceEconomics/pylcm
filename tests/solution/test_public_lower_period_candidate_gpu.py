@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 from importlib.metadata import distribution, distributions
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Unpack
 
 import jax
 import pytest
@@ -22,16 +22,21 @@ import lcm
 from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_directory
 from _lcm.solution import backward_induction as engine
 from _lcm.solution.fingerprint import _semantic_fingerprint
+from _lcm.typing import JSONValue
+from lcm.model import _SolutionPreparation
 from lcm.solver_api import EGM_CONTINUATION, ResultRetention
+from lcm.typing import UserParams
 from tests.solution._native_tool_identity import capture_native_tool_identity
 from tests.solution.test_public_lower_period_candidate import (
     _assert_immutable_result,
     _describe,
+    _FallbackKwargs,
     _forbid_candidate_execution,
     _observe_context,
     _observe_dispatch,
     _observe_lower,
     _observe_wave,
+    _PrepareKwargs,
     _require_public_member,
 )
 from tests.test_models import nbegm_ride_along_toy
@@ -53,7 +58,7 @@ def test_public_gpu_lower_period_candidate_matches_solve(
     *,
     retention: ResultRetention,
     monkeypatch: pytest.MonkeyPatch,
-    record_property: Callable[[str, object], None],
+    record_property: Callable[[str, str], None],
 ) -> None:
     """A requested primary candidate preserves solve's exact lowering contract."""
     model = nbegm_ride_along_toy.build_model(
@@ -151,10 +156,10 @@ def test_public_gpu_lower_period_candidate_matches_solve(
 def _run_gpu_reference(
     *,
     model: lcm.Model,
-    params: Any,
+    params: UserParams,
     retention: ResultRetention,
     monkeypatch: pytest.MonkeyPatch,
-    identities: Mapping[str, Any],
+    identities: Mapping[str, JSONValue],
 ) -> tuple[list[Any], set[Any], dict[Any, str], dict[str, int]]:
     # These containers hold copied descriptors, integer identities and raw bytes only.
     authority: dict[str, Any] = {}
@@ -171,7 +176,9 @@ def _run_gpu_reference(
     dispatched_keys: dict[Any, str] = {}
     compile_real = engine._compile_and_log
 
-    def observe_prepare(self: Any, **kwargs: Any) -> Any:
+    def observe_prepare(
+        self: lcm.Model, **kwargs: Unpack[_PrepareKwargs]
+    ) -> _SolutionPreparation:
         result = prepare(self, **kwargs)
         authority.update(
             model_identity=result.model_fingerprint,
@@ -191,7 +198,9 @@ def _run_gpu_reference(
         assert kwargs["execution_widths"].device_memory_bytes is not None
         return _observe_context(resolve=resolve, contexts=contexts, **kwargs)
 
-    def observe_fallbacks(self: Any, **kwargs: Any) -> Any:
+    def observe_fallbacks(
+        self: engine._LazyCandidateFrontier, **kwargs: Unpack[_FallbackKwargs]
+    ) -> None:
         result = bind_fallbacks(self, **kwargs)
         for candidate, key in kwargs["fallback_keys"].items():
             fallback_contexts[candidate] = _semantic_fingerprint(_describe(key))
@@ -317,7 +326,7 @@ def _sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _capture_gpu_source_runtime_identity() -> Mapping[str, Any]:
+def _capture_gpu_source_runtime_identity() -> Mapping[str, JSONValue]:
     """Proposed CUDA12 source-checkout identity, independent of production code."""
     root = Path(hatch_build.__file__).resolve().parent
     sources = tuple(
@@ -406,7 +415,7 @@ def _capture_gpu_source_runtime_identity() -> Mapping[str, Any]:
     )
 
 
-def _capture_cuda_identity() -> Mapping[str, Any]:
+def _capture_cuda_identity() -> Mapping[str, JSONValue]:
     """Bind plugin/CUDA package bytes and actual loaded driver/device identity."""
     packages = {}
     for package in distributions():

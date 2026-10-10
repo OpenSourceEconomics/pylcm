@@ -20,8 +20,9 @@ child's.
 """
 
 import functools
+from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any
+from typing import Protocol
 
 import jax
 import jax.numpy as jnp
@@ -29,11 +30,14 @@ import numpy as np
 import pytest
 
 from _lcm.egm.continuation import (
+    ContinuationPlan,
     _ChildEulerState,
+    _ChildRead,
     _RowQueriesAndGradients,
     child_resources_params,
     euler_draw_nodes,
 )
+from _lcm.egm.step_core import _EgmKernelPieces
 from _lcm.execution.core_program import core_program_graph
 from lcm import (
     AgeGrid,
@@ -46,7 +50,14 @@ from lcm import (
     categorical,
 )
 from lcm.solvers import DCEGM, GridSearch
-from lcm.typing import ContinuousState, FloatND, RegimeName, ScalarInt
+from lcm.typing import (
+    ContinuousState,
+    FloatND,
+    RegimeName,
+    ScalarFloat,
+    ScalarInt,
+    UserFunction,
+)
 from tests.test_models.nbegm_common import make_alive_dead_model, savings, utility
 
 
@@ -75,8 +86,14 @@ def resources(*, available_wealth: FloatND) -> FloatND:
     return available_wealth
 
 
-def _available_wealth_factory(*, slope: float, transfer: float) -> Any:
-    def build(age: float) -> Any:
+class _Resources(Protocol):
+    def __call__(self, *, liquid: ContinuousState) -> FloatND: ...
+
+
+def _available_wealth_factory(
+    *, slope: float, transfer: float
+) -> Callable[[float], _Resources]:
+    def build(age: float) -> _Resources:
         def available_wealth(*, liquid: ContinuousState) -> FloatND:
             return (1.0 + slope * age) * liquid + transfer * age
 
@@ -85,8 +102,10 @@ def _available_wealth_factory(*, slope: float, transfer: float) -> Any:
     return build
 
 
-def _resources_factory(*, slope: float, transfer: float) -> Any:
-    def build(age: float) -> Any:
+def _resources_factory(
+    *, slope: float, transfer: float
+) -> Callable[[float], _Resources]:
+    def build(age: float) -> _Resources:
         def resources(*, liquid: ContinuousState) -> FloatND:
             return (1.0 + slope * age) * liquid + transfer * age
 
@@ -153,19 +172,27 @@ def resources_case(request: pytest.FixtureRequest) -> tuple[Model, float, float]
     )
 
 
-def _continuation_plan(*, model: Model, regime: RegimeName, period: int) -> Any:
+def _continuation_plan(
+    *, model: Model, regime: RegimeName, period: int
+) -> ContinuationPlan:
     """The continuation plan of `regime` at `period`, from the replay step."""
     kernel = model._regimes[regime].solution.period_kernels[period]
-    step: Any = core_program_graph(kernel=kernel)["replay"].function
+    step = core_program_graph(kernel=kernel)["replay"].function
     seen: set[int] = set()
     while not hasattr(step, "pieces"):
         assert id(step) not in seen, "the replay program wraps no EGM step"
         seen.add(id(step))
-        step = step.func if isinstance(step, functools.partial) else step.__wrapped__
-    return step.pieces.continuation_plan
+        if isinstance(step, functools.partial):
+            step = step.func
+        else:
+            assert hasattr(step, "__wrapped__")
+            step = step.__wrapped__
+    pieces = step.pieces
+    assert isinstance(pieces, _EgmKernelPieces)
+    return pieces.continuation_plan
 
 
-def _child_read(*, model: Model, period: int) -> Any:
+def _child_read(*, model: Model, period: int) -> _ChildRead:
     """The parent's read of its `alive` child, from the period's replay step."""
     plan = _continuation_plan(model=model, regime="alive", period=period)
     return plan.child_reads["alive"]
@@ -214,7 +241,9 @@ class _SourceChildId:
     dead: ScalarInt
 
 
-def _source_child_model(*, slope: float, transfer: float, liquid_law: Any) -> Model:
+def _source_child_model(
+    *, slope: float, transfer: float, liquid_law: UserFunction
+) -> Model:
     """An age-invariant `source` at ages 0 and 1 moving into an age-varying `child`.
 
     The child, active at ages 1 and 2, carries `R_a(x) = (1 + slope a) x +
@@ -305,7 +334,9 @@ def source_child_case(
     return model, slope, transfer, law_slope, savings_at_three
 
 
-def _source_reads_child(*, model: Model, period: int, savings_value: Any) -> Any:
+def _source_reads_child(
+    *, model: Model, period: int, savings_value: ScalarFloat
+) -> tuple[FloatND, FloatND]:
     """The source's composed child-resources query and savings gradient."""
     plan = _continuation_plan(model=model, regime="source", period=period)
     read = plan.child_reads["child"]
@@ -342,7 +373,7 @@ def test_age_invariant_source_reads_the_child_regimes_age(
     """
     model, slope, transfer, law_slope, savings_at_three = source_child_case
 
-    def evaluate(savings_value: Any) -> Any:
+    def evaluate(savings_value: ScalarFloat) -> FloatND:
         return jnp.stack(
             _source_reads_child(model=model, period=period, savings_value=savings_value)
         )

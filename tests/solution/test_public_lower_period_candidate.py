@@ -8,13 +8,14 @@ import enum
 import functools
 import hashlib
 import json
+import logging
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Hashable, Mapping
 from importlib.metadata import distribution
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Never, TypedDict, Unpack
 
 import jax
 import numpy as np
@@ -29,9 +30,26 @@ from _lcm.solution import lower_candidate as candidate_lowering
 from _lcm.solution.continuation_arguments import MARGINAL_ARGUMENT
 from _lcm.solution.fingerprint import _semantic_fingerprint
 from _lcm.solution.lowering_descriptors import describe_lowering_value
+from _lcm.typing import HostArray, JSONValue, LoweringDescriptor
 from lcm.exceptions import ExecutionPlanningError
+from lcm.model import _SolutionPreparation
 from lcm.solver_api import EGM_CONTINUATION, ResultRetention
 from tests.test_models import nbegm_ride_along_toy
+
+
+class _PrepareKwargs(TypedDict):
+    flat_params: engine.FlatParams
+    log: logging.Logger
+    retention: ResultRetention
+    process_grid_resolver: engine.ProcessGridResolver | None
+    call_id: engine.CallId | None
+
+
+class _FallbackKwargs(TypedDict):
+    fallback_keys: dict[engine._CoreCandidate, Hashable]
+    fallback_donations: dict[engine._CoreCandidate, tuple[engine.ResolvedDonation, ...]]
+    argument_keys: dict[engine._CoreTriple, Hashable]
+
 
 pytestmark = [
     pytest.mark.requires(device="cpu"),
@@ -39,11 +57,15 @@ pytestmark = [
 ]
 
 
-def _describe(value: Any) -> Any:
+def _describe(
+    value: object,  # noqa: PAN001 - JAX tree-definition auxiliary metadata accepts arbitrary Python values.
+) -> LoweringDescriptor:
     """Copy descriptor data; reject unknown live objects instead of retaining them."""
     if isinstance(value, enum.Enum):
         return ("enum", type(value).__module__, type(value).__qualname__, value.name)
-    if value is None or type(value) in (str, bool, int, bytes):
+    if value is None or (
+        isinstance(value, str | int | bytes) and type(value) in (str, bool, int, bytes)
+    ):
         return value
     if isinstance(value, float):
         return ("float", value.hex())
@@ -54,7 +76,14 @@ def _describe(value: Any) -> Any:
     return _describe_tree(value)
 
 
-def _describe_jax(value: Any) -> Any:
+def _describe_jax(
+    value: jax.Array
+    | jax.ShapeDtypeStruct
+    | HostArray
+    | jax.tree_util.PyTreeDef
+    | jax.sharding.Sharding
+    | jax.sharding.AbstractMesh,
+) -> LoweringDescriptor:
     """Copy the concrete JAX descriptor variants used by this fixture."""
     if isinstance(value, (jax.Array, jax.ShapeDtypeStruct, np.ndarray)):
         return (
@@ -102,7 +131,9 @@ def _describe_jax(value: Any) -> Any:
     raise AssertionError(f"Unspecified JAX descriptor type: {type(value)}")
 
 
-def _describe_tree(value: Any) -> Any:
+def _describe_tree(
+    value: object,  # noqa: PAN001 - JAX tree-definition auxiliary metadata accepts arbitrary Python values.
+) -> LoweringDescriptor:
     """Copy structural containers without saving their live leaves."""
     if value is INVARIANT:
         return ("singleton", "_lcm.regime_building.age_specialization", "INVARIANT")
@@ -136,7 +167,9 @@ def _describe_tree(value: Any) -> Any:
     raise AssertionError(f"Unspecified descriptor type: {type(value)}")
 
 
-def _forbid_candidate_execution(*_args: Any, **_kwargs: Any) -> Any:
+def _forbid_candidate_execution[Argument](
+    *_args: Argument, **_kwargs: Argument
+) -> Never:
     raise AssertionError("lower-only submitted, compiled or dispatched a candidate")
 
 
@@ -169,7 +202,9 @@ def test_public_lower_period_candidate_matches_solve(
     bind_fallbacks = engine._LazyCandidateFrontier.bind_fallbacks
     identities = _capture_source_runtime_identity()
 
-    def observe_prepare(self: Any, **kwargs: Any) -> Any:
+    def observe_prepare(
+        self: lcm.Model, **kwargs: Unpack[_PrepareKwargs]
+    ) -> _SolutionPreparation:
         result = prepare(self, **kwargs)
         authority.update(
             model_identity=result.model_fingerprint,
@@ -187,7 +222,9 @@ def test_public_lower_period_candidate_matches_solve(
         contexts=contexts,
     )
 
-    def observe_fallbacks(self: Any, **kwargs: Any) -> Any:
+    def observe_fallbacks(
+        self: engine._LazyCandidateFrontier, **kwargs: Unpack[_FallbackKwargs]
+    ) -> None:
         result = bind_fallbacks(self, **kwargs)
         for candidate, key in kwargs["fallback_keys"].items():
             fallback_contexts[candidate] = _semantic_fingerprint(_describe(key))
@@ -276,7 +313,7 @@ def test_public_lower_period_candidate_matches_solve(
     _assert_immutable_result(result)
 
 
-def _assert_immutable_result(value: Any) -> None:
+def _assert_immutable_result[Value](value: Value) -> None:
     """Accept only immutable descriptor trees; never coerce live objects away."""
     if value is None or type(value) in (str, bool, int, bytes):
         return
@@ -290,14 +327,14 @@ def _assert_immutable_result(value: Any) -> None:
             _assert_immutable_result(child)
         return
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        assert value.__dataclass_params__.frozen
+        assert getattr(value, "__dataclass_params__").frozen  # noqa: B009 - DataclassInstance omits generated parameter attributes.
         for field in dataclasses.fields(value):
             _assert_immutable_result(getattr(value, field.name))
         return
     raise AssertionError(f"Mutable or live lower-only result payload: {type(value)}")
 
 
-def _capture_source_runtime_identity() -> Mapping[str, Any]:
+def _capture_source_runtime_identity() -> Mapping[str, JSONValue]:
     """Read exact bytes before observation; reuse existing native/source seals."""
     root = Path(hatch_build.__file__).resolve().parent
     sources = tuple(
@@ -565,7 +602,9 @@ def test_public_lower_period_candidate_rejects_absent_members_before_lowering(
         ),
     )
 
-    def forbid_target_lowering(*_args: Any, **_kwargs: Any) -> Any:
+    def forbid_target_lowering[Argument](
+        *_args: Argument, **_kwargs: Argument
+    ) -> Never:
         raise AssertionError("An absent candidate reached target lowering")
 
     with monkeypatch.context() as bounded:
@@ -601,7 +640,10 @@ _EXPLICIT = ("enum", "jax._src.mesh", "AxisType", "Explicit")
     "describe", [_describe, describe_lowering_value], ids=["tracer", "public"]
 )
 def test_describe_spells_abstract_mesh_by_axis_names_sizes_and_types(
-    *, describe: Any, mesh: Any, expected: Any
+    *,
+    describe: Callable[[jax.sharding.AbstractMesh], LoweringDescriptor],
+    mesh: jax.sharding.AbstractMesh,
+    expected: LoweringDescriptor,
 ) -> None:
     """An abstract mesh, such as JAX's ambient trace-context mesh, is described by
     its axis names, sizes, types and abstract device."""
