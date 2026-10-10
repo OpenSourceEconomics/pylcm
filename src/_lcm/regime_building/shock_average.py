@@ -58,6 +58,8 @@ from lcm.exceptions import ModelInitializationError
 from lcm.typing import Float1D, FloatND, Int1D
 
 _TIME_NAMES = frozenset({"period", "age"})
+# Knots `_merged_knots` adds beyond the merged points, one on each side.
+_N_ANCHORS = 2
 _HIGHEST = jax.lax.Precision.HIGHEST
 
 
@@ -83,7 +85,8 @@ def average_over_shock(
         Tuple of the merged points, ascending, and the average at those points,
         the last axis of `values` replaced by them. A point that coincides with
         another is kept once; its copy moves above the largest point, where the
-        average is linear, so there are always `len(points) * len(shocks)` points.
+        average is linear, so there are always `len(points) * len(shocks)` merged
+        points, plus one anchor below and one above them (`_merged_knots`).
 
     """
     knots, averaging = shock_averaging_matrix(
@@ -491,7 +494,7 @@ def get_shock_average_reader(
         if name == plan.state_name:
             funcs[f"__{averaged_name}_coord__"] = _get_coordinate_finder(
                 in_name=averaged_coordinate,
-                grid=IrregSpacedGrid(n_points=n_points * n_nodes),
+                grid=IrregSpacedGrid(n_points=n_points * n_nodes + _N_ANCHORS),
             )
             continuous_coordinates.append(f"__{averaged_name}_coord__")
         elif name in v_interpolation_info.continuous_states:
@@ -807,18 +810,25 @@ class _ShockAverageReader:
 
 
 def _merged_knots(*, points: Float1D, shocks: Float1D) -> Float1D:
-    """Return `{a_j - shock_k}` ascending, every coincident copy moved above the top.
+    """Return `{a_j - shock_k}` ascending, framed by two anchors a span away.
 
-    Above the largest merged point every term of the average extrapolates along
-    the grid's last segment, so the average is linear there, and a point placed
-    in that region costs no exactness.
+    Below the smallest merged point every term of the average extrapolates along
+    the grid's first segment, and above the largest along its last, so the
+    average is linear in both regions and a point placed there costs no
+    exactness. Every coincident copy moves above the top. One anchor sits a
+    span below the smallest point and one a span above the largest: a read
+    beyond the merged points then extrapolates along a segment as long as the
+    grid, not along the shortest gap between two merged points, whose rounded
+    endpoint values would set the slope.
     """
     merged = jnp.sort((points[:, None] - shocks[None, :]).ravel())
     is_copy = jnp.concatenate([jnp.zeros(1, dtype=bool), merged[1:] <= merged[:-1]])
+    bottom = merged[0]
     top = merged[-1]
-    span = top - merged[0] + 1
+    span = top - bottom + 1
     lifted = top + span * jnp.cumsum(is_copy).astype(merged.dtype)
-    return jnp.sort(jnp.where(is_copy, lifted, merged))
+    knots = jnp.sort(jnp.where(is_copy, lifted, merged))
+    return jnp.concatenate([(bottom - span)[None], knots, (knots[-1] + span)[None]])
 
 
 def _shock_function(

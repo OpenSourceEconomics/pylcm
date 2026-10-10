@@ -60,6 +60,7 @@ N_XI = 5
 POOR_BELOW = 4.0
 HEALTH_PROBS = np.array([[0.7, 0.3], [0.2, 0.8]])
 _ATOL = 1e-10 if X64_ENABLED else 1e-4
+_FP32_ATOL = 1e-5
 
 
 @categorical(ordered=False)
@@ -373,6 +374,24 @@ def test_the_plain_law_value_matches_the_literal_backward_induction(
     V = _alive_values(_model(additive=False))[period]
 
     np.testing.assert_allclose(V, _reference_alive_values()[period], rtol=0, atol=_ATOL)
+
+
+@pytest.mark.usefixtures("x64_disabled")
+@pytest.mark.parametrize("additive", [True, False], ids=["additive", "plain"])
+@pytest.mark.parametrize("period", [0, 1, 2])
+def test_the_fp32_value_matches_the_fp64_reference_at_the_plain_law_accuracy(
+    *, additive: bool, period: int
+) -> None:
+    """In fp32, either law's value lies within `_FP32_ATOL` of the fp64 oracle.
+
+    Reads land below the wealth grid, where the value is extrapolated, so the
+    tolerance also bounds the extrapolation of the averaged value.
+    """
+    V = _alive_values(_model(additive=additive))[period]
+
+    np.testing.assert_allclose(
+        V, _reference_alive_values()[period], rtol=0, atol=_FP32_ATOL
+    )
 
 
 def test_the_additive_shock_policy_equals_the_plain_law_policy() -> None:
