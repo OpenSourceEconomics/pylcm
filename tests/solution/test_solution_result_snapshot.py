@@ -26,6 +26,7 @@ from _lcm.solution.result_snapshot import (
 )
 from _lcm.typing import ArtifactPayload, JSONValue
 from lcm import ExecutionConfig, LinSpacedGrid, Model
+from lcm._solver_api import authority as authority_module
 from lcm.exceptions import (
     IncompatibleSolutionError,
     InvalidSimulationInputError,
@@ -1169,6 +1170,43 @@ def test_whole_payload_zero_leaf_nodes_have_intentional_boundary_semantics() -> 
             payload_runtime_type=tuple,
             template=(),
         )
+
+
+def test_container_types_from_tree_returns_a_read_only_mapping() -> None:
+    """The container classes derived from a PyTree come back read-only."""
+    with_paths, tree = jax.tree_util.tree_flatten_with_path((jnp.zeros(2), jnp.ones(3)))
+    paths = tuple(
+        solver_api_module._normalize_jax_tree_path(path) for path, _leaf in with_paths
+    )
+
+    containers = solver_api_module._container_types_from_tree(
+        tree=tree, leaf_paths=paths
+    )
+
+    assert (type(containers), dict(containers)) == (MappingProxyType, {(): tuple})
+
+
+def test_template_snapshot_returns_read_only_container_types() -> None:
+    """Observing a template once yields its container classes read-only."""
+    _snapshot, containers = solver_api_module._snapshot_artifact_template_once(
+        template=(jnp.zeros(2),),
+        payload_runtime_type=tuple,
+    )
+
+    assert (type(containers), dict(containers)) == (MappingProxyType, {(): tuple})
+
+
+@dataclass(frozen=True, slots=True)
+class _SlottedRecord:
+    values: jax.Array
+
+
+def test_frozen_dataclass_layout_returns_read_only_slot_descriptors() -> None:
+    """A closed dataclass record's slot descriptors come back read-only."""
+    layout = authority_module._frozen_dataclass_layout(_SlottedRecord)
+    slot_descriptors = None if layout is None else layout[3]
+
+    assert type(slot_descriptors) is MappingProxyType
 
 
 def test_root_array_authority_owns_public_private_and_fresh_buffers() -> None:
