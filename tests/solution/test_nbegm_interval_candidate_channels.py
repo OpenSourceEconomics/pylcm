@@ -10,6 +10,7 @@ fusing only candidates that genuinely share a branch.
 """
 
 from collections.abc import Callable
+from typing import TypedDict
 
 import jax.numpy as jnp
 import numpy as np
@@ -17,7 +18,22 @@ import pytest
 
 from _lcm.egm import nbegm_step
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
+from _lcm.egm.preferences import Preferences
+from lcm.typing import Float1D, FloatND, ScalarFloat
 from tests.solution._crra_preferences import crra_preferences
+
+
+class _StepInputs(TypedDict):
+    cont_value: FloatND
+    cont_marginal: FloatND
+    liquid_grid: Float1D
+    savings_grid: Float1D
+    discount_factor: ScalarFloat
+    preferences: Preferences
+    coh_slopes: Float1D
+    coh_intercepts: Float1D
+    breakpoints: Float1D
+
 
 _CRRA = 2.0
 _DISCOUNT = 0.96
@@ -33,7 +49,7 @@ def _inverse_marginal_utility(marginal_continuation):
     return marginal_continuation ** (-1.0 / _CRRA)
 
 
-def _build_inputs(n_intervals: int) -> dict:
+def _build_inputs(n_intervals: int) -> _StepInputs:
     liquid_grid = jnp.linspace(0.1, 30.0, _N_LIQUID)
     savings_grid = jnp.linspace(0.0, 28.0, _N_SAVINGS)
     breakpoints = jnp.linspace(2.0, 27.0, n_intervals - 1)
@@ -54,11 +70,11 @@ def _build_inputs(n_intervals: int) -> dict:
 
 
 def _capture_envelope_inputs(
-    *, inputs: dict, chunk_size: int, monkeypatch
+    *, inputs: _StepInputs, chunk_size: int, monkeypatch
 ) -> dict[str, np.ndarray]:
     """Solve, returning the candidate channels handed to `envelope_at_query`."""
     captured: dict[str, np.ndarray] = {}
-    original: Callable = nbegm_step.envelope_at_query
+    original: Callable[..., tuple[FloatND, ...]] = nbegm_step.envelope_at_query
 
     def spy(**kwargs):
         for name in ("endog_grid", "policy", "value", "marginal", "segment_id"):

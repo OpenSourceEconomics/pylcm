@@ -15,7 +15,6 @@ probability read as `-0` passes a guard meant to refuse it.
 """
 
 from collections.abc import Callable
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -28,18 +27,19 @@ from _lcm.probability import is_negative, regime_mass_is_a_distribution
 from _lcm.regime_building.Q_and_F import (
     _values_without_impossible_nodes,
 )
+from lcm.typing import FloatND
 
 
 def _dtype() -> np.dtype:
     return np.dtype(jnp.zeros(()).dtype)
 
 
-def _largest_subnormal() -> Any:
+def _largest_subnormal() -> np.float32 | np.float64:
     dtype = _dtype()
     return np.nextafter(dtype.type(np.finfo(dtype).tiny), dtype.type(0.0), dtype=dtype)
 
 
-def _smallest_subnormal() -> Any:
+def _smallest_subnormal() -> np.float32 | np.float64:
     dtype = _dtype()
     return np.nextafter(dtype.type(0.0), dtype.type(1.0), dtype=dtype)
 
@@ -71,7 +71,9 @@ def test_a_positive_subnormal_remains_live_in_a_power_mean(*, compile_it: bool) 
     rare_weight = _largest_subnormal()
     values = jnp.asarray([1.0, tiny], dtype=dtype)
     weights = jnp.asarray([1.0, rare_weight], dtype=dtype)
-    fn: Callable = jax.jit(weighted_power_mean) if compile_it else weighted_power_mean
+    fn: Callable[..., FloatND] = (
+        jax.jit(weighted_power_mean) if compile_it else weighted_power_mean
+    )
 
     got = fn(
         values=values,
@@ -152,7 +154,7 @@ def test_a_subnormal_weight_on_an_infinity_keeps_it_in_a_linear_expectation(
     values = jnp.asarray([1.0, -jnp.inf], dtype=dtype)
     weights = jnp.asarray([1.0, rare_weight()], dtype=dtype)
     expectation = LinearExpectation()
-    fn: Callable = (
+    fn: Callable[..., FloatND] = (
         jax.jit(expectation.aggregate) if compile_it else expectation.aggregate
     )
 
@@ -197,7 +199,9 @@ def test_a_subnormal_weight_is_priced_under_a_power_mean_certainty_equivalent(
     weights = jnp.asarray([1.0, rare], dtype=dtype)
     equivalent = PowerMean()
     params = {"risk_aversion": jnp.asarray(2.0, dtype=dtype)}
-    fn: Callable = jax.jit(equivalent.aggregate) if compile_it else equivalent.aggregate
+    fn: Callable[..., FloatND] = (
+        jax.jit(equivalent.aggregate) if compile_it else equivalent.aggregate
+    )
 
     got = fn(values=values, weights=weights, params=params)
     exact = (np.longdouble(1) + np.longdouble(rare)) / (

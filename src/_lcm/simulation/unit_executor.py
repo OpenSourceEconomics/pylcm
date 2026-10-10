@@ -13,7 +13,9 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName
 
 
 @dataclasses.dataclass(kw_only=True, eq=False)
@@ -31,14 +33,14 @@ class SimulationUnitExecutor:
     runtime: SimulationRuntime
     live_footprint: Callable[[], DeviceBufferFootprint]
     budget_devices: tuple[jax.Device, ...]
-    axis_widths: Mapping[str, int] = dataclasses.field(
+    axis_widths: MappingProxyType[str, int] = dataclasses.field(
         default_factory=lambda: MappingProxyType({})
     )
-    on_output: Callable[[object], None] | None = None
+    on_output: Callable[[PytreeValue], None] | None = None
     _outputs: list[DeviceBufferFootprint] = dataclasses.field(
         default_factory=list, init=False, repr=False
     )
-    _owned_outputs: list[object] = dataclasses.field(
+    _owned_outputs: list[PytreeValue] = dataclasses.field(
         default_factory=list, init=False, repr=False
     )
     _closed: bool = dataclasses.field(default=False, init=False, repr=False)
@@ -72,10 +74,10 @@ class SimulationUnitExecutor:
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
-    ) -> object:
+    ) -> PytreeValue:
         """Budget each dispatch afresh and finish its workspace before the next one."""
         if self._closed:
             raise ExecutionPlanningError("This simulation unit is closed.")

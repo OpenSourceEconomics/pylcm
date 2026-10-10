@@ -9,11 +9,12 @@ typed throughout or strongly typed throughout — publishes one subtree and is
 admitted.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Literal, Unpack
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -30,7 +31,8 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.solution import backward_induction
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
-from _lcm.typing import FlatParams, FloatND
+from _lcm.time import TimeAxis
+from _lcm.typing import FlatParams, FloatND, PytreeValue
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -42,9 +44,17 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
-from lcm.solver_api import KernelOutput, ResultRetention, SolverIdentity
-from lcm.solvers import GridSearch, ReducedAxis
+from lcm.solver_api import (
+    ContinuationArtifact,
+    KernelOutput,
+    ResultRetention,
+    SolutionResult,
+    SolverIdentity,
+)
+from lcm.solvers import GridSearch, ReducedAxis, StateActionSpace
+from lcm.typing import ReferenceName, RegimeName
 from tests.conftest import DECIMAL_PRECISION
+from tests.solution.test_solve_executable_readiness import _ExtraKernelKwargs
 from tests.test_models.deterministic.regression import (
     START_AGE,
     LaborSupply,
@@ -140,9 +150,12 @@ class _MaxReduction:
 class _StateAndCandidates:
     """Build the wealth row and the streamed candidate coordinate."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue]:
         """Return the wealth row and the candidate coordinate it reduces over."""
-        x = cast("Any", context.state_action_space).states["wealth"]
+        assert context.state_action_space is not None
+        x = context.state_action_space.states["wealth"]
         return {"x": x, "candidate": jnp.arange(_CANDIDATES, dtype=x.dtype)}
 
 
@@ -150,9 +163,12 @@ class _StateAndCandidates:
 class _StateOnly:
     """Build the wealth row the consumer shifts by its internal input."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue]:
         """Return the wealth row alone."""
-        return {"x": cast("Any", context.state_action_space).states["wealth"]}
+        assert context.state_action_space is not None
+        return {"x": context.state_action_space.states["wealth"]}
 
 
 def _programs(*, convention: str) -> Mapping[str, CoreProgram]:
@@ -212,14 +228,14 @@ class _ScalarEdgeKernel:
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Any],
-        state_action_space: object,
-        next_regime_to_V_arr: Mapping[str, object],
-        next_regime_to_continuation: Mapping[str, object],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationArtifact],
         flat_params: FlatParams,
         period: int,
-        ages: object,
-        **unused: object,
+        ages: TimeAxis,
+        **unused: Unpack[_ExtraKernelKwargs],
     ) -> KernelOutput:
         """Hand the producer's published scalar to the consumer and publish its row."""
         del unused
@@ -234,10 +250,13 @@ class _ScalarEdgeKernel:
         produced = compiled_cores["source"](
             **self.programs["source"].argument_builder(context)
         )
+        assert isinstance(produced, tuple)
+        assert len(produced) == 2
         value = compiled_cores["reader"](
             **self.programs["reader"].argument_builder(context),
             scalar=produced[1],
         )
+        assert isinstance(value, jax.Array)
         return KernelOutput(value=value)
 
 
@@ -312,7 +331,7 @@ def _model(
     )
 
 
-def _solve(*, convention: str) -> object:
+def _solve(*, convention: str) -> SolutionResult:
     """Solve the scalar-edge model under a budget offering the whole frontier."""
     budgeted = _model(
         convention=convention,
@@ -325,17 +344,51 @@ def _solve(*, convention: str) -> object:
     )
 
 
+type _PlanningResult = tuple[
+    dict[backward_induction._CoreTriple, backward_induction.ResolvedOutputLayout],
+    dict[backward_induction._CoreCandidate, Hashable],
+    dict[backward_induction._CoreCandidate, backward_induction.ResolvedCoreProgram],
+    dict[
+        backward_induction._CoreCandidate,
+        Mapping[ReferenceName, backward_induction.ShapeDtypePytree],
+    ],
+    backward_induction.PlannedInputLiveness[
+        backward_induction._InputDispatch, backward_induction.ValueArtifactAddress
+    ],
+    dict[
+        backward_induction._CoreCandidate,
+        tuple[backward_induction.ResolvedDonation, ...],
+    ],
+    MappingProxyType[
+        backward_induction._CoreTriple, backward_induction._ProgramExecutionMetadata
+    ],
+    backward_induction._LazyCandidateFrontier,
+]
+
+
+def _capture_frontier[**Parameters](
+    *,
+    original: Callable[Parameters, _PlanningResult],
+    frontiers: list[backward_induction._LazyCandidateFrontier],
+) -> Callable[Parameters, _PlanningResult]:
+    def observe(*args: Parameters.args, **kwargs: Parameters.kwargs) -> _PlanningResult:
+        result = original(*args, **kwargs)
+        frontiers.append(result[7])
+        return result
+
+    return observe
+
+
 def _observe(
     *, monkeypatch: pytest.MonkeyPatch, convention: str
-) -> tuple[object, list[backward_induction._LazyCandidateFrontier]]:
+) -> tuple[SolutionResult, list[backward_induction._LazyCandidateFrontier]]:
     """Solve the fixture and return its result and the frontier of every plan."""
     frontiers: list[backward_induction._LazyCandidateFrontier] = []
     original_planning = backward_induction._resolve_output_layouts_and_lowering_keys
 
-    def observe_planning(**kwargs: Any) -> tuple:
-        result = original_planning(**kwargs)
-        frontiers.append(result[7])
-        return result
+    observe_planning = _capture_frontier(
+        original=original_planning, frontiers=frontiers
+    )
 
     monkeypatch.setattr(
         backward_induction,
@@ -347,7 +400,9 @@ def _observe(
 
 def _consumed_producer(
     *, frontiers: list[backward_induction._LazyCandidateFrontier]
-) -> tuple[backward_induction._LazyCandidateFrontier, Any, int]:
+) -> tuple[
+    backward_induction._LazyCandidateFrontier, backward_induction._CoreTriple, int
+]:
     """Return a consumed producer with several widths, and its narrowest rank."""
     consumed = [
         (frontier, triple)
@@ -375,7 +430,7 @@ def test_a_width_dependent_published_weak_typing_is_refused_where_it_binds(
     frontier, triple, narrowest = _consumed_producer(frontiers=frontiers)
 
     aaae(
-        np.asarray(cast("Any", result).values[0]["working_life"]),
+        np.asarray(result.values[0]["working_life"]),
         np.linspace(1.0, float(_N_WEALTH), _N_WEALTH) + 1.0,
         decimal=DECIMAL_PRECISION,
     )
@@ -409,7 +464,7 @@ def test_a_uniformly_typed_published_scalar_solves_to_its_consumers_row(
     result = _solve(convention=convention)
 
     aaae(
-        np.asarray(cast("Any", result).values[0]["working_life"]),
+        np.asarray(result.values[0]["working_life"]),
         np.linspace(1.0, float(_N_WEALTH), _N_WEALTH) + 1.0,
         decimal=DECIMAL_PRECISION,
     )

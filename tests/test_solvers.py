@@ -23,12 +23,14 @@ from lcm import (
     NormalIIDProcess,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.regime import RegimeReplacement
 from lcm.solvers import (
     DCEGM,
     ExactEnvelope,
     FUESEnvelope,
     GridSearch,
     MSSEnvelope,
+    Solver,
 )
 from lcm_examples.iskhakov_et_al_2017 import (
     WEALTH_GRID,
@@ -52,10 +54,12 @@ _PARAMS = get_params(
 )
 
 
-def _build_model(*, working_solver: object | None = None) -> Model:
+def _build_model(*, working_solver: Solver | None = None) -> Model:
     """Build the retirement model, optionally overriding `working_life`'s solver."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (_N_PERIODS - 1) * 10, step="10Y")
-    overrides = {} if working_solver is None else {"solver": working_solver}
+    overrides: RegimeReplacement = (
+        {} if working_solver is None else {"solver": working_solver}
+    )
     return Model(
         edges=get_edges(ages=ages),
         regimes={

@@ -18,13 +18,13 @@ bind from the union of the regime's own parameters and its edges' parameters
 (`regime_kernel_params`), which refuses a key the two share.
 """
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from types import MappingProxyType
 from typing import cast
 
 from dags.tree import tree_path_from_qname
 
-from _lcm.typing import FlatEdgeParams, FlatRegimeParams, RegimeName
+from _lcm.typing import FlatEdgeParams, FlatParams, FlatRegimeParams, RegimeName
 from lcm.exceptions import InvalidNameError
 
 # Root of the edge namespace, in the user's params and in the engine's.
@@ -45,8 +45,7 @@ _EMPTY: FlatRegimeParams = MappingProxyType({})
 
 # keyword-only-exempt: primary-argument=flat_params
 def edge_params(
-    # `object` leaves: the claw would otherwise check every leaf on every call.
-    flat_params: Mapping[str, object],
+    flat_params: FlatParams,
     *,
     source: RegimeName,
 ) -> FlatRegimeParams:
@@ -67,8 +66,7 @@ def edge_params(
 
 # keyword-only-exempt: primary-argument=flat_params
 def regime_kernel_params(
-    # `object` leaves: the claw would otherwise check every leaf on every call.
-    flat_params: Mapping[str, object],
+    flat_params: FlatParams,
     *,
     regime_name: RegimeName,
 ) -> FlatRegimeParams:
@@ -138,8 +136,7 @@ def is_gated_cell_slot(key: str) -> bool:
 
 
 def flat_namespaces(
-    # `object` leaves: the claw would otherwise check every leaf on every call.
-    flat_params: Mapping[str, object],
+    flat_params: FlatParams,
 ) -> Iterator[tuple[tuple[str, ...], FlatRegimeParams]]:
     """Yield every flat namespace of the engine's params with its path.
 

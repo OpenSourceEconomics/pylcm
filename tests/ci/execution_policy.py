@@ -14,9 +14,9 @@ metadata is deliberately not accepted here because no launcher enforces it.
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
-Precision = Literal["32", "64"]
+type Precision = Literal["32", "64"]
 
 
 class Profile(StrEnum):
@@ -95,8 +95,8 @@ _MARKER_ARGUMENTS = {
 }
 
 
-def contract_from_marker_kwargs(
-    markers: Mapping[str, Mapping[str, Any]],
+def contract_from_marker_kwargs[MarkerValue](
+    markers: Mapping[str, Mapping[str, MarkerValue]],
 ) -> ExecutionContract:
     """Parse and validate the four enforced pytest policy dimensions."""
     unknown_markers = set(markers) - set(_MARKER_ARGUMENTS)

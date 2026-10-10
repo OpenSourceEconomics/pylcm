@@ -2,12 +2,15 @@
 
 `categorical(ordered=...)` turns an annotated class into a category set with
 auto-assigned `ScalarInt` codes; `validate_category_class` is the check
-`DiscreteGrid` runs on whatever class it is handed.
+`DiscreteGrid` and `Model` run on whatever class they are handed, and
+`get_category_codes` reads the codes of a class that passed it.
 """
 
 import functools
 from collections.abc import Callable
-from dataclasses import dataclass, field, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
+from types import MappingProxyType
+from typing import TYPE_CHECKING, TypeGuard, dataclass_transform
 
 import jax
 import jax.numpy as jnp
@@ -15,12 +18,27 @@ import pandas as pd
 from beartype import beartype
 
 from _lcm.beartype_conf import CATEGORICAL_CONF
-from _lcm.utils.containers import find_duplicates, get_field_names_and_values
+from _lcm.utils.containers import find_duplicates
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import CategoricalDefinitionError, GridInitializationError
 from lcm.typing import ScalarInt
 
+if TYPE_CHECKING:
+    from _lcm.typing import DataclassInstance
 
+    # A raw class attribute of a category class: its `ScalarInt` code, a plain
+    # default a hand-written dataclass sets, or `None` for a field without one.
+    type _RawCategoryValue = ScalarInt | int | float | str | None
+else:
+    # `_lcm.typing` imports the grids, so the protocol is not importable here at
+    # load time; `validate_category_class` refuses a class that is no dataclass.
+    type DataclassInstance = object
+    # A user's category class may set any default; `validate_category_class`
+    # reports every value that is no `ScalarInt`, so the claw checks nothing here.
+    type _RawCategoryValue = object
+
+
+@dataclass_transform(frozen_default=True)
 @beartype(conf=CATEGORICAL_CONF)
 def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
     """Create a categorical class with auto-assigned `ScalarInt` values.
@@ -118,7 +136,7 @@ def _categorical_dtype(
     return pd.CategoricalDtype(categories=list(category_names), ordered=ordered)
 
 
-def validate_category_class(category_class: type) -> list[str]:
+def validate_category_class(category_class: type[DataclassInstance]) -> tuple[str, ...]:
     """Validate a category class has proper structure for discrete grids.
 
     This validates that:
@@ -133,7 +151,7 @@ def validate_category_class(category_class: type) -> list[str]:
             whose values are unique `ScalarInt`s.
 
     Returns:
-        A list of error messages. Empty list if validation passes.
+        The error messages, empty if validation passes.
 
     """
     error_messages: list[str] = []
@@ -143,15 +161,18 @@ def validate_category_class(category_class: type) -> list[str]:
             "category_class must be a dataclass with `ScalarInt` fields, "
             f"but is {category_class}."
         )
-        return error_messages
+        return tuple(error_messages)
 
-    names_and_values = get_field_names_and_values(category_class)
+    raw_values: dict[str, _RawCategoryValue] = {
+        category_field.name: getattr(category_class, category_field.name, None)
+        for category_field in fields(category_class)
+    }
 
-    if not names_and_values:
+    if not raw_values:
         error_messages.append("category_class must have at least one field.")
 
     names_with_bad_values = [
-        name for name, value in names_and_values.items() if not _is_scalar_int(value)
+        name for name, value in raw_values.items() if not _is_scalar_int(value)
     ]
     if names_with_bad_values:
         error_messages.append(
@@ -161,9 +182,11 @@ def validate_category_class(category_class: type) -> list[str]:
         )
         # The remaining checks coerce via `int(...)`; bail out if any value
         # cannot be coerced cleanly.
-        return error_messages
+        return tuple(error_messages)
 
-    values_as_py = [int(v) for v in names_and_values.values()]
+    values_as_py = [
+        int(value) for value in raw_values.values() if _is_scalar_int(value)
+    ]
 
     duplicated_values = find_duplicates(values_as_py)
     if duplicated_values:
@@ -178,19 +201,40 @@ def validate_category_class(category_class: type) -> list[str]:
             "starting from 0 (e.g., 0, 1, 2, ...)."
         )
 
-    return error_messages
+    return tuple(error_messages)
 
 
-def _is_scalar_int(value: object) -> bool:
-    """Return True iff `value` is a 0-d integer jax array (`ScalarInt`)."""
-    return (
-        isinstance(value, jax.Array)
-        and value.shape == ()
-        and jnp.issubdtype(value.dtype, jnp.integer)
+def get_category_codes(
+    category_class: type[DataclassInstance],
+) -> MappingProxyType[str, ScalarInt]:
+    """Return the code of every category of a validated category class, in order.
+
+    Only call it on a class that `validate_category_class` accepts, so that every
+    value is a `ScalarInt`.
+
+    Args:
+        category_class: A category class that passed `validate_category_class`.
+
+    Returns:
+        A read-only mapping from each category name to its code.
+
+    """
+    return MappingProxyType(
+        {
+            category_field.name: getattr(category_class, category_field.name)
+            for category_field in fields(category_class)
+        }
     )
 
 
-def _validate_discrete_grid(category_class: type) -> None:
+def _is_scalar_int(value: _RawCategoryValue) -> TypeGuard[ScalarInt]:
+    """Return True iff `value` is a 0-d int32 jax array (`ScalarInt`)."""
+    return (
+        isinstance(value, jax.Array) and value.shape == () and value.dtype == jnp.int32
+    )
+
+
+def _validate_discrete_grid(category_class: type[DataclassInstance]) -> None:
     """Validate the field names and values of the category_class passed to DiscreteGrid.
 
     Args:

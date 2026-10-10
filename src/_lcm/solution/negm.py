@@ -84,7 +84,11 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
+    ParamsLeaf,
+    PytreeValue,
+    QualifiedName,
     RegimeName,
+    ShapeDtypePytree,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.exceptions import InvalidParamsError, RegimeInitializationError
@@ -100,6 +104,7 @@ from lcm.typing import (
     Float1D,
     FloatND,
     FunctionName,
+    ReferenceName,
     ScalarFloat,
     StateName,
     StateOrActionName,
@@ -768,10 +773,10 @@ class _NEGMPeriodKernel:
     carry_row_state_names: tuple[StateName, ...]
     """The discrete then passive state names leading every carry row."""
 
-    fixed_sweep_kwargs: Mapping[str, object] = MappingProxyType({})
+    fixed_sweep_kwargs: Mapping[QualifiedName, ParamsLeaf] = MappingProxyType({})
     """The regime's and its targets' fixed params, bound into the sweep."""
 
-    _core_programs: Mapping[str, CoreProgram] = field(
+    _core_programs: MappingProxyType[str, CoreProgram] = field(
         init=False, repr=False, compare=False
     )
     """The native graph, `keeper` then `outer_sweep`; derived at construction."""
@@ -902,7 +907,7 @@ class _NEGMPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -947,8 +952,12 @@ class _NEGMPeriodKernel:
                 )
             )
         )
-        V_arr, carry = compiled_cores["outer_sweep"](
-            **arguments, **{_KEEPER_VALUE: keeper_value, _KEEPER_CARRY: keeper_carry}
+        V_arr, carry = cast(
+            "tuple[FloatND, EGMCarry]",
+            compiled_cores["outer_sweep"](
+                **arguments,
+                **{_KEEPER_VALUE: keeper_value, _KEEPER_CARRY: keeper_carry},
+            ),
         )
         return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
 
@@ -984,7 +993,9 @@ class _NEGMSweepArgumentBuilder:
     coh_shift_func: Callable[..., FloatND]
     """The per-(durable, outer-node) cash-on-hand shift of each adjuster."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         flat_params = cast("FlatParams", context.flat_params)
         arguments = dict(
@@ -1020,7 +1031,7 @@ def _outer_sweep_program(
     outer_post_decision: FunctionName,
     durable_axis: int,
     _lcm_outer_candidate_width: int,
-    **arguments: object,
+    **arguments: PytreeValue,
 ) -> tuple[FloatND, EGMCarry]:
     """Solve the adjuster at every outer node and stack it with the keeper.
 
@@ -1081,7 +1092,7 @@ class _NodeSolver:
     outer_post_decision: FunctionName
     """Argument name under which the outer node is bound."""
 
-    adjuster_arguments: Mapping[str, object]
+    adjuster_arguments: Mapping[ReferenceName, PytreeValue]
     """Immutable mapping of the adjuster's own argument tree."""
 
     def __call__(self, node: ScalarFloat) -> tuple[FloatND, EGMCarry]:
@@ -1093,8 +1104,8 @@ class _NodeSolver:
 
 def _fail_if_sweep_inputs_collide_with_the_adjusters(
     *,
-    arguments: Mapping[str, object],
-    own: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+    own: Mapping[ReferenceName, FloatND],
     regime_name: RegimeName,
 ) -> None:
     collisions = sorted(set(arguments) & set(own))
@@ -1204,7 +1215,7 @@ def _build_coh_shift_function(
 
 
 def _zero_coh_shifts(
-    *, durable_values: FloatND, outer_values: FloatND, **params: object
+    *, durable_values: FloatND, outer_values: FloatND, **params: ParamsLeaf
 ) -> FloatND:
     """Return the identically zero cash-on-hand shift matrix.
 
@@ -1230,7 +1241,7 @@ class _CreditedCoHShifts:
     cost_func: Callable[..., FloatND]
     """The concatenated DAG targeting the regime's declared outer-cost node."""
 
-    cost_arg_names: frozenset[str]
+    cost_arg_names: frozenset[ReferenceName]
     """Immutable set of the argument names that DAG declares."""
 
     durable_state_name: StateName
@@ -1246,7 +1257,7 @@ class _CreditedCoHShifts:
     """The keeper's no-adjustment map, or `None` for the identity."""
 
     def __call__(
-        self, *, durable_values: FloatND, outer_values: FloatND, **params: object
+        self, *, durable_values: FloatND, outer_values: FloatND, **params: ParamsLeaf
     ) -> FloatND:
         """Return the shift matrix of shape `(n_durable, n_outer)`."""
         _fail_if_the_outer_cost_reads_beyond_one_cell(
@@ -1274,11 +1285,11 @@ class _CreditedCoHShifts:
 
 def _fail_if_the_outer_cost_reads_beyond_one_cell(
     *,
-    cost_arg_names: frozenset[str],
+    cost_arg_names: frozenset[ReferenceName],
     durable_state_name: StateName,
     outer_post_decision: FunctionName,
     outer_cost_name: FunctionName,
-    param_names: frozenset[str],
+    param_names: frozenset[QualifiedName],
 ) -> None:
     """Reject a cost DAG that needs a binding the per-cell lift cannot supply.
 
@@ -1312,7 +1323,7 @@ class _OuterCostAtCell:
     cost_func: Callable[..., FloatND]
     """The concatenated DAG targeting the declared outer-cost node."""
 
-    cost_arg_names: frozenset[str]
+    cost_arg_names: frozenset[ReferenceName]
     """Immutable set of the argument names that DAG declares."""
 
     durable_state_name: StateName
@@ -1321,7 +1332,7 @@ class _OuterCostAtCell:
     outer_post_decision: FunctionName
     """Name the cost DAG reads the outer post-decision under."""
 
-    params: Mapping[str, object]
+    params: Mapping[QualifiedName, ParamsLeaf]
     """Immutable mapping of the regime's flat params bound into the cost."""
 
     def __call__(self, *, durable: FloatND, outer: FloatND) -> FloatND:
@@ -1409,7 +1420,7 @@ def _with_no_adjustment_outer_function(
         functions=functions, arg_name=outer_post_decision
     )
     if no_adjustment_func is None:
-        arg_names: tuple[str, ...] = (durable_state,)
+        arg_names: tuple[ReferenceName, ...] = (durable_state,)
         args_spec = {
             durable_state: _annotation_of_arg(
                 functions=functions, arg_name=durable_state
@@ -1458,7 +1469,7 @@ class _KeeperOuterPostDecision:
     durable_state: StateName
     """Name of the durable leaf state the identity keeper returns."""
 
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """Tuple of the argument names the no-adjustment map declares."""
 
     no_adjustment_func: EconFunction | None

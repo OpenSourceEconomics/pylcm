@@ -67,7 +67,7 @@ class _StubRegime(Regime):
     writes the one field directly rather than building a whole compiled regime.
     """
 
-    def __init__(self, *, simulation: object) -> None:
+    def __init__(self, *, simulation: SimpleNamespace) -> None:
         object.__setattr__(self, "simulation", simulation)
 
 

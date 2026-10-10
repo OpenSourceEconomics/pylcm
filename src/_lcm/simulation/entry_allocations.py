@@ -23,10 +23,11 @@ import numpy as np
 
 from _lcm.engine import Regime
 from _lcm.params.edges import EDGES, flat_namespaces
-from _lcm.simulation.entry_inputs import SimulationEntryInputs
+from _lcm.simulation.entry_inputs import SimulationEntryInputs, SolutionResultBoundary
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.process_grids import SimulationProcessGrids
+from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
@@ -38,7 +39,24 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     InitialConditions,
+    PytreeByPeriod,
+    PytreeValue,
     RegimeName,
+    SimulationPolicy,
+)
+from lcm.typing import BoolND, FloatND
+
+# The replay inputs resolved from a solution, keyed by period and regime: values,
+# simulation policies, dissolution flags and replay readers, each `None` when the
+# solution provides none; empty before any solution is resolved.
+type _ResolvedInputs = (
+    tuple[
+        Mapping[int, Mapping[RegimeName, FloatND]] | None,
+        Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
+        Mapping[int, Mapping[RegimeName, BoolND]] | None,
+        Mapping[int, Mapping[RegimeName, PreparedReplayReader]] | None,
+    ]
+    | tuple[()]
 )
 
 
@@ -48,9 +66,9 @@ class SimulationEntryAllocations:
 
     original_inputs: SimulationEntryInputs | None
     """Original caller buffers retained until the public call returns."""
-    solution: object | None
+    solution: SolutionResultBoundary | None
     """Currently resolved value, policy and replay-artifact owners."""
-    model_roots: tuple[object, ...]
+    model_roots: tuple[PytreeValue, ...]
     """Already materialized model grids, fixed parameters, IDs and ages."""
     devices: tuple[jax.Device, ...]
     """Actual ordered execution devices; the first owns entry staging."""
@@ -60,11 +78,13 @@ class SimulationEntryAllocations:
         default_factory=ProfiledSimulationOperations
     )
     """Abstract signatures and executable profiles, without array owners."""
-    _stages: dict[str, object] = dataclasses.field(default_factory=dict, init=False)
+    _stages: dict[str, PytreeValue] = dataclasses.field(
+        default_factory=dict, init=False
+    )
     """Complete parameter and initial-condition mappings at the current stage."""
     _pending: list[jax.Array] = dataclasses.field(default_factory=list, init=False)
     """Ready outputs not yet handed to a complete stage mapping."""
-    _resolved_inputs: tuple[object, ...] = dataclasses.field(default=(), init=False)
+    _resolved_inputs: _ResolvedInputs = dataclasses.field(default=(), init=False)
     """Validated value/policy/flag/reader trees beside the original solution."""
     _foreign_copies: list[jax.Array] = dataclasses.field(
         default_factory=list, init=False
@@ -101,7 +121,7 @@ class SimulationEntryAllocations:
             )
         )
 
-    def solve_input_roots(self) -> tuple[object, ...]:
+    def solve_input_roots(self) -> tuple[tuple[PytreeByPeriod, ...], ...]:
         """Keep original and normalized inputs charged during an automatic solve.
 
         These are actual array owners, not a byte total: the solve inventory must
@@ -149,7 +169,7 @@ class SimulationEntryAllocations:
                 live_footprint=live,
                 budget_devices=tuple(dict.fromkeys((*self.devices, *live.spans))),
             )
-            on_devices = cast("FlatRegimeParams", arguments["solve_params"])
+            on_devices = arguments["solve_params"]
             if path[0] == EDGES:
                 # A live view, so each placed source counts toward the next
                 # placement's footprint.
@@ -202,7 +222,9 @@ class SimulationEntryAllocations:
         self._pending.append(result)
         return result
 
-    def publish(self, *, stage: Literal["params", "initial"], tree: object) -> None:
+    def publish(
+        self, *, stage: Literal["params", "initial"], tree: PytreeValue
+    ) -> None:
         """Hand completed outputs to their fully constructed mapping owner."""
         self._stages[stage] = tree
         self._pending.clear()
@@ -241,7 +263,10 @@ class SimulationEntryAllocations:
         return cast("InitialConditions", MappingProxyType(padded)), original_n_subjects
 
     def update_solution(
-        self, *, solution: object | None, resolved_inputs: tuple[object, ...]
+        self,
+        *,
+        solution: SolutionResultBoundary | None,
+        resolved_inputs: _ResolvedInputs,
     ) -> None:
         """Observe newly retained result views without claiming their admission."""
         self.solution = solution

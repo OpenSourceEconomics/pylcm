@@ -1,7 +1,5 @@
 """Regime transitions declared only on the model graph: structure and law."""
 
-from typing import Any
-
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -23,11 +21,13 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.transition import ModelEdges, PhaseEdges
 from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 
@@ -111,7 +111,7 @@ def _retire_at_62(age: float) -> ScalarInt:
     return jnp.where(age < 62, RegimeId.working, RegimeId.retired)
 
 
-def _model(*, edges: object) -> Model:
+def _model(*, edges: ModelEdges) -> Model:
     return Model(
         regimes={"working": _alive(), "retired": _alive(), "dead": DEAD},
         ages=AGES,
@@ -121,7 +121,7 @@ def _model(*, edges: object) -> Model:
     )
 
 
-def _values(model: Model) -> dict[tuple[int, str], Any]:
+def _values(model: Model) -> dict[tuple[int, RegimeName], np.ndarray]:
     solved = model.solve(params=PARAMS, log_level="off").values
     return {
         (period, regime): np.asarray(values)
@@ -361,7 +361,7 @@ LOTTERY_EDGES = {
     ids=["lone_solve", "lone_simulate"],
 )
 def test_phased_lone_edge_pairs_with_a_probability_mapping(
-    *, solve: dict[str, object], simulate: dict[str, object]
+    *, solve: PhaseEdges, simulate: PhaseEdges
 ) -> None:
     """A lone edge in one phase is a probability-one lottery; solve uses its law."""
     phased_values = _values(_model(edges=Phased(solve=solve, simulate=simulate)))

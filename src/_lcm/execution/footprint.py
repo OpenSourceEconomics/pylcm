@@ -23,7 +23,7 @@ from types import MappingProxyType
 import jax
 
 from _lcm.execution.liveness import PlannedInputLiveness
-from _lcm.typing import RegimeName
+from _lcm.typing import FootprintTree, RegimeName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ValueND
 
@@ -105,19 +105,17 @@ class ResidentInventory:
     declared_inputs: tuple[Hashable, ...]
     """All aligned input names, used only for the pre-compilation lower bound."""
 
-    fixed_bytes: Mapping[int, int] = dataclasses.field(default_factory=dict)
+    fixed_bytes: MappingProxyType[int, int] = MappingProxyType({})
     """Concrete solve-lifetime owners, conservatively additional to the peak.
 
     A device with a nonzero entry enters the admission maximum even when it is
     not a workspace device.
     """
 
-    shared_copies: Mapping[Hashable, ArtifactFootprint] = dataclasses.field(
-        default_factory=dict
-    )
+    shared_copies: MappingProxyType[Hashable, ArtifactFootprint] = MappingProxyType({})
     """Whole-period reservations for one destination per shared transfer key."""
 
-    transfer_scratch_bytes: Mapping[int, int] = dataclasses.field(default_factory=dict)
+    transfer_scratch_bytes: MappingProxyType[int, int] = MappingProxyType({})
     """Declared whole-period transfer scratch bound, never compiler-excludable.
 
     Keyed by every endpoint device of the period's transfer operators, source
@@ -127,21 +125,6 @@ class ResidentInventory:
 
     internal_bytes: int = 0
     """Conservative per-device runtime internal-output reservation for this cell."""
-
-    def __post_init__(self) -> None:
-        """Freeze additive fixed-owner and planned-copy reservation metadata."""
-        object.__setattr__(
-            self, "fixed_bytes", MappingProxyType(dict(self.fixed_bytes))
-        )
-        object.__setattr__(
-            self, "shared_copies", MappingProxyType(dict(self.shared_copies))
-        )
-
-        object.__setattr__(
-            self,
-            "transfer_scratch_bytes",
-            MappingProxyType(dict(self.transfer_scratch_bytes)),
-        )
 
     def resident_bytes(
         self,
@@ -207,7 +190,7 @@ class ResidentInventory:
         )
 
 
-def concrete_device_bytes(*, tree: object) -> MappingProxyType[int, int]:
+def concrete_device_bytes(*, tree: FootprintTree) -> MappingProxyType[int, int]:
     """Measure concrete fixed-owner payload, unioning actual shard intervals.
 
     This low-level JAX measurement assumes contiguous logical shard payload from

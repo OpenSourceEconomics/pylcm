@@ -23,6 +23,7 @@ from typing import Literal
 
 import jax.numpy as jnp
 
+from _lcm.typing import DataclassInstance
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -48,6 +49,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.envelope_configs import envelope_config
 from tests.test_models.ds2024_housing import (
@@ -59,7 +61,7 @@ from tests.test_models.ds2024_housing import (
 START_AGE = 60
 
 
-def _make_housing_levels(*, n_housing: int) -> type:
+def _make_housing_levels(*, n_housing: int) -> type[DataclassInstance]:
     """Create an ordered categorical with one field per discrete housing level.
 
     The class name is model-unique so it never collides with another model's
@@ -353,7 +355,7 @@ def build_params(
     return_housing: float = 0.10,
     theta: float = 2.0,
     bequest_shift: float = 200.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Calibration parameters for the DS-2024 discrete-housing model.
 
     Args:

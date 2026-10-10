@@ -27,6 +27,7 @@ from types import FunctionType, MappingProxyType
 from typing import cast
 
 import jax
+import numpy as np
 
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
@@ -46,9 +47,35 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _lowering_key
+from _lcm.transition_plans import TargetTransitionPlan
+from _lcm.typing import (
+    ConstraintFunction,
+    EconFunction,
+    HostArray,
+    PytreeValue,
+    ShapeDtypePytree,
+    TransitionFunction,
+)
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName, RegimeName, ValueND
 
 type StaticArgument = bool | int | float | str | tuple[StaticArgument, ...] | None
+
+# One leaf of a placed operand: an array, a host array or scalar, or the shape and
+# dtype of a leaf that is already abstract.
+type _OperandLeaf = (
+    ValueND | HostArray | np.generic | jax.ShapeDtypeStruct | bool | int | float
+)
+
+# A model-owned input a `built` composer reads: a regime name, or one of the
+# regime's function, constraint, transition or transition-plan mappings.
+type _BuilderInput = (
+    RegimeName
+    | Mapping[
+        str,
+        EconFunction | ConstraintFunction | TransitionFunction | TargetTransitionPlan,
+    ]
+)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -80,23 +107,25 @@ class ProfiledSimulationOperations:
     in_flight: dict[Hashable, Future[_ProfiledOperation]] = dataclasses.field(
         default_factory=dict, repr=False
     )
-    builds: dict[Hashable, object] = dataclasses.field(default_factory=dict, repr=False)
+    builds: dict[Hashable, Callable[..., PytreeValue]] = dataclasses.field(
+        default_factory=dict, repr=False
+    )
     """Callables composed by `built`, keyed by builder and input identities."""
     lock: threading.Lock = dataclasses.field(default_factory=threading.Lock, repr=False)
 
     def dispatch(
         self,
         *,
-        function: Callable[..., object],
-        arguments: Mapping[str, object],
-        subject_arg_names: tuple[str, ...],
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, PytreeValue],
+        subject_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
         live_footprint: Callable[[], DeviceBufferFootprint],
         budget_devices: tuple[jax.Device, ...],
         budget_bytes: int,
-        static_arguments: Mapping[str, object] = MappingProxyType({}),
+        static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
         subject_outputs: bool = False,
-    ) -> object:
+    ) -> PytreeValue:
         """Place once, inspect current residency, and execute the admitted code."""
         static = _validated_static_arguments(
             function=function,
@@ -169,11 +198,11 @@ class ProfiledSimulationOperations:
     def prepare_abstract(
         self,
         *,
-        function: Callable[..., object],
-        arguments: Mapping[str, object],
-        subject_arg_names: tuple[str, ...],
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+        subject_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
-        static_arguments: Mapping[str, object] = MappingProxyType({}),
+        static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
         subject_outputs: bool = False,
     ) -> _ProfiledOperation:
         """Profile already-placed shape descriptors without allocating or admitting.
@@ -201,13 +230,13 @@ class ProfiledSimulationOperations:
     def lower_abstract(
         self,
         *,
-        function: Callable[..., object],
-        arguments: Mapping[str, object],
-        subject_arg_names: tuple[str, ...],
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+        subject_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
         wave: CompilationWave,
         label: str,
-    ) -> object:
+    ) -> ShapeDtypePytree:
         """Lower placed shape descriptors into `wave`; return compiled descriptors.
 
         The wave compiles the operation off the calling thread and publishes its
@@ -244,8 +273,8 @@ class ProfiledSimulationOperations:
     def admit_producer(
         self,
         *,
-        function: Callable[..., object],
-        arguments: Mapping[str, object],
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, ShapeDtypePytree],
         devices: tuple[jax.Device, ...],
         output_sharding: jax.sharding.Sharding | None,
         budget_bytes: int,
@@ -280,7 +309,9 @@ class ProfiledSimulationOperations:
         )
         return plan.compiled.executable
 
-    def built[T](self, *, builder: Callable[..., T], **inputs: object) -> T:
+    def built[T: Callable[..., PytreeValue]](
+        self, *, builder: Callable[..., T], **inputs: _BuilderInput
+    ) -> T:
         """Return the callable `builder` composes from these input objects.
 
         Inputs are identified by typed value where they have one and by object
@@ -305,9 +336,9 @@ class ProfiledSimulationOperations:
         self,
         *,
         key: Hashable,
-        function: Callable[..., object],
-        arguments: Mapping[str, object],
-        static_arguments: Mapping[str, object],
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, ShapeDtypePytree],
+        static_arguments: Mapping[ReferenceName, StaticArgument],
         output_sharding: jax.sharding.Sharding | None = None,
     ) -> _ProfiledOperation:
         """Compile an abstract signature once, without holding the cache lock."""
@@ -360,9 +391,9 @@ class _OperationCompiler:
 
     owner: ProfiledSimulationOperations
     key: Hashable
-    function: Callable[..., object]
-    arguments: Mapping[str, object]
-    static_arguments: Mapping[str, object]
+    function: Callable[..., PytreeValue]
+    arguments: Mapping[ReferenceName, ShapeDtypePytree]
+    static_arguments: MappingProxyType[ReferenceName, StaticArgument]
     output_sharding: jax.sharding.Sharding | None
 
     def __call__(self, widths: Mapping[str, int]) -> _ProfiledOperation:
@@ -382,14 +413,17 @@ class _OperationCompiler:
 
 def _abstract_operation(
     *,
-    function: Callable[..., object],
-    arguments: Mapping[str, object],
-    subject_arg_names: tuple[str, ...],
+    function: Callable[..., PytreeValue],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+    subject_arg_names: tuple[ReferenceName, ...],
     devices: tuple[jax.Device, ...],
-    static_arguments: Mapping[str, object],
+    static_arguments: Mapping[str, StaticArgument],
     subject_outputs: bool,
 ) -> tuple[
-    Hashable, Mapping[str, object], Mapping[str, object], jax.sharding.Sharding | None
+    Hashable,
+    MappingProxyType[ReferenceName, ShapeDtypePytree],
+    MappingProxyType[ReferenceName, StaticArgument],
+    jax.sharding.Sharding | None,
 ]:
     """Canonicalize one operation's placed descriptors and derive its cache key.
 
@@ -406,13 +440,15 @@ def _abstract_operation(
     )
     subject = subject_operand_sharding(devices=devices)
     shared = simulation_value_sharding(stored_sharding=subject, devices=devices)
-    abstract = {
-        name: _abstract_operation_tree(
-            tree=value,
-            required=subject if name in subject_arg_names else shared,
-        )
-        for name, value in sorted(arguments.items())
-    }
+    abstract = MappingProxyType(
+        {
+            name: _abstract_operation_tree(
+                tree=value,
+                required=subject if name in subject_arg_names else shared,
+            )
+            for name, value in sorted(arguments.items())
+        }
+    )
     key = _operation_key(
         function=function,
         arguments=abstract,
@@ -425,9 +461,9 @@ def _abstract_operation(
 
 def _lower_operation(
     *,
-    function: Callable[..., object],
-    arguments: Mapping[str, object],
-    static_arguments: Mapping[str, object],
+    function: Callable[..., PytreeValue],
+    arguments: Mapping[ReferenceName, ShapeDtypePytree],
+    static_arguments: Mapping[ReferenceName, StaticArgument],
     output_sharding: jax.sharding.Sharding | None,
 ) -> jax.stages.Lowered:
     """Trace and lower one pure operation over abstract operands."""
@@ -444,7 +480,7 @@ def _lower_operation(
     return jitted.lower(**arguments)
 
 
-def _abstract_operand(value: object) -> object:
+def _abstract_operand(value: _OperandLeaf) -> jax.ShapeDtypeStruct | _OperandLeaf:
     """Preserve exact placed shape, weak type and ordered device layout."""
     if isinstance(value, jax.Array):
         return jax.ShapeDtypeStruct(
@@ -458,8 +494,8 @@ def _abstract_operand(value: object) -> object:
 
 @cache
 def _validated_operation_function(
-    function: Callable[..., object],
-) -> Callable[..., object]:
+    function: Callable[..., PytreeValue],
+) -> Callable[..., PytreeValue]:
     """Validate a profiled operation's function identity once at registration.
 
     Only module-level functions qualify: this entry path backs process-wide
@@ -490,11 +526,11 @@ def _validated_operation_function(
 
 def _validated_static_arguments(
     *,
-    function: Callable[..., object],
-    arguments: Mapping[str, object],
-    static_arguments: Mapping[str, object],
+    function: Callable[..., PytreeValue],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+    static_arguments: Mapping[str, StaticArgument],
     subject_outputs: bool,
-) -> Mapping[str, object]:
+) -> MappingProxyType[ReferenceName, StaticArgument]:
     """Use one pure-function and immutable-binding contract for both entry paths."""
     if type(subject_outputs) is not bool:
         raise ExecutionPlanningError("Subject-output metadata must be a bool.")
@@ -511,9 +547,9 @@ def _validated_static_arguments(
 
 def _operation_key(
     *,
-    function: Callable[..., object],
-    arguments: Mapping[str, object],
-    static_arguments: Mapping[str, object],
+    function: Callable[..., PytreeValue],
+    arguments: Mapping[ReferenceName, ShapeDtypePytree],
+    static_arguments: Mapping[ReferenceName, StaticArgument],
     subject_outputs: bool,
     devices: tuple[jax.Device, ...],
     output_sharding: jax.sharding.Sharding | None = None,
@@ -530,7 +566,7 @@ def _operation_key(
     )
 
 
-def _program_identity(function: Callable[..., object]) -> Hashable:
+def _program_identity(function: Callable[..., PytreeValue]) -> Hashable:
     """Identify a callable, resolving a `functools.partial` to its bound values.
 
     Equal bound values give equal identities, so a partial rebuilt per call from
@@ -543,7 +579,8 @@ def _program_identity(function: Callable[..., object]) -> Hashable:
         return _bound_identity(function)
     return (
         partial,
-        _program_identity(function.func),
+        # A partial dispatched here wraps an operation body like any other.
+        _program_identity(cast("Callable[..., PytreeValue]", function.func)),
         tuple(_bound_identity(value) for value in function.args),
         tuple(
             (name, _bound_identity(value)) for name, value in function.keywords.items()
@@ -551,7 +588,7 @@ def _program_identity(function: Callable[..., object]) -> Hashable:
     )
 
 
-def _bound_identity(value: object) -> Hashable:
+def _bound_identity(value: object) -> Hashable:  # noqa: PAN001 - any value a dispatched partial binds; one without a typed value is held by identity
     """Identify a bound value by typed value, else by the object it is."""
     try:
         return _static_identity(value)
@@ -567,7 +604,7 @@ class _HeldObject:
     long as the key exists.
     """
 
-    value: object
+    value: object  # noqa: PAN001 - any value a dispatched partial binds, held by identity
 
     def __eq__(self, other: object) -> bool:
         """Equal only to a holder of the very same object."""
@@ -579,8 +616,8 @@ class _HeldObject:
 
 
 def _abstract_operation_tree(
-    *, tree: object, required: jax.sharding.Sharding
-) -> object:
+    *, tree: PytreeValue | ShapeDtypePytree, required: jax.sharding.Sharding
+) -> ShapeDtypePytree:
     """Mirror placed containers while verifying every abstract leaf's layout."""
     if isinstance(tree, Mapping):
         return MappingProxyType(
@@ -616,7 +653,7 @@ def _abstract_operation_tree(
     return tree
 
 
-def _static_identity(value: object) -> Hashable:
+def _static_identity(value: object) -> Hashable:  # noqa: PAN001 - classifies any bound value or function default; a non-static one raises the error its callers rely on
     """Refuse owners and distinguish equal scalar values with different types."""
     if type(value) is float:
         return (float, struct.pack("!d", value))

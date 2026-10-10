@@ -9,6 +9,8 @@ in one chunk, one per chunk, or anything between, the envelope is the same, beca
 the padding intervals contribute no live candidate and the segment ids stay unique.
 """
 
+from typing import TypedDict
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -18,7 +20,22 @@ from _lcm.egm.nbegm_step import (
     _CHUNK_SIZE,
     nbegm_per_interval_continuation_step_savings,
 )
+from _lcm.egm.preferences import Preferences
+from lcm.typing import Float1D, FloatND, ScalarFloat
 from tests.solution._crra_preferences import crra_preferences
+
+
+class _StepInputs(TypedDict):
+    cont_value: FloatND
+    cont_marginal: FloatND
+    liquid_grid: Float1D
+    savings_grid: Float1D
+    discount_factor: ScalarFloat
+    preferences: Preferences
+    coh_slopes: Float1D
+    coh_intercepts: Float1D
+    breakpoints: Float1D
+
 
 _CRRA = 2.0
 _DISCOUNT = 0.96
@@ -34,7 +51,7 @@ def _inverse_marginal_utility(marginal_continuation):
     return marginal_continuation ** (-1.0 / _CRRA)
 
 
-def _build_inputs(n_intervals: int) -> dict:
+def _build_inputs(n_intervals: int) -> _StepInputs:
     """Build a monotone-continuation per-interval problem with `n_intervals` cases."""
     liquid_grid = jnp.linspace(0.1, 30.0, _N_LIQUID)
     savings_grid = jnp.linspace(0.0, 28.0, _N_SAVINGS)
@@ -59,7 +76,9 @@ def _build_inputs(n_intervals: int) -> dict:
     }
 
 
-def _solve_with_chunk_size(*, inputs: dict, chunk_size: int, monkeypatch) -> tuple:
+def _solve_with_chunk_size(
+    *, inputs: _StepInputs, chunk_size: int, monkeypatch
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     monkeypatch.setattr(nbegm_step, "_CHUNK_SIZE", chunk_size)
     value, marginal, policy = nbegm_per_interval_continuation_step_savings(**inputs)
     return np.asarray(value), np.asarray(marginal), np.asarray(policy)

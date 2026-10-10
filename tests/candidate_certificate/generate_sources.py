@@ -7,14 +7,38 @@ override slot, `exclude_sources`; `profile_sources` resolves the effective set o
 every profile, and `upgrade_inventory` carries an older-schema inventory forward.
 """
 
-from __future__ import annotations
-
 import argparse
 import ast
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
+
+type SourceRecord = dict[str, str]
+type SourcePath = str
+type ProfileName = str
+
+
+class ProfileEntry(TypedDict, total=False):
+    inventory: str
+    exclude_sources: list[SourcePath]
+    candidate_sources: list[SourceRecord]
+    source_count: int
+
+
+class DerivedPolicy(TypedDict):
+    profiles: dict[ProfileName, ProfileEntry]
+
+
+class Inventory(TypedDict, total=False):
+    schema_version: str
+    certificate: str
+    generation_rule: str
+    sources: list[SourceRecord]
+    source_inventory_sha256: str
+    derived_policy: DerivedPolicy
+
 
 CERTIFICATE_PATH = "tests/test_grid_search_candidate_certificate.py"
 INVENTORY_PATH = "tests/candidate_certificate/sources.json"
@@ -62,7 +86,7 @@ def inventory_digest(sources: list[dict[str, str]]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def upgrade_inventory(payload: dict[str, Any]) -> dict[str, Any]:
+def upgrade_inventory(payload: Inventory) -> Inventory:
     """Return `payload` in the current schema, carrying every profile override.
 
     Schema 1 repeated the whole source list in each profile. A profile that listed
@@ -76,7 +100,7 @@ def upgrade_inventory(payload: dict[str, Any]) -> dict[str, Any]:
     if version != "1":
         raise ValueError(f"unknown inventory schema_version {version!r}")
     paths = [item["path"] for item in payload.get("sources", [])]
-    profiles: dict[str, Any] = {}
+    profiles: dict[ProfileName, ProfileEntry] = {}
     for profile, entry in payload.get("derived_policy", {}).get("profiles", {}).items():
         listed = [item["path"] for item in entry.get("candidate_sources", [])]
         stray = sorted(set(listed) - set(paths))
@@ -96,7 +120,7 @@ def upgrade_inventory(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def profile_sources(payload: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+def profile_sources(payload: Inventory) -> dict[str, list[SourceRecord]]:
     """Resolve each required profile's candidate sources from the one inventory.
 
     A profile entry is `{"inventory": "sources", "exclude_sources": [...]}`: it
@@ -164,7 +188,7 @@ def _committed_overrides(root: Path) -> dict[str, list[str]]:
     }
 
 
-def build_inventory(repo_root: Path) -> dict[str, Any]:
+def build_inventory(repo_root: Path) -> Inventory:
     """Build the canonical inventory from certificate obligations and source bytes."""
     root = repo_root.resolve()
     certificate = root / CERTIFICATE_PATH
@@ -194,7 +218,7 @@ def build_inventory(repo_root: Path) -> dict[str, Any]:
     }
 
 
-def canonical_json(payload: dict[str, Any]) -> str:
+def canonical_json[PayloadValue](payload: Mapping[str, PayloadValue]) -> str:
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 

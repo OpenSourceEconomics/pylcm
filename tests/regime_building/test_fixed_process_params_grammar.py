@@ -37,10 +37,11 @@ from lcm.exceptions import (
     InvalidParamsError,
     ModelInitializationError,
 )
-from lcm.typing import ScalarFloat, ScalarInt
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts equidistant nodes on
 # `(0, 1, 2)`, so entering at the process's own law is worth `mu`.
+from lcm.typing import ScalarFloat, ScalarInt, UserParams
+
 _MU = 1.0
 _LAW = {"mu": _MU, "sigma": 0.5, "n_std": 2.0}
 _SOLVE_PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
@@ -69,7 +70,9 @@ def _evolve_carried(carried: ScalarFloat) -> ScalarFloat:
     return carried
 
 
-def _entered_process_model(*, fixed_params: dict, enable_jit: bool = False) -> Model:
+def _entered_process_model(
+    *, fixed_params: UserParams, enable_jit: bool = False
+) -> Model:
     """Build a source entering a target process whose law it does not carry."""
     return Model(
         regimes={

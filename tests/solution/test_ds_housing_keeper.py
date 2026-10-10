@@ -24,9 +24,10 @@ import numpy as np
 import pytest
 
 from _lcm.egm.validation import validate_dcegm_regimes
-from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_building.finalize import FinalizedUserRegime, finalize_regimes
 from _lcm.regime_law import bind_regime_law
 from lcm import LinearAggregator, LinearExpectation
+from lcm.typing import RegimeName
 from tests.test_models.ds_housing_keeper import (
     HOUSING_GRID,
     LIQUID_ASSETS_GRID,
@@ -49,7 +50,7 @@ _KEEPER_LAWS = MappingProxyType(
 )
 
 
-def _finalized_keeper_regimes() -> MappingProxyType:
+def _finalized_keeper_regimes() -> MappingProxyType[RegimeName, FinalizedUserRegime]:
     """Finalize the keeper regimes as the model build does, without solving.
 
     Finalization injects the default Bellman aggregator `H` and validates

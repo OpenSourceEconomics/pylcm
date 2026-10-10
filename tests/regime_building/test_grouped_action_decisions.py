@@ -2,7 +2,7 @@
 
 import functools
 from collections.abc import Callable
-from typing import Any, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -64,7 +64,7 @@ def test_grouped_cells_preserve_value_global_action_and_feasibility(
                     feasible[location] = True
     mapped = functools.partial(
         tiled_productmap(
-            func=cast("Callable[..., Any]", _decision_cell),
+            func=cast("Callable[..., HardMaxResult]", _decision_cell),
             variables=("region", "sector", "wealth"),
             width_keyword="cell_width",
             untiled_variables=untiled,

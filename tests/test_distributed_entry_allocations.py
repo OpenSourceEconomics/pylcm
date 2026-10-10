@@ -6,25 +6,113 @@ Run alone in a fresh four-CPU-device process.
 from collections.abc import Callable, Mapping
 from functools import partialmethod
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any, cast
+from types import MappingProxyType, MethodType
+from typing import Never, NotRequired, TypedDict, Unpack
 
 import jax
 import numpy as np
 import pytest
 
 from _lcm.dtypes import safe_to_int_dtype
+from _lcm.engine import Regime as EngineRegime
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation import process_grids
+from _lcm.simulation.chunk_admission import PreparedSimulationChunks
+from _lcm.simulation.chunk_planning import SimulationChunkProfile
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import SimulationEntryInputs
-from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.host_operations import ProfiledSimulationOperations, StaticArgument
 from _lcm.simulation.initial_conditions import canonicalize_initial_conditions
+from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.operand_placement import place_simulation_arguments
-from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    resident_bytes_by_device,
+)
+from _lcm.time import TimeAxis
+from _lcm.typing import (
+    ArrayTree,
+    FlatParams,
+    PytreeValue,
+    RegimeNamesToIds,
+    SimulationPolicy,
+)
+from _lcm.utils.logging import LogLevel
 from lcm import NormalIIDProcess
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import SolutionResult
-from lcm.typing import ValueND
+from lcm.typing import (
+    ActionName,
+    FloatND,
+    IntND,
+    ParameterName,
+    ReferenceName,
+    RegimeName,
+    ValueND,
+)
+
+
+class PrepareChunkArguments(TypedDict):
+    regimes: MappingProxyType[RegimeName, EngineRegime]
+    flat_params: FlatParams
+    values: Mapping[int, Mapping[RegimeName, jax.Array]]
+    flags: Mapping[int, Mapping[RegimeName, jax.Array]]
+    ages: TimeAxis
+    initial_conditions: Mapping[str, jax.Array]
+    regime_names_to_ids: RegimeNamesToIds
+    original_population: int
+    independent_taste: bool
+    log_level: LogLevel
+    policies: NotRequired[Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None]
+    process_grid_resolver: NotRequired[ProcessGridResolver | None]
+    max_compilation_workers: NotRequired[int | None]
+    group_sizes: NotRequired[tuple[int, ...] | None]
+
+
+class RequiredBytesArguments(TypedDict):
+    profile: SimulationChunkProfile
+    resident: Mapping[jax.Device, int]
+    devices: tuple[jax.Device, ...]
+
+
+class HeadroomArguments(TypedDict):
+    live: DeviceBufferFootprint
+    destination_bytes: Mapping[jax.Device, int]
+    scratch_bytes: Mapping[jax.Device, int]
+    budget_bytes: int
+    devices: tuple[jax.Device, ...]
+    budget_note: NotRequired[str]
+
+
+class DispatchArguments(TypedDict):
+    function: Callable[..., PytreeValue]
+    arguments: Mapping[ReferenceName, PytreeValue]
+    subject_arg_names: tuple[ReferenceName, ...]
+    devices: tuple[jax.Device, ...]
+    live_footprint: Callable[[], DeviceBufferFootprint]
+    budget_devices: tuple[jax.Device, ...]
+    budget_bytes: int
+    static_arguments: NotRequired[Mapping[str, StaticArgument]]
+    subject_outputs: NotRequired[bool]
+
+
+class ActionGridArguments(TypedDict):
+    action_names: tuple[ActionName, ...]
+    grids: MappingProxyType[ActionName, FloatND | IntND]
+    retained_arrays: ArrayTree
+
+
+class ProcessStageArguments(TypedDict):
+    parameters: Mapping[ParameterName, process_grids.ProcessValue]
+    n_points: int
+    required: jax.sharding.Sharding
+    stage: NotRequired[process_grids._GridStage]
+    exponent: NotRequired[int]
+    dtype: NotRequired[str]
+    weak_type: NotRequired[bool]
+    process_stage: NotRequired[bool]
+
 
 try:
     jax.config.update("jax_num_cpu_devices", 4)
@@ -153,7 +241,7 @@ def test_foreign_copy_peak_is_charged_on_excluded_source_device(
     owner.budget_bytes = compiled.peak_bytes - 1
     assert owner.budget_bytes >= source.nbytes
 
-    def forbidden(*args: object, **kwargs: object) -> object:
+    def forbidden[T](*args: T, **kwargs: T) -> Never:
         del args, kwargs
         raise AssertionError("Unadmitted copy reached its excluded source device")
 
@@ -256,10 +344,7 @@ def test_native_archive_upload_and_copy_keep_actual_device_ownership(
         assert all(value.devices() == {first_selected} for value in cache_arrays)
     # Resolved private leaves preserve cache layout even when its source mesh
     # includes a same-platform device excluded from the simulation execution mesh.
-    resolved = cast(
-        "tuple[Mapping[int, Mapping[str, jax.Array]], object, object, object]",
-        next(iter(loaded._consumed_views.values())),
-    )[0]
+    resolved = next(iter(loaded._consumed_views.values()))[0]
     for period, by_regime in resolved.items():
         for regime, value in by_regime.items():
             cached = _native_cache(_native_entries(loaded)[(period, regime)]).leaves[0]
@@ -323,10 +408,14 @@ def test_native_source_budget_includes_retained_bank_and_future_copy_scratch(
     banks: list[jax.Array] = []
     requirements: list[tuple[dict[jax.Device, int], int]] = []
 
-    def prepare(*, retained_footprint: DeviceBufferFootprint, **kwargs: Any) -> object:
+    def prepare(
+        *,
+        retained_footprint: DeviceBufferFootprint,
+        **kwargs: Unpack[PrepareChunkArguments],
+    ) -> PreparedSimulationChunks:
         existing = resident_bytes_by_device(
             live=retained_footprint,
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=(source_device,),
         )[source_device]
         assert 0 < existing < budget
@@ -342,14 +431,14 @@ def test_native_source_budget_includes_retained_bank_and_future_copy_scratch(
         assert (
             resident_bytes_by_device(
                 live=live,
-                arguments=DeviceBufferFootprint(spans={}),
+                arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
                 devices=(source_device,),
             )[source_device]
             == budget
         )
         return original_prepare(retained_footprint=live, **kwargs)
 
-    def required(**kwargs: Any) -> Mapping[jax.Device, int]:
+    def required(**kwargs: Unpack[RequiredBytesArguments]) -> Mapping[jax.Device, int]:
         result = original_required(**kwargs)
         profile = kwargs["profile"]
         scratch = profile.fixed_reservation[source_device]
@@ -394,7 +483,7 @@ def _assert_native_bank_and_caches_readable(
         np.testing.assert_array_equal(value, solution.values[period][regime])
 
 
-def _forbid_source_overflow_dispatch(**kwargs: object) -> object:
+def _forbid_source_overflow_dispatch[T](**kwargs: T) -> Never:
     """Detect any public execution after the deliberately overflowing source bank."""
     del kwargs
     raise AssertionError("An overflowing source reservation reached simulation")
@@ -433,7 +522,7 @@ def test_preflight_action_products_use_the_selected_entry_device(  # noqa: PLR09
     active_owners: DeviceBufferFootprint | None = None
     original_headroom = operand_placement.require_transfer_headroom
 
-    def headroom(**kwargs: Any) -> None:
+    def headroom(**kwargs: Unpack[HeadroomArguments]) -> None:
         if active_sources is not None:
             assert active_owners is not None
             # Admission reads the live inventory only on the devices it budgets,
@@ -452,7 +541,7 @@ def test_preflight_action_products_use_the_selected_entry_device(  # noqa: PLR09
                 ),
             )
             assert not any(missing.values())
-            nothing = DeviceBufferFootprint(spans={})
+            nothing = DeviceBufferFootprint(spans=MappingProxyType({}))
             complete = union_buffer_footprints(
                 footprints=(active_owners, active_sources)
             )
@@ -468,14 +557,20 @@ def test_preflight_action_products_use_the_selected_entry_device(  # noqa: PLR09
             source_accounting_checks.append(True)
         original_headroom(**kwargs)
 
-    def dispatch(self: ProfiledSimulationOperations, **kwargs: Any) -> object:
+    def dispatch(
+        self: ProfiledSimulationOperations, **kwargs: Unpack[DispatchArguments]
+    ) -> PytreeValue:
         nonlocal active_sources, active_owners
         arguments = kwargs["arguments"]
         if tuple(arguments) == ("grids",):
             sources = measure_buffer_footprint(tree=arguments)
             # The dispatch callback deliberately projects onto budget devices;
             # source ownership is a separate assertion against the complete owner.
-            full = kwargs["live_footprint"].__self__.snapshot()
+            provider = kwargs["live_footprint"]
+            assert isinstance(provider, MethodType)
+            owner = provider.__self__
+            assert isinstance(owner, SimulationMemory)
+            full = owner.snapshot()
             projected = kwargs["live_footprint"]()
             # A budget device holding no buffer projects to an empty span tuple.
             assert {
@@ -501,7 +596,9 @@ def test_preflight_action_products_use_the_selected_entry_device(  # noqa: PLR09
             active_sources = None
             active_owners = None
 
-    def resolve(self: PreflightActionGrids, **kwargs: Any) -> Mapping[str, jax.Array]:
+    def resolve(
+        self: PreflightActionGrids, **kwargs: Unpack[ActionGridArguments]
+    ) -> Mapping[ActionName, jax.Array]:
         product = original_resolve(self, **kwargs)
         products.append(product)
         return product
@@ -532,7 +629,7 @@ def _observe_selected_stages(
     *,
     original: Callable[..., ValueND],
     produced: list[ValueND],
-    **kwargs: Any,
+    **kwargs: Unpack[ProcessStageArguments],
 ) -> ValueND:
     assert self.temporary_roots
     placed_parameters = self.temporary_roots[0]

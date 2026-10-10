@@ -28,8 +28,10 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
 )
+from lcm.initial_nodes import UserInitialNodes
 from lcm.regime import Regime
-from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from lcm.transition import ModelEdges
+from lcm.typing import BoolND, ContinuousState, FloatND, RegimeName, ScalarInt
 from tests.test_models import n_nbegm_toy
 
 
@@ -112,8 +114,8 @@ def test_graph_edges_price_perceived_choice_and_realize_other_destination() -> N
 @pytest.mark.parametrize(("source", "target"), [("work", "typo"), ("typo", "realized")])
 def test_graph_unknown_names_are_rejected_even_at_final_source_age(
     *,
-    source: str,
-    target: str,
+    source: RegimeName,
+    target: RegimeName,
 ) -> None:
     """Validate topology names before discarding undemanded final-age edges."""
     with pytest.raises(ModelInitializationError, match="typo"):
@@ -317,7 +319,7 @@ def test_explicit_initial_pair_requires_one_exact_age() -> None:
             regimes=_graph_regimes(),
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regime_id_class=_GraphRegimeId,
-            initial_nodes=(((0, 1), "perceived"),),
+            initial_nodes=(((0, 1), "perceived"),),  # ty: ignore[invalid-argument-type]
             edges={},
             enable_jit=False,
         )
@@ -492,12 +494,12 @@ def test_edge_whose_only_source_age_is_the_final_age_is_rejected() -> None:
         )
 
 
-def _phased_graph_model(initial_nodes: object) -> Model:
+def _phased_graph_model(initial_nodes: UserInitialNodes) -> Model:
     return Model(
         regimes=_graph_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_GraphRegimeId,
-        initial_nodes=initial_nodes,  # ty: ignore[invalid-argument-type]
+        initial_nodes=initial_nodes,
         edges=Phased(
             solve={"work": {"perceived": 0}},
             simulate={"work": {"realized": 0}},
@@ -513,7 +515,7 @@ def test_published_initial_nodes_are_accepted_by_the_constructor() -> None:
     assert rebuilt.graph.initial_nodes == frozenset({(0, "work")})
 
 
-def _declaration_model(*, edges: object, enable_jit: bool) -> Model:
+def _declaration_model(*, edges: ModelEdges, enable_jit: bool) -> Model:
     return Model(
         regimes={
             "work": Regime(functions={"utility": lambda: jnp.asarray(1.0)}),
@@ -611,7 +613,9 @@ def test_declared_probability_law_is_read_only() -> None:
         law={"perceived": StochasticTransition(func=lambda: jnp.asarray(1.0))}
     )
     with pytest.raises(TypeError):
-        cast("dict[str, object]", transition.law)["perceived"] = "realized"
+        cast("dict[RegimeName, StochasticTransition | RegimeName]", transition.law)[
+            "perceived"
+        ] = "realized"
 
 
 def test_declared_edge_mapping_is_read_only() -> None:

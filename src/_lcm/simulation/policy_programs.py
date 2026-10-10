@@ -17,6 +17,7 @@ from _lcm.execution.core_program import (
     CoreProgram,
     ValueRead,
 )
+from _lcm.execution.output_layout import OutputRoleTree
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
     ValueArtifactKind,
@@ -26,9 +27,15 @@ from _lcm.execution.value_transfer import (
 from _lcm.simulation.program_types import subject_axis
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.solution.continuation_reads import rekeyed_value_reads
-from _lcm.typing import FlatRegimeParams, RegimeName
+from _lcm.typing import (
+    FlatRegimeParams,
+    PytreeChild,
+    PytreeValue,
+    QAndFKwargs,
+    RegimeName,
+)
 from lcm.solver_api import SIMULATION_POLICY
-from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt, StateName
 
 POLICY_PREPARE = "simulate_policy_prepare"
 POLICY_RANK = "simulate_policy_rank"
@@ -57,12 +64,16 @@ class ReplayPayload:
         )
 
 
-def _flatten_payload(payload: ReplayPayload) -> tuple[tuple, object]:
+def _flatten_payload(
+    payload: ReplayPayload,
+) -> tuple[tuple[PytreeChild, ...], jax.tree_util.PyTreeDef]:
     return payload.arrays, payload.structure
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-def _unflatten_payload(structure: object, arrays: Sequence[object]) -> ReplayPayload:
+def _unflatten_payload(
+    structure: jax.tree_util.PyTreeDef, arrays: Sequence[PytreeChild]
+) -> ReplayPayload:
     result = object.__new__(ReplayPayload)
     object.__setattr__(result, "arrays", tuple(arrays))
     object.__setattr__(result, "structure", structure)
@@ -152,11 +163,11 @@ def declare_finite_replay_programs(regime: Regime) -> Regime:
 def _program(
     *,
     name: str,
-    body: Callable[..., object],
+    body: Callable[..., PytreeValue],
     subject_names: tuple[str, ...],
-    state_names: tuple[str, ...],
+    state_names: tuple[StateName, ...],
     reads: tuple[ValueRead, ...],
-    roles: object,
+    roles: OutputRoleTree,
 ) -> CoreProgram:
     return CoreProgram(
         name=name,
@@ -174,7 +185,7 @@ def _program(
 
 
 def _policy_reads(
-    *, regime: str, period: int, n_arrays: int, core: str
+    *, regime: RegimeName, period: int, n_arrays: int, core: str
 ) -> tuple[ValueRead, ...]:
     """Match NNBEGMSimPolicy's registered four mandatory and optional fifth leaf."""
     return tuple(
@@ -211,7 +222,7 @@ class _Prepare:
         states: Mapping[str, FloatND | IntND],
         params: FlatRegimeParams,
         age: ScalarFloat | ScalarInt,
-    ) -> object:
+    ) -> PytreeValue:
         # Imported at execution to keep declaration construction independent of
         # the forward coordinator's import order.
         from _lcm.simulation.simulate import (  # noqa: PLC0415
@@ -252,7 +263,7 @@ class _Rank:
             )
         )
 
-    def __call__(self, **arguments: object) -> object:
+    def __call__(self, **arguments: PytreeValue) -> PytreeValue:
         from _lcm.simulation.simulate import (  # noqa: PLC0415
             _rank_nnbegm_candidate_bank,
         )
@@ -276,7 +287,8 @@ class _Rank:
                 "MappingProxyType[RegimeName, FloatND]",
                 arguments.pop("next_regime_to_V_arr"),
             ),
-            referenced_value_kwargs=arguments,
+            # What remains after the pops are the declared reference channels.
+            referenced_value_kwargs=cast("QAndFKwargs", arguments),
         )
         return (
             jax.tree.map(lambda value: value[0], actions),

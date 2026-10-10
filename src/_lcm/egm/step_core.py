@@ -13,10 +13,11 @@ orchestration that maps it over the discrete-combo product.
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import (
@@ -35,6 +36,8 @@ from _lcm.egm.preferences import (
 from _lcm.egm.upper_envelope.fues import QueryBracket
 from _lcm.typing import (
     ActionName,
+    EconFunctionArg,
+    EconFunctionKwargs,
     RegimeName,
     StateName,
 )
@@ -43,10 +46,10 @@ from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    ReferenceName,
     ScalarBool,
     ScalarFloat,
     ScalarInt,
-    UserFunction,
 )
 
 # Refined-row fields every envelope backend returns, ahead of the optional
@@ -97,10 +100,10 @@ class _EgmKernelPieces:
     euler_axis_in_V: int
     """Canonical axis of the Euler state in the published value-function array."""
 
-    utility_func: UserFunction
+    utility_func: Callable[..., FloatND]
     """The regime's concatenated utility function."""
 
-    inverse_marginal_utility_func: UserFunction | None
+    inverse_marginal_utility_func: Callable[..., FloatND] | None
     """The regime's concatenated inverse-marginal-utility function.
 
     `None` when the regime supplies no analytic inverse: EGM then inverts `u'`
@@ -108,13 +111,13 @@ class _EgmKernelPieces:
     at the call site.
     """
 
-    own_resources_func: UserFunction
+    own_resources_func: Callable[..., FloatND]
     """The regime's concatenated resources function."""
 
     feasibility_func: Callable[..., ScalarBool] | None
     """Discrete-feasibility predicate of a combo, or `None`."""
 
-    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    build_W_kwargs: Callable[[EconFunctionKwargs], dict[ReferenceName, EconFunctionArg]]
     """Closure assembling the Bellman aggregator's keyword arguments."""
 
     refine: Callable[
@@ -135,7 +138,7 @@ class _EgmKernelPieces:
 def _get_solve_one_combo(
     *,
     pieces: _EgmKernelPieces,
-    pool: dict[str, Any],
+    pool: EconFunctionKwargs,
     state_grid: Float1D,
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     euler_point_width: int | None,
@@ -181,7 +184,7 @@ class _SolveOneCombo:
     pieces: _EgmKernelPieces
     """Build-time statics shared by every per-combo computation."""
 
-    pool: dict[str, Any]
+    pool: EconFunctionKwargs
     """The kernel's flat params, `period`, and `age`."""
 
     state_grid: Float1D
@@ -225,7 +228,8 @@ class _SolveOneCombo:
         }
         # Validation pins the default Bellman aggregator, whose single
         # non-(utility, CE) parameter is the discount factor.
-        (discount_factor,) = tuple(pieces.build_W_kwargs(combo_pool).values())
+        (discount_factor_arg,) = tuple(pieces.build_W_kwargs(combo_pool).values())
+        discount_factor = cast("ScalarFloat", discount_factor_arg)
         utility_of_action = BoundUtilityOfAction(
             utility_func=pieces.utility_func,
             action_name=pieces.action_name,
@@ -363,13 +367,13 @@ class _SolveOneCombo:
 class ResourcesOfState:
     """The regime's resources as a function of its Euler state, all else bound."""
 
-    resources_func: UserFunction
+    resources_func: Callable[..., FloatND]
     """The regime's concatenated resources function."""
 
     euler_state_name: StateName
     """The regime's name for its continuous (Euler) state."""
 
-    bound: Mapping[str, Any]
+    bound: EconFunctionKwargs
     """Every other argument of `resources_func`, by name."""
 
     def __call__(self, state_value: ScalarFloat) -> ScalarFloat:
@@ -390,7 +394,9 @@ def tile_block_size(*, width: int | None, extent: int) -> int:
 
 def _compute_nodes_over_savings(
     *,
-    compute_node: Callable,
+    compute_node: Callable[
+        [ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+    ],
     savings_nodes: Float1D,
     savings_point_width: int | None,
 ) -> tuple[FloatND, FloatND, FloatND, FloatND]:
@@ -417,11 +423,11 @@ def _compute_nodes_over_savings(
 def _get_compute_node(
     *,
     pieces: _EgmKernelPieces,
-    combo_pool: dict[str, Any],
+    combo_pool: EconFunctionKwargs,
     discount_factor: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-    dtype: Any,  # noqa: ANN401
+    dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:

@@ -6,12 +6,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial, partialmethod
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Unpack, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 import pytest
+from jax.typing import DTypeLike
 
 import lcm.model as model_module
 from _lcm.dtypes import safe_to_float_dtype, safe_to_int_dtype
@@ -24,14 +26,21 @@ from _lcm.simulation.entry_inputs import (
     SimulationEntryInputs,
     capture_simulation_entry_inputs,
 )
+from _lcm.simulation.operand_placement import _OperandValue
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
     resident_bytes_by_device,
 )
-from _lcm.typing import FlatParams
+from _lcm.typing import FlatParams, FootprintTree, PytreeValue
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError, InvalidParamsError
+from lcm.typing import ReferenceName
+from tests.simulation._callback_types import (
+    InputValidation,
+    OperandPlacement,
+    SolutionResolution,
+)
 from tests.solution.test_solution_result import _small_grid_search_inputs
 
 
@@ -40,10 +49,22 @@ class _ForbiddenConversion:
     source: np.ndarray
     original: Callable[..., jax.Array]
 
-    def __call__(self, value: object, *args: Any, **kwargs: Any) -> jax.Array:
+    # keyword-only-exempt: library-callback=jax.numpy.asarray
+    def __call__(
+        self,
+        value: npt.ArrayLike,
+        dtype: DTypeLike | None = None,
+        order: str | None = None,
+        *,
+        copy: bool | None = None,
+        device: jax.Device | jax.sharding.Sharding | None = None,
+        out_sharding: jax.NamedSharding | jax.P | None = None,
+    ) -> jax.Array:
         if value is self.source:
             raise AssertionError("Numeric device allocation preceded admission")
-        return self.original(value, *args, **kwargs)
+        return self.original(
+            value, dtype, order, copy=copy, device=device, out_sharding=out_sharding
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -60,16 +81,18 @@ class _RecordingWriter:
 
 @dataclass(kw_only=True)
 class _ResolvedCopies:
-    values: object | None = None
+    values: FootprintTree | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ModelUploadInventory:
+class _ModelUploadInventory[Operand: _OperandValue]:
     expected: DeviceBufferFootprint
-    original: Callable[..., object]
+    original: Callable[..., MappingProxyType[ReferenceName, Operand]]
     calls: list[bool]
 
-    def __call__(self, **arguments: Any) -> object:
+    def __call__(
+        self, **arguments: Unpack[OperandPlacement[Operand]]
+    ) -> MappingProxyType[ReferenceName, Operand]:
         live = arguments["live_footprint"]
         assert isinstance(live, DeviceBufferFootprint)
         missing = resident_bytes_by_device(
@@ -124,9 +147,9 @@ def _copy_resolved_values(
     self: Model,
     *,
     observed: _ResolvedCopies,
-    original: Callable[..., tuple[object, object, object, object]],
-    **arguments: Any,
-) -> tuple[object, object, object, object]:
+    original: Callable[..., model_module._ResolvedSolution],
+    **arguments: Unpack[SolutionResolution],
+) -> model_module._ResolvedSolution:
     values, policies, flags, readers = original(self, **arguments)
     copied = jax.tree.map(jnp.copy, values)
     jax.block_until_ready(copied)
@@ -163,10 +186,10 @@ def _check_resolved_snapshot(
 def _check_preflight_inventory(
     *,
     observed: _ResolvedCopies,
-    original: Callable[..., object],
+    original: Callable[..., None],
     retained_footprint: DeviceBufferFootprint | None,
-    **arguments: Any,
-) -> object:
+    **arguments: Unpack[InputValidation],
+) -> None:
     assert retained_footprint is not None
     spans = measure_buffer_footprint(tree=observed.values)
     missing = resident_bytes_by_device(
@@ -219,13 +242,13 @@ def test_resolved_value_copies_remain_charged_before_initial_upload(
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _record_padding_dispatch(
+def _record_padding_dispatch[Result](
     self: jax.stages.Compiled,
     *,
     calls: list[jax.stages.Compiled],
-    original: Callable[..., object],
-    **arguments: Any,
-) -> object:
+    original: Callable[..., Result],
+    **arguments: PytreeValue,
+) -> Result:
     calls.append(self)
     return original(self, **arguments)
 

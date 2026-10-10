@@ -7,11 +7,13 @@ at dispatch that the arrays handed over match that declaration.
 import dataclasses
 from collections.abc import Hashable, Mapping
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Literal, TypedDict, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -20,6 +22,7 @@ from _lcm.execution.core_program import (
     CoreProgram,
     InternalInputRef,
     InternalOutputSpec,
+    MaterializedCoreProgram,
     ProgramScope,
     core_program_graph,
     materialize_core_program,
@@ -43,6 +46,11 @@ from _lcm.typing import FloatND
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 from lcm.solvers import ReducedAxis
+
+
+class _ConsumerTemplates(TypedDict):
+    upstream_value: jax.ShapeDtypeStruct
+    upstream_carry: dict[str, jax.ShapeDtypeStruct]
 
 
 def _producer_function(*, x):
@@ -141,7 +149,7 @@ class _MaxReduction:
 
 
 def _records(
-    *, materialized: Mapping[str, Any], names: tuple[str, ...]
+    *, materialized: Mapping[str, MaterializedCoreProgram], names: tuple[str, ...]
 ) -> dict[str, MappingProxyType[Hashable, ResolvedProducer]]:
     """Trace the named producers once each and key them by one width candidate.
 
@@ -154,7 +162,9 @@ def _records(
     }
 
 
-def _one_record(*, program: Any) -> dict[Hashable, ResolvedProducer]:
+def _one_record(
+    *, program: MaterializedCoreProgram
+) -> dict[Hashable, ResolvedProducer]:
     """Trace one producer that reads nothing and streams nothing."""
     return {
         (): resolve_producer(
@@ -279,7 +289,7 @@ def test_consumers_are_ordered_after_their_producers() -> None:
     assert topological_program_order(graph=graph) == ("producer", "consumer")
 
 
-def _consumer_templates() -> Mapping[str, Any]:
+def _consumer_templates() -> _ConsumerTemplates:
     """Trace the two-producer fixture graph and return the consumer's templates."""
     graph = core_program_graph(kernel=_Kernel(programs=_graph()))
     materialized = {
@@ -287,7 +297,7 @@ def _consumer_templates() -> Mapping[str, Any]:
         for name, program in graph.items()
     }
     return cast(
-        "Mapping[str, Any]",
+        "_ConsumerTemplates",
         internal_input_templates(
             program=materialized["consumer"],
             producers=_records(materialized=materialized, names=("producer",)),
@@ -316,7 +326,7 @@ def _consumer_templates() -> Mapping[str, Any]:
     ],
 )
 def test_templates_take_the_producers_abstract_output_shapes(
-    *, actual: object, expected: object
+    *, actual: tuple[int, ...] | np.dtype, expected: tuple[int, ...] | np.dtype
 ) -> None:
     """Each internal-input template carries the shape and dtype it will receive."""
     assert actual == expected
@@ -414,7 +424,9 @@ def test_an_internal_input_may_not_collide_with_a_built_argument() -> None:
         )
 
 
-def _materialized_graph(programs: Mapping[str, CoreProgram]) -> dict[str, Any]:
+def _materialized_graph(
+    programs: Mapping[str, CoreProgram],
+) -> dict[str, MaterializedCoreProgram]:
     """Materialize every program of a graph against the shared build context."""
     graph = core_program_graph(kernel=_Kernel(programs=programs))
     return {
@@ -471,8 +483,8 @@ def test_a_non_array_internal_input_leaf_is_refused_by_name() -> None:
     """A handed-over leaf without a shape and a dtype is refused, naming the leaf."""
     with pytest.raises(ValueError, match="shape and a dtype"):
         assert_internal_inputs(
-            arguments={"upstream_value": jnp.zeros((3,), dtype=jnp.float32)},
-            templates={"upstream_value": "not an array"},
+            arguments={"upstream_value": 3},
+            templates={"upstream_value": jax.ShapeDtypeStruct((), jnp.int32)},
             label="consumer",
         )
 
@@ -527,10 +539,10 @@ def test_a_planned_core_names_itself_when_an_internal_input_is_misshapen() -> No
     core = PlannedCore(
         compiled=_consumer_function,
         layout=layout,
-        tile_widths={},
-        internal_input_templates={
-            "upstream_value": jax.ShapeDtypeStruct((3,), template.dtype)
-        },
+        tile_widths=MappingProxyType({}),
+        internal_input_templates=MappingProxyType(
+            {"upstream_value": jax.ShapeDtypeStruct((3,), template.dtype)}
+        ),
         name="consumer",
     )
 
@@ -560,7 +572,7 @@ def test_a_producer_is_traced_with_its_own_internal_input_template() -> None:
     }
 
     templates = cast(
-        "Mapping[str, Any]",
+        "Mapping[str, jax.ShapeDtypeStruct]",
         internal_input_templates(
             program=materialized["leaf"],
             producers={"middle": MappingProxyType(middle_record)},
@@ -598,7 +610,7 @@ def test_a_producer_traced_without_its_static_width_is_refused() -> None:
                     ),
                     tile_widths={"candidate": 2},
                 ),
-                static_kwargs={},
+                static_kwargs=MappingProxyType({}),
             ),
             templates=resolved.internal_input_templates,
         )
@@ -610,7 +622,9 @@ def test_a_planned_producers_static_width_reaches_its_abstract_output() -> None:
 
     narrow = next(iter(candidates.values()))
 
-    assert cast("Any", narrow.abstract_output)[1].shape == (3,)
+    assert cast(
+        "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]", narrow.abstract_output
+    )[1].shape == (3,)
 
 
 def test_a_width_dependent_published_output_is_refused() -> None:
@@ -709,8 +723,12 @@ def _width_dependent_scalar_leaves() -> tuple[
     """Return the scalar published at the narrow and at the wide width."""
     narrow, wide = _scalar_candidates(weak_widths=frozenset({2})).values()
     return (
-        cast("Any", narrow.abstract_output)[1],
-        cast("Any", wide.abstract_output)[1],
+        cast(
+            "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]", narrow.abstract_output
+        )[1],
+        cast("tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]", wide.abstract_output)[
+            1
+        ],
     )
 
 
@@ -791,3 +809,23 @@ def test_dispatching_an_internal_input_of_the_declared_weak_typing_is_admitted(
         )
         is None
     )
+
+
+@pytest.mark.parametrize("field_name", ["internal_input_templates", "static_kwargs"])
+def test_resolved_producer_refuses_a_plain_dict_for_its_mappings(
+    field_name: str,
+) -> None:
+    """A resolved producer holds read-only mappings; a plain dict is refused."""
+    arguments = {
+        "internal_input_templates": MappingProxyType({}),
+        "static_kwargs": MappingProxyType({}),
+        field_name: {},
+    }
+    with pytest.raises(BeartypeCallHintParamViolation, match=field_name):
+        ResolvedProducer(
+            name="producer",
+            function=lambda: jnp.zeros(1),
+            internal_outputs=(),
+            abstract_output=jax.ShapeDtypeStruct((1,), jnp.float32),
+            **arguments,
+        )

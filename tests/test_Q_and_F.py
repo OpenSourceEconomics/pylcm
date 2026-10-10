@@ -1,13 +1,15 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import NotRequired, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from dags import concatenate_functions
+from jax.typing import DTypeLike
 from numpy.testing import assert_allclose, assert_array_equal
+from typing_extensions import TypedDict
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
@@ -31,6 +33,7 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F_terminal,
 )
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.typing import FlatRegimeParams, QualifiedName, RegimeName
 from lcm import (
     AgeGrid,
     ByAge,
@@ -53,6 +56,7 @@ from lcm.typing import (
     IntND,
     Period,
     ScalarInt,
+    UserFunction,
 )
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.test_models.deterministic.regression import (
@@ -121,7 +125,7 @@ def test_get_Q_and_F_function():
         consumption=consumption,
         labor_supply=labor_supply,
         wealth=wealth,
-        **flat_params["working_life"],
+        **cast("FlatRegimeParams", flat_params["working_life"]),
         next_regime_to_V_arr=MappingProxyType({}),
         period=3,
         age=ages.period_to_age(3),
@@ -337,11 +341,11 @@ def test_get_U_and_F_with_annotated_constraints():
     # Verify it works correctly
     U, F = U_and_F(consumption=5.0, wealth=10.0)
     assert jnp.isclose(U, jnp.log(6.0))
-    assert F.item() is True
+    assert bool(F) is True
 
     # Test infeasible case
     U, F = U_and_F(consumption=15.0, wealth=10.0)
-    assert F.item() is False
+    assert bool(F) is False
 
 
 def _health_probs(*, health: DiscreteState, probs_array: FloatND) -> FloatND:
@@ -364,8 +368,8 @@ class _PartialCoverageRegimeId:
 def _build_partial_coverage_model(
     *,
     work_transition: dict[str, StochasticTransition],
-    next_regime_func: Callable,
-) -> tuple[Model, dict]:
+    next_regime_func: UserFunction,
+) -> tuple[Model, dict[str, float | FloatND]]:
     """Build a model whose "work" regime covers `health` only toward "work".
 
     "retire" also carries `health`; whether the model is valid depends on
@@ -521,17 +525,19 @@ _STATELESS_V_INFO = VInterpolationInfo(
 )
 
 
-def _build_two_target_closure(
+def _build_two_target_closure[T](
     *,
-    builder: Callable,
+    builder: Callable[..., T],
     certainty_equivalent: CertaintyEquivalent | None,
-    probs_function: Callable = _low_and_high_probs,
-    flat_param_names: frozenset[str] = frozenset(
+    probs_function: Callable[
+        ..., MappingProxyType[RegimeName, FloatND]
+    ] = _low_and_high_probs,
+    flat_param_names: frozenset[QualifiedName] = frozenset(
         {"certainty_equivalent__risk_aversion"}
     ),
-    period_targets: tuple[str, ...] = ("low", "high"),
-    scalar_targets: tuple[str, ...] = (),
-) -> Callable:
+    period_targets: tuple[RegimeName, ...] = ("low", "high"),
+    scalar_targets: tuple[RegimeName, ...] = (),
+) -> T:
     """Build `Q_and_F` (or the diagnostics twin) over two stateless target regimes."""
     return builder(
         co_map_state_names=(),
@@ -556,6 +562,18 @@ def _build_two_target_closure(
     )
 
 
+class _TwoTargetCallKwargs(TypedDict, closed=True):
+    """Named operands of the two-target continuation tests."""
+
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
+    utility_level: FloatND
+    regime_prob_low: FloatND
+    regime_prob_high: NotRequired[FloatND]
+    age: IntND
+    period: IntND
+    certainty_equivalent__risk_aversion: NotRequired[FloatND]
+
+
 def _two_target_call_kwargs(
     *,
     values: tuple[float, float],
@@ -563,7 +581,7 @@ def _two_target_call_kwargs(
     utility_level: float,
     risk_aversion: float,
     dtype,
-) -> dict:
+) -> _TwoTargetCallKwargs:
     return {
         "next_regime_to_V_arr": MappingProxyType(
             {
@@ -579,7 +597,9 @@ def _two_target_call_kwargs(
     }
 
 
-def _linear_expectation_action_values(*, dtype: Any) -> tuple[np.ndarray, np.ndarray]:
+def _linear_expectation_action_values(
+    *, dtype: DTypeLike
+) -> tuple[np.ndarray, np.ndarray]:
     """Return Q values for an accepted near-unit-mass lottery and a safe action."""
     Q_and_F = _build_two_target_closure(
         builder=get_Q_and_F,
@@ -589,7 +609,7 @@ def _linear_expectation_action_values(*, dtype: Any) -> tuple[np.ndarray, np.nda
     )
 
     def evaluate(*, value: float, probability_high: float) -> FloatND:
-        kwargs: dict[str, Any] = {
+        kwargs: _TwoTargetCallKwargs = {
             "next_regime_to_V_arr": MappingProxyType(
                 {
                     "low": jnp.asarray(value, dtype=dtype),
@@ -626,7 +646,7 @@ def test_linear_expectation_fast_path_normalizes_accepted_regime_mass(
     *,
     request: pytest.FixtureRequest,
     fixture_name: str,
-    dtype: Any,
+    dtype: DTypeLike,
     rtol: float,
 ):
     """The shortcut equals `LinearExpectation.aggregate` on accepted probabilities."""
@@ -732,7 +752,7 @@ def _assert_the_even_lottery_wins(
     *,
     risk_aversion: float,
     scale: float,
-    dtype: Any,
+    dtype: DTypeLike,
     rtol: float,
 ) -> None:
     """Assert `Q` ranks two actions over a `(scale, 2 * scale)` regime lottery.
@@ -814,7 +834,7 @@ def _tiny_anchor_action_values(
     risky_values: tuple[float, float],
     risky_prob_low: float,
     safe_value: float,
-    dtype: Any,
+    dtype: DTypeLike,
 ) -> tuple[float, float]:
     """Return `Q` for a near-degenerate risky action and a deterministic safe one.
 
@@ -988,7 +1008,7 @@ def _solve_alive_at_log_level_off(
     *, total_mass: float, certainty_equivalent: CertaintyEquivalent
 ) -> FloatND:
     """Solve the model at `log_level="off"` and return `alive`'s first V array."""
-    alive_params: dict[str, Any] = {"discount_factor": 0.95}
+    alive_params: dict[str, float | dict[str, float]] = {"discount_factor": 0.95}
     if not isinstance(certainty_equivalent, LinearExpectation):
         alive_params["certainty_equivalent"] = {"risk_aversion": 2.0}
     model = _model_emitting_total_regime_mass(
@@ -1063,7 +1083,9 @@ def test_solve_at_unit_regime_mass_reproduces_the_unchecked_arithmetic(
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-def test_unit_regime_mass_divisor_is_exactly_one(*, dtype: Any, x64_enabled: None):
+def test_unit_regime_mass_divisor_is_exactly_one(
+    *, dtype: DTypeLike, x64_enabled: None
+):
     """At unit mass the per-target route divides by exactly `1.0`.
 
     Division by exactly one is the identity in IEEE754, so the check cannot
@@ -1081,7 +1103,7 @@ def test_unit_regime_mass_divisor_is_exactly_one(*, dtype: Any, x64_enabled: Non
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
 def test_unit_regime_mass_predicate_passes_accumulated_float_error(
-    *, dtype: Any, x64_enabled: None
+    *, dtype: DTypeLike, x64_enabled: None
 ):
     """Mass that misses one by realistic accumulation error is accepted.
 
@@ -1145,7 +1167,7 @@ def test_a_joint_lottery_reads_its_arms_against_their_own_scales() -> None:
             return ()
 
         def aggregate(
-            self, *, values: FloatND, weights: FloatND, params: Any
+            self, *, values: FloatND, weights: FloatND, params: Mapping[str, FloatND]
         ) -> FloatND:
             del params
             return jnp.sum(weights * values) / jnp.sum(weights)
@@ -1156,7 +1178,7 @@ def test_a_joint_lottery_reads_its_arms_against_their_own_scales() -> None:
             values: FloatND,
             coefficients: FloatND,
             shifts: IntND,
-            params: Any,
+            params: Mapping[str, FloatND],
         ) -> FloatND:
             # A plain expectation, so the shipped one states the same quantity;
             # declaring it is what says this mean can read per-node scales.

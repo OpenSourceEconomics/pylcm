@@ -10,15 +10,18 @@ Random draws are keyed by `(period, regime)` site, so a deterministic exit
 leaves later shock draws where a stochastic one would put them.
 """
 
-from typing import Any
+from collections.abc import Callable, Hashable, Mapping
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 import _lcm.model_graph
+from _lcm.regime_building.schedules import RegimeSchedules
 from _lcm.simulation.random import site_simulation_key
+from _lcm.time import TimeAxis
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -43,8 +46,11 @@ from lcm.exceptions import (
     InvalidSimulationInputError,
     RegimeInitializationError,
 )
+from lcm.initial_nodes import UserInitialNodes
 from lcm.phased import Phased
-from lcm.typing import ContinuousState, FloatND, ScalarInt
+from lcm.result import SimulationResult
+from lcm.transition import AgeCaseLaw, AgeSelector
+from lcm.typing import ContinuousState, FloatND, RegimeName, ScalarInt, UserAge
 from tests.regime_building.test_same_period_ref_period_axes import (
     EXPECTED_V_COUPLE,
 )
@@ -106,9 +112,9 @@ _EARLY = {
 
 def _life_model(
     *,
-    law_at_55: Any,
-    initial_nodes: Any,
-    early: Any = None,
+    law_at_55: AgeCaseLaw,
+    initial_nodes: UserInitialNodes,
+    early: AgeCaseLaw | None = None,
     retires_at_55: bool = True,
 ) -> Model:
     return Model(
@@ -185,7 +191,7 @@ def _excess() -> FloatND:
 )
 @_LOG_LEVELS
 def test_invalid_selection_mass_fails_at_every_log_level(
-    *, retire: Any, match: str, log_level: LogLevel
+    *, retire: Callable[..., FloatND], match: str, log_level: LogLevel
 ) -> None:
     """NaN, negative and above-one cells are refused whatever the verbosity."""
     model = _life_model(
@@ -299,7 +305,9 @@ def test_a_numeric_gate_output_fails_with_logging_off() -> None:
 _N_SUBJECTS = 1000
 
 
-def _panel(*, model: Model, age: float, regime: str, seed: int = 0) -> Any:
+def _panel(
+    *, model: Model, age: float, regime: RegimeName, seed: int = 0
+) -> pd.DataFrame:
     return model.simulate(
         params=_PARAMS,
         initial_conditions={
@@ -381,7 +389,7 @@ _REMAIN_TARGETS = (
 
 # keyword-only-exempt: primary-argument=first_law
 def _job_model(
-    first_law: Any, *, targets_at_25: tuple[str, ...] = _REMAIN_TARGETS
+    first_law: AgeCaseLaw, *, targets_at_25: tuple[str, ...] = _REMAIN_TARGETS
 ) -> Model:
     """Every destination is a known regime with a law at 35 and a wealth handoff."""
     return Model(
@@ -405,7 +413,9 @@ def _job_model(
     )
 
 
-def _job_simulate(*, model: Model, log_level: LogLevel, n_subjects: int) -> Any:
+def _job_simulate(
+    *, model: Model, log_level: LogLevel, n_subjects: int
+) -> SimulationResult:
     return model.simulate(
         params=_PARAMS,
         initial_conditions={
@@ -480,7 +490,11 @@ def _complement_between_nodes(wealth: ContinuousState) -> FloatND:
     return 1 - _nonfinite_between_nodes(wealth)
 
 
-def _phased_by_age(*, valid: dict, invalid: dict) -> ByAge:
+def _phased_by_age(
+    *,
+    valid: Mapping[RegimeName, StochasticTransition],
+    invalid: Mapping[RegimeName, StochasticTransition],
+) -> ByAge:
     return ByAge(
         cases={
             AgeRange(start=25, exclusive_stop=45): Phased(solve=valid, simulate=valid),
@@ -658,9 +672,22 @@ def test_simulate_does_not_resolve_demand_again(
     solution = model.solve(params=_PARAMS, log_level="off")
     calls: list[int] = []
 
-    def _counting(**kwargs: Any) -> Any:
+    def _counting(
+        *,
+        schedules: RegimeSchedules,
+        initial_nodes: frozenset[tuple[UserAge, RegimeName]],
+        same_period_refs_by_regime: Mapping[RegimeName, tuple[RegimeName, ...]],
+        terminal_regimes: frozenset[RegimeName],
+        ages: TimeAxis,
+    ) -> RegimeSchedules:
         calls.append(1)
-        return original(**kwargs)
+        return original(
+            schedules=schedules,
+            initial_nodes=initial_nodes,
+            same_period_refs_by_regime=same_period_refs_by_regime,
+            terminal_regimes=terminal_regimes,
+            ages=ages,
+        )
 
     original = _lcm.model_graph.resolve_demand
     monkeypatch.setattr(_lcm.model_graph, "resolve_demand", _counting)
@@ -680,7 +707,7 @@ def test_simulate_does_not_resolve_demand_again(
 
 def test_mutating_the_declared_roots_after_build_changes_nothing() -> None:
     """The model keeps its own snapshot of the starts and their closure."""
-    roots: dict[Any, Any] = {25: "working"}
+    roots: dict[AgeSelector, RegimeName] = {25: "working"}
     model = _admission_model(roots)
     before = (model.initial_nodes, model.reachability.nodes)
     roots[25] = "island"
@@ -750,7 +777,12 @@ def test_a_solution_for_other_visits_is_refused() -> None:
         )
 
 
-def _program_keys(model: Model) -> dict[str, tuple]:
+def _program_keys(
+    model: Model,
+) -> dict[
+    RegimeName,
+    tuple[str, tuple[tuple[int, Hashable], ...], tuple[tuple[int, Hashable], ...]],
+]:
     program_fingerprint = model._program_fingerprint(
         flat_params=model._process_params(_PARAMS)
     )
@@ -829,7 +861,7 @@ def _shock_utility(*, wealth: ContinuousState, income: ContinuousState) -> Float
     return wealth + income
 
 
-def _shock_model(exit_law: Any) -> Model:
+def _shock_model(exit_law: AgeCaseLaw) -> Model:
     return Model(
         edges={
             "working": Transition(
@@ -858,7 +890,7 @@ def _shock_model(exit_law: Any) -> Model:
     )
 
 
-def _shock_panel(exit_law: Any) -> Any:
+def _shock_panel(exit_law: AgeCaseLaw) -> pd.DataFrame:
     model = _shock_model(exit_law)
     return model.simulate(
         params=_PARAMS,
@@ -884,14 +916,16 @@ _EXIT_FORMS = pytest.mark.parametrize(
 
 
 @_EXIT_FORMS
-def test_every_subject_takes_the_single_route(exit_law: Any) -> None:
+def test_every_subject_takes_the_single_route(exit_law: AgeCaseLaw) -> None:
     """A deterministic or singleton exit sends all eight subjects to retirement."""
     panel = _shock_panel(exit_law)
     assert panel.query("age == 35")["regime_name"].tolist() == ["retirement"] * 8
 
 
 @_EXIT_FORMS
-def test_downstream_shock_draws_do_not_depend_on_the_exit_form(exit_law: Any) -> None:
+def test_downstream_shock_draws_do_not_depend_on_the_exit_form(
+    exit_law: AgeCaseLaw,
+) -> None:
     """Retirement income draws match those after a plain named exit."""
     columns = ["subject_id", "age", "income"]
     np.testing.assert_array_equal(

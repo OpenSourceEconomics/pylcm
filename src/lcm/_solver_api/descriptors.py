@@ -3,13 +3,14 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import (
-    cast,
-)
 
+from beartype import beartype
+
+from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.identity import (
     ArtifactChannel,
     ArtifactKey,
+    ArtifactRuntimeType,
     AxisDescriptor,
     AxisRole,
     CategoryDomain,
@@ -22,38 +23,45 @@ from lcm._solver_api.identity import (
 )
 
 
-def _capture_nonempty_mapping_name(value: object) -> str:
+@beartype(conf=SOLVER_API_CONF)
+def _capture_nonempty_mapping_name(value: str) -> str:
     """Canonicalize one exact nonempty mapping-name key before hashing it."""
     if type(value) is not str or not value:
         raise TypeError("Artifact mapping keys must be nonempty exact strs.")
     return value
 
 
-def _capture_artifact_tree_path(value: object) -> TreePath:
+@beartype(conf=SOLVER_API_CONF)
+def _capture_artifact_tree_path(value: TreePath) -> TreePath:
     """Canonicalize one exact TreePath before hashing it."""
     if type(value) is not tuple:
         raise TypeError("Artifact mapping keys must be exact TreePaths.")
     components = value
     if any(type(component) is not str or not component for component in components):
         raise TypeError("Artifact TreePath components must be nonempty exact strs.")
-    return cast("TreePath", tuple(component for component in components))
+    return tuple(component for component in components)
 
 
-def _capture_category_domain(value: object) -> CategoryDomain:
+@beartype(conf=SOLVER_API_CONF)
+def _capture_category_domain(value: CategoryDomain) -> CategoryDomain:
     """Require one exact categorical-domain value before insertion."""
     if type(value) is not CategoryDomain:
         raise TypeError("Artifact categorical domains must be exact CategoryDomains.")
     return value
 
 
-def _capture_container_runtime_type(value: object) -> type[object]:
+@beartype(conf=SOLVER_API_CONF)
+def _capture_container_runtime_type(
+    value: ArtifactRuntimeType,
+) -> ArtifactRuntimeType:
     """Require one runtime-type declaration before insertion."""
     if not isinstance(value, type):
         raise TypeError("Artifact container runtime declarations must be types.")
     return value
 
 
-def _capture_leaf_authority(value: object) -> LeafAuthority:
+@beartype(conf=SOLVER_API_CONF)
+def _capture_leaf_authority(value: LeafAuthority) -> LeafAuthority:
     """Require one exact leaf authority and validate its path before insertion."""
     if type(value) is not LeafAuthority:
         raise TypeError("Artifact leaves must be exact LeafAuthority objects.")
@@ -61,13 +69,13 @@ def _capture_leaf_authority(value: object) -> LeafAuthority:
     return value
 
 
-def _capture_mapping_item_stream_once(
+def _capture_mapping_item_stream_once[K, V](
     *,
-    mapping: object,
+    mapping: Mapping[K, V],
     label: str,
-    snapshot_key: Callable[[object], object],
-    snapshot_value: Callable[[object], object],
-) -> dict[object, object]:
+    snapshot_key: Callable[[K], K],
+    snapshot_value: Callable[[V], V],
+) -> MappingProxyType[K, V]:
     """Own and canonicalize one mapping through exactly one item iterator."""
     if not isinstance(mapping, Mapping):
         raise TypeError(f"{label} must be a mapping.")
@@ -76,7 +84,7 @@ def _capture_mapping_item_stream_once(
     except Exception as error:
         raise TypeError(f"{label} cannot be traversed as mapping items.") from error
 
-    copied: dict[object, object] = {}
+    copied: dict[K, V] = {}
     while True:
         try:
             item = next(iterator)
@@ -92,7 +100,7 @@ def _capture_mapping_item_stream_once(
         if key in copied:
             raise ValueError(f"{label} keys collide after exact reconstruction.")
         copied[key] = value
-    return copied
+    return MappingProxyType(copied)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -122,7 +130,9 @@ class ArtifactDescriptor:
     """Names of the model states the leading axes index, in order."""
     action_roles: tuple[str, ...] = ()
     """Names of the model actions some axes index, in order."""
-    categorical_domains: _CategoricalDomainsBoundary = field(default_factory=dict)
+    categorical_domains: _CategoricalDomainsBoundary = field(
+        default=MappingProxyType({})
+    )
     """Exact label domain of each categorical state or action role."""
     required_for: frozenset[ReplayRouteIdentity] = frozenset()
     """Replay routes that cannot run without this payload."""
@@ -150,14 +160,11 @@ class ArtifactDescriptor:
         axes = tuple(self.named_axes)
         state_roles = tuple(self.state_roles)
         action_roles = tuple(self.action_roles)
-        categories = cast(
-            "dict[str, CategoryDomain]",
-            _capture_mapping_item_stream_once(
-                mapping=self.categorical_domains,
-                label="ArtifactDescriptor.categorical_domains",
-                snapshot_key=_capture_nonempty_mapping_name,
-                snapshot_value=_capture_category_domain,
-            ),
+        categories = _capture_mapping_item_stream_once(
+            mapping=self.categorical_domains,
+            label="ArtifactDescriptor.categorical_domains",
+            snapshot_key=_capture_nonempty_mapping_name,
+            snapshot_value=_capture_category_domain,
         )
         required_for = frozenset(self.required_for)
         if any(type(leaf) is not LeafDescriptor for leaf in leaves):
@@ -227,7 +234,7 @@ class ArtifactDescriptor:
         object.__setattr__(self, "named_axes", axes)
         object.__setattr__(self, "state_roles", state_roles)
         object.__setattr__(self, "action_roles", action_roles)
-        object.__setattr__(self, "categorical_domains", MappingProxyType(categories))
+        object.__setattr__(self, "categorical_domains", categories)
         object.__setattr__(self, "required_for", required_for)
 
 

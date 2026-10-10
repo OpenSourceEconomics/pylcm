@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from typing import cast
 
 from _lcm.dtypes import CanonicalArrayWriter
+from _lcm.typing import ArtifactPayload
 from lcm._solver_api.authority import _ArrayCopier
+from lcm._solver_api.entries import _LazyEntry
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -22,7 +24,7 @@ class NativeValueMaterializer:
     """Own and admit each detached copy in the cached array's exact layout."""
 
     @staticmethod
-    def require_entry(*, entry: object) -> None:
+    def require_entry(*, entry: _LazyEntry) -> None:
         """Reject unsupported decoders before any archive leaf is read."""
         # Persistence imports result snapshots; resolve its exact type at call time.
         from _lcm.persistence.solution import _LazyHdf5Entry  # noqa: PLC0415
@@ -39,7 +41,7 @@ class NativeValueMaterializer:
                 "are not profiled."
             )
 
-    def __call__(self, *, entry: object) -> object:
+    def __call__(self, *, entry: _LazyEntry) -> ArtifactPayload:
         """Verify/upload one cache bank, then return an admitted detached copy."""
         from _lcm.persistence.solution import _LazyHdf5Entry  # noqa: PLC0415
 

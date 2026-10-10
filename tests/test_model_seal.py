@@ -6,6 +6,9 @@ or simulation refuses to run when one of those bindings has since been rebound
 — the cached identity would otherwise describe code the model no longer runs.
 """
 
+from collections.abc import Iterator
+from typing import Never
+
 import jax.numpy as jnp
 import pytest
 
@@ -65,14 +68,14 @@ _PARAMS = {"discount_factor": 0.95}
 
 
 @pytest.fixture
-def restore_scale() -> object:
+def restore_scale() -> Iterator[None]:
     yield None
     globals()["_UTILITY_SCALE"] = jnp.asarray(1.0)
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_rebinding_a_referenced_global_after_build_is_refused(
-    *, enable_jit: bool, restore_scale: object
+    *, enable_jit: bool, restore_scale: None
 ) -> None:
     del restore_scale
     model = _build_model(enable_jit=enable_jit)
@@ -84,7 +87,7 @@ def test_rebinding_a_referenced_global_after_build_is_refused(
         model.solve(params=_PARAMS, log_level="off")
 
 
-def test_simulate_checks_the_seal_too(restore_scale: object) -> None:
+def test_simulate_checks_the_seal_too(restore_scale: None) -> None:
     del restore_scale
     model = _build_model(enable_jit=False)
     solution = model.solve(params=_PARAMS, log_level="off")
@@ -103,7 +106,7 @@ def test_simulate_checks_the_seal_too(restore_scale: object) -> None:
 
 
 def test_rebinding_back_to_the_captured_object_lifts_the_refusal(
-    restore_scale: object,
+    restore_scale: None,
 ) -> None:
     del restore_scale
     original = _UTILITY_SCALE
@@ -124,7 +127,7 @@ def test_structure_fingerprint_is_fixed_at_build(
 
     model = _build_model(enable_jit=False)
 
-    def _must_not_walk(**_kwargs: object) -> str:
+    def _must_not_walk(**_kwargs: Never) -> Never:
         raise AssertionError("structure fingerprint recomputed after build")
 
     monkeypatch.setattr(model_module, "fingerprint_model_structure", _must_not_walk)

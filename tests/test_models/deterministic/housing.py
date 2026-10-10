@@ -47,6 +47,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 
 
@@ -271,7 +272,7 @@ def get_params(
     income: float = 1.0,
     borrowing_floor: float = 0.01,
     final_age_alive: float = 3.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the housing model (faithful calibration from `housing.py`).
 
     The regime law dies from the age `final_age_alive - 1` on; the default fits

@@ -28,6 +28,7 @@ from lcm.tuning import (
     _count_materialised,
     _paired_timing,
     _relative_repeat_spread,
+    _solve_values,
     classify_reduce_fusions,
     evaluate_execution_settings,
 )
@@ -366,7 +367,10 @@ def _x64_precision() -> str:
     ],
 )
 def test_tuned_settings_key_carries_the_identity_field(
-    *, faster_record: TunedSettings, field: str, expected: Callable[[], object]
+    *,
+    faster_record: TunedSettings,
+    field: str,
+    expected: Callable[[], int | str | tuple[()] | None],
 ) -> None:
     assert getattr(faster_record.key, field) == expected()
 
@@ -400,7 +404,19 @@ def test_tuned_settings_carries_the_baseline_ceilings_on_no_change() -> None:
     assert record.axis_width_ceilings == MappingProxyType({})
 
 
-def _steps(*, start: float, n_steps: int, toward: float, dtype: type) -> np.ndarray:
+def test_solve_values_returns_a_read_only_mapping() -> None:
+    """The values compared across solves cannot be rebound after the solve."""
+    values = _solve_values(
+        model=_unperturbed(_BASELINE),
+        params=get_graph_only_params(n_periods=_N_PERIODS),
+    )
+
+    assert isinstance(values, MappingProxyType)
+
+
+def _steps(
+    *, start: float, n_steps: int, toward: float, dtype: type[np.float32 | np.float64]
+) -> np.ndarray:
     """Walk `n_steps` representable neighbours from `start` with `np.nextafter`."""
     value = dtype(start)
     for _ in range(n_steps):
@@ -419,7 +435,7 @@ def _steps(*, start: float, n_steps: int, toward: float, dtype: type) -> np.ndar
     ],
 )
 def test_array_ulp_gap_counts_representable_neighbours(
-    *, dtype: type, start: float, n_steps: int, toward: float
+    *, dtype: type[np.float32 | np.float64], start: float, n_steps: int, toward: float
 ) -> None:
     got = _array_ulp_gap(
         expected=np.array([start], dtype=dtype),

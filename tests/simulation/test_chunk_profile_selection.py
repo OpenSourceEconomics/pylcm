@@ -2,7 +2,7 @@
 
 import importlib
 from types import MappingProxyType
-from typing import Any
+from typing import Never
 
 import jax
 import jax._src.core
@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.simulation.chunk_planning import SimulationChunkProfile
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.simulate import _lookup_values_from_indices
@@ -20,7 +21,7 @@ class _PlanningAllocatedError(AssertionError):
     """No candidate population may be allocated just to decide whether it fits."""
 
 
-def _forbid_allocation(*_args: object, **_kwargs: object) -> object:
+def _forbid_allocation[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
     raise _PlanningAllocatedError("Chunk selection allocated a population")
 
 
@@ -79,14 +80,16 @@ def test_whole_chunk_selection_uses_real_profiles_and_fresh_retained_storage(
                     memory=profile.memory,
                 ),
             ),
-            fixed_reservation={device: width * originals.dtype.itemsize},
-            output_reservation={device: retained_output_bank},
+            fixed_reservation=MappingProxyType(
+                {device: width * originals.dtype.itemsize}
+            ),
+            output_reservation=MappingProxyType({device: retained_output_bank}),
         )
         for width, profile in compiled.items()
     }
     requested: list[int] = []
 
-    def profile_candidate(*, n_subjects: int) -> Any:
+    def profile_candidate(*, n_subjects: int) -> SimulationChunkProfile:
         requested.append(n_subjects)
         return profiles[n_subjects]
 

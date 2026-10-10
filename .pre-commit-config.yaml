@@ -39,7 +39,7 @@ repos:
       - id: name-tests-test
         args:
           - --pytest-test-first
-        exclude: tests/mock_regime.py|tests/collective_fixtures.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/egm/_|^tests/solution/_|^tests/simulation/_|^tests/simulation/initial_conditions/_|^tests/ci/|^tests/candidate_certificate/|^tests/conformance_solver/
+        exclude: tests/mock_regime.py|tests/collective_fixtures.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/egm/_|^tests/execution/_|^tests/solution/_|^tests/simulation/_|^tests/simulation/initial_conditions/_|^tests/ci/|^tests/candidate_certificate/|^tests/conformance_solver/
       - id: no-commit-to-branch
         args:
           - --branch
@@ -179,6 +179,13 @@ repos:
           - python
           - jupyter
           - markdown
+      # One invocation sees every file, so its closing summary counts the whole run.
+      - id: precise-annotations
+        name: annotations name precise types
+        entry: pixi run -e type-checking python -m tests.ci.precise_annotations
+        language: system
+        files: ^((src|tests|benchmarks)/.*\.py|docs/.*\.ipynb)$
+        require_serial: true
       - id: no-hardcoded-user-paths
         name: no hardcoded user-specific absolute paths
         language: pygrep
@@ -242,9 +249,9 @@ repos:
 ci:
   autoupdate_schedule: monthly
   # pre-commit.ci has no pixi environments and blocks network at hook runtime;
-  # the GitHub Actions run-ty job covers type checking and the keyword-only
-  # convention, while pixi-lock-check needs a pixi binary that pre-commit.ci
-  # does not provide.
+  # the GitHub Actions run-ty job covers type checking and the keyword-only and
+  # precise-annotation conventions, while pixi-lock-check needs a pixi binary
+  # that pre-commit.ci does not provide.
   #
   # The two script hooks live in the `.ai-instructions` submodule, which
   # pre-commit.ci does not check out, so there they fail as a missing
@@ -256,6 +263,7 @@ ci:
     - candidate-certificate-seals
     - candidate-certificate-anchors
     - keyword-only-convention
+    - precise-annotations
     - ty
     - pixi-lock-check
     - pre-push-hooks-installed

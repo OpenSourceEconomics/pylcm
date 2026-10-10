@@ -7,13 +7,13 @@ unpinned, unretained buffer *eligible* for a later release decision; this module
 never releases, donates, or offloads an array.
 """
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Hashable, Iterable, Mapping
 from types import MappingProxyType
 
 from lcm.exceptions import ExecutionPlanningError
 
 
-class PlannedInputLiveness[DispatchKey, ArtifactKey]:
+class PlannedInputLiveness[DispatchKey: Hashable, ArtifactKey: Hashable]:
     """Track the planned consumers, retention and aliases of solve-time artifacts.
 
     ``dispatch_accesses`` maps each immutable dispatch ID to its logical artifact
@@ -304,7 +304,7 @@ class PlannedInputLiveness[DispatchKey, ArtifactKey]:
             raise KeyError(msg)
 
 
-def _snapshot_unique_hashable[Value](
+def _snapshot_unique_hashable[Value: Hashable](
     *,
     values: Iterable[Value],
     label: str,
@@ -322,7 +322,7 @@ def _snapshot_unique_hashable[Value](
     return tuple(snapshot)
 
 
-def _require_hashable(*, value: object, label: str) -> None:
+def _require_hashable(*, value: Hashable, label: str) -> None:
     """Give invalid logical artifact keys a local, actionable error."""
     try:
         hash(value)

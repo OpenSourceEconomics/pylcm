@@ -12,13 +12,13 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from tests.candidate_certificate.generate_sources import (
     INVENTORY_PATH,
     REQUIRED_PROFILES,
+    Inventory,
     build_inventory,
     canonical_json,
     profile_sources,
@@ -34,7 +34,7 @@ _SOURCES = [
 ]
 
 
-def _inventory(**exclusions: list[str]) -> dict[str, Any]:
+def _inventory(**exclusions: list[str]) -> Inventory:
     """Return a current-schema inventory over `_SOURCES` with the given exclusions."""
     return {
         "schema_version": "2",
@@ -51,7 +51,7 @@ def _inventory(**exclusions: list[str]) -> dict[str, Any]:
     }
 
 
-def _schema_one(**listed: list[dict[str, str]]) -> dict[str, Any]:
+def _schema_one(**listed: list[dict[str, str]]) -> Inventory:
     """Return an older-schema inventory whose profiles repeat their source lists."""
     return {
         "schema_version": "1",
@@ -138,7 +138,7 @@ def test_an_excluded_source_is_dropped_from_its_own_profile_only(
     ids=["unknown-path", "duplicate-path", "older-schema"],
 )
 def test_profile_sources_refuses_a_malformed_override(
-    *, inventory: dict[str, Any], message: str
+    *, inventory: Inventory, message: str
 ) -> None:
     """An override naming no inventory source, twice, or under another schema fails."""
     with pytest.raises(ValueError, match=re.escape(message)):

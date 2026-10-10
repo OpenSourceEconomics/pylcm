@@ -24,6 +24,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     feasible,
@@ -155,7 +156,7 @@ def build_params(
     subsidy_low: float = 0.0,
     subsidy_high: float = 2.0,
     cliff_b: float = 14.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the mixed jump-and-kink two-variable budget toy.
 
     The kink maps to the asset preimage `kink_a - base_a[kind]` and the jump to

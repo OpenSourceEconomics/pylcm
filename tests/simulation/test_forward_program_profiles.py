@@ -2,7 +2,7 @@
 
 import importlib
 from types import MappingProxyType
-from typing import Any
+from typing import Unpack
 
 import jax
 import jax._src.core
@@ -12,6 +12,8 @@ import pytest
 from _lcm.params.edges import regime_kernel_params
 from _lcm.simulation.forward_program_profiles import profile_forward_programs
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.typing import PytreeValue, ShapeDtypePytree
+from tests.simulation._callback_types import RuntimeDispatch
 from tests.simulation.test_abstract_simulation_profiles import (
     _ConcreteAllocationError,
     _forbid_allocation,
@@ -22,8 +24,15 @@ from tests.simulation.test_budget_lifecycle import (
 )
 from tests.test_models.taste_shocks_toy import ToyRegimeId, get_model, get_params
 
+type _ArraySchema = (
+    tuple[tuple[int, ...], str]
+    | tuple[_ArraySchema, ...]
+    | list[_ArraySchema]
+    | dict[str, _ArraySchema]
+)
 
-def _schema(tree: object) -> object:
+
+def _schema(tree: PytreeValue | ShapeDtypePytree) -> _ArraySchema:
     return jax.tree.map(lambda leaf: (tuple(leaf.shape), str(leaf.dtype)), tree)
 
 
@@ -53,7 +62,9 @@ def test_all_core_families_profile_actual_output_schemas_without_allocation(
     }
     original = SimulationRuntime.dispatch
 
-    def observe(self: SimulationRuntime, **call: Any) -> object:
+    def observe(
+        self: SimulationRuntime, **call: Unpack[RuntimeDispatch]
+    ) -> PytreeValue:
         result = original(self, **call)
         if not runtimes:
             runtimes.append(self)
@@ -121,10 +132,14 @@ def test_independent_taste_profile_keeps_its_actual_key_dtype_under_rbg(
     captured = []
     original = SimulationRuntime.dispatch
 
-    def observe(self: SimulationRuntime, **call: Any) -> object:
+    def observe(
+        self: SimulationRuntime, **call: Unpack[RuntimeDispatch]
+    ) -> PytreeValue:
         result = original(self, **call)
         if "taste_shock_key" in call["arguments"]:
-            captured.append((self, call["arguments"]["taste_shock_key"].dtype))
+            key = call["arguments"]["taste_shock_key"]
+            assert isinstance(key, jax.Array)
+            captured.append((self, key.dtype))
         return result
 
     with jax.default_prng_impl("rbg"):

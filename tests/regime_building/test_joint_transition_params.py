@@ -1,6 +1,6 @@
 """Parameter ownership for edge-local joint kernels."""
 
-from typing import Any, cast
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 
@@ -31,11 +31,11 @@ def _next_wealth(*, match: dict[str, FloatND], wealth_shift: float) -> FloatND:
     return match["wealth"] + wealth_shift
 
 
-def _kernel(probabilities: object) -> JointTransition:
+def _kernel(probabilities: Callable[..., FloatND]) -> JointTransition:
     return JointTransition(
         support_size=2,
         support=_support,
-        probabilities=probabilities,  # ty: ignore[invalid-argument-type]
+        probabilities=probabilities,
         outputs={"wealth": _next_wealth},
     )
 
@@ -55,11 +55,15 @@ def test_joint_kernel_params_follow_role_and_output_ownership() -> None:
     )
     law = bind_regime_law({"target": StochasticTransition(func=_target_probability)})
 
-    template = cast("Any", create_regime_params_template(user_regime=regime, law=law))
+    template = create_regime_params_template(user_regime=regime, law=law)
 
-    assert template["target"]["match"]["support"] == {"match_location": "float"}
-    assert template["target"]["match"]["probabilities"] == {
+    target = template["target"]
+    assert isinstance(target, Mapping)
+    match = target["match"]
+    assert isinstance(match, Mapping)
+    assert match["support"] == {"match_location": "float"}
+    assert match["probabilities"] == {
         "match_probability": "float",
         "realized_match_probability": "float",
     }
-    assert template["target"]["next_wealth"] == {"wealth_shift": "float"}
+    assert target["next_wealth"] == {"wealth_shift": "float"}

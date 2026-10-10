@@ -1,7 +1,7 @@
 """Independent mask counts and diagnostic ordering in actual finite dispatch."""
 
 from functools import partial
-from typing import Any, cast
+from typing import Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -11,8 +11,10 @@ import pytest
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.typing import PytreeValue
 from _lcm.utils.logging import LogLevel
 from lcm.exceptions import UnrepresentableOuterCandidateError
+from tests.simulation._callback_types import MemoryRun, RuntimeDispatch
 from tests.simulation.test_finite_policy_budget import _inputs
 
 
@@ -31,9 +33,9 @@ from tests.simulation.test_finite_policy_budget import _inputs
 )
 def test_candidate_count_uses_only_live_unrepresented_cells(
     *,
-    live: list,
-    represented: list,
-    expected: list,
+    live: list[list[bool]],
+    represented: list[list[bool]],
+    expected: list[int],
 ) -> None:
     """Dead slots never enter either count, even with arbitrary represented flags."""
     actual = jax.jit(dropped_candidate_counts)(
@@ -58,7 +60,9 @@ def test_real_finite_diagnostic_preserves_log_gate_and_precedes_ranking(
     events: list[str] = []
     expected_live: list[int] = []
 
-    def seed_bank(self: SimulationRuntime, **call: Any) -> object:
+    def seed_bank(
+        self: SimulationRuntime, **call: Unpack[RuntimeDispatch]
+    ) -> PytreeValue:
         name = call["program"].name
         if name == "simulate_policy_rank":
             events.append("rank")
@@ -71,7 +75,9 @@ def test_real_finite_diagnostic_preserves_log_gate_and_precedes_ranking(
         events.append("prepare")
         return inner, outer, live, jnp.zeros_like(represented)
 
-    def observe_count(self: SimulationMemory, **call: Any) -> object:
+    def observe_count[T: PytreeValue](
+        self: SimulationMemory, **call: Unpack[MemoryRun[T]]
+    ) -> T:
         result = run(self, **call)
         if call["function"] is dropped_candidate_counts:
             events.append("count")

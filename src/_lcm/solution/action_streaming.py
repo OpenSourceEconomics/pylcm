@@ -15,7 +15,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Literal, NamedTuple
+from typing import Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -36,16 +36,18 @@ from _lcm.solution.action_reduction import (
 from _lcm.solution.logsumexp_action_reduction import (
     BoundLogSumExpReduction,
 )
+from _lcm.typing import QAndFArg
+from lcm.typing import ActionName, BoolND, FloatND, ReferenceName
 
 _INT32_MAX = 2_147_483_647
 _COLLECTIVE_BLOCK_NDIM = 2
-_Block = tuple[jax.Array, jax.Array, jax.Array]
-_ScanCarry = tuple[HardMaxAccumulator, jax.Array]
-_CollectiveBlock = tuple[jax.Array, jax.Array, jax.Array, jax.Array]
-_CollectiveScanCarry = tuple[CollectiveHardMaxAccumulator, jax.Array]
+type _Block = tuple[jax.Array, jax.Array, jax.Array]
+type _ScanCarry = tuple[HardMaxAccumulator, jax.Array]
+type _CollectiveBlock = tuple[jax.Array, jax.Array, jax.Array, jax.Array]
+type _CollectiveScanCarry = tuple[CollectiveHardMaxAccumulator, jax.Array]
 
 
-_EV1ScanCarry = tuple["_EV1ActionAccumulator", jax.Array]
+type _EV1ScanCarry = tuple["_EV1ActionAccumulator", jax.Array]
 
 
 class _EV1ActionAccumulator(NamedTuple):
@@ -63,7 +65,7 @@ class GridSearchEV1ActionReduction:
     n_discrete_action_axes: int
 
     @property
-    def semantic_key(self) -> tuple[object, ...]:
+    def semantic_key(self) -> tuple[str, int, int, tuple[str, int], tuple[str, int]]:
         """Identify the ordered branch-hard-max then log-sum-exp contract."""
         return (
             "grid-search-ev1-action-reduction",
@@ -81,8 +83,8 @@ class GridSearchEV1ActionReduction:
 
 def build_streaming_max_Q_over_a(
     *,
-    Q_and_F: Callable[..., tuple[Any, Any]],
-    action_names: tuple[str, ...],
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
     block_width: int,
 ) -> Callable[..., HardMaxResult]:
     """Build the fixed-state blockwise hard-max callable.
@@ -182,8 +184,8 @@ class ActionPartitionLayout:
 
 def build_partitioned_streaming_max_Q_over_a(
     *,
-    Q_and_F: Callable[..., tuple[Any, Any]],
-    action_names: tuple[str, ...],
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
     block_width: int,
     n_partitions: int,
     axis_name: str,
@@ -246,7 +248,7 @@ def merge_partition_accumulators(
     return HARD_MAX_REDUCTION.finalize(accumulator=merged)
 
 
-def _fail_if_not_positive_int(*, label: str, value: object) -> None:
+def _fail_if_not_positive_int(*, label: str, value: int) -> None:
     """Require a positive exact integer, refusing bools and floats."""
     if type(value) is not int:
         raise TypeError(f"{label} must be an exact int; got {value!r}")
@@ -256,11 +258,11 @@ def _fail_if_not_positive_int(*, label: str, value: object) -> None:
 
 def build_streaming_ev1_max_Q_over_a(
     *,
-    Q_and_F: Callable[..., tuple[Any, Any]],
-    action_names: tuple[str, ...],
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
     n_discrete_action_axes: int,
     block_width: int,
-    scale: Any,  # noqa: ANN401
+    scale: FloatND | float,
 ) -> Callable[..., LogSumExpResult]:
     """Build the fixed-state EV1 expected-maximum callable.
 
@@ -293,11 +295,11 @@ def build_streaming_ev1_max_Q_over_a(
 
 def build_streaming_collective_max_Q_over_a(
     *,
-    Q_and_F: Callable[..., tuple[Any, Any]],
-    action_names: tuple[str, ...],
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
     block_width: int,
     stakeholders: tuple[str, ...],
-    weights: Mapping[str, Any],
+    weights: Mapping[str, FloatND | float],
 ) -> Callable[..., CollectiveHardMaxResult]:
     """Build the fixed-state collective hard-max callable.
 
@@ -325,7 +327,7 @@ def build_streaming_collective_max_Q_over_a(
 
 
 def _validate_streaming_configuration(
-    *, action_names: tuple[str, ...], block_width: int
+    *, action_names: tuple[ActionName, ...], block_width: int
 ) -> None:
     """Validate the common fixed-width action-product declaration."""
     if (
@@ -344,11 +346,11 @@ def _validate_streaming_configuration(
 class _StreamingHardMax:
     """Configured action-streaming callable."""
 
-    Q_and_F: Callable[..., tuple[Any, Any]]
-    action_names: tuple[str, ...]
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    action_names: tuple[ActionName, ...]
     block_width: int
 
-    def __call__(self, **kwargs: Any) -> HardMaxResult:  # noqa: ANN401
+    def __call__(self, **kwargs: QAndFArg) -> HardMaxResult:
         if not self.action_names:
             return _reduce_no_action(Q_and_F=self.Q_and_F, kwargs=kwargs)
 
@@ -380,13 +382,13 @@ class _StreamingHardMax:
 class _PartitionedStreamingHardMax:
     """Configured action-partitioned hard-max callable."""
 
-    Q_and_F: Callable[..., tuple[Any, Any]]
-    action_names: tuple[str, ...]
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    action_names: tuple[ActionName, ...]
     block_width: int
     n_partitions: int
     axis_name: str
 
-    def __call__(self, **kwargs: Any) -> HardMaxResult:  # noqa: ANN401
+    def __call__(self, **kwargs: QAndFArg) -> HardMaxResult:
         """Reduce this member's partition, exchange accumulators and merge them."""
         partition = jax.lax.axis_index(self.axis_name).astype(jnp.int32)
         local = self.local(partition=partition, **kwargs)
@@ -395,7 +397,7 @@ class _PartitionedStreamingHardMax:
             accumulators=gathered, order=tuple(range(self.n_partitions))
         )
 
-    def local(self, *, partition: jax.Array, **kwargs: Any) -> HardMaxAccumulator:  # noqa: ANN401
+    def local(self, *, partition: jax.Array, **kwargs: QAndFArg) -> HardMaxAccumulator:
         """Reduce the blocks one partition owns into an unfinalized accumulator."""
         action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
             action_names=self.action_names,
@@ -448,13 +450,13 @@ class _PartitionedStreamingHardMax:
 class _StreamingEV1ExpectedMax:
     """Configured discrete-branch hard-max followed by EV1 log-sum-exp."""
 
-    Q_and_F: Callable[..., tuple[Any, Any]]
-    action_names: tuple[str, ...]
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    action_names: tuple[ActionName, ...]
     n_discrete_action_axes: int
     block_width: int
-    scale: Any
+    scale: FloatND | float
 
-    def __call__(self, **kwargs: Any) -> LogSumExpResult:  # noqa: ANN401
+    def __call__(self, **kwargs: QAndFArg) -> LogSumExpResult:
         action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
             action_names=self.action_names,
             kwargs=kwargs,
@@ -522,13 +524,13 @@ class _StreamingEV1ExpectedMax:
 class _StreamingCollectiveHardMax:
     """Configured collective action-streaming callable."""
 
-    Q_and_F: Callable[..., tuple[Any, Any]]
-    action_names: tuple[str, ...]
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    action_names: tuple[ActionName, ...]
     block_width: int
     stakeholders: tuple[str, ...]
-    weights: Mapping[str, Any]
+    weights: Mapping[str, FloatND | float]
 
-    def __call__(self, **kwargs: Any) -> CollectiveHardMaxResult:  # noqa: ANN401
+    def __call__(self, **kwargs: QAndFArg) -> CollectiveHardMaxResult:
         if not self.action_names:
             return _reduce_collective_no_action(
                 Q_and_F=self.Q_and_F,
@@ -573,8 +575,10 @@ class _StreamingCollectiveHardMax:
 
 
 def _prepare_action_call(
-    *, action_names: tuple[str, ...], kwargs: dict[str, Any]
-) -> tuple[tuple[jax.Array, ...], dict[str, Any], tuple[int, ...], int]:
+    *,
+    action_names: tuple[ActionName, ...],
+    kwargs: dict[ReferenceName, QAndFArg],
+) -> tuple[tuple[jax.Array, ...], dict[ReferenceName, QAndFArg], tuple[int, ...], int]:
     """Validate grids and split them from scalar Q arguments."""
     missing = tuple(name for name in action_names if name not in kwargs)
     if missing:
@@ -602,11 +606,11 @@ def _prepare_action_call(
 def _evaluate_block(
     *,
     block_index: jax.Array,
-    Q_and_F: Callable[..., tuple[Any, Any]],
-    action_names: tuple[str, ...],
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
     action_grids: tuple[jax.Array, ...],
     action_sizes: tuple[int, ...],
-    fixed_kwargs: dict[str, Any],
+    fixed_kwargs: dict[ReferenceName, QAndFArg],
     n_actions: int,
     block_width: int,
     block_offsets: jax.Array,
@@ -649,11 +653,11 @@ def _evaluate_owned_block(
 def _evaluate_ev1_branch_block(
     *,
     block_index: jax.Array,
-    Q_and_F: Callable[..., tuple[Any, Any]],
-    action_names: tuple[str, ...],
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
     action_grids: tuple[jax.Array, ...],
     action_sizes: tuple[int, ...],
-    fixed_kwargs: dict[str, Any],
+    fixed_kwargs: dict[ReferenceName, QAndFArg],
     n_discrete_branches: int,
     continuous_extent: int,
     branches_per_block: int,
@@ -705,16 +709,16 @@ def _evaluate_ev1_branch_block(
 def _evaluate_collective_block(
     *,
     block_index: jax.Array,
-    Q_and_F: Callable[..., tuple[Any, Any]],
-    action_names: tuple[str, ...],
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
     action_grids: tuple[jax.Array, ...],
     action_sizes: tuple[int, ...],
-    fixed_kwargs: dict[str, Any],
+    fixed_kwargs: dict[ReferenceName, QAndFArg],
     n_actions: int,
     block_width: int,
     block_offsets: jax.Array,
     stakeholders: tuple[str, ...],
-    weights: Mapping[str, Any],
+    weights: Mapping[str, FloatND | float],
 ) -> _CollectiveBlock:
     """Evaluate and scalarize one padded collective action block."""
     block_start = block_index * block_width
@@ -753,12 +757,12 @@ def _evaluate_collective_block(
 def _evaluate_one_action(
     global_id: jax.Array,
     *,
-    Q_and_F: Callable[..., tuple[Any, Any]],
-    action_names: tuple[str, ...],
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
     action_grids: tuple[jax.Array, ...],
     action_sizes: tuple[int, ...],
-    fixed_kwargs: dict[str, Any],
-) -> tuple[Any, Any]:
+    fixed_kwargs: dict[ReferenceName, QAndFArg],
+) -> tuple[FloatND, BoolND]:
     """Evaluate ``Q_and_F`` at one global C-order action identity."""
     action_kwargs = _decode_action(
         global_id=global_id,
@@ -1064,7 +1068,9 @@ def _flush_ev1_branch_group(
 
 
 def _reduce_no_action(
-    *, Q_and_F: Callable[..., tuple[Any, Any]], kwargs: dict[str, Any]
+    *,
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    kwargs: dict[ReferenceName, QAndFArg],
 ) -> HardMaxResult:
     """Treat an empty action product as the one-cell identity product."""
     value, feasible = Q_and_F(**kwargs)
@@ -1148,10 +1154,10 @@ def _add_collective_block(
 
 def _reduce_collective_no_action(
     *,
-    Q_and_F: Callable[..., tuple[Any, Any]],
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     stakeholders: tuple[str, ...],
-    weights: Mapping[str, Any],
-    kwargs: dict[str, Any],
+    weights: Mapping[str, FloatND | float],
+    kwargs: dict[ReferenceName, QAndFArg],
 ) -> CollectiveHardMaxResult:
     """Treat a collective empty action product as one shared identity cell."""
     stakeholder_values, feasible = Q_and_F(**kwargs)
@@ -1181,7 +1187,7 @@ def _reduce_collective_no_action(
 def _decode_action(
     *,
     global_id: jax.Array,
-    action_names: tuple[str, ...],
+    action_names: tuple[ActionName, ...],
     action_grids: tuple[jax.Array, ...],
     action_sizes: tuple[int, ...],
 ) -> dict[str, jax.Array]:

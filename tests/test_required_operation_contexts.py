@@ -10,7 +10,6 @@
 """
 
 from collections.abc import Callable, Mapping
-from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -35,6 +34,8 @@ from lcm import (
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.phased import Phased
+from lcm.regime import FunctionEntry
+from lcm.transition import AgeSelector
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -66,7 +67,9 @@ def _realized_choice(*, realized_rate: float) -> IntND:
     return jnp.where(realized_rate >= 0.5, _DemandId.end, _DemandId.other_end)
 
 
-def _wealth_regime(*, terminal: bool = False, utility: Any = _wealth_utility) -> Regime:
+def _wealth_regime(
+    *, terminal: bool = False, utility: FunctionEntry = _wealth_utility
+) -> Regime:
     return Regime(
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
@@ -74,7 +77,7 @@ def _wealth_regime(*, terminal: bool = False, utility: Any = _wealth_utility) ->
     )
 
 
-def _demand_edges(*, choice: Any = _realized_choice) -> Phased:
+def _demand_edges(*, choice: UserFunction = _realized_choice) -> Phased:
     """`perceived` solves into `end` and simulates by `choice` into either end."""
     return Phased(
         solve={
@@ -99,7 +102,7 @@ def _demand_model(
     redundant_root: bool = False,
     enable_jit: bool = True,
     perceived: Regime | None = None,
-    choice: Any = _realized_choice,
+    choice: UserFunction = _realized_choice,
 ) -> Model:
     """Source perceives `perceived` at age 1 but physically enters `realized`.
 
@@ -108,7 +111,7 @@ def _demand_model(
     """
     if perceived is None:
         perceived = _wealth_regime(utility=_backward_utility)
-    roots: dict[object, str] = {0: "source"}
+    roots: dict[AgeSelector, str] = {0: "source"}
     if promote:
         roots[1] = "perceived"
     if redundant_root:
@@ -130,7 +133,7 @@ def _demand_model(
     )
 
 
-def _leaf_names(*, tree: Any) -> set[str]:
+def _leaf_names(*, tree: _TemplateNode) -> set[str]:
     if not isinstance(tree, Mapping):
         return set()
     return {
@@ -263,7 +266,7 @@ def _perceived_with_simulate_slot(*, slot: str, calls: list[float]) -> Regime:
     - `"carried"`: a carried state `share` whose law of motion reads `drift`.
     """
     wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
-    simulate_utility: Any = {
+    simulate_utility: FunctionEntry = {
         "function": _simulate_utility,
         "factory": AgeSpecializedFunction(
             build=_counting_factory(calls=calls), signature=_zero_signature
@@ -282,7 +285,7 @@ def _perceived_with_simulate_slot(*, slot: str, calls: list[float]) -> Regime:
     )
 
 
-def _slot_choice(slot: str) -> Any:
+def _slot_choice(slot: str) -> UserFunction:
     """The realized route of `_perceived_with_simulate_slot(slot=slot, ...)`."""
     return _shared_choice if slot == "carried" else _realized_choice
 
@@ -425,7 +428,9 @@ def test_mixed_age_simulate_factory_runs_at_the_visited_age_only() -> None:
     assert set(calls) == {2.0}
 
 
-def _collective_regime(*, utility: Any, terminal: bool = False) -> Regime:
+def _collective_regime(
+    *, utility: UserFunction | Phased, terminal: bool = False
+) -> Regime:
     return Regime(
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
@@ -441,7 +446,7 @@ def _collective_demand_model(*, promote: bool) -> Model:
     Each stakeholder of `perceived` has a phased utility whose simulate variant
     reads `simulate_bonus`.
     """
-    roots: dict[object, str] = {0: "source"}
+    roots: dict[AgeSelector, str] = {0: "source"}
     if promote:
         roots[1] = "perceived"
     return Model(
@@ -545,7 +550,9 @@ def _age_grid_model(
         if valid_late_law
         else (_left_from_wealth, _right_from_wealth)
     )
-    roots: dict[object, str] = {(0, 1): "working"} if earlier_root else {1: "working"}
+    roots: dict[AgeSelector, str] = (
+        {(0, 1): "working"} if earlier_root else {1: "working"}
+    )
     return Model(
         edges={
             "working": Transition(
@@ -888,3 +895,6 @@ def test_mixed_age_regime_simulates_its_visited_age() -> None:
         "end",
         "end",
     ]
+
+
+type _TemplateNode = str | Mapping[str, _TemplateNode]

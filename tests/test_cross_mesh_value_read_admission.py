@@ -35,15 +35,23 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType
+from typing import Literal, Unpack, overload
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from typing_extensions import TypedDict
 
 import tests.conftest
+from _lcm.execution.footprint import ResidentInventory
+from _lcm.execution.output_layout import PlannedCore
+from _lcm.execution.value_transfer import ResolvedValueTransfer
+from _lcm.solution.backward_induction import _CoreTriple, _ProgramExecutionMetadata
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -55,7 +63,107 @@ from lcm import (
     fixed_transition,
 )
 from lcm.execution import ExecutionConfig
-from lcm.typing import FloatND, ScalarInt
+from lcm.solver_api import SolutionResult
+from lcm.typing import FloatND, RegimeName, ScalarInt, StateName
+from tests.conftest import AttachResolvedOutputLayoutKwargs, ResidentInventoryKwargs
+
+
+class _ExecutionArguments(TypedDict, closed=True, total=False):
+    simulation_sharding: Literal["legacy", "subjects"]
+    axis_widths: Mapping[str, int]
+    device_memory_bytes: int
+
+
+class _ReferenceVariant(TypedDict, total=False):
+    working_reads: tuple[StateName, ...]
+    retired_reads: tuple[StateName, ...]
+    states_lead_with_b: bool
+    retired_declared_first: bool
+
+
+class _Variant(_ReferenceVariant, closed=True, total=False):
+    sharded: tuple[StateName, ...]
+
+
+class _TransferReport(TypedDict):
+    target_regime: RegimeName
+    source_regime: RegimeName
+    kind: str
+    per_device_bytes: int
+    logical_bytes: int
+    temporary_bytes: int
+    devices: list[int]
+    stored_devices: list[int]
+    required_devices: list[int]
+    required_spec: str
+    stored_spec: str
+    expected_shape: list[int]
+
+
+class _PlacementReport(TypedDict, total=False):
+    pruned_variables: dict[RegimeName, list[StateName]]
+    devices: dict[RegimeName, list[int]]
+    value_shapes: dict[RegimeName, list[int]]
+    solution_matches_reference: bool
+    solution_mismatches: list[str]
+    transfer_kinds: list[str]
+    transfers: list[_TransferReport]
+    _solution: SolutionResult
+    _reference_solution: SolutionResult
+    simulation_mismatch: str
+    simulation_matches_reference: bool
+
+
+class _SimulationReport(TypedDict):
+    simulation_mismatch: str
+    simulation_matches_reference: bool
+
+
+class _IndivisibleReport(TypedDict, total=False):
+    product_refused: bool
+    product_message: str
+    smaller_mesh_devices: dict[RegimeName, list[int]]
+
+
+class _AdmissionReport(TypedDict):
+    kind: str
+    reading_regime: RegimeName
+    expected_shape: list[int]
+    logical_bytes: int
+    per_device_bytes: int
+    temporary_bytes: int
+    operation_class: str
+    operator_devices: list[int]
+    stored_devices: list[int]
+    destination_devices: list[int]
+    required_spec: str
+    workspace_devices: list[int]
+    admission_devices: list[int]
+    transfer_scratch_bytes: dict[str, int]
+    endpoint_bytes: dict[str, int]
+    endpoint_bytes_without_scratch: dict[str, int]
+    boundary_bytes: int
+    admitted_below: bool
+    admitted_at: bool
+    admitted_above: bool
+    refusal_at_boundary: str
+    mutant_admitted_at_boundary: bool
+    mutant_resident_bytes: int
+    budgeted_refusal: str
+    budgeted_resident_bytes: int
+    ample_budget_matches_reference: bool
+    ample_budget_mismatches: list[str]
+
+
+type _MatrixReport = dict[str, _PlacementReport]
+type _Report = (
+    _PlacementReport
+    | _MatrixReport
+    | _SimulationReport
+    | _IndivisibleReport
+    | _AdmissionReport
+)
+
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -171,12 +279,12 @@ def _enter_b(*, wealth: FloatND) -> FloatND:
 def build_model(
     *,
     devices: tuple[int, ...],
-    sharded: tuple[str, ...],
-    working_reads: tuple[str, ...] = ("a",),
-    retired_reads: tuple[str, ...] = ("b",),
+    sharded: tuple[StateName, ...],
+    working_reads: tuple[StateName, ...] = ("a",),
+    retired_reads: tuple[StateName, ...] = ("b",),
     states_lead_with_b: bool = False,
     retired_declared_first: bool = False,
-    **config: Any,
+    **config: Unpack[_ExecutionArguments],
 ) -> Model:
     """Build the working/retired pair whose solve reads across regime meshes.
 
@@ -239,14 +347,16 @@ def build_model(
     )
 
 
-def _solve_capturing_transfers(*, model: Model) -> tuple[Any, list[Any]]:
+def _solve_capturing_transfers(
+    *, model: Model
+) -> tuple[SolutionResult, list[PlannedCore]]:
     """Solve one model and return its solution with every planned core."""
     from _lcm.solution import backward_induction  # noqa: PLC0415
 
-    captured: list[Any] = []
+    captured: list[PlannedCore] = []
     original = backward_induction._attach_resolved_output_layout
 
-    def capture(**kwargs: Any) -> Any:
+    def capture(**kwargs: Unpack[AttachResolvedOutputLayoutKwargs]) -> PlannedCore:
         core = original(**kwargs)
         captured.append(core)
         return core
@@ -259,15 +369,21 @@ def _solve_capturing_transfers(*, model: Model) -> tuple[Any, list[Any]]:
     return solution, captured
 
 
+def _partition_spec(*, sharding: jax.sharding.Sharding) -> str:
+    """Read the named-axis partition of one fixture transfer endpoint."""
+    assert isinstance(sharding, jax.sharding.NamedSharding)
+    return str(sharding.spec)
+
+
 def _placement_report(
     *, model: Model, reference: Model, decimal: int
-) -> dict[str, Any]:
+) -> _PlacementReport:
     """Report placement, shapes, transfer kinds and agreement with the reference."""
     solution, captured = _solve_capturing_transfers(model=model)
     reference_solution = reference.solve(params=_PARAMS, log_level="off")
 
-    devices: dict[str, list[int]] = {}
-    value_shapes: dict[str, list[int]] = {}
+    devices: dict[RegimeName, list[int]] = {}
+    value_shapes: dict[RegimeName, list[int]] = {}
     mismatches: list[str] = []
     for period, values in solution.values.items():
         for regime_name, value in values.items():
@@ -283,7 +399,7 @@ def _placement_report(
             except AssertionError as mismatch:
                 mismatches.append(f"period {period}, {regime_name}: {mismatch}")
 
-    transfers = [
+    transfers: list[_TransferReport] = [
         {
             "target_regime": transfer.target.regime,
             "source_regime": transfer.source.source_regime,
@@ -298,8 +414,8 @@ def _placement_report(
             "required_devices": sorted(
                 device.id for device in transfer.source_sharding.device_set
             ),
-            "required_spec": str(transfer.source_sharding.spec),
-            "stored_spec": str(transfer.stored_sharding.spec),
+            "required_spec": _partition_spec(sharding=transfer.source_sharding),
+            "stored_spec": _partition_spec(sharding=transfer.stored_sharding),
             "expected_shape": list(transfer.expected_shape),
         }
         for core in captured
@@ -323,9 +439,9 @@ def _placement_report(
 def _simulation_mismatch(
     *,
     model: Model,
-    solution: Any,
+    solution: SolutionResult,
     reference: Model,
-    reference_solution: Any,
+    reference_solution: SolutionResult,
     decimal: int,
 ) -> str:
     """Return the frame mismatch between a model and its reference, empty if none."""
@@ -356,12 +472,12 @@ def _simulation_mismatch(
     return ""
 
 
-def _reference_model(**variant: Any) -> Model:
+def _reference_model(**variant: Unpack[_ReferenceVariant]) -> Model:
     """Return the single-device, unsharded model the placements are checked against."""
     return build_model(devices=(0,), sharded=(), **variant)
 
 
-def report_two_axis(*, decimal: int) -> dict[str, Any]:
+def report_two_axis(*, decimal: int) -> _PlacementReport:
     """Report the two-axis placement: `working` holds `a`, `retired` holds `b`."""
     model = build_model(devices=tuple(range(_N_DEVICES)), sharded=("a", "b"))
     reference = _reference_model()
@@ -379,9 +495,9 @@ def report_two_axis(*, decimal: int) -> dict[str, Any]:
     return report
 
 
-def report_matrix(*, decimal: int) -> dict[str, Any]:
+def report_matrix(*, decimal: int) -> _MatrixReport:
     """Report every placement variant of the same topology against its reference."""
-    variants: dict[str, dict[str, Any]] = {
+    variants: dict[str, _Variant] = {
         "source_a_target_b": {},
         "both_read_b": {
             "working_reads": ("b",),
@@ -393,12 +509,20 @@ def report_matrix(*, decimal: int) -> dict[str, Any]:
         "b_declared_first": {"states_lead_with_b": True},
         "retired_declared_first": {"retired_declared_first": True},
     }
-    reports: dict[str, Any] = {}
+    reports: _MatrixReport = {}
     for name, variant in variants.items():
-        variant: dict[str, Any] = {"sharded": ("a", "b"), **variant}  # noqa: PLW2901
-        reference_variant = {
-            key: value for key, value in variant.items() if key != "sharded"
-        }
+        variant: _Variant = {"sharded": ("a", "b"), **variant}  # noqa: PLW2901
+        reference_variant: _ReferenceVariant = {}
+        if "working_reads" in variant:
+            reference_variant["working_reads"] = variant["working_reads"]
+        if "retired_reads" in variant:
+            reference_variant["retired_reads"] = variant["retired_reads"]
+        if "states_lead_with_b" in variant:
+            reference_variant["states_lead_with_b"] = variant["states_lead_with_b"]
+        if "retired_declared_first" in variant:
+            reference_variant["retired_declared_first"] = variant[
+                "retired_declared_first"
+            ]
         model = build_model(devices=tuple(range(_N_DEVICES)), **variant)
         reference = _reference_model(**reference_variant)
         report = _placement_report(model=model, reference=reference, decimal=decimal)
@@ -416,11 +540,11 @@ def report_matrix(*, decimal: int) -> dict[str, Any]:
     return reports
 
 
-def report_indivisible_extents() -> dict[str, Any]:
+def report_indivisible_extents() -> _IndivisibleReport:
     """Report how placement answers extents the visible device count cannot host."""
     from lcm.exceptions import ExecutionPlanningError  # noqa: PLC0415
 
-    report: dict[str, Any] = {}
+    report: _IndivisibleReport = {}
     try:
         model = build_model(
             devices=(0, 1, 2, 3),
@@ -446,7 +570,7 @@ def report_indivisible_extents() -> dict[str, Any]:
     return report
 
 
-def report_subject_sharded_simulation(*, decimal: int) -> dict[str, Any]:
+def report_subject_sharded_simulation(*, decimal: int) -> _SimulationReport:
     """Report the two-axis model simulated with subjects spread over the devices."""
     model = build_model(
         devices=tuple(range(_N_DEVICES)),
@@ -468,7 +592,7 @@ def report_subject_sharded_simulation(*, decimal: int) -> dict[str, Any]:
     }
 
 
-def report_solution_round_trip(*, decimal: int) -> dict[str, Any]:
+def report_solution_round_trip(*, decimal: int) -> _SimulationReport:
     """Report simulating the two-axis model from its persisted, reloaded solution."""
     import tempfile  # noqa: PLC0415
 
@@ -495,7 +619,9 @@ def report_solution_round_trip(*, decimal: int) -> dict[str, Any]:
     }
 
 
-def _capture_reading_inventory(*, model: Model) -> tuple[Any, Any, Any]:
+def _capture_reading_inventory(
+    *, model: Model
+) -> tuple[_CoreTriple, ResolvedValueTransfer, ResidentInventory]:
     """Solve one model and return the admission inventory of its cross-mesh read.
 
     The residency builder is observed, never replaced: the solve that produces
@@ -512,10 +638,17 @@ def _capture_reading_inventory(*, model: Model) -> tuple[Any, Any, Any]:
     """
     from _lcm.solution import backward_induction  # noqa: PLC0415
 
-    captured: list[tuple[Any, Any]] = []
+    captured: list[
+        tuple[
+            Mapping[_CoreTriple, _ProgramExecutionMetadata],
+            MappingProxyType[_CoreTriple, ResidentInventory],
+        ]
+    ] = []
     original = backward_induction._resident_inventory_by_triple
 
-    def observe(**kwargs: Any) -> Any:
+    def observe(
+        **kwargs: Unpack[ResidentInventoryKwargs],
+    ) -> MappingProxyType[_CoreTriple, ResidentInventory]:
         inventories = original(**kwargs)
         captured.append((kwargs["program_metadata"], inventories))
         return inventories
@@ -534,7 +667,9 @@ def _capture_reading_inventory(*, model: Model) -> tuple[Any, Any, Any]:
     raise AssertionError("No planned core reads across the two regime meshes.")
 
 
-def _endpoint_bytes(*, inventory: Any, device: int, scratch_bytes: int) -> int:
+def _endpoint_bytes(
+    *, inventory: ResidentInventory, device: int, scratch_bytes: int
+) -> int:
     """Charge one endpoint device, with the transfer scratch set to a given size.
 
     Nothing is excluded: no compiler pruning, no consumed destination copy. The
@@ -545,8 +680,8 @@ def _endpoint_bytes(*, inventory: Any, device: int, scratch_bytes: int) -> int:
     restricted = dataclasses.replace(
         inventory,
         device_ids=(device,) if device in inventory.device_ids else (),
-        fixed_bytes={device: inventory.fixed_bytes.get(device, 0)},
-        transfer_scratch_bytes={device: scratch_bytes},
+        fixed_bytes=MappingProxyType({device: inventory.fixed_bytes.get(device, 0)}),
+        transfer_scratch_bytes=MappingProxyType({device: scratch_bytes}),
     )
     return restricted.resident_bytes(consumes=(), consumed_copies=frozenset())
 
@@ -577,9 +712,13 @@ def _refusal_without_transfer_scratch(*, budget_bytes: int) -> str:
 
     original = backward_induction._resident_inventory_by_triple
 
-    def without_scratch(**kwargs: Any) -> Any:
+    def without_scratch(
+        **kwargs: Unpack[ResidentInventoryKwargs],
+    ) -> dict[_CoreTriple, ResidentInventory]:
         return {
-            triple: dataclasses.replace(inventory, transfer_scratch_bytes={})
+            triple: dataclasses.replace(
+                inventory, transfer_scratch_bytes=MappingProxyType({})
+            )
             for triple, inventory in original(**kwargs).items()
         }
 
@@ -603,7 +742,7 @@ def _refused_before_compiling(*, message: str) -> bool:
     return "resident at the node's position" in message
 
 
-def report_admission() -> dict[str, Any]:
+def report_admission() -> _AdmissionReport:
     """Report what the cross-mesh read reserves and the budget that refuses it."""
     model = build_model(
         devices=tuple(range(_N_DEVICES)),
@@ -658,7 +797,7 @@ def report_admission() -> dict[str, Any]:
             device.id for device in transfer.stored_sharding.device_set
         ),
         "destination_devices": list(destination_devices),
-        "required_spec": str(transfer.source_sharding.spec),
+        "required_spec": _partition_spec(sharding=transfer.source_sharding),
         "workspace_devices": list(inventory.device_ids),
         "admission_devices": list(endpoints),
         "transfer_scratch_bytes": {
@@ -694,9 +833,47 @@ def report_admission() -> dict[str, Any]:
     }
 
 
+@overload
+def _run_in_child_process(
+    *, entry_point: Literal["report_two_axis"], n_devices: int, arguments: str = ""
+) -> _PlacementReport: ...
+
+
+@overload
+def _run_in_child_process(
+    *, entry_point: Literal["report_matrix"], n_devices: int, arguments: str = ""
+) -> _MatrixReport: ...
+
+
+@overload
+def _run_in_child_process(
+    *,
+    entry_point: Literal["report_indivisible_extents"],
+    n_devices: int,
+    arguments: str = "",
+) -> _IndivisibleReport: ...
+
+
+@overload
+def _run_in_child_process(
+    *,
+    entry_point: Literal[
+        "report_subject_sharded_simulation", "report_solution_round_trip"
+    ],
+    n_devices: int,
+    arguments: str = "",
+) -> _SimulationReport: ...
+
+
+@overload
+def _run_in_child_process(
+    *, entry_point: Literal["report_admission"], n_devices: int, arguments: str = ""
+) -> _AdmissionReport: ...
+
+
 def _run_in_child_process(
     *, entry_point: str, n_devices: int, arguments: str = ""
-) -> dict[str, Any]:
+) -> _Report:
     """Run one module-level report function on `n_devices` and return its report.
 
     The child carries this run's float policy — `jax_enable_x64`, the matmul
@@ -743,7 +920,7 @@ def _tolerance_argument() -> str:
 
 
 @pytest.fixture(scope="module")
-def two_axis() -> dict[str, Any]:
+def two_axis() -> _PlacementReport:
     """Return the two-axis report from one six-device child process."""
     return _run_in_child_process(
         entry_point="report_two_axis",
@@ -753,7 +930,7 @@ def two_axis() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def matrix() -> dict[str, Any]:
+def matrix() -> _MatrixReport:
     """Return the placement-variant reports from one six-device child process."""
     return _run_in_child_process(
         entry_point="report_matrix",
@@ -763,13 +940,13 @@ def matrix() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def indivisible() -> dict[str, Any]:
+def indivisible() -> _IndivisibleReport:
     """Return the indivisible-extent report from one four-device child process."""
     return _run_in_child_process(entry_point="report_indivisible_extents", n_devices=4)
 
 
 @pytest.fixture(scope="module")
-def subject_sharded() -> dict[str, Any]:
+def subject_sharded() -> _SimulationReport:
     """Return the subject-sharded simulation report from six devices."""
     return _run_in_child_process(
         entry_point="report_subject_sharded_simulation",
@@ -779,7 +956,7 @@ def subject_sharded() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def round_trip() -> dict[str, Any]:
+def round_trip() -> _SimulationReport:
     """Return the persisted-solution simulation report from six devices."""
     return _run_in_child_process(
         entry_point="report_solution_round_trip",
@@ -789,13 +966,13 @@ def round_trip() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def admission() -> dict[str, Any]:
+def admission() -> _AdmissionReport:
     """Return the admission report from one six-device child process."""
     return _run_in_child_process(entry_point="report_admission", n_devices=_N_DEVICES)
 
 
 def test_each_regime_retains_only_the_sharded_state_its_dag_reads(
-    two_axis: dict[str, Any],
+    two_axis: _PlacementReport,
 ) -> None:
     """The reading regime keeps `a` and drops `b`; the stored regime the reverse."""
     assert (
@@ -805,7 +982,7 @@ def test_each_regime_retains_only_the_sharded_state_its_dag_reads(
 
 
 def test_the_two_regimes_take_meshes_of_their_own_extents(
-    two_axis: dict[str, Any],
+    two_axis: _PlacementReport,
 ) -> None:
     """Each regime spans one device per category of the state it retains."""
     assert (two_axis["devices"]["working"], two_axis["devices"]["retired"]) == (
@@ -815,7 +992,7 @@ def test_the_two_regimes_take_meshes_of_their_own_extents(
 
 
 def test_each_regimes_value_leads_with_its_own_category_axis(
-    two_axis: dict[str, Any],
+    two_axis: _PlacementReport,
 ) -> None:
     """A regime's value carries the axis of the state it retains, and no other."""
     assert (
@@ -825,28 +1002,28 @@ def test_each_regimes_value_leads_with_its_own_category_axis(
 
 
 def test_a_value_stored_on_another_mesh_is_read_as_a_cross_mesh_copy(
-    two_axis: dict[str, Any],
+    two_axis: _PlacementReport,
 ) -> None:
     """The read across the two device axes is served by one mesh copy."""
     assert two_axis["transfer_kinds"] == ["cross_mesh_copy"]
 
 
 def test_a_cross_mesh_read_is_delivered_replicated_on_the_reading_mesh(
-    two_axis: dict[str, Any],
+    two_axis: _PlacementReport,
 ) -> None:
     """The reading core addresses none of the stored value's axes, so it gets all."""
     assert [transfer["required_spec"] for transfer in two_axis["transfers"]] == ["P()"]
 
 
 def test_the_two_axis_solution_equals_the_single_device_solution(
-    two_axis: dict[str, Any],
+    two_axis: _PlacementReport,
 ) -> None:
     """Placement partitions the solve; it never changes the values published."""
     assert two_axis["solution_matches_reference"] is True
 
 
 def test_the_two_axis_simulation_equals_the_single_device_simulation(
-    two_axis: dict[str, Any],
+    two_axis: _PlacementReport,
 ) -> None:
     """The simulated frames agree with the unsharded reference model's."""
     assert two_axis["simulation_matches_reference"] is True
@@ -864,7 +1041,7 @@ def test_the_two_axis_simulation_equals_the_single_device_simulation(
     ],
 )
 def test_every_placement_variant_publishes_the_reference_values(
-    *, matrix: dict[str, Any], variant: str
+    *, matrix: _MatrixReport, variant: str
 ) -> None:
     """Retained subset, declared order and block ownership never move a value."""
     assert matrix[variant]["solution_matches_reference"] is True
@@ -882,14 +1059,14 @@ def test_every_placement_variant_publishes_the_reference_values(
     ],
 )
 def test_every_placement_variant_simulates_the_reference_frames(
-    *, matrix: dict[str, Any], variant: str
+    *, matrix: _MatrixReport, variant: str
 ) -> None:
     """Placement never moves a simulated path either."""
     assert matrix[variant]["simulation_matches_reference"] is True
 
 
 def test_declaring_the_regimes_in_the_other_order_swaps_the_device_blocks(
-    matrix: dict[str, Any],
+    matrix: _MatrixReport,
 ) -> None:
     """Sharded regimes take consecutive blocks in the order they are declared."""
     assert (
@@ -899,7 +1076,7 @@ def test_declaring_the_regimes_in_the_other_order_swaps_the_device_blocks(
 
 
 def test_two_regimes_retaining_one_state_still_hold_separate_device_blocks(
-    matrix: dict[str, Any],
+    matrix: _MatrixReport,
 ) -> None:
     """A shared state name does not make one mesh: each regime gets its own block."""
     assert (
@@ -909,28 +1086,28 @@ def test_two_regimes_retaining_one_state_still_hold_separate_device_blocks(
 
 
 def test_a_read_between_separate_blocks_of_one_state_is_a_cross_mesh_copy(
-    matrix: dict[str, Any],
+    matrix: _MatrixReport,
 ) -> None:
     """Sharing an axis name buys nothing while the two meshes share no device."""
     assert matrix["both_read_b"]["transfer_kinds"] == ["cross_mesh_copy"]
 
 
 def test_a_regime_retaining_both_states_spans_the_product_of_their_extents(
-    matrix: dict[str, Any],
+    matrix: _MatrixReport,
 ) -> None:
     """Several retained sharded states scatter one grid point per device."""
     assert matrix["source_reads_both"]["devices"]["working"] == list(range(_N_DEVICES))
 
 
 def test_extents_whose_product_exceeds_the_devices_are_refused_while_planning(
-    indivisible: dict[str, Any],
+    indivisible: _IndivisibleReport,
 ) -> None:
     """A regime needing more devices than exist has no mesh, so planning stops."""
     assert indivisible["product_refused"] is True
 
 
 def test_the_product_refusal_names_the_points_and_the_devices(
-    indivisible: dict[str, Any],
+    indivisible: _IndivisibleReport,
 ) -> None:
     """The refusal says what was asked for and what was available."""
     message = indivisible["product_message"]
@@ -939,42 +1116,42 @@ def test_the_product_refusal_names_the_points_and_the_devices(
 
 
 def test_an_extent_the_devices_do_not_divide_takes_the_largest_divisor_mesh(
-    indivisible: dict[str, Any],
+    indivisible: _IndivisibleReport,
 ) -> None:
     """Three categories over two devices divide only one way: a single device."""
     assert indivisible["smaller_mesh_devices"]["retired"] == [0]
 
 
 def test_the_two_axis_model_simulates_the_reference_over_sharded_subjects(
-    subject_sharded: dict[str, Any],
+    subject_sharded: _SimulationReport,
 ) -> None:
     """Spreading subjects over the devices leaves the simulated frames unchanged."""
     assert subject_sharded["simulation_matches_reference"] is True
 
 
 def test_a_persisted_cross_mesh_solution_simulates_the_reference_frames(
-    round_trip: dict[str, Any],
+    round_trip: _SimulationReport,
 ) -> None:
     """Saving and reloading values across the two layouts reproduces the frames."""
     assert round_trip["simulation_matches_reference"] is True
 
 
 def test_the_cross_mesh_read_costs_the_whole_value_on_every_reading_device(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """A replica holds no shard, so its per-device claim is the whole value."""
     assert admission["per_device_bytes"] == admission["logical_bytes"]
 
 
 def test_the_cross_mesh_read_reserves_its_own_scratch_at_the_replica_size(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """The operator holds a second copy of what it delivers while it runs."""
     assert admission["temporary_bytes"] == admission["per_device_bytes"]
 
 
 def test_the_planned_operator_names_both_meshes_devices(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """Nothing the copy touches is left out of the devices it is charged to."""
     assert admission["operator_devices"] == sorted(
@@ -983,21 +1160,21 @@ def test_the_planned_operator_names_both_meshes_devices(
 
 
 def test_the_stored_value_and_its_replica_occupy_different_devices(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """The stored value stays where it is, so both copies are live at once."""
     assert not set(admission["stored_devices"]) & set(admission["destination_devices"])
 
 
 def test_admission_covers_every_device_the_copy_touches(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """A device that only sources the copy is compared against the budget too."""
     assert admission["admission_devices"] == admission["operator_devices"]
 
 
 def test_a_device_that_only_sources_the_copy_is_no_workspace_device(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """The reading core runs on its own mesh; the stored value sits on another."""
     assert not set(admission["stored_devices"]) & set(admission["workspace_devices"])
@@ -1005,7 +1182,7 @@ def test_a_device_that_only_sources_the_copy_is_no_workspace_device(
 
 @pytest.mark.parametrize("endpoint", ["source", "destination"])
 def test_every_endpoint_device_is_charged_the_operators_own_storage(
-    *, admission: dict[str, Any], endpoint: str
+    *, admission: _AdmissionReport, endpoint: str
 ) -> None:
     """Each device the copy touches carries a second whole value while it runs."""
     key = "stored_devices" if endpoint == "source" else "destination_devices"
@@ -1018,7 +1195,7 @@ def test_every_endpoint_device_is_charged_the_operators_own_storage(
 
 
 def test_a_source_device_is_charged_its_shard_and_the_operators_storage(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """Sourcing a copy costs the stored shard plus the whole value in flight."""
     shard = admission["logical_bytes"] // len(admission["stored_devices"])
@@ -1029,28 +1206,28 @@ def test_a_source_device_is_charged_its_shard_and_the_operators_storage(
 
 
 def test_a_budget_below_the_planned_position_admits_no_core(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """A device with less room than the plan already keeps hosts no workspace."""
     assert admission["admitted_below"] is False
 
 
 def test_a_budget_equal_to_the_planned_position_admits_no_core(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """A budget the position exhausts leaves nothing for a workspace."""
     assert admission["admitted_at"] is False
 
 
 def test_a_budget_above_the_planned_position_admits_the_core(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """One byte of room beyond the position is what admission asks for."""
     assert admission["admitted_above"] is True
 
 
 def test_the_admitting_boundary_counts_the_operators_own_storage(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """Leaving the declared temporary bytes out moves the boundary by their size."""
     assert (
@@ -1060,14 +1237,14 @@ def test_the_admitting_boundary_counts_the_operators_own_storage(
 
 
 def test_an_inventory_without_the_operators_storage_admits_the_refused_core(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """The budget that refuses the complete footprint passes the incomplete one."""
     assert admission["mutant_admitted_at_boundary"] is True
 
 
 def test_the_refusal_names_the_transfer_charge_it_counted(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """A cell refused over a copy says how much of its budget the copy took."""
     assert (
@@ -1077,27 +1254,27 @@ def test_the_refusal_names_the_transfer_charge_it_counted(
 
 
 def test_a_budget_too_small_for_the_cross_mesh_solve_is_refused_by_name(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """A solve that cannot fit its reads names the regime that cannot host them."""
     assert "'working'" in admission["budgeted_refusal"]
 
 
 def test_a_budgeted_cross_mesh_solve_publishes_the_reference_values(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """Admitting the read changes what is reserved, never what is computed."""
     assert admission["ample_budget_matches_reference"] is True
 
 
 def test_the_budgeted_refusal_counts_the_replica_it_would_have_to_hold(
-    admission: dict[str, Any],
+    admission: _AdmissionReport,
 ) -> None:
     """The bytes a refused cell reports include the replica the read delivers."""
     assert admission["budgeted_resident_bytes"] >= admission["per_device_bytes"]
 
 
-def _initial_conditions_read_by(model: Model) -> dict[str, Any]:
+def _initial_conditions_read_by(model: Model) -> dict[str, jax.Array]:
     """Return the initial conditions restricted to the states `model` simulates."""
     read = {"age", "regime_id"}.union(
         *(regime.simulation.state_names for regime in model._regimes.values())

@@ -7,7 +7,7 @@ import sys
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Never, NotRequired, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -16,6 +16,8 @@ import pytest
 
 from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.execution.compiler_memory import CompilerMemoryReport
+from _lcm.typing import PytreeValue
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -39,6 +41,17 @@ from lcm.typing import (
 )
 
 _FLOAT_DTYPE = canonical_float_dtype()
+
+
+class _StateProbabilityValidation(TypedDict):
+    probs: transition_checks.FloatND
+    transition: transition_checks._StochasticStateTransition
+    regime_name: transition_checks.RegimeName
+    age: float | transition_checks.ScalarInt | transition_checks.ScalarFloat
+    summary: NotRequired[transition_checks._ValidationSummary | None]
+    memory: NotRequired[transition_checks.SimulationMemory | None]
+    source_codes: NotRequired[transition_checks.np.ndarray | None]
+    fixed_of_code: NotRequired[tuple[int, ...] | None]
 
 
 @categorical(ordered=False)
@@ -224,12 +237,16 @@ def compiler_boundary(monkeypatch: pytest.MonkeyPatch) -> _CompilerBoundary:
     analyze_program = jax.stages.Compiled.memory_analysis
     dispatch_program = jax.stages.Compiled.__call__
 
-    def analyze_and_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def analyze_and_record(
+        self: jax.stages.Compiled, *args: Never, **kwargs: Never
+    ) -> CompilerMemoryReport | None:
         stats = analyze_program(self, *args, **kwargs)
         observed.profiled.append((self, len(observed.dispatched)))
         return stats
 
-    def dispatch_and_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def dispatch_and_record(
+        self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         observed.dispatched.append(self)
         return dispatch_program(self, *args, **kwargs)
 
@@ -255,7 +272,7 @@ def test_state_transition_workspace_refuses_before_user_law_dispatch(
     completed: list[FloatND] = []
     original_check = transition_checks._check_state_probs
 
-    def observe_completed_law(**kwargs: Any) -> None:
+    def observe_completed_law(**kwargs: Unpack[_StateProbabilityValidation]) -> None:
         completed.append(kwargs["probs"])
         original_check(**kwargs)
 

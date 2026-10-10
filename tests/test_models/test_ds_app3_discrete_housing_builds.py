@@ -169,9 +169,16 @@ def test_build_params_threads_the_adjustment_cost_and_is_taxless():
     params_low = ds_app3_discrete_housing.build_params(tau=0.07)
     params_high = ds_app3_discrete_housing.build_params(tau=0.12)
     resources_fn = ds_app3_discrete_housing.RESOURCES_FUNCTION_NAME
+    assert isinstance(params_low["working"], dict)
+    assert isinstance(params_low["working"]["housing_flow"], dict)
     assert params_low["working"]["housing_flow"]["tau"] == 0.07
+    assert isinstance(params_high["working"], dict)
+    assert isinstance(params_high["working"]["housing_flow"], dict)
     assert params_high["working"]["housing_flow"]["tau"] == 0.12
-    assert params_low["working"][resources_fn]["capital_income_tax"] == 0.0
+    assert isinstance(params_low["working"], dict)
+    resources = params_low["working"][resources_fn]
+    assert isinstance(resources, dict)
+    assert resources["capital_income_tax"] == 0.0
 
 
 def test_terminal_bequest_weight_is_threaded():
@@ -183,9 +190,13 @@ def test_terminal_bequest_weight_is_threaded():
     argument and kept the default would land on `0.5` and fail this check.
     """
     params = ds_app3_discrete_housing.build_params(theta=0.8)
+    assert isinstance(params["dead"], dict)
+    assert isinstance(params["dead"]["utility"], dict)
     assert params["dead"]["utility"]["theta"] == 0.8
     # The value is the argument, not the default: the default build carries 0.5.
     default_params = ds_app3_discrete_housing.build_params()
+    assert isinstance(default_params["dead"], dict)
+    assert isinstance(default_params["dead"]["utility"], dict)
     assert default_params["dead"]["utility"]["theta"] == 0.5
 
 

@@ -9,15 +9,13 @@ a controller that finishes before a worker's record lands --- are driven
 through the collector directly.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TypedDict, Unpack, cast
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
@@ -28,6 +26,9 @@ from tests.ci.receipt_plugin import (
     RECEIPT_ENV_VAR,
     SCHEMA_VERSION,
     WORKER_ROLE,
+    Receipt,
+    _CollectedItem,
+    _PhaseReport,
     _ReceiptCollector,
     agreed_collection,
     junit_identity,
@@ -35,6 +36,17 @@ from tests.ci.receipt_plugin import (
     reconcile_with_junit,
     unique_junit_cases,
 )
+
+
+class _CollectorOptions(TypedDict, total=False):
+    ci_policy: str | None
+    hardware_profile: str | None
+    policy_child: bool
+    numprocesses: int | str | None
+    dist: str | None
+    markexpr: str | None
+    keyword: str | None
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -121,19 +133,20 @@ def _run_pytest(
     return process, receipts, junit
 
 
-def _records(*, receipts: Path) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+def _records(*, receipts: Path) -> tuple[Receipt, dict[str, Receipt]]:
     """Return the one canonical record and the supporting worker records by id."""
-    published = [
+    published: list[Receipt] = [
         json.loads(path.read_text(encoding="utf-8"))
         for path in sorted(receipts.glob("*.receipt.json"))
     ]
     canonical = [record for record in published if record["role"] == CANONICAL_ROLE]
     assert len(canonical) == 1, published
-    workers = {
-        record["worker_id"]: record
-        for record in published
-        if record["role"] == WORKER_ROLE
-    }
+    workers: dict[str, Receipt] = {}
+    for record in published:
+        if record["role"] == WORKER_ROLE:
+            worker_id = record["worker_id"]
+            assert isinstance(worker_id, str)
+            workers[worker_id] = record
     assert len(workers) == len(published) - 1, published
     return canonical[0], workers
 
@@ -285,16 +298,20 @@ def test_a_canonical_record_carries_the_identity_of_what_produced_it(
     assert canonical["environment"]["source_sha"] == "0" * 40
     assert canonical["environment"]["runner_os"] == "Linux"
     assert canonical["runtime"]["precision"] in {32, 64}
+    assert canonical["runtime"]["device_count"] is not None
     assert canonical["runtime"]["device_count"] >= 1
     assert canonical["runtime"]["backend"]
     assert canonical["runtime"]["python_version"]
     assert canonical["policy"]["numprocesses"] == 2
     assert canonical["junit_path"] == str(junit)
     assert canonical["exit_status"] == 0
+    assert canonical["start_wall_clock"] is not None
     assert canonical["start_wall_clock"] < canonical["end_wall_clock"]
 
 
-def _collector(*, tmp_path: Path, **option: object) -> _ReceiptCollector:
+def _collector(
+    *, tmp_path: Path, **option: Unpack[_CollectorOptions]
+) -> _ReceiptCollector:
     """Build a collector over a stand-in config, for the cases a run cannot stage."""
     settings = {
         "ci_policy": "full",
@@ -312,7 +329,7 @@ def _collector(*, tmp_path: Path, **option: object) -> _ReceiptCollector:
     return collector
 
 
-def _payload(*, collector: _ReceiptCollector) -> dict[str, Any]:
+def _payload(*, collector: _ReceiptCollector) -> Receipt:
     """Assemble a record with the CI identity a real runner would supply."""
     with patch.dict(os.environ, {"GITHUB_SHA": "0" * 40}):
         return collector.payload(exitstatus=0, junitxml_path="reports/junit.xml")
@@ -429,12 +446,12 @@ def test_an_executed_node_outside_the_selection_is_refused(tmp_path: Path) -> No
     ]
 
 
-def _items(*, nodeid: str) -> Any:
+def _items(*, nodeid: str) -> list[_CollectedItem]:
     """Return the one-item collection the writer reads a `nodeid` off."""
     return [SimpleNamespace(nodeid=nodeid)]
 
 
-def _report(*, nodeid: str, when: str, outcome: str = "passed") -> Any:
+def _report(*, nodeid: str, when: str, outcome: str = "passed") -> _PhaseReport:
     """Return one phase report, the only part of a `TestReport` this writer reads."""
     return SimpleNamespace(
         nodeid=nodeid,

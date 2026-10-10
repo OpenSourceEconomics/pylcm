@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from fractions import Fraction
 from inspect import get_annotations
-from typing import Any, cast
+from typing import Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -35,15 +35,31 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.initial_nodes import UserInitialNodes
 from lcm.phased import Phased
 from lcm.regime import Regime
-from lcm.transition import TransitionLaw
-from lcm.typing import BoolND, DiscreteState, FloatND, Period, ScalarInt
+from lcm.result import SimulationResult
+from lcm.transition import (
+    AgeCaseLaw,
+    AgeSelector,
+    ModelEdges,
+    PhaseEdges,
+    TransitionLaw,
+)
+from lcm.typing import (
+    BoolND,
+    DiscreteState,
+    FloatND,
+    Period,
+    RegimeName,
+    ScalarInt,
+    UserAge,
+)
 from tests.regime_building.test_gate_output_dtype import _boolean_gate
 from tests.regime_building.test_gate_output_dtype import _make_model as _gated_model
 
 AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
-ROOTS: dict[object, str] = {25: "working"}
+ROOTS: dict[AgeSelector, RegimeName] = {25: "working"}
 DATED_TARGETS = {"working": (25, 35, 45), "dead": (25, 35, 45), "retirement": 55}
 CHOICE_TARGETS = {"working": (25, 35, 45), "retirement": 55, "dead": 55}
 # Working may die at every age and retires at 55: two outgoing edges at each age.
@@ -111,7 +127,7 @@ def _working_law() -> ByAge:
 
 def _dated_edges(
     *, working_law: TransitionLaw | None = None
-) -> dict[str, Transition | dict[str, int]]:
+) -> dict[RegimeName, Transition | dict[RegimeName, int]]:
     """Working dies or survives until it retires at 55; retirement dies at 65."""
     return {
         "working": Transition(
@@ -122,7 +138,7 @@ def _dated_edges(
     }
 
 
-def _choice_edges(*, working_law: TransitionLaw) -> dict[str, object]:
+def _choice_edges(*, working_law: TransitionLaw) -> PhaseEdges:
     """Working stays until 55, where `working_law` picks retirement or death."""
     return {
         "working": Transition(targets=CHOICE_TARGETS, law=working_law),
@@ -130,7 +146,7 @@ def _choice_edges(*, working_law: TransitionLaw) -> dict[str, object]:
     }
 
 
-def _dated_model(*, edges: object = None, **overrides: Regime) -> Model:
+def _dated_model(*, edges: ModelEdges | None = None, **overrides: Regime) -> Model:
     regimes = {"working": _regime(), "retirement": _regime(), "dead": DEAD}
     return Model(
         regimes=regimes | overrides,
@@ -176,7 +192,10 @@ def _hand_masked_model() -> Model:
     )
 
 
-def _solve_dated_and_hand_masked() -> tuple[Any, Any]:
+def _solve_dated_and_hand_masked() -> tuple[
+    Mapping[int, Mapping[RegimeName, FloatND]],
+    Mapping[int, Mapping[RegimeName, FloatND]],
+]:
     params = {"discount_factor": 0.95}
     dated = _dated_model().solve(params=params, log_level="off").values
     masked = _hand_masked_model().solve(params=params, log_level="off").values
@@ -341,7 +360,7 @@ def test_choose_routes_to_the_returned_regime_code() -> None:
     assert targets["working"] == ("dead", "retirement")
 
 
-def _model_with_entries(initial_nodes: Any) -> Model:
+def _model_with_entries(initial_nodes: UserInitialNodes) -> Model:
     return Model(
         regimes={"working": _regime(), "retirement": _regime(), "dead": DEAD},
         ages=AGES,
@@ -379,7 +398,7 @@ def test_reachability_nodes_are_the_exact_demanded_age_regime_pairs() -> None:
     ids=["rules", "overlapping-rules-union"],
 )
 def test_initial_nodes_are_the_permitted_covered_pairs(
-    *, initial_nodes: Any, expected: frozenset
+    *, initial_nodes: UserInitialNodes, expected: frozenset[tuple[UserAge, RegimeName]]
 ) -> None:
     """Entry rules select exact covered pairs and union across rules."""
     assert _model_with_entries(initial_nodes).graph.initial_nodes == expected
@@ -408,7 +427,7 @@ def test_initial_nodes_are_the_permitted_covered_pairs(
     ids=["uncovered-pair", "unknown-regime", "off-grid-age", "empty-selector"],
 )
 def test_initial_nodes_rejects_pairs_that_are_not_declared_problems(
-    *, initial_nodes: Any, match: str
+    *, initial_nodes: UserInitialNodes, match: str
 ) -> None:
     """Entry rules name covered pairs; nothing is filtered away."""
     with pytest.raises(ModelInitializationError, match=match):
@@ -430,7 +449,7 @@ def test_simulation_input_outside_the_entry_permissions_raises() -> None:
         )
 
 
-_ALREADY_VISITED_ROOTS = {25: "working", 65: "retirement"}
+_ALREADY_VISITED_ROOTS: UserInitialNodes = {25: "working", 65: "retirement"}
 
 
 def test_a_root_already_visited_leaves_solved_values_unchanged() -> None:
@@ -482,7 +501,7 @@ def _short_mass(health: DiscreteState) -> FloatND:
 )
 @pytest.mark.parametrize("log_level", ["off", "warning"])
 def test_invalid_regime_selection_raises_at_every_log_level(
-    *, transition: Any, log_level: LogLevel
+    *, transition: AgeCaseLaw, log_level: LogLevel
 ) -> None:
     """Regime-selection validity does not depend on verbosity in a dated model."""
     model = _dated_model(
@@ -566,11 +585,11 @@ def test_model_edges_keep_the_dated_declaration() -> None:
     """A model publishes each regime's transition law exactly as declared."""
     declared = _working_law()
     model = _dated_model(edges=_dated_edges(working_law=declared))
-    edges = cast("Mapping[str, Transition]", model.edges)
+    edges = cast("Mapping[RegimeName, Transition]", model.edges)
     assert edges["working"].law is declared
 
 
-def _declared_transition_ids(model: Model) -> dict[str, dict[str, int]]:
+def _declared_transition_ids(model: Model) -> dict[str, dict[RegimeName, int]]:
     """The identity of each declared `Transition`, by phase and source."""
     return {
         phase: {source: id(transition) for source, transition in transitions.items()}
@@ -677,7 +696,7 @@ def test_declared_transitions_read_a_gate_route_fallback_regime_typed() -> None:
     """A declared gate route's fallback regime reads back as a regime name."""
     model = _gated_model(gate=_boolean_gate)
     gate = model.declared_transitions["simulate"]["source"].gates["target"]
-    regime: str = gate.routes["only"].simulate_fallback.regime
+    regime: RegimeName = gate.routes["only"].simulate_fallback.regime
     assert regime == "fallback"
 
 
@@ -778,7 +797,7 @@ class _MonthlyRegimeId:
     end: ScalarInt
 
 
-def _monthly_model(initial_nodes: dict) -> Model:
+def _monthly_model(initial_nodes: UserInitialNodes) -> Model:
     return Model(
         ages=MONTHLY_AGES,
         edges={},
@@ -788,7 +807,9 @@ def _monthly_model(initial_nodes: dict) -> Model:
     )
 
 
-def _monthly_start(*, age: FloatND, log_level: LogLevel, initial_nodes: dict) -> Any:
+def _monthly_start(
+    *, age: FloatND, log_level: LogLevel, initial_nodes: UserInitialNodes
+) -> SimulationResult:
     return _monthly_model(initial_nodes).simulate(
         params={},
         initial_conditions={
@@ -800,7 +821,7 @@ def _monthly_start(*, age: FloatND, log_level: LogLevel, initial_nodes: dict) ->
     )
 
 
-def _first_month(age_source: str) -> FloatND:
+def _first_month(age_source: Literal["grid", "literal"]) -> FloatND:
     """The age one month in, read off the grid or written as a Python float."""
     return MONTHLY_AGES.values[1:2] if age_source == "grid" else jnp.array([1 / 12])
 
@@ -808,7 +829,7 @@ def _first_month(age_source: str) -> FloatND:
 @pytest.mark.parametrize("age_source", ["grid", "literal"])
 @pytest.mark.parametrize("log_level", ["off", "warning"])
 def test_undeclared_monthly_start_raises_at_every_log_level(
-    *, age_source: str, log_level: LogLevel
+    *, age_source: Literal["grid", "literal"], log_level: LogLevel
 ) -> None:
     """A start one month in is refused when only age 0 is an admissible entry."""
     with pytest.raises(InvalidInitialConditionsError, match=r"\(1/12, 'end'\)"):
@@ -822,7 +843,7 @@ def test_undeclared_monthly_start_raises_at_every_log_level(
 @pytest.mark.parametrize("age_source", ["grid", "literal"])
 @pytest.mark.parametrize("log_level", ["off", "warning"])
 def test_declared_monthly_start_simulates_from_its_period(
-    *, age_source: str, log_level: LogLevel
+    *, age_source: Literal["grid", "literal"], log_level: LogLevel
 ) -> None:
     """A subject admitted one month in to a terminal regime is recorded at period 1."""
     result = _monthly_start(
@@ -852,10 +873,10 @@ def test_off_grid_monthly_start_raises_at_every_log_level(
     ids=lambda w: w.__name__,
 )
 def test_the_graph_supplies_the_destinations_of_a_target_tagged_law(
-    *, wrapper: Any
+    *, wrapper: type[_SupportedDeterministicTransition | _SupportedStochasticTransition]
 ) -> None:
     """A law tagged with its own destinations is bound to the graph's edges."""
-    bound: Any = _bind_law(
+    bound = _bind_law(
         law=wrapper(func=lambda: RegimeId.dead, targets=("dead",)),
         targets=("working", "dead", "retirement"),
         fallbacks=(),
@@ -863,6 +884,9 @@ def test_the_graph_supplies_the_destinations_of_a_target_tagged_law(
         age=25,
         side="solve",
         regime_names=("working", "retirement", "dead"),
+    )
+    assert isinstance(
+        bound, _SupportedDeterministicTransition | _SupportedStochasticTransition
     )
     assert bound.targets == ("working", "dead", "retirement")
 
@@ -882,7 +906,7 @@ def test_a_phased_pair_of_transitions_names_the_supported_form() -> None:
         ),
     ):
         _dated_model(
-            edges={
+            edges={  # ty: ignore[invalid-argument-type]
                 "working": Phased(
                     solve=Transition(targets=TWO_EDGE_TARGETS, law=law),
                     simulate=Transition(targets=TWO_EDGE_TARGETS, law=law),

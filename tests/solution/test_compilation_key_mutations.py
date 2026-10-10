@@ -20,9 +20,9 @@ import os
 import subprocess
 import sys
 import weakref
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Unpack, cast
 
 import numpy as np
 import pytest
@@ -37,7 +37,13 @@ from lcm import (
     Transition,
 )
 from lcm.solvers import GridSearch
-from lcm.typing import FloatND, UserParams
+from lcm.typing import FloatND, RegimeName, UserParams
+from tests.solution._callback_types import (
+    LowerWaveKwargs,
+    MeasureVariantKwargs,
+    PlanningKwargs,
+    PlanningResult,
+)
 from tests.solution.test_compilation_identity import _capture_lowering_keys, _model
 from tests.test_models import nbegm_ride_along_toy
 from tests.test_models.deterministic.regression import (
@@ -161,7 +167,11 @@ def _nbegm_model(*, donate_buffers: bool) -> Model:
 
 
 def _keys_of(
-    *, model: Model, params: UserParams, regime: str, monkeypatch: pytest.MonkeyPatch
+    *,
+    model: Model,
+    params: UserParams,
+    regime: RegimeName,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> set[Hashable]:
     """The keys the solve publishes for the cores of one regime."""
     captured = _capture_lowering_keys(monkeypatch=monkeypatch)
@@ -214,10 +224,10 @@ _IN_PROCESS_MUTATIONS = [
 )
 def test_a_program_changing_fact_shares_no_lowering_key(
     *,
-    build_baseline: Any,
-    build_mutant: Any,
+    build_baseline: Callable[[], Model],
+    build_mutant: Callable[[], Model],
     params: UserParams,
-    regime: str,
+    regime: RegimeName,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A mutant whose traced program differs is lowered under its own keys."""
@@ -313,13 +323,19 @@ def _capture_lowered_text(*, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, 
     original = backward_induction._assert_lowered_output_roles
     original_planning = backward_induction._resolve_output_layouts_and_lowering_keys
 
-    def _new_solve(**kwargs: Any) -> tuple:
+    def _new_solve(**kwargs: Unpack[PlanningKwargs]) -> PlanningResult:
         captured.append({})
         return original_planning(**kwargs)
 
-    def _spy(**kwargs: Any) -> None:
-        captured[-1][kwargs["label"]] = kwargs["lowered"].as_text()
-        original(**kwargs)
+    def _spy(
+        *,
+        lowered: backward_induction.jax.stages.Lowered,
+        output_roles: backward_induction.OutputRoleTree,
+        layout: backward_induction.ResolvedOutputLayout,
+        label: str,
+    ) -> None:
+        captured[-1][label] = lowered.as_text()
+        original(lowered=lowered, output_roles=output_roles, layout=layout, label=label)
 
     monkeypatch.setattr(
         backward_induction, "_resolve_output_layouts_and_lowering_keys", _new_solve
@@ -360,11 +376,11 @@ def test_admission_is_checked_per_candidate_not_per_lowering_key(
     original_measure = backward_induction._measure_variant
     original_wave = backward_induction._lower_and_compile_wave
 
-    def _count_measure(**kwargs: Any) -> int:
+    def _count_measure(**kwargs: Unpack[MeasureVariantKwargs]) -> int:
         measured.append(kwargs["variant_key"])
         return original_measure(**kwargs)
 
-    def _count_wave(**kwargs: Any) -> None:
+    def _count_wave(**kwargs: Unpack[LowerWaveKwargs]) -> None:
         lowered.extend(kwargs["new_lowerings"])
         original_wave(**kwargs)
 
@@ -383,7 +399,7 @@ def test_a_budget_change_reruns_admission_on_the_same_keys(
     measured: list[Hashable] = []
     original_measure = backward_induction._measure_variant
 
-    def _count_measure(**kwargs: Any) -> int:
+    def _count_measure(**kwargs: Unpack[MeasureVariantKwargs]) -> int:
         measured.append(kwargs["variant_key"])
         return original_measure(**kwargs)
 
@@ -432,7 +448,7 @@ print(json.dumps({repr(c): repr(k) for c, k in captured[0].items()}, sort_keys=T
 
 
 def _keys_in_fresh_process(
-    *, env: Mapping[str, str] = {}, config: Mapping[str, object] = {}
+    *, env: Mapping[str, str] = {}, config: Mapping[str, tuple[int, ...]] = {}
 ) -> dict[str, str]:
     """Solve the identity toy in a new interpreter and return its keys by `repr`.
 
@@ -483,7 +499,7 @@ _FRESH_PROCESS_MUTATIONS = [
 
 @pytest.mark.parametrize(("env", "config"), _FRESH_PROCESS_MUTATIONS)
 def test_a_process_level_fact_shares_no_lowering_key(
-    *, env: Mapping[str, str], config: Mapping[str, object]
+    *, env: Mapping[str, str], config: Mapping[str, tuple[int, ...]]
 ) -> None:
     """The x64 flag and the device topology each separate every key."""
     baseline = _keys_in_fresh_process()

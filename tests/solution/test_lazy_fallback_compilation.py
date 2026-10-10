@@ -29,11 +29,13 @@ candidate the paired admission would have refused too.
 import re
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import Never, Unpack
 
 import pytest
 
 from _lcm.solution import backward_induction
 from lcm.exceptions import ExecutionPlanningError
+from tests.solution._callback_types import LowerWaveKwargs
 from tests.solution._candidate_census import (
     FALLBACK,
     PRIMARY,
@@ -210,7 +212,7 @@ def test_required_primary_compile_error_propagates(
 ) -> None:
     """A failure lowering a donating variant reaches the caller unchanged."""
 
-    def fail(**_kwargs: object) -> None:
+    def fail[Ignored](**_kwargs: Ignored) -> Never:
         raise RuntimeError("primary lowering refused")
 
     monkeypatch.setattr(backward_induction, "_lower_and_compile_wave", fail)
@@ -230,11 +232,11 @@ def test_required_fallback_compile_error_propagates(
     wave = backward_induction._lower_and_compile_wave
     calls: list[int] = []
 
-    def fail_on_the_fallback_call(**kwargs: object) -> None:
+    def fail_on_the_fallback_call(**kwargs: Unpack[LowerWaveKwargs]) -> None:
         calls.append(1)
         if len(calls) > 1:
             raise RuntimeError("fallback lowering refused")
-        wave(**kwargs)  # ty: ignore[invalid-argument-type]
+        wave(**kwargs)
 
     monkeypatch.setattr(
         backward_induction, "_lower_and_compile_wave", fail_on_the_fallback_call
@@ -253,7 +255,7 @@ def test_malformed_required_report_propagates(
 ) -> None:
     """A reservation report the engine cannot read reaches the caller unchanged."""
 
-    def malformed(**_kwargs: object) -> object:
+    def malformed[Ignored](**_kwargs: Ignored) -> Never:
         raise ValueError("reservation report is malformed")
 
     monkeypatch.setattr(backward_induction, "compiler_memory_reservation", malformed)

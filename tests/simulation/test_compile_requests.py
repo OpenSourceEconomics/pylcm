@@ -29,6 +29,7 @@ from benchmarks.asv._simulation_witnesses import (
     WITNESSES,
 )
 from lcm import ExecutionConfig, Model
+from lcm.solver_api import SolutionResult
 from lcm.typing import FloatND, UserInitialConditions, UserParams
 from tests.ci.simulation_timings import (
     HOST_TIME_MAX_RELATIVE_IQR,
@@ -450,7 +451,7 @@ def _preflight_validation_stubbed() -> Generator[list[str]]:
     """
     absorbed: list[str] = []
 
-    def stub(**kwargs: object) -> None:  # noqa: ARG001
+    def stub[Ignored](**kwargs: Ignored) -> None:  # noqa: ARG001
         """Record entry into the full preflight, absorbing its arguments."""
         absorbed.append("validate_simulation_inputs")
 
@@ -491,7 +492,7 @@ def _host_time(
     model: Model,
     params: UserParams,
     initial_conditions: UserInitialConditions,
-    solution: object,
+    solution: SolutionResult,
     log_level: LogLevel,
 ) -> float:
     """Return the wall time of one simulate call, device work included."""
@@ -499,7 +500,7 @@ def _host_time(
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        solution=solution,  # ty: ignore[invalid-argument-type]
+        solution=solution,
         log_level=log_level,
         seed=0,
     )

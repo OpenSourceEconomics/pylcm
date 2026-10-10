@@ -1,10 +1,10 @@
 """Period coordinates have explicit meaning at every public time boundary."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Literal, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -19,14 +19,17 @@ from _lcm.time import ModelTime, coordinate_at
 from lcm import component_jobs
 from lcm.exceptions import ModelInitializationError
 from lcm.persistence import PeriodCapture, load_period_capture
+from lcm.transition import PeriodSelector
 from lcm.typing import (
     Age,
     ContinuousState,
     DiscreteState,
     FloatND,
     Period,
+    RegimeName,
     ScalarInt,
     UserInitialNodes,
+    UserParams,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -47,10 +50,32 @@ def _terminal() -> FloatND:
     return jnp.asarray(8.0)
 
 
+class ClockKwargs(TypedDict, total=False):
+    ages: lcm.AgeGrid
+    n_periods: int
+
+
+class FixtureClockKwargs(TypedDict, total=False):
+    ages: lcm.AgeGrid
+    n_periods: int | float
+
+
+class ModelDefinition(ClockKwargs):
+    regimes: Mapping[RegimeName, lcm.Regime]
+    regime_id_class: type[RegimeId]
+    initial_nodes: UserInitialNodes
+    fixed_params: UserParams
+
+
+class InitialNodesKwargs(TypedDict, total=False):
+    by_age: Mapping[int, RegimeName | Sequence[RegimeName]]
+    by_period: Mapping[int, RegimeName | Sequence[RegimeName]]
+
+
 def _model(
     *,
     initial_nodes: UserInitialNodes | None = None,
-    **kwargs: Any,
+    **kwargs: Unpack[FixtureClockKwargs],
 ) -> lcm.Model:
     return lcm.Model(
         regimes={
@@ -68,7 +93,7 @@ def _model(
             }
         },
         fixed_params={"discount_factor": 0.5},
-        **kwargs,
+        **kwargs,  # ty: ignore[invalid-argument-type] - Fractional horizons exercise validation.
     )
 
 
@@ -100,7 +125,7 @@ def _work_until_final_period(period: Period) -> ScalarInt:
     ],
 )
 def test_period_selectors_bound_an_explicit_transition_law(
-    targets: dict[str, lcm.PeriodRange | lcm.Periods],
+    targets: dict[RegimeName, lcm.PeriodRange | lcm.Periods],
 ) -> None:
     model = lcm.Model(
         n_periods=3,
@@ -136,7 +161,7 @@ def test_period_selectors_bound_an_explicit_transition_law(
 
 
 @pytest.mark.parametrize("n_periods", [0, -1, True, 2.5])
-def test_period_horizon_requires_positive_integer(n_periods: object) -> None:
+def test_period_horizon_requires_positive_integer(n_periods: float) -> None:
     with pytest.raises(ModelInitializationError, match="n_periods"):
         _model(n_periods=n_periods)
 
@@ -145,7 +170,7 @@ def test_period_horizon_requires_positive_integer(n_periods: object) -> None:
     "kwargs",
     [{}, {"ages": lcm.AgeGrid(start=40, inclusive_stop=42, step="Y"), "n_periods": 3}],
 )
-def test_exactly_one_time_coordinate_is_required(kwargs: dict[str, Any]) -> None:
+def test_exactly_one_time_coordinate_is_required(kwargs: FixtureClockKwargs) -> None:
     with pytest.raises(ModelInitializationError, match=r"[Ee]xactly one"):
         _model(**kwargs)
 
@@ -241,7 +266,7 @@ def test_period_start_and_output_without_age(*, dataframe: bool) -> None:
     ["simulate", "validate_initial_conditions", "initial_conditions_feasibility"],
 )
 def test_period_starts_are_checked_at_every_entry(
-    *, entry: dict[str, object], method: str
+    *, entry: dict[str, jax.Array], method: str
 ) -> None:
     model = _model(n_periods=3)
     kwargs = {"log_level": "off"} if method == "simulate" else {}
@@ -265,7 +290,7 @@ def test_period_public_initial_nodes_roundtrip() -> None:
     assert model.graph.coordinate_kind == "period"
 
 
-def _specialized_flow(period: int) -> Any:
+def _specialized_flow(period: int) -> Callable[..., FloatND]:
     if type(period) is not int:
         raise TypeError("Specialization requires an integer period.")
     value = float(period + 1)
@@ -334,7 +359,7 @@ def test_model_level_period_specialization_receives_integer_period() -> None:
 
 
 def test_period_declared_transitions_preserve_coordinate_kind() -> None:
-    definition: dict[str, Any] = {
+    definition: ModelDefinition = {
         "n_periods": 2,
         "regimes": {
             "work": lcm.Regime(functions={"utility": _flow}),
@@ -356,7 +381,8 @@ def test_period_model_rejects_age_specialization() -> None:
     with pytest.raises(ModelInitializationError, match=r"[Aa]geSpecialized|coordinate"):
         _specialized_model(
             lcm.AgeSpecializedFunction(
-                build=cast("Any", _specialized_flow), signature=int
+                build=_specialized_flow,  # ty: ignore[invalid-argument-type] - Period builder is refused before age specialization.
+                signature=int,
             )
         )
 
@@ -412,11 +438,10 @@ def test_legacy_age_model_state_restores_an_explicit_clock(
     if declaration:
         starts = lcm.InitialNodes(by_age={0: "work"})
         object.__delattr__(starts, "by_period")
-        state["initial_nodes"] = starts
+        state["initial_nodes"] = starts  # ty: ignore[invalid-key]
     else:
-        state["initial_nodes"] = model.graph.initial_nodes
+        state["initial_nodes"] = model.graph.initial_nodes  # ty: ignore[invalid-key]
     del state["_time"]
-    del state["_resolved_initial_nodes"]
     restored = lcm.Model.__new__(lcm.Model)
     restored.__setstate__(state)
     assert restored._model_structure_fingerprint == model._model_structure_fingerprint
@@ -727,7 +752,9 @@ def test_period_nan_report_uses_period_labels(*, phase: str, tmp_path: Path) -> 
         {"by_period": {0: ("work", "")}},
     ],
 )
-def test_initial_nodes_requires_one_nonempty_coordinate_map(kwargs: Any) -> None:
+def test_initial_nodes_requires_one_nonempty_coordinate_map(
+    kwargs: InitialNodesKwargs,
+) -> None:
     """Exactly one nonempty coordinate mapping declares the starts."""
     with pytest.raises(ModelInitializationError):
         lcm.InitialNodes(**kwargs)
@@ -737,7 +764,9 @@ def test_initial_nodes_requires_one_nonempty_coordinate_map(kwargs: Any) -> None
     "selector",
     [True, 0.0, Fraction(0), (0, 1.0), lcm.AgeRange(start=0)],
 )
-def test_initial_nodes_refuses_nonperiod_keys(selector: Any) -> None:
+def test_initial_nodes_refuses_nonperiod_keys(
+    selector: float | Fraction | tuple[int, float] | lcm.AgeRange,
+) -> None:
     """Period coordinates must be genuinely integer-valued."""
     with pytest.raises(ModelInitializationError, match=r"[Pp]eriod"):
         lcm.InitialNodes(by_period={selector: "work"})
@@ -746,14 +775,14 @@ def test_initial_nodes_refuses_nonperiod_keys(selector: Any) -> None:
 @pytest.mark.parametrize(
     "selector", [lcm.PeriodRange(start=0), lcm.Periods(values=(0,))]
 )
-def test_initial_nodes_refuses_period_keys_in_age_map(selector: Any) -> None:
+def test_initial_nodes_refuses_period_keys_in_age_map(selector: PeriodSelector) -> None:
     """An explicit period selector cannot be relabelled as an age."""
     with pytest.raises(ModelInitializationError, match=r"[Aa]ge"):
         lcm.InitialNodes(by_age={selector: "work"})
 
 
 @pytest.mark.parametrize("selector", [-1, 3, (0, 3), lcm.Periods(values=(3,))])
-def test_initial_nodes_checks_period_horizon(selector: Any) -> None:
+def test_initial_nodes_checks_period_horizon(selector: PeriodSelector) -> None:
     """Exact period starts must belong to the declared horizon."""
     with pytest.raises(ModelInitializationError, match=r"[Pp]eriod"):
         _model(
@@ -779,7 +808,7 @@ def test_period_initial_nodes_freezes_and_unions_selectors() -> None:
 
 
 @pytest.mark.parametrize("selector", [lcm.PeriodRange(start=3), ()])
-def test_period_initial_nodes_refuses_empty_selection(selector: Any) -> None:
+def test_period_initial_nodes_refuses_empty_selection(selector: PeriodSelector) -> None:
     """A selector must admit at least one starting node."""
     with pytest.raises(ModelInitializationError, match=r"no period"):
         _model(
@@ -790,10 +819,12 @@ def test_period_initial_nodes_refuses_empty_selection(selector: Any) -> None:
 @pytest.mark.parametrize(
     "initial_nodes", [((0, "work"),), {0: "work"}, {lcm.Periods(values=(0,)): "work"}]
 )
-def test_period_initial_nodes_requires_named_keyword(initial_nodes: Any) -> None:
+def test_period_initial_nodes_requires_named_keyword(
+    initial_nodes: UserInitialNodes | Mapping[lcm.Periods, RegimeName],
+) -> None:
     """Period declarations cannot silently reinterpret legacy age syntax."""
     with pytest.raises(ModelInitializationError, match=r"by_period"):
-        _model(n_periods=3, initial_nodes=initial_nodes)
+        _model(n_periods=3, initial_nodes=initial_nodes)  # ty: ignore[invalid-argument-type] - Explicit period mapping deliberately exercises legacy rejection.
 
 
 def test_initial_nodes_rejects_clock_mismatch_both_directions() -> None:
@@ -806,7 +837,7 @@ def test_initial_nodes_rejects_clock_mismatch_both_directions() -> None:
 
 @pytest.mark.parametrize("selector", [(0, 1), range(2), lcm.Periods(values=(0, 1))])
 def test_period_initial_nodes_accepts_explicit_integer_collections(
-    selector: Any,
+    selector: PeriodSelector,
 ) -> None:
     """The by_period keyword labels every supported exact-selector form."""
     model = _model(
@@ -816,7 +847,9 @@ def test_period_initial_nodes_accepts_explicit_integer_collections(
 
 
 @pytest.mark.parametrize("selector", [(0, 3), range(4), lcm.Periods(values=(0, 3))])
-def test_period_initial_nodes_does_not_clip_explicit_collections(selector: Any) -> None:
+def test_period_initial_nodes_does_not_clip_explicit_collections(
+    selector: PeriodSelector,
+) -> None:
     """Exact starts require grid membership even when another coordinate is valid."""
     with pytest.raises(ModelInitializationError, match=r"[Pp]eriod"):
         _model(
@@ -827,10 +860,12 @@ def test_period_initial_nodes_does_not_clip_explicit_collections(selector: Any) 
 @pytest.mark.parametrize(
     "value", [lcm.ByAge(cases={0: "work"}), lcm.ByPeriod(cases={0: "work"})]
 )
-def test_initial_nodes_refuses_transition_schedules_as_names(value: Any) -> None:
+def test_initial_nodes_refuses_transition_schedules_as_names(
+    value: lcm.ByAge | lcm.ByPeriod,
+) -> None:
     """Initial-node values name regimes rather than laws selected by another clock."""
     with pytest.raises(ModelInitializationError):
-        lcm.InitialNodes(by_period={0: value})
+        lcm.InitialNodes(by_period={0: value})  # ty: ignore[invalid-argument-type] - Schedules are deliberately invalid regime names.
 
 
 def test_period_initial_nodes_is_read_only() -> None:
@@ -872,12 +907,12 @@ def test_by_period_owns_nested_law_mappings(wrapper: str) -> None:
 )
 @pytest.mark.parametrize("mapping", [False, True])
 def test_age_initial_nodes_refuses_legacy_period_selectors(
-    *, selector: Any, mapping: bool
+    *, selector: lcm.PeriodRange | lcm.Periods, mapping: bool
 ) -> None:
     """Legacy age syntax must not admit the explicitly period-labelled wrappers."""
     initial_nodes = {selector: "work"} if mapping else ((selector, "work"),)
     with pytest.raises(ModelInitializationError, match=r"[Aa]ge"):
-        _age_model(initial_nodes=initial_nodes)
+        _age_model(initial_nodes=initial_nodes)  # ty: ignore[invalid-argument-type] - Period selectors deliberately enter the legacy age boundary.
 
 
 def _joint_zero() -> FloatND:
@@ -933,7 +968,7 @@ def _joint_clock_model(
     # for a late start; no missing transition or unreachable target is involved.
     n_periods = source_period + 2
     source_coordinate = origin + source_period
-    clock_kwargs: dict[str, Any] = (
+    clock_kwargs: ClockKwargs = (
         {"n_periods": n_periods}
         if clock == "period"
         else {

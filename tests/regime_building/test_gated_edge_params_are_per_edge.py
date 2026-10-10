@@ -8,8 +8,6 @@ resolving it against a model-wide union of state names removes it from the
 template — leaving a model whose gate reads a value nothing can supply.
 """
 
-from typing import cast
-
 import jax.numpy as jnp
 import pytest
 
@@ -155,8 +153,12 @@ def test_a_gate_parameter_survives_an_unrelated_regimes_state_of_the_same_name(
     """
     template = _build_model(with_bystander=with_bystander).get_params_template()
 
-    edges = cast("dict", template["edges"])
-    assert edges["source"]["target"]["predicate"] == {"marriage_bonus": "float"}
+    edges = template["edges"]
+    source = edges["source"]
+    assert isinstance(source, dict)
+    target = source["target"]
+    assert isinstance(target, dict)
+    assert target["predicate"] == {"marriage_bonus": "float"}
 
 
 def test_the_bystanders_state_is_not_a_parameter_of_its_own_regime() -> None:

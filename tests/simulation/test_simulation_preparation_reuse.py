@@ -5,33 +5,63 @@ import gc
 import hashlib
 import weakref
 from collections import Counter
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Hashable, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Any
+from types import MappingProxyType
+from typing import Never, TypedDict
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.extend.core import ClosedJaxpr, Jaxpr
 
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.execution.core_program import ValueRead
+from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.simulation import chunk_profile_inventory, operand_placement, process_grids
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
+from _lcm.typing import HostArray, PytreeValue, ShapeDtypePytree
 from lcm import Model
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import UserInitialConditions, UserParams
+from lcm.result import SimulationResult
+from lcm.solver_api import SolutionResult
+from lcm.typing import (
+    ParameterName,
+    ReferenceName,
+    RegimeName,
+    UserInitialConditions,
+    UserParams,
+)
 from tests.simulation.test_normal_process_grid_admission import _inputs
+
+type SuppliedCase = tuple[Model, UserParams, UserInitialConditions, SolutionResult]
+
+
+class _PlacementArguments(TypedDict):
+    arguments: Mapping[ReferenceName, HostArray]
+    subject_arg_names: tuple[ReferenceName, ...]
+    value_reads: tuple[ValueRead, ...]
+    devices: tuple[jax.Device, ...]
+    budget_bytes: int
+    budget_devices: tuple[jax.Device, ...]
+
+
+class _LivePlacementArguments(_PlacementArguments):
+    live_footprint: DeviceBufferFootprint
 
 
 @pytest.fixture(scope="module")
-def supplied_case() -> tuple[Model, UserParams, UserInitialConditions, Any]:
+def supplied_case() -> tuple[Model, UserParams, UserInitialConditions, SolutionResult]:
     """Use real multi-period/regime programs and a supplied, budgeted solution."""
     model, params, initial = _inputs(budget=2**28)
     solution = model.solve(params=params, log_level="off")
     return model, params, initial, solution
 
 
-def _snapshot(result: Any) -> dict[tuple[str, int, str, int], tuple[object, ...]]:
+def _snapshot(
+    result: SimulationResult,
+) -> dict[tuple[RegimeName, int, str, int], tuple[tuple[int, ...], str, str]]:
     """Hash every published record field, not a selected economic summary."""
     snapshot = {}
     for regime, periods in result.raw_results.items():
@@ -64,32 +94,55 @@ def _observe_preparation(*, monkeypatch: pytest.MonkeyPatch) -> Generator[Counte
     operand = operand_placement._required_operand_bytes
     trace_recipe = process_grids._trace_process_jaxpr
 
-    def shape(function: Any, *args: Any, **kwargs: Any) -> Any:
+    def shape(
+        function: Callable[..., PytreeValue],
+        *args: PytreeValue | ShapeDtypePytree,
+        **kwargs: PytreeValue | ShapeDtypePytree,
+    ) -> ShapeDtypePytree:
         if function is jax.random.key_data:
             counts["key_shape_traces"] += 1
         elif function is jnp.asarray:
             counts["operand_shape_traces"] += 1
         return eval_shape(function, *args, **kwargs)
 
-    def graph(function: Any, *args: Any, **kwargs: Any) -> Any:
+    # keyword-only-exempt: library-callback=jax.make_jaxpr
+    def graph(
+        function: Callable[..., PytreeValue],
+        static_argnums: int | Sequence[int] = (),
+        axis_env: Sequence[tuple[Hashable, int]] | None = None,
+        return_shape: bool = False,  # noqa: FBT001, FBT002 - Mirrors jax.make_jaxpr.
+    ) -> Callable[..., ClosedJaxpr | tuple[ClosedJaxpr, ShapeDtypePytree]]:
         if (
             getattr(function, "__name__", None) == "_process_value_identity"
             and getattr(function, "__module__", None) == process_grids.__name__
         ):
             counts["attached_identity_traces"] += 1
-        return make_jaxpr(function, *args, **kwargs)
+        return make_jaxpr(function, static_argnums, axis_env, return_shape)
 
-    def declared_payload(**kwargs: Any) -> Any:
+    def declared_payload(*, tree: ShapeDtypePytree) -> dict[jax.Device, int]:
         counts["payload_reads"] += 1
-        return payload(**kwargs)
+        return payload(tree=tree)
 
-    def required_operand(**kwargs: Any) -> int:
+    def required_operand(
+        *,
+        leaf: jax.Array | HostArray | np.generic | complex,
+        sharding: jax.sharding.Sharding,
+    ) -> int:
         counts["operand_reads"] += 1
-        return operand(**kwargs)
+        return operand(leaf=leaf, sharding=sharding)
 
-    def recipe(**kwargs: Any) -> Any:
+    def recipe(
+        *,
+        spec: _ContinuousStochasticProcess,
+        parameter_names: tuple[ParameterName, ...],
+        parameter_values: tuple[process_grids.ProcessValue, ...],
+    ) -> Jaxpr:
         counts["producer_graphs"] += 1
-        return trace_recipe(**kwargs)
+        return trace_recipe(
+            spec=spec,
+            parameter_names=parameter_names,
+            parameter_values=parameter_values,
+        )
 
     with monkeypatch.context() as observe:
         observe.setattr(jax, "eval_shape", shape)
@@ -100,7 +153,7 @@ def _observe_preparation(*, monkeypatch: pytest.MonkeyPatch) -> Generator[Counte
         yield counts
 
 
-def test_public_repeat_preserves_outputs(supplied_case: Any) -> None:
+def test_public_repeat_preserves_outputs(supplied_case: SuppliedCase) -> None:
     """Positive readiness case: genuine public simulation and complete output parity."""
     model, params, initial, solution = supplied_case
     first = model.simulate(
@@ -127,7 +180,11 @@ def test_operand_low_budget_refuses_before_placement(
     device = jax.devices()[0]
     attempts = []
 
-    def forbidden_placement(*, leaf: object, sharding: jax.sharding.Sharding) -> object:
+    def forbidden_placement(
+        *,
+        leaf: jax.Array | HostArray | np.generic | complex,
+        sharding: jax.sharding.Sharding,
+    ) -> Never:
         del sharding
         attempts.append(leaf)
         raise AssertionError("Operand placement ran before admission.")
@@ -140,7 +197,7 @@ def test_operand_low_budget_refuses_before_placement(
             value_reads=(),
             devices=(device,),
             budget_bytes=1,
-            live_footprint=DeviceBufferFootprint(spans={}),
+            live_footprint=DeviceBufferFootprint(spans=MappingProxyType({})),
             budget_devices=(device,),
         )
     assert attempts == []
@@ -148,7 +205,7 @@ def test_operand_low_budget_refuses_before_placement(
 
 def test_public_supplied_simulation_does_not_retrace_metadata(
     *,
-    supplied_case: Any,
+    supplied_case: SuppliedCase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A warm public call uses metadata, not repeatedly retraced size/identity code."""
@@ -259,9 +316,10 @@ def test_payload_storage_matches_materialized_shards(
         )
         expected[shard.device] = 3 * np.asarray(raw).nbytes
     with _observe_preparation(monkeypatch=monkeypatch) as counts:
-        actual = chunk_profile_inventory.payload_bytes(
-            tree={"first": metadata, "alias": (metadata, [metadata])}
-        )
+        child: list[ShapeDtypePytree] = [metadata]
+        branch: tuple[ShapeDtypePytree, ...] = (metadata, child)
+        tree: ShapeDtypePytree = {"first": metadata, "alias": branch}
+        actual = chunk_profile_inventory.payload_bytes(tree=tree)
     assert actual == expected
     assert counts["key_shape_traces"] == 0
     after = (
@@ -383,12 +441,18 @@ def test_operand_admission_rechecks_growing_live_inventory(
     original = operand_placement._place_operand_leaf
     attempts = []
 
-    def observed(*, leaf: object, sharding: jax.sharding.Sharding) -> object:
+    def observed(
+        *,
+        leaf: jax.Array | HostArray | np.generic | complex,
+        sharding: jax.sharding.Sharding,
+    ) -> jax.Array:
         attempts.append(leaf)
-        return original(leaf=leaf, sharding=sharding)
+        placed = original(leaf=leaf, sharding=sharding)
+        assert isinstance(placed, jax.Array)
+        return placed
 
     monkeypatch.setattr(operand_placement, "_place_operand_leaf", observed)
-    kwargs: dict[str, Any] = {
+    kwargs: _PlacementArguments = {
         "arguments": {"state": value},
         "subject_arg_names": ("state",),
         "value_reads": (),
@@ -398,7 +462,7 @@ def test_operand_admission_rechecks_growing_live_inventory(
     }
     first = operand_placement.place_simulation_arguments(
         **kwargs,
-        live_footprint=DeviceBufferFootprint(spans={}),
+        live_footprint=DeviceBufferFootprint(spans=MappingProxyType({})),
     )
     np.testing.assert_array_equal(first["state"], value)
     assert len(attempts) == 1
@@ -415,14 +479,14 @@ def test_operand_admission_exact_boundary_and_occurrences(delta: int) -> None:
     device = jax.devices()[0]
     value = np.arange(3, dtype=canonical_float_dtype())
     required = 4 * value.nbytes  # two copies, each destination plus scratch
-    kwargs: dict[str, Any] = {
+    kwargs: _LivePlacementArguments = {
         "arguments": {"a": value, "b": value},
         "subject_arg_names": ("a", "b"),
         "value_reads": (),
         "devices": (device,),
         "budget_bytes": required + delta,
         "budget_devices": (device,),
-        "live_footprint": DeviceBufferFootprint(spans={}),
+        "live_footprint": DeviceBufferFootprint(spans=MappingProxyType({})),
     }
     if delta < 0:
         with pytest.raises(ExecutionPlanningError, match="before allocation"):
@@ -466,7 +530,7 @@ def test_metadata_paths_under_jit_vmap_and_scan() -> None:
 @pytest.mark.parametrize("seed", [11, 19])
 def test_public_shape_seed_and_state_mutations(
     *,
-    supplied_case: Any,
+    supplied_case: SuppliedCase,
     subjects: int,
     seed: int,
 ) -> None:
@@ -513,7 +577,9 @@ def test_public_shape_seed_and_state_mutations(
 def test_metadata_reads_do_not_keep_concrete_owners() -> None:
     """A call-local abstraction must not extend a host or device array's lifetime."""
 
-    def visit() -> tuple[weakref.ReferenceType[Any], weakref.ReferenceType[Any]]:
+    def visit() -> tuple[
+        weakref.ReferenceType[np.ndarray], weakref.ReferenceType[jax.Array]
+    ]:
         host = np.arange(7, dtype=np.float64)
         device = jax.device_put(host)
         sharding = device.sharding

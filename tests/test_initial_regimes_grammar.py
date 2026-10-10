@@ -1,8 +1,9 @@
 """Required `initial_nodes`, keyword-only declarations, and `ByAge` availability."""
 
 import inspect
+from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
-from typing import Any
+from typing import TypedDict, Unpack
 
 import jax.numpy as jnp
 import pytest
@@ -20,8 +21,10 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.initial_nodes import UserInitialNodes
 from lcm.regime import Regime
-from lcm.typing import FloatND, ScalarInt
+from lcm.transition import AgeCaseLaw, AgeSelector
+from lcm.typing import FloatND, RegimeName, ScalarInt, UserAge, UserFunction
 
 AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
 
@@ -69,7 +72,7 @@ EDGES = {
 }
 
 
-def _regimes() -> dict[str, Regime]:
+def _regimes() -> dict[RegimeName, Regime]:
     return {
         "working": _regime(),
         "retirement": _regime(),
@@ -77,13 +80,22 @@ def _regimes() -> dict[str, Regime]:
     }
 
 
-def _model(**kwargs: Any) -> Model:
+type InitialNodesFixture = (
+    UserInitialNodes | str | tuple[str, ...] | Mapping[str, RegimeName] | None
+)
+
+
+class ModelRootKwargs(TypedDict, total=False):
+    initial_nodes: InitialNodesFixture
+
+
+def _model(**kwargs: Unpack[ModelRootKwargs]) -> Model:
     return Model(
         regimes=_regimes(),
         ages=AGES,
         regime_id_class=RegimeId,
         edges=EDGES,
-        **kwargs,
+        **kwargs,  # ty: ignore[invalid-argument-type] - Malformed starts exercise Model validation.
     )
 
 
@@ -115,7 +127,7 @@ _NOT_A_MAPPING = r"parameter initial_nodes=.* violates type hint UserInitialNode
     ids=["none", "empty", "bare-name", "bare-sequence", "empty-rule", "unknown"],
 )
 def test_model_rejects_malformed_initial_nodes(
-    *, initial_nodes: Any, match: str
+    *, initial_nodes: InitialNodesFixture, match: str
 ) -> None:
     """`None`, empty, bare-name and unknown-name roots all fail at construction."""
     with pytest.raises(ModelInitializationError, match=match):
@@ -131,7 +143,9 @@ def test_model_rejects_malformed_initial_nodes(
     ],
     ids=["off-grid", "boolean-age", "string-age"],
 )
-def test_model_rejects_malformed_root_ages(*, initial_nodes: Any, match: str) -> None:
+def test_model_rejects_malformed_root_ages(
+    *, initial_nodes: InitialNodesFixture, match: str
+) -> None:
     """Root ages are exact grid coordinates; nothing is rounded onto the clock."""
     with pytest.raises(ModelInitializationError, match=match):
         _model(initial_nodes=initial_nodes)
@@ -156,7 +170,9 @@ def test_model_rejects_malformed_root_ages(*, initial_nodes: Any, match: str) ->
     ids=["one-pair", "tuple-and-range", "overlapping-rules-union"],
 )
 def test_initial_nodes_are_the_cartesian_union_of_rules(
-    *, initial_nodes: Any, expected: frozenset
+    *,
+    initial_nodes: InitialNodesFixture,
+    expected: frozenset[tuple[UserAge, RegimeName]],
 ) -> None:
     """Each rule contributes ages times names; rules are unioned."""
     assert _model(initial_nodes=initial_nodes).graph.initial_nodes == expected
@@ -206,7 +222,9 @@ def test_explicit_initial_nodes_owns_regime_collections() -> None:
         {float("nan"): "working"},
     ],
 )
-def test_explicit_initial_nodes_rejects_invalid_declarations(by_age: Any) -> None:
+def test_explicit_initial_nodes_rejects_invalid_declarations(
+    by_age: Mapping[AgeSelector, RegimeName | Sequence[RegimeName]],
+) -> None:
     """Refuse empty declarations, invalid regime names and invalid selectors."""
     with pytest.raises(ModelInitializationError):
         lcm.InitialNodes(by_age=by_age)
@@ -215,7 +233,9 @@ def test_explicit_initial_nodes_rejects_invalid_declarations(by_age: Any) -> Non
 @pytest.mark.parametrize(
     "by_age", [{26: "working"}, {25: "unknown"}, {AgeRange(start=80): "dead"}]
 )
-def test_explicit_initial_nodes_checks_model_coordinates(by_age: Any) -> None:
+def test_explicit_initial_nodes_checks_model_coordinates(
+    by_age: Mapping[AgeSelector, RegimeName | Sequence[RegimeName]],
+) -> None:
     """Binding refuses off-grid starts, unknown regimes and empty selections."""
     with pytest.raises(ModelInitializationError):
         _model(initial_nodes=lcm.InitialNodes(by_age=by_age))
@@ -253,7 +273,7 @@ def test_explicit_initial_nodes_normalizes_legacy_pickle_state() -> None:
     """Restoring a model with stored pairs publishes the explicit declaration."""
     model = _model(initial_nodes={25: "working"})
     state = model.__getstate__()
-    state["initial_nodes"] = model.graph.initial_nodes
+    state["initial_nodes"] = model.graph.initial_nodes  # ty: ignore[invalid-key]
     restored = object.__new__(Model)
     restored.__setstate__(state)
     assert restored.initial_nodes == lcm.InitialNodes(by_age={25: "working"})
@@ -276,14 +296,20 @@ def test_explicit_initial_nodes_normalizes_legacy_pickle_state() -> None:
         "ByAge.until",
     ],
 )
-def test_declarations_reject_positional_arguments(*, call: Any, kwargs: dict) -> None:
+def test_declarations_reject_positional_arguments(
+    *,
+    call: Callable[..., AgeCaseLaw | AgeRange],
+    kwargs: dict[str, int | str | UserFunction | Mapping[AgeSelector, RegimeName]],
+) -> None:
     """Declaration constructors take keyword arguments only."""
     first, *rest = kwargs.values()
     with pytest.raises(TypeError, match="positional"):
         call(first, **dict(zip(list(kwargs)[1:], rest, strict=True)))
 
 
-def _until_periods(*, ages: AgeGrid, stop: Any, start: Any = None) -> dict[Any, object]:
+def _until_periods(
+    *, ages: AgeGrid, stop: UserAge, start: UserAge | None = None
+) -> dict[UserAge, AgeCaseLaw]:
     schedule = ByAge.until(
         start_age_inclusive=start, stop_age_exclusive=stop, law="law", then="then"
     )
@@ -320,7 +346,7 @@ def _until_periods(*, ages: AgeGrid, stop: Any, start: Any = None) -> dict[Any, 
     ids=["annual", "quarterly", "irregular", "one-source-interval"],
 )
 def test_until_selects_law_from_start_and_then_at_the_stop_predecessor(
-    *, ages: AgeGrid, start: Any, expected: dict
+    *, ages: AgeGrid, start: UserAge, expected: dict[UserAge, RegimeName]
 ) -> None:
     """`[start, stop)`: `then` at the last source before 62, nothing at or after 62."""
     assert _until_periods(ages=ages, start=start, stop=62) == expected

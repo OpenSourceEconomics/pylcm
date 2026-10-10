@@ -7,7 +7,7 @@ regimes. `model.user_regimes` exposes the finalized form: plain `Regime`
 instances, complete, immutable, still in user vocabulary.
 """
 
-from typing import Any
+from typing import Unpack
 
 import jax.numpy as jnp
 import pytest
@@ -24,6 +24,7 @@ from lcm import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.regime import RegimeReplacement
 from lcm.typing import FloatND, ScalarInt
 
 
@@ -53,8 +54,8 @@ _EDGES = {
 }
 
 
-def _build_work_regime(**overrides: Any) -> UserRegime:
-    spec: dict[str, Any] = {
+def _build_work_regime(**overrides: Unpack[RegimeReplacement]) -> UserRegime:
+    spec: RegimeReplacement = {
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},

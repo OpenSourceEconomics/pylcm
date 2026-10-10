@@ -42,9 +42,10 @@ from _lcm.egm.validation import (
     _without,
 )
 from _lcm.solution.nnbegm import NNBEGM, _BoundNNBEGM
-from _lcm.typing import FunctionName, RegimeName
+from _lcm.typing import FunctionName, RegimeName, TransitionFunctionName
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateTransitionEntry
 from lcm.typing import UserFunction
 
 
@@ -95,7 +96,9 @@ def _fail_if_removed_outer_action_is_reachable(
         f"next_{state_name}": value
         for state_name, value in user_regime.state_transitions.items()
     }
-    targets: list[tuple[str, UserFunction, Mapping[str, object]]] = [
+    targets: list[
+        tuple[str, UserFunction, Mapping[TransitionFunctionName, StateTransitionEntry]]
+    ] = [
         (f"function {name!r}", func, sibling_laws)
         for name, func in opaque_functions.items()
     ]

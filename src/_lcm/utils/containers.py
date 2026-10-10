@@ -8,14 +8,19 @@ lookups several build stages share.
 
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import fields
 from itertools import chain
 from types import MappingProxyType
-from typing import Any, TypeVar, cast
+from typing import TypeVar, cast, overload
 
+from _lcm.params.mapping_leaf import LeafEntry
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
+from lcm.typing import ScalarInt
 
 T = TypeVar("T")
+
+# A value inside a nested container: a leaf the caller stores, such as a grid, a
+# function, an array or a params leaf, or a container of such values.
+type _ContainerValue = object  # noqa: PAN001 - callers nest any leaf, and the conversion changes the container type at every level
 
 
 class Unset:
@@ -78,26 +83,9 @@ def find_duplicates(*containers: Iterable[T]) -> set[T]:
     return {v for v, count in counts.items() if count > 1}
 
 
-def get_field_names_and_values(dc: object) -> MappingProxyType[str, Any]:
-    """Return the fields of a dataclass.
-
-    Args:
-        dc: The dataclass class or instance to get the fields of.
-
-    Returns:
-        An immutable mapping with the field names as keys and the field values as
-        values. If no value is provided for a field, the value is set to None.
-
-    """
-    return MappingProxyType(
-        {
-            field.name: getattr(dc, field.name, None)
-            for field in fields(dc)  # ty: ignore[invalid-argument-type]
-        }
-    )
-
-
-def invert_regime_ids[K](mapping: Mapping[K, Any]) -> MappingProxyType[int, K]:
+def invert_regime_ids[K](
+    mapping: Mapping[K, ScalarInt | int],
+) -> MappingProxyType[int, K]:
     """Return the inverse of a regime-name → id mapping, with Python-`int` keys.
 
     `@categorical` assigns `jnp.int32` scalars to class attributes, so
@@ -129,8 +117,16 @@ def first_non_none(*args: T | None) -> T:
     raise ValueError("All arguments are None")
 
 
-def _make_immutable(value: Any) -> Any:  # noqa: ANN401
-    """Recursively convert a value to its immutable equivalent."""
+@overload
+def _make_immutable(value: LeafEntry) -> LeafEntry: ...
+@overload
+def _make_immutable(value: _ContainerValue) -> _ContainerValue: ...
+def _make_immutable(value: _ContainerValue) -> _ContainerValue:
+    """Recursively convert a value to its immutable equivalent.
+
+    A frozen params leaf entry is again a leaf entry: mappings become
+    `MappingProxyType`, lists become tuples, and leaves are returned as they are.
+    """
     if isinstance(value, (UserMappingLeaf, UserSequenceLeaf)):
         return value  # already immutable by construction
     if isinstance(value, (MappingProxyType, tuple, frozenset)):
@@ -144,7 +140,7 @@ def _make_immutable(value: Any) -> Any:  # noqa: ANN401
     return value
 
 
-def _make_mutable(value: Any) -> Any:  # noqa: ANN401, PLR0911
+def _make_mutable(value: _ContainerValue) -> _ContainerValue:  # noqa: PLR0911
     """Recursively convert a value to its mutable equivalent."""
     if isinstance(value, UserMappingLeaf):
         return {k: _make_mutable(v) for k, v in value.data.items()}

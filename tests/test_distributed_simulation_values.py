@@ -6,14 +6,17 @@ Run this module alone so its four-CPU-device topology precedes JAX initializatio
 # Test-model declarations must run after the four-device configuration below.
 # ruff: noqa: PLC0415
 from functools import cache
-from typing import cast
+from types import MappingProxyType
+from typing import Never, cast
 
 import jax
 import jax.numpy as jnp
 import pandas as pd
 import pytest
 
+from _lcm.simulation.runtime import CompiledSimulationProgram
 from _lcm.solution.artifacts import OwnedSolutionView
+from _lcm.typing import PytreeValue
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -29,6 +32,11 @@ from lcm.regime import Regime
 from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
 from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
+from tests.conftest import (
+    PrepareMaterializedKwargs,
+    SubjectChunkKwargs,
+    SubjectChunkResults,
+)
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
 )
@@ -71,20 +79,25 @@ def test_abstract_read_preserves_required_ordered_device_identity(
         target=aligned.target,
         source=aligned.source,
         kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
-        stored_template=program.arguments["extra"],
+        stored_template=cast("jax.ShapeDtypeStruct", program.arguments["extra"]),
         source_sharding=required,
     )
     candidate = replace(
         program,
-        arguments={
-            "next_regime_to_V_arr": {
-                "future": jax.ShapeDtypeStruct((3,), jnp.float32, sharding=observed)
-            },
-            "extra": program.arguments["extra"],
-        },
+        arguments=MappingProxyType(
+            {
+                "next_regime_to_V_arr": {
+                    "future": jax.ShapeDtypeStruct((3,), jnp.float32, sharding=observed)
+                },
+                "extra": program.arguments["extra"],
+            }
+        ),
     )
 
-    def forbid_copy(*_args: object, **_kwargs: object) -> object:
+    # keyword-only-exempt: library-callback=jax.device_put
+    def forbid_copy(
+        _value: PytreeValue, _device: jax.Device | jax.sharding.Sharding | None = None
+    ) -> Never:
         raise AssertionError("Abstract metadata resolution allocated a copy")
 
     monkeypatch.setattr(jax, "device_put", forbid_copy)
@@ -370,7 +383,7 @@ def test_fixed_inner_subject_width_survives_outer_device_alignment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """W=3 stays three while an unlimited budget admits one whole-population cohort."""
-    from typing import Any
+    from typing import Unpack
 
     import numpy as np
 
@@ -393,11 +406,13 @@ def test_fixed_inner_subject_width_survives_outer_device_alignment(
     run_chunk = simulation._simulate_subject_chunk
     prepare = SimulationRuntime._prepare_materialized
 
-    def observe_chunk(**call: Any) -> object:
+    def observe_chunk(**call: Unpack[SubjectChunkKwargs]) -> SubjectChunkResults:
         chunks.append(call["initial_regime_ids"].shape[0])
         return run_chunk(**call)
 
-    def observe_width(self: SimulationRuntime, **call: Any) -> object:
+    def observe_width(
+        self: SimulationRuntime, **call: Unpack[PrepareMaterializedKwargs]
+    ) -> CompiledSimulationProgram:
         selected = prepare(self, **call)
         if "subject" in selected.widths:
             widths.append(selected.widths["subject"])

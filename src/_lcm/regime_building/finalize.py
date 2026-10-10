@@ -27,7 +27,7 @@ from _lcm.constraints.ir import Condition
 from _lcm.egm.nbegm import PieceSet
 from _lcm.grids import DiscreteGrid
 from _lcm.regime_law import RegimeLaws
-from _lcm.typing import FunctionName, RegimeName
+from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
 from _lcm.user_regime_validation import (
     _fail_if_collective_regime_folds,
     _validate_completeness,
@@ -43,7 +43,7 @@ from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import _AgeSpecialized
-from lcm.typing import FloatND, UserFunction
+from lcm.typing import FloatND, ReferenceName, UserFunction, ValueND
 
 # A user `Regime` after model-build finalization. Runtime-equivalent to
 # `lcm.regime.Regime`; internal signatures use this alias to mark values
@@ -318,7 +318,7 @@ class _AnnotatedCaseFunction:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: object) -> object:
+    def __call__(self, **kwargs: EconFunctionArg) -> ValueND:
         return self.function(**kwargs)
 
 
@@ -553,8 +553,8 @@ def _fail_if_continuation_slot_is_mixed(
 
 def _publish_signature(
     *,
-    target: object,
-    args: Mapping[str, str],
+    target: _ComposedCaseOutput | _AnnotatedCaseFunction | _ComposedResources,
+    args: Mapping[ReferenceName, str],
     return_annotation: str,
     name: str,
 ) -> None:

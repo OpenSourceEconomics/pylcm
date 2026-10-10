@@ -17,8 +17,23 @@ from enum import Enum, auto
 from types import MappingProxyType
 from typing import no_type_check
 
-from _lcm.typing import RegimeName, TransitionFunctionName
-from lcm.typing import DiscreteState, FloatND
+import numpy as np
+from jax.tree_util import PyTreeDef
+
+from _lcm.typing import (
+    EconFunctionArg,
+    QualifiedName,
+    RegimeName,
+    TransitionFunction,
+    TransitionFunctionName,
+)
+from lcm.typing import (
+    DiscreteState,
+    FloatND,
+    ReferenceName,
+    StateName,
+    UserFunction,
+)
 
 
 class SupportOrigin(Enum):
@@ -41,8 +56,8 @@ class SupportSignature:
     """Static structure of one finite support."""
 
     size: int
-    treedef: object | None = None
-    leaves: tuple[object, ...] = ()
+    treedef: PyTreeDef | None = None
+    leaves: tuple[tuple[tuple[int, ...], np.dtype], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -50,7 +65,7 @@ class ParameterBinding:
     """Public parameter provenance and compiled engine arguments."""
 
     public_path: tuple[str, ...] = ()
-    engine_args: frozenset[str] = frozenset()
+    engine_args: frozenset[ReferenceName] = frozenset()
     user_params: frozenset[str] = frozenset()
 
 
@@ -71,9 +86,9 @@ class InterpolationBasisInfo:
     """A deterministic support basis whose coefficients are not probabilities."""
 
     axis_name: str
-    support_provider: object | None
+    support_provider: TransitionFunction | None
     support_signature: SupportSignature
-    weight_function: object
+    weight_function: UserFunction
     params: ParameterBinding
     weight_name: str
 
@@ -104,7 +119,7 @@ class OriginalLotteryLayout:
     recover either the law or the verified code bijection.
     """
 
-    state_name: str
+    state_name: StateName
     rest_of_code: tuple[int, ...]
     fixed_of_code: tuple[int, ...]
     probabilities: Callable[..., FloatND]
@@ -133,7 +148,7 @@ def declared_law_over_codes(
         return layout, declared
 
     @no_type_check
-    def over_codes(**kwargs: object) -> FloatND:
+    def over_codes(**kwargs: EconFunctionArg) -> FloatND:
         return declared(**{k: v for k, v in kwargs.items() if k != state_name})
 
     over_codes.__signature__ = signature  # ty: ignore[unresolved-attribute]
@@ -142,7 +157,7 @@ def declared_law_over_codes(
 
 
 def signature_with_state(
-    *, func: Callable[..., FloatND], state_name: str
+    *, func: Callable[..., FloatND], state_name: StateName
 ) -> tuple[inspect.Signature, bool]:
     """Return `func`'s signature declaring `state_name`, and whether `func` reads it."""
     signature = inspect.signature(func)
@@ -171,13 +186,13 @@ class TransitionLotteryInfo:
     """One finite stochastic realization mechanism on a target edge."""
 
     name: str
-    qualified_name: str
-    support_provider: object | None
+    qualified_name: QualifiedName
+    support_provider: TransitionFunction | None
     support_signature: SupportSignature
-    probabilities: object
+    probabilities: UserFunction
     support_origin: SupportOrigin
     lifetime: LotteryLifetime
-    persisted_state: str | None
+    persisted_state: StateName | None
     support_params: ParameterBinding
     probability_params: ParameterBinding
     weight_name: str
@@ -193,11 +208,11 @@ class TransitionLotteryInfo:
 class TransitionOutputInfo:
     """How one genuine target state obtains its next-period value."""
 
-    state: str
+    state: StateName
     next_state_name: TransitionFunctionName
-    qualified_name: str
+    qualified_name: QualifiedName
     producer: OutputProducerRef
-    physical_resolver: object | LotteryValue
+    physical_resolver: TransitionFunction | LotteryValue
     continuation_coordinate: (
         PhysicalCoordinate | LotteryIndexCoordinate | InterpolationBasisInfo
     )

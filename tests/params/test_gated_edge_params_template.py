@@ -16,7 +16,7 @@ read at a projected wage. Wages live on the two-point grid $\\{1, 2\\}$ and ever
 value below is exact on it.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import cast
 
@@ -29,6 +29,8 @@ from numpy.testing import assert_array_almost_equal as aaae
 from _lcm.params.edges import edge_params
 from _lcm.regime_building.gated_edges import SOURCE_PARAMS, EdgeArgProvenance
 from _lcm.simulation.gated_routing import bind_provenance_params
+
+# The declaration path of the one gated edge, below `params["edges"]`.
 from _lcm.typing import FlatParams
 from lcm import (
     CollectiveUtility,
@@ -59,7 +61,9 @@ from lcm.typing import (
 from tests.collective_fixtures import DISCOUNT_FACTOR, Work
 from tests.conftest import DECIMAL_PRECISION
 
-# The declaration path of the one gated edge, below `params["edges"]`.
+type TemplateNode = str | Mapping[str, TemplateNode]
+
+
 _EDGE = ("single_f", "married_terminal")
 
 
@@ -424,7 +428,7 @@ _WAGE_HIGH = 2.0
 _AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 
-def _leaf_paths(branch: Mapping[str, object]) -> set[tuple[str, ...]]:
+def _leaf_paths(branch: Mapping[str, TemplateNode]) -> set[tuple[str, ...]]:
     """Return the path of every leaf of a params-template branch.
 
     Args:
@@ -455,7 +459,7 @@ def _build_model(
     gate: UserFunction,
     husband_reference_projection: UserFunction,
     wife_fallback: ProjectedRegimeValue | Phased,
-    probability: UserFunction | None = None,
+    probability: Callable[..., FloatND] | None = None,
 ) -> Model:
     """Build the mutual-consent model around the edge callables given.
 

@@ -8,11 +8,14 @@ and actions are pruned per regime by DAG reachability; regime-level
 declarations are never pruned.
 """
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Unpack
 
 import jax.numpy as jnp
 import pytest
 
+from _lcm.model_graph import bind_edge_laws
+from _lcm.regime_building.broadcast import ModelSlots, merge_model_slots
 from lcm import (
     AgeGrid,
     ByAge,
@@ -29,8 +32,9 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.regime import RegimeReplacement
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import FloatND, RegimeName, ScalarInt
 
 
 @categorical(ordered=False)
@@ -88,8 +92,8 @@ def _retired_transition() -> ByAge:
     )
 
 
-def _work_regime(**overrides: Any) -> UserRegime:
-    spec: dict[str, Any] = {
+def _work_regime(**overrides: Unpack[RegimeReplacement]) -> UserRegime:
+    spec: RegimeReplacement = {
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -99,8 +103,8 @@ def _work_regime(**overrides: Any) -> UserRegime:
     return UserRegime(**spec)
 
 
-def _retired_regime(**overrides: Any) -> UserRegime:
-    spec: dict[str, Any] = {
+def _retired_regime(**overrides: Unpack[RegimeReplacement]) -> UserRegime:
+    spec: RegimeReplacement = {
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -110,7 +114,7 @@ def _retired_regime(**overrides: Any) -> UserRegime:
     return UserRegime(**spec)
 
 
-def _build_model(**model_slots: Any) -> Model:
+def _build_model(**model_slots: Unpack[_BroadcastModelKwargs]) -> Model:
     regimes = model_slots.pop(
         "regimes",
         {
@@ -132,7 +136,96 @@ def _build_model(**model_slots: Any) -> Model:
                 targets={"retired": 0, "dead": (0, 1)}, law=_retired_transition()
             ),
         },
-        **model_slots,
+        # The regimes entry was popped above.
+        **model_slots,  # ty: ignore[parameter-already-assigned]
+    )
+
+
+def _bonus(consumption: float) -> float:
+    return 0.1 * consumption
+
+
+def _income(wealth: float) -> float:
+    return 0.05 * wealth
+
+
+def _within_wealth(*, consumption: float, wealth: float) -> bool:
+    return consumption <= wealth
+
+
+def _below_cap(consumption: float) -> bool:
+    return consumption <= 50.0
+
+
+def test_merge_model_slots_composes_each_slot_from_both_levels() -> None:
+    """Model entries precede regime entries, masks drop out, and so do laws.
+
+    A regime-level `None` masks the model entry of that name; a masked state
+    takes its model-level law with it; a terminal regime takes no model-level
+    law at all. The broadcast variables are the model-level states and actions
+    each merged regime still carries.
+    """
+    work = UserRegime(
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
+            "skill": None,
+        },
+        state_transitions={"wealth": _next_wealth},
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
+        functions={"utility": _utility_plain, "bonus": None},
+        constraints={"within_wealth": _within_wealth},
+    )
+    dead = UserRegime(functions={"utility": lambda: 0.0})
+    regimes = {"work": work, "dead": dead}
+    laws, _ = bind_edge_laws(
+        edges={"work": {"dead": 0}},
+        regimes=regimes,
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+    )
+    model_slots: ModelSlots = {
+        "functions": {"bonus": _bonus, "income": _income},
+        "constraints": {"below_cap": _below_cap},
+        "states": {
+            "skill": DiscreteGrid(category_class=_Skill),
+            "health": DiscreteGrid(category_class=_Skill),
+        },
+        "state_transitions": {
+            "skill": fixed_transition("skill"),
+            "health": fixed_transition("health"),
+        },
+        "actions": {"effort": DiscreteGrid(category_class=_Skill)},
+    }
+
+    merged, broadcast = merge_model_slots(
+        user_regimes=regimes, laws=laws, model_slots=model_slots
+    )
+
+    slots = ("functions", "constraints", "states", "state_transitions", "actions")
+    observed = {
+        name: {slot: tuple(getattr(regime, slot)) for slot in slots}
+        for name, regime in merged.items()
+    }
+    assert (observed, dict(broadcast)) == (
+        {
+            "work": {
+                "functions": ("income", "utility"),
+                "constraints": ("below_cap", "within_wealth"),
+                "states": ("health", "wealth"),
+                "state_transitions": ("health", "wealth"),
+                "actions": ("effort", "consumption"),
+            },
+            "dead": {
+                "functions": ("bonus", "income", "utility"),
+                "constraints": ("below_cap",),
+                "states": ("skill", "health"),
+                "state_transitions": (),
+                "actions": ("effort",),
+            },
+        },
+        {
+            "work": frozenset({"health", "effort"}),
+            "dead": frozenset({"skill", "health", "effort"}),
+        },
     )
 
 
@@ -415,3 +508,8 @@ def test_model_broadcast_solves_and_simulates() -> None:
     )
     values = work_rows.loc[work_rows["period"] == 0, "skill"]
     assert values.tolist() == [0, 1, 0, 1]
+
+
+class _BroadcastModelKwargs(ModelSlots, total=False):
+    regimes: Mapping[RegimeName, UserRegime]
+    execution_config: ExecutionConfig

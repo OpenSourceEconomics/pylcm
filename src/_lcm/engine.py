@@ -14,7 +14,7 @@ import dataclasses
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from math import prod as math_prod
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax
 from jax import Array
@@ -65,6 +65,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
+    Float1D,
     FloatND,
     Int1D,
     IntND,
@@ -80,7 +81,7 @@ if TYPE_CHECKING:
     # reachable only under `TYPE_CHECKING`. ty reads the precise element type;
     # the beartype claw checks only the outer `Mapping` container at runtime
     # (see the runtime alias below).
-    PeriodKernelsMapping: TypeAlias = Mapping[int, PeriodKernel]  # noqa: UP040
+    type PeriodKernelsMapping = Mapping[int, PeriodKernel]
 else:
     PeriodKernelsMapping = Mapping
 
@@ -483,7 +484,9 @@ class SolutionPhase:
     validation_regime_transition_probs: RegimeTransitionFunction | None
     """Probability function retaining declared cells for runtime validation."""
 
-    compute_intermediates: MappingProxyType[int, Callable]
+    compute_intermediates: MappingProxyType[
+        int, Callable[..., Mapping[str, FloatND | Mapping[RegimeName, FloatND]]]
+    ]
     """Immutable mapping of period to intermediate-computation closures.
 
     Productmap-wrapped and fused with on-device reductions inside a single
@@ -517,7 +520,7 @@ class SolutionPhase:
     """Base state-action space before runtime grid substitution."""
 
     period_state_axes: (
-        MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
+        MappingProxyType[int, MappingProxyType[StateOrActionName, Float1D]] | None
     ) = None
     """Per-period node arrays for age-varying (`AgeSpecializedGrid`) states.
 
@@ -851,7 +854,7 @@ class EGMPolicyRead:
         return ReplayMode.EXACT_REPLAY
 
     @property
-    def payload_type(self) -> type[object] | None:
+    def payload_type(self) -> type[EGMSimPolicy]:
         """The exact replay payload class this route reads."""
         return EGMSimPolicy
 
@@ -991,7 +994,7 @@ class NNBEGMPolicyRead:
         return ReplayMode.EXACT_REPLAY
 
     @property
-    def payload_type(self) -> type[object] | None:
+    def payload_type(self) -> type[NestedEGMSimPolicy | NNBEGMSimPolicy] | None:
         """The exact replay payload class, `None` when none is retained."""
         if self.replay_mode is ReplayMode.VALID_RECOMPUTATION:
             return None
@@ -1636,7 +1639,10 @@ def place_template_on_regime_devices[Template](
 
 
 def _fail_if_template_is_misplaced(
-    *, regime_name: RegimeName, template: object, expected_device_ids: tuple[int, ...]
+    *,
+    regime_name: RegimeName,
+    template: ContinuationPayload | None,
+    expected_device_ids: tuple[int, ...],
 ) -> None:
     """Require every continuation array leaf to use the regime's assigned devices."""
     expected = tuple(

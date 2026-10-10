@@ -9,24 +9,31 @@ import weakref
 from collections.abc import Callable, Mapping
 from functools import partialmethod
 from types import MappingProxyType
-from typing import Any, TypedDict
+from typing import TypedDict
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.workspace_planning import compiler_peak_bytes
-from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.host_operations import (
+    ProfiledSimulationOperations,
+    _abstract_operation,
+)
 from _lcm.simulation.membership import initialize_subject_membership
 from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.operand_placement import subject_operand_sharding
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
 from _lcm.simulation.simulate import _lookup_values_from_indices
 from _lcm.simulation.transitions import (
     _advance_states_for_subjects,
     _draw_random_regime_ids,
 )
+from _lcm.typing import FootprintTree, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName
 from tests.conftest import assert_agrees_to_ulp
 
 try:
@@ -42,9 +49,9 @@ pytestmark = pytest.mark.skipif(
 
 
 class _DispatchArguments(TypedDict):
-    function: Callable[..., object]
-    arguments: Mapping[str, object]
-    subject_arg_names: tuple[str, ...]
+    function: Callable[..., PytreeValue]
+    arguments: Mapping[ReferenceName, PytreeValue]
+    subject_arg_names: tuple[ReferenceName, ...]
     devices: tuple[jax.Device, ...]
     live_footprint: Callable[[], DeviceBufferFootprint]
     budget_devices: tuple[jax.Device, ...]
@@ -56,7 +63,7 @@ class _BudgetedDispatchArguments(_DispatchArguments):
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _OwnedInputs:
-    arrays: list[object]
+    arrays: list[FootprintTree]
 
     def __call__(self) -> DeviceBufferFootprint:
         jax.block_until_ready(self.arrays)
@@ -77,7 +84,9 @@ def _static_zero_sign(*, state: jax.Array, selector: float) -> jax.Array:
 
 def _operation_case(
     *, name: str
-) -> tuple[Callable[..., object], dict[str, object], tuple[str, ...]]:
+) -> tuple[
+    Callable[..., PytreeValue], dict[ReferenceName, PytreeValue], tuple[str, ...]
+]:
     if name == "merge":
         return (
             _advance_states_for_subjects,
@@ -230,8 +239,11 @@ def test_static_bindings_include_types_and_reject_arrays() -> None:
     np.testing.assert_array_equal(boolean, np.arange(4.0) + 1)
     np.testing.assert_array_equal(integer, np.arange(4.0) + 2)
     assert len(dispatcher.cache) == 2
-    with pytest.raises(ExecutionPlanningError, match="static"):
-        dispatcher.dispatch(**kwargs, static_arguments={"selector": state})
+    with pytest.raises(BeartypeCallHintParamViolation):
+        dispatcher.dispatch(
+            **kwargs,
+            static_arguments={"selector": state},  # ty: ignore[invalid-argument-type]
+        )
 
 
 def test_ordered_subject_meshes_have_distinct_compiled_placement() -> None:
@@ -324,13 +336,13 @@ def test_constant_membership_outputs_keep_the_actual_ordered_subject_layout() ->
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _record_compiled_output(
+def _record_compiled_output[Result: PytreeValue](
     self: jax.stages.Compiled,
     *,
-    original: Callable[..., object],
-    calls: list[tuple[jax.stages.Compiled, object]],
-    **kwargs: Any,
-) -> object:
+    original: Callable[..., Result],
+    calls: list[tuple[jax.stages.Compiled, PytreeValue]],
+    **kwargs: PytreeValue,
+) -> Result:
     result = original(self, **kwargs)
     calls.append((self, result))
     return result
@@ -348,7 +360,7 @@ def test_subject_output_contract_selects_its_own_profile_and_executable(
     )
     owner = _OwnedInputs(arrays=[state])
     operations = ProfiledSimulationOperations()
-    calls: list[tuple[jax.stages.Compiled, object]] = []
+    calls: list[tuple[jax.stages.Compiled, PytreeValue]] = []
     monkeypatch.setattr(
         jax.stages.Compiled,
         "__call__",
@@ -394,3 +406,34 @@ def test_subject_output_contract_selects_its_own_profile_and_executable(
     assert profiles[0] is profiles[2]
     assert profiles[0] is not profiles[1]
     np.testing.assert_array_equal(state, np.arange(6, dtype=np.int32))
+
+
+def _abstract_shift_operands() -> Mapping[ReferenceName, ShapeDtypePytree]:
+    device = jax.devices()[0]
+    state = jax.ShapeDtypeStruct(
+        (4,), jnp.float32, sharding=subject_operand_sharding(devices=(device,))
+    )
+    _key, abstract, _static, _output_sharding = _abstract_operation(
+        function=_shift,
+        arguments={"state": state},
+        subject_arg_names=("state",),
+        devices=(device,),
+        static_arguments=MappingProxyType({}),
+        subject_outputs=False,
+    )
+    return abstract
+
+
+def test_abstract_operation_returns_read_only_operands() -> None:
+    """The abstract operands an operation is keyed and lowered on are read-only."""
+    assert type(_abstract_shift_operands()) is MappingProxyType
+
+
+def test_abstract_operands_round_trip_through_jax_tree_utilities() -> None:
+    """Abstract operands flatten and rebuild as a read-only view of the same items."""
+    abstract = _abstract_shift_operands()
+    leaves, treedef = jax.tree_util.tree_flatten(abstract)
+
+    rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+
+    assert (type(rebuilt), dict(rebuilt)) == (MappingProxyType, dict(abstract))

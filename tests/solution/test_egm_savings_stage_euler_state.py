@@ -45,7 +45,10 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    FunctionName,
     ScalarInt,
+    UserFunction,
+    UserParams,
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -215,7 +218,7 @@ DCEGM_SOLVER = DCEGM(
 )
 
 
-def _dcegm_functions() -> dict:
+def _dcegm_functions() -> dict[FunctionName, UserFunction]:
     return {
         "utility": utility,
         "savings": savings,
@@ -223,7 +226,7 @@ def _dcegm_functions() -> dict:
     }
 
 
-def _params() -> dict:
+def _params() -> UserParams:
     return {
         "discount_factor": 0.95,
         "final_age_alive": 40 + (N_PERIODS - 2) * 10,

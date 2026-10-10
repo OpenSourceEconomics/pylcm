@@ -10,7 +10,7 @@ claw can resolve the rewritten string annotations on the snapshot writers.
 import copy
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from _lcm.persistence.io import (
     _enforce_retention,
@@ -26,17 +26,22 @@ from lcm.typing import UserParams
 if TYPE_CHECKING:
     from lcm.model import Model
     from lcm.result import SimulationResult
+
+    type _ModelClass = type[Model]
+    type _SimulationResultClass = type[SimulationResult]
 else:
     # Runtime view used by the beartype claw's annotation evaluator until
     # `_bind_forward_refs` rebinds these names to the real classes.
-    Model = Any
-    SimulationResult = Any
+    type Model = object
+    type SimulationResult = object
+    type _ModelClass = type[object]
+    type _SimulationResultClass = type[object]
 
 
 def _bind_forward_refs(
     *,
-    model_cls: type,
-    simulation_result_cls: type,
+    model_cls: _ModelClass,
+    simulation_result_cls: _SimulationResultClass,
 ) -> None:
     """Bind `Model` and `SimulationResult` into this module's globals.
 

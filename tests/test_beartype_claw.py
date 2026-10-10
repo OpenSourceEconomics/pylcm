@@ -19,6 +19,8 @@ the project exception, not as `BeartypeCallHintViolation`.
 
 import ast
 import importlib
+import subprocess
+import sys
 from pathlib import Path
 from types import MappingProxyType
 
@@ -47,6 +49,34 @@ from lcm.exceptions import (
 )
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
+from lcm.typing import RegimeName
+
+_LIST_UNDECORATED_FUNCTIONS = """
+import warnings
+
+warnings.simplefilter("always")
+with warnings.catch_warnings(record=True) as caught:
+    import lcm
+for warning in caught:
+    if type(warning.message).__name__ == "BeartypeClawDecorWarning":
+        print(str(warning.message).split(" in file ")[0])
+"""
+
+
+def test_claw_decorates_every_function_lcm_imports() -> None:
+    """A fresh `import lcm` leaves no function undecorated by the claw.
+
+    beartype warns instead of failing when it cannot build a check for a
+    function, and the function then runs unchecked; the import must emit no
+    such warning.
+    """
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _LIST_UNDECORATED_FUNCTIONS],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout == ""
 
 
 def test_claw_checks_lcm_simulation() -> None:
@@ -128,7 +158,7 @@ def test_claw_allows_with_signature_wrapper_over_named_param_function() -> None:
 
     def Q_and_F(
         *,
-        next_regime_to_V_arr: MappingProxyType[str, jnp.ndarray],  # noqa: ARG001
+        next_regime_to_V_arr: MappingProxyType[RegimeName, jnp.ndarray],  # noqa: ARG001
         action: jnp.ndarray,
         state: jnp.ndarray,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -280,7 +310,7 @@ def test_model_with_bad_arg_raises_project_exception() -> None:
         Model(
             ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),
             regimes="not a mapping",  # ty: ignore[invalid-argument-type]
-            regime_id_class=int,
+            regime_id_class=int,  # ty: ignore[invalid-argument-type]
             initial_nodes={25: "n"},
             edges={},
         )

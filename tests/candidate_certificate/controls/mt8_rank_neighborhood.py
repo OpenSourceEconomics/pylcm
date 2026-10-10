@@ -10,16 +10,36 @@ Exit 1 means the ordering neighborhood is fail-open. Exit 0 means it is closed.
 Exit 2 means the control itself failed.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, NotRequired, TypedDict
+
+if TYPE_CHECKING:
+    from tests.candidate_certificate.verify import _RankControls
+
+
+if TYPE_CHECKING:
+    from tests.candidate_certificate.verify import _VerificationReport
+
+
+class _ControlCase(TypedDict):
+    exit: int
+    errors: list[str]
+
+
+class _ProcessOutput(TypedDict):
+    stdout: str
+    stderr: str
+    errors: NotRequired[list[str]]
+
+
+type _VerifierPayload = _VerificationReport | _ProcessOutput
 
 CERTIFICATE = Path("tests/test_grid_search_candidate_certificate.py")
 VERIFIER = Path("tests/candidate_certificate/verify.py")
@@ -31,11 +51,11 @@ ROUTES = (
 )
 
 
-def _emit(payload: dict[str, Any]) -> None:
+def _emit[PayloadValue](payload: Mapping[str, PayloadValue]) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
-def _run_verifier(root: Path) -> tuple[int, dict[str, Any]]:
+def _run_verifier(root: Path) -> tuple[int, _VerifierPayload]:
     completed = subprocess.run(
         [sys.executable, str(root / VERIFIER), "--repo-root", str(root)],
         capture_output=True,
@@ -43,13 +63,13 @@ def _run_verifier(root: Path) -> tuple[int, dict[str, Any]]:
         check=False,
     )
     try:
-        payload = json.loads(completed.stdout)
+        payload: _VerifierPayload = json.loads(completed.stdout)
     except json.JSONDecodeError:
         payload = {"stdout": completed.stdout, "stderr": completed.stderr}
     return completed.returncode, payload
 
 
-def _oracle_discrimination(root: Path) -> dict[str, Any]:
+def _oracle_discrimination(root: Path) -> _RankControls:
     """Compare a fixed ordering against the swept one on the same omission."""
     sys.path.insert(0, str(root / "tests" / "candidate_certificate"))
     try:
@@ -80,7 +100,7 @@ def main() -> int:
 
             certificate = root / CERTIFICATE
             original = certificate.read_text(encoding="utf-8")
-            cases: dict[str, dict[str, Any]] = {}
+            cases: dict[str, _ControlCase] = {}
 
             # Collapsing the swept matrix back to one fixed ordering must be rejected.
             collapsed = original.replace(

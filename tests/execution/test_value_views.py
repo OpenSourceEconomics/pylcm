@@ -7,7 +7,7 @@ declared as such. Neither is ever inferred from matching array lengths.
 """
 
 import math
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from types import MappingProxyType
 
 import jax
@@ -53,7 +53,9 @@ from _lcm.execution.value_views import (
     fail_if_value_transfer_exceeds_budget,
     plan_value_transfer_footprint,
 )
+from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import RegimeName, StateName
 
 _STATES = ("pref_type", "assets", "health")
 _SHAPE = (3, 4, 2)
@@ -111,7 +113,7 @@ def _selected_view(
     required: jax.sharding.Sharding,
     axis_names: tuple[str, ...] = _STATES,
     shape: tuple[int, ...] = _SHAPE,
-    state: str = "pref_type",
+    state: StateName = "pref_type",
     keep_axis: bool = False,
     width: int = 1,
 ) -> ValueViewDescriptor:
@@ -581,7 +583,7 @@ def _cache(
     *,
     transfers: tuple[ResolvedValueTransfer, ...],
     counts: tuple[int, ...],
-    generation: object = None,
+    generation: Hashable = None,
 ) -> PeriodTransferCache:
     return PeriodTransferCache(
         registry=BufferRegistry(),
@@ -595,14 +597,16 @@ def _cache(
     )
 
 
-def _arguments(*, stored: jax.Array) -> MappingProxyType[str, object]:
+def _arguments(*, stored: jax.Array) -> MappingProxyType[str, ArgumentTree]:
     return MappingProxyType(
         {"next_regime_to_V_arr": MappingProxyType({"retired": stored})}
     )
 
 
-def _delivered(*, arguments: Mapping[str, object]) -> np.ndarray:
-    return np.asarray(arguments["next_regime_to_V_arr"]["retired"])  # ty: ignore[not-subscriptable]
+def _delivered(*, arguments: Mapping[str, ArgumentTree]) -> np.ndarray:
+    branch = arguments["next_regime_to_V_arr"]
+    assert isinstance(branch, Mapping)
+    return np.asarray(branch["retired"])
 
 
 def test_a_shared_cache_serves_each_type_its_own_block() -> None:
@@ -699,7 +703,9 @@ def _single_copy(
     arguments = apply_value_transfer_plan(
         arguments=_arguments(stored=stored), plan=(transfer,), cache=cache
     )
-    copied = arguments["next_regime_to_V_arr"]["retired"]  # ty: ignore[not-subscriptable]
+    branch = arguments["next_regime_to_V_arr"]
+    assert isinstance(branch, Mapping)
+    copied = branch["retired"]
     assert isinstance(copied, jax.Array)
     assert copied is not stored
     return copied
@@ -859,13 +865,16 @@ def test_a_transfer_exactly_at_the_budget_is_admitted() -> None:
 
 
 def _program_reading(
-    *, stored: jax.Array, read: ValueRead, argument_leaf: object
+    *,
+    stored: jax.Array,
+    read: ValueRead,
+    argument_branch: PytreeValue | ShapeDtypePytree,
 ) -> MaterializedCoreProgram:
     del stored
     return MaterializedCoreProgram(
         name="main",
         function=_consume,
-        arguments={"next_regime_to_V_arr": {"retired": argument_leaf}},
+        arguments=MappingProxyType({"next_regime_to_V_arr": argument_branch}),
         requirements=CoreExecutionRequirements(value_reads=(read,)),
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
@@ -873,7 +882,9 @@ def _program_reading(
     )
 
 
-def _consume(*, next_regime_to_V_arr: MappingProxyType) -> jax.Array:
+def _consume(
+    *, next_regime_to_V_arr: MappingProxyType[RegimeName, jax.Array]
+) -> jax.Array:
     return next_regime_to_V_arr["retired"] + 1.0
 
 
@@ -885,14 +896,15 @@ def test_a_resolved_program_receives_the_selected_block() -> None:
     read = ValueRead(target=_ARTIFACT, source=_source(), view=transfer.view)
 
     resolved = resolve_core_program(
-        program=_program_reading(stored=stored, read=read, argument_leaf=stored),
+        program=_program_reading(
+            stored=stored, read=read, argument_branch={"retired": stored}
+        ),
         input_transfer_plan=(transfer,),
     )
 
-    assert (
-        np.asarray(resolved.arguments["next_regime_to_V_arr"]["retired"]).tobytes()  # ty: ignore[not-subscriptable]
-        == values[2].tobytes()
-    )
+    branch = resolved.arguments["next_regime_to_V_arr"]
+    assert isinstance(branch, Mapping)
+    assert np.asarray(branch["retired"]).tobytes() == values[2].tobytes()
 
 
 def test_a_read_and_its_transfer_must_declare_the_same_view() -> None:
@@ -906,7 +918,9 @@ def test_a_read_and_its_transfer_must_declare_the_same_view() -> None:
 
     with pytest.raises(ValueError, match="view"):
         resolve_core_program(
-            program=_program_reading(stored=stored, read=read, argument_leaf=stored),
+            program=_program_reading(
+                stored=stored, read=read, argument_branch={"retired": stored}
+            ),
             input_transfer_plan=(_selected_transfer(stored=stored, code=1),),
         )
 
@@ -918,7 +932,9 @@ def test_a_plain_read_cannot_be_planned_with_a_view() -> None:
 
     with pytest.raises(ValueError, match="view"):
         resolve_core_program(
-            program=_program_reading(stored=stored, read=read, argument_leaf=stored),
+            program=_program_reading(
+                stored=stored, read=read, argument_branch={"retired": stored}
+            ),
             input_transfer_plan=(_selected_transfer(stored=stored, code=1),),
         )
 
@@ -950,12 +966,17 @@ def test_an_abstract_view_input_has_the_consumer_shape() -> None:
     read = ValueRead(target=_ARTIFACT, source=_source(), view=transfer.view)
 
     described = abstract_program_inputs(
-        program=_program_reading(stored=stored, read=read, argument_leaf=stored),
+        program=_program_reading(
+            stored=stored, read=read, argument_branch={"retired": stored}
+        ),
         transfers=(transfer,),
         execution_sharding=_single(),
     )
 
-    leaf = described.arguments["next_regime_to_V_arr"]["retired"]  # ty: ignore[not-subscriptable]
+    branch = described.arguments["next_regime_to_V_arr"]
+    assert isinstance(branch, Mapping)
+    leaf = branch["retired"]
+    assert isinstance(leaf, jax.ShapeDtypeStruct)
     assert (leaf.shape, leaf.sharding) == ((4, 2), _single())
 
 
@@ -968,7 +989,9 @@ def test_an_abstract_view_input_with_the_stored_shape_is_refused() -> None:
 
     with pytest.raises(ValueError, match="shape mismatch"):
         resolve_core_program(
-            program=_program_reading(stored=stored, read=read, argument_leaf=stale),
+            program=_program_reading(
+                stored=stored, read=read, argument_branch={"retired": stale}
+            ),
             input_transfer_plan=(transfer,),
             abstract_inputs=True,
         )

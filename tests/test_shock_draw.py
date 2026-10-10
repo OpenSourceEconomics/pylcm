@@ -1,13 +1,14 @@
 """Tests for draw_shock sampling correctness across all shock grid types."""
 
 from types import MappingProxyType
-from typing import Any
+from typing import NotRequired
 
 import jax
 import numpy as np
 import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
+from typing_extensions import TypedDict
 
 from lcm import (
     LogNormalIIDProcess,
@@ -19,9 +20,42 @@ from lcm import (
     UniformIIDProcess,
 )
 
+
+class _UniformKwargs(TypedDict):
+    start: float
+    stop: float
+
+
+class _NormalKwargs(TypedDict):
+    mu: float
+    sigma: float
+
+
+class _AR1Kwargs(_NormalKwargs):
+    rho: float
+
+
+class _GaussAR1Kwargs(_AR1Kwargs):
+    gauss_hermite: NotRequired[bool]
+
+
+class _MixtureKwargs(TypedDict):
+    n_std: float
+    p1: float
+    mu1: float
+    sigma1: float
+    mu2: float
+    sigma2: float
+
+
+class _TauchenMixtureKwargs(_MixtureKwargs):
+    rho: float
+    mu: float
+
+
 _N_DRAWS = 10_000
 
-_NORMAL_MIXTURE_KWARGS: dict[str, Any] = {
+_NORMAL_MIXTURE_KWARGS: _MixtureKwargs = {
     "n_std": 3.0,
     "p1": 0.9,
     "mu1": 0.0,
@@ -30,7 +64,7 @@ _NORMAL_MIXTURE_KWARGS: dict[str, Any] = {
     "sigma2": 0.3,
 }
 
-_TAUCHEN_NORMAL_MIXTURE_KWARGS: dict[str, Any] = {
+_TAUCHEN_NORMAL_MIXTURE_KWARGS: _TauchenMixtureKwargs = {
     "rho": 0.8,
     "mu": 1.0,
     "n_std": 3.0,
@@ -58,7 +92,7 @@ def _draw_many(*, grid, params, key_seed=0, current_value=None):
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_uniform(params_at_init):
     """Uniform.draw_shock uses start/stop params."""
-    kwargs: dict[str, Any] = {"start": 2.0, "stop": 4.0}
+    kwargs: _UniformKwargs = {"start": 2.0, "stop": 4.0}
     if params_at_init:
         grid = UniformIIDProcess(n_points=5, **kwargs)
         params = grid.params
@@ -74,7 +108,7 @@ def test_draw_shock_uniform(params_at_init):
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_normal(params_at_init):
     """Normal.draw_shock uses mu/sigma params."""
-    kwargs: dict[str, Any] = {"mu": 5.0, "sigma": 0.1}
+    kwargs: _NormalKwargs = {"mu": 5.0, "sigma": 0.1}
     if params_at_init:
         grid = NormalIIDProcess(n_points=5, gauss_hermite=True, **kwargs)
         params = grid.params
@@ -89,7 +123,7 @@ def test_draw_shock_normal(params_at_init):
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_lognormal(params_at_init):
     """LogNormal.draw_shock produces positive samples with correct log-moments."""
-    kwargs: dict[str, Any] = {"mu": 1.0, "sigma": 0.1}
+    kwargs: _NormalKwargs = {"mu": 1.0, "sigma": 0.1}
     if params_at_init:
         grid = LogNormalIIDProcess(n_points=5, gauss_hermite=True, **kwargs)
         params = grid.params
@@ -105,7 +139,7 @@ def test_draw_shock_lognormal(params_at_init):
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_tauchen(params_at_init):
     """Tauchen.draw_shock uses mu/sigma/rho params."""
-    kwargs: dict[str, Any] = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
+    kwargs: _AR1Kwargs = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
     if params_at_init:
         grid = TauchenAR1Process(n_points=5, gauss_hermite=True, **kwargs)
         params = grid.params
@@ -120,7 +154,7 @@ def test_draw_shock_tauchen(params_at_init):
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_rouwenhorst(params_at_init):
     """Rouwenhorst.draw_shock uses mu/sigma/rho params."""
-    kwargs: dict[str, Any] = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
+    kwargs: _AR1Kwargs = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
     if params_at_init:
         grid = RouwenhorstAR1Process(n_points=5, **kwargs)
         params = grid.params
@@ -176,7 +210,7 @@ def test_draw_shock_tauchen_normal_mixture(params_at_init):
 def test_ar1_draw_shock_unconditional_moments(grid_cls):
     """Long-run simulated moments match AR(1) unconditional moments."""
     mu, rho, sigma = 0.5, 0.7, 0.3
-    kwargs: dict[str, Any] = {"rho": rho, "sigma": sigma, "mu": mu}
+    kwargs: _GaussAR1Kwargs = {"rho": rho, "sigma": sigma, "mu": mu}
     if grid_cls is TauchenAR1Process:
         kwargs["gauss_hermite"] = True
     grid = grid_cls(n_points=11, **kwargs)
@@ -224,7 +258,9 @@ _AS_WRITTEN_CASES = [
 
 @pytest.mark.parametrize(("process", "params"), _AS_WRITTEN_CASES)
 def test_draw_shock_rounds_sigma_times_the_standard_normal_as_written(
-    *, process: Any, params: dict[str, float]
+    *,
+    process: RouwenhorstAR1Process | TauchenAR1Process | NormalIIDProcess,
+    params: dict[str, float],
 ) -> None:
     """A compiled draw equals `mu + rho * x + sigma * z`, `z` the standard normal.
 
@@ -238,11 +274,18 @@ def test_draw_shock_rounds_sigma_times_the_standard_normal_as_written(
     frozen = MappingProxyType(
         {k: v for k, v in params.items() if k in _DRAW_KEYS[type(process)]}
     )
+    # The oracle deliberately passes Python-scalar parameters to the low-level draw.
     if type(process) is NormalIIDProcess:
-        draw = lambda k, _v: process.draw_shock(params=frozen, key=k)  # noqa: E731
+        draw = lambda k, _v: process.draw_shock(  # noqa: E731
+            params=frozen,  # ty: ignore[invalid-argument-type]
+            key=k,
+        )
     else:
+        assert isinstance(process, (RouwenhorstAR1Process, TauchenAR1Process))
         draw = lambda k, v: process.draw_shock(  # noqa: E731
-            params=frozen, key=k, current_value=v
+            params=frozen,  # ty: ignore[invalid-argument-type]
+            key=k,
+            current_value=v,
         )
     drawn = jax.jit(jax.vmap(draw))(keys, x)
     z = np.asarray(jax.jit(jax.vmap(lambda k: jax.random.normal(key=k)))(keys))
@@ -255,7 +298,9 @@ def test_draw_shock_rounds_sigma_times_the_standard_normal_as_written(
     np.testing.assert_array_equal(np.asarray(drawn), expected)
 
 
-_DRAW_KEYS = {
+_DRAW_KEYS: dict[
+    type[RouwenhorstAR1Process | TauchenAR1Process | NormalIIDProcess], tuple[str, ...]
+] = {
     RouwenhorstAR1Process: ("rho", "sigma", "mu"),
     TauchenAR1Process: ("rho", "sigma", "mu"),
     NormalIIDProcess: ("sigma", "mu"),

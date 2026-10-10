@@ -29,7 +29,7 @@ from _lcm.regime_building.next_state import get_next_state_function_for_solution
 from _lcm.typing import (
     EconFunctionsMapping,
     FloatND,
-    NextStateSimulationFunction,
+    NextStateSolutionFunction,
     RegimeName,
     StateName,
     StateOrActionName,
@@ -111,7 +111,7 @@ class _DeclaredLiquidLaw:
     landing points on that grid and their derivative with respect to savings.
     """
 
-    next_state_func: NextStateSimulationFunction
+    next_state_func: NextStateSolutionFunction
     """The composed next-state DAG with the post-decision function removed."""
 
     post_decision_name: str
@@ -147,18 +147,13 @@ class _DeclaredLiquidLaw:
 def _landing_point(
     savings: ScalarFloat,
     *,
-    next_state_func: NextStateSimulationFunction,
+    next_state_func: NextStateSolutionFunction,
     post_decision_name: str,
     law_name: TransitionFunctionName,
     array_params: dict[str, ValueND],
 ) -> FloatND:
     """Where one savings level lands next period under the composed law."""
-    # The builder is annotated with the simulation shape, which nests by
-    # target regime; built for the solution it returns one flat mapping
-    # keyed by law name, so the single index yields the array.
-    return next_state_func(**{post_decision_name: savings}, **array_params)[  # ty: ignore[invalid-return-type]
-        law_name
-    ]
+    return next_state_func(**{post_decision_name: savings}, **array_params)[law_name]
 
 
 def _fail_if_law_reaches_past_the_post_decision(

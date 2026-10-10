@@ -16,7 +16,7 @@ from dags import rename_arguments
 
 import lcm
 from lcm import LinSpacedGrid, Model
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND, UserParamsNode
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
@@ -113,7 +113,7 @@ def build_params(
     tax_rate: float = 0.3,
     tax_exemption: float = 12.0,
     budget_name: str = "resources",
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the tax-bracket one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
     return {

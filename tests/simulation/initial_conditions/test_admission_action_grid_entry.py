@@ -7,7 +7,7 @@ import sys
 import weakref
 from collections.abc import Callable, Mapping
 from functools import partial, partialmethod
-from typing import Any
+from typing import NotRequired, TypedDict, Unpack
 
 import jax
 import jax.core
@@ -16,11 +16,12 @@ import numpy as np
 import pytest
 
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
-from _lcm.simulation import host_operations
+from _lcm.simulation import action_grids, host_operations
 from _lcm.simulation import initial_conditions as preflight
 from _lcm.simulation.action_grids import PreflightActionGrids
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
+from _lcm.typing import PytreeValue
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -120,9 +121,43 @@ def _isolated_preflight_profile_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _guard_action_mesh(
-    *args: Any, original: Callable[..., Any], observations: list[bool], **kwargs: Any
-) -> Any:
+class CompileCandidateInputs(TypedDict):
+    key: host_operations.Hashable
+    function: host_operations.Callable[..., host_operations.PytreeValue]
+    arguments: host_operations.Mapping[
+        host_operations.ReferenceName, host_operations.ShapeDtypePytree
+    ]
+    static_arguments: host_operations.Mapping[
+        host_operations.ReferenceName, host_operations.StaticArgument
+    ]
+    output_sharding: NotRequired[host_operations.jax.sharding.Sharding | None]
+
+
+class ActionResolutionInputs(TypedDict):
+    action_names: tuple[action_grids.ActionName, ...]
+    grids: action_grids.MappingProxyType[
+        action_grids.ActionName, action_grids.FloatND | action_grids.IntND
+    ]
+    retained_arrays: action_grids.ArrayTree
+
+
+class FeasibilityInputs(TypedDict):
+    feasibility_func: preflight.Callable[..., preflight.BoolND]
+    subject_states: preflight.Mapping[str, preflight.FloatND | preflight.IntND]
+    action_kwargs: preflight.Mapping[str, preflight.FloatND | preflight.IntND]
+    filtered_params: preflight.Mapping[preflight.ReferenceName, preflight.ParamsLeaf]
+    flat_actions: preflight.Mapping[
+        preflight.ActionName, preflight.FloatND | preflight.IntND
+    ]
+    memory: NotRequired[preflight.SimulationMemory | None]
+
+
+def _guard_action_mesh[Result](
+    *args: jax.typing.ArrayLike,
+    original: Callable[..., Result],
+    observations: list[bool],
+    **kwargs: str | bool,
+) -> Result:
     if (
         sys._getframe(1).f_code
         is inspect.unwrap(preflight._build_flat_action_grid).__code__
@@ -134,8 +169,11 @@ def _guard_action_mesh(
     return original(*args, **kwargs)
 
 
-def _over_budget_peak(
-    *, compiled: jax.stages.Compiled, profiled: list[jax.stages.Compiled], **kwargs: Any
+def _over_budget_peak[Ignored](
+    *,
+    compiled: jax.stages.Compiled,
+    profiled: list[jax.stages.Compiled],
+    **kwargs: Ignored,
 ) -> CompilerMemoryReservation:
     del kwargs
     profiled.append(compiled)
@@ -143,14 +181,14 @@ def _over_budget_peak(
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _profile_action_grid(
+def _profile_action_grid[Result](
     self: ProfiledSimulationOperations,
     *,
-    original: Callable[..., Any],
+    original: Callable[..., Result],
     monkeypatch: pytest.MonkeyPatch,
     profiled: list[jax.stages.Compiled],
-    **kwargs: Any,
-) -> Any:
+    **kwargs: Unpack[CompileCandidateInputs],
+) -> Result:
     if inspect.unwrap(kwargs["function"]) is inspect.unwrap(
         preflight._build_flat_action_grid
     ):
@@ -165,13 +203,13 @@ def _profile_action_grid(
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _forbid_profiled_dispatch(
+def _forbid_profiled_dispatch[Result](
     self: jax.stages.Compiled,
-    *args: Any,
+    *args: PytreeValue,
     profiled: list[jax.stages.Compiled],
-    original: Callable[..., Any],
-    **kwargs: Any,
-) -> Any:
+    original: Callable[..., Result],
+    **kwargs: PytreeValue,
+) -> Result:
     if any(self is executable for executable in profiled):
         raise AssertionError("Over-budget action-grid executable was dispatched")
     return original(self, *args, **kwargs)
@@ -229,7 +267,7 @@ def test_simulate_refuses_preflight_action_grid_before_dispatch(
         profiled[0]()
 
 
-def _require_serial_retry(**kwargs: Any) -> None:
+def _require_serial_retry[Ignored](**kwargs: Ignored) -> None:
     del kwargs
     raise preflight._SerialValidationRequired
 
@@ -238,12 +276,17 @@ def _require_serial_retry(**kwargs: Any) -> None:
 def _record_resolution(
     self: PreflightActionGrids,
     *,
-    original: Callable[..., Any],
+    original: Callable[
+        ...,
+        action_grids.Mapping[
+            action_grids.ActionName, action_grids.FloatND | action_grids.IntND
+        ],
+    ],
     products: list[Mapping[str, FloatND]],
-    **kwargs: Any,
+    **kwargs: Unpack[ActionResolutionInputs],
 ) -> Mapping[str, FloatND]:
     if self.memory is not None and products:
-        owned = measure_buffer_footprint(tree=products)
+        owned = measure_buffer_footprint(tree=tuple(products))
         missing = resident_bytes_by_device(
             live=owned, arguments=self.memory.snapshot(), devices=tuple(owned.spans)
         )
@@ -398,16 +441,21 @@ def test_distinct_regime_products_are_cumulatively_owned_during_preflight(
 def _observe_product_owners(
     self: PreflightActionGrids,
     *,
-    original: Callable[..., Any],
-    references: list[weakref.ReferenceType[object]],
-    **kwargs: Any,
+    original: Callable[
+        ...,
+        action_grids.Mapping[
+            action_grids.ActionName, action_grids.FloatND | action_grids.IntND
+        ],
+    ],
+    references: list[weakref.ReferenceType[jax.Array]],
+    **kwargs: Unpack[ActionResolutionInputs],
 ) -> Mapping[str, FloatND]:
     result = original(self, **kwargs)
     references.extend(weakref.ref(value) for value in result.values())
     return result
 
 
-def _controlled_feasibility_failure(**kwargs: Any) -> None:
+def _controlled_feasibility_failure(**kwargs: Unpack[FeasibilityInputs]) -> None:
     np.testing.assert_array_equal(kwargs["flat_actions"]["choice"], [0, 0, 0, 1, 1, 1])
     np.testing.assert_array_equal(kwargs["flat_actions"]["saving"], [0, 1, 2, 0, 1, 2])
     raise RuntimeError("Controlled failure after Cartesian admission")
@@ -440,7 +488,7 @@ def test_preflight_releases_cartesian_owners_without_cyclic_gc(
     """Success and exceptions release temporary Cartesian arrays immediately."""
     model, params, initial = _inputs(budget=2**28)
     solution = model.solve(params=params, log_level="off")
-    references: list[weakref.ReferenceType[object]] = []
+    references: list[weakref.ReferenceType[jax.Array]] = []
     monkeypatch.setattr(
         PreflightActionGrids,
         "resolve",

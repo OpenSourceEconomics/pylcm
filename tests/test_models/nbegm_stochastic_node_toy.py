@@ -26,6 +26,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     feasible,
@@ -260,7 +261,7 @@ def build_params(
     with_kind: bool = False,
     base_income_hi: float = 4.0,
     income_timing: str = "current",
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the stochastic-node tax toy.
 
     `income` carries the IID process distribution params (`mu`, `sigma`); the intrinsic

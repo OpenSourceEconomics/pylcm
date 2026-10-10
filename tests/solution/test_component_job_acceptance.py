@@ -17,9 +17,39 @@ import shutil
 import subprocess
 from collections import Counter
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 import numpy as np
 import pytest
+
+
+class _RawLeaf(TypedDict):
+    devices: list[list[str | int]]
+    sharding: str
+    memory_kind: str | None
+    dtype: str
+    shape: list[int]
+    sha256: str
+
+
+class _Fields(TypedDict):
+    live_value: list[float]
+    live_choice: list[int]
+    live_pref_type: list[int]
+    live_wealth: list[float]
+    dead_value: list[float]
+
+
+class _WitnessReport(TypedDict):
+    raw: dict[str, _RawLeaf]
+    default_memory_kinds: dict[str, str]
+    values: dict[str, str]
+    panels: dict[str, str]
+    fields: _Fields
+    misplaced: NotRequired[list[str]]
+    simulation_load_solution_values: NotRequired[dict[str, str]]
+    load_solution_values: NotRequired[dict[str, str]]
+
 
 _PRECISIONS = pytest.mark.parametrize("x64", [False, True], ids=["fp32", "fp64"])
 _JIT = pytest.mark.parametrize("enable_jit", [True, False], ids=["jit", "eager"])
@@ -162,7 +192,7 @@ def _run_witness(
     arguments: list[str],
     platform: str,
     x64: bool,
-) -> dict:
+) -> _WitnessReport:
     pixi = shutil.which("pixi")
     if pixi is None:
         raise RuntimeError("The fresh witness requires the active Pixi executable.")

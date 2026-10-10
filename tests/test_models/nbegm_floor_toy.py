@@ -14,7 +14,7 @@ import jax.numpy as jnp
 
 import lcm
 from lcm import LinSpacedGrid, Model
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND, UserParamsNode
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
@@ -86,7 +86,7 @@ def build_params(
     income: float = 1.0,
     base_income: float = 2.0,
     floor_asset: float = 3.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the floor one-asset toy.
 
     `floor_asset` is the liquid level below which the means-tested transfer binds —

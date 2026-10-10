@@ -38,8 +38,23 @@ from _lcm.simulation.subject_groups import type_local_template
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _states_for_period
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams
+from _lcm.typing import (
+    FlatParams,
+    PytreeValue,
+    QualifiedName,
+    ShapeDtypePytree,
+    SimulationPolicy,
+)
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ActionName, ReferenceName, RegimeName
+
+# Output descriptors of the finite ranking stage: the chosen actions, the value
+# they attain, and the nested-policy fallback flag.
+type _FiniteDecisionOutput = tuple[
+    Mapping[ActionName, jax.ShapeDtypeStruct],
+    jax.ShapeDtypeStruct,
+    jax.ShapeDtypeStruct,
+]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -54,17 +69,16 @@ class AbstractSimulationProfile:
     """
 
     executable: jax.stages.Compiled
-    arguments: Mapping[str, object]
+    arguments: MappingProxyType[ReferenceName, ShapeDtypePytree]
     memory: CompilerMemoryReservation
 
     def __post_init__(self) -> None:
-        """Reject caller owners and snapshot only their immutable descriptors."""
+        """Reject caller owners; a profile keeps only immutable descriptors."""
         if any(
             not isinstance(leaf, jax.ShapeDtypeStruct)
             for leaf in jax.tree.leaves(self.arguments)
         ):
             raise ExecutionPlanningError("Forward profiles require abstract arguments.")
-        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -87,7 +101,7 @@ def profile_forward_programs(
     widths: Mapping[str, int],
     ordinary_key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
-    policies: Mapping[int, Mapping[str, object]] | None = None,
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
 ) -> Mapping[tuple[int, str, str], ForwardProgramProfile]:
     """Prepare canonical entry descriptors for focused core-level profiling.
 
@@ -153,7 +167,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     columns: Mapping[str, jax.ShapeDtypeStruct],
     ordinary_key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
-    policy: object = None,
+    policy: SimulationPolicy | None = None,
     wave: CompilationWave | None = None,
 ) -> Mapping[str, ForwardProgramProfile]:
     """Bind one actual current carrier to its decision, transition and route.
@@ -280,7 +294,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             feeds_forward=True,
         )
         next_values = MappingProxyType(
-            {**next_values, **cast("Mapping[str, object]", folded)}
+            {**next_values, **cast("Mapping[RegimeName, ShapeDtypePytree]", folded)}
         )
     references = {}
     if regime.same_period_ref_regimes:
@@ -314,7 +328,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     )
     if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
         actions, _, _ = cast(
-            "tuple[Mapping[str, object], object, object]",
+            "_FiniteDecisionOutput",
             _profile_finite_decision(
                 runtime=runtime,
                 regime=regime,
@@ -363,7 +377,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             age=age,
         )
         indices, _ = cast(
-            "tuple[jax.ShapeDtypeStruct, object]",
+            "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
             _prepare_program(
                 runtime=runtime,
                 program=regime.simulation.programs.forward_decision[period],
@@ -381,12 +395,14 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             indices = jax.ShapeDtypeStruct(
                 (n_subjects,), indices.dtype, sharding=subject
             )
-        decoder_arguments = {
-            "flat_indices": _placed_abstract(
-                leaf=indices, sharding=subject if indices.ndim else shared
-            ),
-            "grids": _shared_tree(tree=base.actions, devices=devices),
-        }
+        decoder_arguments = MappingProxyType(
+            {
+                "flat_indices": _placed_abstract(
+                    leaf=indices, sharding=subject if indices.ndim else shared
+                ),
+                "grids": _shared_tree(tree=base.actions, devices=devices),
+            }
+        )
         subject_arg_names = ("flat_indices",) if indices.ndim else ()
         if wave is None:
             decoded = runtime.operations.prepare_abstract(
@@ -406,7 +422,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             actions = decoded.executable.out_info
         else:
             actions = cast(
-                "Mapping[str, object]",
+                "Mapping[ActionName, ShapeDtypePytree]",
                 runtime.operations.lower_abstract(
                     function=_lookup_values_from_indices,
                     arguments=decoder_arguments,
@@ -459,14 +475,14 @@ def _profile_finite_decision(
     period: int,
     n_subjects: int,
     widths: Mapping[str, int],
-    policy: object,
+    policy: SimulationPolicy | None,
     states: Mapping[str, jax.ShapeDtypeStruct],
     canonical_states: Mapping[str, jax.ShapeDtypeStruct],
-    params: Mapping[str, object],
+    params: Mapping[QualifiedName, ShapeDtypePytree],
     age: jax.ShapeDtypeStruct,
-    next_values: Mapping[str, object],
-    references: Mapping[str, object],
-) -> object:
+    next_values: Mapping[RegimeName, ShapeDtypePytree],
+    references: Mapping[ReferenceName, ShapeDtypePytree],
+) -> ShapeDtypePytree:
     """Use actual payload metadata and the preparation stage's bank schema.
 
     Returns:
@@ -546,16 +562,16 @@ def _prepare_program(
     *,
     runtime: SimulationRuntime,
     program: CoreProgram,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
     n_subjects: int,
     widths: Mapping[str, int],
     family: str,
-    regime_name: str,
+    regime_name: RegimeName,
     profiles: dict[str, ForwardProgramProfile],
     wave: CompilationWave | None,
     feeds_forward: bool = False,
-) -> object:
+) -> ShapeDtypePytree:
     """Compile a forward program here, or lower it into `wave`.
 
     A compiled program's profile is stored in `profiles` under `family`. A lowered
@@ -598,7 +614,7 @@ def _profile_program(
     *,
     runtime: SimulationRuntime,
     program: CoreProgram,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
     n_subjects: int,
     widths: Mapping[str, int],
@@ -618,7 +634,10 @@ def _profile_program(
         )
     return ForwardProgramProfile(
         executable=cast("jax.stages.Compiled", compiled.executable),
-        arguments=arguments,
+        # Preparation refused any argument leaf that is not a shape descriptor.
+        arguments=MappingProxyType(
+            dict(cast("Mapping[ReferenceName, ShapeDtypePytree]", arguments))
+        ),
         memory=compiled.memory,
     )
 
@@ -654,7 +673,7 @@ def _stochastic_keys(
 
 # keyword-only-exempt: library-callback=jax.tree.map
 def _shared_leaf(
-    leaf: object, *, devices: tuple[jax.Device, ...]
+    leaf: jax.Array | jax.ShapeDtypeStruct, *, devices: tuple[jax.Device, ...]
 ) -> jax.ShapeDtypeStruct:
     """Project one retained leaf to the same shared destination layout.
 
@@ -674,8 +693,10 @@ def _shared_leaf(
 
 
 def _shared_tree(
-    *, tree: Mapping[str, object], devices: tuple[jax.Device, ...]
-) -> Mapping[str, object]:
+    *,
+    tree: Mapping[str, PytreeValue | ShapeDtypePytree],
+    devices: tuple[jax.Device, ...],
+) -> Mapping[str, ShapeDtypePytree]:
     """Project actual retained metadata to the same shared destination layout."""
     return jax.tree.map(partial(_shared_leaf, devices=devices), tree)
 

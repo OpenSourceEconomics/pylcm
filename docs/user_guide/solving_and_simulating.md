@@ -473,7 +473,7 @@ df = result.to_dataframe(additional_targets=["utility", "consumption"])
 df = result.to_dataframe(additional_targets="all")
 
 # See what's available
-result.available_targets  # ['consumption', 'earnings', 'utility', ...]
+result.available_targets  # ('consumption', 'earnings', 'utility', ...)
 ```
 
 Each target is computed for regimes where it exists; rows from other regimes get NaN.
@@ -489,9 +489,9 @@ Returns discrete variables as raw integer codes instead of categorical labels.
 ### Metadata
 
 ```python
-result.regime_names  # ['retirement', 'working_life']
-result.state_names  # ['health', 'wealth']
-result.action_names  # ['consumption', 'work']
+result.regime_names  # ('retirement', 'working_life')
+result.state_names  # ('health', 'wealth')
+result.action_names  # ('consumption', 'work')
 result.n_periods  # 50
 result.n_subjects  # 1000
 ```

@@ -3,7 +3,7 @@
 import re
 import threading
 from collections.abc import Hashable
-from typing import Any
+from typing import Never, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -12,6 +12,13 @@ import pytest
 
 import lcm.model as model_module
 from _lcm.simulation.chunk_planning import SimulationChunkPlan
+from _lcm.simulation.runtime import SimulationRuntime
+from tests.execution._jax_callback_types import (
+    CompileOptions,
+    CompilerOptions,
+    LowerOptions,
+)
+from tests.simulation._callback_types import ChunkPreparation, ChunkPreparationResult
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
@@ -22,6 +29,25 @@ _DEBUG_SECTIONS = frozenset(
     {"FileNames", "FunctionNames", "FileLocations", "StackFrames"}
 )
 _WORKERS = (1, 2)
+
+
+type _ChunkContract = tuple[
+    int,
+    int,
+    tuple[tuple[str, int, int], ...],
+    dict[jax.Device, int],
+    dict[jax.Device, int],
+    dict[jax.Device, int],
+    dict[jax.Device, int],
+]
+
+
+class _Observation(TypedDict):
+    lowerings: list[bool]
+    compiles: list[tuple[bool, str]]
+    published: dict[Hashable, str]
+    contract: _ChunkContract
+    panel: pd.DataFrame
 
 
 def _program_text(*, hlo: str) -> str:
@@ -38,7 +64,7 @@ def _program_text(*, hlo: str) -> str:
     return re.sub(r", metadata=\{[^}]*\}", "", "\n\n".join(blocks))
 
 
-def _readable_key(key: Hashable) -> tuple[object, ...]:
+def _readable_key(key: Hashable) -> tuple[Hashable, ...]:
     """Project a runtime lowering key onto its argument names and specialization.
 
     The program identity is an object address, so it is dropped; the argument
@@ -51,7 +77,7 @@ def _readable_key(key: Hashable) -> tuple[object, ...]:
 
 def _simulate_and_observe(
     *, monkeypatch: pytest.MonkeyPatch, max_compilation_workers: int
-) -> dict[str, Any]:
+) -> _Observation:
     """Simulate a fresh budgeted model, recording chunk planning's lowerings,
     compiles, published forward executables and plan."""
     model = _stateful_target_model()
@@ -72,15 +98,22 @@ def _simulate_and_observe(
     compile_body = jax.stages.Lowered.compile
     prepare = model_module.prepare_simulation_chunks
 
-    def observe_lower(self: jax.stages.Traced, *args: Any, **kwargs: Any) -> Any:
+    def observe_lower(
+        self: jax.stages.Traced, *args: Never, **kwargs: Unpack[LowerOptions]
+    ) -> jax.stages.Lowered:
         lowered = lower_body(self, *args, **kwargs)
         if planning[0]:
             with lock:
                 lowerings.append(threading.get_ident() == caller)
         return lowered
 
-    def observe_compile(self: jax.stages.Lowered, *args: Any, **kwargs: Any) -> Any:
-        compiled = compile_body(self, *args, **kwargs)
+    # keyword-only-exempt: library-callback=jax.stages.Lowered.compile
+    def observe_compile(
+        self: jax.stages.Lowered,
+        compiler_options: CompilerOptions | None = None,
+        **kwargs: Unpack[CompileOptions],
+    ) -> jax.stages.Compiled:
+        compiled = compile_body(self, compiler_options, **kwargs)
         if planning[0]:
             with lock:
                 compiles.append(
@@ -91,21 +124,19 @@ def _simulate_and_observe(
                 )
         return compiled
 
-    def observe_prepare(**call: Any) -> Any:
+    def observe_prepare(**call: Unpack[ChunkPreparation]) -> ChunkPreparationResult:
         runtime = next(iter(call["regimes"].values())).simulation.programs.executor
+        assert isinstance(runtime, SimulationRuntime)
         before = set(runtime.cache)
         planning[0] = True
         try:
             prepared = prepare(**call)
         finally:
             planning[0] = False
-        published.update(
-            {
-                key: _program_text(hlo=entry.executable.as_text() or "")
-                for key, entry in runtime.cache.items()
-                if key not in before
-            }
-        )
+        for key, entry in runtime.cache.items():
+            if key not in before:
+                assert isinstance(entry.executable, jax.stages.Compiled)
+                published[key] = _program_text(hlo=entry.executable.as_text() or "")
         plans.append(prepared.plan)
         return prepared
 
@@ -145,7 +176,7 @@ def _simulate_and_observe(
 
 
 @pytest.fixture(scope="module")
-def observed() -> dict[int, dict[str, Any]]:
+def observed() -> dict[int, _Observation]:
     with pytest.MonkeyPatch.context() as monkeypatch:
         return {
             workers: _simulate_and_observe(
@@ -157,7 +188,7 @@ def observed() -> dict[int, dict[str, Any]]:
 
 @pytest.mark.parametrize("workers", _WORKERS)
 def test_chunk_planning_lowers_every_program_on_the_calling_thread(
-    *, observed: dict[int, dict[str, Any]], workers: int
+    *, observed: dict[int, _Observation], workers: int
 ) -> None:
     lowerings = observed[workers]["lowerings"]
     assert (len(lowerings) > 0, all(lowerings)) == (True, True)
@@ -165,7 +196,7 @@ def test_chunk_planning_lowers_every_program_on_the_calling_thread(
 
 @pytest.mark.parametrize("workers", _WORKERS)
 def test_chunk_planning_compiles_every_forward_program_off_the_calling_thread(
-    *, observed: dict[int, dict[str, Any]], workers: int
+    *, observed: dict[int, _Observation], workers: int
 ) -> None:
     pooled = {
         text for on_caller, text in observed[workers]["compiles"] if not on_caller
@@ -175,7 +206,7 @@ def test_chunk_planning_compiles_every_forward_program_off_the_calling_thread(
 
 @pytest.mark.parametrize("workers", _WORKERS)
 def test_chunk_planning_publishes_one_executable_per_forward_program(
-    *, observed: dict[int, dict[str, Any]], workers: int
+    *, observed: dict[int, _Observation], workers: int
 ) -> None:
     """The small model's four forward programs, each at three subjects."""
     step = ("age", "koopmans_aggregator__discount_factor", "period", "saving", "wealth")
@@ -203,7 +234,7 @@ def test_chunk_planning_publishes_one_executable_per_forward_program(
 
 
 def test_chunk_planning_compiles_the_same_forward_programs_for_every_worker_count(
-    observed: dict[int, dict[str, Any]],
+    observed: dict[int, _Observation],
 ) -> None:
     def programs(workers: int) -> list[str]:
         return sorted(observed[workers]["published"].values())
@@ -215,13 +246,13 @@ def test_chunk_planning_compiles_the_same_forward_programs_for_every_worker_coun
 
 
 def test_chunk_planning_admits_the_same_chunk_contract_for_every_worker_count(
-    observed: dict[int, dict[str, Any]],
+    observed: dict[int, _Observation],
 ) -> None:
     assert observed[2]["contract"] == observed[1]["contract"]
 
 
 def test_chunk_planning_simulates_the_same_panel_for_every_worker_count(
-    observed: dict[int, dict[str, Any]],
+    observed: dict[int, _Observation],
 ) -> None:
     pd.testing.assert_frame_equal(
         observed[2]["panel"], observed[1]["panel"], check_exact=True

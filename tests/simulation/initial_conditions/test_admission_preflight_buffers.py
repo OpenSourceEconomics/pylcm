@@ -22,7 +22,7 @@ from _lcm.simulation.initial_conditions import (
 )
 from _lcm.simulation.residency import DeviceBufferFootprint, resident_bytes_by_device
 from _lcm.transition_checks import _SerialValidationRequired
-from _lcm.typing import FlatParams, InitialConditions
+from _lcm.typing import FlatParams, InitialConditions, PytreeValue
 from _lcm.utils.logging import get_logger
 from lcm import AgeGrid, Model
 from lcm.exceptions import ExecutionPlanningError
@@ -120,10 +120,10 @@ def test_resource_failures_never_select_serial_diagnostics(
     model, params, initial = _case()
     expected = error_type("resource sentinel")
 
-    def denied(**_kwargs: object) -> None:
+    def denied[Ignored](**_kwargs: Ignored) -> None:
         raise expected
 
-    def forbidden(**_kwargs: object) -> None:
+    def forbidden[Ignored](**_kwargs: Ignored) -> None:
         pytest.fail("Resource failure selected serial validation.")
 
     monkeypatch.setattr(initial_module, "_pack_initial_summary", denied)
@@ -147,7 +147,7 @@ def test_summary_allocation_is_refused_before_dispatch_and_inputs_survive(
     """Real admission refuses an unfunded summary and accepts generous headroom."""
     model, params, initial = _case(n_subjects=1024)
     generous = dataclasses.replace(model._execution, device_memory_bytes=2**25)
-    empty = DeviceBufferFootprint(spans={})
+    empty = DeviceBufferFootprint(spans=MappingProxyType({}))
     assert model.ages is not None
     memory = _preflight_memory(
         execution=generous,
@@ -173,11 +173,13 @@ def test_summary_allocation_is_refused_before_dispatch_and_inputs_survive(
     dispatched = []
     original = jax.stages.Compiled.__call__
 
-    def observe(self: jax.stages.Compiled, *args: object, **kwargs: object) -> object:
+    def observe(
+        self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         dispatched.append(self)
         return original(self, *args, **kwargs)
 
-    def forbidden(**_kwargs: object) -> None:
+    def forbidden[Ignored](**_kwargs: Ignored) -> None:
         pytest.fail("A valid budget witness selected unprofiled serial diagnostics.")
 
     monkeypatch.setattr(jax.stages.Compiled, "__call__", observe)

@@ -2,15 +2,16 @@
 
 import gc
 import weakref
-from collections.abc import Callable
 from typing import cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import ArrayLike, DTypeLike
 
 from _lcm.execution.eager_core import make_eager_core
+from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ValueND
 from tests.execution.test_eager_core import eager_program, internal_eager_program
@@ -28,15 +29,26 @@ def test_weak_binding_shares_one_allocation_and_releases_call_owners(
     assert source.committed
     source_ref = weakref.ref(source)
     normalized_refs: list[weakref.ReferenceType[ValueND]] = []
-    outputs: list[object] = []
-    calls: list[object] = []
-    original_asarray = cast("Callable[..., ValueND]", jnp.asarray)
+    outputs: list[PytreeValue] = []
+    calls: list[DTypeLike | None] = []
+    original_asarray = jnp.asarray
 
-    def observe(*args: object, **kwargs: object) -> ValueND:
-        calls.append(kwargs.get("dtype"))
-        return original_asarray(*args, **kwargs)
+    # keyword-only-exempt: library-callback=jax.numpy.asarray
+    def observe(
+        a: ArrayLike,
+        dtype: DTypeLike | None = None,
+        order: str | None = None,
+        *,
+        copy: bool | None = None,
+        device: jax.Device | jax.sharding.Sharding | None = None,
+        out_sharding: jax.NamedSharding | jax.P | None = None,
+    ) -> ValueND:
+        calls.append(dtype)
+        return original_asarray(
+            a, dtype, order, copy=copy, device=device, out_sharding=out_sharding
+        )
 
-    def body(*, first: ValueND, second: ValueND) -> object:
+    def body(*, first: ValueND, second: ValueND) -> PytreeValue:
         original = source_ref()
         assert original is not None
         assert not original.is_deleted()

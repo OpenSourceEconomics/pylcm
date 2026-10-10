@@ -19,6 +19,10 @@ import numpy as np
 from _lcm.typing import PeriodToRegimeToVArr
 from lcm.typing import FloatND
 
+# What a snapshot or a period capture pickles: a model, its parameters and initial
+# conditions, a simulation result, or a capture payload.
+type _Picklable = object  # noqa: PAN001 - cloudpickle serializes any picklable object
+
 
 def _get_platform() -> str:
     """Return a platform identifier string, e.g. `"x86_64-Linux"`."""
@@ -34,7 +38,7 @@ def _find_project_root() -> Path | None:
     return None
 
 
-def _save_pkl(*, path: Path, obj: object) -> None:
+def _save_pkl(*, path: Path, obj: _Picklable) -> None:
     """Save an object to a pickle file atomically."""
     _atomic_dump(obj=obj, path=path, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -165,7 +169,7 @@ class _SnapshotCounterKey:
         return _snapshot_counter(entry=entry, prefix=self.prefix)
 
 
-def _atomic_dump(*, obj: object, path: str | Path, protocol: int) -> Path:
+def _atomic_dump(*, obj: _Picklable, path: str | Path, protocol: int) -> Path:
     """Serialize `obj` to `path` in an atomic (all-or-nothing) way.
 
     Args:

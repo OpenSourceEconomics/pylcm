@@ -16,7 +16,7 @@ from _lcm.regime_building.transitions import (
     _IdentityTransition,
     collect_state_transitions,
 )
-from _lcm.regime_law import bind_regime_law
+from _lcm.regime_law import RegimeLawDeclaration, bind_regime_law
 from _lcm.user_regime_validation import validate_regime_law
 from _lcm.utils.error_messages import path_segment_name_errors
 from lcm import (
@@ -51,6 +51,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserFunction,
 )
 
 
@@ -331,11 +332,11 @@ def _gated_edge_model(
     *,
     route_key: str = "only",
     gate_reference_key: str = "outside_value",
-    utility: Callable = _wage_utility,
-    probability: Callable = _probability_one,
-    gate: Callable = _gate_open,
-    gate_reference_projection: Callable = _project_wage,
-    fallback_projection: Callable = _project_wage,
+    utility: UserFunction = _wage_utility,
+    probability: Callable[..., FloatND] = _probability_one,
+    gate: UserFunction = _gate_open,
+    gate_reference_projection: UserFunction = _project_wage,
+    fallback_projection: UserFunction = _project_wage,
 ) -> Model:
     """Build a singleton source whose edge into `target` is gated."""
     source = UserRegime(
@@ -392,7 +393,7 @@ def _next_regime(*, age: float, scale: float) -> ScalarInt:
     return jnp.where(age >= scale, _LawRegimeId.retired, _LawRegimeId.working)
 
 
-def _law_model(*, law: Callable) -> Model:
+def _law_model(*, law: UserFunction) -> Model:
     """Build a working regime whose regime-transition law is `law`."""
     working = UserRegime(
         functions={"utility": utility},
@@ -416,7 +417,9 @@ def _law_model(*, law: Callable) -> Model:
     )
 
 
-_PARAMETER_CARRIERS: dict[str, tuple[Callable, Callable[[Callable], Model]]] = {
+_PARAMETER_CARRIERS: dict[
+    str, tuple[Callable[..., FloatND], Callable[[Callable[..., FloatND]], Model]]
+] = {
     "utility": (_wage_utility, lambda func: _gated_edge_model(utility=func)),
     "regime_transition_law": (_next_regime, lambda func: _law_model(law=func)),
     "probability": (
@@ -555,7 +558,7 @@ def test_regime_has_no_activity_argument():
 
 
 # keyword-only-exempt: primary-argument=regime
-def _finalize(regime: UserRegime, *, law: object) -> UserRegime:
+def _finalize(regime: UserRegime, *, law: RegimeLawDeclaration) -> UserRegime:
     """Run the completeness validation the model applies to a regime and its law."""
     return finalize_regimes(
         user_regimes={"regime": regime},

@@ -29,14 +29,18 @@ _VALUE_LENGTH = 7919
 _LEAF_LENGTH = 7907
 
 
-def _holds_array(*, candidate: object, length: int) -> bool:
+def _holds_array(
+    *,
+    candidate: object,  # noqa: PAN001 - gc exposes arbitrary interpreter objects
+    length: int,
+) -> bool:
     """Whether a gc-tracked container or entry holds an array of `length` first."""
     # The gc heap also holds weak proxies whose referent may be gone, and
     # `isinstance` dereferences a proxy, so proxies are excluded by exact type first.
     if type(candidate) in (weakref.ProxyType, weakref.CallableProxyType):
         return False
     if isinstance(candidate, _CanonicalValueEntry):
-        held: object = candidate.value
+        held: object = candidate.value  # noqa: PAN001 - tuple/list heads may be anything
     elif isinstance(candidate, tuple | list) and candidate:
         held = candidate[0]
     else:
@@ -79,7 +83,7 @@ def test_dropped_artifact_plan_walks_release_their_leaves(walker: str) -> None:
     for _ in range(8):
         leaf = np.zeros(_LEAF_LENGTH)
         if walker == "reconstruct":
-            _reconstruct_artifact_from_plan(plan=plan, leaves=(leaf, []))
+            _reconstruct_artifact_from_plan(plan=plan, leaves=(leaf,))
         else:
             _artifact_leaf_values_from_plan(payload=(leaf,), plan=plan, leaf_count=1)
 

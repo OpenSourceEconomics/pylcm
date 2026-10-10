@@ -15,7 +15,7 @@ from jaxtyping import Key, UInt32
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.random import _create_simulation_key, generate_simulation_keys
 from _lcm.time import TimeAxis
-from _lcm.typing import PRNGKeyND
+from _lcm.typing import ArrayTree, PRNGKeyND
 from lcm.exceptions import ExecutionPlanningError
 from lcm.grids import DiscreteGrid
 from lcm.typing import ActionName, RegimeName, UserAge
@@ -30,7 +30,7 @@ _WORD_BASE = 2**32
 
 
 def create_taste_shock_key(
-    *, seed: int | None, memory: SimulationMemory | None, live_inputs: object = ()
+    *, seed: int | None, memory: SimulationMemory | None, live_inputs: ArrayTree = ()
 ) -> PRNGKeyND | None:
     """Create an optional Threefry root, counting its caller's live inputs first."""
     if seed is None:

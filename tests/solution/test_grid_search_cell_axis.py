@@ -1,12 +1,15 @@
 """Public GridSearch solves tile state cells while preserving scalar reducers."""
 
-from typing import Any
+from collections.abc import Mapping
+from typing import TypedDict
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.execution.core_program import CoreExecutionDisposition, core_program_graph
+from _lcm.grids import Grid
+from _lcm.typing import ArrayTree, QAndFArg
 from _lcm.utils import dispatchers
 from lcm import (
     AgeGrid,
@@ -19,17 +22,32 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.regime import FunctionEntry
 from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
+    ActionName,
     BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteAction,
     FloatND,
+    FunctionName,
     ScalarInt,
+    StateName,
+    UserFunction,
+    UserParams,
+    UserParamsNode,
 )
 from tests.conftest import assert_agrees_to_ulp
+
+
+class _RegimeCommon(TypedDict, total=False):
+    states: Mapping[StateName, Grid]
+    actions: Mapping[ActionName, Grid]
+    functions: Mapping[FunctionName, FunctionEntry]
+    constraints: Mapping[FunctionName, UserFunction]
+    taste_shocks: ExtremeValueTasteShocks | None
 
 
 @categorical(ordered=False)
@@ -71,7 +89,7 @@ def _model(*, kind: str, width: int) -> Model:
         "first": LinSpacedGrid(start=1.0, stop=3.0, n_points=2),
         "second": LinSpacedGrid(start=2.0, stop=6.0, n_points=3),
     }
-    common: dict[str, Any] = {
+    common: _RegimeCommon = {
         "states": states,
         "actions": {"work": DiscreteGrid(category_class=_Work)},
         "functions": {"utility": utility},
@@ -94,8 +112,8 @@ def _model(*, kind: str, width: int) -> Model:
     )
 
 
-def _params(kind: str) -> dict[str, Any]:
-    params: dict[str, Any] = {"discount_factor": 0.5}
+def _params(kind: str) -> UserParams:
+    params: dict[str, UserParamsNode] = {"discount_factor": 0.5}
     if kind == "ev1":
         params.update(
             {name: {"taste_shocks": {"scale": 0.2}} for name in ("acting", "done")}
@@ -111,8 +129,10 @@ def test_public_solve_dispatches_the_planned_cell_width(
     observed: set[int] = set()
     original = dispatchers._TiledProductMap.__call__
 
-    def observe(self: dispatchers._TiledProductMap, **kwargs: Any) -> Any:
-        observed.add(kwargs.get(self.width_keyword, 1))
+    def observe(self: dispatchers._TiledProductMap, **kwargs: QAndFArg) -> ArrayTree:
+        width = kwargs.get(self.width_keyword, 1)
+        assert isinstance(width, int)
+        observed.add(width)
         return original(self, **kwargs)
 
     monkeypatch.setattr(dispatchers._TiledProductMap, "__call__", observe)
@@ -178,7 +198,7 @@ def _collision_utility(
 
 def _collision_model() -> Model:
     states = {"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=2)}
-    common: dict[str, Any] = {
+    common: _RegimeCommon = {
         "states": states,
         "actions": {
             "lcm_cell_width": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
@@ -235,7 +255,7 @@ def test_trivial_state_product_does_not_declare_a_cell_axis(
     states = (
         {"first": LinSpacedGrid(start=1.0, stop=2.0, n_points=1)} if with_state else {}
     )
-    common: dict[str, Any] = {
+    common: _RegimeCommon = {
         "states": states,
         "functions": {
             "utility": _single_state_utility if with_state else _constant_utility

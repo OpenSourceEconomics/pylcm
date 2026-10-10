@@ -129,8 +129,14 @@ def test_build_params_threads_the_transaction_cost():
     params_low = ds_app2_housing.build_params(tau=0.05)
     params_high = ds_app2_housing.build_params(tau=0.12)
     cost_fn = ds_app2_housing.HOUSING_COST_FUNCTION_NAME
-    assert params_low["working"][cost_fn]["tau"] == 0.05
-    assert params_high["working"][cost_fn]["tau"] == 0.12
+    assert isinstance(params_low["working"], dict)
+    low_cost = params_low["working"][cost_fn]
+    assert isinstance(low_cost, dict)
+    assert low_cost["tau"] == 0.05
+    assert isinstance(params_high["working"], dict)
+    high_cost = params_high["working"][cost_fn]
+    assert isinstance(high_cost, dict)
+    assert high_cost["tau"] == 0.12
 
 
 def test_keeping_the_house_is_free():

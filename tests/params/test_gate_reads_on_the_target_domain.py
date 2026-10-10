@@ -34,6 +34,9 @@ from lcm.exceptions import (
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 
+type TemplateNode = str | Mapping[str, TemplateNode]
+
+
 DISCOUNT_FACTOR = 0.5
 
 
@@ -204,7 +207,7 @@ def build_model(
 
 
 def leaf_paths(
-    *, tree: Mapping | str, prefix: tuple[str, ...] = ()
+    *, tree: TemplateNode, prefix: tuple[str, ...] = ()
 ) -> set[tuple[str, ...]]:
     if isinstance(tree, Mapping):
         return {

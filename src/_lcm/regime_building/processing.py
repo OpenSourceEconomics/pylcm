@@ -20,7 +20,6 @@ from math import prod as math_prod
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
-    Any,
     Literal,
     Protocol,
     cast,
@@ -157,6 +156,8 @@ from _lcm.regime_building.next_state import get_next_state_function_for_simulati
 from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
     RegimePhaseSpec,
+    _PhaseRegimeTransition,
+    _PhaseStateTransition,
     normalize_all_regime_phases,
     phase_variation_paths,
 )
@@ -178,7 +179,7 @@ else:
     # Importing the private bound solver here would close the solution/processing
     # cycle. Static analysis sees the precise type above; runtime validation only
     # needs a decoratable broad alias.
-    _BoundNNBEGM = object
+    type _BoundNNBEGM = object
 
 from _lcm.constraints.dispositions import ConstraintContext, Evaluate, Reject
 from _lcm.constraints.materialize import as_constraint_function
@@ -236,9 +237,11 @@ from _lcm.transition_plans import (
     TransitionOutputInfo,
 )
 from _lcm.typing import (
+    AnnotationForm,
     ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
     EconFunction,
+    EconFunctionArg,
     EconFunctionsMapping,
     EdgeParamsTemplate,
     EGMCarryProducer,
@@ -246,10 +249,13 @@ from _lcm.typing import (
     FunctionName,
     NextStateSimulationFunction,
     ProcessName,
+    PytreeValue,
     QAndFFunction,
+    QualifiedName,
     RegimeName,
     RegimeNamesToIds,
     RegimeParamsTemplate,
+    RegimeParamsTemplateNode,
     RegimeTransitionFunction,
     StateName,
     StateOrActionName,
@@ -261,7 +267,7 @@ from _lcm.typing import (
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from _lcm.utils.error_messages import format_messages
-from _lcm.utils.functools import get_union_of_args
+from _lcm.utils.functools import get_union_of_args, is_user_function
 from _lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 from _lcm.variables import (
     from_regime,
@@ -275,7 +281,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.phased import Phased
-from lcm.regime import ProjectedRegimeValue
+from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -290,15 +296,26 @@ from lcm.solvers import (
     DCEGM,
     NNBEGM,
     AdaptiveOuterMesh,
+    EnvelopeConfig,
     FiniteOuterGrid,
     Solver,
     UniformObservedFixedCost,
 )
 from lcm.transition import JointTransition, StochasticTransition, Transition
-from lcm.typing import Float1D, FloatND, Int1D, IntND, ParameterName, UserFunction
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ParameterName,
+    ReferenceName,
+    UserFunction,
+)
 
-type _TransitionBundles = dict[
-    RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
+type _TransitionBundles = MappingProxyType[
+    RegimeName,
+    MappingProxyType[TransitionFunctionName, UserFunction | _CoarseTransitionCell],
 ]
 
 
@@ -797,8 +814,8 @@ def process_regimes(
         regimes_to_active_periods=regimes_to_active_periods,
         representative_user_regimes=representative_user_regimes,
         laws=laws,
-        simulate_nested_transitions=simulate_nested_transitions,
-        solve_nested_transitions=solve_nested_transitions,
+        simulate_nested_transitions=MappingProxyType(simulate_nested_transitions),
+        solve_nested_transitions=MappingProxyType(solve_nested_transitions),
         specs=specs,
         state_action_spaces=state_action_spaces,
         state_grids=state_grids,
@@ -896,10 +913,12 @@ def _placement_on_model_devices(
 
     """
     return SubmeshPlacement(
-        device_ids_by_regime={
-            regime_name: tuple(device_ids[position] for position in positions)
-            for regime_name, positions in placement.device_ids_by_regime.items()
-        },
+        device_ids_by_regime=MappingProxyType(
+            {
+                regime_name: tuple(device_ids[position] for position in positions)
+                for regime_name, positions in placement.device_ids_by_regime.items()
+            }
+        ),
         n_devices=placement.n_devices,
     )
 
@@ -1017,10 +1036,10 @@ class _CanonicalRegimeBuilder:
     laws: RegimeLaws
     """Each regime's law, bound from `Model(edges=...)`, by regime name."""
 
-    simulate_nested_transitions: Mapping[RegimeName, _TransitionBundles]
+    simulate_nested_transitions: MappingProxyType[RegimeName, _TransitionBundles]
     """Mapping of regime names to their simulate-phase per-target transition bundles."""
 
-    solve_nested_transitions: Mapping[RegimeName, _TransitionBundles]
+    solve_nested_transitions: MappingProxyType[RegimeName, _TransitionBundles]
     """Mapping of regime names to their solve-phase per-target transition bundles."""
 
     specs: MappingProxyType[RegimeName, PhasedRegimeSpec]
@@ -1053,7 +1072,7 @@ class _CanonicalRegimeBuilder:
         gated_continuations_by_source: Mapping[
             RegimeName, Mapping[RegimeName, GatedContinuationSchedule]
         ],
-    ) -> dict[RegimeName, Regime]:
+    ) -> MappingProxyType[RegimeName, Regime]:
         """Build every regime's canonical form, gated continuations included.
 
         Called once with no gated continuations, which is all a model without
@@ -1283,7 +1302,7 @@ def _with_declared_continuation_reads(
     *,
     canonical_regimes: dict[RegimeName, Regime],
     solution_builds: Mapping[RegimeName, _SolutionBuild],
-) -> dict[RegimeName, Regime]:
+) -> MappingProxyType[RegimeName, Regime]:
     """Let every continuation source declare the leaves it reads.
 
     A solver builds its kernels before any regime has published a carry, so it
@@ -1309,7 +1328,7 @@ def _with_declared_continuation_reads(
         if build.solver.required_continuation_keys
     }
     if not demanding:
-        return canonical_regimes
+        return MappingProxyType(canonical_regimes)
     published_specs = _published_continuation_specs(canonical_regimes=canonical_regimes)
     for regime_name, build in demanding.items():
         declared = build.solver.declare_continuation_reads(
@@ -1336,7 +1355,7 @@ def _with_declared_continuation_reads(
                 regime.solution, period_kernels=declared.period_kernels
             ),
         )
-    return canonical_regimes
+    return MappingProxyType(canonical_regimes)
 
 
 def _fail_if_a_declaration_moved_more_than_the_kernels(
@@ -1509,7 +1528,7 @@ def _gated_continuation_specs(
 
 def _attach_gated_edge_folds(
     *,
-    canonical_regimes: dict[RegimeName, Regime],
+    canonical_regimes: Mapping[RegimeName, Regime],
     gated_source_periods: Mapping[tuple[RegimeName, RegimeName], tuple[int, ...]],
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
@@ -1519,7 +1538,7 @@ def _attach_gated_edge_folds(
     ),
     grid_schedule: AgeGridSchedule | None,
     enable_jit: bool,
-) -> dict[RegimeName, Regime]:
+) -> MappingProxyType[RegimeName, Regime]:
     """Resolve and compile each source regime's gated-edge folds.
 
     For every source regime with gated edges, resolve each user
@@ -1554,6 +1573,7 @@ def _attach_gated_edge_folds(
     projection functions with the target's DAG and interpolates nothing, so no
     grid's nodes enter it.
     """
+    regimes = dict(canonical_regimes)
     for source_name in user_regimes:
         gated_edges = laws[source_name].gated_edges
         if not gated_edges:
@@ -1566,7 +1586,7 @@ def _attach_gated_edge_folds(
                 edge=edge,
                 user_regimes=user_regimes,
             )
-            target_solution = canonical_regimes[target_name].solution
+            target_solution = regimes[target_name].solution
             target_deterministic_transitions = _merge_deterministic_transitions(
                 transitions=target_solution.transitions,
                 transition_plans=target_solution.transition_plans,
@@ -1607,7 +1627,7 @@ def _attach_gated_edge_folds(
             )
             fold_periods = tuple(
                 period
-                for period in canonical_regimes[target_name].active_periods
+                for period in regimes[target_name].active_periods
                 if period - 1 in source_periods
             )
             # The fold takes the target's value array as a RUNTIME argument and
@@ -1656,7 +1676,7 @@ def _attach_gated_edge_folds(
                     if enable_jit
                     else fold
                 )
-            evaluators_by_group: dict[Hashable, Callable] = {}
+            evaluators_by_group: dict[Hashable, Callable[..., BoolND]] = {}
             for group_key, periods in grouped_evaluator_periods.items():
                 v_info = _v_interpolation_info_at_period(
                     period=periods[0],
@@ -1693,7 +1713,7 @@ def _attach_gated_edge_folds(
                         # SIMULATED subject, so it owes a coordinate on every
                         # state that regime carries in simulation — the states
                         # it carries only there (no solve axis) included.
-                        fallback_simulate_state_names=canonical_regimes[
+                        fallback_simulate_state_names=regimes[
                             leg.realized_fallback.regime
                         ].simulation.state_names,
                         target_regime_name=target_name,
@@ -1714,11 +1734,11 @@ def _attach_gated_edge_folds(
                 folds_by_period=folds_by_period,
                 simulate_gate_evaluators_by_period=simulate_gate_evaluators_by_period,
             )
-        canonical_regimes[source_name] = dataclass_replace(
-            canonical_regimes[source_name],
+        regimes[source_name] = dataclass_replace(
+            regimes[source_name],
             gated_edges=MappingProxyType(resolved),
         )
-    return canonical_regimes
+    return MappingProxyType(regimes)
 
 
 def _v_interpolation_info_at_period(
@@ -1794,7 +1814,7 @@ def _merge_deterministic_transitions(
     *,
     transitions: TransitionFunctionsMapping,
     transition_plans: TargetTransitionPlans,
-) -> Mapping[TransitionFunctionName, TransitionFunction]:
+) -> MappingProxyType[TransitionFunctionName, TransitionFunction]:
     """Merge a target's deterministic `next_<state>` laws across its bundles.
 
     A gated-edge fold projects the source's cell INTO the target's state space,
@@ -1987,7 +2007,7 @@ def _fail_if_a_pareto_weight_reads_an_action(user_regime: UserRegime) -> None:
         return
     actions = set(user_regime.actions)
     for name, weight in objective.weights.items():
-        if not callable(weight):
+        if not is_user_function(weight):
             continue
         read = sorted(actions & set(get_union_of_args([weight])))
         if read:
@@ -2626,7 +2646,7 @@ def _fail_if_same_period_ref_cycle(
             for regime_name, successors in references.items()
             if period in regimes_to_active_periods.get(regime_name, ())
         }
-        search = _SamePeriodRefSearch(graph=graph)
+        search = _SamePeriodRefSearch(graph=MappingProxyType(graph))
         for regime_name in graph:
             search.visit(regime_name)
 
@@ -2635,7 +2655,7 @@ def _fail_if_same_period_ref_cycle(
 class _SamePeriodRefSearch:
     """Depth-first three-color search over the same-period reference graph."""
 
-    graph: Mapping[RegimeName, tuple[RegimeName, ...]]
+    graph: MappingProxyType[RegimeName, tuple[RegimeName, ...]]
     """Each regime's reference regimes, in declaration order."""
     visiting: set[RegimeName] = field(default_factory=set)
     """Regimes on the current search path."""
@@ -2901,7 +2921,7 @@ def _state_handoff_errors(
     phase_reachability: PhaseReachability,
     specs: Mapping[RegimeName, PhasedRegimeSpec],
     ages: TimeAxis,
-) -> list[str]:
+) -> tuple[str, ...]:
     """Return errors for target states without a valid retained-edge handoff."""
     phase_slices: dict[RegimeName, RegimePhaseSpec] = {
         regime_name: getattr(spec, phase_name) for regime_name, spec in specs.items()
@@ -2988,7 +3008,7 @@ def _state_handoff_errors(
                         f"entry law, or narrow the transition's static target "
                         f"support."
                     )
-    return error_messages
+    return tuple(error_messages)
 
 
 def _fail_if_a_law_reads_a_draw_the_edge_lacks(
@@ -3274,7 +3294,7 @@ def _build_solution_phase(  # noqa: PLR0915
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
-    declared_regime_transition: object,
+    declared_regime_transition: _PhaseRegimeTransition,
     phase_reachability: PhaseReachability,
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
@@ -3487,7 +3507,7 @@ def _build_solution_phase(  # noqa: PLR0915
             Q_and_F_functions = MappingProxyType(
                 dict.fromkeys(range(ages.n_periods), terminal_func)
             )
-        compute_intermediates: MappingProxyType[int, Callable] = MappingProxyType({})
+        compute_intermediates = MappingProxyType({})
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
             functions=core.functions,
@@ -3976,9 +3996,9 @@ def _gated_edge_group_components(
     return tuple(components)
 
 
-def _filter_kwargs_for_func(
-    *, func: Callable, kwargs: Mapping[str, object]
-) -> Mapping[str, object]:
+def _filter_kwargs_for_func[T](
+    *, func: EGMCarryProducer, kwargs: Mapping[ReferenceName, T]
+) -> Mapping[ReferenceName, T]:
     """Filter kwargs to only those accepted by func's signature."""
     try:
         sig = inspect.signature(func)
@@ -4047,7 +4067,7 @@ class _TerminalCarryPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -4109,7 +4129,7 @@ def _edge_and_same_period_kwargs(
     *,
     edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
     same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
-) -> dict[str, object]:
+) -> MappingProxyType[ReferenceName, Mapping[RegimeName, FloatND]]:
     """Relay only the optional kernel arguments the caller actually supplied.
 
     The solve loop passes `edge_regime_to_V_arr` to a source with
@@ -4119,12 +4139,12 @@ def _edge_and_same_period_kwargs(
     so a base kernel whose signature declares neither is called exactly as the
     solve loop would have called it directly.
     """
-    kwargs: dict[str, object] = {}
+    kwargs: dict[ReferenceName, Mapping[RegimeName, FloatND]] = {}
     if edge_regime_to_V_arr is not None:
         kwargs["edge_regime_to_V_arr"] = edge_regime_to_V_arr
     if same_period_regime_to_V_arr is not None:
         kwargs["same_period_regime_to_V_arr"] = same_period_regime_to_V_arr
-    return kwargs
+    return MappingProxyType(kwargs)
 
 
 def _build_egm_child_carry_producer(
@@ -5094,7 +5114,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
 # Empty: no shipped backend provides the guarantee, so the branch-faithful policy
 # read is off and simulation keeps its grid-argmax. An envelope earns a place here
 # by passing the crossing- and support-completeness suites, not by intending to.
-_CROSSING_COMPLETE_ENVELOPES: tuple[type[object], ...] = ()
+_CROSSING_COMPLETE_ENVELOPES: tuple[type[EnvelopeConfig], ...] = ()
 
 
 def _envelope_publishes_crossings(solver: DCEGM) -> bool:
@@ -5253,19 +5273,21 @@ class _CoreResult:
 class _PhaseFunctionPartition:
     """One phase's user functions split by what `_process_regime_core` does next."""
 
-    next_regime_cells_by_target: dict[RegimeName, UserFunction | _CoarseTransitionCell]
+    next_regime_cells_by_target: MappingProxyType[
+        RegimeName, UserFunction | _CoarseTransitionCell
+    ]
     """Per-target `next_regime` cells, lifted out of the transition bundles."""
 
-    flat_nested_transitions: MappingProxyType[str, Any]
+    flat_nested_transitions: MappingProxyType[QualifiedName, UserFunction]
     """State laws only (no `next_regime`), flattened to qualified names."""
 
-    stochastic_transition_functions: dict[str, UserFunction]
+    stochastic_transition_functions: MappingProxyType[str, UserFunction]
     """State laws whose target state is stochastic."""
 
-    deterministic_transition_functions: dict[str, UserFunction]
+    deterministic_transition_functions: MappingProxyType[str, UserFunction]
     """State laws whose target state is deterministic."""
 
-    deterministic_functions: dict[str, UserFunction]
+    deterministic_functions: MappingProxyType[str, UserFunction]
     """Everything else: ordinary functions and constraints."""
 
 
@@ -5274,7 +5296,7 @@ def _partition_phase_functions(
     nested_transitions: _TransitionBundles,
     functions: Mapping[FunctionName, UserFunction],
     constraints: ProcessedConstraintsMapping,
-    state_transitions: Mapping[StateName, object],
+    state_transitions: Mapping[StateName, _PhaseStateTransition],
     variables: Variables,
 ) -> _PhaseFunctionPartition:
     """Split a phase's functions into the four groups processed differently.
@@ -5357,11 +5379,15 @@ def _partition_phase_functions(
     }
 
     return _PhaseFunctionPartition(
-        next_regime_cells_by_target=next_regime_cells_by_target,
+        next_regime_cells_by_target=MappingProxyType(next_regime_cells_by_target),
         flat_nested_transitions=flat_nested_transitions,
-        stochastic_transition_functions=stochastic_transition_functions,
-        deterministic_transition_functions=deterministic_transition_functions,
-        deterministic_functions=deterministic_functions,
+        stochastic_transition_functions=MappingProxyType(
+            stochastic_transition_functions
+        ),
+        deterministic_transition_functions=MappingProxyType(
+            deterministic_transition_functions
+        ),
+        deterministic_functions=MappingProxyType(deterministic_functions),
     )
 
 
@@ -5372,7 +5398,7 @@ def _process_regime_core(
     constraints: ProcessedConstraintsMapping,
     evaluated_constraint_names: frozenset[FunctionName],
     koopmans_aggregator: UserFunction | None,
-    state_transitions: Mapping[StateName, object],
+    state_transitions: Mapping[StateName, _PhaseStateTransition],
     markov_draw_laws: Mapping[StateName, StochasticTransition],
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     nested_transitions: _TransitionBundles,
@@ -5878,7 +5904,7 @@ def _source_draws_read_by_target_laws(
     reads_by_law: Mapping[str, frozenset[str]],
     source_random_grids: Mapping[StateName, Grid],
     state_grids: Mapping[RegimeName, Mapping[StateName, Grid]],
-) -> dict[tuple[RegimeName, StateName], Grid]:
+) -> MappingProxyType[tuple[RegimeName, StateName], Grid]:
     """Find the source's random states whose draw a law toward a non-carrier reads.
 
     A random state is a process or a Markov state. A target that carries the
@@ -5903,7 +5929,7 @@ def _source_draws_read_by_target_laws(
                 and f"next_{state}" in reads
             ):
                 draws[(target, state)] = grid
-    return draws
+    return MappingProxyType(draws)
 
 
 def _add_source_draw_functions(
@@ -5961,16 +5987,18 @@ def _reads_by_target_law(
     flat_nested_transitions: Mapping[str, UserFunction],
     functions: Mapping[str, UserFunction],
     continuation_targets: Collection[RegimeName],
-) -> dict[str, frozenset[str]]:
+) -> MappingProxyType[str, frozenset[str]]:
     """Collect the names each law toward a continuation target reads.
 
     Keyed by the law's qualified name; reads go through `functions`.
     """
-    return {
-        qname: _names_read_by(roots=(law,), functions=functions)
-        for qname, law in flat_nested_transitions.items()
-        if tree_path_from_qname(qname)[0] in continuation_targets
-    }
+    return MappingProxyType(
+        {
+            qname: _names_read_by(roots=(law,), functions=functions)
+            for qname, law in flat_nested_transitions.items()
+            if tree_path_from_qname(qname)[0] in continuation_targets
+        }
+    )
 
 
 def _names_read_by(
@@ -5991,7 +6019,7 @@ def _names_read_by(
 
 def _get_source_process_nodes(
     *, name: ProcessName, grid: _ContinuousStochasticProcess
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """Get the provider of a source process's nodes, the support of its draw."""
     if grid.params_to_pass_at_runtime:
         fixed_params = dict(grid.params)
@@ -6068,11 +6096,13 @@ def _joint_node_annotation(
     return next(iter(annotations), "Any")
 
 
-def _literal_joint_support(*, support: object, node_annotation: str) -> EconFunction:
+def _literal_joint_support(
+    *, support: PytreeValue, node_annotation: str
+) -> EconFunction:
     """Lift an immutable literal support pytree into the target-local DAG."""
 
     @with_signature(args={}, return_annotation=node_annotation)
-    def provide() -> object:
+    def provide() -> PytreeValue:
         return support
 
     return cast("EconFunction", provide)
@@ -6406,13 +6436,13 @@ def _with_cell_param_keys(
 
 def _build_validation_regime_transition_probs(
     *,
-    declared_regime_transition: object,
+    declared_regime_transition: _PhaseRegimeTransition,
     compute_regime_transition_probs: RegimeTransitionFunction,
     functions: EconFunctionsMapping,
     grids: MappingProxyType[StateOrActionName, Grid],
     edge_params_template: EdgeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     enable_jit: bool,
 ) -> RegimeTransitionFunction:
     """Build a validation function that retains every declared target cell."""
@@ -6460,9 +6490,11 @@ def _extract_phase_transitions(*, phase_slice: RegimePhaseSpec) -> _TransitionBu
 
     """
     if phase_slice.regime_transition is None:
-        return {}
+        return MappingProxyType({})
 
-    per_target: _TransitionBundles = {}
+    per_target: dict[
+        RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
+    ] = {}
     for state_name, canonical in phase_slice.state_transitions.items():
         for target_regime_name, law in cast(
             "Mapping[RegimeName, UserFunction]", canonical
@@ -6474,7 +6506,9 @@ def _extract_phase_transitions(*, phase_slice: RegimePhaseSpec) -> _TransitionBu
     ).items():
         per_target.setdefault(target_regime_name, {})["next_regime"] = cell
 
-    return per_target
+    return MappingProxyType(
+        {target: MappingProxyType(bundle) for target, bundle in per_target.items()}
+    )
 
 
 def _wrap_transitions(
@@ -6488,7 +6522,7 @@ def _wrap_transitions(
 
 def _get_stochastic_transition_names(
     *,
-    state_transitions: Mapping[StateName, object],
+    state_transitions: Mapping[StateName, _PhaseStateTransition],
     variables: Variables,
 ) -> frozenset[TransitionFunctionName]:
     """Compute stochastic transition names from one phase's state transitions.
@@ -6586,9 +6620,9 @@ def _rename_params_to_qnames(
 
     # Per-target keys are qnames (`<target>__<func>`) addressing a nested
     # template branch; walk the tree path instead of subscripting directly.
-    branch: Mapping[str, object] = regime_params_template
+    branch: Mapping[str, RegimeParamsTemplateNode] = regime_params_template
     for part in tree_path_from_qname(names_key if names_key is not None else param_key):
-        branch = cast("Mapping[str, object]", branch[part])
+        branch = cast("Mapping[str, RegimeParamsTemplateNode]", branch[part])
     # Rename only the parameters this law actually reads. The template branch of a
     # `Phased` state transition holds the union of both phases' parameters, so a law
     # that takes none of its own must not be stamped with one the other phase
@@ -6726,7 +6760,7 @@ def _declaration_param_expansions(
 
 
 def _extract_template_names_key(
-    *, func_name: str, regime_params_template: RegimeParamsTemplate
+    *, func_name: FunctionName, regime_params_template: RegimeParamsTemplate
 ) -> str:
     """Extract the template key under which a function's param names live.
 
@@ -6762,7 +6796,7 @@ def _fail_if_a_markov_law_names_a_continuous_state(
     *,
     func_name: TransitionFunctionName,
     grid: Grid,
-    state_transitions: Mapping[StateName, object],
+    state_transitions: Mapping[StateName, _PhaseStateTransition],
     source_regime_name: RegimeName,
 ) -> None:
     """Reject a `StochasticTransition` law written for a state with a continuous grid.
@@ -6818,10 +6852,10 @@ def _fail_if_a_markov_law_names_a_continuous_state(
 
 def _get_discrete_markov_next_function(
     *, func: UserFunction, grid: Int1D
-) -> UserFunction:
+) -> Callable[..., IntND]:
     @with_signature(args=None, return_annotation="Int1D")
     @functools.wraps(func)
-    def next_func(**kwargs: Any) -> Int1D:  # noqa: ANN401, ARG001
+    def next_func(**kwargs: EconFunctionArg) -> Int1D:  # noqa: ARG001
         return grid
 
     return next_func
@@ -6829,11 +6863,11 @@ def _get_discrete_markov_next_function(
 
 def _get_stochastic_next_function_for_process(
     *, name: str, grid: Float1D
-) -> UserFunction:
+) -> Callable[..., IntND]:
     """Get function returning the indices in the vf arr of the next process states."""
 
     @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
-    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+    def next_func(**kwargs: EconFunctionArg) -> Int1D:  # noqa: ARG001
         return jnp.arange(grid.shape[0], dtype=jnp.int32)
 
     return next_func
@@ -7020,7 +7054,7 @@ def _get_conditioned_weights_func(
     grid: _ContinuousStochasticProcess,
     sc: StateConditioned,
     grids: Mapping[StateOrActionName, Grid],
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """Build the direct-CDF weights function for a state-conditioned process.
 
     The transition row is computed directly at the time-$t$ value on the fixed common
@@ -7113,7 +7147,7 @@ def _get_weights_func_for_process(
     name: str,
     grid: _ContinuousStochasticProcess,
     grids: Mapping[StateOrActionName, Grid] = MappingProxyType({}),
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """Get function that uses linear interpolation to calculate the process weights.
 
     For processes whose params are supplied at runtime, the grid points and
@@ -7182,7 +7216,7 @@ def _get_weights_func_for_process(
     return weights_func
 
 
-def _get_entry_next_for_process(*, grid: Float1D) -> UserFunction:
+def _get_entry_next_for_process(*, grid: Float1D) -> Callable[..., IntND]:
     """Get the next-index function for a process the source does not carry.
 
     The target's nodes are the process's own, and no current value selects
@@ -7190,13 +7224,15 @@ def _get_entry_next_for_process(*, grid: Float1D) -> UserFunction:
     """
 
     @with_signature(args={}, return_annotation="Int1D")
-    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+    def next_func(**kwargs: EconFunctionArg) -> Int1D:  # noqa: ARG001
         return jnp.arange(grid.shape[0], dtype=jnp.int32)
 
     return next_func
 
 
-def _get_entry_weights_for_process(*, name: str, grid: _IIDProcess) -> UserFunction:
+def _get_entry_weights_for_process(
+    *, name: str, grid: _IIDProcess
+) -> Callable[..., FloatND]:
     """Get the entry weights of an IID process the source does not carry.
 
     Every row of an IID transition matrix is the same unconditional
@@ -7239,7 +7275,7 @@ def _get_explicit_entry_weights_for_process(
     physical_name: TransitionFunctionName,
     target: RegimeName,
     state_name: ProcessName,
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """Get the weights that place a declared entry value on a process's nodes.
 
     A declared entry law names a physical value, but a discretized process holds
@@ -7411,7 +7447,7 @@ def _validate_categoricals(
 
 def compute_merged_discrete_categories(
     user_regimes: Mapping[RegimeName, UserRegime],
-) -> tuple[dict[str, tuple[str, ...]], dict[str, bool]]:
+) -> tuple[MappingProxyType[str, tuple[str, ...]], MappingProxyType[str, bool]]:
     """Compute merged categories and ordered flags for all discrete variables.
 
     Returns:
@@ -7446,7 +7482,7 @@ def compute_merged_discrete_categories(
         assert merged is not None  # noqa: S101
         categories[var_name] = merged
 
-    return categories, ordered_flags
+    return MappingProxyType(categories), MappingProxyType(ordered_flags)
 
 
 def _validate_ordered_flags(
@@ -7568,7 +7604,7 @@ def _unique_topological_sort(
 
 
 def _get_simple_transition_discrete_grid(
-    *, user_regime: UserRegime, state_name: StateName, raw: object
+    *, user_regime: UserRegime, state_name: StateName, raw: StateTransitionEntry
 ) -> DiscreteGrid | None:
     """Return the source DiscreteGrid for a simple transition.
 
@@ -7616,7 +7652,7 @@ def build_regime_transition_probs_functions(
     compute_regime_transition_probs: TransitionFunction | None,
     grids: MappingProxyType[StateOrActionName, Grid],
     regime_names_to_ids: RegimeNamesToIds,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     is_stochastic: bool,
     enable_jit: bool,
     shape: Literal["grid", "per_subject"],
@@ -7717,7 +7753,7 @@ def build_per_subject_regime_transition_probs(
     compute_regime_transition_probs: TransitionFunction | None,
     grids: MappingProxyType[StateOrActionName, Grid],
     regime_names_to_ids: RegimeNamesToIds,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     is_stochastic: bool,
     next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None = None,
 ) -> _PerSubjectFunction:
@@ -7764,7 +7800,7 @@ def per_subject_regime_transition_probs(
     *,
     next_regime: RegimeTransitionFunction,
     grids: MappingProxyType[StateOrActionName, Grid],
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     target_regime_names: tuple[RegimeName, ...],
 ) -> _PerSubjectFunction:
     """Return the regime-transition probabilities at one subject's state cell.
@@ -7882,7 +7918,9 @@ def _wrap_regime_transition_probs(
     annotations = get_annotations(func)
     annotations.pop("return", None)
     return _RegimeTransitionProbsByName(
-        func=func, regime_names=tuple(regime_names), annotations=annotations
+        func=func,
+        regime_names=tuple(regime_names),
+        annotations=MappingProxyType(annotations),
     )
 
 
@@ -7900,7 +7938,7 @@ class _RegimeTransitionProbsByName:
     regime_names: tuple[RegimeName, ...]
     """The regime names in regime-id order."""
     # Annotation objects: classes, aliases or strings, whatever the callable declares.
-    annotations: Mapping[ParameterName, object]
+    annotations: MappingProxyType[ParameterName, AnnotationForm]
     """The transition's argument annotations, without its return."""
 
     def __post_init__(self) -> None:
@@ -7932,7 +7970,9 @@ class _RegimeTransitionProbsByName:
         )
 
     @no_type_check
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(
+        self, *args: EconFunctionArg, **kwargs: EconFunctionArg
+    ) -> MappingProxyType[RegimeName, FloatND]:
         result = self.func(*args, **kwargs)
         _fail_if_not_one_entry_per_regime(
             result=result, n_regimes=len(self.regime_names)
@@ -7981,7 +8021,7 @@ class _OneHotRegimeTransition:
         object.__setattr__(self, "__wrapped__", self.func)
 
     @no_type_check
-    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
+    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
         return jax.nn.one_hot(self.func(*args, **kwargs), self.n_regimes)
 
 
@@ -8021,8 +8061,8 @@ def _wrap_deterministic_regime_transition(
 
 def _get_vmap_params(
     *,
-    all_args: tuple[str, ...],
-    flat_param_names: frozenset[str],
+    all_args: tuple[ReferenceName, ...],
+    flat_param_names: frozenset[QualifiedName],
 ) -> tuple[str, ...]:
     """Get parameter names that should be vmapped (states and actions)."""
     non_vmap = {"period", "age"} | flat_param_names
@@ -8202,7 +8242,7 @@ def _build_period_state_axes(
 def _build_terminal_collective_Q_and_F_per_period(
     *,
     n_periods: int,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     stakeholders: tuple[str, ...],
@@ -8295,7 +8335,7 @@ def _build_Q_and_F_per_period(
     transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
     period_to_regime_v_interp: (
@@ -8675,7 +8715,7 @@ def _build_next_state_vmapped(
     transitions: TransitionFunctionsMapping,
     transition_plans: TargetTransitionPlans,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     enable_jit: bool,
 ) -> _NextStateBuild:
     """Build a per-period vmapped next-state function for simulation.
@@ -8881,9 +8921,9 @@ def _route_constraints(
     solver: Solver,
     regime_name: RegimeName,
     phase: Literal["solve", "simulate"],
-    functions: EconFunctionsMapping,
+    functions: MappingProxyType[FunctionName, UserFunction],
     variables: Variables,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     active_periods: tuple[int, ...],
     grids: MappingProxyType[StateOrActionName, Grid],
 ) -> _ConstraintRoutingResult:
@@ -8951,7 +8991,9 @@ def _route_constraints(
 
 
 def _routing_pool(
-    *, functions: EconFunctionsMapping, active_periods: tuple[int, ...]
+    *,
+    functions: MappingProxyType[FunctionName, UserFunction],
+    active_periods: tuple[int, ...],
 ) -> EconFunctionsMapping:
     """The pool constraint routing resolves leaves through.
 
@@ -8959,12 +9001,14 @@ def _routing_pool(
     same parameters at every age, so its first active period's callable stands
     for all of them.
     """
-    if not active_periods:
-        return functions
-    return cast(
-        "EconFunctionsMapping",
-        resolve_periodized_nodes(mapping=functions, period=active_periods[0]),
+    pool = (
+        resolve_periodized_nodes(mapping=functions, period=active_periods[0])
+        if active_periods
+        else functions
     )
+    # The route context names the pool by the engine protocol; routing never
+    # calls a function in it.
+    return cast("EconFunctionsMapping", pool)
 
 
 def _fail_if_a_constraint_cannot_be_met(*, plan: ConstraintPlan) -> None:
@@ -9025,7 +9069,7 @@ def _fail_if_a_synthesized_constraint_is_unmet(
     regime_name: RegimeName,
     functions: EconFunctionsMapping,
     variables: Variables,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     active_periods: tuple[int, ...],
     grids: MappingProxyType[StateOrActionName, Grid],
 ) -> None:

@@ -1,4 +1,5 @@
 import dataclasses
+from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType, SimpleNamespace
 
 import jax
@@ -15,7 +16,7 @@ from _lcm.execution.core_program import (
     ResolvedCoreProgram,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.execution.output_layout import VALUE
+from _lcm.execution.output_layout import VALUE, PlannedCore, resolve_output_layout
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
@@ -30,8 +31,12 @@ from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.solution.backward_induction import (
+    _CoreCandidate,
+    _count_triples_per_lowering_key,
     _drain_V_arr_shards,
+    _group_cores_by_regime_period,
     _mark_reused_transfers,
+    _uncompiled,
     solve,
 )
 from _lcm.solution.contract import PeriodKernel
@@ -43,6 +48,8 @@ from _lcm.typing import FlatRegimeParams, MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
+from lcm.solver_api import ArtifactAuthority, ArtifactKey
+from lcm.typing import Float1D, FloatND, RegimeName
 
 
 @dataclasses.dataclass(frozen=True)
@@ -63,14 +70,16 @@ class MockSolutionPhase:
     """These dense fixture state axes have no declared device sharding."""
     action_partitions: int = 1
     """No regime's actions are shared over devices."""
-    compute_intermediates: dict = dataclasses.field(default_factory=dict)
-    artifact_authorities: MappingProxyType = dataclasses.field(
-        default_factory=lambda: MappingProxyType({})
+    compute_intermediates: dict[
+        int, Callable[..., Mapping[str, FloatND | Mapping[RegimeName, FloatND]]]
+    ] = dataclasses.field(default_factory=dict)
+    artifact_authorities: MappingProxyType[ArtifactKey, ArtifactAuthority] = (
+        dataclasses.field(default_factory=lambda: MappingProxyType({}))
     )
     continuation_template: None = None
     continuation_spec: None = None
     period_state_axes: (
-        MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
+        MappingProxyType[int, MappingProxyType[StateOrActionName, Float1D]] | None
     ) = None
     reachability: PhaseReachability = dataclasses.field(
         default_factory=lambda: _single_regime_reachability(n_periods=2)
@@ -84,14 +93,14 @@ class MockSolutionPhase:
         return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
 
     @property
-    def period_signatures(self) -> MappingProxyType[int, object]:
+    def period_signatures(self) -> MappingProxyType[int, tuple[str, int]]:
         """One signature per period: the mock builds a kernel per period."""
         return MappingProxyType(
             {period: ("mock", period) for period in self.period_kernels}
         )
 
     @property
-    def solver_period_group_keys(self) -> MappingProxyType[int, object]:
+    def solver_period_group_keys(self) -> MappingProxyType[int, Hashable]:
         """No solver-side grouping; the per-period signature decides alone."""
         return MappingProxyType({})
 
@@ -121,7 +130,7 @@ def _single_regime_reachability(*, n_periods: int) -> PhaseReachability:
 
 
 def _grid_search_period_kernels(
-    *, max_Q_over_a: dict[int, MaxQOverAFunction], regime_name: str
+    *, max_Q_over_a: dict[int, MaxQOverAFunction], regime_name: RegimeName
 ) -> dict[int, PeriodKernel]:
     """Wrap hand-written dense cores in native GridSearch program graphs."""
     argument_builder = _GridSearchArgumentBuilder(regime_name=regime_name)
@@ -251,7 +260,7 @@ def test_backward_induction():
                 # pick [0, 1, 2] such that no coordinate mapping is needed
                 # lazy is like a type, it influences utility but is not affected
                 # by actions
-                "lazy": jnp.array([0, 1]),
+                "lazy": jnp.array([0, 1], dtype=jnp.int32),
                 "wealth": jnp.array([0.0, 1.0, 2.0]),
             }
         ),
@@ -412,19 +421,19 @@ def _program(*, transfer: ResolvedValueTransfer) -> ResolvedCoreProgram:
     return ResolvedCoreProgram(
         name="main",
         function=lambda: None,
-        arguments={},
-        static_kwargs={},
+        arguments=MappingProxyType({}),
+        static_kwargs=MappingProxyType({}),
         requirements=CoreExecutionRequirements(),
         output_roles=None,
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         specialization_key=("k",),
         input_transfer_plan=(transfer,),
     )
 
 
-def _marks(*, marked: dict) -> list[bool]:
+def _marks(*, marked: Mapping[_CoreCandidate, ResolvedCoreProgram]) -> list[bool]:
     """The reuse mark of every transfer in a marked program set, in plan order."""
     return [
         transfer.reused_by_several_consumers
@@ -461,3 +470,74 @@ def test_two_source_cores_of_one_period_share_one_transfer() -> None:
     )
 
     assert _marks(marked=marked) == [True, True]
+
+
+def _planned_core(*, name: str) -> PlannedCore:
+    """One compiled core that is grouped but never called."""
+    return PlannedCore(
+        compiled=_never_called,
+        layout=resolve_output_layout(
+            core_key=name,
+            value_template=jnp.arange(3.0),
+            state_order=("wealth",),
+            output_roles=VALUE,
+        ),
+        tile_widths=MappingProxyType({}),
+        name=name,
+    )
+
+
+def _never_called() -> jax.Array:
+    raise AssertionError("A grouped core must not be called.")
+
+
+def _grouped_cores() -> Mapping[tuple[str, int], Mapping[str, PlannedCore]]:
+    return _group_cores_by_regime_period(
+        {
+            ("working", 0, "main"): _planned_core(name="main"),
+            ("working", 0, "aux"): _planned_core(name="aux"),
+            ("retired", 0, "main"): _planned_core(name="main"),
+        }
+    )
+
+
+_WIDE = (("working", 0, "main"), (("consumption", 2),))
+_NARROW = (("working", 0, "main"), (("consumption", 1),))
+
+
+def _uncompiled_candidates() -> Mapping[Hashable, Hashable]:
+    return _uncompiled(keys={_WIDE: "shared", _NARROW: "narrow"}, compiled={})
+
+
+def _triples_per_lowering() -> Mapping[Hashable, int]:
+    return _count_triples_per_lowering_key(
+        lowering_keys={_WIDE: "shared", _NARROW: "shared"}
+    )
+
+
+_PLANNING_MAPS = pytest.mark.parametrize(
+    "build",
+    [_grouped_cores, _uncompiled_candidates, _triples_per_lowering],
+    ids=["cores_by_cell", "uncompiled", "triples_per_lowering"],
+)
+
+
+@_PLANNING_MAPS
+def test_planning_maps_are_read_only[T](
+    build: Callable[[], Mapping[Hashable, T]],
+) -> None:
+    """Planning maps handed from one compile stage to the next are read-only views."""
+    assert type(build()) is MappingProxyType
+
+
+@_PLANNING_MAPS
+def test_planning_maps_round_trip_through_jax_tree_utilities[T](
+    build: Callable[[], Mapping[Hashable, T]],
+) -> None:
+    """A planning map flattens and rebuilds as a read-only view of the same items."""
+    built = build()
+    leaves, treedef = jax.tree_util.tree_flatten(built)
+
+    rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+
+    assert (type(rebuilt), dict(rebuilt)) == (MappingProxyType, dict(built))

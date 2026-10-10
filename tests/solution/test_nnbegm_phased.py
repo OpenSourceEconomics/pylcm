@@ -5,7 +5,7 @@ phase-varying declaration therefore must fail during ``Model`` construction;
 falling back to generic simulation-grid maximization changes candidate support.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import cast
 
 import jax.numpy as jnp
@@ -17,7 +17,13 @@ from _lcm.solution.nnbegm import _BoundNNBEGM
 from lcm import LinearAggregator, Phased, Transition
 from lcm.exceptions import ModelInitializationError
 from lcm.solvers import NBEGM
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+    UserFunction,
+)
 from tests.test_models import n_nbegm_toy
 from tests.test_models.nbegm_common import (
     make_alive_dead_model,
@@ -82,7 +88,7 @@ def _structural_phase_variations(model) -> tuple[str, ...]:
             )
         )
 
-    alive_edges = cast("Mapping[str, object]", model.edges).get("alive")
+    alive_edges = model.edges.get("alive")
     law = alive_edges.law if isinstance(alive_edges, Transition) else None
     if isinstance(law, Phased) and law.solve is not law.simulate:
         varied.append("transition")
@@ -110,7 +116,7 @@ def test_nbegm_accepts_an_identical_object_phased_utility() -> None:
         simulate=n_nbegm_toy.utility,
     )
     alive_functions = cast(
-        "Mapping[str, Callable[..., object]]",
+        "Mapping[str, UserFunction]",
         {
             "utility": phased_utility,
             "resources": _resources,

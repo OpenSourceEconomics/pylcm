@@ -14,15 +14,30 @@ keeps the separate marginal interpolation (a documented second-order
 approximation there).
 """
 
+from typing import TypedDict
+
 import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import _aggregate_child_choices
 from _lcm.egm.interp import prepare_padded_grid
+from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
 
-def _one_row_scene(query: float) -> dict:
+class _Scene(TypedDict):
+    carry: EGMCarry
+    prepared_search_grid: FloatND
+    prepared_valid_length: IntND
+    has_taste_shocks: bool
+    child_index: tuple[ScalarInt, ...]
+    child_passive_values: tuple[ScalarFloat, ...]
+    child_passive_grids: tuple[Float1D, ...]
+    row_queries: FloatND
+    row_gradients: FloatND
+
+
+def _one_row_scene(query: float) -> _Scene:
     """One smooth carry row: values 1 -> 2 on [0, 1] with zero endpoint slopes."""
     endog = jnp.array([0.0, 1.0])
     value = jnp.array([1.0, 2.0])
