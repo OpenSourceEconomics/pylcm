@@ -119,6 +119,8 @@ from _lcm.typing import (
     EconFunctionArg,
     EconFunctionsMapping,
     FlatParams,
+    FlatRegimeParams,
+    ReferenceName,
     RegimeName,
     SimulationPolicy,
 )
@@ -1315,7 +1317,7 @@ class _NNBEGMPeriodKernel:
         params = dict(regime_kernel_params(flat_params, regime_name=self.regime_name))
         accepted = inspect.signature(self.outer_target_function).parameters
         scalar = jnp.zeros(())
-        pool: dict[str, object] = {
+        pool: dict[ReferenceName, EconFunctionArg] = {
             **params,
             **{
                 name: jnp.asarray(values)
@@ -2556,7 +2558,7 @@ def _fail_if_branch_scale_outside_support(
     branch_aggregation_by_period: Mapping[
         int, tuple[UniformObservedFixedCost | None, Callable[..., FloatND] | None]
     ],
-    regime_params: Mapping[str, object],
+    regime_params: FlatRegimeParams,
     ages: TimeAxis,
 ) -> None:
     """Reject a fixed-cost scale outside the closed form's support.
@@ -2592,7 +2594,7 @@ def _fail_if_branch_scale_outside_support(
 def _resolve_branch_scale(
     *,
     scale_function: Callable[..., FloatND] | None,
-    regime_params: Mapping[str, object],
+    regime_params: FlatRegimeParams,
     period: int,
     ages: TimeAxis,
 ) -> FloatND:
@@ -2602,7 +2604,7 @@ def _resolve_branch_scale(
     if scale_function is None:  # pragma: no cover - guarded at build time
         msg = "branch_fixed_cost set without a resolved scale function"
         raise RegimeInitializationError(msg)
-    kwargs: dict[str, object] = {}
+    kwargs: dict[ReferenceName, EconFunctionArg] = {}
     for name in inspect.signature(scale_function).parameters:
         if name == "period":
             kwargs[name] = jnp.asarray(period)

@@ -8,6 +8,8 @@ from types import MappingProxyType
 import jax
 import numpy as np
 
+from _lcm.typing import JSONValue
+
 
 @dataclass(frozen=True, kw_only=True)
 class PeriodCapture:
@@ -62,7 +64,7 @@ class PeriodCapture:
 class PeriodCaptureRecord:
     """Inspect a checksum-verified entry and its optional completed reference."""
 
-    metadata: Mapping[str, object]
+    metadata: Mapping[str, JSONValue]
     """Identity, layout, widths, compiler admission and optimized HLO records."""
 
     reference: np.ndarray | None

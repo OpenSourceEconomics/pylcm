@@ -8,7 +8,6 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
 
 import h5py
 import numpy as np
@@ -22,10 +21,11 @@ from _lcm.persistence.solution import (
     _validate_archive_structure,
     _write_payload_entry,
 )
+from _lcm.typing import JSONValue
 
 
 def write_period_archive(
-    *, path: Path, metadata: dict[str, Any], arrays: Mapping[str, np.ndarray]
+    *, path: Path, metadata: Mapping[str, JSONValue], arrays: Mapping[str, np.ndarray]
 ) -> str:
     """Publish one complete archive atomically and return its manifest identity."""
     descriptor, filename = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
@@ -75,7 +75,7 @@ def write_period_archive(
 
 def read_period_archive(
     *, path: Path
-) -> tuple[dict[str, Any], dict[str, np.ndarray], str]:
+) -> tuple[dict[str, JSONValue], dict[str, np.ndarray], str]:
     """Verify metadata and native payload checksums before returning host arrays."""
     with h5py.File(path, "r") as archive:
         dataset = _require_local_dataset(

@@ -6,10 +6,12 @@ import functools
 import weakref
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from threading import RLock
 from types import GetSetDescriptorType, MappingProxyType, MemberDescriptorType
 from typing import (
     Any,
+    Literal,
     Protocol,
     SupportsIndex,
     cast,
@@ -1398,6 +1400,12 @@ def _reconstruct_artifact_from_plan(
     return _reconstruct_plan_node(leaves=leaves, node=plan)
 
 
+class _MissingLeaf(Enum):
+    """Marks a leaf slot no payload field has filled."""
+
+    MISSING = auto()
+
+
 @dataclass(slots=True, kw_only=True)
 class _LeafExtraction:
     """Working state of one callback-free leaf extraction."""
@@ -1406,7 +1414,7 @@ class _LeafExtraction:
     """Number of times each leaf slot has been met."""
     extracted: list[object]
     """Leaf value per slot, `missing` until the slot is met."""
-    missing: object
+    missing: Literal[_MissingLeaf.MISSING]
     """Sentinel for a slot no payload field has filled."""
     active_ids: set[int]
     """Identities of containers on the current descent path."""
@@ -1507,7 +1515,7 @@ def _artifact_leaf_values_from_plan(
     validate_static: bool = True,
 ) -> tuple[object, ...]:
     """Extract ordered numerical fields through a sealed callback-free plan."""
-    missing = object()
+    missing = _MissingLeaf.MISSING
     state = _LeafExtraction(
         seen=[0] * leaf_count,
         extracted=[missing] * leaf_count,

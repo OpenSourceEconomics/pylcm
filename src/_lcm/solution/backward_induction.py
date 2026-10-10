@@ -192,6 +192,7 @@ from _lcm.solution.kernel_output import (
 )
 from _lcm.solution.period_capture import (
     PeriodCaptureTarget,
+    PeriodKernelKwargs,
     capture_kernel_inputs,
     resolve_capture_target,
 )
@@ -222,7 +223,16 @@ from _lcm.solution.v_topology import (
     placed_V_sharding,
 )
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
-from _lcm.typing import FlatParams, RegimeName, SimulationPolicy, StateName
+from _lcm.typing import (
+    FlatParams,
+    ParamsLeaf,
+    QAndFArg,
+    QualifiedName,
+    ReferenceName,
+    RegimeName,
+    SimulationPolicy,
+    StateName,
+)
 from _lcm.utils.logging import (
     format_duration,
     log_period_header,
@@ -1376,7 +1386,7 @@ def _run_period_kernel(
 
     # Captured before the period-specific state axes are substituted below. Replay
     # re-enters this funnel with capture explicitly disabled.
-    kernel_kwargs = {
+    kernel_kwargs: PeriodKernelKwargs = {
         "regime_name": regime_name,
         "period": period,
         "state_action_space": state_action_space,
@@ -1447,7 +1457,7 @@ def _run_period_kernel(
         logger=logger,
     )
 
-    same_period_kwargs: dict[str, object] = {}
+    same_period_kwargs: dict[ReferenceName, MappingProxyType[RegimeName, FloatND]] = {}
     if regime.same_period_ref_regimes:
         same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
             {
@@ -1872,8 +1882,8 @@ def _evaluate_edge_fold(
     fold_age: object,
     target_states: Mapping[str, ContinuousState | DiscreteState],
     same_period_mapping: Mapping[RegimeName, FloatND],
-    source_flat_params: Mapping[str, object],
-    reference_flat_params: Mapping[RegimeName, Mapping[str, object]],
+    source_flat_params: Mapping[QualifiedName, ParamsLeaf],
+    reference_flat_params: Mapping[RegimeName, Mapping[QualifiedName, ParamsLeaf]],
     shared_sharding: jax.sharding.Sharding | None = None,
 ) -> FloatND:
     """Call one edge's fold with exactly the arguments its signature declares.
@@ -1900,7 +1910,7 @@ def _evaluate_edge_fold(
     """
     surfaces = fold.surfaces
     sig_params = set(inspect.signature(surfaces).parameters)
-    kwargs: dict[str, object] = {
+    kwargs: dict[ReferenceName, QAndFArg] = {
         name: arr for name, arr in target_states.items() if name in sig_params
     }
     kwargs.update(
@@ -2119,7 +2129,7 @@ def _edge_kwargs(
     regime: Regime,
     regime_name: RegimeName,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
-) -> dict[str, object]:
+) -> dict[ReferenceName, MappingProxyType[RegimeName, FloatND]]:
     """Build a source kernel's gated-edge `Wbar` argument, keyed by target.
 
     The kernel substitutes each entry for the raw target V in

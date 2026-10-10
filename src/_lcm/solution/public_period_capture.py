@@ -25,8 +25,9 @@ from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.persistence.period import read_period_archive, write_period_archive
-from _lcm.solution.period_capture import _period_layouts
+from _lcm.solution.period_capture import PeriodKernelKwargs, _period_layouts
 from _lcm.time import age_at
+from _lcm.typing import JSONValue
 from lcm.period_capture import PeriodCapture, PeriodCaptureRecord
 
 _GRID_SEARCH_ROUTE = "_lcm.solution.grid_search._GridSearchPeriodKernel"
@@ -45,7 +46,7 @@ class CaptureContext:
     """Carry validated selection and identities through the ordinary solve chain."""
 
     request: PeriodCapture
-    identity: dict[str, Any]
+    identity: Mapping[str, JSONValue]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -123,7 +124,7 @@ def period_identity(
     params_fingerprint: str,
     source_identity: Mapping[str, str],
     execution: ResolvedExecution,
-) -> dict[str, Any]:
+) -> dict[str, JSONValue]:
     """Bind mathematical identity separately from strict execution provenance."""
     source_root = Path(__file__).resolve().parents[2]
     digest = hashlib.sha256()
@@ -172,7 +173,7 @@ def capture_public_entry(
     context: CaptureContext | None,
     regime: Regime,
     period: int,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: PeriodKernelKwargs,
     compiled_cores: Mapping[str, PlannedCore],
     admission: Mapping[str, Mapping[str, int | None]],
 ) -> CapturedEntry | None:
@@ -351,7 +352,9 @@ class _BackendJsonNumber(str):
     __slots__ = ()
 
 
-def _backend_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+def _backend_json_object(
+    pairs: list[tuple[str, JSONValue]],
+) -> dict[str, JSONValue]:
     """Reject ambiguous members, including differently escaped duplicate keys."""
     result = {}
     for key, value in pairs:

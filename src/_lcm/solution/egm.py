@@ -28,6 +28,7 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree
+from _lcm.egm.preferences import Preferences
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -69,6 +70,7 @@ from _lcm.time import TimeAxis
 from _lcm.typing import (
     EconFunction,
     EconFunctionArg,
+    EconFunctionKwargs,
     EconFunctionsMapping,
     FlatParams,
     RegimeName,
@@ -89,6 +91,7 @@ from lcm.typing import (
     Float1D,
     FloatND,
     FunctionName,
+    ScalarFloat,
     StateName,
     ValueND,
 )
@@ -1170,9 +1173,9 @@ class _EGMCore:
 
     egm_one_asset_step: Callable[..., Any]
     """The one-asset EGM step the core runs."""
-    build_preferences: Callable[[Mapping[str, Any]], Any]
+    build_preferences: Callable[[EconFunctionKwargs], Preferences]
     """Build the felicity trio from the regime's scalar params."""
-    read_discount_factor: Callable[[Mapping[str, Any]], Any]
+    read_discount_factor: Callable[[EconFunctionKwargs], ScalarFloat]
     """Read the discount factor off the regime's scalar params."""
 
     def __call__(
