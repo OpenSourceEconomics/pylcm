@@ -10,7 +10,7 @@ artifact templates.
 from collections.abc import Callable, Mapping
 from functools import partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import jax
 
@@ -53,29 +53,21 @@ from lcm.solver_api import (
 from lcm.typing import RegimeName
 
 if TYPE_CHECKING:
-    _ArtifactStoreBoundary: TypeAlias = ArtifactStore  # noqa: UP040
-    _ValueStoreBoundary: TypeAlias = ValueStore  # noqa: UP040
-    _OmissionsInput: TypeAlias = Mapping[  # noqa: UP040
-        ArtifactRef, OmissionReason
-    ]
-    _OmissionsSnapshot: TypeAlias = MappingProxyType[  # noqa: UP040
-        ArtifactRef, OmissionReason
-    ]
-    _AuthoritiesInput: TypeAlias = Mapping[  # noqa: UP040
-        ArtifactRef, ArtifactAuthority
-    ]
-    _AuthoritiesSnapshot: TypeAlias = MappingProxyType[  # noqa: UP040
-        ArtifactRef, ArtifactAuthority
-    ]
+    type _ArtifactStoreBoundary = ArtifactStore
+    type _ValueStoreBoundary = ValueStore
+    type _OmissionsInput = Mapping[ArtifactRef, OmissionReason]
+    type _OmissionsSnapshot = MappingProxyType[ArtifactRef, OmissionReason]
+    type _AuthoritiesInput = Mapping[ArtifactRef, ArtifactAuthority]
+    type _AuthoritiesSnapshot = MappingProxyType[ArtifactRef, ArtifactAuthority]
 else:
     # Explicit body checks own these hostile-input boundaries; runtime annotation
     # traversal must not inspect their contents first.
-    _ArtifactStoreBoundary = object
-    _ValueStoreBoundary = object
-    _OmissionsInput = object
-    _OmissionsSnapshot = object
-    _AuthoritiesInput = object
-    _AuthoritiesSnapshot = object
+    type _ArtifactStoreBoundary = object
+    type _ValueStoreBoundary = object
+    type _OmissionsInput = object
+    type _OmissionsSnapshot = object
+    type _AuthoritiesInput = object
+    type _AuthoritiesSnapshot = object
 
 
 # keyword-only-exempt: primary-argument=mapping

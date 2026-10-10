@@ -37,8 +37,8 @@ from lcm.typing import (
     ScalarInt,
 )
 
-ShockType = Literal["normal_gh", "rouwenhorst", "tauchen"]
-WealthGridType = Literal["lin", "log", "irreg"]
+type ShockType = Literal["normal_gh", "rouwenhorst", "tauchen"]
+type WealthGridType = Literal["lin", "log", "irreg"]
 
 _SHOCK_GRID_CLASSES = {
     "normal_gh": NormalIIDProcess,

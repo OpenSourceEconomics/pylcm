@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 else:
     # Runtime view used by the beartype claw's annotation evaluator until
     # `_bind_forward_refs` rebinds these names to the real classes.
-    Model = Any
-    SimulationResult = Any
+    type Model = Any
+    type SimulationResult = Any
 
 
 def _bind_forward_refs(

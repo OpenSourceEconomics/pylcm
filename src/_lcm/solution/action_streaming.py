@@ -41,13 +41,13 @@ from lcm.typing import ActionName, ReferenceName
 
 _INT32_MAX = 2_147_483_647
 _COLLECTIVE_BLOCK_NDIM = 2
-_Block = tuple[jax.Array, jax.Array, jax.Array]
-_ScanCarry = tuple[HardMaxAccumulator, jax.Array]
-_CollectiveBlock = tuple[jax.Array, jax.Array, jax.Array, jax.Array]
-_CollectiveScanCarry = tuple[CollectiveHardMaxAccumulator, jax.Array]
+type _Block = tuple[jax.Array, jax.Array, jax.Array]
+type _ScanCarry = tuple[HardMaxAccumulator, jax.Array]
+type _CollectiveBlock = tuple[jax.Array, jax.Array, jax.Array, jax.Array]
+type _CollectiveScanCarry = tuple[CollectiveHardMaxAccumulator, jax.Array]
 
 
-_EV1ScanCarry = tuple["_EV1ActionAccumulator", jax.Array]
+type _EV1ScanCarry = tuple["_EV1ActionAccumulator", jax.Array]
 
 
 class _EV1ActionAccumulator(NamedTuple):

@@ -6,7 +6,6 @@ from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Any,
-    TypeAlias,
     cast,
 )
 
@@ -33,29 +32,29 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, RegimeName
 
 if TYPE_CHECKING:
-    _FloatValueBoundary: TypeAlias = FloatND  # noqa: UP040
-    _RegimeValuesBoundary: TypeAlias = Mapping[RegimeName, FloatND]  # noqa: UP040
-    _MaterializedValuesBoundary: TypeAlias = MappingProxyType[  # noqa: UP040
+    type _FloatValueBoundary = FloatND
+    type _RegimeValuesBoundary = Mapping[RegimeName, FloatND]
+    type _MaterializedValuesBoundary = MappingProxyType[
         int, MappingProxyType[str, FloatND]
     ]
-    _ValueStoreBoundary: TypeAlias = "ValueStore"  # noqa: UP040
-    _ArtifactStoreBoundary: TypeAlias = "ArtifactStore"  # noqa: UP040
-    _ValuePeriodBoundary: TypeAlias = int  # noqa: UP040
-    _RegimeNameBoundary: TypeAlias = RegimeName  # noqa: UP040
-    _ArtifactRefBoundary: TypeAlias = ArtifactRef  # noqa: UP040
-    _ArtifactKeyBoundary: TypeAlias = ArtifactKey  # noqa: UP040
+    type _ValueStoreBoundary = ValueStore
+    type _ArtifactStoreBoundary = ArtifactStore
+    type _ValuePeriodBoundary = int
+    type _RegimeNameBoundary = RegimeName
+    type _ArtifactRefBoundary = ArtifactRef
+    type _ArtifactKeyBoundary = ArtifactKey
 else:
     # Lazy stores own their validation and materialization boundaries. Runtime
     # annotation traversal would load them before those explicit checks run.
-    _FloatValueBoundary = object
-    _RegimeValuesBoundary = object
-    _MaterializedValuesBoundary = object
-    _ValueStoreBoundary = object
-    _ArtifactStoreBoundary = object
-    _ValuePeriodBoundary = object
-    _RegimeNameBoundary = object
-    _ArtifactRefBoundary = object
-    _ArtifactKeyBoundary = object
+    type _FloatValueBoundary = object
+    type _RegimeValuesBoundary = object
+    type _MaterializedValuesBoundary = object
+    type _ValueStoreBoundary = object
+    type _ArtifactStoreBoundary = object  # noqa: PYI047
+    type _ValuePeriodBoundary = object
+    type _RegimeNameBoundary = object
+    type _ArtifactRefBoundary = object
+    type _ArtifactKeyBoundary = object
 
 
 def _traverse_public_mapping_items(
