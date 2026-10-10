@@ -5,6 +5,7 @@ Run this module alone so its four-device CPU topology precedes initialization.
 
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import Never
 
 import jax
 import jax.numpy as jnp
@@ -203,7 +204,7 @@ def test_operand_placement_preserves_subjects_and_addressed_values(
     assert not value.is_deleted()
 
 
-def _refuse_operand_copy(*args: object, **kwargs: object) -> object:
+def _refuse_operand_copy[Ignored](*args: Ignored, **kwargs: Ignored) -> Never:
     del args, kwargs
     raise AssertionError("A shared operand was copied before checking headroom")
 

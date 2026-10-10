@@ -74,13 +74,16 @@ class _Environment(TypedDict):
     XLA_FLAGS: str | None
 
 
-class _VersionShim(TypedDict):
+class _VersionShimSeed(TypedDict):
     module: str
     origin: str
     exports: list[str]
     version: str
     version_tuple: list[int | str]
     commit_id: None
+
+
+class _VersionShim(_VersionShimSeed):
     sha256: str
 
 

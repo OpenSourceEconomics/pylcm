@@ -11,8 +11,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, PytreeValue
 from lcm.solver_api import (
     ActionOutput,
     ArtifactAuthority,
@@ -59,7 +57,7 @@ from lcm.solvers import (
     ValueInputChannel,
     ValueRead,
 )
-from lcm.typing import ActionName, Float1D, FloatND, RegimeName, StateName
+from lcm.typing import ActionName, FlatParams, Float1D, FloatND, RegimeName, StateName
 
 COUNTER_KEY = ArtifactKey(
     type_id="tests.conformance_solver.counter",
@@ -295,16 +293,16 @@ class _PeriodKernel:
         """Return this parameter-free kernel unchanged."""
         return self
 
-    def __call__[Ignored](
+    def __call__[Ignored, AgeAxis, CoreResult](
         self,
         *,
-        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
+        compiled_cores: Mapping[str, Callable[..., CoreResult]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationArtifact],
         flat_params: FlatParams,  # noqa: ARG002
         period: int,
-        ages: TimeAxis,  # noqa: ARG002
+        ages: AgeAxis,  # noqa: ARG002
         logger: logging.Logger,  # noqa: ARG002
         **_unused: Ignored,
     ) -> KernelOutput:

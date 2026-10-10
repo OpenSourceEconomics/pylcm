@@ -20,16 +20,17 @@ channel the read consumes.
 """
 
 import inspect
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import TypedDict, Unpack
 
 import numpy as np
 import pytest
 
 from _lcm.solution import nbegm as nbegm_module
 from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
+from _lcm.typing import ArgumentTree
 from lcm import Model
-from lcm.typing import UserParams
+from lcm.typing import ActionName, ReferenceName, RegimeName, UserParams
 from tests.solution._nbegm_direct_oracle import (
     ChildPeriodContext,
     OracleContext,
@@ -42,7 +43,47 @@ from tests.solution.test_nbegm_direct_oracle import (
 )
 from tests.test_models import nbegm_multi_discrete_toy, nbegm_ride_discrete_toy
 
-_SMALL: dict[str, Any] = {"n_liquid": 12, "n_savings": 16, "n_consumption": 24}
+
+class _Variants(TypedDict, total=False):
+    action_in_costate: bool
+    action_in_liquid_law: bool
+    action_in_utility: bool
+    action_in_regime_transition: bool
+    action_in_health_transition: bool
+    action_in_schedule_variable: bool
+    action_in_discount: bool
+    jump_schedule: bool
+    costate_reads_liquid: bool
+
+
+class _Sizes(TypedDict):
+    n_liquid: int
+    n_savings: int
+    n_consumption: int
+
+
+type _SignatureLaw = Callable[..., dict[ReferenceName, ArgumentTree]]
+
+
+class _ChannelInputs(TypedDict):
+    regime_transition: _SignatureLaw
+    target_laws: Mapping[RegimeName, tuple[_SignatureLaw, ...]]
+    target_weight_laws: Mapping[RegimeName, _SignatureLaw | None]
+    target_resources_arg_names: Mapping[RegimeName, frozenset[str]]
+    discount_factor_dag: _SignatureLaw
+    interval_schedule_dags: tuple[_SignatureLaw, ...]
+
+
+class _ChannelOverrides(TypedDict, total=False):
+    regime_transition: _SignatureLaw
+    target_laws: Mapping[RegimeName, tuple[_SignatureLaw, ...]]
+    target_weight_laws: Mapping[RegimeName, _SignatureLaw | None]
+    target_resources_arg_names: Mapping[RegimeName, frozenset[str]]
+    discount_factor_dag: _SignatureLaw
+    interval_schedule_dags: tuple[_SignatureLaw, ...]
+
+
+_SMALL: _Sizes = {"n_liquid": 12, "n_savings": 16, "n_consumption": 24}
 _PERIOD = 0
 
 type _Route = tuple[Callable[[], Model], Callable[[], UserParams]]
@@ -57,9 +98,13 @@ _PARAMS_FLAGS = frozenset(
 )
 
 
-def _ride_discrete(**variant: bool) -> _Route:
+def _ride_discrete(**variant: Unpack[_Variants]) -> _Route:
     """Model and params builders for one variant of the ride-along discrete toy."""
-    params_flags = {name: on for name, on in variant.items() if name in _PARAMS_FLAGS}
+    params_flags: dict[str, bool] = {}
+    for name, on in variant.items():
+        if name in _PARAMS_FLAGS:
+            assert isinstance(on, bool)
+            params_flags[name] = on
     return (
         lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL, **variant
@@ -131,20 +176,20 @@ def test_an_action_reaching_the_continuation_splits_the_classes(*, route: str):
     assert statics.continuation_class_of_branch == (0, 1)
 
 
-def _reads(*names: str) -> Callable[..., Any]:
+def _reads(*names: ReferenceName) -> _SignatureLaw:
     """A callable whose signature names exactly `names`, keyword-only."""
     parameters = [
         inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY) for name in names
     ]
 
-    def func(**kwargs: Any) -> Any:
+    def func(**kwargs: ArgumentTree) -> dict[ReferenceName, ArgumentTree]:
         return kwargs
 
     func.__signature__ = inspect.Signature(parameters)  # ty: ignore[unresolved-attribute]
     return func
 
 
-_QUIET: dict[str, Any] = {
+_QUIET: _ChannelInputs = {
     "regime_transition": _reads("age"),
     "target_laws": {
         "alive": (_reads("savings", "kind"),),
@@ -159,7 +204,7 @@ _QUIET: dict[str, Any] = {
     "interval_schedule_dags": (_reads("liquid", "kind"),),
 }
 
-_CHANNEL_CASES: dict[str, dict[str, Any]] = {
+_CHANNEL_CASES: dict[str, _ChannelOverrides] = {
     "regime_transition": {"regime_transition": _reads("age", "work")},
     "target_law": {
         "target_laws": {
@@ -192,9 +237,12 @@ _CHANNEL_CASES: dict[str, dict[str, Any]] = {
 }
 
 
-def _classify(overrides: dict[str, Any]) -> tuple[str, ...]:
+def _classify(overrides: _ChannelOverrides) -> tuple[ActionName, ...]:
+    channels: _ChannelInputs = {**_QUIET, **overrides}
+    # Signature-only stand-ins return their input mappings instead of numeric laws.
     return nbegm_module._continuation_action_names(
-        **{**_QUIET, **overrides}, action_names=("work", "claim")
+        **channels,  # ty: ignore[invalid-argument-type]
+        action_names=("work", "claim"),
     )
 
 

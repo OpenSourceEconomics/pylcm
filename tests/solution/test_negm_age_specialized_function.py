@@ -41,7 +41,7 @@ import pytest
 from _lcm.egm import regime_introspection
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import _ChildRead
-from _lcm.egm.step import _EGMStep
+from _lcm.egm.step_core import _EgmKernelPieces
 from _lcm.execution.core_program import core_program_graph
 from _lcm.solution.negm import _NEGMPeriodKernel
 from lcm import (
@@ -591,8 +591,9 @@ def _early_reads_of_late(*, model: Model) -> _ChildRead:
         else:
             assert hasattr(step, "__wrapped__")
             step = step.__wrapped__
-    assert isinstance(step, _EGMStep)
-    return step.pieces.continuation_plan.child_reads["late"]
+    pieces = step.pieces
+    assert isinstance(pieces, _EgmKernelPieces)
+    return pieces.continuation_plan.child_reads["late"]
 
 
 # `late`'s keeper per variant; `late` is active at the source age and the next.

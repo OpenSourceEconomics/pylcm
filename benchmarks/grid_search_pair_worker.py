@@ -17,7 +17,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, TypeGuard, runtime_checkable
 
 from benchmarks.grid_search_pair_scenarios import EXTERNAL_HARNESS_SOURCES
 
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from _lcm.typing import JSONValue
     from benchmarks.grid_search_pair import (
         _ArrayManifest,
+        _AsyncCommunicationCounts,
         _CompiledCore,
         _DeviceMemory,
         _Dimensions,
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
         _ProcMemory,
         _RouteMetadata,
         _VersionShim,
+        _VersionShimSeed,
         _WorkerMetrics,
     )
     from benchmarks.grid_search_pair_scenarios import ScenarioSpec
@@ -57,6 +59,14 @@ class _GridExtent(Protocol):
     def n_points(self) -> int: ...
 
 
+class _GridArray(Protocol):
+    def to_jax(self) -> Array: ...
+
+
+def _has_grid_array[GridValue](grid: GridValue) -> TypeGuard[_GridArray]:
+    return callable(getattr(grid, "to_jax", None))
+
+
 class _JaxConfig(Protocol):
     def read(self, name: str) -> bool: ...
 
@@ -66,6 +76,7 @@ class _JaxPrecision(Protocol):
     def config(self) -> _JaxConfig: ...
 
 
+@runtime_checkable
 class _ReadyLeaf(Protocol):
     def block_until_ready(self) -> _ReadyLeaf | None: ...
 
@@ -153,7 +164,7 @@ _VERSION_SHIM_EXPORTS = (
 
 
 def _version_shim_identity() -> _VersionShim:
-    identity = {
+    identity: _VersionShimSeed = {
         "module": _VERSION_SHIM_MODULE,
         "origin": _VERSION_SHIM_ORIGIN,
         "exports": list(_VERSION_SHIM_EXPORTS),
@@ -161,10 +172,10 @@ def _version_shim_identity() -> _VersionShim:
         "version_tuple": [0, "gridsearchpair"],
         "commit_id": None,
     }
-    identity["sha256"] = hashlib.sha256(
+    digest = hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    return identity
+    return {**identity, "sha256": digest}
 
 
 class _VersionShimFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
@@ -192,13 +203,15 @@ class _VersionShimFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def exec_module(self, module: ModuleType) -> None:
         version_tuple = (0, "gridsearchpair")
         module.__file__ = _VERSION_SHIM_ORIGIN
-        module.__all__ = list(_VERSION_SHIM_EXPORTS)
-        module.__version__ = _VERSION_SHIM_VERSION
-        module.version = _VERSION_SHIM_VERSION
-        module.__version_tuple__ = version_tuple
-        module.version_tuple = version_tuple
-        module.__commit_id__ = None
-        module.commit_id = None
+        module.__dict__.update(
+            __all__=list(_VERSION_SHIM_EXPORTS),
+            __version__=_VERSION_SHIM_VERSION,
+            version=_VERSION_SHIM_VERSION,
+            __version_tuple__=version_tuple,
+            version_tuple=version_tuple,
+            __commit_id__=None,
+            commit_id=None,
+        )
 
 
 def _import_lcm_with_version_shim(
@@ -358,7 +371,7 @@ def _hlo_census(text: str) -> _HloCensus:
         return len(re.findall(rf"(?<![a-z0-9_-]){re.escape(op)}\s*\(", lowered))
 
     op_counts = {}
-    async_communication_counts = {}
+    async_communication_counts: dict[str, _AsyncCommunicationCounts] = {}
     for op in _HLO_OPS:
         if op not in _COLLECTIVE_OPS:
             op_counts[op] = count_form(op)
@@ -390,11 +403,12 @@ def _safe_stem(label: str) -> str:
     return stem[:100] or "core"
 
 
-def _grid_extent(grid: _GridExtent) -> int:
+def _grid_extent(grid: _GridExtent | _GridArray) -> int:
     """Return a grid width without requiring runtime-supplied points."""
     n_points = getattr(grid, "n_points", None)
     if n_points is not None:
         return int(n_points)
+    assert _has_grid_array(grid=grid)
     return int(grid.to_jax().shape[0])
 
 
@@ -588,6 +602,7 @@ def _flatten_arrays[Ref: _ReplayRef](
         dissolution_flags: dict[int, dict[RegimeName, _ReadyLeaf]] = {}
         for ref, payload in result.replay_artifacts.items():
             if ref.key.type_id == "pylcm.collective.dissolution_flag":
+                assert isinstance(payload, _ReadyLeaf)
                 dissolution_flags.setdefault(ref.period, {})[ref.regime] = payload
     flattened: dict[str, _ReadyLeaf] = {}
     for prefix, tree in (("value", values), ("dissolution", dissolution_flags)):
@@ -654,7 +669,7 @@ def _write_arrays(
     converted = {
         key: np.asarray(jax.device_get(value)) for key, value in arrays.items()
     }
-    np.savez_compressed(path, **converted)
+    np.savez_compressed(path, allow_pickle=True, **converted)
     return [
         {
             "key": key,
@@ -668,7 +683,7 @@ def _write_arrays(
 
 
 def _device_memory(jax: ModuleType) -> list[_DeviceMemory]:
-    result = []
+    result: list[_DeviceMemory] = []
     for device in jax.devices():
         try:
             stats = device.memory_stats()
@@ -810,7 +825,10 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     lcm, version_shim = _import_lcm_with_version_shim(target_src=target_src)
     from _lcm.solution import backward_induction
 
-    imported_lcm = Path(lcm.__file__).resolve()
+    lcm_path = lcm.__file__
+    if lcm_path is None:
+        raise RuntimeError("Imported lcm has no source-file identity.")
+    imported_lcm = Path(lcm_path).resolve()
     if not imported_lcm.is_relative_to(target_src):
         raise RuntimeError(
             f"Imported lcm from {imported_lcm}, outside target source {target_src}."
@@ -857,9 +875,13 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     timed_compile_all = observe_compile(original_compile_all)
 
     def retain_compiled(
-        *, compiled: Compiled, label: str, logger: logging.Logger
+        *,
+        compiled: Compiled,
+        label: str,
+        logger: logging.Logger,
+        precomputed_peak_bytes: int | None = None,
     ) -> None:
-        del logger
+        del logger, precomputed_peak_bytes
         if capture_cold:
             with capture_lock:
                 compiled_refs.append((label, compiled))
@@ -891,14 +913,14 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         solve_kwargs["return_dissolution_flags"] = True
     memory_before_solve = _read_proc_memory()
     with ExitStack() as stack:
-        backward_induction._compile_all_functions = timed_compile_all  # noqa: SLF001
+        backward_induction.__dict__["_compile_all_functions"] = timed_compile_all
         stack.callback(
             setattr,
             backward_induction,
             "_compile_all_functions",
             original_compile_all,
         )
-        backward_induction._log_kernel_memory = retain_compiled  # noqa: SLF001
+        backward_induction.__dict__["_log_kernel_memory"] = retain_compiled
         stack.callback(
             setattr,
             backward_induction,
@@ -906,7 +928,8 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
             original_log_memory,
         )
         if original_resolve_program is not None:
-            backward_induction.resolve_core_program = retain_plan
+            assert retain_plan is not None
+            backward_induction.__dict__["resolve_core_program"] = retain_plan
             stack.callback(
                 setattr,
                 backward_induction,
@@ -936,7 +959,13 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     device_memory = _device_memory(jax)
     if final_warm_result is None:
         raise RuntimeError("The worker produced no final warm result.")
-    arrays = _flatten_arrays(result=final_warm_result)
+    published = _flatten_arrays(result=final_warm_result)
+    arrays: dict[str, Array] = {}
+    for name, leaf in published.items():
+        if not isinstance(leaf, jax.Array):
+            raise TypeError(f"Published paired value {name!r} is not a JAX array.")
+        arrays[name] = leaf
+    del published
     executed_float_dtype = _executed_float_dtype(
         precision=args.precision, jax=jax, arrays=arrays
     )
@@ -946,7 +975,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     )
     del arrays, final_warm_result
 
-    tile_plans = [
+    tile_plans: list[dict[str, JSONValue]] = [
         {
             "tile_widths": dict(result.tile_widths),
             "static_kwargs": dict(result.static_kwargs),
@@ -961,6 +990,8 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     ordered_compiled = sorted(compiled_refs, key=lambda item: item[0])
     for ordinal, (label, compiled) in enumerate(ordered_compiled):
         text = compiled.as_text()
+        if text is None:
+            raise RuntimeError(f"Compiled core {label!r} supplied no HLO text.")
         census = _hlo_census(text)
         compiler_memory = _memory_analysis(compiled)
         filename = f"{ordinal:03d}-{_safe_stem(label)}-{census['sha256'][:12]}.hlo.txt"

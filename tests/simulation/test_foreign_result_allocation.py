@@ -7,7 +7,7 @@ from dataclasses import replace
 from functools import partial, partialmethod
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Concatenate, Never, NotRequired, TypedDict, Unpack, cast
 from unittest.mock import Mock
 
 import jax
@@ -29,13 +29,13 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.solution_copies import copy_solution_leaf
 from _lcm.solution.result_snapshot import snapshot_artifact_store
-from _lcm.typing import ArtifactPayload
+from _lcm.typing import ArtifactPayload, PytreeValue
 from lcm import ExecutionConfig, Model
 from lcm._solver_api import authority as authority_module
 from lcm._solver_api import entries
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.persistence import load_solution
-from lcm.solver_api import ArtifactRef, ArtifactStore, ValueStore
+from lcm.solver_api import ArtifactRef, ArtifactStore, SolutionResult, ValueStore
 from tests.conformance_solver import ReferenceSolver
 from tests.solution.test_solution_result import _small_grid_search_inputs
 from tests.solution.test_solution_result_snapshot import (
@@ -60,6 +60,30 @@ from tests.test_external_solver_conformance import (
 from tests.test_models.initial_nodes import initial_nodes_of
 
 
+class _EntryOwnerInputs(TypedDict):
+    original_inputs: SimulationEntryInputs | None
+    solution: model_module._SolutionResultBoundary | None
+    model_roots: tuple[PytreeValue, ...]
+    devices: tuple[jax.Device, ...]
+    budget_bytes: int
+    operations: NotRequired[ProfiledSimulationOperations]
+
+
+class _ForeignResolution(TypedDict):
+    solution: model_module._SolutionResultBoundary
+    flat_params: model_module.FlatParams
+    expected_fingerprint: str
+    array_copier: NotRequired[model_module._ArrayCopier | None]
+    native_values: NotRequired[model_module.NativeValueMaterializer | None]
+    process_grid_resolver: NotRequired[model_module.ProcessGridResolver | None]
+
+
+class _SolutionCopyInputs(TypedDict):
+    value: entries.ArtifactPayload | entries._LazyEntry
+    label: str
+    array_copier: NotRequired[entries._ArrayCopier | None]
+
+
 class _UnadmittedForeignCopyError(AssertionError):
     """A concrete copy reached the eager allocator inside foreign resolution."""
 
@@ -67,7 +91,7 @@ class _UnadmittedForeignCopyError(AssertionError):
 def _capture_owner(monkeypatch: pytest.MonkeyPatch) -> list[SimulationEntryAllocations]:
     owners: list[SimulationEntryAllocations] = []
 
-    def create(**arguments: Any) -> SimulationEntryAllocations:
+    def create(**arguments: Unpack[_EntryOwnerInputs]) -> SimulationEntryAllocations:
         owner = SimulationEntryAllocations(**arguments)
         owners.append(owner)
         return owner
@@ -77,16 +101,16 @@ def _capture_owner(monkeypatch: pytest.MonkeyPatch) -> list[SimulationEntryAlloc
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _guard_foreign_resolution(
+def _guard_foreign_resolution[Result](
     self: Model,
     *,
-    original: Callable[..., object],
+    original: Callable[..., Result],
     monkeypatch: pytest.MonkeyPatch,
     owners: list[SimulationEntryAllocations],
     lower_budget: bool,
     reached: list[bool],
-    **arguments: Any,
-) -> object:
+    **arguments: Unpack[_ForeignResolution],
+) -> Result:
     owner = owners[-1]
     reached.append(True)
     live = owner.snapshot()
@@ -97,19 +121,26 @@ def _guard_foreign_resolution(
         assert owner.budget_bytes > 1
     array = jnp.array
 
-    def guard(value: object, *args: Any, **kwargs: Any) -> jax.Array:
-        if (
-            kwargs.get("copy") is True
-            and isinstance(value, jax.Array)
-            and not isinstance(value, jax.core.Tracer)
-        ):
-            raise _UnadmittedForeignCopyError(
-                "Foreign snapshot allocated an eager copy before profiled admission"
-            )
-        return array(value, *args, **kwargs)
+    def wrap_array[Value, **P, ArrayResult](
+        original: Callable[Concatenate[Value, P], ArrayResult],
+    ) -> Callable[Concatenate[Value, P], ArrayResult]:
+        def guard(value: Value, /, *args: P.args, **kwargs: P.kwargs) -> ArrayResult:
+            if (
+                kwargs.get("copy") is True
+                and isinstance(value, jax.Array)
+                and not isinstance(value, jax.core.Tracer)
+            ):
+                raise _UnadmittedForeignCopyError(
+                    "Foreign snapshot allocated an eager copy before profiled admission"
+                )
+            return original(value, *args, **kwargs)
+
+        return guard
 
     with monkeypatch.context() as patch:
-        patch.setattr(jnp, "array", guard)
+        patch.setattr(jnp, "array", wrap_array(array))
+        assert isinstance(arguments["solution"], SolutionResult)
+        assert isinstance(arguments["solution"].values, ValueStore)
         source = next(
             entry.value
             for entry in arguments["solution"].values._entries.values()
@@ -174,7 +205,12 @@ def test_foreign_copy_bank_is_live_before_the_next_copy(
     inspected: list[bool] = []
     original = entries._copy_solution_value
 
-    def observe(*, value: ArtifactPayload, label: str, **kwargs: Any) -> object:
+    def observe(
+        *,
+        value: ArtifactPayload | entries._LazyEntry,
+        label: str,
+        array_copier: entries._ArrayCopier | None = None,
+    ) -> entries._SolutionValue:
         still_live = tuple(leaf for ref in copied if (leaf := ref()) is not None)
         if still_live:
             inspected.append(True)
@@ -187,7 +223,7 @@ def test_foreign_copy_bank_is_live_before_the_next_copy(
             assert not any(missing.values()), (
                 f"Live foreign copies missing before the next copy: {dict(missing)}"
             )
-        result = original(value=value, label=label, **kwargs)
+        result = original(value=value, label=label, array_copier=array_copier)
         if isinstance(result, jax.Array):
             result.block_until_ready()
             copied.append(weakref.ref(result))
@@ -302,7 +338,7 @@ def test_foreign_copy_owners_release_and_never_enter_the_compiler_cache(
     )
     if fail_validation:
 
-        def refuse(**arguments: Any) -> None:
+        def refuse[Ignored](**arguments: Ignored) -> None:
             del arguments
             raise InvalidSimulationInputError("Seeded late schema rejection")
 
@@ -361,7 +397,7 @@ def test_growing_copy_bank_rechecks_the_same_compiled_candidate(
     owner.copy_solution_leaf(leaf=source, label="second")
     assert next(iter(owner.operations.cache.values())) is compiled
 
-    def forbidden(*args: Any, **kwargs: Any) -> object:
+    def forbidden[Ignored](*args: Ignored, **kwargs: Ignored) -> Never:
         del args, kwargs
         raise AssertionError("Rejected copy reached concrete executable dispatch")
 
@@ -387,7 +423,7 @@ def test_budgeted_native_archive_uses_admitted_loader_without_public_callback(
         assert isinstance(foreign.values, ValueStore)
         foreign.values.materialize()
 
-    def forbidden(*args: Any, **kwargs: Any) -> object:
+    def forbidden[Ignored](*args: Ignored, **kwargs: Ignored) -> Never:
         del args, kwargs
         raise AssertionError("Unprofiled native archive callback was invoked")
 
@@ -428,12 +464,17 @@ def test_unexpected_supplied_artifact_is_rejected_before_unprofiled_copy(
     )
     original = authority_module._copy_artifact_array_leaf
 
-    def guard(*, leaf: jax.Array, label: str, **kwargs: Any) -> jax.Array:
-        if kwargs.get("array_copier") is None:
+    def guard(
+        *,
+        leaf: authority_module.ArtifactLeafArray,
+        label: str,
+        array_copier: authority_module._ArrayCopier | None = None,
+    ) -> jax.Array:
+        if array_copier is None:
             raise _UnadmittedForeignCopyError(
                 "Unexpected artifact reached unprofiled copy"
             )
-        return original(leaf=leaf, label=label, **kwargs)
+        return original(leaf=leaf, label=label, array_copier=array_copier)
 
     monkeypatch.setattr(entries, "_copy_artifact_array_leaf", guard)
     monkeypatch.setattr(authority_module, "_copy_artifact_array_leaf", guard)
@@ -493,7 +534,7 @@ def test_artifact_route_refuses_before_the_foreign_snapshot(
     foreign = replace(_solve_conformance(model=source))
     assert foreign.replay_artifacts
 
-    def forbidden(**kwargs: object) -> object:
+    def forbidden[Ignored](**kwargs: Ignored) -> Never:
         del kwargs
         raise AssertionError("Unprofiled foreign artifact snapshot started")
 
@@ -527,7 +568,7 @@ def test_host_value_payload_is_rejected_before_its_unprofiled_copy(
     foreign = replace(owned, values=ValueStore(values))
     original_copy = entries._copy_solution_value
 
-    def guarded_copy(**kwargs: Any) -> object:
+    def guarded_copy(**kwargs: Unpack[_SolutionCopyInputs]) -> entries._SolutionValue:
         if isinstance(kwargs["value"], np.ndarray):
             raise _UnadmittedForeignCopyError(
                 "Invalid host model value reached its copy allocator"
