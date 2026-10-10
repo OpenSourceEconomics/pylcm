@@ -2,7 +2,7 @@
 
 import copy
 import dataclasses
-from typing import Any
+from typing import Never, NotRequired, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -11,6 +11,8 @@ import pytest
 
 from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.execution.compiler_memory import CompilerMemoryReport
+from _lcm.typing import PytreeValue
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -24,6 +26,7 @@ from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidRegimeTransitionProbabilitiesError,
 )
+from lcm.result import SimulationResult
 from lcm.typing import (
     FloatND,
     ScalarFloat,
@@ -122,12 +125,16 @@ def compiler_boundary(monkeypatch: pytest.MonkeyPatch) -> _CompilerBoundary:
     analyze_program = jax.stages.Compiled.memory_analysis
     dispatch_program = jax.stages.Compiled.__call__
 
-    def analyze_and_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def analyze_and_record(
+        self: jax.stages.Compiled, *args: Never, **kwargs: Never
+    ) -> CompilerMemoryReport | None:
         stats = analyze_program(self, *args, **kwargs)
         observed.profiled.append((self, len(observed.dispatched)))
         return stats
 
-    def dispatch_and_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def dispatch_and_record(
+        self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         observed.dispatched.append(self)
         return dispatch_program(self, *args, **kwargs)
 
@@ -136,7 +143,9 @@ def compiler_boundary(monkeypatch: pytest.MonkeyPatch) -> _CompilerBoundary:
     return observed
 
 
-def _controlled_post_validation_refusal(*args: Any, **kwargs: Any) -> Any:
+def _controlled_post_validation_refusal[Ignored](
+    *args: Ignored, **kwargs: Ignored
+) -> Never:
     del args, kwargs
     raise ExecutionPlanningError("controlled refusal after transition validation")
 
@@ -201,7 +210,30 @@ def _numerical_inputs(
     )
 
 
-def _assert_same_raw_results(*, actual: Any, expected: Any) -> None:
+class RegimeLawInputs(TypedDict):
+    regime_transition_probs: transition_checks.MappingProxyType[
+        transition_checks.RegimeName, transition_checks.FloatND
+    ]
+    active_regimes_next_period: tuple[transition_checks.RegimeName, ...]
+    regime_name: transition_checks.RegimeName
+    age: float | transition_checks.ScalarInt | transition_checks.ScalarFloat
+    next_age: float | transition_checks.ScalarInt | transition_checks.ScalarFloat | None
+    period: NotRequired[int | None]
+    state_action_values: NotRequired[
+        transition_checks.MappingProxyType[
+            transition_checks.StateOrActionName,
+            transition_checks.FloatND | transition_checks.IntND,
+        ]
+        | None
+    ]
+    summary: NotRequired[transition_checks._ValidationSummary | None]
+    memory: NotRequired[transition_checks.SimulationMemory | None]
+    rows: NotRequired[transition_checks.Bool1D | None]
+
+
+def _assert_same_raw_results(
+    *, actual: SimulationResult, expected: SimulationResult
+) -> None:
     """Compare the complete public record, including routes and masks."""
     assert jax.tree.structure(actual.raw_results) == jax.tree.structure(
         expected.raw_results
@@ -297,10 +329,10 @@ def test_regime_law_workspace_refuses_before_completed_user_output(
 ) -> None:
     """The full Cartesian law must fit before its first completed output."""
     model, params, initial = _inputs(budget=16 * 1024)
-    completed: list[object] = []
+    completed: list[PytreeValue] = []
     original_check = transition_checks._validate_regime_transition_probs
 
-    def observe_completed_law(**kwargs: Any) -> None:
+    def observe_completed_law(**kwargs: Unpack[RegimeLawInputs]) -> None:
         jax.block_until_ready(kwargs["regime_transition_probs"])
         completed.append(kwargs["regime_transition_probs"])
         original_check(**kwargs)

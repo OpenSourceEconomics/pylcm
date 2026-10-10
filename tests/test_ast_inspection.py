@@ -1,7 +1,6 @@
 """Tests for AST-based array parameter indexing detection."""
 
 from dataclasses import dataclass
-from typing import Any
 
 import pytest
 
@@ -10,17 +9,20 @@ from _lcm.regime_building.transition_support import (
     _SupportedStochasticTransition,
 )
 from _lcm.utils.ast_inspection import _get_func_indexing_params
+from lcm.typing import FloatND, UserFunction
 
 
-def _good_multi(*, period: int, health: int, probs_array: Any) -> Any:
+def _good_multi(*, period: int, health: int, probs_array: FloatND) -> FloatND:
     return probs_array[period, health]
 
 
-def _good_single(*, health: int, probs_array: Any) -> Any:
+def _good_single(*, health: int, probs_array: FloatND) -> FloatND:
     return probs_array[health]
 
 
-def _good_three(*, period: int, work: int, partner: int, probs_array: Any) -> Any:
+def _good_three(
+    *, period: int, work: int, partner: int, probs_array: FloatND
+) -> FloatND:
     return probs_array[period, work, partner]
 
 
@@ -42,7 +44,7 @@ def test_get_func_indexing_params_three() -> None:
     ) == ["period", "work", "partner"]
 
 
-def _swapped(*, period: int, health: int, probs_array: Any) -> Any:
+def _swapped(*, period: int, health: int, probs_array: FloatND) -> FloatND:
     return probs_array[health, period]
 
 
@@ -54,22 +56,24 @@ def test_get_func_indexing_params_detects_actual_order() -> None:
     ]
 
 
-def _computed_index(*, period: int, health: int, probs_array: Any) -> Any:
+def _computed_index(*, period: int, health: int, probs_array: FloatND) -> FloatND:
     return probs_array[period - 1, health]
 
 
-def _mixed_bare_and_computed(*, period: int, health: int, probs_array: Any) -> Any:
+def _mixed_bare_and_computed(
+    *, period: int, health: int, probs_array: FloatND
+) -> FloatND:
     return probs_array[period, health - 1]
 
 
 @pytest.mark.parametrize("func", [_computed_index, _mixed_bare_and_computed])
-def test_computed_index_raises(func: Any) -> None:
+def test_computed_index_raises(func: UserFunction) -> None:
     """Computed indices raise ValueError with recipe for fix."""
     with pytest.raises(ValueError, match="computed indices"):
         _get_func_indexing_params(func=func, array_param_name="probs_array")
 
 
-def _aliased_variable(*, period: int, health: int, probs_array: Any) -> Any:
+def _aliased_variable(*, period: int, health: int, probs_array: FloatND) -> FloatND:
     idx = period
     return probs_array[idx, health]
 
@@ -82,7 +86,7 @@ def test_aliased_variable_detected_by_ast() -> None:
         )
 
 
-def _no_subscript(*, period: int, health: int, probs_array: Any) -> Any:  # noqa: ARG001
+def _no_subscript(*, period: int, health: int, probs_array: FloatND) -> FloatND:  # noqa: ARG001
     return probs_array
 
 
@@ -112,7 +116,7 @@ def test_lambda_raises() -> None:
         _get_func_indexing_params(func=func, array_param_name="probs_array")
 
 
-def _custom_array(*, period: int, health: int, wage_grid: Any) -> Any:
+def _custom_array(*, period: int, health: int, wage_grid: FloatND) -> FloatND:
     return wage_grid[period, health]
 
 
@@ -123,7 +127,9 @@ def test_non_probs_array_param() -> None:
     ) == ["period", "health"]
 
 
-def _custom_array_wrong_order(*, period: int, health: int, wage_grid: Any) -> Any:
+def _custom_array_wrong_order(
+    *, period: int, health: int, wage_grid: FloatND
+) -> FloatND:
     return wage_grid[health, period]
 
 
@@ -134,7 +140,9 @@ def test_non_probs_array_param_actual_order() -> None:
     ) == ["health", "period"]
 
 
-def _dict_subscript(*, config: dict, period: int, probs_array: Any) -> Any:
+def _dict_subscript(
+    *, config: dict[str, float], period: int, probs_array: FloatND
+) -> FloatND:
     threshold = config["threshold"]  # noqa: F841
     return probs_array[period]
 
@@ -147,8 +155,8 @@ def test_dict_subscript_not_confused_with_array() -> None:
 
 
 def _param_subscripted_before_array(
-    *, lookup: Any, period: int, health: int, arr: Any
-) -> Any:
+    *, lookup: FloatND, period: int, health: int, arr: FloatND
+) -> FloatND:
     threshold = lookup[period]  # noqa: F841
     return arr[period, health]
 
@@ -160,7 +168,7 @@ def test_array_param_name_skips_false_positive() -> None:
     ) == ["period", "health"]
 
 
-def _multiple_subscripts(*, period: int, health: int, probs_array: Any) -> Any:
+def _multiple_subscripts(*, period: int, health: int, probs_array: FloatND) -> FloatND:
     x = probs_array[period]
     return probs_array[period, health] + x
 
@@ -177,7 +185,7 @@ def test_multiple_subscripts_raises() -> None:
 class _CallableMulti:
     """A callable object whose `__call__` indexes an array parameter."""
 
-    def __call__(self, *, period: int, health: int, probs_array: Any) -> Any:
+    def __call__(self, *, period: int, health: int, probs_array: FloatND) -> FloatND:
         return probs_array[period, health]
 
 
@@ -185,7 +193,7 @@ class _CallableMulti:
 class _CallableScalar:
     """A callable object that never subscripts its array parameter."""
 
-    def __call__(self, *, period: int, probs_array: Any) -> Any:
+    def __call__(self, *, period: int, probs_array: FloatND) -> FloatND:
         return probs_array * period
 
 
@@ -208,17 +216,17 @@ def test_callable_object_without_a_subscript_returns_empty() -> None:
 
 def test_uninspectable_callable_object_names_its_class() -> None:
     """The error for an uninspectable callable object names the class, not a lambda."""
-    namespace: dict[str, Any] = {}
+    namespace: dict[str, object] = {}  # noqa: PAN001 - exec inserts a builtins dictionary beside the dynamic class
     exec(  # noqa: S102
         "class _Dynamic:\n"
         "    def __call__(self, health, probs_array):\n"
         "        return probs_array[health]\n",
         namespace,
     )
+    dynamic_class = namespace["_Dynamic"]
+    assert isinstance(dynamic_class, type)
     with pytest.raises(TypeError, match="_Dynamic"):
-        _get_func_indexing_params(
-            func=namespace["_Dynamic"](), array_param_name="probs_array"
-        )
+        _get_func_indexing_params(func=dynamic_class(), array_param_name="probs_array")
 
 
 def test_get_func_indexing_params_reads_through_a_dated_law() -> None:

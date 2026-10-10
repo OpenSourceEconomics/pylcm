@@ -19,7 +19,7 @@ import pytest
 from _lcm.config import TEST_DATA
 from lcm import AgeGrid, ByAge, Model, StochasticTransition, Transition
 from lcm.taste_shocks import ExtremeValueTasteShocks
-from lcm.typing import FloatND
+from lcm.typing import FloatND, RegimeName
 from lcm_examples.iskhakov_et_al_2017 import get_edges
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import base, dcegm_variants
@@ -47,7 +47,9 @@ def _load_analytical(*, case: str, kind: str) -> np.ndarray:
 
 
 def _stack_regime_V(
-    *, period_to_regime_to_V_arr: Mapping[int, Mapping[str, FloatND]], regime: str
+    *,
+    period_to_regime_to_V_arr: Mapping[int, Mapping[str, FloatND]],
+    regime: RegimeName,
 ) -> np.ndarray:
     periods = sorted(period_to_regime_to_V_arr)[:-1]
     return np.stack([np.asarray(period_to_regime_to_V_arr[p][regime]) for p in periods])
@@ -200,7 +202,9 @@ def test_smoothed_model_brute_and_dcegm_agree():
     scale = 0.2
     n_brute_unstable_nodes = 12
     params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
-    params["working_life"]["taste_shocks"] = {"scale": scale}
+    working_params = params["working_life"]
+    assert isinstance(working_params, dict)
+    working_params["taste_shocks"] = {"scale": scale}
 
     models = _smoothed_model_pair(n_periods=n_periods, shocks=ExtremeValueTasteShocks())
     solutions = {

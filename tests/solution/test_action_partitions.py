@@ -21,6 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
+from jax.extend.core import ClosedJaxpr
 from numpy.testing import assert_array_equal
 
 from _lcm.solution.action_reduction import HardMaxAccumulator, HardMaxResult
@@ -170,7 +171,7 @@ def _unpartitioned(
     )(jnp.arange(n_cells))
 
 
-def _bits(array: object) -> np.ndarray:
+def _bits(array: jax.Array | np.ndarray | np.floating) -> np.ndarray:
     """Return the exact storage bits of a floating array, NaN payloads included."""
     host = np.asarray(array)
     return host.view(np.dtype(f"u{host.dtype.itemsize}"))
@@ -188,7 +189,11 @@ def _assert_every_participant_publishes_the_same_bits(*, lanes: HardMaxResult) -
 
 
 def _assert_results_identical(
-    *, got: HardMaxResult, expected: tuple[object, object, object]
+    *,
+    got: HardMaxResult,
+    expected: tuple[
+        jax.Array | np.ndarray, jax.Array | np.ndarray, jax.Array | np.ndarray
+    ],
 ) -> None:
     assert_array_equal(_bits(got.best_value), _bits(np.asarray(expected[0])))
     assert_array_equal(np.asarray(got.best_global_action_id), np.asarray(expected[1]))
@@ -473,13 +478,13 @@ def test_padded_action_slots_never_publish_an_identity_outside_the_product():
 
 
 @pytest.mark.parametrize("n_partitions", [0, -1, True])
-def test_partition_count_must_be_a_positive_exact_int(n_partitions: object) -> None:
+def test_partition_count_must_be_a_positive_exact_int(n_partitions: int) -> None:
     with pytest.raises((TypeError, ValueError), match="n_partitions"):
         build_partitioned_streaming_max_Q_over_a(
             Q_and_F=_table_Q_and_F,
             action_names=("choice",),
             block_width=2,
-            n_partitions=n_partitions,  # ty: ignore[invalid-argument-type]
+            n_partitions=n_partitions,
             axis_name=_AXIS,
         )
 
@@ -508,7 +513,7 @@ def test_partitioned_reduction_requires_an_action_product() -> None:
 
 def _partitioned_sin_jaxpr(
     *, n_partitions: int, block_width: int, n_actions: int
-) -> object:
+) -> ClosedJaxpr:
     """Stage every participant's reduction of a Q that stages one `sin` per call."""
     reduce_cell = build_partitioned_streaming_max_Q_over_a(
         Q_and_F=sin_Q_and_F,

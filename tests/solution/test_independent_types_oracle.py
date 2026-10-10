@@ -13,13 +13,14 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from lcm.typing import FloatND, RegimeName
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models import independent_types
 
 _N_TYPES = len(independent_types.TYPE_PARAMS["weight"])
 
 
-def _solved_values() -> Mapping:
+def _solved_values() -> Mapping[int, Mapping[RegimeName, FloatND]]:
     model = independent_types.get_model()
     return model.solve(params=independent_types.get_params(), log_level="off").values
 

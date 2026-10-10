@@ -1,8 +1,8 @@
 """A real values-only NB-EGM dispatch can donate one owned marginal leaf."""
 
 import json
-from collections.abc import Callable, Mapping
-from typing import Any, cast
+from collections.abc import Callable
+from typing import Unpack
 
 import jax
 import numpy as np
@@ -14,13 +14,19 @@ from _lcm.execution.output_layout import PlannedCore
 from _lcm.solution import backward_induction
 from lcm import ExecutionConfig
 from lcm.solver_api import ResultRetention
+from tests.solution._callback_types import (
+    RetireDonatedInputsKwargs,
+    RetireDonatedInputsResult,
+    RunPeriodKernelKwargs,
+    RunPeriodKernelResult,
+)
 from tests.test_models import nbegm_ride_along_toy, nbegm_ride_discrete_toy
 
 
 def test_values_only_nbegm_dispatch_donates_the_marginal_leaf(
     *,
     monkeypatch: pytest.MonkeyPatch,
-    record_testsuite_property: Callable[[str, object], None],
+    record_testsuite_property: Callable[[str, str], None],
 ) -> None:
     model = nbegm_ride_along_toy.build_model(
         variant="nbegm", n_liquid=8, n_savings=10, n_consumption=12
@@ -30,7 +36,9 @@ def test_values_only_nbegm_dispatch_donates_the_marginal_leaf(
     retire = backward_induction._retire_donated_inputs
     retired: list[tuple[int, tuple[str, ...], bool]] = []
 
-    def observe_retirement(**kwargs: Any) -> Any:
+    def observe_retirement(
+        **kwargs: Unpack[RetireDonatedInputsKwargs],
+    ) -> RetireDonatedInputsResult:
         before = [
             (entry.artifact.period, entry.artifact.leaf_path, entry.array.is_deleted())
             for entry in kwargs["donated_inputs"]
@@ -40,8 +48,8 @@ def test_values_only_nbegm_dispatch_donates_the_marginal_leaf(
         retired.extend(before)
         return result
 
-    def observe(**kwargs: Any) -> Any:
-        cores = cast("Mapping[str, PlannedCore]", kwargs["compiled_cores"])
+    def observe(**kwargs: Unpack[RunPeriodKernelKwargs]) -> RunPeriodKernelResult:
+        cores = kwargs["compiled_cores"]
         if kwargs["regime_name"] == "alive":
             carry = kwargs["next_regime_to_continuation"]["alive"]
             assert isinstance(carry, EGMCarry)
@@ -94,7 +102,7 @@ def test_donation_off_preserves_values_and_the_model_fingerprint(
     enabled = True
     carries: dict[bool, dict[int, tuple[np.ndarray, ...]]] = {True: {}, False: {}}
 
-    def observe(**kwargs: Any) -> Any:
+    def observe(**kwargs: Unpack[RunPeriodKernelKwargs]) -> RunPeriodKernelResult:
         if kwargs["regime_name"] == "alive":
             seen.extend(
                 (enabled, core.donated_arguments)
@@ -159,7 +167,9 @@ def test_donation_off_preserves_values_and_the_model_fingerprint(
 
 
 @pytest.mark.parametrize("value", [0, 1, None, "yes", np.bool_(1)])
-def test_donation_switch_requires_an_exact_bool(value: object) -> None:
+def test_donation_switch_requires_an_exact_bool(
+    value: int | str | np.bool_ | None,
+) -> None:
     with pytest.raises(
         (TypeError, BeartypeCallHintParamViolation), match=r"donate_buffers.*bool"
     ):

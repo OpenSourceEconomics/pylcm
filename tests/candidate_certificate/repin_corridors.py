@@ -46,6 +46,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
+type SourcePath = str
+
+
 DIRECT_FLOW_PATH = "tests/candidate_certificate/direct_flow.py"
 _DIGEST_LENGTH = 64
 _STORE = "_CORRIDOR_PINS"
@@ -55,7 +58,7 @@ _STORE = "_CORRIDOR_PINS"
 class CorridorPin:
     """One recomputable anchor in the pin store of `direct_flow.py`."""
 
-    source: str
+    source: SourcePath
     """Repository-relative path of the certified source this pin describes."""
 
     kind: str
@@ -126,7 +129,9 @@ def collect_pins(*, tree: ast.Module, module: ModuleType) -> tuple[CorridorPin, 
     return tuple(pins)
 
 
-def evaluate(*, repo_root: Path, changed_sources: frozenset[str]) -> RepinOutcome:
+def evaluate(
+    *, repo_root: Path, changed_sources: frozenset[SourcePath]
+) -> RepinOutcome:
     """Recompute every pin and split the drift into in-scope and out-of-scope.
 
     `direct_flow.py` is read once per evaluation, so the pins and the helpers
@@ -300,7 +305,7 @@ def _load_direct_flow(*, root: Path) -> ModuleType:
 
 
 def _source_tree(
-    *, repo_root: Path, source: str, cache: dict[str, ast.Module]
+    *, repo_root: Path, source: SourcePath, cache: dict[str, ast.Module]
 ) -> ast.Module:
     if source not in cache:
         text = (repo_root / source).read_text(encoding="utf-8")
@@ -359,7 +364,7 @@ def _resolve_source_key(*, node: ast.expr | None, module: ModuleType) -> str | N
     return None
 
 
-def _callable_pins(*, source: str, contracts: ast.Dict) -> list[CorridorPin]:
+def _callable_pins(*, source: SourcePath, contracts: ast.Dict) -> list[CorridorPin]:
     pins: list[CorridorPin] = []
     for key_node, value_node in zip(contracts.keys, contracts.values, strict=True):
         if not (isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)):

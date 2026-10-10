@@ -69,7 +69,7 @@ def census_as_json(*, census: Census) -> str:
 def test_census_of_the_donor_pair_fixture_is_nonempty(
     *,
     monkeypatch: pytest.MonkeyPatch,
-    record_testsuite_property: Callable[[str, object], None],
+    record_testsuite_property: Callable[[str, str], None],
 ) -> None:
     """Some triple of the donor-pair fixture names a donation-free fallback.
 
@@ -110,7 +110,7 @@ def test_census_of_the_donor_pair_fixture_pairs_every_fallback_with_a_primary(
 def test_census_of_the_donor_pair_fixture_reads_the_cell_frontier(
     *,
     monkeypatch: pytest.MonkeyPatch,
-    record_testsuite_property: Callable[[str, object], None],
+    record_testsuite_property: Callable[[str, str], None],
 ) -> None:
     """Leaving `cell` unfixed offers more than one width on the `cell` axis.
 

@@ -10,14 +10,13 @@ format's spacing, and set from what those neighbours actually are rather than
 from a defensive round number.
 """
 
-from typing import Any
-
 import numpy as np
 import pytest
 
 import _lcm.solution.nnbegm as nnbegm_module
 from _lcm.execution.core_program import core_program_graph
 from lcm import ExecutionConfig
+from lcm.solver_api import SolutionResult
 from lcm.solvers import (
     CELL_AXIS,
     ENVELOPE_CELL_AXIS,
@@ -27,11 +26,12 @@ from lcm.solvers import (
     AdaptiveOuterMesh,
     FiniteOuterGrid,
 )
+from lcm.typing import UserParams
 from tests.conftest import assert_agrees_to_ulp
 from tests.simulation.test_nnbegm_split_workflow_parity import _MESH
 from tests.test_models import n_nbegm_toy, negm_kinked_toy
 
-_PARAMS: dict[str, Any] = {"discount_factor": 0.95, "alive": {}}
+_PARAMS: UserParams = {"discount_factor": 0.95, "alive": {}}
 _N_OUTER = negm_kinked_toy.N_AZ
 
 
@@ -87,7 +87,7 @@ def test_outer_candidate_axis_spans_the_outer_grid() -> None:
     assert axis.extent == _N_OUTER
 
 
-def _solve(*, widths: dict[str, int]) -> Any:
+def _solve(*, widths: dict[str, int]) -> SolutionResult:
     """Solve the kinked NEGM toy with the named axis widths fixed."""
     return negm_kinked_toy.build_model(
         execution_config=ExecutionConfig(axis_widths=widths)

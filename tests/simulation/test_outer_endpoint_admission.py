@@ -36,6 +36,15 @@ from collections.abc import Callable
 from fractions import Fraction
 from types import MappingProxyType, SimpleNamespace
 
+# The adaptive leg of this module peaks at 7.3 GB RSS in a fresh process, which
+# is more than a 16 GB runner can host next to three sibling xdist workers: on
+# the Windows general shard it was OOM-killed twice as a silent "node down".
+# `slow` moves the whole module onto the Linux-only slow non-solution lanes,
+# which run at two workers under `--dist loadfile`, so the module's cases stay
+# on one worker and at most one of them is resident at a time. Both precisions
+# still run it.
+from typing import TypedDict
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -50,22 +59,27 @@ from _lcm.egm.outer_inversion import (
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import Regime
+from _lcm.typing import QAndFArg
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.solvers import AdaptiveOuterMesh
 from lcm.typing import BoolND, FloatND
 from tests.test_models import n_nbegm_toy as toy
 
-# The adaptive leg of this module peaks at 7.3 GB RSS in a fresh process, which
-# is more than a 16 GB runner can host next to three sibling xdist workers: on
-# the Windows general shard it was OOM-killed twice as a silent "node down".
-# `slow` moves the whole module onto the Linux-only slow non-solution lanes,
-# which run at two workers under `--dist loadfile`, so the module's cases stay
-# on one worker and at most one of them is resident at a time. Both precisions
-# still run it.
+
+class _EndpointCase(TypedDict):
+    domain: tuple[float, float]
+    target: float
+    nodes: tuple[float, ...]
+    winner: int
+    approach_from: float
+    unsafe_investment: float
+    reproduced_endpoint: float
+
+
 pytestmark = pytest.mark.slow
 
 # The declared lower endpoint, approached from a positive realized stock.
-_LOWER_CASE = {
+_LOWER_CASE: _EndpointCase = {
     "domain": (-1.0, 10.0),
     "target": -1.0,
     "nodes": (-1.0, 4.5, 10.0),
@@ -76,7 +90,7 @@ _LOWER_CASE = {
 }
 
 # The declared upper endpoint, approached from a negative realized stock.
-_UPPER_CASE = {
+_UPPER_CASE: _EndpointCase = {
     "domain": (-10.0, 1.0),
     "target": 1.0,
     "nodes": (-10.0, -4.5, 1.0),
@@ -133,7 +147,7 @@ _INITIAL = {
 class _StubRegime(Regime):
     """Engine regime carrying only the fields the policy read reaches."""
 
-    def __init__(self, *, simulation: object) -> None:
+    def __init__(self, *, simulation: SimpleNamespace) -> None:
         object.__setattr__(self, "simulation", simulation)
 
 
@@ -296,7 +310,7 @@ def _admissible(*, domain, target: float, stock: float) -> bool:
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
 def test_adaptive_replay_falls_back_when_the_action_misses_a_declared_endpoint(
-    case: dict,
+    case: _EndpointCase,
 ) -> None:
     """A recovered action landing beside a declared endpoint is not published."""
     assert _falls_back(
@@ -311,7 +325,7 @@ def test_adaptive_replay_falls_back_when_the_action_misses_a_declared_endpoint(
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
 def test_adaptive_replay_publishes_when_the_action_reaches_a_declared_endpoint(
-    case: dict,
+    case: _EndpointCase,
 ) -> None:
     """A recovered action reproducing a declared endpoint exactly is published."""
     assert not _falls_back(
@@ -326,7 +340,7 @@ def test_adaptive_replay_publishes_when_the_action_reaches_a_declared_endpoint(
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
 def test_adaptive_replay_publishes_an_interior_target_inside_the_domain(
-    case: dict,
+    case: _EndpointCase,
 ) -> None:
     """An interior target only has to land inside the relevant domain."""
     assert not _falls_back(
@@ -354,7 +368,7 @@ def test_adaptive_replay_publishes_a_nonnegative_direct_law_endpoint(
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
 def test_finite_replay_drops_a_candidate_that_misses_a_declared_endpoint(
-    case: dict,
+    case: _EndpointCase,
 ) -> None:
     """Finite replay applies the same endpoint rule the adaptive reader does."""
     assert not _admissible(
@@ -368,7 +382,7 @@ def test_finite_replay_drops_a_candidate_that_misses_a_declared_endpoint(
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
 def test_finite_replay_admits_a_candidate_that_reaches_a_declared_endpoint(
-    case: dict,
+    case: _EndpointCase,
 ) -> None:
     """A recovered action reproducing the endpoint exactly stays admissible."""
     assert _admissible(
@@ -382,7 +396,7 @@ def test_finite_replay_admits_a_candidate_that_reaches_a_declared_endpoint(
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
 def test_finite_replay_admits_an_interior_target_inside_the_domain(
-    case: dict,
+    case: _EndpointCase,
 ) -> None:
     """The finite path shares the interior-containment rule."""
     assert _admissible(
@@ -494,8 +508,8 @@ def _prefer_investment(favoured: float) -> Callable[..., tuple[FloatND, BoolND]]
     outcome whether the rule excluded it or not.
     """
 
-    def q_and_f(**kwargs: object) -> tuple[FloatND, BoolND]:
-        investment = jnp.asarray(kwargs["investment"])
+    def q_and_f(*, investment: FloatND, **_kwargs: QAndFArg) -> tuple[FloatND, BoolND]:
+        investment = jnp.asarray(investment)
         return (
             -jnp.abs(investment - favoured),
             jnp.ones(investment.shape, dtype=bool),
@@ -587,7 +601,9 @@ def _baseline(
 
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
-def test_a_fallback_lands_exactly_on_the_branch_it_published(case: dict) -> None:
+def test_a_fallback_lands_exactly_on_the_branch_it_published(
+    case: _EndpointCase,
+) -> None:
     """A published fallback reaches the target of the branch it settled on.
 
     The objective is peaked at the action recovered for the endpoint the
@@ -622,7 +638,7 @@ def test_a_fallback_lands_exactly_on_the_branch_it_published(case: dict) -> None
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
 def test_projected_fallback_publishes_the_endpoint_it_reaches_exactly(
-    case: dict,
+    case: _EndpointCase,
 ) -> None:
     """A projection whose action reproduces its endpoint stays publishable.
 
@@ -743,7 +759,7 @@ def test_a_subject_with_no_publishable_pair_fails_loud() -> None:
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
 def test_containment_alone_would_publish_a_missed_endpoint(
-    *, case: dict, monkeypatch: pytest.MonkeyPatch
+    *, case: _EndpointCase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Weakening the endpoint verdict to containment re-admits the missed stock.
 
@@ -783,7 +799,7 @@ def test_containment_alone_would_publish_a_missed_endpoint(
 
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
-def test_fallback_reselects_the_best_admissible_mesh_node(case: dict) -> None:
+def test_fallback_reselects_the_best_admissible_mesh_node(case: _EndpointCase) -> None:
     """A rejected endpoint hands the fallback to the whole published bank.
 
     The bank carries one conditional policy per outer node, so an endpoint the
@@ -812,7 +828,7 @@ def test_fallback_reselects_the_best_admissible_mesh_node(case: dict) -> None:
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
 def test_a_fallback_publishes_the_keeper_when_the_objective_ranks_it_first(
-    case: dict,
+    case: _EndpointCase,
 ) -> None:
     """The no-adjustment branch competes in the fallback and can win it.
 
@@ -840,7 +856,7 @@ def test_a_fallback_publishes_the_keeper_when_the_objective_ranks_it_first(
 
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
-def test_a_winning_keeper_carries_the_keeper_inner_action(case: dict) -> None:
+def test_a_winning_keeper_carries_the_keeper_inner_action(case: _EndpointCase) -> None:
     """A published branch brings its own inner action, never another branch's."""
     actions, _, _ = _baseline(
         domain=case["domain"],

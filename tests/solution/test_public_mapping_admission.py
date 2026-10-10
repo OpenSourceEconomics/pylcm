@@ -34,7 +34,7 @@ from lcm.solver_api import (
     ValueArraySchema,
     ValueStore,
 )
-from lcm.typing import FloatND
+from lcm.typing import FloatND, RegimeName
 from tests.solution.test_solution_result import _small_grid_search_inputs
 
 _REGIME = "alive"
@@ -45,7 +45,7 @@ type _ValueEntries = (
 _OTHER_REGIME = "retired"
 
 
-class _ItemStream(Mapping[object, object]):
+class _ItemStream[K, V](Mapping[K, V]):
     """Schema-shaped mapping whose item traversal is its only authoritative view.
 
     `keys` optionally substitutes a different key view so a test can show that the
@@ -56,8 +56,8 @@ class _ItemStream(Mapping[object, object]):
     def __init__(
         self,
         *,
-        items: list[tuple[object, object]],
-        keys: list[object] | None = None,
+        items: list[tuple[K, V]],
+        keys: list[K] | None = None,
         max_traversals: int | None = None,
     ) -> None:
         self._items = tuple(items)
@@ -65,13 +65,13 @@ class _ItemStream(Mapping[object, object]):
         self._max_traversals = max_traversals
         self.traversals = 0
 
-    def __getitem__(self, key: object) -> object:
+    def __getitem__(self, key: K) -> V:
         for candidate, value in self._items:
             if candidate == key:
                 return value
         raise KeyError(key)
 
-    def __iter__(self) -> Iterator[object]:
+    def __iter__(self) -> Iterator[K]:
         if self._keys is None:
             raise RuntimeError("key view consulted")
         return iter(self._keys)
@@ -79,7 +79,7 @@ class _ItemStream(Mapping[object, object]):
     def __len__(self) -> int:
         return len(self._items)
 
-    def items(self) -> list[tuple[object, object]]:  # ty: ignore[invalid-method-override]
+    def items(self) -> list[tuple[K, V]]:  # ty: ignore[invalid-method-override]
         self.traversals += 1
         if self._max_traversals is not None and self.traversals > self._max_traversals:
             raise RuntimeError("item traversal repeated")
@@ -292,7 +292,7 @@ def test_public_value_mapping_survives_save_load_and_replay(tmp_path) -> None:
     assert_frame_equal(replayed, expected)
 
 
-def _ref(*, period: int, regime: str = _REGIME) -> ArtifactRef:
+def _ref(*, period: int, regime: RegimeName = _REGIME) -> ArtifactRef:
     return ArtifactRef(period=period, regime=regime, key=SIMULATION_POLICY)
 
 

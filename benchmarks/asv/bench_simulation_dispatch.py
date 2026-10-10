@@ -30,6 +30,10 @@ same call.
 """
 
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lcm import Model, SimulationResult
 
 # Names of the CPU witnesses, as `_simulation_witnesses.WITNESSES` keys.
 WITNESS_NAMES = ("dissolution", "multi_regime")
@@ -38,7 +42,7 @@ WITNESS_NAMES = ("dissolution", "multi_regime")
 LOG_LEVELS = ("off", "progress")
 
 
-def count_period_regime_iterations(model: object) -> int:
+def count_period_regime_iterations(model: Model) -> int:
     """Return the number of (period, regime) iterations one chunk runs."""
     return sum(
         1
@@ -61,7 +65,7 @@ def _measure_combination(*, witness: str, log_level: str) -> dict[str, float]:
     )
     solution = model.solve(params=model_params, log_level="off")
 
-    def _simulate() -> object:
+    def _simulate() -> SimulationResult:
         return model.simulate(
             params=model_params,
             initial_conditions=initial_conditions,

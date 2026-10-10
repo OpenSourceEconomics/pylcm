@@ -60,6 +60,7 @@ from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import FlatParams
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -251,7 +252,7 @@ def _make_laws() -> RegimeLaws:
     )
 
 
-def _flat_params() -> MappingProxyType:
+def _flat_params() -> FlatParams:
     return MappingProxyType(
         {
             "single_f": MappingProxyType(

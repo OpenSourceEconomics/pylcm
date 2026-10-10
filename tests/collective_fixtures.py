@@ -21,8 +21,6 @@ never co-occur here: a collective regime may not declare a folded state, so
 built model.
 """
 
-from typing import Any
-
 import jax.numpy as jnp
 
 from lcm import (
@@ -35,6 +33,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.regime import RegimeReplacement
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, IntND, ScalarInt
 
 # Nested `{regime: {function: {parameter: value}}}` params, as `solve` takes them.
@@ -237,7 +236,7 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
     return model, params
 
 
-def make_folding_collective_regime_kwargs() -> dict[str, Any]:
+def make_folding_collective_regime_kwargs() -> RegimeReplacement:
     """Return the keyword arguments of a collective regime declaring a fold.
 
     A collective regime may not integrate a shock out of its stored value, so

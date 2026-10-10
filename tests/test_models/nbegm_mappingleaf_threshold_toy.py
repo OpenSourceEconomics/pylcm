@@ -26,6 +26,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     feasible,
@@ -145,7 +146,7 @@ def build_params(
     subsidy_high: float = 3.0,
     fpl_cliff_lo: float = 14.0,
     fpl_cliff_hi: float = 11.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the leaf-nested kind-indexed subsidy-cliff toy.
 
     `tax_schedule` is a `MappingLeaf` whose `fpl_cliff` entry is a length-2 array

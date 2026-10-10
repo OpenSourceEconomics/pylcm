@@ -25,6 +25,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     feasible,
@@ -132,7 +133,7 @@ def build_params(
     base_income_hi: float = 4.0,
     tax_rate: float = 0.3,
     tax_kink: float = 15.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the derived-income tax toy.
 
     `base_income` is a length-2 array indexed by the `kind` code (`lo`, `hi`). The

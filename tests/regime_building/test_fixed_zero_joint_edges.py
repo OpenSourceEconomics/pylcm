@@ -27,7 +27,14 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime
-from lcm.typing import ContinuousState, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    ContinuousState,
+    FloatND,
+    ScalarFloat,
+    ScalarInt,
+    UserParams,
+    UserParamsNode,
+)
 
 
 @categorical(ordered=False)
@@ -90,7 +97,7 @@ def _wealth_grid() -> LinSpacedGrid:
 
 
 def _model(
-    *, joint: bool, fixed_params: dict, simulate_high_mass: bool = False
+    *, joint: bool, fixed_params: UserParams, simulate_high_mass: bool = False
 ) -> Model:
     transitions = {
         "low": StochasticTransition(func=_low_mass),
@@ -153,7 +160,7 @@ def _model(
     )
 
 
-def _fixed(*, joint: bool, p_mid: float, p_high: float) -> dict:
+def _fixed(*, joint: bool, p_mid: float, p_high: float) -> dict[str, UserParamsNode]:
     return {"p_mid": p_mid, "p_high": p_high} | ({"tilt": 1.0} if joint else {})
 
 
@@ -163,7 +170,7 @@ def _reference_value(*, p_mid: Fraction, p_high: Fraction) -> Fraction:
     return (1 - p_mid - p_high) * 2 + p_mid * 4 + p_high * high_value
 
 
-def _source_value(*, model: Model, params: dict) -> np.ndarray:
+def _source_value(*, model: Model, params: UserParams) -> np.ndarray:
     result = model.solve(params={"discount_factor": 1.0, **params}, log_level="off")
     return np.asarray(result.values[0]["source"])
 

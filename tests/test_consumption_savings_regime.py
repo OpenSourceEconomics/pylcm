@@ -2,12 +2,17 @@
 
 from dataclasses import fields
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_law import bind_regime_law
+from _lcm.solution.dcegm import _BoundDCEGM
+from _lcm.solution.egm import _BoundEGM
+from _lcm.solution.nbegm import _BoundNBEGM
+from _lcm.solution.negm import _BoundNEGM
+from _lcm.solution.nnbegm import _BoundNNBEGM
 from lcm import (
     DiscreteGrid,
     LinearAggregator,
@@ -34,8 +39,10 @@ from lcm.solvers import (
     FiniteOuterGrid,
     FUESEnvelope,
     GridSearch,
+    OneMarginSolver,
+    TwoMarginSolver,
 )
-from lcm.typing import ScalarInt
+from lcm.typing import ScalarInt, UserFunction
 
 
 def _next_regime_code() -> int:
@@ -98,7 +105,7 @@ def next_durable(durable_after_choice):
     return durable_after_choice
 
 
-def _functions() -> dict[str, Any]:
+def _functions() -> dict[str, UserFunction]:
     return {
         "utility": utility,
         "consumption_bonus": consumption_bonus,
@@ -109,8 +116,8 @@ def _functions() -> dict[str, Any]:
 
 def _regime(
     *,
-    solver: Any = None,
-    functions: dict[str, Any] | None = None,
+    solver: OneMarginSolver | GridSearch | None = None,
+    functions: dict[str, UserFunction] | None = None,
     liquid: LiquidMargin = _LIQUID,
 ) -> ConsumptionSavingsRegime:
     if solver is None:
@@ -127,10 +134,10 @@ def _regime(
 
 def _nested_regime(
     *,
-    solver: Any = None,
+    solver: TwoMarginSolver | GridSearch | None = None,
     liquid: LiquidMargin = _LIQUID,
     outer: OuterContinuousMargin = _OUTER,
-    functions: dict[str, Any] | None = None,
+    functions: dict[str, UserFunction] | None = None,
 ) -> NestedConsumptionSavingsRegime:
     if solver is None:
         solver = GridSearch()
@@ -188,7 +195,7 @@ def test_public_solver_dataclasses_contain_numerical_configuration_only():
 def test_dcegm_receives_all_four_names_from_the_liquid_margin():
     regime = _regime(solver=_fues_dcegm())
 
-    solver = cast("Any", regime.solver)
+    solver = cast("_BoundDCEGM", regime.solver)
     assert solver.continuous_state == "wealth"
     assert solver.continuous_action == "consumption"
     assert solver.resources == "resources"
@@ -198,13 +205,13 @@ def test_dcegm_receives_all_four_names_from_the_liquid_margin():
 def test_plain_egm_receives_its_post_decision_name_from_the_margin():
     regime = _regime(solver=EGM(savings_grid=_GRID))
 
-    assert cast("Any", regime.solver).post_decision_function == "savings"
+    assert cast("_BoundEGM", regime.solver).post_decision_function == "savings"
 
 
 def test_nbegm_receives_all_liquid_names_from_the_margin():
     regime = _regime(solver=NBEGM(savings_grid=_GRID))
 
-    solver = cast("Any", regime.solver)
+    solver = cast("_BoundNBEGM", regime.solver)
     assert solver.continuous_state == "wealth"
     assert solver.continuous_action == "consumption"
     assert solver.budget_target == "resources"
@@ -214,7 +221,7 @@ def test_nbegm_receives_all_liquid_names_from_the_margin():
 def test_nested_regime_binds_both_margins_into_negm():
     regime = _nested_regime(solver=NEGM(inner=_fues_dcegm(), outer_grid=_GRID))
 
-    solver = cast("Any", regime.solver)
+    solver = cast("_BoundNEGM", regime.solver)
     assert solver.inner.continuous_state == "wealth"
     assert solver.inner.continuous_action == "consumption"
     assert solver.inner.resources == "resources"
@@ -233,7 +240,7 @@ def test_nested_regime_binds_both_margins_into_nnbegm():
         )
     )
 
-    solver = cast("Any", regime.solver)
+    solver = cast("_BoundNNBEGM", regime.solver)
     assert solver.inner.continuous_state == "wealth"
     assert solver.inner.continuous_action == "consumption"
     assert solver.inner.budget_target == "resources"
@@ -251,12 +258,12 @@ def test_nested_regime_binds_both_margins_into_nnbegm():
 
 def test_pairing_check_rejects_two_margin_solver_on_one_margin_regime():
     with pytest.raises(RegimeInitializationError, match="OneMarginSolver"):
-        _regime(solver=NEGM(inner=_fues_dcegm(), outer_grid=_GRID))
+        _regime(solver=NEGM(inner=_fues_dcegm(), outer_grid=_GRID))  # ty: ignore[invalid-argument-type]
 
 
 def test_pairing_check_rejects_one_margin_solver_on_nested_regime():
     with pytest.raises(RegimeInitializationError, match="TwoMarginSolver"):
-        _nested_regime(solver=_fues_dcegm())
+        _nested_regime(solver=_fues_dcegm())  # ty: ignore[invalid-argument-type]
 
 
 def test_plain_regime_rejects_an_unbound_egm_family_solver():
@@ -390,7 +397,7 @@ def test_replace_preserves_the_specialized_type_and_rebinds_the_solver():
     replaced = _regime().replace(solver=EGM(savings_grid=_GRID))
 
     assert isinstance(replaced, ConsumptionSavingsRegime)
-    assert cast("Any", replaced.solver).post_decision_function == "savings"
+    assert cast("_BoundEGM", replaced.solver).post_decision_function == "savings"
 
 
 def test_liquid_state_message_states_the_property_it_checks():

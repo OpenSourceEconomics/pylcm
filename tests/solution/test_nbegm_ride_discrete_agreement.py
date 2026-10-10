@@ -11,6 +11,7 @@ from collections.abc import Mapping
 
 import numpy as np
 
+from lcm.typing import FloatND, RegimeName
 from tests.test_models import nbegm_ride_discrete_toy as toy
 
 _ALIVE = "alive"
@@ -23,7 +24,7 @@ _AWAY_FROM_KINK = (
 
 def _solve(
     *, variant: str, n_consumption: int = 120, jump_schedule: bool = False
-) -> Mapping[int, Mapping]:
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     model = toy.build_model(
         variant=variant,
         n_liquid=120,

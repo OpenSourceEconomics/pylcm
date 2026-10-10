@@ -75,6 +75,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 
 # Income discretisation (`z_vals`, `Pi` from InverseDCDP housing.py).
@@ -508,7 +509,7 @@ def build_params(
     theta: float = 2.0,
     bequest_shift: float = 200.0,
     housing_min: float = 0.01,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Calibration parameters for the DS-2024 housing model.
 
     Defaults mirror `InverseDCDP` `housing.py` (`r=0.024`, `r_H=0.10`,

@@ -7,7 +7,7 @@ into per-phase specs and rejects combinations without defined semantics.
 """
 
 from pathlib import Path
-from typing import Any, cast
+from typing import Never, Unpack, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -36,8 +36,9 @@ from lcm import (
 from lcm.exceptions import InvalidSimulationInputError, RegimeInitializationError
 from lcm.persistence import load_solution
 from lcm.regime import Regime as UserRegime
+from lcm.regime import RegimeReplacement, StateEntry, StateTransitionEntry
 from lcm.transition import TransitionLaw
-from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserParams
+from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserFunction, UserParams
 
 
 def _solve_variant(wealth: float) -> FloatND:
@@ -113,13 +114,13 @@ def _pension_grid() -> LinSpacedGrid:
 
 
 def _build_regime(
-    *, law: RegimeLawDeclaration = _next_regime, **overrides: Any
+    *, law: RegimeLawDeclaration = _next_regime, **overrides: Unpack[RegimeReplacement]
 ) -> tuple[UserRegime, RegimeLaw]:
     """A small valid regime validated under `law`; tests override individual slots.
 
     Returns the regime together with `law` bound as `Model(edges=...)` binds it.
     """
-    spec: dict[str, Any] = {
+    spec: RegimeReplacement = {
         "states": {
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
         },
@@ -134,7 +135,7 @@ def _build_regime(
     return regime, bound
 
 
-def _carried_states() -> dict[str, Any]:
+def _carried_states() -> dict[str, StateEntry]:
     return {
         "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
         "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
@@ -144,7 +145,7 @@ def _carried_states() -> dict[str, Any]:
     }
 
 
-def _carried_state_transitions() -> dict[str, Any]:
+def _carried_state_transitions() -> dict[str, StateTransitionEntry]:
     return {
         "wealth": _next_wealth,
         "aime": lambda aime: aime,
@@ -262,7 +263,10 @@ def test_phased_markov_regime_transition_sets_stochastic_flags() -> None:
     ],
 )
 def test_invalid_phased_state_combinations_are_rejected(
-    *, solve_side: Any, simulate_side: Any, match: str
+    *,
+    solve_side: LinSpacedGrid | UserFunction,
+    simulate_side: LinSpacedGrid | UserFunction,
+    match: str,
 ) -> None:
     """Of the states matrix, only `Phased(solve=callable, simulate=Grid)` is valid."""
     with pytest.raises(RegimeInitializationError, match=match):
@@ -380,7 +384,7 @@ def test_phased_in_actions_is_rejected() -> None:
     the menu the value function was computed for."""
     with pytest.raises(RegimeInitializationError):
         _build_regime(
-            actions={
+            actions={  # ty: ignore[invalid-argument-type]
                 "consumption": Phased(
                     solve=LinSpacedGrid(start=1.0, stop=10.0, n_points=5),
                     simulate=LinSpacedGrid(start=1.0, stop=20.0, n_points=5),
@@ -393,7 +397,7 @@ def test_phased_in_derived_categoricals_is_rejected() -> None:
     """Derived categoricals are phase-invariant grid metadata."""
     with pytest.raises(RegimeInitializationError):
         _build_regime(
-            derived_categoricals={
+            derived_categoricals={  # ty: ignore[invalid-argument-type]
                 "coverage": Phased(
                     solve=DiscreteGrid(category_class=_CoverageStatus),
                     simulate=DiscreteGrid(category_class=_CoverageStatus),
@@ -491,8 +495,8 @@ def _build_phased_law_model(*, phased_law: bool) -> Model:
     )
 
 
-def _solve_params(model: Model) -> dict:
-    params = cast("dict", model.get_params_template())
+def _solve_params(model: Model) -> dict[str, dict[str, dict[str, float]]]:
+    params = cast("dict[str, dict[str, dict[str, float]]]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     return params
 
@@ -719,7 +723,7 @@ def test_persisted_solution_binds_beliefs_but_accepts_new_transition_truth(
     )
     np.testing.assert_array_equal(income, np.asarray([2.0, 1.0]))
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Never) -> None:
         raise AssertionError("forward simulation ran before belief preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)

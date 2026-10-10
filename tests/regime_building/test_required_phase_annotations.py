@@ -8,7 +8,6 @@ the regime is visited.
 """
 
 from collections.abc import Mapping
-from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -30,6 +29,8 @@ from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.transition import AgeSelector
 from lcm.typing import ContinuousState, FloatND, IntND, ScalarInt, UserFunction
+
+type _TemplateNode = str | Mapping[str, _TemplateNode]
 
 
 @categorical(ordered=False)
@@ -116,7 +117,7 @@ def _demand_model(
     )
 
 
-def _leaves(*, tree: object) -> set[str]:
+def _leaves(*, tree: _TemplateNode | None) -> set[str]:
     if not isinstance(tree, Mapping):
         return set()
     return {
@@ -130,7 +131,7 @@ def _edge_leaves(*, model: Model) -> set[str]:
     return _leaves(tree=model.get_params_template().get("edges", {}).get("perceived"))
 
 
-def _params(*, promote: tuple[int, ...]) -> dict[str, Any]:
+def _params(*, promote: tuple[int, ...]) -> dict[str, float]:
     return {
         "discount_factor": 0.5,
         "backward_bonus": 1.0,

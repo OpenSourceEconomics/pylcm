@@ -95,6 +95,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.envelope_configs import envelope_config
 
@@ -634,7 +635,7 @@ def build_params(
     sigma_w: float = 0.063,
     mu_w: float = 0.0,
     n_periods: int | None = None,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Calibration parameters for the DS App.3 discrete-housing model (no tax).
 
     Args:

@@ -9,7 +9,9 @@ validated view.
 
 import gc
 import weakref
+from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 import jax.numpy as jnp
 import pytest
@@ -30,19 +32,23 @@ from tests.solution.test_solution_result import _small_grid_search_inputs
 from tests.test_models.deterministic.regression import get_params
 
 
-class _Counter:
+class _CallCount(Protocol):
+    calls: int
+
+
+class _Counter[**P, R]:
     """Count calls to one wrapped function while delegating to it."""
 
-    def __init__(self, target: object) -> None:
+    def __init__(self, target: Callable[P, R]) -> None:
         self.calls = 0
         self._target = target
 
-    def __call__(self, *args: object, **kwargs: object) -> object:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         self.calls += 1
-        return self._target(*args, **kwargs)  # ty: ignore[call-non-callable]
+        return self._target(*args, **kwargs)
 
 
-def _count_leaf_copies(monkeypatch: pytest.MonkeyPatch) -> _Counter:
+def _count_leaf_copies(monkeypatch: pytest.MonkeyPatch) -> _CallCount:
     """Count leaf copies in the module whose lazy entries perform them."""
     counter = _Counter(entries_module._copy_artifact_array_leaf)
     monkeypatch.setattr(entries_module, "_copy_artifact_array_leaf", counter)

@@ -16,9 +16,9 @@ the child period's own grid rows, independently of the solved child carry.
 """
 
 import dataclasses
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from fractions import Fraction
-from typing import Any
+from typing import TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -26,20 +26,32 @@ import numpy as np
 import pytest
 
 import lcm
+from _lcm.egm.carry import EGMCarry
 from _lcm.execution.core_program import (
     CoreBuildContext,
     core_program_graph,
     materialize_core_program,
 )
-from _lcm.solution.nbegm import _cliff_savings_targets
+from _lcm.solution.nbegm import _cliff_savings_targets, _RideAlongNBEGMPeriodKernel
+from _lcm.typing import ArgumentTree
 from lcm import DiscreteGrid, LinSpacedGrid, Model
-from lcm.typing import ContinuousState, DiscreteState, FloatND, UserFunction
+from lcm.typing import (
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    FunctionName,
+    ParameterName,
+    RegimeName,
+    UserFunction,
+    UserParams,
+)
 from tests.solution._cliff_pullback_reference import (
     child_cliff_preimages,
     sibling_draw_preimages,
     two_period_log_value,
 )
 from tests.solution._nbegm_direct_oracle import (
+    _economic_argument,
     child_period_context,
     ride_along_kernel,
 )
@@ -61,6 +73,17 @@ from tests.test_models.nbegm_indexed_threshold_toy import (
 from tests.test_models.nbegm_indexed_threshold_toy import (
     subsidy as kind_indexed_subsidy,
 )
+
+type _ModelParams = dict[
+    RegimeName, dict[FunctionName, dict[ParameterName, float | FloatND]]
+]
+
+
+class _Seam(TypedDict):
+    kernel: _RideAlongNBEGMPeriodKernel
+    kwargs: Mapping[str, ArgumentTree]
+    child_carry: EGMCarry
+
 
 BASE_INCOME = 2.0
 SUBSIDY = 5.0
@@ -144,7 +167,7 @@ def _params(
     fpl_cliff: float | FloatND,
     law_slope: float,
     law_offset: tuple[float, float],
-) -> dict[str, Any]:
+) -> _ModelParams:
     return {
         "alive": {
             "utility": {"crra": 1.0},
@@ -163,7 +186,7 @@ def _params(
     }
 
 
-def _indexed_params(*, cutoffs: tuple[float, float]) -> dict[str, Any]:
+def _indexed_params(*, cutoffs: tuple[float, float]) -> _ModelParams:
     return _params(
         fpl_cliff=jnp.asarray(cutoffs) + BASE_INCOME,
         law_slope=1.0,
@@ -171,11 +194,12 @@ def _indexed_params(*, cutoffs: tuple[float, float]) -> dict[str, Any]:
     )
 
 
-def _solved_seam(*, model: Model, params: dict[str, Any]) -> dict[str, Any]:
+def _solved_seam(*, model: Model, params: UserParams) -> _Seam:
     """Solve the model and return its period-0 kernel with the bound arguments."""
     kernel, context = ride_along_kernel(
         model=model, params=params, regime_name="alive", period=0
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     replay = core_program_graph(kernel=kernel)["replay"]
     materialized = materialize_core_program(
         program=replay, context=CoreBuildContext(**context)
@@ -184,18 +208,19 @@ def _solved_seam(*, model: Model, params: dict[str, Any]) -> dict[str, Any]:
     kwargs.update(getattr(replay.function, "keywords", None) or {})
     assert kernel.cliff_candidates
     child_carry = context["next_regime_to_continuation"]["alive"]
+    assert isinstance(child_carry, EGMCarry)
     return {"kernel": kernel, "kwargs": kwargs, "child_carry": child_carry}
 
 
-def _kind(code: int) -> dict[str, Any]:
+def _kind(code: int) -> dict[str, jax.Array]:
     return {"kind": jnp.asarray(code, dtype=jnp.int32)}
 
 
 def _targets(
     *,
-    seam: dict[str, Any],
-    cell: dict[str, Any],
-    overrides: dict[str, Any] | None = None,
+    seam: _Seam,
+    cell: Mapping[str, jax.Array],
+    overrides: Mapping[str, FloatND] | None = None,
     child_breakpoints: FloatND | None = None,
     jit: bool = False,
 ) -> np.ndarray:
@@ -211,7 +236,7 @@ def _targets(
     if child_breakpoints is not None:
         child_carry = dataclasses.replace(child_carry, breakpoints=child_breakpoints)
     param_pool = {
-        key: value
+        key: _economic_argument(value)
         for key, value in kwargs.items()
         if key not in statics.state_names and key != "next_regime_to_continuation"
     }
@@ -233,7 +258,7 @@ def _targets(
 
 
 @pytest.fixture(scope="module")
-def reading_draw_seam() -> dict[str, Any]:
+def reading_draw_seam() -> _Seam:
     model = _build_model(
         liquid_law=next_liquid_reading_draw, subsidy=kind_indexed_subsidy
     )
@@ -241,12 +266,12 @@ def reading_draw_seam() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def draw_free_seam() -> dict[str, Any]:
+def draw_free_seam() -> _Seam:
     model = _build_model(liquid_law=next_liquid_draw_free, subsidy=kind_indexed_subsidy)
     return _solved_seam(model=model, params=_indexed_params(cutoffs=(9.0, 6.0)))
 
 
-def _overrides(*, seam: dict[str, Any], **values: FloatND) -> dict[str, FloatND]:
+def _overrides(*, seam: _Seam, **values: FloatND) -> dict[str, FloatND]:
     """Replace every flat param ending in `__<name>` (all its qualified aliases)."""
     return {
         key: value
@@ -291,7 +316,7 @@ def _brackets_each_child_preimage(
 @pytest.mark.parametrize("source_kind", [0, 1])
 @pytest.mark.parametrize("jit", [False, True])
 def test_draw_reading_law_targets_each_child_rows_cliff(
-    *, reading_draw_seam: dict[str, Any], source_kind: int, jit: bool
+    *, reading_draw_seam: _Seam, source_kind: int, jit: bool
 ) -> None:
     """With cutoffs (9, 6) and offsets (0, 0.1), the targets straddle 9 and 5.9."""
     rows = _targets(seam=reading_draw_seam, cell=_kind(source_kind), jit=jit)
@@ -306,7 +331,7 @@ def test_draw_reading_law_targets_each_child_rows_cliff(
 
 @pytest.mark.parametrize("source_kind", [0, 1])
 def test_draw_free_law_targets_each_child_rows_cliff(
-    *, draw_free_seam: dict[str, Any], source_kind: int
+    *, draw_free_seam: _Seam, source_kind: int
 ) -> None:
     """A law not reading the draw still targets cutoff 9 and cutoff 6."""
     rows = _targets(seam=draw_free_seam, cell=_kind(source_kind))
@@ -333,7 +358,7 @@ _MUTATIONS = [
 @pytest.mark.parametrize(("cuts", "slope", "shift", "source_kind"), _MUTATIONS)
 def test_targets_follow_child_rows_across_scales_and_translations(
     *,
-    reading_draw_seam: dict[str, Any],
+    reading_draw_seam: _Seam,
     cuts: tuple[float, float],
     slope: float,
     shift: float,
@@ -363,7 +388,7 @@ def test_targets_follow_child_rows_across_scales_and_translations(
 
 @pytest.mark.parametrize("source_kind", [0, 1])
 def test_relabelling_kinds_permutes_the_node_targets(
-    *, reading_draw_seam: dict[str, Any], source_kind: int
+    *, reading_draw_seam: _Seam, source_kind: int
 ) -> None:
     """Swapping both kinds' child cliff rows and offsets swaps the target rows."""
     kwargs = reading_draw_seam["kwargs"]
@@ -452,6 +477,7 @@ def test_period_kernel_agrees_with_the_child_carry_oracle(
         regime_name="alive",
         period=0,
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     assert_kernel_agrees_with_oracle(
         kernel=kernel,
         context=context,
@@ -503,12 +529,12 @@ def _build_deterministic_model(
     )
 
 
-def _deterministic_params(*, fpl_cliff: float | FloatND) -> dict[str, Any]:
+def _deterministic_params(*, fpl_cliff: float | FloatND) -> _ModelParams:
     return _params(fpl_cliff=fpl_cliff, law_slope=1.0, law_offset=(0.0, 0.0))
 
 
 @pytest.fixture(scope="module")
-def flipped_kind_seam() -> dict[str, Any]:
+def flipped_kind_seam() -> _Seam:
     model = _build_deterministic_model(
         kind_law=next_kind_flipped, subsidy=kind_indexed_subsidy
     )
@@ -519,7 +545,7 @@ def flipped_kind_seam() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def age_seam() -> dict[str, Any]:
+def age_seam() -> _Seam:
     model = _build_deterministic_model(
         kind_law=lcm.fixed_transition("kind"),
         subsidy=kind_indexed_subsidy,
@@ -532,7 +558,7 @@ def age_seam() -> dict[str, Any]:
 
 @pytest.mark.parametrize("source_kind", [0, 1])
 def test_deterministic_kind_law_targets_the_next_kinds_cliff(
-    *, flipped_kind_seam: dict[str, Any], source_kind: int
+    *, flipped_kind_seam: _Seam, source_kind: int
 ) -> None:
     """With `next_kind = 1 - kind` and cutoffs (9, 6), kind 0 targets 6, kind 1 9."""
     rows = _targets(seam=flipped_kind_seam, cell=_kind(source_kind))
@@ -546,9 +572,7 @@ def test_deterministic_kind_law_targets_the_next_kinds_cliff(
     ), rows
 
 
-def test_age_reading_schedule_targets_the_childs_age_cliff(
-    *, age_seam: dict[str, Any]
-) -> None:
+def test_age_reading_schedule_targets_the_childs_age_cliff(*, age_seam: _Seam) -> None:
     """Income `liquid + 2 + 3 * age` crosses 11 at liquid 6 at the child's age 1.
 
     At the source age 0 the same cliff sits at liquid 9; the child's value
@@ -565,7 +589,7 @@ def test_age_reading_schedule_targets_the_childs_age_cliff(
 
 
 @pytest.fixture(scope="module")
-def wage_seam() -> dict[str, Any]:
+def wage_seam() -> _Seam:
     model = nbegm_continuous_ride_along_toy.build_model(
         variant="nbegm", n_periods=3, n_liquid=24, n_savings=16, n_consumption=24
     )
@@ -574,7 +598,7 @@ def wage_seam() -> dict[str, Any]:
 
 
 def test_continuous_co_state_targets_both_rows_the_child_blends(
-    *, wage_seam: dict[str, Any]
+    *, wage_seam: _Seam
 ) -> None:
     """A source wage 3.8 moves to 0.9 * 3.8 = 3.42, between wage nodes 2.7 and 3.8.
 
@@ -617,13 +641,14 @@ def test_continuous_co_state_targets_both_rows_the_child_blends(
     ids=["flipped_kind", "continuous_wage"],
 )
 def test_child_row_kernels_agree_with_the_oracle(
-    build: Callable[[], tuple[Model, dict[str, Any]]],
+    build: Callable[[], tuple[Model, UserParams]],
 ) -> None:
     """Value, carry and consumption match the oracle on the child's own rows."""
     model, params = build()
     kernel, context = ride_along_kernel(
         model=model, params=params, regime_name="alive", period=0
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     assert_kernel_agrees_with_oracle(
         kernel=kernel,
         context=context,
@@ -643,6 +668,7 @@ def test_age_reading_kernel_agrees_with_the_oracle() -> None:
     kernel, context = ride_along_kernel(
         model=model, params=params, regime_name="alive", period=0
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     assert_kernel_agrees_with_oracle(
         kernel=kernel,
         context=context,
@@ -695,7 +721,7 @@ def _build_sibling_draw_model() -> Model:
     )
 
 
-def _sibling_params() -> dict[str, Any]:
+def _sibling_params() -> _ModelParams:
     params = _params(
         fpl_cliff=jnp.asarray([9.0, 6.0]) + BASE_INCOME,
         law_slope=1.0,
@@ -706,14 +732,14 @@ def _sibling_params() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def sibling_draw_seam() -> dict[str, Any]:
+def sibling_draw_seam() -> _Seam:
     return _solved_seam(model=_build_sibling_draw_model(), params=_sibling_params())
 
 
 @pytest.mark.parametrize("source_kind", [0, 1])
 @pytest.mark.parametrize("jit", [False, True])
 def test_sibling_draw_targets_every_joint_childs_cliff(
-    *, sibling_draw_seam: dict[str, Any], source_kind: int, jit: bool
+    *, sibling_draw_seam: _Seam, source_kind: int, jit: bool
 ) -> None:
     """Cliffs (9, 6) by kind and law `s + shock / 10` give centres 9, 8.9, 6, 5.9.
 
@@ -754,6 +780,7 @@ def test_sibling_draw_kernel_agrees_with_the_oracle() -> None:
     kernel, context = ride_along_kernel(
         model=model, params=_sibling_params(), regime_name="alive", period=0
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     assert_kernel_agrees_with_oracle(
         kernel=kernel,
         context=context,

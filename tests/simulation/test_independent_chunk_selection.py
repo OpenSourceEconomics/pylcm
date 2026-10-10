@@ -2,13 +2,15 @@
 
 import gc
 import weakref
+from collections.abc import Mapping
 from types import MappingProxyType, SimpleNamespace
-from typing import Any
+from typing import NotRequired, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
 import pytest
 
+from _lcm.execution import workspace_planning
 from _lcm.execution.core_program import TiledOutputAxis
 from _lcm.simulation import chunk_admission as admission
 from _lcm.simulation.chunk_planning import (
@@ -25,6 +27,16 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.simulate import _lookup_values_from_indices
 from lcm.exceptions import ExecutionPlanningError
+
+
+class WidthCandidateInputs(TypedDict):
+    axes: tuple[
+        workspace_planning.ReducedAxis | workspace_planning.TiledOutputAxis, ...
+    ]
+    fixed_widths: NotRequired[workspace_planning.Mapping[str, int]]
+    budget_bytes: NotRequired[int | None]
+    width_ceilings: NotRequired[workspace_planning.Mapping[str, int]]
+    covered_axes: NotRequired[workspace_planning.Collection[str]]
 
 
 def _selector(
@@ -67,7 +79,9 @@ def _selector(
     monkeypatch.setattr(admission, "_common_axes", lambda **_: axes)
     original_widths = admission.workspace_width_candidates
 
-    def no_cartesian(**kwargs: Any) -> Any:
+    def no_cartesian(
+        **kwargs: Unpack[WidthCandidateInputs],
+    ) -> tuple[workspace_planning.Mapping[str, int], ...]:
         assert kwargs["budget_bytes"] is None
         return original_widths(**kwargs)
 
@@ -76,7 +90,7 @@ def _selector(
 
     # keyword-only-exempt: primary-argument=_self
     def profile_widths(
-        _self: admission._ChunkProfiler, *, n_subjects: int, widths: Any
+        _self: admission._ChunkProfiler, *, n_subjects: int, widths: Mapping[str, int]
     ) -> SimulationChunkProfile:
         stage = object.__new__(SimulationStageProfile)
         for name, value in {
@@ -349,7 +363,7 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
 
     # keyword-only-exempt: primary-argument=_self
     def profile_widths(
-        _self: admission._ChunkProfiler, *, n_subjects: int, widths: Any
+        _self: admission._ChunkProfiler, *, n_subjects: int, widths: Mapping[str, int]
     ) -> SimulationChunkProfile:
         assert widths == {"subject": 64}
         requested.append(n_subjects)

@@ -1,4 +1,4 @@
-"""Red-green tests for logging the resolved simulation execution plan.
+"""Tests for logging the resolved simulation execution plan.
 
 `Model.simulate` reports, once per call, the resolved execution route
 (legacy/subjects), the subject devices, the resolved axis widths, the outer
@@ -19,7 +19,7 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import jax.numpy as jnp
 import pandas as pd
@@ -40,6 +40,16 @@ _REPO_ROOT = Path(__file__).parent.parent.parent
 _N_PERIODS = 3
 _N_SUBJECTS = 4
 _N_DEVICES = 4
+
+
+class _ShardedReport(TypedDict):
+    messages: list[str]
+    route: str
+    n_subject_devices: int
+    subject_backend: str
+    outer_chunk_count: int
+    admitted_chunk_widths: list[int]
+    budget_mode: str
 
 
 def _initial_conditions(n_subjects: int = _N_SUBJECTS) -> UserInitialConditions:
@@ -182,7 +192,7 @@ def test_a_saved_and_reloaded_result_carries_no_plan_summary(tmp_path: Path) -> 
     pd.testing.assert_frame_equal(reloaded.to_dataframe(), result.to_dataframe())
 
 
-def report_subject_sharded(*, decimal: int) -> dict[str, Any]:
+def report_subject_sharded(*, decimal: int) -> _ShardedReport:
     """Run the subject-sharded route on four CPU devices and report the plan.
 
     Module-level so the four-device child process can import and call it (see
@@ -231,7 +241,7 @@ def report_subject_sharded(*, decimal: int) -> dict[str, Any]:
     }
 
 
-def _run_in_four_device_process(*, entry_point: str) -> dict[str, Any]:
+def _run_in_four_device_process(*, entry_point: str) -> _ShardedReport:
     """Run one module-level report function on four CPU devices and return it.
 
     The child carries this run's float policy -- `jax_enable_x64`, the matmul
@@ -264,13 +274,13 @@ def _run_in_four_device_process(*, entry_point: str) -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def subject_sharded() -> dict[str, Any]:
+def subject_sharded() -> _ShardedReport:
     """Return the subject-sharded report from one four-device child process."""
     return _run_in_four_device_process(entry_point="report_subject_sharded")
 
 
 def test_subjects_run_logs_the_route_and_device_count(
-    subject_sharded: dict[str, Any],
+    subject_sharded: _ShardedReport,
 ) -> None:
     """The subject-sharded route reports `route=subjects` and every device."""
     assert subject_sharded["route"] == "subjects"
@@ -278,7 +288,7 @@ def test_subjects_run_logs_the_route_and_device_count(
     assert subject_sharded["subject_backend"] == "cpu"
 
 
-def test_subjects_run_logs_at_debug(subject_sharded: dict[str, Any]) -> None:
+def test_subjects_run_logs_at_debug(subject_sharded: _ShardedReport) -> None:
     """A subjects run at `log_level='debug'` logs both the summary and detail."""
     summary_lines = [
         m for m in subject_sharded["messages"] if m.startswith("Simulation plan:")
@@ -294,7 +304,7 @@ def test_subjects_run_logs_at_debug(subject_sharded: dict[str, Any]) -> None:
     assert "route=subjects" in detail_lines[0]
 
 
-def test_subjects_run_reports_chunking(subject_sharded: dict[str, Any]) -> None:
+def test_subjects_run_reports_chunking(subject_sharded: _ShardedReport) -> None:
     """The subjects run reports the outer chunk count and admitted widths."""
     assert subject_sharded["outer_chunk_count"] >= 1
     assert sum(subject_sharded["admitted_chunk_widths"]) >= _N_DEVICES

@@ -1,11 +1,12 @@
 import itertools
-from collections.abc import Callable, Mapping
-from typing import Any
+from collections.abc import Callable, Mapping, Sequence
+from typing import Protocol, TypeGuard
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.extend.core import ClosedJaxpr, JaxprEqn
 from numpy.testing import assert_array_equal
 
 from _lcm.solution.action_streaming import (
@@ -13,14 +14,17 @@ from _lcm.solution.action_streaming import (
     build_streaming_ev1_max_Q_over_a,
     build_streaming_max_Q_over_a,
 )
+from lcm.typing import ActionName
 
 
 def _direct_scalar_oracle(
     *,
-    Q_and_F: Callable[..., tuple[object, object]],
-    action_names: tuple[str, ...],
+    Q_and_F: Callable[
+        ..., tuple[jax.Array | float | np.floating, jax.Array | bool | np.bool_]
+    ],
+    action_names: tuple[ActionName, ...],
     action_grids: Mapping[str, np.ndarray],
-    fixed_kwargs: Mapping[str, object],
+    fixed_kwargs: Mapping[str, float],
 ) -> tuple[float, int, bool]:
     """Enumerate the canonical row-major product without using JAX mapping."""
     grids = [np.asarray(action_grids[name]) for name in action_names]
@@ -240,7 +244,28 @@ def test_streaming_rejects_non_positive_block_width(block_width: int):
         )
 
 
-def count_primitive(*, jaxpr: object, name: str) -> int:
+class _GraphEquations(Protocol):
+    @property
+    def eqns(self) -> Sequence[JaxprEqn]: ...
+
+
+class _GraphBody(Protocol):
+    @property
+    def jaxpr(self) -> _GraphEquations: ...
+
+
+type _Graph = _GraphEquations | _GraphBody
+
+
+def _has_equations[T](value: T) -> TypeGuard[_GraphEquations]:
+    return hasattr(value, "eqns")
+
+
+def _has_graph_body[T](value: T) -> TypeGuard[_GraphBody]:
+    return _has_equations(getattr(value, "jaxpr", None))
+
+
+def count_primitive(*, jaxpr: _Graph, name: str) -> int:
     """Count the equations of primitive `name` in a jaxpr and every sub-jaxpr."""
     return sum(
         (eqn.primitive.name == name)
@@ -252,7 +277,7 @@ def count_primitive(*, jaxpr: object, name: str) -> int:
     )
 
 
-def scan_lengths(*, jaxpr: object) -> list[int]:
+def scan_lengths(*, jaxpr: _Graph) -> list[int]:
     """Return the length of every scan in a jaxpr and its sub-jaxprs, in order."""
     lengths = []
     for eqn in _jaxpr_body(jaxpr).eqns:
@@ -263,16 +288,19 @@ def scan_lengths(*, jaxpr: object) -> list[int]:
     return lengths
 
 
-def _jaxpr_body(jaxpr: object) -> Any:
+def _jaxpr_body(jaxpr: _Graph) -> _GraphEquations:
     """Return the open jaxpr of a closed or open jaxpr."""
-    return jaxpr if hasattr(jaxpr, "eqns") else jaxpr.jaxpr  # ty: ignore[unresolved-attribute]
+    if _has_equations(jaxpr):
+        return jaxpr
+    assert _has_graph_body(jaxpr)
+    return jaxpr.jaxpr
 
 
-def _sub_jaxprs(values: tuple[object, ...]) -> list[object]:
+def _sub_jaxprs[T](values: tuple[T, ...]) -> list[_Graph]:
     """Return the jaxprs among equation parameters, inside tuples included."""
-    found: list[object] = []
+    found: list[_Graph] = []
     for value in values:
-        if hasattr(value, "eqns") or hasattr(getattr(value, "jaxpr", None), "eqns"):
+        if _has_equations(value) or _has_graph_body(value):
             found.append(value)
         elif isinstance(value, tuple | list):
             found.extend(_sub_jaxprs(tuple(value)))
@@ -300,14 +328,14 @@ def _sin_ev1_Q_and_F(
 _CHOICE = jnp.arange(7.0)
 
 
-def _single_device_jaxpr() -> object:
+def _single_device_jaxpr() -> ClosedJaxpr:
     streamed = build_streaming_max_Q_over_a(
         Q_and_F=sin_Q_and_F, action_names=("choice",), block_width=3
     )
     return jax.make_jaxpr(lambda choice: streamed(choice=choice))(_CHOICE)
 
 
-def _collective_jaxpr() -> object:
+def _collective_jaxpr() -> ClosedJaxpr:
     streamed = build_streaming_collective_max_Q_over_a(
         Q_and_F=_sin_collective_Q_and_F,
         action_names=("choice",),
@@ -318,7 +346,7 @@ def _collective_jaxpr() -> object:
     return jax.make_jaxpr(lambda choice: streamed(choice=choice))(_CHOICE)
 
 
-def _ev1_jaxpr() -> object:
+def _ev1_jaxpr() -> ClosedJaxpr:
     # Two branches of seven continuous cells in blocks of three: three blocks
     # per branch, six blocks in all.
     streamed = build_streaming_ev1_max_Q_over_a(

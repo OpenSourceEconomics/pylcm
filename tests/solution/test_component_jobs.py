@@ -7,7 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Hashable, Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -20,11 +20,12 @@ import lcm
 from _lcm import version
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from _lcm.persistence.solution import _array_checksum
+from _lcm.typing import PytreeValue
 from lcm import InvariantBlockSchedule, Model
 from lcm.exceptions import ExecutionPlanningError, SolutionIntegrityError
 from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
-from lcm.typing import UserParams
+from lcm.typing import RegimeName, UserParams
 from tests.simulation import test_type_grouped_simulation as life_cycle
 from tests.solution import test_block_major_lifetime as lifetime
 
@@ -49,9 +50,22 @@ def _model(*, enable_jit: bool = True) -> Model:
     )
 
 
-def _complete_result_bytes(
-    *, solution: object, simulation: SimulationResult | None
-) -> tuple[object, ...]:
+type _LeafBytes = tuple[str, tuple[int, ...], bytes]
+type _ValueBytes = tuple[tuple[int, RegimeName, _LeafBytes], ...]
+type _RawOrder = tuple[tuple[RegimeName, tuple[int, ...]], ...]
+type _RawBytes = tuple[_RawOrder, jax.tree_util.PyTreeDef, tuple[_LeafBytes, ...]]
+type _ColumnBytes = tuple[Hashable, str, str, tuple[int, ...], bytes | str]
+type _PanelBytes = tuple[
+    tuple[Hashable | None, ...], tuple[str, ...], str, tuple[_ColumnBytes, ...]
+]
+type _CompleteBytes = (
+    tuple[_ValueBytes, None] | tuple[_ValueBytes, _RawBytes, _PanelBytes]
+)
+
+
+def _complete_result_bytes[Result](
+    *, solution: Result, simulation: SimulationResult | None
+) -> _CompleteBytes:
     """Encode every value, raw leaf and published panel cell for exact comparison."""
     if not isinstance(solution, SolutionResult):
         msg = "A complete component result includes a SolutionResult."
@@ -126,7 +140,7 @@ def _create_complete_campaign(
     return directory, model, params, reference
 
 
-def _reseal_manifest(*, file: h5py.File, manifest: dict[str, object]) -> None:
+def _reseal_manifest[Field](*, file: h5py.File, manifest: Mapping[str, Field]) -> None:
     """Publish the checksum of a deliberately edited fragment manifest."""
     encoded = json.dumps(
         manifest,
@@ -177,7 +191,7 @@ def test_simulating_job_copies_its_raw_results_to_the_host_in_one_transfer(
     device_get = jax.device_get
     callers: list[str] = []
 
-    def _recording_device_get(tree: object) -> object:
+    def _recording_device_get(tree: PytreeValue) -> PytreeValue:
         callers.append(sys._getframe(1).f_code.co_name)
         return device_get(tree)
 
@@ -407,7 +421,9 @@ def test_fragment_metadata_preserves_exact_address_types(
         )
 
 
-def _replace_campaign_plan(*, directory: Path, plan: dict[str, object]) -> None:
+def _replace_campaign_plan[Field](
+    *, directory: Path, plan: Mapping[str, Field]
+) -> None:
     """Replace one test plan and bind its fragments to the replacement bytes."""
     encoded = json.dumps(
         plan, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
@@ -583,7 +599,7 @@ def test_collector_validates_model_owned_fixed_raw_fields(
         )
 
 
-def _campaign_files(*, directory: Path) -> tuple[object, ...]:
+def _campaign_files(*, directory: Path) -> tuple[bool, tuple[tuple[str, str], ...]]:
     """Snapshot caller-owned publication files, including directory existence."""
     return directory.exists(), tuple(
         (
@@ -744,7 +760,7 @@ def test_loaded_simulation_plan_preserves_a_complete_admitted_bundle(
     tmp_path: Path,
     complete_campaign: CompleteCampaign,
     field_name: str,
-    foreign: object,
+    foreign: int | None,
 ) -> None:
     """A simulation plan needs an integer seed, subjects and a population digest."""
     component_jobs = importlib.import_module("lcm.component_jobs")
@@ -800,7 +816,7 @@ def test_collector_binds_execution_to_its_own_runtime(
     tmp_path: Path,
     complete_campaign: CompleteCampaign,
     field_name: str,
-    foreign: object,
+    foreign: str | bool | dict[str, int],
 ) -> None:
     """Fragment agreement cannot authorize another compiler or execution mode."""
     component_jobs = importlib.import_module("lcm.component_jobs")
@@ -905,7 +921,7 @@ def test_fresh_pixi_process_preserves_complete_component_result(
     *,
     tmp_path: Path,
     complete_campaign: CompleteCampaign,
-    record_property: Callable[[str, object], None],
+    record_property: Callable[[str, str], None],
 ) -> None:
     """A fresh frozen Pixi worker preserves every value, raw leaf and panel cell."""
 

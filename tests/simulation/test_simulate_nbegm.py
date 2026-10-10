@@ -1,5 +1,6 @@
 """NBEGM simulation evaluates phase-resolved post-decision constraints."""
 
+from collections.abc import Mapping
 from dataclasses import replace
 from types import MappingProxyType
 
@@ -20,7 +21,13 @@ from lcm import (
 )
 from lcm.regime import Regime
 from lcm.solvers import NBEGM
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+    UserParamsNode,
+)
 
 pytestmark = pytest.mark.slow
 
@@ -96,15 +103,18 @@ def _model(*, hand_written: bool = False) -> Model:
     )
 
 
-def _filled_params(model: Model) -> dict:
-    def fill(node: object) -> object:
+type _FillInput = str | int | float | Mapping[str, _FillInput]
+
+
+def _filled_params(model: Model) -> dict[str, UserParamsNode]:
+    def fill(node: _FillInput) -> UserParamsNode:
         if isinstance(node, dict):
             return {key: fill(value) for key, value in node.items()}
         if isinstance(node, bool) or not isinstance(node, int | float):
             return 0.95
         return node
 
-    return fill(model.get_params_template())  # ty: ignore[invalid-return-type]
+    return {name: fill(value) for name, value in model.get_params_template().items()}
 
 
 @pytest.mark.parametrize("declaration_kind", ["factory", "hand_written"])

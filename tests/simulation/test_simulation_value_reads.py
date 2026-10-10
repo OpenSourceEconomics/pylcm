@@ -22,6 +22,7 @@ from _lcm.execution.value_transfer import (
     apply_value_transfer,
 )
 from _lcm.simulation.value_reads import PeriodSimulationReads
+from _lcm.typing import ArgumentTree, PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY
 
@@ -48,7 +49,9 @@ def _stored_value() -> jax.Array:
     return jax.device_put(jnp.arange(3), jax.NamedSharding(mesh, jax.P()))
 
 
-def _physical_copy(*, value: object, transfer: ResolvedValueTransfer) -> jax.Array:
+def _physical_copy(
+    *, value: ArgumentTree, transfer: ResolvedValueTransfer
+) -> jax.Array:
     """Make the actual adapter's output physically distinct on one CPU."""
     assert isinstance(value, jax.Array)
     result = apply_value_transfer(value=value, transfer=transfer).copy()
@@ -210,7 +213,9 @@ def test_finish_keeps_no_concrete_array_references(
         {"path": ("neighbor",)},
     ],
 )
-def test_undeclared_reader_occurrences_are_rejected(*, change: dict) -> None:
+def test_undeclared_reader_occurrences_are_rejected(
+    *, change: dict[str, str | int | tuple[str, ...]]
+) -> None:
     """Matching the target does not authorize another core, channel or leaf."""
     read = _read(unit="alive")
     undeclared = replace(read, source=replace(read.source, **change))
@@ -298,7 +303,9 @@ def test_finish_refuses_missing_commits() -> None:
 
 
 @pytest.mark.parametrize("change", [{"source_period": 1}, {"source_regime": "other"}])
-def test_reader_addresses_match_the_declared_period_and_unit(*, change: dict) -> None:
+def test_reader_addresses_match_the_declared_period_and_unit(
+    *, change: dict[str, str | int | tuple[str, ...]]
+) -> None:
     """A roster cannot assign a different period's or regime's occurrence to a unit."""
     read = _read(unit="alive")
     misaddressed = replace(read, source=replace(read.source, **change))
@@ -320,7 +327,7 @@ def test_single_and_shared_copies_keep_honest_transfer_metadata(
     module = importlib.import_module("_lcm.simulation.value_reads")
     transfers: list[ResolvedValueTransfer] = []
 
-    def observe(*, value: object, transfer: ResolvedValueTransfer) -> jax.Array:
+    def observe(*, value: ArgumentTree, transfer: ResolvedValueTransfer) -> jax.Array:
         transfers.append(transfer)
         return _physical_copy(value=value, transfer=transfer)
 
@@ -368,7 +375,7 @@ def test_every_output_is_ready_before_a_copy_can_be_released(
     observed: list[tuple[int, ...]] = []
     original = jax.block_until_ready
 
-    def observe(tree: object) -> object:
+    def observe(tree: PytreeValue) -> PytreeValue:
         assert not copied.is_deleted()
         observed.append(tuple(id(leaf) for leaf in jax.tree.leaves(tree)))
         return original(tree)
@@ -432,7 +439,7 @@ def test_budget_refusal_happens_before_a_transfer_allocates(
     module = importlib.import_module("_lcm.simulation.value_reads")
     allocated: list[ResolvedValueTransfer] = []
 
-    def observe(*, value: object, transfer: ResolvedValueTransfer) -> jax.Array:
+    def observe(*, value: ArgumentTree, transfer: ResolvedValueTransfer) -> jax.Array:
         allocated.append(transfer)
         return _physical_copy(value=value, transfer=transfer)
 
@@ -689,9 +696,18 @@ def test_a_device_transfer_budget_callback_cannot_admit_a_host_upload(
     ) -> None:
         raise AssertionError(f"Invented device transfer: {transfer!r}, {live_values!r}")
 
-    def no_allocation(*args: object, **kwargs: object) -> None:
+    # keyword-only-exempt: library-callback=jax.device_put
+    def no_allocation(
+        value: ArgumentTree,
+        device: jax.Device | jax.sharding.Sharding | None = None,
+        *,
+        src: jax.Device | jax.sharding.Sharding | None = None,
+        donate: bool = False,
+        may_alias: bool | None = None,
+    ) -> None:
         raise AssertionError(
-            f"Host upload happened before refusal: {args!r}, {kwargs!r}"
+            f"Host upload happened before refusal: {value!r}, {device!r}, "
+            f"{src!r}, {donate!r}, {may_alias!r}"
         )
 
     original = np.array([1, 4, 7], dtype=np.int32)
@@ -738,7 +754,7 @@ def test_host_replay_preserves_distinct_artifact_keys_for_one_numpy_original() -
 @pytest.mark.parametrize("dtype", [np.bool_, np.int32])
 @pytest.mark.parametrize("offset", [0, 16])
 def test_host_replay_copy_lifetimes_are_independent_of_numpy_alignment(
-    *, dtype: type, offset: int
+    *, dtype: type[np.bool_ | np.int32], offset: int
 ) -> None:
     """Aligned host storage cannot join otherwise independent artifact lifetimes."""
     storage = np.empty(128, dtype=np.uint8)

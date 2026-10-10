@@ -19,6 +19,7 @@ from typing import Literal
 from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM
+from lcm.typing import UserParamsNode
 from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
     WEALTH_GRID,
@@ -167,7 +168,7 @@ def get_retirement_only_params(
     n_periods: int,
     discount_factor: float = 0.98,
     interest_rate: float = 0.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Params for the retirement-only pair; valid for both solver variants."""
     return retirement_only.get_params(
         n_periods=n_periods,
@@ -181,7 +182,7 @@ def get_graph_only_retirement_params(
     n_periods: int,
     discount_factor: float = 0.98,
     interest_rate: float = 0.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Retirement-only params for a model whose `retirement` edges declare no law.
 
     Such a model has no law reading `final_age_alive`, so the key is unknown there.
@@ -204,7 +205,7 @@ def get_full_params(
     disutility_of_work: float = 1.0,
     interest_rate: float = 0.0,
     wage: float = 20.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Params for the full-model pair; valid for both solver variants."""
     return base.get_params(
         n_periods=n_periods,

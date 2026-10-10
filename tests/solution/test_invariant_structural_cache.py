@@ -16,10 +16,10 @@ import gc
 import logging
 import math
 import weakref
-from collections.abc import Generator, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager
 from types import MappingProxyType
-from typing import Any
+from typing import NotRequired, TypedDict, Unpack
 
 import cloudpickle
 import jax
@@ -28,9 +28,14 @@ import numpy as np
 import pytest
 
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
+from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.solution import backward_induction as bi
+from _lcm.typing import ArgumentTree, FlatParams
 from lcm import ExecutionConfig, Model
+from lcm.solver_api import SolutionResult
+from lcm.typing import UserParams
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
+from tests.solution._candidate_census import _CompilationKwargs
 from tests.solution.test_invariant_blocking import _workload
 
 _WORKLOADS = ("independent_types", "sector_typed_terminal", "sector_type_free_terminal")
@@ -41,6 +46,19 @@ _EXPENSIVE_BUILDERS = (
 )
 
 
+type _PlanSummary = tuple[
+    dict[str, int],
+    tuple[bi.ResolvedValueTransfer, ...],
+    tuple[str, ...],
+    bi.ResolvedOutputLayout,
+    dict[bi.ReferenceName, bi.ShapeDtypePytree],
+]
+
+
+class _ProcessKwargs(TypedDict):
+    array_writer: NotRequired[SimulationEntryAllocations | None]
+
+
 def _config(*, blocked: bool, budget: int | None = 2**30) -> ExecutionConfig:
     return ExecutionConfig(
         devices=(0,),
@@ -49,11 +67,21 @@ def _config(*, blocked: bool, budget: int | None = 2**30) -> ExecutionConfig:
     )
 
 
-def _solve(*, model: Model, params: dict) -> Any:
+def _solve(*, model: Model, params: UserParams) -> SolutionResult:
     result = model.solve(params=params, log_level="off")
     for values in result.values.values():
         jax.block_until_ready(tuple(values.values()))
     return result
+
+
+def _count_builder[**Parameters, Result](
+    *, original: Callable[Parameters, Result], name: str, calls: dict[str, int]
+) -> Callable[Parameters, Result]:
+    def observe(*args: Parameters.args, **kwargs: Parameters.kwargs) -> Result:
+        calls[name] += 1
+        return original(*args, **kwargs)
+
+    return observe
 
 
 @contextmanager
@@ -61,29 +89,38 @@ def _counted_builders(monkeypatch: pytest.MonkeyPatch) -> Generator[dict[str, in
     """Count calls of the builders a blueprint hit skips."""
     calls = dict.fromkeys(_EXPENSIVE_BUILDERS, 0)
     with monkeypatch.context() as patch:
-        for name in _EXPENSIVE_BUILDERS:
-            original = getattr(bi, name)
-
-            def observe(
-                *args: Any, _name: str = name, _original: Any = original, **kwargs: Any
-            ) -> Any:
-                calls[_name] += 1
-                return _original(*args, **kwargs)
-
-            patch.setattr(bi, name, observe)
+        observers = {
+            "materialize_core_program": _count_builder(
+                original=bi.materialize_core_program,
+                name="materialize_core_program",
+                calls=calls,
+            ),
+            "_prepare_abstract_program": _count_builder(
+                original=bi._prepare_abstract_program,
+                name="_prepare_abstract_program",
+                calls=calls,
+            ),
+            "resolve_core_program_candidates": _count_builder(
+                original=bi.resolve_core_program_candidates,
+                name="resolve_core_program_candidates",
+                calls=calls,
+            ),
+        }
+        for name, observer in observers.items():
+            patch.setattr(bi, name, observer)
         yield calls
 
 
 @contextmanager
 def _captured_plans(
     monkeypatch: pytest.MonkeyPatch,
-) -> Generator[list[Any]]:
+) -> Generator[list[bi._CompiledPrograms]]:
     """Capture the compiled-program plan of every solve inside the block."""
-    plans: list[Any] = []
+    plans: list[bi._CompiledPrograms] = []
     original = bi._compile_all_functions
     with monkeypatch.context() as patch:
 
-        def capture(**kwargs: Any) -> Any:
+        def capture(**kwargs: Unpack[_CompilationKwargs]) -> bi._CompiledPrograms:
             compiled = original(**kwargs)
             plans.append(compiled)
             return compiled
@@ -92,7 +129,7 @@ def _captured_plans(
         yield plans
 
 
-def _plan_summary(compiled: Any) -> dict:
+def _plan_summary(compiled: bi._CompiledPrograms) -> dict[bi._CoreTriple, _PlanSummary]:
     """Describe every selected core by what its executable was planned with."""
     return {
         (regime, period, name): (
@@ -107,7 +144,9 @@ def _plan_summary(compiled: Any) -> dict:
     }
 
 
-def _admitted_widths(compiled: Any) -> dict:
+def _admitted_widths(
+    compiled: bi._CompiledPrograms,
+) -> dict[bi._CoreTriple, dict[str, int]]:
     return {
         (regime, period, name): dict(core.tile_widths)
         for (regime, period), cores in compiled.executables.items()
@@ -115,7 +154,7 @@ def _admitted_widths(compiled: Any) -> dict:
     }
 
 
-def _assert_values_identical(*, first: Any, second: Any) -> None:
+def _assert_values_identical(*, first: SolutionResult, second: SolutionResult) -> None:
     assert set(first.values) == set(second.values)
     for period, by_regime in first.values.items():
         assert set(by_regime) == set(second.values[period])
@@ -126,7 +165,7 @@ def _assert_values_identical(*, first: Any, second: Any) -> None:
             assert left.tobytes() == right.tobytes()
 
 
-def _warm(*, model: Model, params: dict, n: int = 2) -> None:
+def _warm(*, model: Model, params: UserParams, n: int = 2) -> None:
     for _ in range(n):
         warmed = _solve(model=model, params=params)
         del warmed
@@ -142,9 +181,13 @@ def test_same_schema_warm_calls_rebind_values_without_rebuilding_structure(
     model, params = _workload(name=workload, execution_config=config)
     _warm(model=model, params=params, n=3)
     changed = copy.deepcopy(params)
-    changed["working"]["utility"]["weight"] = (
-        changed["working"]["utility"]["weight"] * 1.125
-    )
+    working = changed["working"]
+    assert isinstance(working, dict)
+    utility = working["utility"]
+    assert isinstance(utility, dict)
+    weight = utility["weight"]
+    assert isinstance(weight, jax.Array)
+    utility["weight"] = weight * 1.125
     with _counted_builders(monkeypatch) as calls:
         same = _solve(model=model, params=params)
         different = _solve(model=model, params=changed)
@@ -194,12 +237,16 @@ def test_user_typing_and_placement_normalise_to_the_cached_schema(
     model, params = _workload(name="independent_types", execution_config=config)
     _warm(model=model, params=params)
     variant = copy.deepcopy(params)
-    variant["discount_factor"] = jnp.asarray(
-        params["discount_factor"], dtype=jnp.float16
-    )
-    variant["working"]["utility"]["weight"] = jax.device_put(
-        params["working"]["utility"]["weight"], jax.devices()[0]
-    )
+    discount_factor = params["discount_factor"]
+    assert isinstance(discount_factor, float)
+    working = variant["working"]
+    assert isinstance(working, dict)
+    utility = working["utility"]
+    assert isinstance(utility, dict)
+    weight = utility["weight"]
+    assert isinstance(weight, jax.Array)
+    variant["discount_factor"] = jnp.asarray(discount_factor, dtype=jnp.float16)
+    utility["weight"] = jax.device_put(weight, jax.devices()[0])
     with _counted_builders(monkeypatch) as calls:
         got = _solve(model=model, params=variant)
     assert calls == dict.fromkeys(calls, 0), calls
@@ -256,7 +303,7 @@ def _respecify_processed_params(
     """
     process = model._process_params
 
-    def respecify(leaf: object) -> jax.Array:
+    def respecify(leaf: ArgumentTree) -> jax.Array:
         assert isinstance(leaf, jax.Array)
         if weak and leaf.ndim == 0:
             leaf = jnp.asarray(leaf.item())
@@ -264,7 +311,7 @@ def _respecify_processed_params(
             leaf = jax.device_put(leaf, jax.devices()[0])
         return leaf
 
-    def processed(params: dict, **kwargs: Any) -> MappingProxyType:
+    def processed(params: UserParams, **kwargs: Unpack[_ProcessKwargs]) -> FlatParams:
         flat_params = process(params, **kwargs)
         memo: dict[int, jax.Array] = {}
         respecified = MappingProxyType(
@@ -318,7 +365,7 @@ def test_a_budget_change_rebinds_and_readmits_without_rebuilding(
 
 
 def _width_proportional_peak(
-    *, compiled: object, widths: Mapping[str, int]
+    *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
 ) -> CompilerMemoryReservation:
     """Report a compiler peak of one kilobyte per streamed width-product point."""
     del compiled
@@ -347,16 +394,23 @@ def test_the_cache_is_bounded_and_released_with_its_model(
         name="independent_types", execution_config=_config(blocked=True)
     )
     cache = model._structural_blueprints
-    weight = params["working"]["utility"]["weight"]
+    working = params["working"]
+    assert isinstance(working, dict)
+    utility = working["utility"]
+    assert isinstance(utility, dict)
+    weight = utility["weight"]
+    assert isinstance(weight, jax.Array)
     for dtype in (None, jnp.float32, jnp.float16):
         for committed in (False, True):
             variant = copy.deepcopy(params)
             if dtype is not None:
                 variant["discount_factor"] = jnp.asarray(0.9, dtype=dtype)
             if committed:
-                variant["working"]["utility"]["weight"] = jax.device_put(
-                    weight, jax.devices()[0]
-                )
+                variant_working = variant["working"]
+                assert isinstance(variant_working, dict)
+                variant_utility = variant_working["utility"]
+                assert isinstance(variant_utility, dict)
+                variant_utility["weight"] = jax.device_put(weight, jax.devices()[0])
             result = _solve(model=model, params=variant)
             del result
     assert (len(cache), cache.misses) == (1, 1)
@@ -392,7 +446,11 @@ def test_cached_blueprints_retain_no_concrete_array() -> None:
     assert concrete == []
 
 
-def _walk(*, value: object, seen: set[int] | None = None) -> Iterator[object]:
+def _walk(
+    *,
+    value: object,  # noqa: PAN001 - Object graph inspection includes arbitrary dataclass fields.
+    seen: set[int] | None = None,
+) -> Iterator[object]:  # noqa: PAN001 - Yields arbitrary reachable graph members for array detection.
     """Yield every object reachable through containers and dataclass fields."""
     seen = set() if seen is None else seen
     if id(value) in seen:

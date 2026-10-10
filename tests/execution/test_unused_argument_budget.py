@@ -42,6 +42,7 @@ from _lcm.solution import backward_induction
 from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import RegimeName
 
 _PAYLOAD_BYTES = 1024 * 1024
 _INSUFFICIENT_BYTES = 3 * _PAYLOAD_BYTES // 2
@@ -53,7 +54,9 @@ def _shape_only_simulation(*, state: jax.Array, **_static: int) -> jax.Array:
     return jnp.arange(state.size, dtype=state.dtype).reshape(state.shape)
 
 
-def _shape_only_solve(*, next_regime_to_V_arr: Mapping[str, jax.Array]) -> jax.Array:
+def _shape_only_solve(
+    *, next_regime_to_V_arr: Mapping[RegimeName, jax.Array]
+) -> jax.Array:
     """A real declared local value read supplies only shape and dtype."""
     value = next_regime_to_V_arr["done"]
     return jnp.arange(value.size, dtype=value.dtype).reshape(value.shape)
@@ -134,7 +137,7 @@ def test_simulation_refuses_a_shape_only_live_input_over_budget(
 
     def observe(
         self: CompiledSimulationProgram, **arguments: PytreeValue | ShapeDtypePytree
-    ) -> object:
+    ) -> PytreeValue:
         executions.append(None)
         return original(self, **arguments)
 

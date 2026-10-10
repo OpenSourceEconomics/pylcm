@@ -38,6 +38,9 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+type SourceText = str
+
+
 _DETAILS = {
     "PAN001": "`object` in an annotation; name the precise type",
     "PAN002": "`Any` in an annotation; name the precise type",
@@ -221,7 +224,7 @@ class _Finding:
 
 @dataclass(frozen=True, kw_only=True)
 class _SourceUnit:
-    source: str
+    source: SourceText
     cell: int | None = None
 
 
@@ -284,7 +287,7 @@ def _render(violation: AnnotationViolation) -> str:
     return f"{location}: {violation.code} {violation.construct}: {violation.detail}"
 
 
-def _findings_for_source(*, source: str) -> list[_Finding]:
+def _findings_for_source(*, source: SourceText) -> list[_Finding]:
     comments = _comments(source=source)
     visitor = _AnnotationVisitor(
         standalone_comment_lines=frozenset(
@@ -321,7 +324,7 @@ def _findings_for_source(*, source: str) -> list[_Finding]:
     return sorted(findings, key=lambda finding: (finding.line, finding.code))
 
 
-def _comments(*, source: str) -> dict[int, tuple[str, bool]]:
+def _comments(*, source: SourceText) -> dict[int, tuple[str, bool]]:
     """Map each line with a comment to its text and whether it stands alone."""
     lines = source.splitlines()
     comments: dict[int, tuple[str, bool]] = {}

@@ -33,11 +33,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_law import RegimeLawDeclaration
 from _lcm.simulation.gated_routing import (
     route_gated_edges,
     substitute_gated_edge_continuations,
 )
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import StatesPerRegime
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
@@ -58,7 +60,14 @@ from lcm import (
 )
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import StochasticTransition
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    RegimeName,
+    ScalarInt,
+)
 from tests.conftest import (
     DECIMAL_PRECISION,
     bind_laws,
@@ -160,7 +169,7 @@ def test_dissolving_household_starts_its_fallback_regime_at_the_projected_career
     )
 
 
-def _route_three_households() -> MappingProxyType:
+def _route_three_households() -> StatesPerRegime:
     """Run the router on three households and return their state slots.
 
     Every household's ordinary draw is the edge's target and every fallback
@@ -386,7 +395,9 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
     }
 
 
-def _make_laws(*, carrying_fallback: bool) -> dict[str, object]:
+def _make_laws(
+    *, carrying_fallback: bool
+) -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """Build each household regime's transition law.
 
     `married` is a `Transition` that dissolves through a gate whose wife's leg

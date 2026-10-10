@@ -16,10 +16,39 @@ import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Protocol, TypedDict, Unpack
 
 import jax
 import numpy as np
+
+from _lcm.execution.core_program import ResolvedCoreProgram
+from _lcm.execution.output_layout import ResolvedOutputLayout
+from _lcm.typing import JSONValue, ReferenceName, ShapeDtypePytree
+from lcm import Model
+from lcm.solver_api import SolutionResult
+from lcm.typing import FloatND, RegimeName, StateName
+
+
+class _ModelKwargs(TypedDict, total=False):
+    widths: Mapping[str, int] | None
+    action_partitions: Mapping[RegimeName, int] | None
+    sharded_states: tuple[StateName, ...]
+    typed: bool
+    invariant_block_widths: Mapping[StateName, int] | None
+    devices: tuple[int, ...] | None
+
+
+class _LowerCandidate(Protocol):
+    def __call__(
+        self,
+        *,
+        label: str,
+        resolved: ResolvedCoreProgram,
+        layout: ResolvedOutputLayout,
+        donated: tuple[ReferenceName, ...],
+        internal_templates: Mapping[ReferenceName, ShapeDtypePytree],
+    ) -> jax.stages.Lowered: ...
+
 
 _FIXED_WIDTH = 5
 
@@ -35,10 +64,10 @@ def main() -> None:
     arguments.out.write_text(json.dumps(report, indent=2, sort_keys=True))
 
 
-def _report() -> dict[str, Any]:
+def _report() -> dict[str, JSONValue]:
     from tests.test_models import many_actions  # noqa: PLC0415
 
-    report: dict[str, Any] = {
+    report: dict[str, JSONValue] = {
         "device_count": jax.device_count(),
         "backend": jax.default_backend(),
         "x64": bool(jax.config.read("jax_enable_x64")),
@@ -101,19 +130,18 @@ def _report() -> dict[str, Any]:
         ("action_only", {}),
         ("state_by_action", {"sharded_states": ("wealth",), "devices": (0, 1)}),
     ):
-        blocked = {
+        blocked: _ModelKwargs = {
             "widths": {"action_product": _FIXED_WIDTH},
             "typed": True,
             "invariant_block_widths": {"pref_type": 1},
             **kwargs,
         }
-        got = _solve(
-            **{
-                **blocked,
-                "devices": None,
-                "action_partitions": {"working": 4},
-            }
-        )
+        partitioned: _ModelKwargs = {
+            **blocked,
+            "devices": None,
+            "action_partitions": {"working": 4},
+        }
+        got = _solve(**partitioned)
         reference_values = _solve(**blocked).values
         report[f"invariant_blocks_{name}"] = {
             "mismatches": _bitwise_mismatches(
@@ -148,12 +176,12 @@ def _report() -> dict[str, Any]:
 def _model(
     *,
     widths: Mapping[str, int] | None = None,
-    action_partitions: Mapping[str, int] | None = None,
-    sharded_states: tuple[str, ...] = (),
+    action_partitions: Mapping[RegimeName, int] | None = None,
+    sharded_states: tuple[StateName, ...] = (),
     typed: bool = False,
-    invariant_block_widths: Mapping[str, int] | None = None,
+    invariant_block_widths: Mapping[StateName, int] | None = None,
     devices: tuple[int, ...] | None = None,
-) -> Any:
+) -> Model:
     from lcm import ExecutionConfig  # noqa: PLC0415
     from tests.test_models import many_actions  # noqa: PLC0415
 
@@ -169,18 +197,19 @@ def _model(
     )
 
 
-def _solve(**kwargs: Any) -> Any:
+def _solve(*, scale: float = 1.0, **kwargs: Unpack[_ModelKwargs]) -> SolutionResult:
     """Solve the model `_model(**kwargs)` builds; `scale` moves its params."""
     from tests.test_models import many_actions  # noqa: PLC0415
 
-    scale = kwargs.pop("scale", 1.0)
     typed = kwargs.get("typed", False)
     return _model(**kwargs).solve(
         params=many_actions.get_params(typed=typed, scale=scale), log_level="off"
     )
 
 
-def _flat(values: Mapping) -> dict[str, np.ndarray]:
+def _flat(
+    values: Mapping[int, Mapping[RegimeName, FloatND | np.ndarray]],
+) -> dict[str, np.ndarray]:
     return {
         f"{period}/{regime}": np.asarray(value)
         for period, by_regime in values.items()
@@ -188,7 +217,11 @@ def _flat(values: Mapping) -> dict[str, np.ndarray]:
     }
 
 
-def _bitwise_mismatches(*, got: Mapping, expected: Mapping) -> list[str]:
+def _bitwise_mismatches(
+    *,
+    got: Mapping[int, Mapping[RegimeName, FloatND | np.ndarray]],
+    expected: Mapping[int, Mapping[RegimeName, FloatND | np.ndarray]],
+) -> list[str]:
     got_flat, expected_flat = _flat(got), _flat(expected)
     if sorted(got_flat) != sorted(expected_flat):
         return ["<different period-regime keys>"]
@@ -201,7 +234,11 @@ def _bitwise_mismatches(*, got: Mapping, expected: Mapping) -> list[str]:
     ]
 
 
-def _max_ulp(*, got: Mapping, expected: Mapping) -> float:
+def _max_ulp(
+    *,
+    got: Mapping[int, Mapping[RegimeName, FloatND | np.ndarray]],
+    expected: Mapping[int, Mapping[RegimeName, FloatND | np.ndarray]],
+) -> float:
     worst = 0.0
     got_flat = _flat(got)
     for key, value in _flat(expected).items():
@@ -210,7 +247,7 @@ def _max_ulp(*, got: Mapping, expected: Mapping) -> float:
     return worst
 
 
-def _layout(value: jax.Array) -> dict[str, Any]:
+def _layout(value: jax.Array) -> dict[str, JSONValue]:
     sharding = value.sharding
     named = isinstance(sharding, jax.NamedSharding)
     return {
@@ -220,7 +257,9 @@ def _layout(value: jax.Array) -> dict[str, Any]:
     }
 
 
-def _simulated_frames(*, widths: Mapping[str, int] | None = None) -> dict[str, Any]:
+def _simulated_frames(
+    *, widths: Mapping[str, int] | None = None
+) -> dict[str, JSONValue]:
     import jax.numpy as jnp  # noqa: PLC0415
 
     from tests.test_models import many_actions  # noqa: PLC0415
@@ -250,14 +289,14 @@ def _simulated_frames(*, widths: Mapping[str, int] | None = None) -> dict[str, A
     }
 
 
-def _program_report() -> dict[str, Any]:
+def _program_report() -> dict[str, JSONValue]:
     """Compile the working regime's period-0 program and read its exchanges."""
     from _lcm.solution import backward_induction  # noqa: PLC0415
     from tests.test_models import many_actions  # noqa: PLC0415
 
-    report: dict[str, Any] = {}
+    report: dict[str, JSONValue] = {}
     for name, partitions in (("partitioned", {"working": 4}), ("ordinary", {})):
-        lowered: dict[str, Any] = {}
+        lowered: dict[str, jax.stages.Lowered] = {}
         original = backward_induction._lower_resolved_candidate
         backward_induction._lower_resolved_candidate = _LoweringRecorder(  # ty: ignore[invalid-assignment]
             lower=original, lowered=lowered
@@ -276,11 +315,14 @@ def _program_report() -> dict[str, Any]:
         )
         compiled = lowered[label].compile()
         text = compiled.as_text()
+        assert text is not None
+        stats = compiled.memory_analysis()
+        assert stats is not None
         report[name] = {
             "all_gather_shapes": sorted(
                 _all_gather_result_shapes(hlo_text=text), key=str
             ),
-            "temp_bytes": int(compiled.memory_analysis().temp_size_in_bytes),
+            "temp_bytes": int(stats.temp_size_in_bytes),
         }
     return report
 
@@ -288,12 +330,28 @@ def _program_report() -> dict[str, Any]:
 class _LoweringRecorder:
     """Lower a solve candidate as the solve does, keeping each lowering by label."""
 
-    def __init__(self, *, lower: Any, lowered: dict[str, Any]) -> None:
+    def __init__(
+        self, *, lower: _LowerCandidate, lowered: dict[str, jax.stages.Lowered]
+    ) -> None:
         self._lower = lower
         self._lowered = lowered
 
-    def __call__(self, *, label: str, **kwargs: Any) -> Any:
-        result = self._lower(label=label, **kwargs)
+    def __call__(
+        self,
+        *,
+        label: str,
+        resolved: ResolvedCoreProgram,
+        layout: ResolvedOutputLayout,
+        donated: tuple[ReferenceName, ...],
+        internal_templates: Mapping[ReferenceName, ShapeDtypePytree],
+    ) -> jax.stages.Lowered:
+        result = self._lower(
+            label=label,
+            resolved=resolved,
+            layout=layout,
+            donated=donated,
+            internal_templates=internal_templates,
+        )
         self._lowered[label] = result
         return result
 
@@ -312,7 +370,9 @@ def _all_gather_result_shapes(*, hlo_text: str) -> list[list[int]]:
     return shapes
 
 
-def _block_major_report(*, sharded_states: tuple[str, ...] = ()) -> dict[str, Any]:
+def _block_major_report(
+    *, sharded_states: tuple[StateName, ...] = ()
+) -> dict[str, JSONValue]:
     """Compare complete fixed-width values, panels and retained component lifetime."""
     import jax.numpy as jnp  # noqa: PLC0415
     import pytest  # noqa: PLC0415
@@ -327,7 +387,7 @@ def _block_major_report(*, sharded_states: tuple[str, ...] = ()) -> dict[str, An
     )
     from tests.test_models import many_actions  # noqa: PLC0415
 
-    def model(schedule: InvariantBlockSchedule) -> Any:
+    def model(schedule: InvariantBlockSchedule) -> Model:
         return many_actions.get_model(
             typed=True,
             execution_config=ExecutionConfig(
@@ -394,7 +454,7 @@ def _block_major_report(*, sharded_states: tuple[str, ...] = ()) -> dict[str, An
     }
 
 
-def _budget_report() -> dict[str, Any]:
+def _budget_report() -> dict[str, JSONValue]:
     """Solve at the exact represented-memory ceiling and immediately below it."""
     import logging  # noqa: PLC0415
 
@@ -405,7 +465,7 @@ def _budget_report() -> dict[str, Any]:
     from tests.execution.test_core_plan_record import _PlanRecords  # noqa: PLC0415
     from tests.test_models import many_actions  # noqa: PLC0415
 
-    def solve(budget: int) -> Any:
+    def solve(budget: int) -> SolutionResult:
         return many_actions.get_model(
             execution_config=ExecutionConfig(
                 devices=(0, 1, 2, 3),
@@ -417,7 +477,7 @@ def _budget_report() -> dict[str, Any]:
 
     records = _PlanRecords()
     logger = logging.getLogger("lcm")
-    lowered: dict[str, Any] = {}
+    lowered: dict[str, jax.stages.Lowered] = {}
     original = backward_induction._lower_resolved_candidate
     backward_induction._lower_resolved_candidate = _LoweringRecorder(  # ty: ignore[invalid-assignment]
         lower=original, lowered=lowered
@@ -431,6 +491,7 @@ def _budget_report() -> dict[str, Any]:
     native_reservations: dict[str, int] = {}
     for label, program in lowered.items():
         stats = program.compile().memory_analysis()
+        assert stats is not None
         native_reservations[label] = max(
             int(stats.peak_memory_in_bytes),
             int(stats.argument_size_in_bytes)

@@ -13,13 +13,16 @@ from collections.abc import Mapping
 
 import numpy as np
 
+from lcm.typing import FloatND, RegimeName
 from tests.test_models import nbegm_ride_along_toy as toy
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 
-def _solve(*, variant: str, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(
+    *, variant: str, n_consumption: int = 120
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the per-kind-discount ride-along toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
