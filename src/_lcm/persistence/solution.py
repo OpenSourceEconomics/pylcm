@@ -2221,7 +2221,7 @@ def _axis_descriptors_from_manifest(value: JSONValue) -> tuple[AxisDescriptor, .
 
 def _categorical_domains_from_manifest(
     value: JSONValue,
-) -> dict[str, CategoryDomain]:
+) -> MappingProxyType[str, CategoryDomain]:
     """Decode exact categorical labels, integer codes, and order."""
     result: dict[str, CategoryDomain] = {}
     for name, raw_domain in _require_exact_dict(
@@ -2261,7 +2261,7 @@ def _categorical_domains_from_manifest(
                 label=f"artifact categorical domain {name!r} ordering",
             ),
         )
-    return result
+    return MappingProxyType(result)
 
 
 def _required_routes_from_manifest(value: JSONValue) -> frozenset[ReplayRouteIdentity]:
