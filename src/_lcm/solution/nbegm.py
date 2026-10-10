@@ -153,6 +153,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import map_over_leading_axis
+from _lcm.utils.functools import array_result, is_user_function
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.case_piece import CaseBoundary, EqualityOwner, PiecewiseAffineMeta
 from lcm.collective import CollectiveUtility
@@ -2443,8 +2444,8 @@ class _NBEGMCaseCore:
             preferences=preferences,
             next_liquid=next_liquid,
             marginal_return=marginal_return,
-            subsidy_when=subsidy_below,
-            subsidy_otherwise=subsidy_above,
+            subsidy_when=array_result(subsidy_below),
+            subsidy_otherwise=array_result(subsidy_above),
             asset_limit=asset_limit,
             equality_owner=case_spec.equality_owner,
             arithmetic=self.envelope_arithmetic,
@@ -2602,7 +2603,7 @@ def _fail_if_discrete_action_feeds_continuation(
     funcs: dict[FunctionName, UserFunction] = {
         name: func
         for name, func in regime.decomposed_functions.items()
-        if callable(func)
+        if is_user_function(func)
     }
     budget_nodes = frozenset({budget_target, post_decision_function})
 
@@ -4093,7 +4094,7 @@ def _indexed_arg_ranks(
     return MappingProxyType(ranks)
 
 
-def _resolved_annotation(annotation: object) -> object | None:  # noqa: PAN001 - a parameter annotation is whatever expression its author wrote
+def _resolved_annotation(annotation: AnnotationForm) -> AnnotationForm | None:
     """The annotation object a probe can read a fill contract off, or `None`.
 
     A function composed for the DAG carries its parameters' types as names rather
@@ -4108,9 +4109,10 @@ def _resolved_annotation(annotation: object) -> object | None:  # noqa: PAN001 -
     if annotation is inspect.Parameter.empty:
         return None
     if isinstance(annotation, str):
-        annotation = _PROBE_ANNOTATION_VOCABULARY.get(annotation)
-        if annotation is None:
+        named = _PROBE_ANNOTATION_VOCABULARY.get(annotation)
+        if named is None:
             return None
+        annotation = named
     return getattr(annotation, "__value__", annotation)
 
 

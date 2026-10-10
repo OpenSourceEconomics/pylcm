@@ -19,7 +19,7 @@ declares no breakpoints, so the inner NB-EGM partition is a single interval —
 the degenerate plain-EGM case.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 
@@ -59,6 +59,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserFunction,
     UserParams,
 )
 
@@ -252,16 +253,16 @@ def build_model(
     illiquid_grid: Grid | AgeSpecializedGrid = ILLIQUID_GRID,
     outer_search: OuterSearch | None = None,
     adjustment_cost: OuterBranchAggregator | None = None,
-    scale_function: Callable[..., object] | None = None,
+    scale_function: UserFunction | None = None,
     illiquid_investment_grid: Grid = ILLIQUID_INVESTMENT_GRID,
     consumption_grid: Grid = CONSUMPTION_GRID,
-    durable_law: Callable[..., object] | Phased | None = None,
-    constraints: Mapping[str, Callable[..., object]] | None = None,
-    utility_function: Callable[..., object] | AgeSpecializedFunction | Phased = utility,
-    terminal_utility_function: Callable[..., object] = terminal_utility,
-    outer_post_decision_function: Callable[..., object] | None = None,
-    regime_transition: Callable[..., object] | Phased = next_regime,
-    koopmans_aggregator: Callable[..., object] | Phased | None = None,
+    durable_law: UserFunction | Phased | None = None,
+    constraints: Mapping[str, UserFunction] | None = None,
+    utility_function: UserFunction | AgeSpecializedFunction | Phased = utility,
+    terminal_utility_function: UserFunction = terminal_utility,
+    outer_post_decision_function: UserFunction | None = None,
+    regime_transition: UserFunction | Phased = next_regime,
+    koopmans_aggregator: UserFunction | Phased | None = None,
     second_passive_state: bool = False,
     carried_state: bool = False,
     fixed_params: UserParams | None = None,

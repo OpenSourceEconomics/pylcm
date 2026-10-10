@@ -10,7 +10,7 @@ carry are born in their planned placement, and a replay lowers the same program.
 
 import functools
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -32,6 +32,7 @@ from _lcm.solution import period_replay
 from _lcm.solution.period_replay import replay_period
 from lcm.exceptions import RegimeInitializationError
 from lcm.solvers import EGM
+from lcm.typing import UserFunction
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.solution.test_egm_solver import _SAVINGS_GRID, _model, _params
@@ -240,7 +241,7 @@ def _single_liquid_nbegm_graph() -> Mapping[str, Any]:
         _smooth_params,
     )
 
-    declaration = cast("Callable[..., object]", lcm.ref("liquid") >= 4.0)
+    declaration = cast("UserFunction", lcm.ref("liquid") >= 4.0)
     model = _build_smooth_model(constraints={"asset_test": declaration})
     kernel, _ = ride_along_kernel(
         model=model, params=_smooth_params(asset_limit=None), regime_name="alive"

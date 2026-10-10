@@ -35,7 +35,7 @@ created.
 import dataclasses
 import inspect
 from collections import deque
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -55,10 +55,12 @@ from lcm.initial_nodes import InitialNodes, UserInitialNodes
 from lcm.phased import Phased
 from lcm.transition import (
     AgeRange,
+    AgeSelector,
     ByAge,
     DeterministicTransition,
     PeriodRange,
     Periods,
+    PeriodSelector,
     StochasticTransition,
     _fail_if_invalid_age_selector,
     _select_periods,
@@ -67,10 +69,18 @@ from lcm.typing import FloatND, IntND, Period, UserAge, UserFunction
 
 if TYPE_CHECKING:
     from _lcm.regime_law import RegimeLaw
+
+    # One `initial_nodes` entry's coordinate selector, and one legacy exact pair.
+    type _InitialSelector = AgeSelector | PeriodSelector
+    type _InitialPair = tuple[UserAge | float, RegimeName]
 else:
     # `_lcm.regime_law` imports this module, so `RegimeLaw` is not importable here
     # at runtime; the law's own constructor checks its fields.
     type RegimeLaw = object
+    # A malformed `initial_nodes` entry reaches the normalizers, whose checks
+    # refuse it with a model error naming it rather than a type violation.
+    type _InitialSelector = object
+    type _InitialPair = object
 
 type PhaseKey = str
 type Side = Literal["solve", "simulate"]
@@ -340,7 +350,7 @@ def resolve_regime_schedules(
 def lower_demanded_transitions(
     *,
     schedules: RegimeSchedules,
-    declared_transitions: Mapping[RegimeName, object],
+    declared_transitions: Mapping[RegimeName, RegimeTransitionLaw],
     code_by_name: Mapping[str, int],
 ) -> MappingProxyType[RegimeName, EngineLaw | None]:
     """Lower each regime's law over the periods demand requires, only.
@@ -732,7 +742,7 @@ _INITIAL_NODE_ARITY = 2
 
 def _initial_node_entries(
     *, initial_nodes: UserInitialNodes, kind: str = "age"
-) -> Sequence[tuple[object, str | Sequence[str]]]:
+) -> Sequence[tuple[_InitialSelector, RegimeName | Sequence[RegimeName]]]:
     """Normalize exact-pair or selector-mapping entries before grid selection."""
     if isinstance(initial_nodes, InitialNodes):
         selected = initial_nodes.by_age if kind == "age" else initial_nodes.by_period
@@ -768,7 +778,7 @@ def _initial_node_entries(
     return entries
 
 
-def _initial_node_pair(pair: object) -> tuple[object, RegimeName]:
+def _initial_node_pair(pair: _InitialPair) -> tuple[_InitialSelector, RegimeName]:
     """Normalize one legacy exact age pair."""
     if (
         not isinstance(pair, Sequence)
@@ -817,12 +827,12 @@ def _fail_if_unknown_entry_regimes(
 
 
 # keyword-only-exempt: primary-argument=func
-def _with_signature(
-    func: UserFunction,
+def _with_signature[F: UserFunction](
+    func: F,
     *,
     names: tuple[str, ...],
     sources: tuple[UserFunction, ...],
-) -> UserFunction:
+) -> F:
     """Expose `names` as keyword-only arguments annotated as in `sources`.
 
     The DAG machinery requires one annotation per argument name across a
@@ -912,7 +922,7 @@ class _DeclaredExit:
 
 def _indicator(
     *, selector: UserFunction, code: int | None, names: tuple[str, ...]
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """Probability one where a deterministic selector returns `code`."""
     return _with_signature(
         _Indicator(selector=selector, code=code, names=names),
@@ -946,7 +956,7 @@ class _Indicator:
 
 def _period_masked(
     *, cell: UserFunction, periods: tuple[int, ...], names: tuple[str, ...]
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """A probability cell that is exactly zero outside `periods`."""
     return _with_signature(
         _PeriodMasked(cell=cell, periods=periods, names=names),
@@ -978,7 +988,7 @@ def _period_dispatch(
     cases: tuple[UserFunction, ...],
     case_names: tuple[tuple[str, ...], ...],
     case_by_period: tuple[int, ...],
-) -> UserFunction:
+) -> Callable[..., FloatND | IntND]:
     """Evaluate the case callable selected for the current period."""
     names = tuple(sorted({name for names in case_names for name in names}))
     return _with_signature(
@@ -1035,9 +1045,7 @@ def _phase_side[L](*, law: L | Phased[L, L], side: Side) -> L:
 
 def _edge_support(
     *,
-    # Any value: the graph binder passes laws a `ByAge` resolves, which
-    # `ResolvedSchedule` types as `object`.
-    law: object,
+    law: PhaseLaw,
     source: RegimeName,
     period: int,
     ages: TimeAxis,
@@ -1059,7 +1067,7 @@ def _edge_support(
 
 
 def _declared_support(
-    *, law: object, regime_names: tuple[RegimeName, ...]
+    *, law: PhaseLaw, regime_names: tuple[RegimeName, ...]
 ) -> tuple[str, ...]:
     """The targets one nonterminal law declares."""
     if isinstance(law, str):
@@ -1190,7 +1198,7 @@ def _dispatch(
     cases: tuple[UserFunction, ...],
     laws: tuple[PhaseLaw, ...],
     law_by_period: Mapping[int, PhaseLaw],
-) -> UserFunction:
+) -> Callable[..., FloatND | IntND]:
     n_periods = max(law_by_period) + 2
     position = {id(law): index for index, law in enumerate(laws)}
     return _period_dispatch(
@@ -1302,7 +1310,9 @@ def _mapping_union(
     return MappingProxyType(merged)
 
 
-def _masked(*, cell: ProbabilityCell, periods: tuple[int, ...]) -> UserFunction:
+def _masked(
+    *, cell: ProbabilityCell, periods: tuple[int, ...]
+) -> Callable[..., FloatND]:
     # Validation admits `Phased` only around a whole law, never as one target's cell.
     func = (
         cell.func
@@ -1314,7 +1324,7 @@ def _masked(*, cell: ProbabilityCell, periods: tuple[int, ...]) -> UserFunction:
     )
 
 
-def _period_sum(parts: tuple[UserFunction, ...]) -> UserFunction:
+def _period_sum(parts: tuple[UserFunction, ...]) -> Callable[..., FloatND]:
     """Sum of period-masked cells whose periods never overlap."""
     part_names = tuple(_argument_names(part) for part in parts)
     names = tuple(sorted({name for names in part_names for name in names}))

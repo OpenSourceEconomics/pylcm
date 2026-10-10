@@ -80,13 +80,19 @@ from _lcm.typing import (
     StateName,
     StateOrActionName,
 )
+from _lcm.utils.functools import array_result
 from lcm.exceptions import GridInitializationError, ModelInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
 from lcm.regime import ActionEntry, StateEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
-from lcm.transition import ByAge, DeterministicTransition, StochasticTransition
+from lcm.transition import (
+    AgeCaseLaw,
+    ByAge,
+    DeterministicTransition,
+    StochasticTransition,
+)
 from lcm.typing import (
     Float1D,
     FloatND,
@@ -97,6 +103,10 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
+
+# A transition declaration as the EGM checks unpack it: a `state_transitions`
+# entry, a regime's engine-view law, or one case of an age schedule.
+type _TransitionDeclaration = StateTransitionEntry | DecomposedTransition | AgeCaseLaw
 
 # Shrink threshold of the node-resolution continuity spot check. Within one
 # Euler grid cell, a function that is smooth at node resolution has
@@ -1544,7 +1554,7 @@ def _declared_sources(func: UserFunction) -> tuple[UserFunction, ...]:
 
 def _declared_transition_variants(
     *,
-    value: object,
+    value: _TransitionDeclaration,
 ) -> list[tuple[str, UserFunction]]:
     """Unpack a transition declaration into labeled callables, sources unexpanded."""
     if isinstance(value, ByAge):
@@ -1556,7 +1566,7 @@ def _declared_transition_variants(
     if isinstance(value, Phased):
         value = value.solve
     if isinstance(value, StochasticTransition | DeterministicTransition):
-        return [("", cast("UserFunction", value.func))]
+        return [("", value.func)]
     if isinstance(value, Mapping):
         variants: list[tuple[str, UserFunction]] = []
         for target_name, target_value in value.items():
@@ -1644,7 +1654,9 @@ def _call_with_varied(
     every sample variable (e.g. resources independent of the Euler state).
     """
     arg_names = set(inspect.signature(func).parameters)
-    return func(**fixed, **{k: v for k, v in varied.items() if k in arg_names})
+    return array_result(
+        func(**fixed, **{k: v for k, v in varied.items() if k in arg_names})
+    )
 
 
 def _isclose(

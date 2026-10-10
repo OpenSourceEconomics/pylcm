@@ -18,7 +18,7 @@ own budget DAG (`resources` and friends), and toys with genuinely different
 regime structure keep their own assembly.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 import jax.numpy as jnp
@@ -40,7 +40,14 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
-from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+    UserFunction,
+)
 
 
 @categorical(ordered=False)
@@ -146,18 +153,18 @@ def make_alive_dead_model(
     n_liquid: int,
     liquid_max: float,
     n_consumption: int,
-    alive_functions: Mapping[str, Callable[..., object]],
-    liquid_law: Callable[..., object],
+    alive_functions: Mapping[str, UserFunction],
+    liquid_law: UserFunction,
     alive_solver: OneMarginSolver | GridSearch,
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
-    constraints: Mapping[str, Callable[..., object]],
+    constraints: Mapping[str, UserFunction],
     extra_actions: Mapping[str, Grid] | None = None,
     extra_states: Mapping[str, Grid | AgeSpecializedGrid] | None = None,
     extra_state_transitions: Mapping[str, Any] | None = None,
     survival_transition: Mapping[str, Any] | None = None,
     model_states: Mapping[str, Grid] | None = None,
     liquid_grid: Grid | None = None,
-    dead_functions: Mapping[str, Callable[..., object]] | None = None,
+    dead_functions: Mapping[str, UserFunction] | None = None,
     fixed_params: Mapping[str, Any] | None = None,
     liquid_state: str = "liquid",
     liquid_action: str = "consumption",

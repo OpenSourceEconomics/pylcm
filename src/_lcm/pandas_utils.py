@@ -17,6 +17,7 @@ from jax import Array
 from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.params.edges import EDGES
+from _lcm.params.mapping_leaf import LeafEntry
 from _lcm.params.regime_template import (
     EdgeVocabulary,
     iter_edge_callables,
@@ -38,12 +39,12 @@ from _lcm.typing import (
     FlatParams,
     FunctionName,
     InitialConditions,
-    PytreeValue,
     RegimeName,
     RegimeNamesToIds,
     StateName,
 )
 from _lcm.utils.ast_inspection import _get_func_indexing_params, time_index_names
+from _lcm.utils.functools import is_user_function
 from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.exceptions import InvalidParamsError
 from lcm.params import (
@@ -77,8 +78,9 @@ from lcm.typing import (
 _JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH = 4
 
 # A params node between broadcast and canonicalization: a user-form leaf or
-# mapping, with every Series and `TimeVarying` replaced by its JAX array.
-type _ConvertedParamsNode = UserParamsNode | ValueND
+# mapping, or an entry a leaf holds, with every Series and `TimeVarying`
+# replaced by its JAX array.
+type _ConvertedParamsNode = UserParamsNode | LeafEntry | ValueND
 
 # A regime slot whose callable may read a parameter: a function, a `ByAge`
 # schedule of laws, or a `Phased` pair of those.
@@ -807,9 +809,9 @@ def _resolve_param_consumer(
         role_funcs: tuple[UserFunction, ...]
         if role == "support":
             role_funcs = tuple(
-                cast("Callable[..., PytreeValue]", variant.support)
+                variant.support
                 for variant in variants
-                if callable(variant.support)
+                if is_user_function(variant.support)
             )
         else:
             role_funcs = tuple(variant.probabilities for variant in variants)
@@ -870,7 +872,7 @@ def _resolve_param_consumer(
 
 def _convert_param_value(
     *,
-    value: UserParamsNode,
+    value: UserParamsNode | LeafEntry,
     func: UserFunction | None,
     param_name: ParameterName,
     func_name: FunctionName,
@@ -1741,7 +1743,7 @@ def _scheduled_consumer(
             if isinstance(law, Phased)
             else (law,)
         )
-        if callable(variant)
+        if is_user_function(variant)
     )
     if not laws:
         msg = (

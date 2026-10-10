@@ -17,6 +17,7 @@ The cases mutate the valid kinked-toy NEGM regime one rule at a time:
 """
 
 import dataclasses
+from collections.abc import Callable
 from types import MappingProxyType
 from typing import cast
 
@@ -52,7 +53,6 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
-    UserFunction,
 )
 from tests.test_models import negm_kinked_toy
 
@@ -446,7 +446,7 @@ def test_finalize_composes_resources_as_base_minus_outer_cost():
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["alive"]
-    composed = cast("UserFunction", finalized.functions["resources"])
+    composed = cast("Callable[..., FloatND]", finalized.functions["resources"])
 
     assert float(
         composed(
@@ -479,7 +479,7 @@ def test_finalize_composes_resources_with_a_phased_base():
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["alive"]
-    composed = cast("UserFunction", finalized.functions["resources"])
+    composed = cast("Callable[..., FloatND]", finalized.functions["resources"])
 
     assert float(
         composed(

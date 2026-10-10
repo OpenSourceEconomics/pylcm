@@ -15,7 +15,7 @@ plausible finite solve rather than an error:
 Both are rejected at model build with the alternative named.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import pytest
@@ -23,7 +23,7 @@ import pytest
 import lcm
 from lcm import LinSpacedGrid, Model
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND, UserFunction
 from tests.test_models.nbegm_common import (
     make_alive_dead_model,
     next_liquid_from_savings,
@@ -91,7 +91,7 @@ def _resources_floor_and_cliff(
     return liquid + net_transfer
 
 
-def _build(*, alive_functions: Mapping[str, Callable[..., object]]) -> Model:
+def _build(*, alive_functions: Mapping[str, UserFunction]) -> Model:
     return make_alive_dead_model(
         n_periods=3,
         n_liquid=20,

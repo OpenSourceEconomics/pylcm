@@ -71,7 +71,6 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.typing import (
     ArrayTree,
-    ConstraintFunction,
     EconFunctionsMapping,
     FlatParams,
     FunctionName,
@@ -94,6 +93,7 @@ from lcm.typing import (
     FloatND,
     ReferenceName,
     ScalarFloat,
+    UserFunction,
     ValueND,
 )
 
@@ -504,7 +504,7 @@ class ResolvedGatedEdge:
     target: RegimeName
     """Name of the target regime whose grid the fold lands on."""
 
-    gate: ConstraintFunction
+    gate: UserFunction
     """Boolean gate predicate, exactly as the user declared it. The builders
     below rename its parameters to their flat source-regime names
     (`_with_qualified_params`) after the fences have read it as declared."""
@@ -699,12 +699,12 @@ def _projection_seed_args(ref: ResolvedProjectedRegimeValue) -> frozenset[str]:
     return frozenset(leaves)
 
 
-def _with_qualified_params(
+def _with_qualified_params[R](
     *,
-    func: Callable[..., FloatND],
+    func: Callable[..., R],
     path: tuple[str, ...],
     wired_names: Container[str],
-) -> Callable[..., FloatND]:
+) -> Callable[..., R]:
     """Return `func` with every parameter it declares renamed to its flat name.
 
     An edge callable is written in the target regime's vocabulary, so what it

@@ -7,7 +7,7 @@ need an action, post-decision value, another state, or unsupported Boolean
 structure remain outside the route and are refused when the model is built.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Literal, cast
 
 import jax.numpy as jnp
@@ -29,7 +29,13 @@ from lcm.consumption_savings_regime import (
     post_decision_lower_bound,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    UserFunction,
+)
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models import (
     n_nbegm_toy,
@@ -63,9 +69,7 @@ def rationing(*, consumption: ContinuousAction, liquid: ContinuousState) -> Bool
     return jnp.square(consumption) + jnp.square(liquid) <= 400.0
 
 
-def _build_model(
-    *, variant: str, constraints: Mapping[str, Callable[..., object]]
-) -> Model:
+def _build_model(*, variant: str, constraints: Mapping[str, UserFunction]) -> Model:
     """Assemble the Medicaid one-asset toy with an arbitrary constraint pool."""
     return make_alive_dead_model(
         n_periods=3,
@@ -99,7 +103,7 @@ def _savings_from_liquid(
 
 def _build_smooth_model(
     *,
-    constraints: Mapping[str, Callable[..., object]],
+    constraints: Mapping[str, UserFunction],
     jump_read: str = "one_sided",
     variant: str = "nbegm",
     n_periods: int = 3,
@@ -132,8 +136,8 @@ def _build_smooth_model(
 
 def _build_scheduled_model(
     *,
-    functions: Mapping[str, Callable[..., object]],
-    constraints: Mapping[str, Callable[..., object]],
+    functions: Mapping[str, UserFunction],
+    constraints: Mapping[str, UserFunction],
 ) -> Model:
     """Assemble a one-asset NBEGM model around a declared budget schedule."""
     liquid_grid = PiecewiseLinSpacedGrid(
@@ -177,7 +181,7 @@ def _smooth_params(*, asset_limit: float | None = 4.0) -> dict:
 def test_nbegm_masks_a_compiled_parameter_interval_in_the_solved_value() -> None:
     """A compiled current-liquid half-space is enforced at every published row."""
     declaration = cast(
-        "Callable[..., object]",
+        "UserFunction",
         lcm.ref("liquid") >= lcm.ref("asset_limit"),
     )
     model = _build_smooth_model(constraints={"asset_test": declaration})
@@ -201,7 +205,7 @@ def test_nbegm_matches_grid_search_on_a_breakpoint_aligned_grid() -> None:
         post_decision_state="savings",
     )
     constraints = {
-        "asset_test": cast("Callable[..., object]", lcm.ref("liquid") >= 4.0),
+        "asset_test": cast("UserFunction", lcm.ref("liquid") >= 4.0),
         "borrowing_limit": post_decision_lower_bound(margin=margin, lower=0.0),
     }
     nbegm = _build_smooth_model(
@@ -258,7 +262,7 @@ def test_nbegm_enforces_full_empty_and_intersected_feasible_domains(
 ) -> None:
     """Out-of-domain and conjunctive thresholds mask exactly their declared set."""
     model = _build_smooth_model(
-        constraints={"asset_test": cast("Callable[..., object]", declaration)}
+        constraints={"asset_test": cast("UserFunction", declaration)}
     )
 
     solution = model.solve(
@@ -302,7 +306,7 @@ def test_nbegm_composes_feasibility_with_kinks_and_flat_budget_floors(
     budget_params,
 ) -> None:
     """Supported budget refinements retain the compiled feasible half-space."""
-    declaration = cast("Callable[..., object]", lcm.ref("liquid") >= 4.0)
+    declaration = cast("UserFunction", lcm.ref("liquid") >= 4.0)
     model = _build_scheduled_model(
         functions=functions,
         constraints={"asset_test": declaration},
@@ -322,7 +326,7 @@ def test_nbegm_composes_feasibility_with_kinks_and_flat_budget_floors(
 
 def test_nbegm_rejects_feasibility_composed_with_a_finite_schedule_jump() -> None:
     """A value jump and a feasibility edge require a combined topology."""
-    declaration = cast("Callable[..., object]", lcm.ref("liquid") >= 4.0)
+    declaration = cast("UserFunction", lcm.ref("liquid") >= 4.0)
 
     with pytest.raises(
         ModelInitializationError,
@@ -361,8 +365,8 @@ def test_nbegm_builder_consumes_each_compiled_boundary_once(monkeypatch):
         "_consume_nbegm_feasibility_constraints",
         recording_consumer,
     )
-    lower = cast("Callable[..., object]", lcm.ref("liquid") >= 4.0)
-    upper = cast("Callable[..., object]", lcm.ref("liquid") < 16.0)
+    lower = cast("UserFunction", lcm.ref("liquid") >= 4.0)
+    upper = cast("UserFunction", lcm.ref("liquid") < 16.0)
 
     _build_smooth_model(
         constraints={"lower_asset_test": lower, "upper_asset_test": upper},
@@ -381,7 +385,7 @@ def test_nbegm_builder_consumes_each_compiled_boundary_once(monkeypatch):
 
 def test_nbegm_rejects_bridged_carry_with_a_feasibility_boundary() -> None:
     """Compiled feasibility requires a one-sided cross-period carry."""
-    declaration = cast("Callable[..., object]", lcm.ref("liquid") >= 4.0)
+    declaration = cast("UserFunction", lcm.ref("liquid") >= 4.0)
 
     with pytest.raises(ModelInitializationError, match="bridged"):
         _build_smooth_model(
@@ -412,7 +416,7 @@ def test_nbegm_publishes_a_one_sided_feasibility_carry(monkeypatch) -> None:
         "__call__",
         recording_call,
     )
-    declaration = cast("Callable[..., object]", lcm.ref("liquid") >= 4.0)
+    declaration = cast("UserFunction", lcm.ref("liquid") >= 4.0)
     model = _build_smooth_model(constraints={"asset_test": declaration})
 
     model.solve(params=_smooth_params(asset_limit=None), log_level="off")
@@ -493,7 +497,7 @@ def test_nbegm_carry_retains_the_declared_topology_at_a_grid_endpoint(
         recording_call,
     )
     model = _build_smooth_model(
-        constraints={"asset_test": cast("Callable[..., object]", declaration)}
+        constraints={"asset_test": cast("UserFunction", declaration)}
     )
 
     model.solve(params=_smooth_params(asset_limit=None), log_level="off")
@@ -521,7 +525,7 @@ def test_nbegm_carry_retains_the_declared_topology_at_a_grid_endpoint(
 
 def test_nbegm_rejects_feasibility_composed_with_a_binary_case_piece() -> None:
     """A finite jump and an external feasibility boundary require one topology."""
-    declaration = cast("Callable[..., object]", lcm.ref("liquid") >= 4.0)
+    declaration = cast("UserFunction", lcm.ref("liquid") >= 4.0)
 
     with pytest.raises(
         ModelInitializationError,
@@ -536,7 +540,7 @@ def test_nbegm_rejects_feasibility_composed_with_a_binary_case_piece() -> None:
 def test_nbegm_compiles_a_constraint_parameter_threshold():
     """A declared threshold parameter is resolved in the engine's flat namespace."""
     declaration = cast(
-        "Callable[..., object]",
+        "UserFunction",
         lcm.ref("liquid") >= lcm.ref("asset_limit"),
     )
 
@@ -580,7 +584,7 @@ def test_nnbegm_filters_the_boundary_plan_for_each_inner_route(monkeypatch) -> N
     """Adjuster and keeper inner builders receive only their own route ledger."""
     threshold = float(np.asarray(n_nbegm_toy.WEALTH_GRID.to_jax()[4]))
     declaration = cast(
-        "Callable[..., object]",
+        "UserFunction",
         lcm.ref("wealth") >= threshold,
     )
     received_paths = []
@@ -616,7 +620,7 @@ def test_nnbegm_enforces_a_compiled_wealth_boundary() -> None:
     wealth = n_nbegm_toy.WEALTH_GRID.to_jax()
     threshold = float(np.asarray(wealth[4]))
     declaration = cast(
-        "Callable[..., object]",
+        "UserFunction",
         lcm.ref("wealth") >= threshold,
     )
     model = n_nbegm_toy.build_model(
@@ -637,7 +641,7 @@ def test_nnbegm_carries_a_compiled_wealth_boundary_between_periods() -> None:
     wealth = n_nbegm_toy.WEALTH_GRID.to_jax()
     threshold = float(np.asarray(wealth[4]))
     declaration = cast(
-        "Callable[..., object]",
+        "UserFunction",
         lcm.ref("wealth") >= threshold,
     )
     model = n_nbegm_toy.build_model(

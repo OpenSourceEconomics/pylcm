@@ -8,16 +8,9 @@ user-constructor methods (`Model.__init__`, `Model.solve`, `Model.simulate`,
 live in `_lcm.typing`.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from fractions import Fraction
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Literal,
-    Protocol,
-    TypeAliasType,
-    runtime_checkable,
-)
+from typing import TYPE_CHECKING, Literal, TypeAliasType
 
 import numpy as np
 import pandas as pd
@@ -41,11 +34,21 @@ type TimeLabel = PeriodLabel | AgeLabel
 from lcm.params import TimeVarying, UserMappingLeaf, UserSequenceLeaf  # noqa: E402
 
 if TYPE_CHECKING:
+    from _lcm.typing import EconFunction
     from lcm.initial_nodes import InitialNodes, UserInitialNodes  # noqa: F401
 
     # Defined beside `AgeRange` in `lcm.transition`, which imports this module;
     # `lcm.__init__` binds it here through `_bind_forward_refs`.
     from lcm.transition import AgeSelector  # noqa: F401  (re-exported)
+
+    # A protocol class or a type alias that `__getattr__` resolves lazily.
+    type _EngineAlias = type[EconFunction] | TypeAliasType
+    type _InitialNodesClass = type[InitialNodes]
+else:
+    # The engine's typing module and `lcm.initial_nodes` import this module, so
+    # their names exist only for type checkers.
+    type _EngineAlias = object
+    type _InitialNodesClass = type[object]
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
@@ -158,15 +161,20 @@ type UserFacingParamsTemplate = dict[
 ]
 
 
-@runtime_checkable
-class UserFunction(Protocol):
-    """A function provided by the user.
+# What a user function returns: an array or a scalar, or mappings and tuples of
+# them (a regime transition returns probabilities keyed by regime name).
+type UserFunctionResult = (
+    ValueND
+    | float
+    | int
+    | bool
+    | Mapping[str, UserFunctionResult]
+    | tuple[UserFunctionResult, ...]
+)
 
-    Used for both type checking and beartype runtime checks on perimeter
-    constructors. Any callable satisfies this protocol structurally.
-    """
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
+# A function provided by the user. Its parameters are resolved by name, so any
+# callable qualifies whatever parameters it declares.
+type UserFunction = Callable[..., UserFunctionResult]
 
 
 outer_unchanged: FunctionName = "__outer_unchanged__"
@@ -186,7 +194,7 @@ _ENGINE_ALIASES = frozenset(
 )
 
 
-def __getattr__(name: str) -> object:
+def __getattr__(name: str) -> _EngineAlias:
     """Resolve the solver-contract aliases the engine defines."""
     if name in _ENGINE_ALIASES:
         import _lcm.typing as engine_typing  # noqa: PLC0415
@@ -199,7 +207,7 @@ def __getattr__(name: str) -> object:
 def _bind_forward_refs(
     *,
     age_selector: TypeAliasType,
-    initial_nodes_cls: type,
+    initial_nodes_cls: _InitialNodesClass,
     user_initial_nodes: TypeAliasType,
 ) -> None:
     """Bind public declaration types after their modules finish importing.

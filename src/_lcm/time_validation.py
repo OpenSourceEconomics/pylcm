@@ -6,6 +6,7 @@ from _lcm.params.temporal import temporal_parameter_names
 from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaws
 from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.utils.functools import is_user_function
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import (
@@ -91,7 +92,7 @@ def validate_time_declarations(
                         "wrong coordinate kind for a "
                         f"{coordinate_kind(ages)} model."
                     )
-            if callable(declaration):
+            if is_user_function(declaration):
                 conflicts = temporal_parameter_names(declaration) & wired
                 if conflicts:
                     raise ModelInitializationError(

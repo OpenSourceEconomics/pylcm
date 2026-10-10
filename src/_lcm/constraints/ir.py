@@ -34,6 +34,7 @@ from typing import Literal, Self
 import jax.numpy as jnp
 
 from _lcm.typing import AnnotationForm
+from _lcm.utils.functools import array_result
 from lcm.typing import BoolND, FloatND, ReferenceName, UserFunction, ValueND
 
 type ComparisonOperator = Literal["<", "<=", ">", ">=", "==", "!="]
@@ -377,7 +378,7 @@ def evaluate_expression(
         case Opaque(func=func):
             names = signature_names(func)
             _fail_if_names_are_missing(names=names, values=values)
-            return func(**{name: values[name] for name in names})
+            return array_result(func(**{name: values[name] for name in names}))
     raise TypeError(f"Not a condition expression: {expression!r}")
 
 

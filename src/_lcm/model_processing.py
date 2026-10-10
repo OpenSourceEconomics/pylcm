@@ -76,6 +76,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.containers import get_field_names_and_values
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
+from _lcm.utils.functools import is_user_function
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.params import MappingLeaf
 from lcm.phased import Phased
@@ -403,7 +404,7 @@ def _reserved_age_errors(
                         if isinstance(raw, Phased)
                         else raw,
                     )
-                    if callable(joint.support):
+                    if is_user_function(joint.support):
                         functions[f"__joint_support__{target}__{name}"] = joint.support
             if "age" in functions:
                 continue

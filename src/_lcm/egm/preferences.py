@@ -40,7 +40,6 @@ from lcm.typing import (
     FloatND,
     ReferenceName,
     ScalarFloat,
-    UserFunction,
 )
 
 # Name of the regime function supplying the analytic inverse marginal utility.
@@ -229,8 +228,8 @@ def concatenate_regime_function(
     *,
     functions: EconFunctionsMapping,
     target: FunctionName,
-) -> UserFunction:
-    """Concatenate one regime-function target from the regime DAG."""
+) -> Callable[..., FloatND]:
+    """Concatenate one float-valued regime-function target from the regime DAG."""
     return concatenate_functions(
         functions=dict(functions),
         targets=target,
@@ -273,7 +272,7 @@ class BoundUtilityOfAction:
     from `bound`.
     """
 
-    utility_func: UserFunction
+    utility_func: Callable[..., FloatND]
     """The regime's concatenated utility function."""
 
     action_name: ActionName
@@ -290,7 +289,7 @@ class BoundUtilityOfAction:
 class AnalyticInverseMarginalUtility:
     """The regime's declared `inverse_marginal_utility`, parameters bound."""
 
-    analytic_inverse: UserFunction
+    analytic_inverse: Callable[..., FloatND]
     """The regime's concatenated inverse-marginal-utility function."""
 
     bound: EconFunctionKwargs
@@ -333,10 +332,10 @@ class _PreferencesBuilder:
     parameters without recompiling the DAG.
     """
 
-    utility_func: UserFunction
+    utility_func: Callable[..., FloatND]
     """The regime's concatenated `utility` target."""
 
-    analytic_inverse: UserFunction | None
+    analytic_inverse: Callable[..., FloatND] | None
     """The regime's concatenated `inverse_marginal_utility` target, if declared."""
 
     action_name: ActionName
