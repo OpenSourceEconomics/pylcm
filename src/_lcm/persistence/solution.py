@@ -79,6 +79,7 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
     _snapshot_artifact_template_once,
 )
+from lcm.typing import FloatND, RegimeName
 
 if TYPE_CHECKING:
     type _SolutionResultBoundary = SolutionResult
@@ -114,7 +115,7 @@ _SHA256_HEX_LENGTH: Final = 64
 PYLCM_VERSION: Final = _version.__version__
 
 
-def _require_exact_str(*, value: object, label: str) -> str:
+def _require_exact_str(*, value: JSONValue, label: str) -> str:
     """Return one exact JSON string or raise an archive-integrity error."""
     if type(value) is not str:
         raise SolutionIntegrityError(f"Persisted {label} is not an exact string.")
@@ -161,7 +162,7 @@ def _require_exact_bool(*, value: JSONValue, label: str) -> bool:
 
 
 def _require_exact_json_scalar(
-    *, value: object, label: str
+    *, value: JSONValue, label: str
 ) -> bool | int | float | str:
     """Return one finite exact JSON scalar without truthy-type coercion."""
     if not any(type(value) is allowed for allowed in (bool, int, float, str)):
@@ -212,7 +213,7 @@ def _require_numeric_dtype(*, value: JSONValue, label: str) -> str:
     return dtype_string
 
 
-def _require_sha256(*, value: object, label: str) -> str:
+def _require_sha256(*, value: JSONValue, label: str) -> str:
     """Return one exact lowercase SHA-256 hex digest."""
     digest = _require_exact_str(value=value, label=label)
     if len(digest) != _SHA256_HEX_LENGTH or any(
@@ -580,7 +581,13 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
                 value=manifest_dataset.attrs["sha256"],
                 label="manifest checksum",
             )
-        except (KeyError, OSError, TypeError, ValueError) as error:
+        except (
+            BeartypeCallHintViolation,
+            KeyError,
+            OSError,
+            TypeError,
+            ValueError,
+        ) as error:
             raise SolutionIntegrityError(
                 f"Solution archive {path} has no valid manifest."
             ) from error
@@ -635,7 +642,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
             f"{metadata.pylcm_version!r} (expected {PYLCM_VERSION!r})."
         )
 
-    value_entries: dict[tuple[int, str], object] = {}
+    value_entries: dict[tuple[int, RegimeName], _LazyHdf5Entry] = {}
     addresses: set[str] = set()
     for raw_entry in _require_exact_list(
         value=typed_manifest.get("values"), label="value manifest"
@@ -691,7 +698,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         )
     values = ValueStore(cast("Mapping[object, object]", value_entries))
 
-    stores: dict[ArtifactChannel, dict[ArtifactRef, object]] = {
+    stores: dict[ArtifactChannel, dict[ArtifactRef, _LazyHdf5Entry]] = {
         channel: {} for channel in ArtifactChannel
     }
     artifact_refs: set[ArtifactRef] = set()
@@ -840,12 +847,8 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
     )
     _validate_archive_structure(
         path=path,
-        entries=tuple(cast("_LazyHdf5Entry", entry) for entry in value_entries.values())
-        + tuple(
-            cast("_LazyHdf5Entry", entry)
-            for store in stores.values()
-            for entry in store.values()
-        ),
+        entries=tuple(value_entries.values())
+        + tuple(entry for store in stores.values() for entry in store.values()),
     )
     if verify_checksums:
         _verify_result_entries(result=result)
@@ -1325,7 +1328,7 @@ def _require_save_compatibility(*, metadata: SolutionMetadata) -> None:
 
 
 def _prepare_payload(
-    *, payload: object, identity: dict[str, JSONValue]
+    *, payload: FloatND | HostArray, identity: dict[str, JSONValue]
 ) -> _PreparedPayload:
     """Copy a numerical PyTree into independent contiguous NumPy arrays."""
     with_paths, tree = jax.tree_util.tree_flatten_with_path(payload)
