@@ -14,13 +14,23 @@ of the route it is being met on, and assigned by `_lcm.constraints.routes`.
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from _lcm.constraints.ir import Compare
 from _lcm.constraints.processed import ProcessedConstraint
 from _lcm.grids import Grid
 from _lcm.typing import FunctionName, RegimeName, StateOrActionName
 from lcm.typing import ParameterName
+
+if TYPE_CHECKING:
+    from _lcm.egm.nbegm_constraint_boundaries import NBEGMFeasibilityBoundaryProgram
+
+    # What a boundary-compiling solver hands its own kernel.
+    type BoundaryPayload = NBEGMFeasibilityBoundaryProgram
+else:
+    # The compiling solvers import this module, and a solver plugin may compile
+    # payloads of its own; the claw checks nothing here.
+    type BoundaryPayload = object
 
 # What kind of candidate a route site has in hand. The stages differ in what is in
 # scope, which is what decides whether a constraint can be evaluated at all:
@@ -84,7 +94,7 @@ class BoundaryProgram:
     surfaces: tuple[Compare, ...]
     """The comparisons separating the admitted region from its complement."""
 
-    payload: object
+    payload: BoundaryPayload
     """Whatever the compiling solver needs to act on the boundary; private
     to that solver, and never interpreted here."""
 

@@ -61,6 +61,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.optimization.golden_section import maximize_golden_section
+from _lcm.typing import ArrayTree
 from _lcm.utils.functools import allow_args
 from lcm.typing import BoolND, FloatND
 
@@ -121,7 +122,7 @@ class OwnerProvenance(NamedTuple):
     is false when any formula-defining component is unavailable.
     """
 
-    signature: object
+    signature: ArrayTree
     decided: BoolND
     strict_primary: BoolND
     complete: BoolND
@@ -262,8 +263,8 @@ def _continuous_outer_optimum_jvp(
     objective: Callable[..., FloatND],
     n_mesh: int,
     polish_iterations: int,
-    primals: tuple,
-    tangents: tuple,
+    primals: tuple[FloatND, tuple[FloatND, FloatND]],
+    tangents: tuple[FloatND, tuple[FloatND, FloatND]],
 ) -> tuple[tuple[FloatND, FloatND, FloatND], tuple[FloatND, FloatND, FloatND]]:
     theta, bounds = primals
     positional_objective = allow_args(objective)
@@ -391,13 +392,13 @@ class _ActionSlopeInParameter:
         )
 
 
-def _cell_bool(*, value: object, like: FloatND) -> BoolND:
+def _cell_bool(*, value: BoolND, like: FloatND) -> BoolND:
     """Broadcast one provenance flag onto the diagnostic cell axes."""
     return jnp.broadcast_to(jnp.asarray(value, dtype=bool), jnp.shape(like))
 
 
 def _same_owner_signature(
-    *, baseline: object, candidate: object, like: FloatND
+    *, baseline: ArrayTree, candidate: ArrayTree, like: FloatND
 ) -> tuple[BoolND, bool]:
     """Compare fixed-pytree signature fields without inventing missing fields."""
     baseline_leaves, baseline_tree = jax.tree_util.tree_flatten(baseline)

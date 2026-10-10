@@ -893,7 +893,7 @@ def _map_combo_product(
     block = tile_block_size(width=cell_width, extent=extent)
     if not block:
         return productmap(
-            func=func,  # ty: ignore[invalid-argument-type]
+            func=func,
             variables=combo_var_names,
             batch_sizes=dict.fromkeys(combo_var_names, 0),
         )(**combo_axis_values)
@@ -901,7 +901,7 @@ def _map_combo_product(
     splayed = tuple(name for name in combo_var_names if name in state_names)
     vmapped = tuple(name for name in combo_var_names if name not in state_names)
     inner = productmap(
-        func=func,  # ty: ignore[invalid-argument-type]
+        func=func,
         variables=vmapped,
         batch_sizes=dict.fromkeys(vmapped, 0),
     )

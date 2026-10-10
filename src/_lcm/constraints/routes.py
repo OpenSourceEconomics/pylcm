@@ -567,9 +567,9 @@ def _fail_if_coverage_is_incomplete(
 
 def _fail_if_verdict_is_outside_the_contract(
     *,
-    verdict: object,
-    allowed: tuple[type, ...],
-    source: object,
+    verdict: ConstraintDisposition,
+    allowed: tuple[type[ProvedByConstruction | CompileBoundary | Reject], ...],
+    source: StructuralProof | BoundaryCompiler,
     allowed_description: str,
 ) -> None:
     """Refuse a capability that answered with a kind of verdict it may not give."""
