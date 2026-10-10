@@ -83,10 +83,10 @@ class ConsumedKernelOutput:
     continuation_artifacts: Mapping[ArtifactKey, ArtifactPayload]
     """Declared continuation payloads retained independently after rolling."""
 
-    replay_artifacts: Mapping[ArtifactKey, object]
+    replay_artifacts: Mapping[ArtifactKey, ArtifactPayload]
     """Every declared replay payload, including custom plugin artifacts."""
 
-    auxiliary_artifacts: Mapping[ArtifactKey, object]
+    auxiliary_artifacts: Mapping[ArtifactKey, ArtifactPayload]
     """Declared solver outputs retained only for inspection or persistence."""
 
 
@@ -265,9 +265,9 @@ def _consume_declared_artifacts(
     authorities: Mapping[ArtifactKey, ArtifactAuthority],
     regime_name: RegimeName,
     period: int,
-) -> dict[ArtifactKey, object]:
+) -> dict[ArtifactKey, ArtifactPayload]:
     """Canonicalize extension artifacts once and return those exact snapshots."""
-    canonical: dict[ArtifactKey, object] = {}
+    canonical: dict[ArtifactKey, ArtifactPayload] = {}
     for key in tuple(artifacts):
         authority = authorities.get(key)
         if authority is None or authority.descriptor.channel is not channel:
@@ -298,7 +298,7 @@ def _canonicalize_declared_artifact(
     key: ArtifactKey,
     regime_name: RegimeName,
     period: int,
-) -> object:
+) -> ArtifactPayload:
     """Canonicalize a producer payload and attach its cell to any defect."""
     if authority.descriptor.key != key or authority.descriptor.channel is not channel:
         raise RuntimeError(

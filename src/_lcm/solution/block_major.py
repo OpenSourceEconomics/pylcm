@@ -58,6 +58,7 @@ from _lcm.solution.v_topology import (
     _RegimeVTopology,
 )
 from _lcm.typing import (
+    ArtifactPayload,
     FlatParams,
     PeriodToRegimeToSimulationPolicy,
     RegimeName,
@@ -647,7 +648,7 @@ class _ComponentValueEntry(_LazyEntry):
         """Nothing of a block-major value is resident until it is read."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> jax.Array:
+    def materialize(self, *, template: ArtifactPayload | None = None) -> jax.Array:
         """Assemble the value on the layout the period-major solve publishes."""
         del template
         return self.owner.assemble_value(period=self.period, regime=self.regime)

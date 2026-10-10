@@ -3641,7 +3641,7 @@ class Model:
             or engine_view.model_instance_id != self._solution_model_instance_id
         ):
             return None
-        return cast("RetainedComponentValues | None", engine_view.component_values)
+        return engine_view.component_values
 
     def _fail_if_another_instances_result(
         self, *, solution: _SolutionResultBoundary | None

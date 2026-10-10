@@ -5,7 +5,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TypedDict, cast
 
 import jax
 import numpy as np
@@ -26,6 +26,7 @@ from _lcm.solution.period_capture import (
     PeriodKernelContext,
     PeriodKernelKwargs,
     PeriodLayouts,
+    RenderedAddress,
     ShardingDescriptor,
     ValueTransferDescriptor,
     describe_array_leaves,
@@ -56,6 +57,64 @@ class _HostKernelKwargs(PeriodKernelContext):
 
     period_solution: Mapping[RegimeName, HostArray]
     """Persisted value arrays of the regimes already solved in this period."""
+
+
+class _ShardingRecord(TypedDict):
+    """A `ShardingDescriptor` as the capture archive's JSON holds it."""
+
+    kind: str
+    device_ids: list[int]
+    partition_spec: list[str | list[str] | None] | None
+    mesh_axis_names: list[str] | None
+    mesh_axis_sizes: list[int] | None
+    memory_kind: str | None
+
+
+class _LeafRecord(TypedDict):
+    """A `LeafLayoutDescriptor` as the capture archive's JSON holds it."""
+
+    tree_path: str
+    shape: list[int]
+    dtype: str
+    weak_type: bool
+    committed: bool
+    sharding: _ShardingRecord
+
+
+class _TransferRecord(TypedDict):
+    """A `ValueTransferDescriptor` as the capture archive's JSON holds it."""
+
+    kind: str
+    target: RenderedAddress
+    source: RenderedAddress
+    stored_sharding: _ShardingRecord
+    source_sharding: _ShardingRecord
+    expected_shape: list[int]
+    expected_dtype: str
+
+
+class _CoreRecord(TypedDict):
+    """A `CoreLayoutDescriptor` as the capture archive's JSON holds it.
+
+    Each compiled placement is a `[path, sharding]` pair.
+    """
+
+    name: str
+    lowered_out_shardings: list[_ShardingRecord]
+    compiled_input_shardings: list[list[str | _ShardingRecord]]
+    compiled_output_shardings: list[list[str | _ShardingRecord]]
+    input_transfer_plan: list[_TransferRecord]
+    donated_arguments: list[str]
+    variant: str
+
+
+class _LayoutsRecord(TypedDict):
+    """`PeriodLayouts` as the capture archive's JSON holds it."""
+
+    route: str
+    device_ids: list[int]
+    leaves: list[_LeafRecord]
+    cores: dict[str, _CoreRecord | None]
 
 
 def replay_public_period(
@@ -101,7 +160,7 @@ def replay_public_period(
     entry_metadata, arrays, _ = read_period_archive(path=directory / "entry.h5")
     if entry_metadata != metadata:
         raise ValueError("Period capture changed while being read.")
-    layouts = _decode_layouts(cast("dict[str, JSONValue]", metadata["layouts"]))
+    layouts = _decode_layouts(cast("_LayoutsRecord", metadata["layouts"]))
     devices = placed_devices_for_ids(
         submesh_device_ids=layouts.device_ids, visible_device_ids=execution.device_ids
     )
@@ -336,67 +395,93 @@ def _validate_recorded_admission(
             raise ValueError("Replay exceeds the recorded admission budget.")
 
 
-def _decode_sharding(raw: dict[str, Any]) -> ShardingDescriptor:
+def _decode_sharding(raw: _ShardingRecord) -> ShardingDescriptor:
     """Reconstruct only the fixed non-executable sharding descriptor schema."""
-    values = dict(raw)
-    for key in ("device_ids", "mesh_axis_names", "mesh_axis_sizes"):
-        if values[key] is not None:
-            values[key] = tuple(values[key])
-    if values["partition_spec"] is not None:
-        values["partition_spec"] = tuple(
-            tuple(item) if isinstance(item, list) else item
-            for item in values["partition_spec"]
-        )
-    return ShardingDescriptor(**values)
+    partition_spec = raw["partition_spec"]
+    mesh_axis_names = raw["mesh_axis_names"]
+    mesh_axis_sizes = raw["mesh_axis_sizes"]
+    return ShardingDescriptor(
+        kind=raw["kind"],
+        device_ids=tuple(raw["device_ids"]),
+        partition_spec=None
+        if partition_spec is None
+        else tuple(
+            tuple(item) if isinstance(item, list) else item for item in partition_spec
+        ),
+        mesh_axis_names=None if mesh_axis_names is None else tuple(mesh_axis_names),
+        mesh_axis_sizes=None if mesh_axis_sizes is None else tuple(mesh_axis_sizes),
+        memory_kind=raw["memory_kind"],
+    )
 
 
-def _decode_core(raw: dict[str, Any]) -> CoreLayoutDescriptor:
+def _decode_named_sharding(
+    pair: list[str | _ShardingRecord],
+) -> tuple[str, ShardingDescriptor]:
+    """Decode one `[path, sharding]` pair of a compiled placement."""
+    path, sharding = pair
+    if not isinstance(path, str) or isinstance(sharding, str):
+        raise TypeError("Invalid compiled placement in the period capture.")
+    return path, _decode_sharding(sharding)
+
+
+def _decode_transfer(raw: _TransferRecord) -> ValueTransferDescriptor:
+    """Decode one stored-value transfer descriptor."""
+    return ValueTransferDescriptor(
+        kind=raw["kind"],
+        target=raw["target"],
+        source=raw["source"],
+        stored_sharding=_decode_sharding(raw["stored_sharding"]),
+        source_sharding=_decode_sharding(raw["source_sharding"]),
+        expected_shape=tuple(raw["expected_shape"]),
+        expected_dtype=raw["expected_dtype"],
+    )
+
+
+def _decode_core(raw: _CoreRecord) -> CoreLayoutDescriptor:
     """Decode the existing strict core layout and transfer descriptors."""
-    values = dict(raw)
-    values["lowered_out_shardings"] = tuple(
-        _decode_sharding(item) for item in values["lowered_out_shardings"]
-    )
-    for key in ("compiled_input_shardings", "compiled_output_shardings"):
-        values[key] = tuple(
-            (name, _decode_sharding(sharding)) for name, sharding in values[key]
-        )
-    values["donated_arguments"] = tuple(values["donated_arguments"])
-    values["input_transfer_plan"] = tuple(
-        ValueTransferDescriptor(
-            **(
-                item
-                | {
-                    "stored_sharding": _decode_sharding(item["stored_sharding"]),
-                    "source_sharding": _decode_sharding(item["source_sharding"]),
-                    "expected_shape": tuple(item["expected_shape"]),
-                }
-            )
-        )
-        for item in values["input_transfer_plan"]
-    )
-    if values["donated_arguments"]:
+    if raw["donated_arguments"]:
         raise ValueError("Public capture replay does not support donated inputs.")
-    return CoreLayoutDescriptor(**values)
+    return CoreLayoutDescriptor(
+        name=raw["name"],
+        lowered_out_shardings=tuple(
+            _decode_sharding(item) for item in raw["lowered_out_shardings"]
+        ),
+        compiled_input_shardings=tuple(
+            _decode_named_sharding(pair) for pair in raw["compiled_input_shardings"]
+        ),
+        compiled_output_shardings=tuple(
+            _decode_named_sharding(pair) for pair in raw["compiled_output_shardings"]
+        ),
+        input_transfer_plan=tuple(
+            _decode_transfer(item) for item in raw["input_transfer_plan"]
+        ),
+        donated_arguments=(),
+        variant=raw["variant"],
+    )
 
 
-def _decode_layouts(raw: dict[str, Any]) -> PeriodLayouts:
+def _decode_leaf(raw: _LeafRecord) -> LeafLayoutDescriptor:
+    """Decode one captured array leaf's layout descriptor."""
+    return LeafLayoutDescriptor(
+        tree_path=raw["tree_path"],
+        shape=tuple(raw["shape"]),
+        dtype=raw["dtype"],
+        weak_type=raw["weak_type"],
+        committed=raw["committed"],
+        sharding=_decode_sharding(raw["sharding"]),
+    )
+
+
+def _decode_layouts(raw: _LayoutsRecord) -> PeriodLayouts:
     """Decode fixed descriptors without importing a type named by the archive."""
-    values: dict[str, Any] = raw | {
-        "device_ids": tuple(raw["device_ids"]),
-        "leaves": tuple(
-            LeafLayoutDescriptor(
-                **(
-                    leaf
-                    | {
-                        "shape": tuple(leaf["shape"]),
-                        "sharding": _decode_sharding(leaf["sharding"]),
-                    }
-                )
-            )
-            for leaf in raw["leaves"]
+    return PeriodLayouts(
+        route=raw["route"],
+        device_ids=tuple(raw["device_ids"]),
+        leaves=tuple(_decode_leaf(leaf) for leaf in raw["leaves"]),
+        cores=MappingProxyType(
+            {
+                name: None if core is None else _decode_core(core)
+                for name, core in raw["cores"].items()
+            }
         ),
-        "cores": MappingProxyType(
-            {name: _decode_core(core) for name, core in raw["cores"].items()}
-        ),
-    }
-    return PeriodLayouts(**values)
+    )

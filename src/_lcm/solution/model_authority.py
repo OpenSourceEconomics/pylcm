@@ -62,6 +62,7 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
+from lcm._solver_api.identity import ArtifactRuntimeType
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     SIMULATION_POLICY,
@@ -1127,7 +1128,7 @@ def _validate_external_route_authorities(
     *,
     external_route: ExecutableReplayRoute | None,
     authorities: dict[ArtifactKey, ArtifactAuthority],
-    producer_payload_types: MappingProxyType[ArtifactKey, type[object]],
+    producer_payload_types: MappingProxyType[ArtifactKey, ArtifactRuntimeType],
     context: ReplayModelContext,
 ) -> None:
     """Bind an external route only to replay authorities built with the solver."""
@@ -1196,7 +1197,7 @@ def _validate_external_route_authorities(
 def _validate_required_external_producers(
     *,
     required_artifacts: frozenset[ArtifactKey],
-    producer_payload_types: MappingProxyType[ArtifactKey, type[object]],
+    producer_payload_types: MappingProxyType[ArtifactKey, ArtifactRuntimeType],
 ) -> None:
     """Require each external-route input to be published by a core program."""
     missing = required_artifacts - producer_payload_types.keys()
@@ -1209,13 +1210,13 @@ def _validate_required_external_producers(
 
 def _period_artifact_payload_types(
     *, regime: Regime, period: int
-) -> MappingProxyType[ArtifactKey, type[object]]:
+) -> MappingProxyType[ArtifactKey, ArtifactRuntimeType]:
     """Return every exact retained payload type from one validated producer graph."""
     graph = core_program_graph(kernel=regime.solution.period_kernels[period])
     keys = sorted(
         {key for program in graph.values() for key in program.retained_artifact_keys}
     )
-    payload_types: dict[ArtifactKey, type[object]] = {}
+    payload_types: dict[ArtifactKey, ArtifactRuntimeType] = {}
     for key in keys:
         payload_type = retained_artifact_payload_type(graph=graph, key=key)
         if payload_type is None:  # pragma: no cover - graph validation owns this case
@@ -1230,7 +1231,7 @@ def _validate_artifact_producer_types(
     *,
     regime_name: RegimeName,
     period: int,
-    producer_payload_types: MappingProxyType[ArtifactKey, type[object]],
+    producer_payload_types: MappingProxyType[ArtifactKey, ArtifactRuntimeType],
     custom_authorities: dict[ArtifactKey, ArtifactAuthority],
     built_in_policy_type: type[object] | None,
     external_route: ExecutableReplayRoute | None,
