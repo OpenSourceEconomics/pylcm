@@ -57,6 +57,7 @@ from _lcm.solution.solver_diagnostics import (
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.time import TimeAxis
 from _lcm.typing import (
+    ArtifactPayload,
     FlatParams,
     RegimeName,
     StateName,
@@ -90,7 +91,7 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
     _snapshot_artifact_template_once,
 )
-from lcm.typing import ActionName
+from lcm.typing import ActionName, FloatND, IntND
 
 _EGM_CONTINUATION_ROUTE = ReplayRouteIdentity(
     route_id="pylcm.egm_continuation",
@@ -108,7 +109,7 @@ _NNBEGM_CANDIDATE_AXIS = "pylcm:nnbegm:outer_candidate"
 class ValueCellDescriptor:
     """Canonical representation of one model value cell."""
 
-    payload_type: type[object]
+    payload_type: type[Array]
     shape: tuple[int, ...]
     dtype: str
     axis_names: tuple[str, ...]
@@ -232,13 +233,15 @@ def _snapshot_value_cell_descriptor(
     )
 
 
-def _snapshot_authority_value_coordinate(coordinate: object) -> tuple[int, RegimeName]:
+def _snapshot_authority_value_coordinate(
+    coordinate: tuple[int, RegimeName],
+) -> tuple[int, RegimeName]:
     if type(coordinate) is not tuple or len(coordinate) != 2:  # noqa: PLR2004
         raise TypeError("Value authority coordinates must be exact pairs.")
     period, regime_name = coordinate
     _require_nonnegative_exact_int(value=period, label="value authority period")
     _require_nonempty_exact_str(value=regime_name, label="value authority regime")
-    return cast("int", period), cast("RegimeName", regime_name)
+    return period, regime_name
 
 
 def _snapshot_replay_cell_descriptor(
@@ -601,69 +604,68 @@ def _snapshot_declared_outer_inverse(
     )
 
 
-def _require_exact_mapping(*, value: object, label: str) -> None:
+def _require_exact_mapping[Key, Value](
+    *, value: Mapping[Key, Value], label: str
+) -> None:
     if type(value) is not MappingProxyType:
         raise TypeError(f"{label} must be an immutable exact mapping.")
 
 
-def _require_exact_tuple(*, value: object, label: str) -> None:
+def _require_exact_tuple[Item](*, value: tuple[Item, ...], label: str) -> None:
     if type(value) is not tuple:
         raise TypeError(f"{label} must be an exact tuple.")
 
 
-def _require_nonempty_exact_str(*, value: object, label: str) -> None:
+def _require_nonempty_exact_str(*, value: str, label: str) -> None:
     if type(value) is not str:
         raise TypeError(f"{label} must be an exact str.")
     if not value:
         raise ValueError(f"{label} must not be empty.")
 
 
-def _require_nonnegative_exact_int(*, value: object, label: str) -> None:
+def _require_nonnegative_exact_int(*, value: int, label: str) -> None:
     if type(value) is not int:
         raise TypeError(f"{label} must be an exact int.")
     if value < 0:
         raise ValueError(f"{label} must be nonnegative.")
 
 
-def _require_exact_float(*, value: object, label: str) -> None:
+def _require_exact_float(*, value: float, label: str) -> None:
     if type(value) is not float:
         raise TypeError(f"{label} must be an exact float.")
 
 
-def _require_exact_names(*, value: object, label: str) -> None:
+def _require_exact_names(*, value: tuple[str, ...], label: str) -> None:
     _require_exact_tuple(value=value, label=label)
-    names = cast("tuple[object, ...]", value)
-    if any(type(name) is not str or not name for name in names):
+    if any(type(name) is not str or not name for name in value):
         raise TypeError(f"{label} must contain nonempty exact strs.")
 
 
-def _require_exact_shape(*, value: object, label: str) -> None:
+def _require_exact_shape(*, value: tuple[int, ...], label: str) -> None:
     _require_exact_tuple(value=value, label=label)
-    shape = cast("tuple[object, ...]", value)
-    if any(type(size) is not int for size in shape):
+    if any(type(size) is not int for size in value):
         raise TypeError(f"{label} must contain exact ints.")
-    if any(cast("int", size) < 0 for size in shape):
+    if any(size < 0 for size in value):
         raise ValueError(f"{label} must contain nonnegative sizes.")
 
 
-def _require_exact_ints(*, value: object, label: str) -> None:
+def _require_exact_ints(*, value: tuple[int, ...], label: str) -> None:
     _require_exact_tuple(value=value, label=label)
-    items = cast("tuple[object, ...]", value)
-    if any(type(item) is not int for item in items):
+    if any(type(item) is not int for item in value):
         raise TypeError(f"{label} must contain exact ints.")
 
 
-def _require_exact_floats(*, value: object, label: str) -> None:
+def _require_exact_floats(*, value: tuple[float, ...], label: str) -> None:
     _require_exact_tuple(value=value, label=label)
-    items = cast("tuple[object, ...]", value)
-    if any(type(item) is not float for item in items):
+    if any(type(item) is not float for item in value):
         raise TypeError(f"{label} must contain exact floats.")
 
 
-def _require_exact_period_lengths(*, value: object, label: str) -> None:
+def _require_exact_period_lengths(
+    *, value: Mapping[int, tuple[int, ...]], label: str
+) -> None:
     _require_exact_mapping(value=value, label=label)
-    mapping = cast("MappingProxyType[object, object]", value)
-    for period, lengths in mapping.items():
+    for period, lengths in value.items():
         _require_nonnegative_exact_int(value=period, label=f"{label} period")
         _require_exact_shape(value=lengths, label=f"{label} lengths")
 
@@ -1749,7 +1751,7 @@ def _authority_from_template(
     channel: ArtifactChannel,
     persistence: PersistencePolicy,
     payload_runtime_type: type[object],
-    template: object | None,
+    template: ArtifactPayload | None,
     leaf_axis_names: dict[TreePath, tuple[str, ...]] | None = None,
     axes: tuple[AxisAuthority, ...] | None = None,
     state_roles: tuple[str, ...] = (),
@@ -1992,7 +1994,7 @@ def _bind_model_owned_artifact_facts(  # noqa: C901
     )
 
 
-def _json_coordinates(nodes: object) -> tuple[bool | int | float | str, ...]:
+def _json_coordinates(nodes: FloatND | IntND) -> tuple[bool | int | float | str, ...]:
     """Convert model grid nodes to immutable, exact transport scalars."""
     array = np.asarray(nodes)
     if array.ndim != 1:
@@ -2426,7 +2428,7 @@ def _policy_persistence_and_template(
     policy_read: EGMPolicyRead | NNBEGMPolicyRead | None,
     policy_shape: tuple[int, ...] | None,
     expected_replay_capability: OuterReplayCapability | None,
-) -> tuple[PersistencePolicy, object | None]:
+) -> tuple[PersistencePolicy, EGMSimPolicy | NNBEGMSimPolicy | None]:
     """Return the route's persistence policy and model-built PyTree template."""
     if isinstance(policy_read, EGMPolicyRead):
         if policy_shape is None:
