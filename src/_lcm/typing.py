@@ -93,18 +93,20 @@ type PRNGKeyND = Key[Array, "..."]
 type ParamsLeaf = FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
 
 # One argument of a user economic function, exactly as `EconFunction.__call__`
-# accepts it. Named so a call site binding such arguments can say so.
-type EconFunctionArg = FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf
+# accepts it. Named so a call site binding such arguments can say so. Integer
+# arrays may have any width: with x64 enabled, states, actions and indices are
+# int64.
+type EconFunctionArg = (
+    FloatND | Int[Array, "..."] | BoolND | float | MappingLeaf | SequenceLeaf
+)
 
 # The arguments of a user economic function, keyed by the names they reference.
 type EconFunctionKwargs = Mapping[ReferenceName, EconFunctionArg]
 
 # One argument of a generated `QAndFFunction` or `MaxQOverAFunction`: an argument
-# of a user function, an integer index array of any width, or a per-regime mapping
-# of value arrays or of flat params.
+# of a user function, or a per-regime mapping of value arrays or of flat params.
 type QAndFArg = (
     EconFunctionArg
-    | Int[Array, "..."]
     | Mapping[RegimeName, FloatND]
     | Mapping[RegimeName, Mapping[QualifiedName, ParamsLeaf]]
 )
