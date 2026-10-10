@@ -722,7 +722,13 @@ def _record_component_blocks(
     retain = block_major.RetainedComponentValues.retain
 
     # keyword-only-exempt: library-callback=pytest.MonkeyPatch.setattr
-    def recording(self: Any, *, code: int, blocks: Mapping, **kwargs: Any) -> None:
+    def recording(
+        self: Any,
+        *,
+        code: int,
+        blocks: MappingProxyType[int, MappingProxyType[str, jax.Array]],
+        **kwargs: Any,
+    ) -> None:
         recorded.extend(
             (code, block) for regimes in blocks.values() for block in regimes.values()
         )

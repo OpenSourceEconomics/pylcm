@@ -70,7 +70,9 @@ from lcm._solver_api.stores import ArtifactStore, ValueStore, _ValueStoreBoundar
 from lcm.exceptions import ExecutionPlanningError
 
 if TYPE_CHECKING:
-    type _ComponentBlocks = Mapping[int, Mapping[RegimeName, jax.Array]]
+    type _ComponentBlocks = MappingProxyType[
+        int, MappingProxyType[RegimeName, jax.Array]
+    ]
 else:
     # A component's blocks are read and deleted by the schedule itself; the
     # runtime annotation check must not walk them while they are being retired.
