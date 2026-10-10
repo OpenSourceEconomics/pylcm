@@ -8,10 +8,9 @@ lookups several build stages share.
 
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import fields
 from itertools import chain
 from types import MappingProxyType
-from typing import Any, TypeVar, cast, overload
+from typing import TypeVar, cast, overload
 
 from _lcm.params.mapping_leaf import LeafEntry
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
@@ -82,25 +81,6 @@ def find_duplicates(*containers: Iterable[T]) -> set[T]:
     combined = chain.from_iterable(containers)
     counts = Counter(combined)
     return {v for v, count in counts.items() if count > 1}
-
-
-def get_field_names_and_values(dc: object) -> MappingProxyType[str, Any]:
-    """Return the fields of a dataclass.
-
-    Args:
-        dc: The dataclass class or instance to get the fields of.
-
-    Returns:
-        An immutable mapping with the field names as keys and the field values as
-        values. If no value is provided for a field, the value is set to None.
-
-    """
-    return MappingProxyType(
-        {
-            field.name: getattr(dc, field.name, None)
-            for field in fields(dc)  # ty: ignore[invalid-argument-type]
-        }
-    )
 
 
 def invert_regime_ids[K](

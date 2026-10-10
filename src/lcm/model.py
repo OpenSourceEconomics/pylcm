@@ -4,7 +4,6 @@ import dataclasses
 import functools
 import hashlib
 import logging
-import operator
 import os
 import threading
 import uuid
@@ -56,6 +55,7 @@ from _lcm.grids import (
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
 )
+from _lcm.grids.categorical import get_category_codes, validate_category_class
 from _lcm.model_graph import (
     DroppedCells,
     ModelGraph,
@@ -261,8 +261,8 @@ from _lcm.user_regime_validation import (
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
-    get_field_names_and_values,
 )
+from _lcm.utils.error_messages import format_messages
 from _lcm.utils.logging import (
     LogLevel,
     get_logger,
@@ -860,9 +860,16 @@ class Model:
         resolved_initial_nodes = resolve_initial_nodes(
             initial_nodes=initial_nodes, regime_names=tuple(regimes), ages=self._time
         )
+        regime_id_errors = validate_category_class(regime_id_class)
+        if regime_id_errors:
+            msg = (
+                "regime_id_class is not a valid category class. "
+                f"{format_messages(regime_id_errors)}"
+            )
+            raise ModelInitializationError(msg)
         regime_names_to_ids = {
             name: int(code)
-            for name, code in get_field_names_and_values(regime_id_class).items()
+            for name, code in get_category_codes(regime_id_class).items()
         }
         model_slots = {
             "functions": factored_functions,
@@ -970,14 +977,8 @@ class Model:
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
         )
-        self.regime_names_to_ids = MappingProxyType(
-            dict(
-                sorted(
-                    get_field_names_and_values(regime_id_class).items(),
-                    key=operator.itemgetter(1),
-                )
-            )
-        )
+        # A validated category class lists its codes 0, 1, ... in field order.
+        self.regime_names_to_ids = get_category_codes(regime_id_class)
         self._execution = resolve_execution_config(
             config=execution_config,
             visible_device_ids=visible_device_ids(),
