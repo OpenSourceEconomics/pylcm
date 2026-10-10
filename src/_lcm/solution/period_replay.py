@@ -21,7 +21,7 @@ import time
 from collections.abc import Hashable, Mapping, MutableMapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, NotRequired, TypedDict, cast
+from typing import Literal, NotRequired, TypedDict, TypeGuard, cast
 
 import cloudpickle
 import jax
@@ -271,17 +271,46 @@ def _load_capture_payload(*, directory: Path) -> PeriodCapturePayload:
     """Load one period's captured regime, inputs, widths and layout block."""
     with (directory / _PAYLOAD_NAME).open("rb") as stream:
         payload = cloudpickle.load(stream)
-    if not isinstance(payload, dict):
+    if not _is_period_capture_payload(payload):
         msg = "A period capture payload must be a dictionary."
         raise TypeError(msg)
-    if "core_tile_widths" not in payload:
-        msg = "Period capture is missing required 'core_tile_widths'."
-        raise ValueError(msg)
-    loaded = dict(payload)
+    loaded = payload.copy()
     loaded["core_tile_widths"] = _normalize_core_tile_widths(
         raw=payload["core_tile_widths"]
     )
-    return cast("PeriodCapturePayload", loaded)
+    return loaded
+
+
+def _is_period_capture_payload(
+    obj: object,  # noqa: PAN001 - an unpickled payload is any object until narrowed
+    /,
+) -> TypeGuard[PeriodCapturePayload]:
+    """Whether `obj` is a dictionary holding every required capture entry.
+
+    Returns `False` for anything but a dictionary. A dictionary that lacks a
+    required entry, or holds one at the wrong top-level type, is refused naming
+    that entry. The optional `layouts` block is checked where it is read, by
+    `_require_period_layouts`.
+    """
+    if not isinstance(obj, dict):
+        return False
+    for key in ("regime", "period", "kernel_kwargs", "core_tile_widths"):
+        if key not in obj:
+            msg = f"Period capture is missing required {key!r}."
+            raise ValueError(msg)
+    for key, valid in (
+        ("regime", isinstance(obj["regime"], Regime)),
+        ("period", isinstance(obj["period"], int)),
+        ("kernel_kwargs", isinstance(obj["kernel_kwargs"], dict)),
+        ("core_tile_widths", isinstance(obj["core_tile_widths"], Mapping)),
+    ):
+        if not valid:
+            msg = (
+                f"Period capture entry {key!r} has the wrong type "
+                f"({type(obj[key]).__name__})."
+            )
+            raise TypeError(msg)
+    return True
 
 
 def _normalize_core_tile_widths(

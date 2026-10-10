@@ -41,6 +41,7 @@ from tests.regime_building.test_gated_edges_collective_solve import (
     _make_full_topology_regimes,
     _with_full_topology_laws,
 )
+from tests.solution.test_period_core_memory import _StandInRegime
 from tests.test_models.deterministic import base as retirement_model
 from tests.test_models.deterministic.discrete import (
     RegimeId,
@@ -275,6 +276,43 @@ def test_replay_lowers_the_scope_the_solve_dispatched(
     replay_period(directory=tmp_path / "working_life@1")
 
     assert observed == [(regime_retains_replay, frozenset())]
+
+
+_REQUIRED_PAYLOAD_KEYS = ("regime", "period", "kernel_kwargs", "core_tile_widths")
+
+
+def _well_formed_payload() -> dict[str, object]:
+    """A capture payload with every required entry at its declared type."""
+    return {
+        "regime": _StandInRegime(),
+        "period": 1,
+        "kernel_kwargs": {},
+        "core_tile_widths": {"main": {"cell": 2}},
+    }
+
+
+def test_is_period_capture_payload_accepts_a_well_formed_payload() -> None:
+    """A payload carrying every required entry at its declared type is admitted."""
+    assert period_replay._is_period_capture_payload(_well_formed_payload())
+
+
+@pytest.mark.parametrize("key", _REQUIRED_PAYLOAD_KEYS)
+def test_is_period_capture_payload_names_a_missing_key(key: str) -> None:
+    """A payload lacking a required entry is refused, naming that entry."""
+    payload = _well_formed_payload()
+    del payload[key]
+
+    with pytest.raises(ValueError, match=re.escape(repr(key))):
+        period_replay._is_period_capture_payload(payload)
+
+
+@pytest.mark.parametrize("key", _REQUIRED_PAYLOAD_KEYS)
+def test_is_period_capture_payload_names_a_wrong_typed_key(key: str) -> None:
+    """A payload holding a required entry at the wrong type is refused, naming it."""
+    payload = {**_well_formed_payload(), key: "not the declared type"}
+
+    with pytest.raises(TypeError, match=re.escape(repr(key))):
+        period_replay._is_period_capture_payload(payload)
 
 
 def _rewrite_capture(*, directory, mutate):
