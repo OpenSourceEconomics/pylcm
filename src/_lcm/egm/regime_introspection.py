@@ -10,7 +10,7 @@ modules import from.
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
@@ -29,7 +29,13 @@ from _lcm.variables import from_regime, get_grids
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM
-from lcm.typing import ScalarFloat, StateOrActionName, UserFunction
+from lcm.typing import (
+    Float1D,
+    Int1D,
+    ScalarFloat,
+    StateOrActionName,
+    UserFunction,
+)
 
 
 def _as_dcegm(user_regime: UserRegime) -> _BoundDCEGM | None:
@@ -127,7 +133,7 @@ def _get_child_state_name(*, user_regime: UserRegime) -> StateName:
 
 def _get_child_discrete_actions(
     *, user_regime: UserRegime
-) -> tuple[tuple[ActionName, ...], tuple[Any, ...]]:
+) -> tuple[tuple[ActionName, ...], tuple[Int1D | Float1D, ...]]:
     """Discrete-action names and grid values of a carry target, in combo order.
 
     The order matches the target's own kernel combos (its state-action

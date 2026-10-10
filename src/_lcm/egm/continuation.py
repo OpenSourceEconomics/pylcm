@@ -22,6 +22,7 @@ from typing import Any, cast
 import jax
 import jax.numpy as jnp
 from dags import concatenate_functions
+from jax.typing import DTypeLike
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import (
@@ -79,6 +80,7 @@ from _lcm.typing import (
     RegimeName,
     RegimeTransitionFunction,
     StateName,
+    TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
@@ -99,6 +101,10 @@ from lcm.typing import (
 # Stable Epstein-Zin partials `(nu, W, b, T~)` returned by a child reader
 # when a power certainty equivalent is active.
 type _EZPartials = tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+
+# A child carry read at one savings node: the linear `(value, marginal)` pair, or
+# the Epstein-Zin partials.
+type _ChildCarryRead = tuple[ScalarFloat, ScalarFloat] | _EZPartials
 
 
 def _is_runtime_process(grid: Grid) -> bool:
@@ -247,7 +253,7 @@ class _ChildRead:
     weight_keys: tuple[str, ...]
     """`weight_<target>__next_<state>` keys aligned with the stochastic dims."""
 
-    weights_func: Callable[..., Any] | None
+    weights_func: Callable[..., Mapping[str, FloatND]] | None
     """Concatenated intrinsic-weights function, or `None` without stochastic dims."""
 
     passive_state_names: tuple[StateName, ...]
@@ -288,7 +294,7 @@ class _ChildRead:
     no carry row, it only feeds the laws reading it.
     """
 
-    local_support_func: Callable[..., Any] | None = None
+    local_support_func: Callable[..., Mapping[str, FloatND | IntND]] | None = None
     """Concatenated support providers of the local draws, or `None` without."""
 
     local_support_keys: tuple[str, ...] = ()
@@ -349,7 +355,7 @@ def bind_continuation(
     plan: ContinuationPlan,
     combo_pool: EconFunctionKwargs,
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-    dtype: Any,
+    dtype: DTypeLike,
     stochastic_node_width: int | None = None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
     co_map_state_names: tuple[StateName, ...] = (),
@@ -462,13 +468,13 @@ class _BoundContinuation:
     risk_aversion: FloatND | None
     """The Epstein-Zin risk-aversion coefficient; `None` for the linear read."""
 
-    child_readers: Mapping[RegimeName, Callable[[ScalarFloat], object]]
+    child_readers: Mapping[RegimeName, Callable[[ScalarFloat], _ChildCarryRead]]
     """Per stateful target, the carry read at a savings node."""
 
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
     """The next period's EGM carries (scalar targets read their constant)."""
 
-    dtype: Any
+    dtype: DTypeLike
     """The canonical float dtype of the blended results."""
 
     def __call__(
@@ -973,7 +979,7 @@ class _RowQueriesAndGradients:
     child_euler_state: Callable[[ScalarFloat], ScalarFloat]
     """The child's Euler state as a function of the savings node."""
 
-    deterministic_resources_kwargs: dict[str, Any]
+    deterministic_resources_kwargs: EconFunctionKwargs
     """Deterministic next-state values the resources function reads."""
 
     resources_param_kwargs: EconFunctionKwargs
@@ -1000,7 +1006,7 @@ def _compute_row_queries_and_gradients(
     *,
     read: _ChildRead,
     child_euler_state: Callable[[ScalarFloat], ScalarFloat],
-    deterministic_resources_kwargs: dict[str, Any],
+    deterministic_resources_kwargs: EconFunctionKwargs,
     resources_param_kwargs: EconFunctionKwargs,
     savings_value: ScalarFloat,
     stochastic_values: tuple[ScalarFloat | ScalarInt, ...],
@@ -1093,8 +1099,8 @@ def _composed_row_resources(
     *,
     read: _ChildRead,
     child_euler_state: Callable[[ScalarFloat], ScalarFloat],
-    deterministic_resources_kwargs: dict[str, Any],
-    stochastic_kwargs: dict[str, Any],
+    deterministic_resources_kwargs: EconFunctionKwargs,
+    stochastic_kwargs: EconFunctionKwargs,
     resources_param_kwargs: EconFunctionKwargs,
 ) -> ScalarFloat:
     """Child resources at the savings node for one row's discrete/passive values."""
@@ -2458,7 +2464,7 @@ def _build_child_reads(
 class _ChildDrawReads:
     """How one target's laws read the draws of its edge."""
 
-    laws: MappingProxyType[TransitionFunctionName, Any]
+    laws: MappingProxyType[TransitionFunctionName, TransitionFunction]
     """The target's laws, without the draws' own producers."""
 
     draw_free_law_names: tuple[TransitionFunctionName, ...]
@@ -2479,14 +2485,14 @@ class _ChildDrawReads:
     local_draw_sizes: tuple[int, ...]
     """Node counts of the local draws."""
 
-    local_support_func: Callable[..., Any] | None
+    local_support_func: Callable[..., Mapping[str, FloatND | IntND]] | None
     """Concatenated support providers of the local draws."""
 
 
 def _child_draw_reads(
     *,
     target: RegimeName,
-    bundle: MappingProxyType[TransitionFunctionName, Any],
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
     functions: EconFunctionsMapping,
     transition_plans: TargetTransitionPlans,
     euler_state_name: StateName,

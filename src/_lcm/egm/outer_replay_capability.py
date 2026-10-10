@@ -26,7 +26,14 @@ from fractions import Fraction
 from _lcm.egm.outer_inversion import DeclaredOuterInverse
 from lcm.exceptions import RegimeInitializationError
 from lcm.solver_api import _register_artifact_static_metadata_dataclass
-from lcm.typing import ActionName, FunctionName, RegimeName, StateName
+from lcm.typing import (
+    ActionName,
+    FloatND,
+    FunctionName,
+    IntND,
+    RegimeName,
+    StateName,
+)
 
 __all__ = [
     "OuterReplayCapability",
@@ -94,7 +101,7 @@ _register_artifact_static_metadata_dataclass(
 def resolve_outer_replay_capability(
     *,
     inverse: DeclaredOuterInverse,
-    functions: Mapping[FunctionName, Callable[..., object]],
+    functions: Mapping[FunctionName, Callable[..., FloatND | IntND]],
     bindable_names: frozenset[str],
     outer_post_decision_name: FunctionName,
     outer_action_name: ActionName,
