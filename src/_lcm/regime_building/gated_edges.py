@@ -74,6 +74,8 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FunctionName,
     ParamsLeaf,
+    QAndFArg,
+    QAndFKwargs,
     QualifiedName,
     RegimeName,
     StateName,
@@ -2388,7 +2390,7 @@ class _FallbackStateProjector:
 
 
 def _fail_if_arguments_do_not_match(
-    *, kwargs: Mapping[str, object], arg_names: tuple[ReferenceName, ...], name: str
+    *, kwargs: QAndFKwargs, arg_names: tuple[ReferenceName, ...], name: str
 ) -> None:
     """Fail if a router-facing callable is handed the wrong keyword arguments.
 
@@ -2447,8 +2449,8 @@ def _assemble_gate_kwargs(
     d_value: FloatND | None,
     gate_ref_values: Mapping[str, FloatND],
     state_mesh: Mapping[StateName, ContinuousState | DiscreteState],
-    cell_kwargs: Mapping[str, object],
-) -> dict[str, object]:
+    cell_kwargs: QAndFKwargs,
+) -> dict[ReferenceName, QAndFArg]:
     """Bind each gate argument to its grid array.
 
     Resolves the gate's declared arguments against the target's own value
@@ -2461,7 +2463,7 @@ def _assemble_gate_kwargs(
     narrowed to `FloatND` (the same holds for `_evaluate_edge_fold`'s
     `target_states` in `backward_induction.py`).
     """
-    gate_kwargs: dict[str, object] = {}
+    gate_kwargs: dict[ReferenceName, QAndFArg] = {}
     for arg in gate_arg_names:
         if arg in target_components:
             gate_kwargs[arg] = target_components[arg]
