@@ -34,7 +34,6 @@ from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
-    ArrayTree,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     EdgeParamsTemplate,
@@ -485,7 +484,9 @@ class SolutionPhase:
     validation_regime_transition_probs: RegimeTransitionFunction | None
     """Probability function retaining declared cells for runtime validation."""
 
-    compute_intermediates: MappingProxyType[int, Callable[..., Mapping[str, ArrayTree]]]
+    compute_intermediates: MappingProxyType[
+        int, Callable[..., Mapping[str, FloatND | Mapping[RegimeName, FloatND]]]
+    ]
     """Immutable mapping of period to intermediate-computation closures.
 
     Productmap-wrapped and fused with on-device reductions inside a single
