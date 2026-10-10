@@ -235,8 +235,11 @@ def test_deleted_arrays_cannot_supply_a_live_inventory() -> None:
 
 def test_nonaddressable_arrays_cannot_supply_a_complete_inventory() -> None:
     """Unobserved remote shards refuse a complete local accounting claim."""
+    # A real dtype and shape let the stand-in pass the footprint tree's array check.
     array = Mock(
         spec=jax.Array,
+        dtype=jnp.dtype("float32"),
+        shape=(2,),
         is_deleted=Mock(return_value=False),
         is_fully_addressable=False,
     )
