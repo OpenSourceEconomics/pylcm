@@ -87,7 +87,7 @@ from _lcm.solution.component_fragments import (
     write_json_atomically,
 )
 from _lcm.transition_checks import validate_transitions
-from _lcm.typing import FlatParams, InitialConditions
+from _lcm.typing import FlatParams, InitialConditions, JSONValue
 from _lcm.utils.logging import LogLevel, get_logger
 from lcm.exceptions import ExecutionPlanningError, SolutionIntegrityError
 from lcm.model import _VALUES_RETAINED_ON_THE_HOST, Model
@@ -132,7 +132,7 @@ class ComponentJobPlan:
     jobs: tuple[tuple[int, ...], ...]
     """The codes of each job, each in grid order."""
 
-    identity: MappingProxyType[str, object]
+    identity: MappingProxyType[str, JSONValue]
     """Model, parameter, precision, build and solve-configuration identity."""
 
     seed: int | None
@@ -361,7 +361,7 @@ def load_component_job_plan(*, directory: Path) -> ComponentJobPlan:
             codes=codes,
             jobs=jobs,
             identity=MappingProxyType(
-                dict(cast("Mapping[str, object]", plan["identity"]))
+                dict(cast("Mapping[str, JSONValue]", plan["identity"]))
             ),
             seed=cast("int | None", seed),
             n_subjects=n_subjects,
@@ -673,7 +673,7 @@ def _split_codes(
     return tuple(tuple(code for code in codes if code in job) for job in jobs)
 
 
-def _identity(*, model: Model, flat_params: FlatParams) -> dict[str, object]:
+def _identity(*, model: Model, flat_params: FlatParams) -> dict[str, JSONValue]:
     """Return what every job and the collector must reproduce exactly."""
     execution = model._execution  # noqa: SLF001
     return {
@@ -740,7 +740,7 @@ def _fail_if_identity_differs(
     *,
     model: Model,
     plan: ComponentJobPlan,
-    identity: Mapping[str, object],
+    identity: Mapping[str, JSONValue],
     source: PlanParticipant,
 ) -> None:
     """Refuse a model, parameters or build that do not reproduce the plan's."""
@@ -891,7 +891,7 @@ def _job_row_checksum(*, job: int, codes: tuple[int, ...], rows: np.ndarray) -> 
     )
 
 
-def _execution_record(*, model: Model, log_level: LogLevel) -> dict[str, object]:
+def _execution_record(*, model: Model, log_level: LogLevel) -> dict[str, JSONValue]:
     """Record the actual compiler, execution mode, native build and device budget."""
     execution = model._execution  # noqa: SLF001
     devices = [device for device in jax.devices() if device.id in execution.device_ids]
@@ -1033,7 +1033,7 @@ def _data_leaves(
 
 
 def _complete_fragments(
-    *, plan: ComponentJobPlan, execution: Mapping[str, object]
+    *, plan: ComponentJobPlan, execution: Mapping[str, JSONValue]
 ) -> tuple[Fragment, ...]:
     """Return one verified fragment per job, in job order.
 
@@ -1128,7 +1128,7 @@ def _complete_fragments(
 
 
 def _fail_if_execution_differs(
-    *, fragments: tuple[Fragment, ...], execution: Mapping[str, object]
+    *, fragments: tuple[Fragment, ...], execution: Mapping[str, JSONValue]
 ) -> None:
     """Require all workers to reproduce the collector's admitted execution."""
     executions = {
@@ -1376,7 +1376,9 @@ def _selected_devices(*, model: Model) -> tuple[jax.Device, ...]:
     )
 
 
-def _leaf_layout(*, leaf: object, devices: tuple[jax.Device, ...]) -> dict[str, object]:
+def _leaf_layout(
+    *, leaf: object, devices: tuple[jax.Device, ...]
+) -> dict[str, JSONValue]:
     """Describe one raw leaf's layout in positions of the selected devices.
 
     A layout on devices outside the selection or of an unsupported sharding is
@@ -1397,7 +1399,7 @@ def _leaf_layout(*, leaf: object, devices: tuple[jax.Device, ...]) -> dict[str, 
         }
     if isinstance(sharding, jax.sharding.NamedSharding):
         mesh = sharding.mesh
-        spec: list[object] = []
+        spec: list[JSONValue] = []
         for entry in sharding.spec:
             if entry is None or isinstance(entry, str):
                 spec.append(entry)
@@ -1419,7 +1421,7 @@ def _leaf_layout(*, leaf: object, devices: tuple[jax.Device, ...]) -> dict[str, 
 
 
 def _sharding_from_layout(
-    *, layout: Mapping[str, object], devices: tuple[jax.Device, ...]
+    *, layout: Mapping[str, JSONValue], devices: tuple[jax.Device, ...]
 ) -> jax.sharding.Sharding:
     """Rebuild a recorded layout on the selected devices.
 
@@ -1472,7 +1474,7 @@ def _sharding_from_layout(
     raise ValueError(msg)
 
 
-def _device_position(*, value: object, devices: tuple[jax.Device, ...]) -> int:
+def _device_position(*, value: JSONValue, devices: tuple[jax.Device, ...]) -> int:
     """Return a recorded device position after checking it names a selected device."""
     position = _require_nonnegative_exact_int(value=value, label="device position")
     if position >= len(devices):

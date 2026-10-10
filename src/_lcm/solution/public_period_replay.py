@@ -4,7 +4,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import jax
 import numpy as np
@@ -22,6 +22,7 @@ from _lcm.solution.backward_induction import (
 from _lcm.solution.period_capture import (
     CoreLayoutDescriptor,
     LeafLayoutDescriptor,
+    PeriodKernelKwargs,
     PeriodLayouts,
     ShardingDescriptor,
     ValueTransferDescriptor,
@@ -37,7 +38,7 @@ from _lcm.solution.public_period_capture import (
 )
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams
+from _lcm.typing import FlatParams, JSONValue
 from _lcm.utils.logging import get_logger
 from lcm.period_capture import CapturedPeriodReplay
 
@@ -57,7 +58,7 @@ def replay_public_period(
 ) -> CapturedPeriodReplay:
     """Bind, compile and validate one captured period before dispatching it."""
     record = load_period_capture(directory=directory)
-    metadata: dict[str, Any] = dict(record.metadata)
+    metadata: dict[str, JSONValue] = dict(record.metadata)
     expected_identity = period_identity(
         model_fingerprint=model_fingerprint,
         params_fingerprint=params_fingerprint,
@@ -85,7 +86,7 @@ def replay_public_period(
     entry_metadata, arrays, _ = read_period_archive(path=directory / "entry.h5")
     if entry_metadata != metadata:
         raise ValueError("Period capture changed while being read.")
-    layouts = _decode_layouts(metadata["layouts"])
+    layouts = _decode_layouts(cast("dict[str, JSONValue]", metadata["layouts"]))
     devices = placed_devices_for_ids(
         submesh_device_ids=layouts.device_ids, visible_device_ids=execution.device_ids
     )
@@ -97,7 +98,7 @@ def replay_public_period(
         name=name,
         period=period,
         ages=ages,
-        retain_replay=metadata["retain_replay"],
+        retain_replay=cast("bool", metadata["retain_replay"]),
     )
     kernel_kwargs = _restore_array_leaves(
         kernel_kwargs=kernel_kwargs,
@@ -121,7 +122,9 @@ def replay_public_period(
             "period": period,
             "kernel_kwargs": kernel_kwargs,
             "layouts": layouts,
-            "core_tile_widths": metadata["widths"],
+            "core_tile_widths": cast(
+                "Mapping[str, Mapping[str, int]]", metadata["widths"]
+            ),
         },
         directory=directory,
         devices=devices,
@@ -129,7 +132,7 @@ def replay_public_period(
     hlo = optimized_hlo_records(compiled_cores=cores)
     _validate_recorded_admission(
         cores=cores,
-        records=metadata["admission"],
+        records=cast("Mapping[str, Mapping[str, JSONValue]]", metadata["admission"]),
         budget=execution.device_memory_bytes,
     )
     if hlo != metadata["optimized_hlo"]:
@@ -228,7 +231,7 @@ def _restore_array_leaves(
     kernel_kwargs: dict[str, Any],
     leaves: tuple[LeafLayoutDescriptor, ...],
     device_by_recorded_id: Mapping[int, jax.Device],
-) -> dict[str, Any]:
+) -> PeriodKernelKwargs:
     """Upload host values directly to recorded devices and restore weak typing."""
     descriptors = {leaf.tree_path: leaf for leaf in leaves}
     flat, treedef = jax.tree_util.tree_flatten_with_path(kernel_kwargs)
@@ -276,7 +279,10 @@ def _restore_array_leaves(
 
 
 def _validate_recorded_admission(
-    *, cores: Mapping[str, PlannedCore], records: dict[str, Any], budget: int | None
+    *,
+    cores: Mapping[str, PlannedCore],
+    records: Mapping[str, Mapping[str, JSONValue]],
+    budget: int | None,
 ) -> None:
     """Recheck the selected executable under its recorded production residency."""
     if set(cores) != set(records):
@@ -308,7 +314,9 @@ def _validate_recorded_admission(
             )
         if (
             budget is not None
-            and record["resident_bytes"] + memory.reservation_bytes > budget
+            # The check above admits only an exact nonnegative integer here.
+            and cast("int", record["resident_bytes"]) + memory.reservation_bytes
+            > budget
         ):
             raise ValueError("Replay exceeds the recorded admission budget.")
 

@@ -14,10 +14,10 @@ import sys
 import types
 import typing
 from collections.abc import Callable, Iterable, Mapping
-from enum import Enum
+from enum import Enum, auto
 from fractions import Fraction
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, Protocol, cast
 
 import dags.exceptions as dags_exceptions
 import jax
@@ -49,7 +49,13 @@ from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_law import RegimeLaw
 from _lcm.time import TimeAxis, coordinate_kind
-from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, RegimeNamesToIds
+from _lcm.typing import (
+    DataclassInstance,
+    FlatParams,
+    FlatRegimeParams,
+    RegimeName,
+    RegimeNamesToIds,
+)
 from lcm.case_piece import (
     AffineBreakpoint,
     CaseBoundary,
@@ -111,7 +117,15 @@ _ARRAY_METADATA_READS = MappingProxyType(
         "dtype": np.dtype,
     }
 )
-_NOT_ARRAY_METADATA = object()
+
+
+class _NotArrayMetadata(Enum):
+    """Marks an attribute read that is not trusted array metadata."""
+
+    NOT_ARRAY_METADATA = auto()
+
+
+_NOT_ARRAY_METADATA: Final = _NotArrayMetadata.NOT_ARRAY_METADATA
 _TRUSTED_GRID_TYPE_OBJECTS = frozenset(
     value
     for name in grid_declarations.__all__
@@ -776,7 +790,7 @@ def _project_user_regime_declaration(
     elif dataclasses.is_dataclass(regime) and not isinstance(regime, type):
         fields = (
             (declaration.name, getattr(regime, declaration.name))
-            for declaration in dataclasses.fields(cast("Any", regime))
+            for declaration in dataclasses.fields(cast("DataclassInstance", regime))
         )
     else:
         msg = "A model fingerprint requires a dataclass user-regime declaration."
@@ -1772,12 +1786,12 @@ class _SemanticHasher:
             self._visit_terminal_reference(current)
         self.frame(label="module-reference-end")
 
-    def _visit_dataclass(self, value: object) -> None:
+    def _visit_dataclass(self, value: DataclassInstance) -> None:
         self.frame(
             label="dataclass-start",
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
-        for declaration in dataclasses.fields(cast("Any", value)):
+        for declaration in dataclasses.fields(value):
             # An optional field left at its default hashes like its absence, so
             # declarations that never use it keep their durable fingerprint.
             if declaration.metadata.get("fingerprint_omit_if_default") and (
@@ -1858,7 +1872,7 @@ class _SemanticHasher:
         )
         self.visit(value=identity)
         if dataclasses.is_dataclass(value) and not isinstance(value, type):
-            for declaration in dataclasses.fields(cast("Any", value)):
+            for declaration in dataclasses.fields(cast("DataclassInstance", value)):
                 self.frame(label="solver-field", payload=declaration.name.encode())
                 self.visit(value=getattr(value, declaration.name))
         else:
@@ -2319,7 +2333,7 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
                 _is_closed_terminal_reference(
                     value=getattr(value, field.name), _active=active
                 )
-                for field in dataclasses.fields(cast("Any", value))
+                for field in dataclasses.fields(cast("DataclassInstance", value))
             )
         if isinstance(value, functools.partial):
             return _is_closed_terminal_reference(
@@ -2499,7 +2513,7 @@ def _bind_referenced_member(
 
 def _read_array_metadata(
     *, binding_instance: object, attribute: str, member: object
-) -> object:
+) -> tuple[int, ...] | int | np.dtype | Literal[_NotArrayMetadata.NOT_ARRAY_METADATA]:
     """Read shape metadata an array constant already fixes, else the sentinel.
 
     `shape`, `size`, `ndim` and `dtype` of a JAX or NumPy array are functions of the

@@ -129,6 +129,7 @@ from _lcm.solution.periodization import (
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
+    EconFunctionKwargs,
     EconFunctionsMapping,
     FlatParams,
     QualifiedName,
@@ -154,6 +155,7 @@ from lcm.typing import (
     Float1D,
     FloatND,
     FunctionName,
+    Int1D,
     IntND,
     ParameterName,
     ReferenceName,
@@ -2334,7 +2336,7 @@ class _NBEGMCaseCore:
     savings_grid: Float1D
     """Exogenous post-decision savings grid the step inverts on."""
 
-    build_preferences: Callable[[Mapping[str, Any]], Preferences]
+    build_preferences: Callable[[EconFunctionKwargs], Preferences]
     """Bind the regime's flat params into its utility, marginal, and inverse maps."""
 
     case_spec: _NBEGMCaseSpec
@@ -3726,7 +3728,7 @@ class _DynamicLiquidProbe:
     """Whether to normalize the budget output to a scalar before differentiation."""
 
     # keyword-only-exempt: library-callback=jax.grad
-    def __call__(self, value: FloatND, arguments: Mapping[str, object]) -> object:
+    def __call__(self, value: FloatND, arguments: EconFunctionKwargs) -> object:
         result = self.func(**{**arguments, self.liquid_name: value})
         return jnp.asarray(result).reshape(()) if self.scalar else result
 
@@ -4968,7 +4970,7 @@ class _NBEGMContinuousCore:
     savings_grid: Float1D
     """Exogenous post-decision savings grid the step inverts on."""
 
-    build_preferences: Callable[[Mapping[str, Any]], Preferences]
+    build_preferences: Callable[[EconFunctionKwargs], Preferences]
     """Bind the regime's flat params into its utility, marginal, and inverse maps."""
 
     schedule_spec: _NBEGMScheduleSpec
@@ -5095,7 +5097,7 @@ class _BoundScalarFunction:
     argument_name: str
     """Name of the argument each call supplies."""
 
-    bound: Mapping[str, object]
+    bound: EconFunctionKwargs
     """The other arguments, by parameter name."""
 
     def __call__(self, value: FloatND) -> FloatND:
@@ -5645,7 +5647,7 @@ def _nbegm_ride_along_statics(
 def _nbegm_cell_breakpoints(
     *,
     statics: _NBEGMRideAlongStatics,
-    kwargs: Mapping[str, Any],
+    kwargs: EconFunctionKwargs,
     cell: dict[str, Any],
     liquid_grid: Float1D,
     dtype: Any,  # canonical float dtype
@@ -5699,7 +5701,7 @@ def _cell_breakpoint(
     *,
     source: _NBEGMSource,
     liquid_name: str,
-    kwargs: Mapping[str, Any],
+    kwargs: EconFunctionKwargs,
     cell: dict[str, Any],
     dtype: Any,  # canonical float dtype
     action_binding: Mapping[str, Any],
@@ -5800,7 +5802,7 @@ def _cliff_savings_targets(
     regime_name: RegimeName,
     statics: _NBEGMRideAlongStatics,
     child_carry: EGMCarry,
-    combo_pool: dict[str, Any],
+    combo_pool: EconFunctionKwargs,
     savings_grid: Float1D,
     dtype: Any,
     midpoints: Float1D | None = None,
@@ -5864,7 +5866,7 @@ def _cliff_targets_at_midpoint(
     midpoint: FloatND,
     *,
     targets_for_pool: Callable[..., FloatND],
-    combo_pool: dict[str, Any],
+    combo_pool: EconFunctionKwargs,
     liquid_name: str,
 ) -> FloatND:
     """The cliff targets with the liquid state bound to one interval's node."""
@@ -5884,7 +5886,7 @@ def _jump_breakpoint_states(*, statics: _NBEGMRideAlongStatics) -> frozenset[str
 
 def _cliff_targets_for_pool(
     *,
-    pool: dict[str, Any],
+    pool: EconFunctionKwargs,
     read: Any,  # `_ChildRead`; import-cycle-safe
     breakpoints: FloatND,
     jump_states: frozenset[str],
@@ -5940,7 +5942,7 @@ def _cliff_targets_for_pool(
             row.append(jnp.int32(0))
     for name, grid in zip(read.passive_state_names, read.passive_grids, strict=True):
         key = f"next_{name}"
-        value = next_states[key] if key in next_states else pool[key]
+        value = next_states[key] if key in next_states else cast("FloatND", pool[key])
         lower, upper, _ = locate_on_grid(x_query=value, grid=grid)
         if name in jump_states:
             node_axes[f"segment_{name}"] = jnp.stack([lower, upper])
@@ -5983,7 +5985,7 @@ def _cliff_targets_for_pool(
 
 def _cliff_targets_at_node(
     *,
-    pool: dict[str, Any],
+    pool: EconFunctionKwargs,
     next_state_func: Callable[..., Any],
     next_state_key: str,
     post_decision_name: str,
@@ -6027,7 +6029,7 @@ def _cliff_targets_at_node(
 def _next_euler_state(
     *,
     savings_value: FloatND,
-    pool: dict[str, Any],
+    pool: EconFunctionKwargs,
     next_state_func: Callable[..., Any],
     next_state_key: str,
     post_decision_name: str,
@@ -6496,7 +6498,7 @@ def _solve_nbegm_inner_mesh(
     *,
     carry: MappingProxyType[RegimeName, EGMCarry],
     comap_bindings: dict[str, Any],
-    kwargs: dict[str, Any],
+    kwargs: EconFunctionKwargs,
     solve_one_cell: Callable[..., tuple[FloatND, ...]],
     savings_grid: Float1D,
     continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
@@ -6578,7 +6580,7 @@ def _nbegm_continuation_channels(
 
 
 def _nbegm_inner_ride_cells(
-    *, kwargs: Mapping[str, Any], statics: _NBEGMRideAlongStatics
+    *, kwargs: EconFunctionKwargs, statics: _NBEGMRideAlongStatics
 ) -> tuple[FloatND | IntND, ...] | None:
     """Flatten the mesh over the ride states that are not co-mapped.
 
@@ -6595,7 +6597,7 @@ def _nbegm_inner_ride_cells(
 
 def _solve_nbegm_over_co_map(
     *,
-    kwargs: Mapping[str, Any],
+    kwargs: EconFunctionKwargs,
     carry: MappingProxyType[RegimeName, EGMCarry],
     continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     co_map_names: tuple[str, ...],
@@ -6624,7 +6626,7 @@ def _solve_with_co_map(
     carry: MappingProxyType[RegimeName, EGMCarry],
     remaining: tuple[str, ...],
     comap_bindings: dict[str, Any],
-    kwargs: Mapping[str, Any],
+    kwargs: EconFunctionKwargs,
     continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     solve_inner: Callable[..., tuple[FloatND, ...]],
 ) -> tuple[FloatND, ...]:
@@ -6665,7 +6667,7 @@ def _slice_solve(
     head: str,
     tail: tuple[str, ...],
     comap_bindings: dict[str, Any],
-    kwargs: Mapping[str, Any],
+    kwargs: EconFunctionKwargs,
     continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     solve_inner: Callable[..., tuple[FloatND, ...]],
 ) -> tuple[FloatND, ...]:
@@ -6682,7 +6684,7 @@ def _slice_solve(
 
 def _bind_nbegm_cell_continuation(
     *,
-    kwargs: dict[str, Any],
+    kwargs: EconFunctionKwargs,
     carry: MappingProxyType[RegimeName, EGMCarry],
     comap_bindings: Mapping[str, Any],
     savings_grid: Float1D,
@@ -6730,7 +6732,7 @@ class _NBEGMCellContinuation:
     scan requests and consumes one fixed-width row block at a time.
     """
 
-    kwargs: dict[str, Any]
+    kwargs: EconFunctionKwargs
     """The period's state grids and flat params."""
 
     carry: MappingProxyType[RegimeName, EGMCarry]
@@ -6766,7 +6768,7 @@ class _NBEGMCellContinuation:
     action_names: tuple[ActionName, ...] = field(init=False)
     """The declared discrete actions' names; derived at construction."""
 
-    param_pool: Mapping[str, Any] = field(init=False)
+    param_pool: EconFunctionKwargs = field(init=False)
     """Every non-state entry of `kwargs`; derived at construction."""
 
     def __post_init__(self) -> None:
@@ -6842,7 +6844,7 @@ class _NBEGMCellContinuation:
 
     # keyword-only-exempt: library-callback=_lcm.utils.dispatchers.map_over_leading_axis
     def _rows_for_codes(
-        self, codes_row: IntND, *, base_pool: dict[str, Any]
+        self, codes_row: IntND, *, base_pool: EconFunctionKwargs
     ) -> tuple[FloatND, ...]:
         """Read the rows of the branch class one representative's codes name."""
         binding = {
@@ -6851,7 +6853,7 @@ class _NBEGMCellContinuation:
         return self._cell_rows_for_pool(combo_pool={**base_pool, **binding})
 
     def _bind_interval_reader_for_branch(
-        self, *, action_binding: Mapping[str, IntND], base_pool: dict[str, Any]
+        self, *, action_binding: Mapping[str, IntND], base_pool: EconFunctionKwargs
     ) -> _NBEGMIntervalBlockReader:
         """Bind one branch's action codes into the cell's interval reader."""
         return self._bind_cell_interval_reader_for_pool(
@@ -6859,7 +6861,7 @@ class _NBEGMCellContinuation:
         )
 
     def _bind_cell_interval_reader_for_pool(
-        self, *, combo_pool: dict[str, Any]
+        self, *, combo_pool: EconFunctionKwargs
     ) -> _NBEGMIntervalBlockReader:
         """Bind one branch and return read access to the intervals a scan asks for."""
         from _lcm.egm.nbegm_breakpoints import interval_midpoints  # noqa: PLC0415
@@ -6889,7 +6891,9 @@ class _NBEGMCellContinuation:
             interval_rows=self._interval_rows_for(combo_pool=combo_pool),
         )
 
-    def _cell_rows_for_pool(self, *, combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
+    def _cell_rows_for_pool(
+        self, *, combo_pool: EconFunctionKwargs
+    ) -> tuple[FloatND, ...]:
         """Read one cell's rows under one combo pool, interval by interval if needed."""
         from _lcm.egm.continuation import bind_continuation  # noqa: PLC0415
         from _lcm.egm.nbegm_breakpoints import interval_midpoints  # noqa: PLC0415
@@ -6967,7 +6971,7 @@ class _NBEGMCellContinuation:
     def _cliff_targets_for(
         self,
         *,
-        combo_pool: dict[str, Any],
+        combo_pool: EconFunctionKwargs,
         midpoints: Float1D | None,
     ) -> FloatND:
         """The cell's save-to-cliff savings targets under one combo pool.
@@ -6989,7 +6993,7 @@ class _NBEGMCellContinuation:
         )
 
     def _interval_rows_for(
-        self, *, combo_pool: dict[str, Any]
+        self, *, combo_pool: EconFunctionKwargs
     ) -> Callable[[tuple[FloatND, ...]], tuple[Float1D, Float1D]]:
         """The per-interval row read with this cell's combo pool bound."""
         return functools.partial(
@@ -7009,7 +7013,7 @@ class _NBEGMCellContinuation:
 def _interval_rows(
     interval_inputs: tuple[FloatND, ...],
     *,
-    combo_pool: dict[str, Any],
+    combo_pool: EconFunctionKwargs,
     liquid_name: str,
     continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     carry: MappingProxyType[RegimeName, EGMCarry],
@@ -7160,7 +7164,7 @@ class _NBEGMCellSolver:
     binder: _NBEGMCellBinder
     """The period-invariant half of the solve."""
 
-    kwargs: Mapping[str, Any]
+    kwargs: EconFunctionKwargs
     """The period's state grids and flat params."""
 
     dtype: type
@@ -7169,13 +7173,13 @@ class _NBEGMCellSolver:
     liquid: Float1D
     """The liquid grid in the canonical dtype."""
 
-    coh_params: Mapping[str, Any]
+    coh_params: EconFunctionKwargs
     """The composed budget's params, read off `kwargs`."""
 
-    utility_params: Mapping[str, Any]
+    utility_params: EconFunctionKwargs
     """The utility DAG's params, read off `kwargs`."""
 
-    discount_params: Mapping[str, Any]
+    discount_params: EconFunctionKwargs
     """The per-cell discount factor's params, read off `kwargs`."""
 
     inverse_eis: FloatND | None
@@ -7253,7 +7257,7 @@ class _NBEGMCellSolver:
                 liquid=liquid,
                 schedule_breakpoints=cell_breakpoints,
                 schedule_kinds=binder.schedule_kinds,
-                params=kwargs,
+                params=cast("Mapping[str, FloatND | IntND | BoolND]", kwargs),
             )
             query_grid, unsort = _augment_liquid_for_feasibility(
                 liquid=liquid,
@@ -7392,7 +7396,7 @@ class _NBEGMCellBinder:
     schedule_kinds: tuple[str, ...]
     """Every declared breakpoint's kind, in source order."""
 
-    def __call__(self, kwargs: Mapping[str, Any]) -> _NBEGMCellSolver:
+    def __call__(self, kwargs: EconFunctionKwargs) -> _NBEGMCellSolver:
         """Bind one period's inputs into the per-cell solve."""
         dtype = canonical_float_dtype()
         return _NBEGMCellSolver(
@@ -7416,9 +7420,12 @@ class _NBEGMCellBinder:
             # expected-utility step.
             inverse_eis=(
                 1.0
-                / kwargs[
-                    "koopmans_aggregator__intertemporal_elasticity_of_substitution"
-                ]
+                / cast(
+                    "ScalarFloat",
+                    kwargs[
+                        "koopmans_aggregator__intertemporal_elasticity_of_substitution"
+                    ],
+                )
                 if self.is_epstein_zin
                 else None
             ),
@@ -7487,7 +7494,7 @@ class _NBEGMBranchSolver:
         query_grid = self.query_grid
         discount_factor_dag = schedule_spec.discount_factor_dag
         branch_discount_factor = (
-            kwargs["koopmans_aggregator__discount_factor"]
+            cast("ScalarFloat", kwargs["koopmans_aggregator__discount_factor"])
             if discount_factor_dag is None
             else discount_factor_dag(
                 **{name: cell[name] for name in statics.discount_state_names},
@@ -7575,7 +7582,9 @@ class _NBEGMBranchSolver:
                 feasible_interval_mask=self.feasible_interval_mask,
                 interval_block_reader=branch_interval_reader,
                 interval_width=statics.interval_width,
-                interval_indices=self.cell_solver.kwargs.get(_INTERVAL_COORDINATE),
+                interval_indices=cast(
+                    "Int1D | None", self.cell_solver.kwargs.get(_INTERVAL_COORDINATE)
+                ),
             )
         if branch_cont_value is None or branch_cont_marginal is None:
             raise ValueError(
@@ -7958,7 +7967,7 @@ class _NBEGMScheduleDiscreteCore:
     savings_grid: Float1D
     """Exogenous post-decision savings grid the step inverts on."""
 
-    build_preferences: Callable[[Mapping[str, Any]], Preferences]
+    build_preferences: Callable[[EconFunctionKwargs], Preferences]
     """Bind the regime's flat params and a branch's codes into its preference maps."""
 
     spec: _NBEGMScheduleDiscreteSpec
@@ -8098,7 +8107,7 @@ class _NBEGMDiscreteCore:
     savings_grid: Float1D
     """Exogenous post-decision savings grid the step inverts on."""
 
-    build_preferences: Callable[[Mapping[str, Any]], Preferences]
+    build_preferences: Callable[[EconFunctionKwargs], Preferences]
     """Bind the regime's flat params and a branch's codes into its preference maps."""
 
     discrete_spec: _NBEGMDiscreteSpec

@@ -20,13 +20,13 @@ import time
 from collections.abc import Hashable, Mapping, MutableMapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 import cloudpickle
 import jax
 import numpy as np
 
-from _lcm.engine import StateActionSpace, _RegimeSharding
+from _lcm.engine import Regime, StateActionSpace, _RegimeSharding
 from _lcm.execution.abstract_program_inputs import abstract_program_inputs
 from _lcm.execution.compiler_memory import (
     CompilerMemoryBytes,
@@ -75,6 +75,8 @@ from _lcm.solution.period_capture import (
     LAYOUTS_KEY,
     CoreLayoutDescriptor,
     LeafLayoutDescriptor,
+    PeriodCompileInputs,
+    PeriodKernelKwargs,
     PeriodLayouts,
     ShardingDescriptor,
     _describe_transfer,
@@ -96,6 +98,25 @@ from lcm.solver_api import KernelOutput
 #   ownership, and is admitted under them. No entry point in this module
 #   produces it; the label exists so a layout-faithful replay is not read as one.
 type PeriodReplayScope = Literal["logical", "layout", "resource"]
+
+
+class PeriodCapturePayload(TypedDict):
+    """What a period capture records, as replay reads it back."""
+
+    regime: Regime
+    """The captured regime."""
+
+    period: int
+    """Index of the captured period in the model horizon."""
+
+    kernel_kwargs: PeriodKernelKwargs
+    """The arguments the period adapter was called with."""
+
+    core_tile_widths: Mapping[str, Mapping[str, int]]
+    """Width per execution axis of every core, keyed by core name."""
+
+    layouts: NotRequired[PeriodLayouts]
+    """The device layout the period ran on, when the capture recorded one."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -231,7 +252,7 @@ def analyze_period_core_memory(*, directory: Path) -> PeriodCoreMemoryAnalysis:
     )
 
 
-def _load_capture_payload(*, directory: Path) -> dict[str, Any]:
+def _load_capture_payload(*, directory: Path) -> PeriodCapturePayload:
     """Load one period's captured regime, inputs, widths and layout block."""
     with (directory / _PAYLOAD_NAME).open("rb") as stream:
         payload = cloudpickle.load(stream)
@@ -245,7 +266,7 @@ def _load_capture_payload(*, directory: Path) -> dict[str, Any]:
     loaded["core_tile_widths"] = _normalize_core_tile_widths(
         raw=payload["core_tile_widths"]
     )
-    return loaded
+    return cast("PeriodCapturePayload", loaded)
 
 
 def _normalize_core_tile_widths(
@@ -331,9 +352,9 @@ def _project_axis_widths(
 
 def _compile_cores_for_one_period(
     *,
-    regime: Any,  # the canonical Regime, circular to import here
+    regime: Regime,
     period: int,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: PeriodCompileInputs,
     core_tile_widths: object,
     core_donations: Mapping[str, tuple[str, ...]] = MappingProxyType({}),
     recorded_core_layouts: Mapping[str, CoreLayoutDescriptor] | None = None,
@@ -498,9 +519,9 @@ def _compile_cores_for_one_period(
 
 def _core_build_context_for_one_period(
     *,
-    regime: Any,  # the canonical Regime, circular to import here
+    regime: Regime,
     period: int,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: PeriodCompileInputs,
 ) -> CoreBuildContext:
     """Build the immutable program context shared by replay and memory analysis."""
     # A source declaring gated edges reads its targets' folded continuation in
@@ -595,8 +616,8 @@ def replay_period_on_recorded_layout(
 
 
 def prepare_recorded_period(
-    *, payload: Mapping[str, Any], directory: Path, devices: Sequence[jax.Device]
-) -> tuple[dict[str, Any], MappingProxyType[str, PlannedCore]]:
+    *, payload: PeriodCapturePayload, directory: Path, devices: Sequence[jax.Device]
+) -> tuple[PeriodKernelKwargs, MappingProxyType[str, PlannedCore]]:
     """Restore and check the recorded layout without executing the period."""
     layouts = _require_period_layouts(payload=payload, directory=directory)
     recorded_cores = _require_recorded_cores(layouts=layouts, directory=directory)
@@ -645,7 +666,7 @@ def prepare_recorded_period(
 
 
 def _require_period_layouts(
-    *, payload: Mapping[str, Any], directory: Path
+    *, payload: PeriodCapturePayload, directory: Path
 ) -> PeriodLayouts:
     """Return the capture's layout block, refusing a capture that has none."""
     layouts = payload.get(LAYOUTS_KEY)
@@ -816,10 +837,10 @@ def _restore_input_transfer_plan(
 
 def _restore_recorded_layout(
     *,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: PeriodKernelKwargs,
     leaves: tuple[LeafLayoutDescriptor, ...],
     device_by_recorded_id: Mapping[int, jax.Device],
-) -> dict[str, Any]:
+) -> PeriodKernelKwargs:
     """Place every array leaf back on its recorded sharding and check it landed.
 
     The placement is checked leaf by leaf rather than trusted: `device_put` onto
@@ -864,12 +885,12 @@ def _restore_recorded_layout(
             label=f"restored input {key}",
         )
         restored.append(placed)
-    return cast("dict[str, Any]", jax.tree.unflatten(treedef, restored))
+    return cast("PeriodKernelKwargs", jax.tree.unflatten(treedef, restored))
 
 
 def _restore_state_action_space_layout(
-    *, kernel_kwargs: dict[str, Any]
-) -> dict[str, Any]:
+    *, kernel_kwargs: PeriodKernelKwargs
+) -> PeriodKernelKwargs:
     """Place the state-action space's grids where the solve's builder put them.
 
     The state-action space is not a pytree, so a capture records no descriptor
@@ -899,6 +920,7 @@ def _restore_state_action_space_layout(
             distributed_state_names=tuple(template_sharding.mesh.axis_names),
         )
         if isinstance(template_sharding, jax.NamedSharding)
+        and isinstance(template_sharding.mesh, jax.sharding.Mesh)
         else None
     )
 
@@ -1100,7 +1122,7 @@ class DeclaredCoreCompilation:
 
 def compile_declared_period_cores(
     *,
-    regimes: MappingProxyType[RegimeName, Any],
+    regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: TimeAxis,
     regime_name: RegimeName,
@@ -1157,7 +1179,7 @@ def compile_declared_period_cores(
             process_grid_resolver=process_grid_resolver,
         )
     )
-    kernel_kwargs = {
+    kernel_kwargs: PeriodCompileInputs = {
         "regime_name": regime_name,
         "period": period,
         "state_action_space": base_spaces[regime_name],
@@ -1199,10 +1221,10 @@ def compile_declared_period_cores(
 
 def _require_declared_regime(
     *,
-    regimes: Mapping[RegimeName, Any],
+    regimes: Mapping[RegimeName, Regime],
     regime_name: RegimeName,
     period: int,
-) -> Any:  # the canonical Regime, circular to import here
+) -> Regime:
     """Return the regime, refusing a name or a period it does not declare."""
     if regime_name not in regimes:
         msg = (
@@ -1222,9 +1244,9 @@ def _require_declared_regime(
 
 def _declared_axis_names(
     *,
-    regime: Any,  # the canonical Regime, circular to import here
+    regime: Regime,
     period: int,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: PeriodCompileInputs,
 ) -> frozenset[str]:
     """Collect the execution axes this period's cores declare.
 

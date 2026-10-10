@@ -18,6 +18,8 @@ from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
 from _lcm.typing import (
     FlatParams,
+    HostArray,
+    ParamsLeaf,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
@@ -381,7 +383,7 @@ def _update_digest_token(*, digest: Any, chunk: str | bytes) -> None:
 def _update_digest_value(
     *,
     digest: Any,
-    value: Any,
+    value: ParamsLeaf | HostArray,
     path: tuple[str, ...],
 ) -> None:
     """Feed one parameter leaf, with its tree path and container boundaries."""

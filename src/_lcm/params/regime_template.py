@@ -14,7 +14,7 @@ fallbacks — and returns that source's branch of `params["edges"]`.
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
@@ -42,6 +42,7 @@ from _lcm.typing import (
     FunctionName,
     RegimeName,
     RegimeParamsTemplate,
+    RegimeParamsTemplateNode,
     StateName,
     TransitionFunctionName,
 )
@@ -60,6 +61,14 @@ from lcm.transition import (
     Transition,
 )
 from lcm.typing import ParameterName, Phase, ReferenceName, UserFunction
+
+# A node of a parameter template under construction: an annotation string, or a
+# branch of further nodes keyed by name. Not `NodeTree[str]`: beartype checks the
+# recursive reference of a subscripted generic alias as its leaf type, so it
+# would refuse a branch nested three levels deep.
+type _TemplateNode = str | Mapping[str, _TemplateNode]
+# A mutable branch of a parameter template under construction.
+type _TemplateBranch = dict[str, _TemplateNode]
 
 
 def create_regime_params_template(
@@ -169,7 +178,7 @@ def create_regime_params_template(
         }
     )
     function_params: dict[FunctionName, dict[str, str]] = {}
-    per_target_params: dict[RegimeName, dict[str, Any]] = {}
+    per_target_params: dict[RegimeName, dict[str, _TemplateBranch]] = {}
 
     # The law joins the checks above, but its parameters belong to the edge
     # namespace (`create_edge_params_template`).
@@ -411,7 +420,7 @@ def create_edge_params_template(
         source=source, params_by_path=law_params_by_path
     )
     # A mutable build buffer of nested slots; freezing gives it its template type.
-    template: dict[str, Any] = {}
+    template: _TemplateBranch = {}
     for path, params in params_by_path:
         for param_name, annotation in params.items():
             _insert_edge_slot(
@@ -548,7 +557,7 @@ def _gate_callables(
 
 
 def _insert_edge_slot(
-    *, template: dict[str, Any], path: tuple[str, ...], annotation: str
+    *, template: _TemplateBranch, path: tuple[str, ...], annotation: str
 ) -> None:
     """File one parameter at its path, in place, refusing a leaf/branch clash."""
     branch = template
@@ -618,7 +627,7 @@ def _record_params(
     name: FunctionName | TransitionFunctionName,
     params: dict[str, str],
     function_params: dict[FunctionName, dict[str, str]],
-    per_target_params: dict[RegimeName, dict[str, Any]],
+    per_target_params: dict[RegimeName, dict[str, _TemplateBranch]],
 ) -> None:
     """File one entry's parameters under the branch its key names, in place.
 
@@ -644,7 +653,7 @@ def _record_params(
         function_params[name] = function_params.get(name, {}) | params
 
 
-def _freeze_template_node(value: Any) -> Any:
+def _freeze_template_node(value: _TemplateNode) -> RegimeParamsTemplateNode:
     """Recursively freeze a parameter-template branch."""
     if isinstance(value, Mapping):
         return MappingProxyType(
@@ -655,7 +664,7 @@ def _freeze_template_node(value: Any) -> Any:
 
 def _add_joint_transition_params(
     *,
-    per_target_params: dict[RegimeName, dict[str, Any]],
+    per_target_params: dict[RegimeName, dict[str, _TemplateBranch]],
     user_regime: UserRegime,
     variables: set[str],
     other_regime_state_names: frozenset[StateName],

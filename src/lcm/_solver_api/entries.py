@@ -6,6 +6,7 @@ from typing import Protocol, runtime_checkable
 
 import jax
 import numpy as np
+import numpy.typing as npt
 
 from lcm._solver_api.authority import (
     ArtifactAuthority,
@@ -42,7 +43,7 @@ class _LazyEntry(ABC):
     def materialize(self, *, template: object | None = None) -> object:
         """Load and verify the entry, optionally rebuilding a declared PyTree."""
 
-    def host_value(self) -> object | None:
+    def host_value(self) -> npt.NDArray[np.generic] | None:
         """Return the value as a host array without placing it on a device.
 
         `None` for an entry whose value is only available on a device.

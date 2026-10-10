@@ -72,7 +72,10 @@ from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import LotteryLifetime, declared_law_over_codes
 from _lcm.typing import (
+    ArrayTree,
     EconFunction,
+    EconFunctionArg,
+    EconFunctionKwargs,
     EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
@@ -97,8 +100,10 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     IntND,
+    ReferenceName,
     ScalarFloat,
     ScalarInt,
+    ValueND,
 )
 
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
@@ -162,7 +167,7 @@ class _ValidationSummary:
         self,
         *,
         function: Callable[..., jax.Array],
-        arguments: Mapping[str, object],
+        arguments: Mapping[str, ArrayTree],
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
     ) -> None:
         """Admit and retain only one check's reduced output."""
@@ -685,7 +690,7 @@ def _validate_regime_law_on_feasible_rows(
     phase: SolutionPhase | SimulationPhase,
     available_grids: Mapping[StateOrActionName, FloatND | IntND],
     regime_params: FlatRegimeParams,
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
     period: int,
@@ -763,7 +768,7 @@ def _evaluate_feasible_rows(
     law: Callable[..., Mapping[RegimeName, FloatND]],
     feasibility: Callable[..., BoolND],
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     memory: SimulationMemory | None,
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
@@ -798,7 +803,7 @@ def _evaluate_feasible_rows(
 def _feasible_rows_law(
     *,
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     grid_names: tuple[StateOrActionName, ...],
     law: Callable[..., Mapping[RegimeName, FloatND]],
     feasibility: Callable[..., BoolND],
@@ -824,7 +829,7 @@ def _evaluate_regime_probability_law(
     *,
     func: Callable[..., Mapping[RegimeName, FloatND]],
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     memory: SimulationMemory | None,
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
@@ -855,7 +860,7 @@ def _evaluate_regime_probability_law(
 def _regime_probability_law(
     *,
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     grid_names: tuple[StateOrActionName, ...],
     func: Callable[..., Mapping[RegimeName, FloatND]],
 ) -> tuple[Mapping[RegimeName, FloatND], Mapping[StateOrActionName, FloatND | IntND]]:
@@ -940,7 +945,7 @@ def _validate_regime_transition_probs(
 
     """
     names = tuple(regime_transition_probs)
-    flag_arguments: dict[str, object] = {
+    flag_arguments: dict[str, ArrayTree] = {
         "probabilities": tuple(regime_transition_probs.values())
     }
     if rows is not None:
@@ -1362,7 +1367,7 @@ def validate_joint_transitions_all_periods(
 
 @contextmanager
 def _own_transition_outputs(
-    *, memory: SimulationMemory | None, outputs: object, restore: object = ()
+    *, memory: SimulationMemory | None, outputs: object, restore: ArrayTree = ()
 ) -> Generator[None]:
     """Publish temporary roots for admitted checks and release them reliably."""
     _set_transition_outputs(memory=memory, outputs=outputs)
@@ -1526,7 +1531,7 @@ def _evaluate_joint_support(
     memory: SimulationMemory | None = None,
 ) -> Any:
     """Bind and admit one complete parameter-bound joint-support provider."""
-    kwargs: dict[str, object] = {}
+    kwargs: dict[ReferenceName, EconFunctionArg] = {}
     for name in inspect.signature(func).parameters:
         if name == "period":
             kwargs[name] = period
@@ -1715,7 +1720,7 @@ def _evaluate_joint_weights(
         evaluated at all.
     """
     grid_args: dict[StateOrActionName, FloatND | IntND] = {}
-    scalar_kwargs: dict[str, object] = {}
+    scalar_kwargs: dict[ReferenceName, EconFunctionArg] = {}
     for name in inspect.signature(func).parameters:
         if name == "period":
             scalar_kwargs[name] = period
@@ -1772,7 +1777,7 @@ def _evaluate_joint_weights(
 def _joint_weight_law(
     *,
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     grid_names: tuple[StateOrActionName, ...],
     func: Callable[..., Mapping[str, FloatND | IntND]],
 ) -> Mapping[str, FloatND | IntND]:
@@ -1869,7 +1874,7 @@ def _validate_state_transition_single(
         return
 
     grid_args: dict[StateOrActionName, FloatND | IntND] = {}
-    scalar_kwargs: dict[str, object] = {}
+    scalar_kwargs: dict[ReferenceName, EconFunctionArg] = {}
     period_int32 = jnp.int32(period)
 
     for name in sig_params:
@@ -2086,7 +2091,7 @@ def _evaluate_state_probability_law(
     *,
     func: Callable[..., FloatND],
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     memory: SimulationMemory | None,
 ) -> FloatND:
     """Admit a complete stochastic-state law before its first device dispatch."""
@@ -2138,7 +2143,7 @@ def _evaluate_state_probability_law(
 def _evaluate_admitted_transition_producer(
     *,
     function: Callable[..., object],
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
     memory: SimulationMemory,
 ) -> object:
     """Place, profile, admit, and complete one transition validation producer."""
@@ -2176,7 +2181,7 @@ def _evaluate_admitted_transition_producer(
 def _state_probability_law(
     *,
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     grid_names: tuple[StateOrActionName, ...],
     func: Callable[..., FloatND],
 ) -> FloatND:
@@ -2322,7 +2327,7 @@ def _check_state_probs(
         summary=summary,
     )
 
-    arguments: dict[str, object] = {"probabilities": probs}
+    arguments: dict[str, ValueND] = {"probabilities": probs}
     if source_codes is not None and fixed_of_code is not None:
         groups = np.asarray(fixed_of_code)
         outside_group = groups[source_codes][:, None] != groups
@@ -2470,7 +2475,7 @@ class _GridPointCall:
 
     names: tuple[str, ...]
     """Grid variable names, in the order the positional values arrive."""
-    scalar_kwargs: Mapping[str, object] = field(repr=False)
+    scalar_kwargs: EconFunctionKwargs = field(repr=False)
     """Arguments held fixed across grid points."""
     func: Callable[..., Any] = field(repr=False)
     """The transition function."""
