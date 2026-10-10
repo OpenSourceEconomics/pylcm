@@ -14,7 +14,7 @@ from typing import Protocol, runtime_checkable
 
 import jax
 
-from _lcm.typing import PytreeValue, ShapeDtypePytree
+from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from lcm.typing import ReferenceName
 
 
@@ -66,7 +66,7 @@ def shard_subject_function(
     *,
     function: Callable[..., PytreeValue],
     subject_arg_names: tuple[ReferenceName, ...],
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, ArgumentTree],
     static_kwargs: Mapping[str, int],
     devices: tuple[jax.Device, ...],
     subject_width_keyword: str,
@@ -117,7 +117,7 @@ def shard_subject_function(
 
 def _subject_extent(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, ArgumentTree],
     subject_arg_names: tuple[ReferenceName, ...],
 ) -> int:
     """Validate declared leading dimensions from metadata, never device values."""

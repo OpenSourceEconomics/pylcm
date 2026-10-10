@@ -21,10 +21,9 @@ from collections.abc import Hashable, Mapping
 from types import MappingProxyType
 
 import jax
-from jaxtyping import PyTree
 
 from _lcm.execution.liveness import PlannedInputLiveness
-from _lcm.typing import RegimeName
+from _lcm.typing import FootprintTree, RegimeName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ValueND
 
@@ -208,7 +207,7 @@ class ResidentInventory:
         )
 
 
-def concrete_device_bytes(*, tree: PyTree) -> MappingProxyType[int, int]:
+def concrete_device_bytes(*, tree: FootprintTree) -> MappingProxyType[int, int]:
     """Measure concrete fixed-owner payload, unioning actual shard intervals.
 
     This low-level JAX measurement assumes contiguous logical shard payload from

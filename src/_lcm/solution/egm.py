@@ -806,10 +806,7 @@ class _EGMArgumentBuilder:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         flat_params = cast("FlatParams", context.flat_params)
-        next_carry = cast(
-            "ContinuationPayload",
-            context.next_regime_to_continuation[self.continuation_target],
-        )
+        next_carry = context.next_regime_to_continuation[self.continuation_target]
         next_carry = cast("EGMCarry", next_carry)
         leaves = next_carry.leaves()
         (

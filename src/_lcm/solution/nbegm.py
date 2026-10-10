@@ -1499,10 +1499,7 @@ class _RideAlongArgumentBuilder:
                 **interval_arguments,
                 "next_regime_to_continuation": self._co_map_carry(
                     states=states,
-                    next_regime_to_continuation=cast(
-                        "Mapping[RegimeName, ContinuationPayload]",
-                        context.next_regime_to_continuation,
-                    ),
+                    next_regime_to_continuation=context.next_regime_to_continuation,
                 ),
                 **union_free_params(
                     flat_params=flat_params,

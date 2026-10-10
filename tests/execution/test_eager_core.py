@@ -20,7 +20,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.eager_core import make_eager_core
 from _lcm.execution.output_layout import VALUE
-from _lcm.typing import PytreeValue
+from _lcm.typing import ArgumentTree, PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -39,7 +39,7 @@ def internal_eager_program(
 
 
 def eager_program(
-    *, function: Callable[..., PytreeValue], arguments: Mapping[str, object]
+    *, function: Callable[..., PytreeValue], arguments: Mapping[str, ArgumentTree]
 ) -> ResolvedCoreProgram:
     """Declare a dense numerical body independently of the eager adapter."""
     return ResolvedCoreProgram(

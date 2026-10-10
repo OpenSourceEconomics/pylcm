@@ -49,7 +49,7 @@ def _double(*, value: object) -> object:
 
 def _context() -> CoreBuildContext:
     return CoreBuildContext(
-        state_action_space=object(),
+        state_action_space=None,
         next_regime_to_V_arr=MappingProxyType({}),
         next_regime_to_continuation=MappingProxyType({}),
         flat_params=MappingProxyType({}),

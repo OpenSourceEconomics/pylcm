@@ -27,6 +27,7 @@ from _lcm.execution.core_program import InvariantBinding
 from _lcm.execution.runtime_sharding import runtime_shardings_match
 from _lcm.execution.value_transfer import (
     CoordinateSelection,
+    StoredValueTemplate,
     ValueArtifactAddress,
     ValueViewDescriptor,
     ValueViewLeaf,
@@ -91,7 +92,7 @@ def selected_block_view(
     artifact: ValueArtifactAddress,
     binding: InvariantBinding,
     stored_axis_names: tuple[StateName, ...],
-    stored_template: object,
+    stored_template: StoredValueTemplate,
     required_sharding: jax.sharding.Sharding,
 ) -> ValueViewDescriptor:
     """Describe the read of the bound code's block of a value that carries the state.
@@ -99,14 +100,14 @@ def selected_block_view(
     The bound axis is removed; the consumer receives the remaining axes in
     their stored order.
     """
-    shape = tuple(int(size) for size in stored_template.shape)  # ty: ignore[unresolved-attribute]
+    shape = tuple(int(size) for size in stored_template.shape)
     axis = stored_axis_names.index(binding.state_name)
     return ValueViewDescriptor(
         artifact=artifact,
         leaf=ValueViewLeaf.SELECTED,
         stored_axis_names=stored_axis_names,
         stored_shape=shape,
-        dtype=stored_template.dtype,  # ty: ignore[unresolved-attribute]
+        dtype=stored_template.dtype,
         weak_type=bool(getattr(stored_template, "weak_type", False)),
         consumer_shape=(*shape[:axis], *shape[axis + 1 :]),
         required_sharding=required_sharding,

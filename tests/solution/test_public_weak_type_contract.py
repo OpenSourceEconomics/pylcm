@@ -42,8 +42,13 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
-from lcm.solver_api import KernelOutput, ResultRetention, SolverIdentity
-from lcm.solvers import GridSearch, ReducedAxis
+from lcm.solver_api import (
+    ContinuationArtifact,
+    KernelOutput,
+    ResultRetention,
+    SolverIdentity,
+)
+from lcm.solvers import GridSearch, ReducedAxis, StateActionSpace
 from lcm.typing import ReferenceName
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.deterministic.regression import (
@@ -218,9 +223,9 @@ class _ScalarEdgeKernel:
         self,
         *,
         compiled_cores: Mapping[str, Any],
-        state_action_space: object,
+        state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[str, FloatND],
-        next_regime_to_continuation: Mapping[str, object],
+        next_regime_to_continuation: Mapping[str, ContinuationArtifact],
         flat_params: FlatParams,
         period: int,
         ages: object,

@@ -62,7 +62,6 @@ from _lcm.execution.core_program import (
     ResolvedCoreProgram,
     TiledOutputAxis,
     ValueRead,
-    _TransferArgumentLeaf,
     _value_read_argument_leaf,
     core_program_graph,
     materialize_core_program,
@@ -135,6 +134,7 @@ from _lcm.execution.scheduler import (
 )
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
+    StoredValueTemplate,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
@@ -232,11 +232,14 @@ from _lcm.solution.v_topology import (
 )
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import (
+    ArgumentTree,
     ArtifactPayload,
     FlatParams,
+    FootprintTree,
     HostArray,
     ParamsLeaf,
     PRNGKeyND,
+    PytreeByPeriod,
     PytreeValue,
     QAndFArg,
     QualifiedName,
@@ -379,7 +382,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retain_replay: bool = True,
     retain_all_artifacts: bool = False,
     persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
-    retained_input_arrays: object = (),
+    retained_input_arrays: tuple[tuple[PytreeByPeriod, ...], ...] = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     call_id: CallId | None = None,
     gather_checks: GatherChecks | None = None,
@@ -3713,7 +3716,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     max_compilation_workers: int | None,
     logger: logging.Logger,
     call_id: CallId | None = None,
-    fixed_input_arrays: object = (),
+    fixed_input_arrays: FootprintTree = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     gather_checks: GatherChecks | None = None,
     executable_cache: ExecutableCache | None = None,
@@ -6736,7 +6739,7 @@ def _bound_block_view(
     *,
     program: MaterializedCoreProgram,
     read: ValueRead,
-    stored_template: _TransferArgumentLeaf,
+    stored_template: StoredValueTemplate,
     source_sharding: jax.sharding.Sharding,
     value_axis_names: Mapping[RegimeName, tuple[StateName, ...]],
 ) -> tuple[ValueViewDescriptor, jax.sharding.Sharding] | None:
@@ -6753,8 +6756,7 @@ def _bound_block_view(
     axis_names = value_axis_names.get(read.target.regime, ())
     if binding.state_name not in axis_names:
         return None
-    # The caller's layout resolution has refused a template without a sharding.
-    stored_sharding = cast("jax.sharding.Sharding", stored_template.sharding)
+    stored_sharding = stored_template.sharding
     selected_sharding = block_layout(
         layout=stored_sharding,
         axis=axis_names.index(binding.state_name),
@@ -7012,7 +7014,7 @@ def _spelled_trace_value(value: Hashable) -> Hashable:
 
 def _abstract_arguments_key(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, ArgumentTree],
 ) -> Hashable:
     """Describe dynamic kwargs by pytree and abstract leaf metadata."""
     return tuple(

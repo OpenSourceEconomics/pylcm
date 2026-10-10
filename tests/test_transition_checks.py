@@ -23,6 +23,7 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
 )
 from _lcm.solution import backward_induction as backward_induction_module
+from _lcm.typing import FootprintTree
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -920,7 +921,7 @@ def test_solve_fixed_inventory_charges_derived_categorical_codes(
     trees: list[object] = []
     original: Callable[..., object] = backward_induction_module.concrete_device_bytes
 
-    def record(*, tree: object) -> object:
+    def record(*, tree: FootprintTree) -> object:
         trees.append(tree)
         return original(tree=tree)
 

@@ -69,7 +69,7 @@ from _lcm.solution.backward_induction import (
     _trace_settings_key,
 )
 from _lcm.solution.solve_phase_records import nested_phase
-from _lcm.typing import HostArray, PytreeValue, ShapeDtypePytree
+from _lcm.typing import ArgumentTree, HostArray, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 
@@ -1086,7 +1086,7 @@ class _SimulationCandidateCompiler:
 
     def _bound(
         self, widths: Mapping[str, int]
-    ) -> tuple[Callable[..., PytreeValue], Mapping[str, object], dict[str, int]]:
+    ) -> tuple[Callable[..., PytreeValue], Mapping[str, ArgumentTree], dict[str, int]]:
         """Return the callable, its dynamic arguments and its static keywords."""
         if (
             self.shard_subjects
@@ -1115,7 +1115,7 @@ class _SimulationCandidateCompiler:
                             program=self.program, read=read
                         )
                     ),
-                    source_sharding=cast("jax.sharding.Sharding", leaf.sharding),
+                    source_sharding=leaf.sharding,
                 )
                 for read in self.program.requirements.value_reads
             )

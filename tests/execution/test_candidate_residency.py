@@ -191,4 +191,4 @@ def test_internal_reservation_uses_producer_identity_and_candidate_maximum() -> 
         templates=templates,
     )
     assert actual == {("acting", 0): (8 + 4) * 4}
-    assert footprint.concrete_device_bytes(tree=templates) == {}
+    assert footprint.concrete_device_bytes(tree=tuple(templates.values())) == {}
