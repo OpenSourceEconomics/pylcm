@@ -55,6 +55,7 @@ from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
     NextStateSimulationFunction,
+    ParamsLeaf,
     QAndFFunction,
     QualifiedName,
     RegimeName,
@@ -63,7 +64,6 @@ from _lcm.typing import (
     TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
-    _ParamsLeaf,
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
@@ -459,7 +459,7 @@ class _QAndF:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: _ParamsLeaf,
+        **states_actions_params: ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
@@ -622,7 +622,7 @@ class _ComputeIntermediates:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: _ParamsLeaf,
+        **states_actions_params: ParamsLeaf,
     ) -> tuple[
         FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
     ]:
@@ -698,7 +698,7 @@ class _TerminalQAndF:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
-        **states_actions_params: _ParamsLeaf,
+        **states_actions_params: ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
 
@@ -828,7 +828,7 @@ class _TerminalCollectiveQAndF:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
-        **states_actions_params: _ParamsLeaf,
+        **states_actions_params: ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Stacked per-stakeholder utilities and the shared feasibility mask.
 
@@ -1203,7 +1203,7 @@ class _SamePeriodReferenceReader:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+    def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
         regime_to_V = cast("Mapping[RegimeName, FloatND]", kwargs[self.v_mapping_arg])
         V_ref = regime_to_V[self.ref.regime]
         if self.ref.stakeholder_index is not None:
@@ -1274,7 +1274,7 @@ def _lookup_reference_params(
     qnames: Mapping[str, str],
     regime_to_params: object,
     ref_regime: RegimeName,
-) -> dict[str, _ParamsLeaf]:
+) -> dict[str, ParamsLeaf]:
     """Resolve a reader's interpolation helpers in the REFERENCE regime's params.
 
     See `SAME_PERIOD_PARAMS_ARG`.
@@ -1286,7 +1286,7 @@ def _lookup_reference_params(
     if not qnames:
         return {}
     params_per_regime = cast(
-        "Mapping[RegimeName, Mapping[str, _ParamsLeaf]]", regime_to_params
+        "Mapping[RegimeName, Mapping[str, ParamsLeaf]]", regime_to_params
     )
     if ref_regime not in params_per_regime:
         msg = (
@@ -1297,7 +1297,7 @@ def _lookup_reference_params(
         )
         raise KeyError(msg)
     ref_params = params_per_regime[ref_regime]
-    resolved: dict[str, _ParamsLeaf] = {}
+    resolved: dict[str, ParamsLeaf] = {}
     for arg, qname in qnames.items():
         if qname not in ref_params:
             msg = (
@@ -1544,7 +1544,7 @@ class _CollectiveQAndF:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: _ParamsLeaf,
+        **states_actions_params: ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Per-stakeholder state-action values and the shared feasibility mask.
 
@@ -1709,7 +1709,7 @@ def _apply_value_constraints(
     machinery: _ValueConstraintMachinery,
     Q_arr: FloatND,
     F_arr: BoolND,
-    # `object` values: besides ordinary `_ParamsLeaf` leaves, the cell kwargs
+    # `object` values: besides ordinary `ParamsLeaf` leaves, the cell kwargs
     # carry the same-period V mapping under `SAME_PERIOD_V_ARG`.
     states_actions_params: Mapping[str, object],
 ) -> BoolND:
@@ -1805,7 +1805,7 @@ class _StakeholderSlicedInterpolator:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+    def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
         stacked_V_arr = cast("FloatND", kwargs.pop(self.V_arr_name))
         return jnp.stack(
             [
@@ -2066,7 +2066,7 @@ class _PointwiseGatedInterpolator:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+    def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
         stacked = cast("FloatND", kwargs[self.V_arr_name])
         interpolator_kwargs = {
             name: kwargs[name]

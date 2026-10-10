@@ -7,10 +7,14 @@ they are re-exported here so engine-internal code can import everything from
 `_lcm.typing`.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import Field
 from types import MappingProxyType
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
+import jax
+import numpy as np
+import numpy.typing as npt
 from jax import Array
 from jaxtyping import Key
 
@@ -40,11 +44,13 @@ from lcm.typing import (
     IntND,
     Period,
     ProcessName,  # noqa: F401
+    ReferenceName,
     RegimeName,
     ScalarInt,
     StateName,
     StateOrActionName,  # noqa: F401
     TransitionFunctionName,
+    ValueND,
 )
 
 # A `__`-joined path through the params or function namespace, such as
@@ -84,14 +90,75 @@ type PRNGKeyND = Key[Array, "..."]
 # Post-canonicalization leaf type — output of
 # `cast_params_to_canonical_dtypes`. Only canonical-dtype JAX arrays and
 # canonical-narrow `MappingLeaf` / `SequenceLeaf` instances survive.
-type _ParamsLeaf = FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
+type ParamsLeaf = FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
 
 # One argument of a user economic function, exactly as `EconFunction.__call__`
 # accepts it. Named so a call site binding such arguments can say so.
 type EconFunctionArg = FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf
+
+# The arguments of a user economic function, keyed by the names they reference.
+type EconFunctionKwargs = Mapping[ReferenceName, EconFunctionArg]
+
+# One argument of a generated `QAndFFunction` or `MaxQOverAFunction`: an argument
+# of a user function, or a per-regime mapping of value arrays or of flat params.
+type QAndFArg = (
+    EconFunctionArg
+    | Mapping[RegimeName, FloatND]
+    | Mapping[RegimeName, FlatRegimeParams]
+)
+type QAndFKwargs = Mapping[ReferenceName, QAndFArg]
+
+# A value tree as the engine hands it to JAX: arrays and Python scalars at the
+# leaves, nested in tuples, lists and string-keyed mappings. The beartype claw
+# checks the outer levels of a recursive alias; ty checks every level.
+type ArrayTree = (
+    ValueND
+    | bool
+    | int
+    | float
+    | tuple[ArrayTree, ...]
+    | list[ArrayTree]
+    | Mapping[str, ArrayTree]
+    | None
+)
+
+# The abstract counterpart of an `ArrayTree`, for lowering and memory profiling.
+type ShapeDtypeTree = (
+    jax.ShapeDtypeStruct
+    | tuple[ShapeDtypeTree, ...]
+    | list[ShapeDtypeTree]
+    | Mapping[str, ShapeDtypeTree]
+    | None
+)
+
+# Shardings laid out like the tree they place.
+type ShardingTree = (
+    jax.sharding.Sharding
+    | tuple[ShardingTree, ...]
+    | list[ShardingTree]
+    | Mapping[str, ShardingTree]
+    | None
+)
+
+# A value that `json.dumps` writes and `json.loads` reads back.
+type JSONValue = (
+    bool | int | float | str | Sequence[JSONValue] | Mapping[str, JSONValue] | None
+)
+
+# A host NumPy operand, as opposed to a device `jax.Array`.
+type HostArray = npt.NDArray[np.generic]
+
+
+@runtime_checkable
+class DataclassInstance(Protocol):
+    """An instance of any dataclass."""
+
+    __dataclass_fields__: ClassVar[dict[str, Field[object]]]  # noqa: PAN001 - a dataclass field may hold any value
+
+
 type Params = Mapping[
     str,
-    _ParamsLeaf | Mapping[str, _ParamsLeaf | Mapping[str, _ParamsLeaf]],
+    ParamsLeaf | Mapping[str, ParamsLeaf | Mapping[str, ParamsLeaf]],
 ]
 
 # Internal regime parameters: A flat mapping with function-qualified names.
@@ -99,7 +166,7 @@ type Params = Mapping[
 # "koopmans_aggregator__discount_factor"). Values are canonical-dtype JAX arrays or
 # canonical-narrow container leaves.
 type FlatRegimeParams = MappingProxyType[
-    str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
+    QualifiedName, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
 ]
 # The `edges` level of the internal params: per source regime, the flat params of
 # the callables its edges declare, keyed by their declaration path below

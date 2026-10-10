@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 import jax
 
 if TYPE_CHECKING:
-    from _lcm.typing import _ParamsLeaf
-    from lcm.typing import _UserParamsLeaf
+    from _lcm.typing import ParamsLeaf
+    from lcm.typing import UserParamsLeaf
 
 
 class UserMappingLeaf:
@@ -34,7 +34,7 @@ class UserMappingLeaf:
     __slots__ = ("data",)
 
     if TYPE_CHECKING:
-        data: Mapping[str, _UserParamsLeaf]
+        data: Mapping[str, UserParamsLeaf]
 
     def __init__(self, data: Mapping[str, Any]) -> None:
         from _lcm.utils.containers import (  # noqa: PLC0415
@@ -71,7 +71,7 @@ class MappingLeaf(UserMappingLeaf):
     __slots__ = ()
 
     if TYPE_CHECKING:
-        data: Mapping[str, _ParamsLeaf]
+        data: Mapping[str, ParamsLeaf]
 
 
 def _user_flatten(
