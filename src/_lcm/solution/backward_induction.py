@@ -2197,7 +2197,7 @@ def _edge_kwargs(
     regime: Regime,
     regime_name: RegimeName,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
-) -> dict[ReferenceName, MappingProxyType[RegimeName, FloatND]]:
+) -> MappingProxyType[ReferenceName, MappingProxyType[RegimeName, FloatND]]:
     """Build a source kernel's gated-edge `Wbar` argument, keyed by target.
 
     The kernel substitutes each entry for the raw target V in
@@ -2206,15 +2206,17 @@ def _edge_kwargs(
     called with. Empty for a regime declaring no gated edge.
     """
     if not regime.gated_edges:
-        return {}
-    return {
-        "edge_regime_to_V_arr": MappingProxyType(
-            {
-                target_name: next_edge_to_V_arr[(regime_name, target_name)]
-                for target_name in regime.gated_edges
-            }
-        )
-    }
+        return MappingProxyType({})
+    return MappingProxyType(
+        {
+            "edge_regime_to_V_arr": MappingProxyType(
+                {
+                    target_name: next_edge_to_V_arr[(regime_name, target_name)]
+                    for target_name in regime.gated_edges
+                }
+            )
+        }
+    )
 
 
 def _iter_edge_topologies(
@@ -2357,7 +2359,9 @@ class _ProgramExecutionMetadata:
 class _CompiledPrograms:
     """Executable graph plus the metadata liveness reads through the same seam."""
 
-    executables: dict[tuple[RegimeName, int], MappingProxyType[str, PlannedCore]]
+    executables: MappingProxyType[
+        tuple[RegimeName, int], MappingProxyType[str, PlannedCore]
+    ]
     metadata: MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]
 
     input_liveness: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]
@@ -2371,8 +2375,8 @@ class _CompiledPrograms:
     )
     """Admitted ordinary alternatives at exactly the selected donating widths."""
 
-    capture_admission: Mapping[
-        tuple[str, int], Mapping[str, Mapping[str, int | None]]
+    capture_admission: MappingProxyType[
+        tuple[str, int], MappingProxyType[str, MappingProxyType[str, int | None]]
     ] = dataclasses.field(default_factory=lambda: MappingProxyType({}))
     """Selected non-donating reservation and residency for requested captures."""
 
@@ -3144,7 +3148,7 @@ def _period_copy_reservations(
     *,
     period: int,
     metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
-) -> Mapping[Hashable, ArtifactFootprint]:
+) -> MappingProxyType[Hashable, ArtifactFootprint]:
     """Reserve each shared destination throughout its period, including aliases.
 
     Runtime caches a destination by artifact and required layout, or by the
@@ -3175,7 +3179,7 @@ def _period_transfer_scratch_reservations(
     period: int,
     metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
-) -> Mapping[int, int]:
+) -> MappingProxyType[int, int]:
     """Bound all pending copy scratch on every endpoint device of one period.
 
     An operator's declared temporary bytes are what it holds beyond its result,
@@ -3221,7 +3225,7 @@ def _internal_reservations_by_cell(
     *,
     programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     templates: Mapping[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]],
-) -> Mapping[tuple[RegimeName, int], int]:
+) -> MappingProxyType[tuple[RegimeName, int], int]:
     """Reserve future producer subtrees across all cores of their runtime cell.
 
     These are not allocations owned by abstract templates. The existing producer
@@ -4373,7 +4377,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     logger=logger,
                 )
 
-    capture_admission: dict[tuple[str, int], dict[str, Mapping[str, int | None]]] = {}
+    capture_admission: dict[
+        tuple[str, int], dict[str, MappingProxyType[str, int | None]]
+    ] = {}
     for triple, core in selected_cores.items():
         if triple[:2] not in capture_periods:
             continue
@@ -4404,7 +4410,12 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
 
     return _CompiledPrograms(
         executables=_group_cores_by_regime_period(selected_cores),
-        capture_admission=MappingProxyType(capture_admission),
+        capture_admission=MappingProxyType(
+            {
+                cell: MappingProxyType(records)
+                for cell, records in capture_admission.items()
+            }
+        ),
         metadata=_execution_metadata(programs=selected_programs),
         input_liveness=input_liveness,
         donations=MappingProxyType(
@@ -5042,13 +5053,13 @@ def _uncompiled(
     *,
     keys: Mapping[_CoreCandidate, Hashable],
     compiled: Mapping[Hashable, jax.stages.Compiled],
-) -> dict[Hashable, _CoreCandidate]:
+) -> MappingProxyType[Hashable, _CoreCandidate]:
     """Name one representative candidate per key no wave has compiled yet."""
     new: dict[Hashable, _CoreCandidate] = {}
     for candidate, key in keys.items():
         if key not in compiled:
             new.setdefault(key, candidate)
-    return new
+    return MappingProxyType(new)
 
 
 def _measure_variant(
@@ -5412,7 +5423,7 @@ def _execution_metadata(
 def _count_triples_per_lowering_key(
     *,
     lowering_keys: Mapping[_CoreCandidate, Hashable],
-) -> dict[Hashable, int]:
+) -> MappingProxyType[Hashable, int]:
     """Count the candidate addresses each compiled module will serve.
 
     A shared callable with distinct output layouts is deliberately counted as
@@ -5421,7 +5432,7 @@ def _count_triples_per_lowering_key(
     counts: dict[Hashable, int] = {}
     for key in lowering_keys.values():
         counts[key] = counts.get(key, 0) + 1
-    return counts
+    return MappingProxyType(counts)
 
 
 def _fail_if_one_key_covers_two_callables(
@@ -5625,9 +5636,9 @@ class _LazyCandidateFrontier:
     ahead of it.
     """
 
-    frontiers: Mapping[_CoreTriple, _CoreFrontier]
+    frontiers: MappingProxyType[_CoreTriple, _CoreFrontier]
     candidates_by_triple: dict[_CoreTriple, list[_CoreCandidate]]
-    frontier_lengths: Mapping[_CoreTriple, int]
+    frontier_lengths: MappingProxyType[_CoreTriple, int]
     layouts: Mapping[_CoreTriple, ResolvedOutputLayout]
     resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram]
     internal_templates: dict[_CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]]
@@ -5635,7 +5646,7 @@ class _LazyCandidateFrontier:
     donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]]
     lowering_keys: dict[_CoreCandidate, Hashable]
     argument_keys: dict[_CoreTriple, Hashable]
-    transfer_consumers: Mapping[_ConsumerKey, Collection[_CoreTriple]]
+    transfer_consumers: MappingProxyType[_ConsumerKey, frozenset[_CoreTriple]]
     readers_by_dispatch: Mapping[
         tuple[int, RegimeName],
         Mapping[ValueArtifactAddress, frozenset[ValueConsumerAddress]],
@@ -7177,7 +7188,7 @@ def _attach_resolved_output_layout(
 
 def _group_cores_by_regime_period(
     cores_by_triple: Mapping[_CoreTriple, PlannedCore],
-) -> dict[tuple[RegimeName, int], MappingProxyType[str, PlannedCore]]:
+) -> MappingProxyType[tuple[RegimeName, int], MappingProxyType[str, PlannedCore]]:
     """Group (regime, period, core_key) -> core into (regime, period) -> {key: core}.
 
     The solve loop dispatches each period adapter with its full per-key core map,
@@ -7187,7 +7198,9 @@ def _group_cores_by_regime_period(
     grouped: dict[tuple[RegimeName, int], dict[str, PlannedCore]] = {}
     for (regime_name, period, core_key), core in cores_by_triple.items():
         grouped.setdefault((regime_name, period), {})[core_key] = core
-    return {key: MappingProxyType(cores) for key, cores in grouped.items()}
+    return MappingProxyType(
+        {key: MappingProxyType(cores) for key, cores in grouped.items()}
+    )
 
 
 def _log_kernel_memory(

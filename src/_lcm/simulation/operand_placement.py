@@ -61,7 +61,7 @@ def place_simulation_arguments[T: _OperandValue](
     live_footprint: DeviceBufferFootprint | None = None,
     argument_footprint: DeviceBufferFootprint | None = None,
     budget_devices: tuple[jax.Device, ...] = (),
-) -> Mapping[str, T]:
+) -> MappingProxyType[str, T]:
     """Share scalars/grids/params and shard subjects on the declared device order.
 
     Addressed value leaves are already supplied by the period's value owner and
@@ -130,7 +130,7 @@ def place_simulation_arguments[T: _OperandValue](
         # outstanding scratch from these operand copies.
         jax.block_until_ready(placed)
     # Rebuilding a container keeps its structure and places its leaves.
-    return cast("Mapping[str, T]", placed)
+    return cast("MappingProxyType[str, T]", placed)
 
 
 def _require_operand_headroom(

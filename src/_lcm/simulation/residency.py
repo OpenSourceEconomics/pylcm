@@ -137,7 +137,7 @@ def resident_bytes_by_device(
     live: DeviceBufferFootprint,
     arguments: DeviceBufferFootprint,
     devices: tuple[jax.Device, ...],
-) -> Mapping[jax.Device, int]:
+) -> MappingProxyType[jax.Device, int]:
     """Count live bytes outside the actual arguments already in compiler peaks.
 
     Subtract only each argument's covered address range on the same actual device.

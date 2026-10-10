@@ -18,16 +18,20 @@ import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.workspace_planning import compiler_peak_bytes
-from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.host_operations import (
+    ProfiledSimulationOperations,
+    _abstract_operation,
+)
 from _lcm.simulation.membership import initialize_subject_membership
 from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.operand_placement import subject_operand_sharding
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
 from _lcm.simulation.simulate import _lookup_values_from_indices
 from _lcm.simulation.transitions import (
     _advance_states_for_subjects,
     _draw_random_regime_ids,
 )
-from _lcm.typing import FootprintTree, PytreeValue
+from _lcm.typing import FootprintTree, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 from tests.conftest import assert_agrees_to_ulp
@@ -402,3 +406,34 @@ def test_subject_output_contract_selects_its_own_profile_and_executable(
     assert profiles[0] is profiles[2]
     assert profiles[0] is not profiles[1]
     np.testing.assert_array_equal(state, np.arange(6, dtype=np.int32))
+
+
+def _abstract_shift_operands() -> Mapping[ReferenceName, ShapeDtypePytree]:
+    device = jax.devices()[0]
+    state = jax.ShapeDtypeStruct(
+        (4,), jnp.float32, sharding=subject_operand_sharding(devices=(device,))
+    )
+    _key, abstract, _static, _output_sharding = _abstract_operation(
+        function=_shift,
+        arguments={"state": state},
+        subject_arg_names=("state",),
+        devices=(device,),
+        static_arguments=MappingProxyType({}),
+        subject_outputs=False,
+    )
+    return abstract
+
+
+def test_abstract_operation_returns_read_only_operands() -> None:
+    """The abstract operands an operation is keyed and lowered on are read-only."""
+    assert type(_abstract_shift_operands()) is MappingProxyType
+
+
+def test_abstract_operands_round_trip_through_jax_tree_utilities() -> None:
+    """Abstract operands flatten and rebuild as a read-only view of the same items."""
+    abstract = _abstract_shift_operands()
+    leaves, treedef = jax.tree_util.tree_flatten(abstract)
+
+    rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+
+    assert (type(rebuilt), dict(rebuilt)) == (MappingProxyType, dict(abstract))
