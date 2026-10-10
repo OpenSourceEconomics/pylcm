@@ -182,7 +182,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     @staticmethod
     def _from_entries_with_copy(
         *, entries: Mapping[object, object], array_copier: _ArrayCopier
-    ) -> ValueStore:
+    ) -> _ValueStoreBoundary:
         """Use the public constructor's checks with an ephemeral copy dependency."""
         store = object.__new__(ValueStore)
         object.__setattr__(store, "_entries", entries)
