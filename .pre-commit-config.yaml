@@ -179,13 +179,12 @@ repos:
           - python
           - jupyter
           - markdown
-      # The per-file baseline is read and rewritten by each invocation, so the
-      # hook runs serially rather than in parallel file batches.
+      # One invocation sees every file, so its closing summary counts the whole run.
       - id: precise-annotations
         name: annotations name precise types
         entry: pixi run -e type-checking python -m tests.ci.precise_annotations
         language: system
-        files: ^src/.*\.py$
+        files: ^(src/.*\.py|docs/.*\.ipynb)$
         require_serial: true
       - id: no-hardcoded-user-paths
         name: no hardcoded user-specific absolute paths

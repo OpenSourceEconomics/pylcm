@@ -48,8 +48,9 @@ aliases — DataFrame column labels, free-form param-template leaf strings, and 
 Use `NewType` only when an opaque ID is required; the project has not needed that so
 far.
 
-The `precise-annotations` hook reports a bare `str` on a regime, state, action or
-function name (`PAN003`), together with `object` and `Any` in annotations; see
+The `precise-annotations` hook reports a bare `str` on a regime, state, action,
+function, qualified or parameter name (`PAN003`), together with `object`, `Any`,
+generics without type arguments and aliases outside `type` statements; see
 [style.md](style.md), "Precise Annotations".
 
 ### Code Standards

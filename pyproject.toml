@@ -401,6 +401,9 @@ per-file-ignores."tests/test_Q_and_F.py" = [
 per-file-ignores."tests/test_temporal_aggregation.py" = [
   "ARG001", # Unused function argument (x64_enabled fixture)
 ]
+# `tests/ci/precise_annotations.py` reads `# noqa: PANxxx - <reason>`; ruff keeps
+# those codes when it rewrites a `noqa` comment.
+external = [ "PAN" ]
 pydocstyle.convention = "google"
 
 # codespell passes most econ/numerics jargon, but not all of it: `statics`
