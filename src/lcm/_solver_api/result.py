@@ -30,8 +30,11 @@ from lcm._solver_api.stores import (
 from lcm.typing import FloatND, RegimeName
 
 if TYPE_CHECKING:
+    from _lcm.solution.artifacts import OwnedSolutionView
+
     type _SolutionValuesInput = Mapping[int, Mapping[RegimeName, FloatND]] | ValueStore
     type _SolutionOmissionsInput = Mapping[ArtifactRef, OmissionReason]
+    type _EngineView = OwnedSolutionView
 else:
     # The public static contract stays precise above. At runtime the package-wide
     # beartype claw must not traverse these mappings: a ValueStore can contain lazy
@@ -39,6 +42,9 @@ else:
     # materialization, while omission validation belongs to result/save preflight.
     type _SolutionValuesInput = object
     type _SolutionOmissionsInput = object
+    # The engine's view class lives in the engine, which the solver API does not
+    # import at runtime.
+    type _EngineView = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -67,7 +73,7 @@ class SolutionResult:
         repr=False,
         compare=False,
     )
-    _engine_view: object | None = field(
+    _engine_view: _EngineView | None = field(
         default=None,
         init=False,
         repr=False,
