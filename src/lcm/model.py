@@ -395,7 +395,9 @@ type _ResolvedSolution = tuple[
 class _ReplayPayloadSource(Protocol):
     """How a plugin replay payload is obtained from a consumed solution."""
 
-    def __call__(self, *, ref: ArtifactRef, authority: ArtifactAuthority) -> object:
+    def __call__(
+        self, *, ref: ArtifactRef, authority: ArtifactAuthority
+    ) -> ArtifactPayload:
         """Return the payload stored at `ref` in the form `authority` declares."""
 
 
@@ -2077,7 +2079,7 @@ class Model:
         consumed_views = solution._consumed_views  # noqa: SLF001
         remembered = consumed_views.get(memo_key)
         if remembered is not None:
-            return cast("_ResolvedSolution", remembered)
+            return remembered
         engine_view = solution._engine_view  # noqa: SLF001
         if (
             type(engine_view) is OwnedSolutionView
@@ -2148,7 +2150,9 @@ class Model:
         )
         replay_artifacts = engine_view.replay_artifacts
 
-        def owned_payload(*, ref: ArtifactRef, authority: ArtifactAuthority) -> object:
+        def owned_payload(
+            *, ref: ArtifactRef, authority: ArtifactAuthority
+        ) -> ArtifactPayload:
             del authority
             return replay_artifacts[ref]
 
@@ -2960,7 +2964,7 @@ class Model:
                         f"({period}, {regime_name!r})."
                     )
 
-                snapshot_artifacts: dict[ArtifactKey, object] = {}
+                snapshot_artifacts: dict[ArtifactKey, ArtifactPayload] = {}
                 snapshot_authorities: dict[ArtifactKey, ArtifactAuthority] = {}
                 defects: list[str] = []
                 for key, declared_authority in declared.items():

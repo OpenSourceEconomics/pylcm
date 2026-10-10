@@ -6,12 +6,14 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
-    cast,
 )
+
+from beartype import beartype
 
 from lcm._solver_api.authority import (
     ArtifactAuthority,
 )
+from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.contract import (
     ArtifactRef,
     OmissionReason,
@@ -20,21 +22,22 @@ from lcm._solver_api.contract import (
 from lcm._solver_api.stores import (
     ArtifactStore,
     ValueStore,
-    _ArtifactStoreBoundary,
     _FloatValueBoundary,
-    _RegimeNameBoundary,
     _require_exact_artifact_ref,
     _traverse_public_mapping_items,
-    _ValuePeriodBoundary,
 )
 from lcm.typing import FloatND, RegimeName
 
 if TYPE_CHECKING:
     from _lcm.solution.artifacts import OwnedSolutionView
+    from lcm.model import _ResolvedSolution
 
     type _SolutionValuesInput = Mapping[int, Mapping[RegimeName, FloatND]] | ValueStore
     type _SolutionOmissionsInput = Mapping[ArtifactRef, OmissionReason]
     type _EngineView = OwnedSolutionView
+    # Engine replay inputs a consuming model resolved from this result, keyed by
+    # that model's instance and the parameter fingerprint it consumed under.
+    type _ConsumedViews = dict[tuple[str, str], _ResolvedSolution]
 else:
     # The public static contract stays precise above. At runtime the package-wide
     # beartype claw must not traverse these mappings: a ValueStore can contain lazy
@@ -45,8 +48,12 @@ else:
     # The engine's view class lives in the engine, which the solver API does not
     # import at runtime.
     type _EngineView = object
+    # The resolved replay inputs are defined by the model, which imports the solver
+    # API.
+    type _ConsumedViews = object
 
 
+@beartype(conf=SOLVER_API_CONF)
 @dataclass(frozen=True, kw_only=True)
 class SolutionResult:
     """Labelled value functions, retained artifacts, and omission records."""
@@ -55,17 +62,15 @@ class SolutionResult:
     """Value function of every solved cell, keyed by period then regime."""
     metadata: SolutionMetadata
     """Identity, retention, and schema facts of the solve."""
-    retained_continuations: _ArtifactStoreBoundary = field(
-        default_factory=ArtifactStore
-    )
+    retained_continuations: ArtifactStore = field(default_factory=ArtifactStore)
     """Continuation payloads kept for persistence, addressed by cell and key."""
-    replay_artifacts: _ArtifactStoreBoundary = field(default_factory=ArtifactStore)
+    replay_artifacts: ArtifactStore = field(default_factory=ArtifactStore)
     """Payloads simulation replays decisions from, addressed by cell and key."""
-    auxiliary_artifacts: _ArtifactStoreBoundary = field(default_factory=ArtifactStore)
+    auxiliary_artifacts: ArtifactStore = field(default_factory=ArtifactStore)
     """Additional solver-published payloads, addressed by cell and key."""
     omissions: _SolutionOmissionsInput = field(default_factory=dict)
     """Why each accounted-for artifact that is absent was left out."""
-    diagnostics: _ArtifactStoreBoundary = field(default_factory=ArtifactStore)
+    diagnostics: ArtifactStore = field(default_factory=ArtifactStore)
     """Solver diagnostics kept according to the solve's log level."""
     _artifact_authority: Mapping[ArtifactRef, ArtifactAuthority] = field(
         default_factory=lambda: MappingProxyType({}),
@@ -82,7 +87,7 @@ class SolutionResult:
     """The producing model's by-reference view of this result, when the engine
     built it in this process; `None` for every other provenance and for any
     copy made through `dataclasses.replace`."""
-    _consumed_views: dict[object, object] = field(
+    _consumed_views: _ConsumedViews = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -103,9 +108,7 @@ class SolutionResult:
                     f"SolutionResult.{field_name} must be an exact ArtifactStore."
                 )
         values = (
-            self.values
-            if type(self.values) is ValueStore
-            else ValueStore(cast("Mapping", self.values))
+            self.values if type(self.values) is ValueStore else ValueStore(self.values)
         )
         object.__setattr__(self, "values", values)
         omissions: dict[ArtifactRef, OmissionReason] = {}
@@ -128,8 +131,8 @@ class SolutionResult:
     def value(
         self,
         *,
-        period: _ValuePeriodBoundary,
-        regime: _RegimeNameBoundary,
+        period: int,
+        regime: RegimeName,
     ) -> _FloatValueBoundary:
         """Return one value-function array by its explicit coordinates."""
         return self.values[period][regime]

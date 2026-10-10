@@ -79,7 +79,7 @@ class OwnedSolutionView:
     """The published replay policies consumed by a declared route."""
     dissolution_flags: PeriodToRegimeToDissolutionFlags
     """The retained per-period, per-collective-regime dissolution flags."""
-    replay_artifacts: Mapping[ArtifactRef, object]
+    replay_artifacts: Mapping[ArtifactRef, ArtifactPayload]
     """Every retained replay-channel payload, by reference, for plugin routes."""
     authority: SolutionAuthority
     """The solution authority bound to this solve."""
@@ -120,11 +120,13 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         if component_values is None
         else component_values.coordinates
     )
-    replay: dict[ArtifactRef, object] = dict(internal_result.replay_artifacts)
-    retained_continuations: dict[ArtifactRef, object] = dict(
+    replay: dict[ArtifactRef, ArtifactPayload] = dict(internal_result.replay_artifacts)
+    retained_continuations: dict[ArtifactRef, ArtifactPayload] = dict(
         internal_result.retained_continuations
     )
-    auxiliary: dict[ArtifactRef, object] = dict(internal_result.auxiliary_artifacts)
+    auxiliary: dict[ArtifactRef, ArtifactPayload] = dict(
+        internal_result.auxiliary_artifacts
+    )
     diagnostics: dict[ArtifactRef, ArtifactPayload] = {}
     omissions: dict[ArtifactRef, OmissionReason] = {}
     declared_replay_policies: PeriodToRegimeToSimulationPolicy = MappingProxyType(

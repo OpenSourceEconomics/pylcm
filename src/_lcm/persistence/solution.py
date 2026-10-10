@@ -16,7 +16,6 @@ import math
 import os
 import tempfile
 import threading
-from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from pathlib import Path
@@ -698,7 +697,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         raise SolutionIntegrityError(
             "Solution archive value entries do not match its value schemas."
         )
-    values = ValueStore(cast("Mapping[object, object]", value_entries))
+    values = ValueStore(value_entries)
 
     stores: dict[ArtifactChannel, dict[ArtifactRef, _LazyHdf5Entry]] = {
         channel: {} for channel in ArtifactChannel

@@ -119,7 +119,7 @@ class _RaisingMapping(_OneShotMapping):
 class _CountingLazyEntry(solver_api_module._LazyEntry):
     """Record any payload materialization past structural preflight."""
 
-    def __init__(self, value: object) -> None:
+    def __init__(self, value: ArtifactPayload) -> None:
         self.value = value
         self.materialization_count = 0
 
@@ -127,7 +127,7 @@ class _CountingLazyEntry(solver_api_module._LazyEntry):
     def load_state(self) -> LoadState:
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
         self.materialization_count += 1
         return self.value
 
@@ -144,7 +144,7 @@ class _DeletingLazyEntry(solver_api_module._LazyEntry):
     def load_state(self) -> LoadState:
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:
         del template
         self.materialization_count += 1
         for target in self.targets:
@@ -675,7 +675,7 @@ def _replace_first_value_with_counter(
 ) -> tuple[SolutionResult, _CountingLazyEntry]:
     values = cast("ValueStore", solution.values)
     entries = dict(values._entries)
-    coordinate = cast("tuple[int, str]", next(iter(entries)))
+    coordinate = next(iter(entries))
     lazy = _CountingLazyEntry(values[coordinate[0]][coordinate[1]])
     entries[coordinate] = lazy
     return replace(solution, values=ValueStore(entries)), lazy
