@@ -185,7 +185,7 @@ def _snapshot_inert_pytree_metadata(  # noqa: C901
 
 
 def _same_inert_pytree_metadata(  # noqa: C901, PLR0911
-    *, actual: object, expected: InertMetadata
+    *, actual: ArtifactValue, expected: InertMetadata
 ) -> bool:
     """Compare validated static values with exact types and no custom equality."""
     actual_type = type(actual)
