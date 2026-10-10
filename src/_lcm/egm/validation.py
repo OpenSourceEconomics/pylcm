@@ -56,6 +56,7 @@ offending piece. The rules, in the order they are checked:
 import functools
 import inspect
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import cast
 
 import jax
@@ -843,7 +844,7 @@ def _savings_stage_candidates(
     law: RegimeLaw,
     solver: _BoundDCEGM,
     exclude_states: frozenset[StateName] = frozenset(),
-) -> list[tuple[str, str, UserFunction]]:
+) -> tuple[tuple[str, str, UserFunction], ...]:
     """Enumerate every savings-stage function variant of a regime.
 
     Coarse, `StochasticTransition`-wrapped, `Phased`, and granular per-target
@@ -899,7 +900,7 @@ def _savings_stage_candidates(
                     transition_func,
                 )
             )
-    return candidates
+    return tuple(candidates)
 
 
 def _savings_stage_euler_state_readers(
@@ -908,7 +909,7 @@ def _savings_stage_euler_state_readers(
     law: RegimeLaw,
     functions: dict[FunctionName, UserFunction],
     solver: _BoundDCEGM,
-) -> list[tuple[str, str, UserFunction]]:
+) -> tuple[tuple[str, str, UserFunction], ...]:
     """Savings-stage function variants whose DAG ancestors include the Euler state.
 
     The post-decision and resources functions are opaque (removed from the
@@ -922,14 +923,14 @@ def _savings_stage_euler_state_readers(
     opaque_functions = _without(
         functions=functions, names={solver.post_decision_function, solver.resources}
     )
-    return [
+    return tuple(
         (role, label, func)
         for role, label, func in _savings_stage_candidates(
             user_regime=user_regime, law=law, solver=solver
         )
         if solver.continuous_state
         in _dag_ancestors(functions=opaque_functions, target_func=func)
-    ]
+    )
 
 
 def _fail_if_grid_hygiene_violated(
@@ -1408,7 +1409,7 @@ def _find_jump_at_node_resolution(
 def _law_values_on_sample(
     *,
     law_func: UserFunction,
-    context: dict[ReferenceName, ScalarFloat | ScalarInt],
+    context: Mapping[ReferenceName, ScalarFloat | ScalarInt],
     euler_state_name: StateName,
     post_decision_name: FunctionName,
     savings_value: ScalarFloat,
@@ -1439,7 +1440,7 @@ def _law_at_euler_state(
     state_value: ScalarFloat,
     *,
     law_func: UserFunction,
-    context: dict[ReferenceName, ScalarFloat | ScalarInt],
+    context: Mapping[ReferenceName, ScalarFloat | ScalarInt],
     euler_state_name: StateName,
     post_decision_name: FunctionName,
     savings_value: ScalarFloat,
@@ -1472,7 +1473,7 @@ def _combo_contexts(
     grids: dict[StateOrActionName, Grid],
     varied: set[str],
     n_contexts: int = 3,
-) -> list[dict[ReferenceName, ScalarFloat | ScalarInt]]:
+) -> tuple[MappingProxyType[ReferenceName, ScalarFloat | ScalarInt], ...]:
     """A few fixed-input contexts for every non-varied argument of `func`.
 
     Context `j` binds each non-varied argument to the `j`-th point of its
@@ -1488,17 +1489,22 @@ def _combo_contexts(
         if arg_name in grids:
             samples[arg_name] = _grid_sample(grid=grids[arg_name])
         else:
-            return []
-    return [
-        {name: sample[min(j, sample.shape[0] - 1)] for name, sample in samples.items()}
+            return ()
+    return tuple(
+        MappingProxyType(
+            {
+                name: sample[min(j, sample.shape[0] - 1)]
+                for name, sample in samples.items()
+            }
+        )
         for j in range(n_contexts)
-    ]
+    )
 
 
 def _solve_grids(
     *,
     slot: Mapping[StateName, StateEntry] | Mapping[ActionName, ActionEntry],
-) -> dict[StateOrActionName, Grid]:
+) -> MappingProxyType[StateOrActionName, Grid]:
     """Solve-phase grids of a `states` or `actions` slot.
 
     A `Phased` state is carried: derived (no grid axis) during backward
@@ -1507,26 +1513,28 @@ def _solve_grids(
     (model-level broadcast masks) carry no grid either; the effective regime
     the validation runs on has them resolved away.
     """
-    return {name: grid for name, grid in slot.items() if isinstance(grid, Grid)}
+    return MappingProxyType(
+        {name: grid for name, grid in slot.items() if isinstance(grid, Grid)}
+    )
 
 
 def _continuous_non_process_names(
     *,
     grids: Mapping[StateOrActionName, Grid],
-) -> list[StateOrActionName]:
+) -> tuple[StateOrActionName, ...]:
     """Names of continuous grids that are not stochastic processes."""
-    return [
+    return tuple(
         name
         for name, grid in grids.items()
         if isinstance(grid, ContinuousGrid)
         and not isinstance(grid, _ContinuousStochasticProcess)
-    ]
+    )
 
 
 def _transition_variants(
     *,
     value: StateTransitionEntry | DecomposedTransition,
-) -> list[tuple[str, UserFunction]]:
+) -> tuple[tuple[str, UserFunction], ...]:
     """Unpack a `state_transitions` entry into labeled callables.
 
     Handles bare callables, `Phased` containers (solve variant),
@@ -1537,11 +1545,11 @@ def _transition_variants(
     reads the model period to pick its case, so it is unpacked into the laws
     the user wrote (`__lcm_sources__`), which are what can jump in a state.
     """
-    return [
+    return tuple(
         (label, source)
         for label, func in _declared_transition_variants(value=value)
         for source in _declared_sources(func)
-    ]
+    )
 
 
 def _declared_sources(func: UserFunction) -> tuple[UserFunction, ...]:
@@ -1555,18 +1563,18 @@ def _declared_sources(func: UserFunction) -> tuple[UserFunction, ...]:
 def _declared_transition_variants(
     *,
     value: _TransitionDeclaration,
-) -> list[tuple[str, UserFunction]]:
+) -> tuple[tuple[str, UserFunction], ...]:
     """Unpack a transition declaration into labeled callables, sources unexpanded."""
     if isinstance(value, ByAge):
-        return [
+        return tuple(
             variant
             for law in value.laws
             for variant in _declared_transition_variants(value=law)
-        ]
+        )
     if isinstance(value, Phased):
         value = value.solve
     if isinstance(value, StochasticTransition | DeterministicTransition):
-        return [("", value.func)]
+        return (("", value.func),)
     if isinstance(value, Mapping):
         variants: list[tuple[str, UserFunction]] = []
         for target_name, target_value in value.items():
@@ -1576,24 +1584,26 @@ def _declared_transition_variants(
                 else target_value
             )
             variants.append((f" (target '{target_name}')", cast("UserFunction", func)))
-        return variants
-    return [("", cast("UserFunction", value))]
+        return tuple(variants)
+    return (("", cast("UserFunction", value)),)
 
 
 def _without(
     *,
     functions: dict[FunctionName, UserFunction],
     names: set[FunctionName],
-) -> dict[FunctionName, UserFunction]:
+) -> MappingProxyType[FunctionName, UserFunction]:
     """Return `functions` with `names` removed, so they become DAG leaves."""
-    return {name: func for name, func in functions.items() if name not in names}
+    return MappingProxyType(
+        {name: func for name, func in functions.items() if name not in names}
+    )
 
 
 def _dag_ancestors(
     *,
     functions: Mapping[FunctionName, UserFunction],
     target_func: UserFunction,
-) -> set[str]:
+) -> frozenset[str]:
     """Ancestors (function names and leaf inputs) of a standalone callable.
 
     The callable is added to the DAG under a reserved name so its own name
@@ -1601,7 +1611,9 @@ def _dag_ancestors(
     """
     target_name = "__dcegm_validation_target__"
     mapping = {**functions, target_name: target_func}
-    return set(get_ancestors(mapping, targets=[target_name], include_targets=False))
+    return frozenset(
+        set(get_ancestors(mapping, targets=[target_name], include_targets=False))
+    )
 
 
 def _grid_sample(*, grid: Grid, n_points: int = 5) -> Float1D | Int1D:
@@ -1623,7 +1635,7 @@ def _fixed_kwargs(
     func: UserFunction,
     grids: dict[StateOrActionName, Grid],
     varied: set[str],
-) -> dict[ReferenceName, ScalarFloat | ScalarInt] | None:
+) -> MappingProxyType[ReferenceName, ScalarFloat | ScalarInt] | None:
     """Fixed inputs (first grid point) for every non-varied argument of `func`.
 
     Returns `None` when an argument is neither varied nor a state/action —
@@ -1638,7 +1650,7 @@ def _fixed_kwargs(
             fixed[arg_name] = grids[arg_name].to_jax()[0]
         else:
             return None
-    return fixed
+    return MappingProxyType(fixed)
 
 
 def _call_with_varied(

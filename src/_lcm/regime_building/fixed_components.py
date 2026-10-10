@@ -77,7 +77,7 @@ type _DeclarationNode = (
 class FixedComponentSplit:
     """A code bijection and the original observation domains of its carriers."""
 
-    grids: Mapping[str, DiscreteGrid]
+    grids: MappingProxyType[RegimeName, DiscreteGrid]
     """Original simulation grids by regime, before broadcast pruning."""
 
     rest_grid: DiscreteGrid
@@ -187,9 +187,12 @@ def factor_fixed_components(
     Mapping[StateName, StateEntry],
     Mapping[StateName, StateTransitionEntry],
     Mapping[FunctionName, FunctionEntry],
-    Mapping[str, FixedComponentSplit],
+    MappingProxyType[StateName, FixedComponentSplit],
 ]:
-    """Inventory declarations, then lower each grid and law in its original slot."""
+    """Inventory declarations, then lower each grid and law in its original slot.
+
+    Without a fixed component the model's own declarations pass through as given.
+    """
     groups = _collect_groups(regimes=regimes, state_transitions=state_transitions)
     if not groups:
         return (
@@ -294,7 +297,7 @@ def factor_fixed_components(
                 }
             ),
         ),
-        MappingProxyType(splits),
+        splits,
     )
 
 
@@ -448,7 +451,7 @@ def _collect_groups(
     *,
     regimes: Mapping[str, Regime],
     state_transitions: Mapping[StateName, StateTransitionEntry],
-) -> dict[str, tuple[int, ...]]:
+) -> MappingProxyType[StateName, tuple[int, ...]]:
     """Require one declared grouping across all law leaves."""
     groups: dict[str, tuple[int, ...]] = {}
     for laws in (
@@ -468,7 +471,7 @@ def _collect_groups(
                             "differs "
                             "between declarations; one state needs one grouping."
                         )
-    return groups
+    return MappingProxyType(groups)
 
 
 def _create_splits(
@@ -476,7 +479,10 @@ def _create_splits(
     regimes: Mapping[str, Regime],
     groups: Mapping[str, tuple[int, ...]],
     occupied: set[str],
-) -> tuple[dict[str, FixedComponentSplit], dict[str, np.ndarray]]:
+) -> tuple[
+    MappingProxyType[StateName, FixedComponentSplit],
+    MappingProxyType[StateName, np.ndarray],
+]:
     """Resolve every original carrier before replacing any grid or law."""
     splits: dict[str, FixedComponentSplit] = {}
     parts: dict[str, np.ndarray] = {}
@@ -522,7 +528,7 @@ def _create_splits(
             rest_of_code=tuple(int(code) for code in rest_of_code),
             fixed_of_code=grouping,
         )
-    return splits, parts
+    return MappingProxyType(splits), MappingProxyType(parts)
 
 
 def _read_initial_codes(

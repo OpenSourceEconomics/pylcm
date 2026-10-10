@@ -12,6 +12,7 @@ fallbacks — and returns that source's branch of `params["edges"]`.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, cast
@@ -216,7 +217,9 @@ def create_regime_params_template(
             strip_target_value_operands=False,
         )
 
-        _drop_engine_provided_args(name=name, params=params, user_regime=user_regime)
+        params = _drop_engine_provided_args(
+            name=name, params=params, user_regime=user_regime
+        )
 
         _record_params(
             name=name,
@@ -395,8 +398,8 @@ def create_edge_params_template(
 
     """
     variables = set(vocabulary_by_regime[source].variables)
-    params_by_path: list[tuple[tuple[str, ...], dict[ParameterName, str]]] = []
-    law_params_by_path: list[tuple[tuple[str, ...], dict[ParameterName, str]]] = []
+    params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
+    law_params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]] = []
     for transition in declared_transitions:
         for path, func, gate in iter_transition_callables(transition):
             non_params = (
@@ -441,7 +444,7 @@ def create_edge_params_template(
 def _fail_if_coarse_law_params_meet_per_target_cells(
     *,
     source: RegimeName,
-    params_by_path: list[tuple[tuple[str, ...], dict[ParameterName, str]]],
+    params_by_path: list[tuple[tuple[str, ...], Mapping[ParameterName, str]]],
 ) -> None:
     """Reject a source whose laws read parameters both over all targets and per target.
 
@@ -594,7 +597,7 @@ def _edge_slot_clash(*, path: tuple[str, ...]) -> str:
     )
 
 
-def _wired_names(user_regime: UserRegime) -> set[ReferenceName]:
+def _wired_names(user_regime: UserRegime) -> frozenset[ReferenceName]:
     """Return the names a regime's own callables read that the engine binds.
 
     Args:
@@ -627,13 +630,13 @@ def _wired_names(user_regime: UserRegime) -> set[ReferenceName]:
         # user-facing params.
         variables.update(f"Q_{s}" for s in user_regime.stakeholders)
         variables.update(user_regime.same_period_refs)
-    return variables
+    return frozenset(variables)
 
 
 def _record_params(
     *,
     name: FunctionName | TransitionFunctionName,
-    params: dict[str, str],
+    params: MappingProxyType[str, str],
     function_params: dict[FunctionName, dict[str, str]],
     per_target_params: dict[RegimeName, dict[str, _TemplateBranch]],
 ) -> None:
@@ -674,7 +677,7 @@ def _add_joint_transition_params(
     *,
     per_target_params: dict[RegimeName, dict[str, _TemplateBranch]],
     user_regime: UserRegime,
-    variables: set[str],
+    variables: AbstractSet[str],
     other_regime_state_names: frozenset[StateName],
 ) -> None:
     """File joint support, probability, and output params under their owners."""
@@ -756,8 +759,8 @@ def _joint_transition_node_names(user_regime: UserRegime) -> frozenset[str]:
 
 
 def _union_callable_params(
-    *, functions: Sequence[UserFunction], non_params: set[str]
-) -> dict[str, str]:
+    *, functions: Sequence[UserFunction], non_params: AbstractSet[str]
+) -> MappingProxyType[str, str]:
     """Union signature-derived parameters over one role's phase variants."""
     tree: dict[str, str] = {}
     for index, func in enumerate(functions):
@@ -772,23 +775,25 @@ def _union_callable_params(
     )
 
 
-def _input_types(functions: Mapping[str, UserFunction]) -> dict[str, str]:
+def _input_types(functions: Mapping[str, UserFunction]) -> MappingProxyType[str, str]:
     """Return argument name to type annotation for the arguments of `functions`.
 
     Every key of `functions` is a flat, unqualified name, so dags returns a flat
     mapping whose values are annotation strings.
     """
-    return cast("dict[str, str]", dict(dt.create_tree_with_input_types(functions)))
+    return MappingProxyType(
+        cast("dict[str, str]", dict(dt.create_tree_with_input_types(functions)))
+    )
 
 
 def _discovered_params(
     *,
     name: FunctionName | TransitionFunctionName,
     func: UserFunction | Phased,
-    non_params: set[str],
+    non_params: AbstractSet[str],
     strip_target_value_operands: bool,
     kind: str | None = None,
-) -> dict[str, str]:
+) -> MappingProxyType[str, str]:
     """Return the parameters one collected template entry contributes.
 
     Args:
@@ -842,7 +847,7 @@ def _discovered_params(
 
 def _annotate_temporal_params(
     *, params: dict[str, str], functions: Sequence[UserFunction], name: str
-) -> dict[str, str]:
+) -> MappingProxyType[str, str]:
     """Expose managed time slots consistently across ordinary and joint roles."""
     temporal = validate_temporal_variants(functions=functions, name=name)
     if conflicts := temporal - params.keys():
@@ -850,12 +855,14 @@ def _annotate_temporal_params(
             f"{name}: temporal markers {sorted(conflicts)} must name parameter "
             "arguments, not engine-wired inputs."
         )
-    return {
-        param: f"TimeVarying[{annotation}] or scalar"
-        if param in temporal
-        else annotation
-        for param, annotation in params.items()
-    }
+    return MappingProxyType(
+        {
+            param: f"TimeVarying[{annotation}] or scalar"
+            if param in temporal
+            else annotation
+            for param, annotation in params.items()
+        }
+    )
 
 
 # keyword-only-exempt: primary-argument=user_regime
@@ -1003,7 +1010,7 @@ def _joint_nodes_reachable_from(
     functions: Mapping[FunctionName, UserFunction | Phased | None],
     phase: Literal["solve", "simulate"],
     joint_node_names: frozenset[str],
-) -> dict[str, tuple[FunctionName, ...]]:
+) -> MappingProxyType[str, tuple[FunctionName, ...]]:
     """Return joint-node names reachable from one consumer, with helper routes."""
     reached: dict[str, tuple[FunctionName, ...]] = {}
     walked: set[FunctionName] = set()
@@ -1022,7 +1029,7 @@ def _joint_nodes_reachable_from(
                     (variant, (*chain, arg_name))
                     for variant in _callables_in(value=functions[arg_name], phase=phase)
                 )
-    return reached
+    return MappingProxyType(reached)
 
 
 def _fail_if_a_joint_node_is_read(
@@ -1120,7 +1127,7 @@ def _next_names_reachable_from(
     func: UserFunction | Phased,
     functions: Mapping[FunctionName, UserFunction | Phased | None],
     phase: Literal["solve", "simulate"],
-) -> dict[str, tuple[FunctionName, ...]]:
+) -> MappingProxyType[str, tuple[FunctionName, ...]]:
     """Return every `next_`-prefixed argument reachable from `func`, with its route.
 
     Args:
@@ -1151,7 +1158,7 @@ def _next_names_reachable_from(
                     (variant, (*chain, arg_name))
                     for variant in _callables_in(value=functions[arg_name], phase=phase)
                 )
-    return reached
+    return MappingProxyType(reached)
 
 
 def _fail_if_a_next_name_is_read(
@@ -1367,7 +1374,7 @@ def _fail_if_runtime_grid_shadows_function(
 
 def _callables_in(
     *, value: _CallableSlot, phase: Literal["solve", "simulate"] | None = None
-) -> list[UserFunction]:
+) -> tuple[UserFunction, ...]:
     """Return the callables a regime slot value stands for.
 
     A law and a regime function accept the same shapes, so one traversal serves
@@ -1393,20 +1400,20 @@ def _callables_in(
 
     """
     if value is None:
-        return []
+        return ()
     if isinstance(value, Phased):
         if phase == "solve":
             return _callables_in(value=value.solve, phase=phase)
         if phase == "simulate":
             return _callables_in(value=value.simulate, phase=phase)
-        return [*_callables_in(value=value.solve), *_callables_in(value=value.simulate)]
+        return (*_callables_in(value=value.solve), *_callables_in(value=value.simulate))
     if isinstance(value, Mapping) and not isinstance(value, StochasticTransition):
-        return [
+        return tuple(
             callable_
             for member in value.values()
             for callable_ in _callables_in(value=member, phase=phase)
-        ]
-    return [cast("UserFunction", value)]
+        )
+    return (cast("UserFunction", value),)
 
 
 def _function_names_in_transition_role(
@@ -1473,7 +1480,7 @@ def _collect_all_functions_for_template(
     user_regime: UserRegime,
     *,
     law: RegimeLaw,
-) -> dict[FunctionName | TransitionFunctionName, UserFunction | Phased]:
+) -> MappingProxyType[FunctionName | TransitionFunctionName, UserFunction | Phased]:
     """Collect all regime functions evaluated on this regime's domain.
 
     The law runs on the source grid and is collected; a gated edge's callables
@@ -1521,7 +1528,7 @@ def _collect_all_functions_for_template(
             joint_output_names=joint_output_names,
         )
         result |= _regime_transition_entries(law.decomposed_transition)
-    return result
+    return MappingProxyType(result)
 
 
 def _fail_if_a_gated_edge_reads_a_next_name(law: RegimeLaw) -> None:
@@ -1543,7 +1550,7 @@ def _fail_if_a_gated_edge_reads_a_next_name(law: RegimeLaw) -> None:
         )
 
 
-def _gated_edge_entries(law: RegimeLaw) -> dict[FunctionName, UserFunction]:
+def _gated_edge_entries(law: RegimeLaw) -> MappingProxyType[FunctionName, UserFunction]:
     """Key every gated-edge callable of a regime for the `next_` read check.
 
     A gated edge is declared with three kinds of user callable, each an ordinary
@@ -1583,7 +1590,7 @@ def _gated_edge_entries(law: RegimeLaw) -> dict[FunctionName, UserFunction]:
                     entries[qname_from_tree_path((key, target_regime_name))] = (
                         projection
                     )
-    return entries
+    return MappingProxyType(entries)
 
 
 def _fallbacks_by_phase(
@@ -1607,7 +1614,7 @@ def _gated_edge_wired_names(
     *,
     gate_reference_names: frozenset[ReferenceName],
     target_state_names: frozenset[StateName],
-) -> set[ReferenceName]:
+) -> frozenset[ReferenceName]:
     """Return the names ONE edge's gate callables read that the engine binds itself.
 
     A gate and a projection are evaluated on that edge's TARGET regime's grid, so
@@ -1639,36 +1646,48 @@ def _gated_edge_wired_names(
         parameters.
 
     """
-    return {
-        "D_target",
-        *EDGE_PERIOD_CONTEXT_ARGS,
-        *target_state_names,
-        *gate_reference_names,
-    }
+    return frozenset(
+        {
+            "D_target",
+            *EDGE_PERIOD_CONTEXT_ARGS,
+            *target_state_names,
+            *gate_reference_names,
+        }
+    )
 
 
 def _drop_engine_provided_args(
-    *, name: FunctionName, params: dict[str, str], user_regime: UserRegime
-) -> None:
-    """Remove a function's engine-supplied arguments from its discovered params.
+    *,
+    name: FunctionName,
+    params: MappingProxyType[str, str],
+    user_regime: UserRegime,
+) -> MappingProxyType[str, str]:
+    """Return a function's discovered params without its engine-supplied arguments.
 
     In a continuation-based (Euler-inversion) regime the inversion function
     `inverse_marginal_utility` receives `marginal_continuation` from the EGM
     kernel (in a regime whose solver reads no continuation, a function of that
     name is ordinary). This must not surface as a user-facing param, so it is
-    popped in place. Gated on the declared continuation demand, not the
-    concrete solver type, so every Euler-inversion solver is covered.
+    left out. Gated on the declared continuation demand, not the concrete
+    solver type, so every Euler-inversion solver is covered.
     """
     if (
         name == "inverse_marginal_utility"
         and user_regime.solver.required_continuation_keys
     ):
-        params.pop("marginal_continuation", None)
+        return MappingProxyType(
+            {
+                param: annotation
+                for param, annotation in params.items()
+                if param != "marginal_continuation"
+            }
+        )
+    return params
 
 
 def _regime_transition_entries(
     transition: DecomposedTransition,
-) -> dict[TransitionFunctionName, UserFunction | Phased]:
+) -> MappingProxyType[TransitionFunctionName, UserFunction | Phased]:
     """Key the regime transition for the read checks.
 
     The entries let the checks walk what the law reads and keep it out of the
@@ -1686,20 +1705,24 @@ def _regime_transition_entries(
     if isinstance(transition, Phased) and isinstance(transition.solve, Mapping):
         solve_cells = cast("Mapping[RegimeName, UserFunction]", transition.solve)
         simulate_cells = cast("Mapping[RegimeName, UserFunction]", transition.simulate)
-        return {
-            f"next_regime__{target_regime_name}": Phased(
-                solve=solve_cells.get(target_regime_name),
-                simulate=simulate_cells.get(target_regime_name),
-            )
-            for target_regime_name in dict.fromkeys((*solve_cells, *simulate_cells))
-        }
+        return MappingProxyType(
+            {
+                f"next_regime__{target_regime_name}": Phased(
+                    solve=solve_cells.get(target_regime_name),
+                    simulate=simulate_cells.get(target_regime_name),
+                )
+                for target_regime_name in dict.fromkeys((*solve_cells, *simulate_cells))
+            }
+        )
     if isinstance(transition, Mapping):
         cells = cast("Mapping[RegimeName, UserFunction]", transition)
-        return {
-            f"next_regime__{target_regime_name}": cell
-            for target_regime_name, cell in cells.items()
-        }
-    return {"next_regime": cast("UserFunction | Phased", transition)}
+        return MappingProxyType(
+            {
+                f"next_regime__{target_regime_name}": cell
+                for target_regime_name, cell in cells.items()
+            }
+        )
+    return MappingProxyType({"next_regime": cast("UserFunction | Phased", transition)})
 
 
 def _validate_no_shadowing(

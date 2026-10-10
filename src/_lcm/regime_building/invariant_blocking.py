@@ -147,7 +147,7 @@ def _request_failures(
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     block_widths: Mapping[StateName, int],
     sharded_states: frozenset[StateName],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Name what the request itself asks that the route does not serve."""
     failures: list[str] = []
     if len(block_widths) > 1:
@@ -165,7 +165,7 @@ def _request_failures(
             )
         if not any(name in regime.states for regime in user_regimes.values()):
             failures.append(f"no regime declares a state {name!r}")
-    return failures
+    return tuple(failures)
 
 
 def _block_major_failures(
@@ -173,9 +173,9 @@ def _block_major_failures(
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     laws: RegimeLaws,
     block_widths: Mapping[StateName, int],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Name every regime the block-major schedule cannot take components of."""
-    return [
+    return tuple(
         (
             f"regime {regime_name!r} does not carry {name!r}, which the "
             "block-major schedule requires of every regime"
@@ -187,7 +187,7 @@ def _block_major_failures(
         if not isinstance(regime.states.get(name), DiscreteGrid)
         # A non-terminal carrier's grid is already checked by the route itself.
         and not (regime.states.get(name) is not None and not laws[regime_name].terminal)
-    ]
+    )
 
 
 def _regime_failures(
@@ -196,10 +196,10 @@ def _regime_failures(
     regime: FinalizedUserRegime,
     law: RegimeLaw,
     carried: tuple[StateName, ...],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Name what one non-terminal regime carrying a blocked state declares."""
     if not carried:
-        return []
+        return ()
     checks = (
         (
             not isinstance(regime.solver, GridSearch),
@@ -217,7 +217,9 @@ def _regime_failures(
             for name in carried
         ),
     )
-    return [f"regime {regime_name!r} {reason}" for failed, reason in checks if failed]
+    return tuple(
+        f"regime {regime_name!r} {reason}" for failed, reason in checks if failed
+    )
 
 
 def admit_invariant_blocking(

@@ -117,10 +117,10 @@ def test_validate_discrete_grid_non_consecutive_jumps():
 
 
 def test_validate_category_class_valid():
-    """Valid category class should return empty error list."""
+    """A valid category class yields no error messages."""
     category_class = _make_dc("Category", ("a", jnp.int32(0)), ("b", jnp.int32(1)))
     errors = validate_category_class(category_class)
-    assert errors == []
+    assert errors == ()
 
 
 def test_validate_category_class_not_dataclass():

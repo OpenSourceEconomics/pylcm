@@ -448,10 +448,10 @@ def _fail_if_outer_law_reads_the_inner_margin(
 
 def _ancestors_through_sibling_laws(
     *,
-    functions: dict[FunctionName, UserFunction],
+    functions: Mapping[FunctionName, UserFunction],
     target_func: UserFunction,
     sibling_laws: Mapping[TransitionFunctionName, StateTransitionEntry],
-) -> set[str]:
+) -> frozenset[str]:
     """Ancestors of a law of motion, following the other laws it reads.
 
     A chained transition is supported — one law may consume another law's

@@ -11,6 +11,7 @@ and `dags` see the function they stand in for.
 import inspect
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TypeIs, TypeVar, cast
 
 import jax.numpy as jnp
@@ -85,7 +86,7 @@ def _split_bound_arguments[T](
     n_positional: int,
     original_signature: inspect.Signature,
     adapted_signature: inspect.Signature,
-) -> tuple[list[T], dict[ReferenceName, T]]:
+) -> tuple[tuple[T, ...], MappingProxyType[ReferenceName, T]]:
     """Preserve how positional-or-keyword values reached the adapter."""
     positional_origins: set[str] = set()
     remaining_positional = n_positional
@@ -118,7 +119,7 @@ def _split_bound_arguments[T](
         else:
             forwarded_kwargs[name] = value
 
-    return forwarded_args, forwarded_kwargs
+    return tuple(forwarded_args), MappingProxyType(forwarded_kwargs)
 
 
 def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
@@ -228,7 +229,9 @@ def array_result(value: UserFunctionResult) -> ValueND:
     raise TypeError(msg)
 
 
-def get_union_of_args[R](list_of_functions: Sequence[Callable[..., R]]) -> set[str]:
+def get_union_of_args[R](
+    list_of_functions: Sequence[Callable[..., R]],
+) -> frozenset[str]:
     """Return the union of arguments of a list of functions.
 
     Args:
@@ -239,7 +242,7 @@ def get_union_of_args[R](list_of_functions: Sequence[Callable[..., R]]) -> set[s
 
     """
     arguments = [inspect.signature(f).parameters for f in list_of_functions]
-    return set().union(*arguments)
+    return frozenset(set().union(*arguments))
 
 
 def all_as_kwargs[T](
@@ -247,7 +250,7 @@ def all_as_kwargs[T](
     args: tuple[T, ...],
     kwargs: dict[ReferenceName, T],
     arg_names: list[ReferenceName],
-) -> dict[ReferenceName, T]:
+) -> MappingProxyType[ReferenceName, T]:
     """Return kwargs dictionary containing all arguments.
 
     Args:
@@ -259,7 +262,9 @@ def all_as_kwargs[T](
         A dictionary of all arguments.
 
     """
-    return dict(zip(arg_names[: len(args)], args, strict=True)) | kwargs
+    return MappingProxyType(
+        dict(zip(arg_names[: len(args)], args, strict=True)) | kwargs
+    )
 
 
 def all_as_args[T](
@@ -284,7 +289,7 @@ def all_as_args[T](
 
 def convert_kwargs_to_args[T](
     *, kwargs: dict[ReferenceName, T], arg_names: list[ReferenceName]
-) -> list[T]:
+) -> tuple[T, ...]:
     """Convert kwargs to args in the order of arg_names.
 
     Args:
@@ -298,7 +303,7 @@ def convert_kwargs_to_args[T](
     unknown = set(kwargs).difference(arg_names)
     if unknown:
         raise ValueError(f"Arguments {sorted(unknown)} are not among {arg_names}.")
-    return [kwargs[name] for name in arg_names if name in kwargs]
+    return tuple(kwargs[name] for name in arg_names if name in kwargs)
 
 
 @dataclass(frozen=True, eq=False)

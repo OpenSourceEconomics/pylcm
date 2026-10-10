@@ -395,7 +395,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retain_replay: bool = True,
     retain_all_artifacts: bool = False,
     persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
-    retained_input_arrays: PytreeByPeriod = (),
+    retained_input_arrays: tuple[tuple[PytreeByPeriod, ...], ...] = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     call_id: CallId | None = None,
     gather_checks: GatherChecks | None = None,

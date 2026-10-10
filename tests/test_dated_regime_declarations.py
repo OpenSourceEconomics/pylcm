@@ -396,9 +396,9 @@ def test_until_schedule_resolves_like_its_declaration() -> None:
 
 def test_with_mapped_laws_calls_func_once_per_law() -> None:
     """Mapping the laws evaluates `func` exactly once for each declared law."""
-    calls: list[object] = []
+    calls: list[AgeCaseLaw] = []
 
-    def rename(law: object) -> object:
+    def rename(law: AgeCaseLaw) -> AgeCaseLaw:
         calls.append(law)
         return f"{law}_x"
 

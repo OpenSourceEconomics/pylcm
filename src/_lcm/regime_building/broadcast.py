@@ -220,12 +220,13 @@ def prune_broadcast_variables(
     }
     all_regime_names = frozenset(user_regimes)
 
-    kept: dict[RegimeName, frozenset[StateOrActionName]] = {}
-    for regime_name, user_regime in user_regimes.items():
-        declared = (
-            set(user_regime.states) | set(user_regime.actions)
-        ) - broadcast_variables[regime_name]
-        kept[regime_name] = frozenset(declared)
+    declared_kept = {
+        regime_name: frozenset(
+            (set(user_regime.states) | set(user_regime.actions))
+            - broadcast_variables[regime_name]
+        )
+        for regime_name, user_regime in user_regimes.items()
+    }
 
     kept = _joint_phase_closure(
         specs=specs,
@@ -233,7 +234,7 @@ def prune_broadcast_variables(
         laws=laws,
         broadcast_variables=broadcast_variables,
         koopmans_aggregator=koopmans_aggregator,
-        kept=kept,
+        kept=declared_kept,
         all_regime_names=all_regime_names,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
@@ -363,7 +364,7 @@ def _valuation_roots(
     law: RegimeLaw,
     phase: Literal["solve", "simulate"],
     koopmans_aggregator: UserFunction | None,
-) -> dict[str, UserFunction]:
+) -> MappingProxyType[str, UserFunction]:
     """Key the payoff side of the regime — utility, categoricals, constraints, W."""
     functions = {
         name: cast("UserFunction", _for_phase(value=func, phase=phase))
@@ -394,12 +395,12 @@ def _valuation_roots(
         aggregator = regime.get_koopmans_aggregator(phase=phase) or koopmans_aggregator
         if aggregator is not None:
             roots["__koopmans_aggregator"] = aggregator
-    return roots
+    return MappingProxyType(roots)
 
 
 def _transition_roots(
     *, regime: UserRegime, law: RegimeLaw, phase: Literal["solve", "simulate"]
-) -> dict[str, UserFunction]:
+) -> MappingProxyType[str, UserFunction]:
     """Key regime routing plus every edge-local joint probability and output law."""
     roots: dict[str, UserFunction] = {}
     transition = _for_phase(value=law.decomposed_transition, phase=phase)
@@ -421,10 +422,10 @@ def _transition_roots(
                 f"__joint_output__{target_name}__{state_name}": output
                 for state_name, output in kernel.outputs.items()
             }
-    return roots
+    return MappingProxyType(roots)
 
 
-def _value_aware_roots(*, regime: UserRegime) -> dict[str, UserFunction]:
+def _value_aware_roots(*, regime: UserRegime) -> MappingProxyType[str, UserFunction]:
     """Key a collective regime's household declarations.
 
     Its value constraints, its same-period projections, and its Pareto weights
@@ -446,12 +447,12 @@ def _value_aware_roots(*, regime: UserRegime) -> dict[str, UserFunction]:
         for ref_name, ref in regime.same_period_refs.items()
         for state_name, projection in ref.projection.items()
     }
-    return roots
+    return MappingProxyType(roots)
 
 
 def _incoming_edge_roots(
     *, regime_name: RegimeName, laws: RegimeLaws
-) -> dict[str, UserFunction]:
+) -> MappingProxyType[str, UserFunction]:
     """Key the gated-edge functions other regimes evaluate on this regime's grid."""
     roots: dict[str, UserFunction] = {}
     for source_name, law in laws.items():
@@ -478,7 +479,7 @@ def _incoming_edge_roots(
             )
             for state_name, projection in ref.projection.items()
         }
-    return roots
+    return MappingProxyType(roots)
 
 
 def _for_phase[T](*, value: T | Phased[T, T], phase: Literal["solve", "simulate"]) -> T:
@@ -500,7 +501,7 @@ def _joint_phase_closure(
     ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
     phase_order: tuple[PhaseName, ...] = ("solution", "simulation"),
-) -> dict[RegimeName, frozenset[StateOrActionName]]:
+) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to the least fixed point of both phase operators.
 
     The two phase slices feed each other: a target that keeps a state only
@@ -514,7 +515,7 @@ def _joint_phase_closure(
     Being the least fixed point of both operators, the result is the same for
     either `phase_order`.
     """
-    grown = dict(kept)
+    grown = MappingProxyType(dict(kept))
     while True:
         before = grown
         for phase_name in phase_order:
@@ -546,7 +547,7 @@ def _phase_fixed_point(
     all_regime_names: frozenset[RegimeName],
     ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
-) -> dict[RegimeName, frozenset[StateOrActionName]]:
+) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to this phase slice's least fixed point.
 
     Per iteration, each regime's needed-set is the DAG ancestry of its root
@@ -602,7 +603,7 @@ def _phase_fixed_point(
                 grown[regime_name] = grown[regime_name] | newly_kept
                 changed = True
         if not changed:
-            return grown
+            return MappingProxyType(grown)
 
 
 def _state_conditioned_names(
@@ -746,7 +747,7 @@ def _needed_names(
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     ages: TimeAxis | None,
     active_periods: tuple[int, ...] | None,
-) -> set[str]:
+) -> frozenset[str]:
     """Collect every name this phase slice's root computations read.
 
     The roots are `root_functions`' — utility, derived categoricals,
@@ -783,7 +784,7 @@ def _needed_names(
     pool |= roots
 
     if not roots:
-        return set()
+        return frozenset()
     while True:
         resolved_pool = _resolved_at_representative_age(
             mapping=pool, ages=ages, active_periods=active_periods
@@ -795,14 +796,14 @@ def _needed_names(
             phase_slice=phase_slice, regime=user_regime, reads=needed
         )
         if draw_roots.keys() <= roots.keys():
-            return needed
+            return frozenset(needed)
         roots |= draw_roots
         pool |= draw_roots
 
 
 def _draw_law_roots(
     *, phase_slice: RegimePhaseSpec, regime: UserRegime, reads: Collection[str]
-) -> dict[str, UserFunction]:
+) -> MappingProxyType[str, UserFunction]:
     """Key the Markov laws whose draws `reads` contains as pruning roots.
 
     A draw toward a target that does not carry the state is taken from the
@@ -810,18 +811,20 @@ def _draw_law_roots(
     values, so every name that law reads is read here. A per-target law cell
     feeds only a target carrying the state; `_law_roots` roots it there.
     """
-    return {
-        f"__draw_law_{name}": cast("UserFunction", law)
-        for name in states_read_through_their_draw(regime=regime, reads=reads)
-        if isinstance(
-            law := phase_slice.state_transitions.get(name), StochasticTransition
-        )
-    }
+    return MappingProxyType(
+        {
+            f"__draw_law_{name}": cast("UserFunction", law)
+            for name in states_read_through_their_draw(regime=regime, reads=reads)
+            if isinstance(
+                law := phase_slice.state_transitions.get(name), StochasticTransition
+            )
+        }
+    )
 
 
 def _composed_resources_edge(
     *, user_regime: UserRegime, pool: Mapping[str, UserFunction]
-) -> dict[str, UserFunction]:
+) -> MappingProxyType[str, UserFunction]:
     """Supply the resources node a `NetOfAdjustmentCost` regime composes later.
 
     Model finalization installs `<resources> = <before_cost> - <cost>`, but
@@ -833,16 +836,18 @@ def _composed_resources_edge(
     """
     resources = getattr(getattr(user_regime, "liquid", None), "resources", None)
     if not isinstance(resources, NetOfAdjustmentCost) or resources.output in pool:
-        return {}
+        return MappingProxyType({})
 
-    return {
-        resources.output: cast(
-            "UserFunction",
-            _ComposedResourcesEdge(
-                before_cost=resources.before_cost, cost=resources.cost
-            ),
-        )
-    }
+    return MappingProxyType(
+        {
+            resources.output: cast(
+                "UserFunction",
+                _ComposedResourcesEdge(
+                    before_cost=resources.before_cost, cost=resources.cost
+                ),
+            )
+        }
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -927,7 +932,7 @@ def _law_roots(
     phase_slice: RegimePhaseSpec,
     candidate_targets: frozenset[RegimeName],
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
-) -> dict[str, UserFunction]:
+) -> MappingProxyType[str, UserFunction]:
     """Key the laws of motion that rescue a state as pruning roots.
 
     A law counts only toward a candidate target that currently keeps the
@@ -950,7 +955,7 @@ def _law_roots(
                 roots[f"__law_{state_name}_{target_regime_name}"] = cast(
                     "UserFunction", law
                 )
-    return roots
+    return MappingProxyType(roots)
 
 
 def _merge_one_slot(
@@ -959,7 +964,7 @@ def _merge_one_slot(
     regime_name: RegimeName,
     regime_slot: Mapping[str, SlotEntry],
     model_slot: Mapping[str, SlotEntry],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Apply the exactly-one-level rule to one slot of one regime.
 
     Args:
@@ -969,7 +974,7 @@ def _merge_one_slot(
         model_slot: The model-level entries that reach this regime.
 
     Returns:
-        List of error messages, empty when the slot merges cleanly.
+        The error messages, empty when the slot merges cleanly.
 
     """
     errors: list[str] = []
@@ -987,7 +992,7 @@ def _merge_one_slot(
                 f"regime '{regime_name}': defined at model level and regime "
                 f"level. Remove one, or mask the model entry with `None`.",
             )
-    return errors
+    return tuple(errors)
 
 
 def _names_the_household_writes(*, user_regime: UserRegime) -> frozenset[str]:
@@ -1017,22 +1022,19 @@ def _names_the_household_writes(*, user_regime: UserRegime) -> frozenset[str]:
 def _model_slot_value_errors(
     *,
     model_slots: Mapping[str, Mapping[str, SlotEntry]],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Reject `None` values in model-level slots (masks are regime-level).
 
     Per-value grammar (grids, callables, law vocabulary, `Phased` placement)
     is validated when the merged regimes are constructed; only the
     merge-specific vocabulary is checked here.
     """
-    errors: list[str] = []
-    for slot_name, slot in model_slots.items():
-        for name, value in slot.items():
-            if value is None:
-                errors.append(
-                    f"Model-level {slot_name}['{name}'] cannot be `None` — "
-                    f"masks are regime-level.",
-                )
-    return errors
+    return tuple(
+        f"Model-level {slot_name}['{name}'] cannot be `None` — masks are regime-level."
+        for slot_name, slot in model_slots.items()
+        for name, value in slot.items()
+        if value is None
+    )
 
 
 def validate_model_slots(*, model_slots: Mapping[str, Mapping[str, SlotEntry]]) -> None:
