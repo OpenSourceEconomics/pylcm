@@ -33,6 +33,7 @@ from dags import get_ancestors
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
+from _lcm.regime_building.fixed_process_laws import StateDeclaration
 from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
     RegimePhaseSpec,
@@ -40,7 +41,7 @@ from _lcm.regime_building.phases import (
 )
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.time import TimeAxis, specialization_coordinate_at
-from _lcm.typing import RegimeName, StateName, StateOrActionName
+from _lcm.typing import EconFunctionArg, RegimeName, StateName, StateOrActionName
 from _lcm.utils.error_messages import format_messages
 from lcm.collective import CollectiveUtility
 from lcm.consumption_savings_regime import NetOfAdjustmentCost
@@ -469,7 +470,7 @@ def _incoming_edge_roots(
     return roots
 
 
-def _for_phase(*, value: object, phase: Literal["solve", "simulate"]) -> object:
+def _for_phase[T](*, value: T | Phased[T, T], phase: Literal["solve", "simulate"]) -> T:
     """Take the side of a `Phased` slot value this phase runs, else the value."""
     if isinstance(value, Phased):
         return value.solve if phase == "solve" else value.simulate
@@ -676,14 +677,14 @@ def states_read_through_their_draw(
     )
 
 
-def _is_process(grid: object) -> bool:
+def _is_process(grid: StateDeclaration) -> bool:
     """Whether a state declaration is a process in either phase."""
     if isinstance(grid, Phased):
         return _is_process(grid.solve) or _is_process(grid.simulate)
     return isinstance(grid, _ContinuousStochasticProcess)
 
 
-def _is_markov_law(law: object) -> bool:
+def _is_markov_law(law: StateTransitionEntry) -> bool:
     """Whether a law of motion is a Markov law, toward any target in either phase."""
     if isinstance(law, Phased):
         return _is_markov_law(law.solve) or _is_markov_law(law.simulate)
@@ -857,7 +858,7 @@ class _ComposedResourcesEdge:
     # Python scalars, arrays of either integer width -- so its annotations
     # document the contract and are not enforced at call time.
     @no_type_check
-    def __call__(self, *args: object, **kwargs: object) -> None: ...
+    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> None: ...
 
 
 def _retained_state_transition(
@@ -924,8 +925,8 @@ def _law_roots(
     """
     roots: dict[str, UserFunction] = {}
     for state_name, raw in phase_slice.state_transitions.items():
-        laws: dict[RegimeName, object] = (
-            dict(cast("Mapping[RegimeName, object]", raw))
+        laws: dict[RegimeName, UserFunction | StochasticTransition | None] = (
+            dict(raw)
             if isinstance(raw, Mapping)
             else dict.fromkeys(candidate_targets, raw)
         )
