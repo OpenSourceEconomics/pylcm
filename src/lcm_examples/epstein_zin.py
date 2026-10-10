@@ -57,6 +57,7 @@ from lcm.typing import (
     FloatND,
     Period,
     ScalarInt,
+    UserParamsNode,
 )
 
 WEALTH_GRID = LinSpacedGrid(start=0.5, stop=12.0, n_points=6)
@@ -211,7 +212,7 @@ def get_params(
     income: float = INCOME,
     health_cost: float = 0.0,
     bequest_scale: float = 1.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the Epstein-Zin lifecycle model.
 
     Args:
@@ -232,7 +233,7 @@ def get_params(
         Parameter dict ready for `model.solve()`.
 
     """
-    params: dict = {
+    params: dict[str, UserParamsNode] = {
         "alive": {
             "koopmans_aggregator": {
                 "discount_factor": discount_factor,
