@@ -2,24 +2,12 @@
 
 import dataclasses
 import functools
-from collections.abc import Callable
-from typing import Protocol, runtime_checkable
-
-from _lcm.typing import PytreeValue
+from typing import Any
 
 # A compiler memory report, one of its per-device records, or one of their fields.
 # Backends differ: an attribute record, a string-keyed mapping, or one record per
 # device; every reader validates the fields it reads.
 type CompilerMemoryReport = object  # noqa: PAN001 - JAX types `Compiled.memory_analysis()` as `Any`
-
-
-@runtime_checkable
-class _MemoryAnalyzable(Protocol):
-    """An executable that can be asked for its compiler memory report."""
-
-    def memory_analysis(self) -> CompilerMemoryReport:
-        """Return the backend's report, or `None` when it reports nothing."""
-        ...
 
 
 @dataclasses.dataclass(frozen=True)
@@ -39,17 +27,13 @@ class CompilerMemoryBytes:
     host_temp_size_in_bytes: int | None
 
 
-def compiler_memory_bytes(
-    *, compiled: _MemoryAnalyzable | Callable[..., PytreeValue]
-) -> CompilerMemoryBytes | None:
+def compiler_memory_bytes(*, compiled: Any) -> CompilerMemoryBytes | None:
     """Normalize a backend memory-analysis object to stable integer byte fields.
 
     Memory reporting is an optional backend capability. Unsupported executables,
     missing reports, and missing individual fields therefore return ``None`` at
     the corresponding level rather than changing compilation or replay behavior.
     """
-    if not isinstance(compiled, _MemoryAnalyzable):
-        return None
     try:
         stats = compiled.memory_analysis()
     except Exception:  # noqa: BLE001 - analysis is optional across JAX backends
