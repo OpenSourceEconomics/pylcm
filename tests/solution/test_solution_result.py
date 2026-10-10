@@ -29,13 +29,23 @@ from _lcm.typing import (
     ArtifactPayload,
     FlatParams,
 )
-from lcm import ExecutionConfig, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    CollectiveUtility,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.exceptions import (
     ExecutionPlanningError,
     IncompatibleSolutionError,
     InvalidSimulationInputError,
     SolutionIntegrityError,
 )
+from lcm.persistence import load_solution
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -55,7 +65,7 @@ from lcm.solver_api import (
     ValueStore,
 )
 from lcm.solvers import MSSEnvelope
-from lcm.typing import FloatND, UserInitialConditions, UserParams
+from lcm.typing import FloatND, ScalarInt, UserInitialConditions, UserParams
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
     _make_dissolution_model,
@@ -964,7 +974,15 @@ def test_solution_result_value_schema_is_checked_before_forward(
         schema = solution.metadata.value_schemas[coordinate]
         schemas = dict(solution.metadata.value_schemas)
         schemas[coordinate] = replace(
-            schema, axis_names=tuple(f"wrong_{name}" for name in schema.axis_names)
+            schema,
+            axis_names=tuple(f"wrong_{name}" for name in schema.axis_names),
+            named_axes=tuple(
+                replace(axis, name=f"wrong_{axis.name}") for axis in schema.named_axes
+            ),
+            categorical_domains={
+                f"wrong_{name}": domain
+                for name, domain in schema.categorical_domains.items()
+            },
         )
         malformed = replace(
             solution,
@@ -1594,3 +1612,151 @@ def test_values_and_replay_retains_the_adaptive_nnbegm_policy() -> None:
     assert all(
         isinstance(solution.replay_artifacts[ref], NestedEGMSimPolicy) for ref in refs
     )
+
+
+@pytest.mark.parametrize("width", [1, 3])
+@pytest.mark.parametrize("use_labels", [True, False])
+def test_value_frame_labels_grid_nodes(
+    *, width: int, use_labels: bool, tmp_path: Path
+) -> None:
+    """Each labelled row retains its value through blocking and persistence."""
+
+    @categorical(ordered=True)
+    class Kind:
+        low: ScalarInt
+        high: ScalarInt
+
+    @categorical(ordered=False)
+    class Alive:
+        alive: ScalarInt
+
+    def utility(*, wealth: FloatND, kind: ScalarInt) -> FloatND:
+        return wealth + 10 * kind
+
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={
+                    "wealth": LinSpacedGrid(start=1, stop=3, n_points=3),
+                    "kind": DiscreteGrid(Kind),
+                },
+                functions={"utility": utility},
+            )
+        },
+        ages=AgeGrid(exact_values=(18,)),
+        edges={},
+        initial_nodes=((18, "alive"),),
+        execution_config=ExecutionConfig(axis_widths={"cell": width}),
+        regime_id_class=Alive,
+    )
+    result = model.solve(params={}, log_level="off")
+    frame = result.value_frame(period=0, regime="alive", use_labels=use_labels)
+    assert tuple(frame.columns) == (
+        *result.metadata.value_schemas[0, "alive"].axis_names,
+        "V",
+    )
+    np.testing.assert_array_equal(frame["wealth"], [1, 2, 3, 1, 2, 3])
+    np.testing.assert_array_equal(frame["V"], [1, 2, 3, 11, 12, 13])
+    np.testing.assert_array_equal(
+        frame["V"], np.asarray(result.value(period=0, regime="alive")).ravel()
+    )
+    if use_labels:
+        assert frame["kind"].tolist() == ["low"] * 3 + ["high"] * 3
+        assert frame["kind"].cat.ordered
+    else:
+        np.testing.assert_array_equal(frame["kind"], [0, 0, 0, 1, 1, 1])
+    restored = load_solution(path=result.save(path=tmp_path / "labelled"))
+    assert_frame_equal(
+        frame, restored.value_frame(period=0, regime="alive", use_labels=use_labels)
+    )
+    frame["V"] = -99.0
+    np.testing.assert_array_equal(
+        result.value_frame(period=0, regime="alive")["V"], [1, 2, 3, 11, 12, 13]
+    )
+
+
+def test_value_frame_scalar_and_collective() -> None:
+    """Scalar values have one row and collective values identify stakeholders."""
+
+    @categorical(ordered=False)
+    class Household:
+        alone: ScalarInt
+        couple: ScalarInt
+
+    model = Model(
+        regimes={
+            "alone": Regime(functions={"utility": lambda: 7.0}),
+            "couple": Regime(
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": lambda: 3.0, "m": lambda: 5.0}
+                    )
+                }
+            ),
+        },
+        ages=AgeGrid(exact_values=(18,)),
+        edges={},
+        initial_nodes=((18, "alone"), (18, "couple")),
+        regime_id_class=Household,
+    )
+    result = model.solve(params={}, log_level="off")
+    assert result.value_frame(period=0, regime="alone").to_dict("list") == {"V": [7.0]}
+    assert result.value_frame(period=0, regime="couple").to_dict("list") == {
+        "stakeholder": ["f", "m"],
+        "V": [3.0, 5.0],
+    }
+    with pytest.raises(KeyError):
+        result.value_frame(period=2, regime="alone")
+
+
+@pytest.mark.parametrize("grid_kind", ["process", "age"])
+def test_value_frame_uses_resolved_grid_coordinates(*, grid_kind: str) -> None:
+    """Coordinates follow runtime parameters and the requested period's grid."""
+    from lcm import AgeSpecializedGrid, NormalIIDProcess  # noqa: PLC0415
+
+    @categorical(ordered=False)
+    class Alive:
+        alive: ScalarInt
+
+    grid = (
+        NormalIIDProcess(n_points=3, gauss_hermite=False)
+        if grid_kind == "process"
+        else AgeSpecializedGrid(
+            build=lambda age: LinSpacedGrid(
+                start=float(age), stop=float(age) + 2, n_points=3
+            ),
+            signature=lambda age: age,
+        )
+    )
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"wealth": grid}, functions={"utility": lambda wealth: wealth}
+            )
+        },
+        ages=AgeGrid(exact_values=(18, 19)),
+        regime_id_class=Alive,
+        edges={},
+        initial_nodes=((18, "alive"), (19, "alive")),
+    )
+    params = (
+        {"alive": {"wealth": {"mu": 1.0, "sigma": 0.5, "n_std": 2.0}}}
+        if grid_kind == "process"
+        else {}
+    )
+    result = model.solve(params=params, log_level="off")
+    for period in (0, 1):
+        frame = result.value_frame(period=period, regime="alive")
+        expected = (
+            [0.0, 1.0, 2.0]
+            if grid_kind == "process"
+            else [18 + period, 19 + period, 20 + period]
+        )
+        np.testing.assert_array_equal(frame["wealth"], expected)
+        np.testing.assert_array_equal(frame["V"], expected)
+        np.testing.assert_array_equal(
+            frame["wealth"],
+            model.state_grid(
+                params=params, regime_name="alive", state_name="wealth", period=period
+            ),
+        )

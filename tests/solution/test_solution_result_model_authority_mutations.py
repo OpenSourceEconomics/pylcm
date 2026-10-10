@@ -753,6 +753,7 @@ def test_co_mutated_value_shape_and_axis_schema_is_rejected_before_forward(
         original_schema,
         shape=tuple(replacement.shape),
         axis_names=tuple(reversed(original_schema.axis_names)),
+        named_axes=tuple(reversed(original_schema.named_axes)),
     )
     values = {
         outer_period: dict(regime_to_value)
