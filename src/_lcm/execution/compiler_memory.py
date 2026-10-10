@@ -2,21 +2,12 @@
 
 import dataclasses
 import functools
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 # A compiler memory report, one of its per-device records, or one of their fields.
 # Backends differ: an attribute record, a string-keyed mapping, or one record per
 # device; every reader validates the fields it reads.
 type CompilerMemoryReport = object  # noqa: PAN001 - JAX types `Compiled.memory_analysis()` as `Any`
-
-
-@runtime_checkable
-class MemoryAnalyzable(Protocol):
-    """An executable that can be asked for its compiler memory report."""
-
-    def memory_analysis(self) -> CompilerMemoryReport:
-        """Return the backend's report, or `None` when it reports nothing."""
-        ...
 
 
 @dataclasses.dataclass(frozen=True)
