@@ -143,7 +143,9 @@ def test_the_builder_refuses_a_law_falling_in_savings():
 def test_with_fixed_params_rebinds_the_program_and_its_builder():
     kernel, context = _kernel()
     program = core_program_graph(kernel=kernel)["main"]
-    fixed = MappingProxyType({_REGIME: MappingProxyType({"crra": 2.0})})
+    fixed = MappingProxyType(
+        {_REGIME: MappingProxyType({"crra": jax.numpy.asarray(2.0)})}
+    )
 
     bound = kernel.with_fixed_params(fixed_flat_params=fixed)
     bound_program = core_program_graph(kernel=bound)["main"]

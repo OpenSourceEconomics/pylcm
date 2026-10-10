@@ -86,6 +86,7 @@ from lcm.typing import (
     IntND,
     ReferenceName,
     UserInitialConditions,
+    ValueND,
 )
 
 # Sentinel for categorical states not in initial conditions.  Using int32 min
@@ -761,7 +762,7 @@ def trim_pad_from_raw_results(
             if data.V_arr.shape[0] == original_n_subjects:
                 new_periods[period] = data
                 continue
-            sliced: dict[str, object] = {}
+            sliced: dict[str, ValueND | MappingProxyType[str, ValueND]] = {}
             for name in field_names:
                 value = getattr(data, name)
                 # `actions` and `states` are name -> array mappings; every other

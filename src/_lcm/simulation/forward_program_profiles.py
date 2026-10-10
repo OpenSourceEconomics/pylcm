@@ -38,7 +38,13 @@ from _lcm.simulation.subject_groups import type_local_template
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _states_for_period
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, PytreeValue, QualifiedName, ShapeDtypePytree
+from _lcm.typing import (
+    FlatParams,
+    PytreeValue,
+    QualifiedName,
+    ShapeDtypePytree,
+    SimulationPolicy,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ActionName, ReferenceName, RegimeName
 
@@ -96,7 +102,7 @@ def profile_forward_programs(
     widths: Mapping[str, int],
     ordinary_key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
-    policies: Mapping[int, Mapping[str, object]] | None = None,
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
 ) -> Mapping[tuple[int, str, str], ForwardProgramProfile]:
     """Prepare canonical entry descriptors for focused core-level profiling.
 
@@ -162,7 +168,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     columns: Mapping[str, jax.ShapeDtypeStruct],
     ordinary_key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
-    policy: object = None,
+    policy: SimulationPolicy | None = None,
     wave: CompilationWave | None = None,
 ) -> Mapping[str, ForwardProgramProfile]:
     """Bind one actual current carrier to its decision, transition and route.
@@ -468,7 +474,7 @@ def _profile_finite_decision(
     period: int,
     n_subjects: int,
     widths: Mapping[str, int],
-    policy: object,
+    policy: SimulationPolicy | None,
     states: Mapping[str, jax.ShapeDtypeStruct],
     canonical_states: Mapping[str, jax.ShapeDtypeStruct],
     params: Mapping[QualifiedName, ShapeDtypePytree],
@@ -664,7 +670,7 @@ def _stochastic_keys(
 
 # keyword-only-exempt: library-callback=jax.tree.map
 def _shared_leaf(
-    leaf: object, *, devices: tuple[jax.Device, ...]
+    leaf: jax.Array | jax.ShapeDtypeStruct, *, devices: tuple[jax.Device, ...]
 ) -> jax.ShapeDtypeStruct:
     """Project one retained leaf to the same shared destination layout.
 
@@ -684,7 +690,9 @@ def _shared_leaf(
 
 
 def _shared_tree(
-    *, tree: Mapping[str, object], devices: tuple[jax.Device, ...]
+    *,
+    tree: Mapping[str, PytreeValue | ShapeDtypePytree],
+    devices: tuple[jax.Device, ...],
 ) -> Mapping[str, ShapeDtypePytree]:
     """Project actual retained metadata to the same shared destination layout."""
     return jax.tree.map(partial(_shared_leaf, devices=devices), tree)

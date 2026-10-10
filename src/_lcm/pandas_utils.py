@@ -3,10 +3,10 @@
 import functools
 import inspect
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -38,6 +38,7 @@ from _lcm.typing import (
     FlatParams,
     FunctionName,
     InitialConditions,
+    PytreeValue,
     RegimeName,
     RegimeNamesToIds,
     StateName,
@@ -54,6 +55,7 @@ from lcm.params import (
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import (
+    AgeCaseLaw,
     AgeSpecializedGrid,
     ByAge,
     JointTransition,
@@ -78,8 +80,14 @@ _JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH = 4
 # mapping, with every Series and `TimeVarying` replaced by its JAX array.
 type _ConvertedParamsNode = UserParamsNode | ValueND
 
+# A regime slot whose callable may read a parameter: a function, a `ByAge`
+# schedule of laws, or a `Phased` pair of those.
+type _ParamConsumer = (
+    UserFunction | ByAge | Phased[UserFunction | ByAge, UserFunction | ByAge]
+)
 
-def has_series(params: Mapping) -> bool:
+
+def has_series(params: Mapping[str, UserParamsNode]) -> bool:
     """Check if any leaf value in a params mapping is a pd.Series."""
     for value in params.values():
         if isinstance(value, pd.Series):
@@ -430,7 +438,7 @@ def convert_series_in_params(
         simulate_funcs = user_regime.get_all_functions(
             phase="simulate", law=laws[regime_name]
         )
-        all_funcs: dict[str, object] = {**solve_funcs, **simulate_funcs}
+        all_funcs: dict[str, _ParamConsumer] = {**solve_funcs, **simulate_funcs}
         for name in solve_funcs.keys() & simulate_funcs.keys():
             if solve_funcs[name] is not simulate_funcs[name]:
                 all_funcs[name] = Phased(
@@ -612,7 +620,7 @@ def _regime_param_periods(
     required_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
     reachability: ModelReachability | None,
     user_regime: UserRegime,
-    phase_functions: Mapping[Phase, Mapping[str, object]],
+    phase_functions: Mapping[Phase, Mapping[str, _ParamConsumer]],
 ) -> tuple[int, ...]:
     """Require only slots where a declaring phase can read this parameter."""
     periods = (
@@ -735,7 +743,7 @@ def _edge_param_periods(
     return tuple(sorted(required))
 
 
-def _case_names_target(*, case: object, target: RegimeName) -> bool:
+def _case_names_target(*, case: AgeCaseLaw | None, target: RegimeName) -> bool:
     """Read named support without evaluating parameter-dependent probabilities."""
     if isinstance(case, Phased):
         return any(
@@ -745,7 +753,7 @@ def _case_names_target(*, case: object, target: RegimeName) -> bool:
     return target in case if isinstance(case, Mapping) else case == target
 
 
-def _needs_param_preflight(value: object) -> bool:
+def _needs_param_preflight(value: UserParamsNode) -> bool:
     """Inspect arrays and containers, including scalar-only or empty containers."""
     return isinstance(
         value,
@@ -778,10 +786,10 @@ def _resolve_param_consumer(
     parts: tuple[str, ...],
     param_name: ParameterName,
     user_regime: UserRegime,
-    all_funcs: Mapping[str, object],
-    aggregator_variants: tuple[Callable[..., Any], ...],
+    all_funcs: Mapping[str, _ParamConsumer],
+    aggregator_variants: tuple[UserFunction, ...],
     phase: Phase | None = None,
-) -> tuple[Callable[..., Any] | None, FunctionName]:
+) -> tuple[UserFunction | None, FunctionName]:
     """Resolve a flattened param path to the callable declaring its Series leaf.
 
     Joint support/probability roles add one qname level, while joint outputs keep
@@ -796,10 +804,10 @@ def _resolve_param_consumer(
         target, kernel_name, role, _ = parts
         raw = user_regime.joint_transitions[target][kernel_name]
         variants = _joint_variants(raw=raw, phase=phase)
-        role_funcs: tuple[Callable[..., Any], ...]
+        role_funcs: tuple[UserFunction, ...]
         if role == "support":
             role_funcs = tuple(
-                cast("Callable[..., Any]", variant.support)
+                cast("Callable[..., PytreeValue]", variant.support)
                 for variant in variants
                 if callable(variant.support)
             )
@@ -863,7 +871,7 @@ def _resolve_param_consumer(
 def _convert_param_value(
     *,
     value: UserParamsNode,
-    func: Callable | None,
+    func: UserFunction | None,
     param_name: ParameterName,
     func_name: FunctionName,
     ages: TimeAxis,
@@ -966,7 +974,7 @@ def _convert_param_value(
 def _check_raw_time_array(
     *,
     managed: bool,
-    func: Callable | None,
+    func: UserFunction | None,
     param_name: ParameterName,
     ages: TimeAxis,
     name: str,
@@ -1000,7 +1008,7 @@ def _check_raw_time_array(
 def array_from_series(
     *,
     sr: pd.Series,
-    func: Callable | None,
+    func: UserFunction | None,
     param_name: ParameterName,
     func_name: FunctionName,
     ages: TimeAxis,
@@ -1282,7 +1290,8 @@ class _RegimeIdCode:
 
 def _age_level_mapping(ages: TimeAxis) -> _LevelMapping:
     """Create a `_LevelMapping` for the age dimension."""
-    labels: dict[object, int] = {v: i for i, v in enumerate(ages.exact_values)}
+    # Keyed by every label the index may hold, so an unknown one fails the lookup.
+    labels: dict[Hashable, int] = {v: i for i, v in enumerate(ages.exact_values)}
     if coordinate_kind(ages) == "age":
         labels.update({float(v): i for i, v in enumerate(ages.exact_values)})
     return _LevelMapping(
@@ -1690,8 +1699,11 @@ _PSEUDO_KEYS_WITHOUT_A_SIGNATURE = frozenset({"certainty_equivalent", "taste_sho
 
 
 def _scheduled_consumer(
-    *, func: object, param_name: ParameterName, phase: Phase | None = None
-) -> Callable[..., Any] | None:
+    *,
+    func: _ParamConsumer | None,
+    param_name: ParameterName,
+    phase: Phase | None = None,
+) -> UserFunction | None:
     """Return the callable law of a `ByAge` schedule that declares `param_name`.
 
     A schedule is a declaration, not a callable; the law it selects is what
@@ -1716,7 +1728,7 @@ def _scheduled_consumer(
             param_name=param_name,
         )
     if not isinstance(func, ByAge):
-        return cast("Callable[..., Any] | None", func)
+        return func
     laws = tuple(
         variant
         for law in func.laws
@@ -1743,8 +1755,8 @@ def _scheduled_consumer(
 
 
 def _variant_declaring(
-    *, variants: tuple[Callable[..., Any], ...], param_name: ParameterName
-) -> Callable[..., Any]:
+    *, variants: tuple[UserFunction, ...], param_name: ParameterName
+) -> UserFunction:
     """Return the first variant declaring `param_name`, else the first variant.
 
     A `Phased` slot contributes both of its variants to the params template, so

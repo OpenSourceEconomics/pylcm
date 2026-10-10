@@ -114,14 +114,13 @@ class _RetainedBuffers:
         if type(value) in (ValueStore, ArtifactStore):
             store = cast("ValueStore | ArtifactStore", value)
             self.collect(store._entries)  # noqa: SLF001
-        elif type(value) in (dict, MappingProxyType):
-            mapping = cast(
-                "dict[object, object] | MappingProxyType[object, object]", value
-            )
-            for child in mapping.values():
+        elif type(value) in (dict, MappingProxyType) and isinstance(
+            value, dict | MappingProxyType
+        ):
+            for child in value.values():
                 self.collect(child)
-        elif type(value) in (tuple, list):
-            for child in cast("tuple[object, ...] | list[object]", value):
+        elif type(value) in (tuple, list) and isinstance(value, tuple | list):
+            for child in value:
                 self.collect(child)
         elif type(value) is _CanonicalValueEntry:
             self.collect(value.value)
@@ -209,7 +208,7 @@ class _RetainedBuffers:
         self.collect(value.context.action_nodes)
 
 
-def _unsupported(value: object) -> ExecutionPlanningError:
+def _unsupported(value: object) -> ExecutionPlanningError:  # noqa: PAN001 - names the type of any value outside the known payload inventory
     """Refuse incomplete budget provenance rather than reporting fictitious zero."""
     return ExecutionPlanningError(
         "Budgeted simulation encountered unsupported retained solution storage: "

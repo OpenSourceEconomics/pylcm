@@ -79,7 +79,7 @@ def test_dropped_artifact_plan_walks_release_their_leaves(walker: str) -> None:
     for _ in range(8):
         leaf = np.zeros(_LEAF_LENGTH)
         if walker == "reconstruct":
-            _reconstruct_artifact_from_plan(plan=plan, leaves=(leaf, []))
+            _reconstruct_artifact_from_plan(plan=plan, leaves=(leaf,))
         else:
             _artifact_leaf_values_from_plan(payload=(leaf,), plan=plan, leaf_count=1)
 

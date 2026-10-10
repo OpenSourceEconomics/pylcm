@@ -20,7 +20,6 @@ from math import prod as math_prod
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
-    Any,
     Literal,
     Protocol,
     cast,
@@ -157,6 +156,8 @@ from _lcm.regime_building.next_state import get_next_state_function_for_simulati
 from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
     RegimePhaseSpec,
+    _PhaseRegimeTransition,
+    _PhaseStateTransition,
     normalize_all_regime_phases,
     phase_variation_paths,
 )
@@ -236,9 +237,11 @@ from _lcm.transition_plans import (
     TransitionOutputInfo,
 )
 from _lcm.typing import (
+    AnnotationForm,
     ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
     EconFunction,
+    EconFunctionArg,
     EconFunctionsMapping,
     EdgeParamsTemplate,
     EGMCarryProducer,
@@ -252,6 +255,7 @@ from _lcm.typing import (
     RegimeName,
     RegimeNamesToIds,
     RegimeParamsTemplate,
+    RegimeParamsTemplateNode,
     RegimeTransitionFunction,
     StateName,
     StateOrActionName,
@@ -277,7 +281,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.phased import Phased
-from lcm.regime import ProjectedRegimeValue
+from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -292,12 +296,14 @@ from lcm.solvers import (
     DCEGM,
     NNBEGM,
     AdaptiveOuterMesh,
+    EnvelopeConfig,
     FiniteOuterGrid,
     Solver,
     UniformObservedFixedCost,
 )
 from lcm.transition import JointTransition, StochasticTransition, Transition
 from lcm.typing import (
+    BoolND,
     Float1D,
     FloatND,
     Int1D,
@@ -1666,7 +1672,7 @@ def _attach_gated_edge_folds(
                     if enable_jit
                     else fold
                 )
-            evaluators_by_group: dict[Hashable, Callable] = {}
+            evaluators_by_group: dict[Hashable, Callable[..., BoolND]] = {}
             for group_key, periods in grouped_evaluator_periods.items():
                 v_info = _v_interpolation_info_at_period(
                     period=periods[0],
@@ -3284,7 +3290,7 @@ def _build_solution_phase(  # noqa: PLR0915
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
-    declared_regime_transition: object,
+    declared_regime_transition: _PhaseRegimeTransition,
     phase_reachability: PhaseReachability,
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
@@ -3497,7 +3503,7 @@ def _build_solution_phase(  # noqa: PLR0915
             Q_and_F_functions = MappingProxyType(
                 dict.fromkeys(range(ages.n_periods), terminal_func)
             )
-        compute_intermediates: MappingProxyType[int, Callable] = MappingProxyType({})
+        compute_intermediates = MappingProxyType({})
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
             functions=core.functions,
@@ -3987,7 +3993,7 @@ def _gated_edge_group_components(
 
 
 def _filter_kwargs_for_func[T](
-    *, func: Callable, kwargs: Mapping[ReferenceName, T]
+    *, func: EGMCarryProducer, kwargs: Mapping[ReferenceName, T]
 ) -> Mapping[ReferenceName, T]:
     """Filter kwargs to only those accepted by func's signature."""
     try:
@@ -4057,7 +4063,7 @@ class _TerminalCarryPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -5104,7 +5110,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
 # Empty: no shipped backend provides the guarantee, so the branch-faithful policy
 # read is off and simulation keeps its grid-argmax. An envelope earns a place here
 # by passing the crossing- and support-completeness suites, not by intending to.
-_CROSSING_COMPLETE_ENVELOPES: tuple[type[object], ...] = ()
+_CROSSING_COMPLETE_ENVELOPES: tuple[type[EnvelopeConfig], ...] = ()
 
 
 def _envelope_publishes_crossings(solver: DCEGM) -> bool:
@@ -5266,7 +5272,7 @@ class _PhaseFunctionPartition:
     next_regime_cells_by_target: dict[RegimeName, UserFunction | _CoarseTransitionCell]
     """Per-target `next_regime` cells, lifted out of the transition bundles."""
 
-    flat_nested_transitions: MappingProxyType[str, Any]
+    flat_nested_transitions: MappingProxyType[QualifiedName, UserFunction]
     """State laws only (no `next_regime`), flattened to qualified names."""
 
     stochastic_transition_functions: dict[str, UserFunction]
@@ -5284,7 +5290,7 @@ def _partition_phase_functions(
     nested_transitions: _TransitionBundles,
     functions: Mapping[FunctionName, UserFunction],
     constraints: ProcessedConstraintsMapping,
-    state_transitions: Mapping[StateName, object],
+    state_transitions: Mapping[StateName, _PhaseStateTransition],
     variables: Variables,
 ) -> _PhaseFunctionPartition:
     """Split a phase's functions into the four groups processed differently.
@@ -5382,7 +5388,7 @@ def _process_regime_core(
     constraints: ProcessedConstraintsMapping,
     evaluated_constraint_names: frozenset[FunctionName],
     koopmans_aggregator: UserFunction | None,
-    state_transitions: Mapping[StateName, object],
+    state_transitions: Mapping[StateName, _PhaseStateTransition],
     markov_draw_laws: Mapping[StateName, StochasticTransition],
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     nested_transitions: _TransitionBundles,
@@ -6418,7 +6424,7 @@ def _with_cell_param_keys(
 
 def _build_validation_regime_transition_probs(
     *,
-    declared_regime_transition: object,
+    declared_regime_transition: _PhaseRegimeTransition,
     compute_regime_transition_probs: RegimeTransitionFunction,
     functions: EconFunctionsMapping,
     grids: MappingProxyType[StateOrActionName, Grid],
@@ -6500,7 +6506,7 @@ def _wrap_transitions(
 
 def _get_stochastic_transition_names(
     *,
-    state_transitions: Mapping[StateName, object],
+    state_transitions: Mapping[StateName, _PhaseStateTransition],
     variables: Variables,
 ) -> frozenset[TransitionFunctionName]:
     """Compute stochastic transition names from one phase's state transitions.
@@ -6598,9 +6604,9 @@ def _rename_params_to_qnames(
 
     # Per-target keys are qnames (`<target>__<func>`) addressing a nested
     # template branch; walk the tree path instead of subscripting directly.
-    branch: Mapping[str, object] = regime_params_template
+    branch: Mapping[str, RegimeParamsTemplateNode] = regime_params_template
     for part in tree_path_from_qname(names_key if names_key is not None else param_key):
-        branch = cast("Mapping[str, object]", branch[part])
+        branch = cast("Mapping[str, RegimeParamsTemplateNode]", branch[part])
     # Rename only the parameters this law actually reads. The template branch of a
     # `Phased` state transition holds the union of both phases' parameters, so a law
     # that takes none of its own must not be stamped with one the other phase
@@ -6774,7 +6780,7 @@ def _fail_if_a_markov_law_names_a_continuous_state(
     *,
     func_name: TransitionFunctionName,
     grid: Grid,
-    state_transitions: Mapping[StateName, object],
+    state_transitions: Mapping[StateName, _PhaseStateTransition],
     source_regime_name: RegimeName,
 ) -> None:
     """Reject a `StochasticTransition` law written for a state with a continuous grid.
@@ -6833,7 +6839,7 @@ def _get_discrete_markov_next_function(
 ) -> UserFunction:
     @with_signature(args=None, return_annotation="Int1D")
     @functools.wraps(func)
-    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001
+    def next_func(**kwargs: EconFunctionArg) -> Int1D:  # noqa: ARG001
         return grid
 
     return next_func
@@ -6845,7 +6851,7 @@ def _get_stochastic_next_function_for_process(
     """Get function returning the indices in the vf arr of the next process states."""
 
     @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
-    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001
+    def next_func(**kwargs: EconFunctionArg) -> Int1D:  # noqa: ARG001
         return jnp.arange(grid.shape[0], dtype=jnp.int32)
 
     return next_func
@@ -7202,7 +7208,7 @@ def _get_entry_next_for_process(*, grid: Float1D) -> UserFunction:
     """
 
     @with_signature(args={}, return_annotation="Int1D")
-    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001
+    def next_func(**kwargs: EconFunctionArg) -> Int1D:  # noqa: ARG001
         return jnp.arange(grid.shape[0], dtype=jnp.int32)
 
     return next_func
@@ -7580,7 +7586,7 @@ def _unique_topological_sort(
 
 
 def _get_simple_transition_discrete_grid(
-    *, user_regime: UserRegime, state_name: StateName, raw: object
+    *, user_regime: UserRegime, state_name: StateName, raw: StateTransitionEntry
 ) -> DiscreteGrid | None:
     """Return the source DiscreteGrid for a simple transition.
 
@@ -7912,7 +7918,7 @@ class _RegimeTransitionProbsByName:
     regime_names: tuple[RegimeName, ...]
     """The regime names in regime-id order."""
     # Annotation objects: classes, aliases or strings, whatever the callable declares.
-    annotations: Mapping[ParameterName, object]
+    annotations: Mapping[ParameterName, AnnotationForm]
     """The transition's argument annotations, without its return."""
 
     def __post_init__(self) -> None:
@@ -7944,7 +7950,9 @@ class _RegimeTransitionProbsByName:
         )
 
     @no_type_check
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(
+        self, *args: EconFunctionArg, **kwargs: EconFunctionArg
+    ) -> MappingProxyType[RegimeName, FloatND]:
         result = self.func(*args, **kwargs)
         _fail_if_not_one_entry_per_regime(
             result=result, n_regimes=len(self.regime_names)
@@ -7993,7 +8001,7 @@ class _OneHotRegimeTransition:
         object.__setattr__(self, "__wrapped__", self.func)
 
     @no_type_check
-    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:
+    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
         return jax.nn.one_hot(self.func(*args, **kwargs), self.n_regimes)
 
 

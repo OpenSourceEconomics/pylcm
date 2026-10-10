@@ -38,6 +38,7 @@ from dags import concatenate_functions
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
 from _lcm.typing import (
+    EconFunctionArg,
     EconFunctionKwargs,
     EconFunctionsMapping,
     EGMCarryProducer,
@@ -65,7 +66,7 @@ def get_stateless_terminal_carry_producer() -> EGMCarryProducer:
 def _produce_stateless_carry(
     *,
     V_arr: FloatND,
-    **kwargs: object,  # noqa: ARG001
+    **kwargs: EconFunctionArg,  # noqa: ARG001
 ) -> EGMCarry:
     """Broadcast the scalar terminal value into constant carry rows."""
     dtype = canonical_float_dtype()
@@ -170,7 +171,7 @@ class _TerminalWealthCarryProducer:
     continuous_state_order: tuple[StateName, ...]
     """The value-function array's continuous-axis order."""
 
-    def __call__(self, *, V_arr: FloatND, **kwargs: object) -> EGMCarry:
+    def __call__(self, *, V_arr: FloatND, **kwargs: EconFunctionArg) -> EGMCarry:
         """Evaluate the terminal value and its Euler-state gradient on the grid."""
         dtype = canonical_float_dtype()
         euler_grid = jnp.asarray(kwargs[self.state_name], dtype=dtype)
@@ -356,7 +357,7 @@ class _BruteChildCarryProducer:
     continuous_state_order: tuple[StateName, ...]
     """The value-function array's continuous-axis order."""
 
-    def __call__(self, *, V_arr: FloatND, **kwargs: object) -> EGMCarry:
+    def __call__(self, *, V_arr: FloatND, **kwargs: EconFunctionArg) -> EGMCarry:
         """Carry the solved value array and its Euler-state gradient."""
         dtype = canonical_float_dtype()
         euler_grid = jnp.asarray(kwargs[self.state_name], dtype=dtype)

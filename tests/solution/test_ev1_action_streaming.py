@@ -223,7 +223,7 @@ def test_ev1_padded_branch_ids_do_not_overflow_int32() -> None:
         block_index=jnp.asarray(final_branch_group, dtype=jnp.int32),
         Q_and_F=Q_and_F,
         action_names=("branch",),
-        action_grids=(jnp.asarray([0], dtype=jnp.int32),),
+        action_grids=(jnp.asarray([0], dtype=jnp.float32),),
         action_sizes=(1,),
         fixed_kwargs={},
         n_discrete_branches=int32_max,

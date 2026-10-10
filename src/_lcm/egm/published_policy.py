@@ -66,12 +66,21 @@ row is additional state.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
 import jax
 
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from lcm.typing import ActionName, FloatND, IntND, StateName
+
+if TYPE_CHECKING:
+    from _lcm.execution.output_layout import OutputRoleLeaf
+    from _lcm.typing import PytreeChild
+else:
+    # `_lcm.typing` imports this module, and `_lcm.execution.output_layout` imports
+    # `_lcm.typing`, so neither alias is importable here at runtime.
+    type OutputRoleLeaf = object
+    type PytreeChild = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -141,10 +150,16 @@ _EGM_SIM_POLICY_STATIC_FIELDS = (
     "row_discrete_action_names",
 )
 
+# The row-axis names an `EGMSimPolicy` keeps as pytree aux data, in
+# `_EGM_SIM_POLICY_STATIC_FIELDS` order.
+type _EGMSimPolicyAux = tuple[
+    tuple[StateName, ...], tuple[StateName, ...], tuple[ActionName, ...]
+]
+
 
 def _flatten_egm_sim_policy(
     policy: EGMSimPolicy,
-) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+) -> tuple[tuple[PytreeChild, ...], _EGMSimPolicyAux]:
     children = tuple(getattr(policy, name) for name in _EGM_SIM_POLICY_ARRAY_FIELDS)
     aux = tuple(getattr(policy, name) for name in _EGM_SIM_POLICY_STATIC_FIELDS)
     return children, aux
@@ -152,8 +167,15 @@ def _flatten_egm_sim_policy(
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_egm_sim_policy(
-    aux: tuple[Any, ...], children: Sequence[Any]
+    aux: _EGMSimPolicyAux, children: Sequence[PytreeChild]
 ) -> EGMSimPolicy:
+    return _assemble_egm_sim_policy(aux=aux, children=children)
+
+
+def _assemble_egm_sim_policy(
+    *, aux: _EGMSimPolicyAux, children: Sequence[PytreeChild | OutputRoleLeaf]
+) -> EGMSimPolicy:
+    """Set the policy's fields in flatten order, bypassing its checked constructor."""
     policy = object.__new__(EGMSimPolicy)
     for name, child in zip(_EGM_SIM_POLICY_ARRAY_FIELDS, children, strict=True):
         object.__setattr__(policy, name, child)
@@ -169,7 +191,7 @@ jax.tree_util.register_pytree_node(
 
 def egm_sim_policy_role_tree(
     *,
-    row: object,
+    row: OutputRoleLeaf,
     row_discrete_state_names: tuple[StateName, ...],
     row_passive_state_names: tuple[StateName, ...],
     row_discrete_action_names: tuple[ActionName, ...],
@@ -179,12 +201,16 @@ def egm_sim_policy_role_tree(
     A kernel declares its policy outputs with the same pytree structure as the
     policy it publishes, row names included: one role for each of the four
     refined-grid rows. The leaves are role declarations rather than arrays, so
-    the tree is assembled through the pytree unflatten rather than the
+    the tree is assembled field by field rather than through the
     runtime-checked constructor.
     """
-    return _unflatten_egm_sim_policy(
-        (row_discrete_state_names, row_passive_state_names, row_discrete_action_names),
-        (row, row, row, row),
+    return _assemble_egm_sim_policy(
+        aux=(
+            row_discrete_state_names,
+            row_passive_state_names,
+            row_discrete_action_names,
+        ),
+        children=(row, row, row, row),
     )
 
 
@@ -276,9 +302,13 @@ class NNBEGMSimPolicy:
     """Columns of ``candidate_discrete_actions`` in declaration order."""
 
 
+# The axis names an `NBEGMGridPolicy` keeps as pytree aux data.
+type _GridPolicyAux = tuple[tuple[StateName, ...], tuple[ActionName, ...]]
+
+
 def _flatten_grid_policy(
     policy: NBEGMGridPolicy,
-) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+) -> tuple[tuple[PytreeChild, ...], _GridPolicyAux]:
     aux = (policy.state_names, policy.discrete_action_names)
     return (
         policy.action,
@@ -290,7 +320,7 @@ def _flatten_grid_policy(
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_grid_policy(
-    aux: tuple[Any, ...], children: Sequence[Any]
+    aux: _GridPolicyAux, children: Sequence[PytreeChild]
 ) -> NBEGMGridPolicy:
     state_names, discrete_action_names = aux
     policy = object.__new__(NBEGMGridPolicy)
@@ -303,9 +333,22 @@ def _unflatten_grid_policy(
     return policy
 
 
+# The static fields an `NNBEGMSimPolicy` keeps as pytree aux data: state names,
+# inner and outer action names, keeper-candidate count, replay capability and
+# discrete-action names.
+type _NNBEGMPolicyAux = tuple[
+    tuple[StateName, ...],
+    ActionName,
+    ActionName,
+    int,
+    OuterReplayCapability,
+    tuple[ActionName, ...],
+]
+
+
 def _flatten_nnbegm_policy(
     policy: NNBEGMSimPolicy,
-) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+) -> tuple[tuple[PytreeChild, ...], _NNBEGMPolicyAux]:
     aux = (
         policy.state_names,
         policy.inner_action_name,
@@ -325,7 +368,7 @@ def _flatten_nnbegm_policy(
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_nnbegm_policy(
-    aux: tuple[Any, ...], children: Sequence[Any]
+    aux: _NNBEGMPolicyAux, children: Sequence[PytreeChild]
 ) -> NNBEGMSimPolicy:
     (
         state_names,

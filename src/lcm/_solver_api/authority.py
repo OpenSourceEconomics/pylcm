@@ -4,13 +4,13 @@ canonicalization, and lazy canonical entries."""
 import dataclasses
 import functools
 import weakref
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from threading import RLock
 from types import GetSetDescriptorType, MappingProxyType, MemberDescriptorType
 from typing import (
-    Any,
+    TYPE_CHECKING,
     Literal,
     Protocol,
     SupportsIndex,
@@ -37,8 +37,14 @@ from lcm._solver_api.descriptors import (
     _capture_nonempty_mapping_name,
 )
 from lcm._solver_api.identity import (
+    ArtifactLeafArray,
+    ArtifactLeafValue,
+    ArtifactPayload,
+    ArtifactRuntimeType,
+    ArtifactValue,
     AxisAuthority,
     CategoryDomain,
+    InertMetadata,
     LeafAuthority,
     ReplayRouteIdentity,
     TreePath,
@@ -47,6 +53,31 @@ from lcm._solver_api.identity import (
     _LeafAuthoritiesBoundary,
 )
 from lcm.exceptions import ExecutionPlanningError
+
+if TYPE_CHECKING:
+    # One node of a callback-free construction plan.
+    type _ConstructionPlan = (
+        _ArtifactLeafSlot
+        | _ArtifactStaticPlan
+        | _ArtifactTuplePlan
+        | _ArtifactDataclassPlan
+    )
+    # A JAX key path as `jax.tree_util.tree_flatten_with_path` reports it.
+    type _JaxKeyPath = tuple[
+        jax.tree_util.GetAttrKey
+        | jax.tree_util.SequenceKey
+        | jax.tree_util.FlattenedIndexKey
+        | jax.tree_util.DictKey,
+        ...,
+    ]
+    type _PickleStateBoundary = _ArtifactAuthorityPickleState
+else:
+    # Plans, key paths and transported state are checked node by node by exact type
+    # identity in the bodies, which never run plugin code; the claw checks nothing
+    # here.
+    type _ConstructionPlan = object
+    type _JaxKeyPath = object
+    type _PickleStateBoundary = object
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -67,7 +98,7 @@ class _ArtifactLeafSlot:
 class _ArtifactTuplePlan:
     """Callback-free reconstruction plan for one exact tuple."""
 
-    children: tuple[object, ...]
+    children: tuple[_ConstructionPlan, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,14 +107,14 @@ class _ArtifactDataclassFieldPlan:
 
     name: str
     stored_in_dict: bool
-    value: object
+    value: _ConstructionPlan
 
 
 @dataclass(frozen=True, slots=True)
 class _ArtifactDataclassPlan:
     """Callback-free reconstruction plan for one closed dataclass record."""
 
-    runtime_type: type[object]
+    runtime_type: type[ArtifactValue]
     fields: tuple[_ArtifactDataclassFieldPlan, ...]
 
 
@@ -91,7 +122,7 @@ class _ArtifactDataclassPlan:
 class _ArtifactStaticPlan:
     """Owned closed-grammar value injected by an unflatten declaration."""
 
-    value: object
+    value: InertMetadata
     validate_payload: bool
 
 
@@ -99,11 +130,11 @@ class _ArtifactStaticPlan:
 class _CanonicalArtifactTemplate:
     """Owned declaration whose later reconstruction never invokes plugin code."""
 
-    payload: object
+    payload: ArtifactPayload
     tree: jax.tree_util.PyTreeDef
     leaf_paths: tuple[TreePath, ...]
     leaves: tuple[jax.Array, ...]
-    construction_plan: object
+    construction_plan: _ConstructionPlan
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -113,7 +144,7 @@ class _ArtifactAuthorityPickleState:
     descriptor: ArtifactDescriptor
     payload_runtime_type: type[object]
     template_snapshot: _CanonicalArtifactTemplate | None
-    container_runtime_types: Mapping[TreePath, type[object]]
+    container_runtime_types: Mapping[TreePath, ArtifactRuntimeType]
     leaves: Mapping[TreePath, LeafAuthority]
     axes: tuple[AxisAuthority, ...]
     state_roles: tuple[str, ...]
@@ -132,7 +163,7 @@ class ArtifactAuthority:
     """Transport-safe description of the same artifact."""
     payload_runtime_type: type[object]
     """Exact runtime class of the payload; `jax.Array` for a bare array."""
-    template: object | None
+    template: ArtifactPayload | None
     """Engine-built payload of the declared layout, or `None` for an artifact the model
     declares but never publishes in this cell.
     """
@@ -163,35 +194,26 @@ class ArtifactAuthority:
             raise TypeError("ArtifactAuthority.descriptor must be exact.")
         if not isinstance(self.payload_runtime_type, type):
             raise TypeError("ArtifactAuthority.payload_runtime_type must be a type.")
-        containers = cast(
-            "dict[TreePath, type[object]]",
-            _capture_mapping_item_stream_once(
-                mapping=self.container_runtime_types,
-                label="ArtifactAuthority.container_runtime_types",
-                snapshot_key=_capture_artifact_tree_path,
-                snapshot_value=_capture_container_runtime_type,
-            ),
+        containers = _capture_mapping_item_stream_once(
+            mapping=self.container_runtime_types,
+            label="ArtifactAuthority.container_runtime_types",
+            snapshot_key=_capture_artifact_tree_path,
+            snapshot_value=_capture_container_runtime_type,
         )
-        leaves = cast(
-            "dict[TreePath, LeafAuthority]",
-            _capture_mapping_item_stream_once(
-                mapping=self.leaves,
-                label="ArtifactAuthority.leaves",
-                snapshot_key=_capture_artifact_tree_path,
-                snapshot_value=_capture_leaf_authority,
-            ),
+        leaves = _capture_mapping_item_stream_once(
+            mapping=self.leaves,
+            label="ArtifactAuthority.leaves",
+            snapshot_key=_capture_artifact_tree_path,
+            snapshot_value=_capture_leaf_authority,
         )
         axes = tuple(self.axes)
         state_roles = tuple(self.state_roles)
         action_roles = tuple(self.action_roles)
-        categories = cast(
-            "dict[str, CategoryDomain]",
-            _capture_mapping_item_stream_once(
-                mapping=self.categorical_domains,
-                label="ArtifactAuthority.categorical_domains",
-                snapshot_key=_capture_nonempty_mapping_name,
-                snapshot_value=_capture_category_domain,
-            ),
+        categories = _capture_mapping_item_stream_once(
+            mapping=self.categorical_domains,
+            label="ArtifactAuthority.categorical_domains",
+            snapshot_key=_capture_nonempty_mapping_name,
+            snapshot_value=_capture_category_domain,
         )
         if any(
             type(path) is not tuple
@@ -329,7 +351,10 @@ class ArtifactAuthority:
 
     def __reduce_ex__(
         self, protocol: SupportsIndex, /
-    ) -> tuple[object, tuple[object, ...]]:
+    ) -> tuple[
+        Callable[[_ArtifactAuthorityPickleState], ArtifactAuthority],
+        tuple[_ArtifactAuthorityPickleState],
+    ]:
         """Transport a sealed declaration and rebind it without plugin callbacks."""
         del protocol
         return (
@@ -343,9 +368,9 @@ class _ArtifactAuthorityTemplateBinding:
     """Private write-once template binding for one live authority identity."""
 
     authority_ref: weakref.ReferenceType[ArtifactAuthority]
-    template: object | None
+    template: ArtifactPayload | None
     payload_runtime_type: type[object]
-    container_runtime_types: Mapping[TreePath, type[object]]
+    container_runtime_types: Mapping[TreePath, ArtifactRuntimeType]
     leaves: Mapping[TreePath, LeafAuthority]
     snapshot: _CanonicalArtifactTemplate | None
     public_template_leaves: tuple[jax.Array, ...]
@@ -515,27 +540,27 @@ def _artifact_authority_template_snapshot(
     )
 
 
-def _normalize_jax_tree_path(path: tuple[object, ...]) -> TreePath:  # noqa: C901
+def _normalize_jax_tree_path(path: _JaxKeyPath) -> TreePath:  # noqa: C901
     """Encode a JAX key path without collapsing distinct key kinds or types."""
     normalized: list[str] = []
     for component in path:
         if type(component) is jax.tree_util.GetAttrKey:
-            attribute_key = cast("jax.tree_util.GetAttrKey", component)
+            attribute_key = component
             if type(attribute_key.name) is not str or not attribute_key.name:
                 raise TypeError("Artifact attribute TreePath keys must be exact strs.")
             normalized.append(f"attribute:{attribute_key.name}")
         elif type(component) is jax.tree_util.SequenceKey:
-            sequence_key = cast("jax.tree_util.SequenceKey", component)
+            sequence_key = component
             if type(sequence_key.idx) is not int or sequence_key.idx < 0:
                 raise TypeError("Artifact sequence TreePath keys must be exact ints.")
             normalized.append(f"sequence:{sequence_key.idx}")
         elif type(component) is jax.tree_util.FlattenedIndexKey:
-            flattened_key = cast("jax.tree_util.FlattenedIndexKey", component)
+            flattened_key = component
             if type(flattened_key.key) is not int or flattened_key.key < 0:
                 raise TypeError("Artifact flattened TreePath keys must be exact ints.")
             normalized.append(f"flattened:{flattened_key.key}")
         elif type(component) is jax.tree_util.DictKey:
-            key = cast("jax.tree_util.DictKey", component).key
+            key = component.key
             if not any(type(key) is allowed for allowed in (bool, int, float, str)):
                 raise TypeError(
                     "Artifact mapping TreePath keys must be exact JSON scalars."
@@ -707,7 +732,7 @@ class _ArrayCopier(Protocol):
 
 
 def _copy_artifact_array_leaf(
-    *, leaf: object, label: str, array_copier: _ArrayCopier | None = None
+    *, leaf: ArtifactLeafArray, label: str, array_copier: _ArrayCopier | None = None
 ) -> jax.Array:
     """Make one independent exact JAX buffer for an owned artifact graph."""
     if not isinstance(leaf, jax.Array):
@@ -813,14 +838,22 @@ def _same_exact_pytree_def(
 
 def _frozen_dataclass_layout(  # noqa: C901, PLR0911, PLR0912
     cls: type[object],
-) -> tuple[tuple[str, ...], tuple[bool, ...], object | None, dict[str, object]] | None:
+) -> (
+    tuple[
+        tuple[str, ...],
+        tuple[bool, ...],
+        GetSetDescriptorType | None,
+        dict[str, MemberDescriptorType],
+    ]
+    | None
+):
     """Return one closed dataclass record's callback-free storage layout."""
     try:
         class_mro = type.__getattribute__(cls, "__mro__")
     except TypeError:
         return None
-    dataclass_fields: object | None = None
-    dataclass_params: object | None = None
+    dataclass_fields = None
+    dataclass_params = None
     for base in class_mro:
         namespace = type.__getattribute__(base, "__dict__")
         if dataclass_fields is None and "__dataclass_fields__" in namespace:
@@ -834,7 +867,7 @@ def _frozen_dataclass_layout(  # noqa: C901, PLR0911, PLR0912
     if (
         type(dataclass_fields) is not dict
         or type(dataclass_params) is not type(authority_params)
-        or cast("Any", dataclass_params).frozen is not True
+        or getattr(dataclass_params, "frozen", None) is not True
     ):
         return None
     field_names: list[str] = []
@@ -851,8 +884,8 @@ def _frozen_dataclass_layout(  # noqa: C901, PLR0911, PLR0912
     if len(set(field_names)) != len(field_names):
         return None
 
-    dict_descriptor: object | None = None
-    slot_descriptors: dict[str, object] = {}
+    dict_descriptor: GetSetDescriptorType | None = None
+    slot_descriptors: dict[str, MemberDescriptorType] = {}
     for base in reversed(class_mro):
         namespace = type.__getattribute__(base, "__dict__")
         candidate_dict_descriptor = namespace.get("__dict__")
@@ -900,19 +933,19 @@ def _frozen_dataclass_layout(  # noqa: C901, PLR0911, PLR0912
 
 def _artifact_dataclass_field_values(
     value: object,
-) -> tuple[tuple[str, bool, object], ...]:
+) -> tuple[tuple[str, bool, ArtifactValue], ...]:
     """Read every exact instance field without invoking user attribute methods."""
     runtime_type = type(value)
     layout = _frozen_dataclass_layout(runtime_type)
     if layout is None:
         raise TypeError("Artifact construction requires a closed dataclass record.")
     field_names, stored_in_dict, dict_descriptor, slot_descriptors = layout
-    instance_dict: dict[str, object]
+    instance_dict: dict[str, ArtifactValue]
     if dict_descriptor is None:
         instance_dict = {}
     else:
         try:
-            raw_dict = cast("Any", dict_descriptor).__get__(value, runtime_type)
+            raw_dict = dict_descriptor.__get__(value, runtime_type)
         except Exception as error:
             raise TypeError(
                 "Artifact dataclass storage cannot be read safely."
@@ -921,7 +954,7 @@ def _artifact_dataclass_field_values(
             raise TypeError(
                 "Artifact dataclass instance storage must be an exact dict."
             )
-        instance_dict = cast("dict[str, object]", raw_dict)
+        instance_dict = cast("dict[str, ArtifactValue]", raw_dict)
     expected_dict_names = {
         name
         for name, is_dict_field in zip(field_names, stored_in_dict, strict=True)
@@ -932,14 +965,14 @@ def _artifact_dataclass_field_values(
             "Artifact dataclass has missing or hidden instance dictionary state."
         )
 
-    result: list[tuple[str, bool, object]] = []
+    result: list[tuple[str, bool, ArtifactValue]] = []
     for name, is_dict_field in zip(field_names, stored_in_dict, strict=True):
         if is_dict_field:
             field_value = instance_dict[name]
         else:
             descriptor = slot_descriptors[name]
             try:
-                field_value = cast("Any", descriptor).__get__(value, runtime_type)
+                field_value = descriptor.__get__(value, runtime_type)
             except Exception as error:
                 raise TypeError(
                     f"Artifact dataclass slot {name!r} cannot be read safely."
@@ -967,7 +1000,7 @@ def _artifact_leaf_slot_from_callback_token(
 
 
 def _artifact_static_plan_from_callback_value(
-    *, value: object
+    *, value: ArtifactValue
 ) -> _ArtifactStaticPlan | None:
     """Own token-free callback metadata, leaving dynamic records structural."""
     value_type = type(value)
@@ -985,12 +1018,12 @@ def _artifact_static_plan_from_callback_value(
 
 def _construction_plan_from_callback_value(
     *,
-    value: object,
+    value: ArtifactValue,
     tokens: tuple[_ArtifactLeafToken, ...],
     seen: list[int],
     active_ids: set[int],
     encountered_ids: set[int],
-) -> object:
+) -> _ConstructionPlan:
     """Own one callback result while retaining no callback-returned reference."""
     value_type = type(value)
     if value_type is _ArtifactLeafToken:
@@ -1023,7 +1056,7 @@ def _construction_plan_from_callback_value(
                         active_ids=active_ids,
                         encountered_ids=encountered_ids,
                     )
-                    for child in cast("tuple[object, ...]", value)
+                    for child in cast("tuple[ArtifactValue, ...]", value)
                 )
             )
         finally:
@@ -1067,9 +1100,18 @@ def _construction_plan_from_callback_value(
     )
 
 
+class _MissingLeaf(Enum):
+    """Marks a leaf slot or a plan field that no payload value fills."""
+
+    MISSING = auto()
+
+
 def _mark_static_provenance_node(
-    *, node: object, source: object, missing: object
-) -> object:
+    *,
+    node: _ConstructionPlan,
+    source: object,
+    missing: Literal[_MissingLeaf.MISSING],
+) -> _ConstructionPlan:
     """Copy one plan node, marking static metadata the declaration payload carried."""
     node_type = type(node)
     if node_type is _ArtifactLeafSlot:
@@ -1113,7 +1155,7 @@ def _mark_static_provenance_node(
     if node_type is not _ArtifactDataclassPlan:
         raise TypeError("Artifact construction plan contains an unsupported node.")
     dataclass_plan = cast("_ArtifactDataclassPlan", node)
-    source_fields: dict[tuple[str, bool], object] = {}
+    source_fields: dict[tuple[str, bool], ArtifactValue] = {}
     if type(source) is dataclass_plan.runtime_type:
         try:
             source_fields = {
@@ -1144,7 +1186,9 @@ def _mark_static_provenance_node(
     )
 
 
-def _mark_artifact_static_provenance(*, plan: object, payload: object) -> object:
+def _mark_artifact_static_provenance(
+    *, plan: _ConstructionPlan, payload: object
+) -> _ConstructionPlan:
     """Mark static fields represented identically by the declaration payload.
 
     A custom unflatten callback may inject instance fields which its flatten callback
@@ -1153,7 +1197,7 @@ def _mark_artifact_static_provenance(*, plan: object, payload: object) -> object
     inert value in the declaration payload are payload-owned metadata and must match
     on every later publication.
     """
-    missing = object()
+    missing = _MissingLeaf.MISSING
 
     return _mark_static_provenance_node(missing=missing, node=plan, source=payload)
 
@@ -1163,7 +1207,7 @@ def _compile_artifact_construction_plan(
     tree: jax.tree_util.PyTreeDef,
     payload_runtime_type: type[object],
     declaration_payload: object,
-) -> object:
+) -> _ConstructionPlan:
     """Compile one callback result into a closed callback-free construction plan."""
     if tree.node_data() is None:
         if tree.num_leaves != 1 or payload_runtime_type is not jax.Array:
@@ -1204,8 +1248,8 @@ def _compile_artifact_construction_plan(
 
 
 def _snapshot_plan_node(  # noqa: C901, PLR0912
-    *, node: object, seen: list[int], active_ids: set[int]
-) -> object:
+    *, node: _ConstructionPlan, seen: list[int], active_ids: set[int]
+) -> _ConstructionPlan:
     """Validate and copy one plan node; `seen` counts every leaf slot met."""
     node_type = type(node)
     if node_type is _ArtifactLeafSlot:
@@ -1290,7 +1334,9 @@ def _snapshot_plan_node(  # noqa: C901, PLR0912
     raise TypeError("Artifact construction plan contains an unsupported node.")
 
 
-def _snapshot_artifact_construction_plan(*, plan: object, leaf_count: int) -> object:
+def _snapshot_artifact_construction_plan(
+    *, plan: _ConstructionPlan, leaf_count: int
+) -> _ConstructionPlan:
     """Validate and detach one closed construction plan without plugin callbacks."""
     seen = [0] * leaf_count
     active_ids: set[int] = set()
@@ -1303,7 +1349,9 @@ def _snapshot_artifact_construction_plan(*, plan: object, leaf_count: int) -> ob
     return copied
 
 
-def _reconstruct_plan_node(*, node: object, leaves: tuple[object, ...]) -> object:  # noqa: C901, PLR0912
+def _reconstruct_plan_node(  # noqa: C901, PLR0912
+    *, node: _ConstructionPlan, leaves: tuple[ArtifactLeafValue, ...]
+) -> ArtifactValue:
     """Build one node of an owned payload graph from the plan and its leaves."""
     node_type = type(node)
     if node_type is _ArtifactLeafSlot:
@@ -1334,7 +1382,7 @@ def _reconstruct_plan_node(*, node: object, leaves: tuple[object, ...]) -> objec
         field_names
     ):
         raise TypeError("Artifact dataclass plan fields are incomplete.")
-    values: list[tuple[str, bool, object]] = []
+    values: list[tuple[str, bool, ArtifactValue]] = []
     for field_plan, expected_name, expected_storage in zip(
         dataclass_plan.fields,
         field_names,
@@ -1364,7 +1412,7 @@ def _reconstruct_plan_node(*, node: object, leaves: tuple[object, ...]) -> objec
         raise TypeError("Artifact dataclass allocation returned a different type.")
     if dict_descriptor is not None:
         try:
-            instance_dict = cast("Any", dict_descriptor).__get__(
+            instance_dict = dict_descriptor.__get__(
                 instance,
                 dataclass_plan.runtime_type,
             )
@@ -1382,7 +1430,7 @@ def _reconstruct_plan_node(*, node: object, leaves: tuple[object, ...]) -> objec
     for name, is_dict_field, field_value in values:
         if not is_dict_field:
             try:
-                cast("Any", slot_descriptors[name]).__set__(
+                slot_descriptors[name].__set__(
                     instance,
                     field_value,
                 )
@@ -1393,17 +1441,11 @@ def _reconstruct_plan_node(*, node: object, leaves: tuple[object, ...]) -> objec
 
 
 def _reconstruct_artifact_from_plan(
-    *, plan: object, leaves: tuple[object, ...]
-) -> object:
+    *, plan: _ConstructionPlan, leaves: tuple[ArtifactLeafValue, ...]
+) -> ArtifactPayload:
     """Build an owned payload graph without invoking plugin-owned code."""
-
-    return _reconstruct_plan_node(leaves=leaves, node=plan)
-
-
-class _MissingLeaf(Enum):
-    """Marks a leaf slot no payload field has filled."""
-
-    MISSING = auto()
+    # The root of a construction plan always rebuilds the payload itself.
+    return cast("ArtifactPayload", _reconstruct_plan_node(leaves=leaves, node=plan))
 
 
 @dataclass(slots=True, kw_only=True)
@@ -1425,7 +1467,7 @@ class _LeafExtraction:
 
 
 def _extract_plan_leaves(  # noqa: C901, PLR0912
-    *, value: object, node: object, state: _LeafExtraction
+    *, value: object, node: _ConstructionPlan, state: _LeafExtraction
 ) -> None:
     """Walk one payload node against its plan node, collecting leaves in `state`."""
     node_type = type(node)
@@ -1510,7 +1552,7 @@ def _extract_plan_leaves(  # noqa: C901, PLR0912
 def _artifact_leaf_values_from_plan(
     *,
     payload: object,
-    plan: object,
+    plan: _ConstructionPlan,
     leaf_count: int,
     validate_static: bool = True,
 ) -> tuple[object, ...]:
@@ -1536,7 +1578,10 @@ def _artifact_leaf_values_from_plan(
 
 
 def _validate_artifact_value_against_plan(
-    *, payload: object, plan: object, leaves: tuple[object, ...]
+    *,
+    payload: ArtifactPayload,
+    plan: _ConstructionPlan,
+    leaves: tuple[ArtifactLeafValue, ...],
 ) -> None:
     """Validate one exposed graph against private leaf identities, callback-free."""
     actual_leaves = _artifact_leaf_values_from_plan(
@@ -1554,8 +1599,8 @@ def _validate_artifact_value_against_plan(
 def _reconstruct_artifact_from_template_snapshot(
     *,
     template_snapshot: _CanonicalArtifactTemplate,
-    leaves: tuple[object, ...],
-) -> object:
+    leaves: tuple[ArtifactLeafValue, ...],
+) -> ArtifactPayload:
     """Reconstruct with a detached validated plan and no plugin callbacks."""
     if type(template_snapshot) is not _CanonicalArtifactTemplate:
         raise TypeError("Artifact reconstruction requires an exact template snapshot.")
@@ -1570,7 +1615,7 @@ def _reconstruct_artifact_from_template_snapshot(
 class _CanonicalArtifactPayload:
     """Canonical object plus the exact numerical leaves that produced it."""
 
-    payload: object
+    payload: ArtifactPayload
     leaf_paths: tuple[TreePath, ...]
     leaves: tuple[jax.Array, ...]
     payload_kind: str
@@ -1578,7 +1623,7 @@ class _CanonicalArtifactPayload:
 
 def _validate_cached_artifact_template(  # noqa: C901, PLR0912
     *,
-    template: object,
+    template: ArtifactPayload,
     snapshot: _CanonicalArtifactTemplate | None,
     payload_runtime_type: type[object],
     containers: Mapping[TreePath, type[object]],
@@ -1587,7 +1632,7 @@ def _validate_cached_artifact_template(  # noqa: C901, PLR0912
     jax.tree_util.PyTreeDef,
     tuple[TreePath, ...],
     tuple[jax.Array, ...],
-    object,
+    _ConstructionPlan,
 ]:
     """Copy a cached declaration without invoking its plugin PyTree callbacks."""
     if type(snapshot) is not _CanonicalArtifactTemplate:
@@ -1670,7 +1715,7 @@ def _validate_cached_artifact_template(  # noqa: C901, PLR0912
 
 def _rebuild_cached_artifact_template(
     *,
-    template: object,
+    template: ArtifactPayload,
     snapshot: _CanonicalArtifactTemplate | None,
     payload_runtime_type: type[object],
     containers: Mapping[TreePath, type[object]],
@@ -1696,7 +1741,7 @@ def _rebuild_cached_artifact_template(
 
 def _canonicalize_declared_template_snapshot(
     *,
-    template: object,
+    template: ArtifactPayload,
     payload_runtime_type: type[object],
     containers: Mapping[TreePath, type[object]],
     leaves: Mapping[TreePath, LeafAuthority],
@@ -2086,7 +2131,9 @@ def _artifact_authority_pickle_state(
     )
 
 
-def _restore_artifact_authority_from_pickle(state: object) -> ArtifactAuthority:
+def _restore_artifact_authority_from_pickle(
+    state: _PickleStateBoundary,
+) -> ArtifactAuthority:
     """Rebuild one transported authority through the validated private constructor."""
     if type(state) is not _ArtifactAuthorityPickleState:
         raise TypeError("Artifact authority pickle state must be exact.")
@@ -2109,11 +2156,11 @@ def _restore_artifact_authority_from_pickle(state: object) -> ArtifactAuthority:
 
 def _canonicalize_declared_template(
     *,
-    template: object,
+    template: ArtifactPayload,
     payload_runtime_type: type[object],
     containers: Mapping[TreePath, type[object]],
     leaves: Mapping[TreePath, LeafAuthority],
-) -> object:
+) -> ArtifactPayload:
     """Validate and detach a template for callback-free lazy reconstruction."""
     return _canonicalize_declared_template_snapshot(
         template=template,
@@ -2234,7 +2281,7 @@ def _canonicalize_artifact_payload_snapshot(  # noqa: C901
 
 def _canonicalize_artifact_payload(
     *, payload: object, authority: ArtifactAuthority
-) -> object:
+) -> ArtifactPayload:
     """Copy one payload into its model-built exact PyTree and leaf representation."""
     return _canonicalize_artifact_payload_snapshot(
         payload=payload,

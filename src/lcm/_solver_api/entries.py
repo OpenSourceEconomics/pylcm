@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 import jax
 import numpy as np
@@ -18,7 +18,15 @@ from lcm._solver_api.authority import (
     _reconstruct_artifact_from_template_snapshot,
 )
 from lcm._solver_api.identity import (
+    ArtifactPayload,
     LoadState,
+)
+from lcm.typing import FloatND
+
+# One numerical solution value: a device or host array, a NumPy scalar, or a Python
+# number.
+type _SolutionValue = (
+    jax.Array | npt.NDArray[np.generic] | np.generic | bool | int | float | complex
 )
 
 
@@ -26,7 +34,7 @@ from lcm._solver_api.identity import (
 class _ValueMaterializer(Protocol):  # noqa: PYI046 — private store boundary protocol
     """Call-local trusted value loader; never retained by a public store."""
 
-    def __call__(self, *, entry: object) -> object:
+    def __call__(self, *, entry: _LazyEntry) -> object:
         """Materialize one explicitly admitted entry with its private ownership."""
         ...
 
@@ -40,7 +48,7 @@ class _LazyEntry(ABC):
         """Return the materialization state without loading the entry."""
 
     @abstractmethod
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(self, *, template: ArtifactPayload | None = None) -> object:
         """Load and verify the entry, optionally rebuilding a declared PyTree."""
 
     def host_value(self) -> npt.NDArray[np.generic] | None:
@@ -50,7 +58,7 @@ class _LazyEntry(ABC):
         """
         return None
 
-    def fresh_value(self) -> object | None:
+    def fresh_value(self) -> FloatND | None:
         """Return the value in a validated buffer no other reader can reach.
 
         A store hands such a value out as it is, without its defensive copy.
@@ -71,7 +79,7 @@ class _LazyEntry(ABC):
     def materialize_from_template_snapshot(
         self,
         *,
-        template_snapshot: object,
+        template_snapshot: _CanonicalArtifactTemplate,
     ) -> object:
         """Fallback for lazy implementations that only consume a template object."""
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
@@ -86,8 +94,8 @@ class _LazyEntry(ABC):
 def _materialize_entry(
     *,
     entry: object,
-    template: object | None = None,
-    template_snapshot: object | None = None,
+    template: ArtifactPayload | None = None,
+    template_snapshot: _CanonicalArtifactTemplate | None = None,
 ) -> object:
     """Materialize an internal lazy entry while leaving eager objects untouched."""
     if isinstance(entry, _LazyEntry):
@@ -117,7 +125,7 @@ class _CanonicalArtifactEntry(_LazyEntry):
         self,
         *,
         template_snapshot: _CanonicalArtifactTemplate,
-    ) -> object:
+    ) -> ArtifactPayload:
         """Copy private buffers and reconstruct without a plugin callback."""
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
             raise TypeError("Owned artifact reconstruction requires an exact snapshot.")
@@ -146,7 +154,9 @@ class _CanonicalArtifactEntry(_LazyEntry):
             leaves=tuple(copied),
         )
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
         """Return a fresh graph; eager-entry compatibility ignores raw templates."""
         del template
         return self._fresh(template_snapshot=self.plan_snapshot)
@@ -154,8 +164,8 @@ class _CanonicalArtifactEntry(_LazyEntry):
     def materialize_from_template_snapshot(
         self,
         *,
-        template_snapshot: object,
-    ) -> object:
+        template_snapshot: _CanonicalArtifactTemplate,
+    ) -> ArtifactPayload:
         """Return a fresh graph through the current model-authoritative plan."""
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
             raise TypeError("Owned artifact reconstruction requires an exact snapshot.")
@@ -200,7 +210,7 @@ def _canonical_artifact_entry_from_authority(
 
 def _copy_solution_value(
     *, value: object, label: str, array_copier: _ArrayCopier | None = None
-) -> object:
+) -> _SolutionValue:
     """Copy one numerical value without changing its concrete representation."""
     if isinstance(value, jax.Array):
         if array_copier is None:
@@ -225,7 +235,7 @@ def _copy_solution_value(
             raise TypeError(f"{label} is not numerical or Boolean.")
         return np.array(value, copy=True)[()]
     if any(type(value) is allowed for allowed in (bool, int, float, complex)):
-        return value
+        return cast("bool | int | float | complex", value)
     raise TypeError(f"{label} is not a supported numerical value.")
 
 
@@ -240,12 +250,12 @@ class _CanonicalValueEntry(_LazyEntry):
         """An owned eager value is already loaded."""
         return LoadState.LOADED
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(self, *, template: ArtifactPayload | None = None) -> _SolutionValue:
         """Return an independent numerical value."""
         del template
         return self._fresh()
 
-    def _fresh(self, *, array_copier: _ArrayCopier | None = None) -> object:
+    def _fresh(self, *, array_copier: _ArrayCopier | None = None) -> _SolutionValue:
         """Copy with an optional call-local allocator, without storing it."""
         if array_copier is None:
             return _copy_solution_value(value=self.value, label="Owned solution value")

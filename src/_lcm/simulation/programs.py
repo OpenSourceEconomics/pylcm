@@ -29,7 +29,7 @@ import inspect
 from collections.abc import Callable, Mapping
 from functools import partial
 from types import MappingProxyType
-from typing import Any, ClassVar, cast
+from typing import ClassVar, TypedDict, cast
 
 import jax
 import jax.numpy as jnp
@@ -71,8 +71,9 @@ from _lcm.simulation.program_types import (
     _PerSubjectFunction,
     subject_axis,
 )
-from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
+from _lcm.solution.action_reduction import HARD_MAX_REDUCTION, HardMaxResult
 from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
+from _lcm.solution.backward_induction import FoldAge
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import (
@@ -84,15 +85,27 @@ from _lcm.solution.grid_search import (
 )
 from _lcm.typing import (
     ActionName,
+    FlatParams,
     PytreeValue,
     QAndFFunction,
     RegimeName,
     RegimeNamesToIds,
     ShapeDtypePytree,
     StateOrActionName,
+    StatesPerRegime,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import BoolND, FloatND, IntND, ReferenceName
+from lcm.typing import (
+    Bool1D,
+    BoolND,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    Int1D,
+    IntND,
+    ReferenceName,
+    StateName,
+)
 
 
 # Why a regime whose routing the host drives cedes its own width.
@@ -509,6 +522,33 @@ def forward_regimes_by_period(
     )
 
 
+class _GateFoldArguments(TypedDict):
+    """The arguments a gate-fold program hands its body."""
+
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    target_states_by_target: (
+        Mapping[RegimeName, Mapping[StateName, ContinuousState | DiscreteState]] | None
+    )
+    edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]]
+    edge_flags: Mapping[RegimeName, BoolND]
+    flat_params: FlatParams
+    fold_age: FoldAge
+
+
+class _GateRouteArguments(TypedDict):
+    """The arguments a gate-route program hands its body, besides the width."""
+
+    edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]]
+    edge_flags: Mapping[RegimeName, BoolND]
+    next_states: StatesPerRegime
+    new_subject_regime_ids: Int1D
+    subjects_in_regime: Bool1D
+    flat_params: FlatParams
+    own_stakeholder: Int1D
+    new_own_stakeholder: Int1D
+    fold_age: FoldAge
+
+
 #: Gate-route operands partitioned across subjects; every other one is shared.
 _GATE_ROUTE_SUBJECT_ARG_NAMES = (
     "next_states",
@@ -541,19 +581,20 @@ class _GateFoldBody:
         """Declare that the fold partitions nothing: it has no subject axis."""
         return ()
 
-    def __call__(self, **kwargs: Any) -> PytreeValue:
+    def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
+        arguments = cast("_GateFoldArguments", kwargs)
         folded = simulation_gate_fold(
             regime=self.regime,
             regime_name=self.name,
             regimes=self.regimes,
             period=self.period,
-            next_regime_to_V_arr=kwargs["next_regime_to_V_arr"],
+            next_regime_to_V_arr=arguments["next_regime_to_V_arr"],
             base_state_action_spaces=MappingProxyType({}),
-            target_states_by_target=kwargs["target_states_by_target"],
-            edge_values=kwargs["edge_values"],
-            edge_flags=kwargs["edge_flags"],
-            flat_params=kwargs["flat_params"],
-            fold_age=kwargs["fold_age"],
+            target_states_by_target=arguments["target_states_by_target"],
+            edge_values=arguments["edge_values"],
+            edge_flags=arguments["edge_flags"],
+            flat_params=arguments["flat_params"],
+            fold_age=arguments["fold_age"],
         )
         return MappingProxyType(
             {
@@ -585,21 +626,22 @@ class _GateRouteBody:
         """Name the operands whose leaves carry the independent subject axis."""
         return _GATE_ROUTE_SUBJECT_ARG_NAMES
 
-    def __call__(self, **kwargs: Any) -> PytreeValue:
+    def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
+        arguments = cast("_GateRouteArguments", kwargs)
         return simulation_gate_route_delta(
             regime=self.regime,
             fold_period=self.fold_period,
-            edge_values=kwargs["edge_values"],
-            edge_flags=kwargs["edge_flags"],
-            candidate_states=kwargs["next_states"],
+            edge_values=arguments["edge_values"],
+            edge_flags=arguments["edge_flags"],
+            candidate_states=arguments["next_states"],
             regime_names_to_ids=self.regime_names_to_ids,
-            new_subject_regime_ids=kwargs["new_subject_regime_ids"],
-            subjects_in_regime=kwargs["subjects_in_regime"],
-            flat_params=kwargs["flat_params"],
-            own_stakeholder=kwargs["own_stakeholder"],
-            new_own_stakeholder=kwargs["new_own_stakeholder"],
-            fold_age=kwargs["fold_age"],
-            subject_width=kwargs[SUBJECT_WIDTH_KEYWORD],
+            new_subject_regime_ids=arguments["new_subject_regime_ids"],
+            subjects_in_regime=arguments["subjects_in_regime"],
+            flat_params=arguments["flat_params"],
+            own_stakeholder=arguments["own_stakeholder"],
+            new_own_stakeholder=arguments["new_own_stakeholder"],
+            fold_age=arguments["fold_age"],
+            subject_width=cast("int | None", kwargs[SUBJECT_WIDTH_KEYWORD]),
         )
 
 
@@ -784,7 +826,7 @@ class _StreamedArgmaxQOverA:
     action_width_keyword: str
     """Name of the planner-bound static action-block width in the call."""
 
-    folds: dict[int, Callable[..., Any]] = dataclasses.field(
+    folds: dict[int, Callable[..., HardMaxResult]] = dataclasses.field(
         default_factory=dict, repr=False
     )
     """Streamed folds already built, by the block width each streams at."""
@@ -810,7 +852,7 @@ class _StreamedArgmaxQOverA:
             result.best_value,
         )
 
-    def _fold(self, *, block_width: int) -> Callable[..., Any]:
+    def _fold(self, *, block_width: int) -> Callable[..., HardMaxResult]:
         """Return the streamed fold for one block width, building it once."""
         fold = self.folds.get(block_width)
         if fold is None:

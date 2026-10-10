@@ -24,13 +24,20 @@ import warnings
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    Protocol,
+    TypeAliasType,
+    cast,
+    runtime_checkable,
+)
 
 import jax
 import jax.numpy as jnp
 from beartype import beartype
 from dags import concatenate_functions
-from dags.tree import QNAME_DELIMITER
+from jax.typing import DTypeLike
 
 import lcm.typing as lcm_typing
 from _lcm.axis_boundaries import (
@@ -58,6 +65,7 @@ from _lcm.egm.nbegm_constraint_boundaries import (
     NBEGMFeasibilityBoundaryProgram,
     feasibility_axis_boundaries,
 )
+from _lcm.egm.nbegm_step import JumpPosition
 from _lcm.egm.preferences import Preferences
 from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
@@ -72,7 +80,7 @@ from _lcm.execution.core_program import (
     ReducedAxis,
     TiledOutputAxis,
 )
-from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.execution.reductions import (
     INTERVAL_ENVELOPE_REDUCTION,
     WEIGHTED_EXPECTATION_REDUCTION,
@@ -117,6 +125,7 @@ from _lcm.solution.dcegm import (
     _fail_if_exact_affine_kernel_unavailable,
 )
 from _lcm.solution.egm import (
+    OneRowCore,
     _build_egm_period_kernel,
     declare_egm_carry_reads,
     guard_regime_mass,
@@ -129,19 +138,23 @@ from _lcm.solution.periodization import (
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
+    AnnotationForm,
     ArrayTree,
+    EconFunctionArg,
     EconFunctionKwargs,
     EconFunctionsMapping,
     FlatParams,
+    ParamsLeaf,
     PytreeValue,
     QualifiedName,
     RegimeName,
     ShapeDtypePytree,
+    TransitionFunction,
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import map_over_leading_axis
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
-from lcm.case_piece import CaseBoundary, EqualityOwner
+from lcm.case_piece import CaseBoundary, EqualityOwner, PiecewiseAffineMeta
 from lcm.exceptions import RegimeInitializationError
 from lcm.fixed_forms import cash_on_hand_with_subsidy
 from lcm.solver_api import (
@@ -155,6 +168,8 @@ from lcm.solver_api import (
 from lcm.typing import (
     ActionName,
     BoolND,
+    ContinuousState,
+    DiscreteState,
     Float1D,
     FloatND,
     FunctionName,
@@ -165,13 +180,52 @@ from lcm.typing import (
     ScalarFloat,
     StateName,
     StateOrActionName,
+    TransitionFunctionName,
+    UserFunction,
     ValueND,
 )
+
+if TYPE_CHECKING:
+    from _lcm.egm.continuation import ContinuationPlan, _ChildRead
+    from lcm.regime import FunctionEntry
+else:
+    # `_lcm.egm.continuation` and `lcm.regime` import the `lcm.solvers` facade,
+    # which imports this module, so neither is importable here at runtime.
+    type ContinuationPlan = object
+    type _ChildRead = object
+    type FunctionEntry = object
 
 # Key under which ride-along periods share one compiled core: the continuation
 # targets either side of a `"|"` separator, followed by those targets'
 # age-specialized grid signatures at `period + 1`.
 type _RideAlongGroupKey = tuple[RegimeName | Hashable, ...]
+
+# A law the continuation reads: a target's next-state or Euler-state function, or
+# the regime transition, each returning its value tree.
+type _ContinuationLaw = Callable[..., ArrayTree]
+
+# A compiled liquid-derivative program: the derivative of a budget, or of a
+# continuation law, at a batch of liquid points, with every other argument of the
+# differentiated function supplied per call.
+type _BudgetProbeProgram = Callable[[FloatND, EconFunctionKwargs], FloatND]
+type _LawProbeProgram = Callable[[FloatND, EconFunctionKwargs], ArrayTree]
+
+# A structural argument a deferred probe binds at model build: the composed
+# function or continuation plan it probes, the liquid grid and its samples, the
+# declared breakpoints, the derivative programs, a name, or a flag.
+type _ProbeBinding = (
+    Callable[..., FloatND]
+    | ContinuationPlan
+    | Float1D
+    | tuple[_NBEGMSource, ...]
+    | Mapping[int, _BudgetProbeProgram]
+    | Mapping[_ContinuationLaw, _LawProbeProgram]
+    | str
+    | bool
+)
+
+# One ride-along state's coordinate in a cell.
+type _RideCoordinate = FloatND | IntND
 
 # Every discrete action the envelope branches over, paired with its grid codes.
 # The branch axis is the product of these code sets, so the pairing has to keep
@@ -446,7 +500,9 @@ class NBEGM(OneMarginSolver):
     ) -> SolutionKernels:
         """Declare actual leaves on the single-liquid and adapted self-carry routes."""
         kernels = declare_egm_carry_reads(kernels=kernels, context=context)
-        adapted: dict[tuple[int, int], tuple[CoreArgumentBuilder, Callable]] = {}
+        adapted: dict[
+            tuple[int, int], tuple[CoreArgumentBuilder, MarginalLeafCore]
+        ] = {}
         return replace(
             kernels,
             period_kernels=MappingProxyType(
@@ -611,7 +667,7 @@ class NBEGM(OneMarginSolver):
         )
 
         period_to_target = period_to_continuation_target(context=context)
-        cores: dict[Hashable, Callable] = {}
+        cores: dict[Hashable, OneRowCore] = {}
         laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         period_group_keys = {
@@ -1456,7 +1512,7 @@ class _RideAlongArgumentBuilder:
     def _co_map_carry(
         self,
         *,
-        states: Mapping[str, object],
+        states: Mapping[StateName, ContinuousState | DiscreteState],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
     ) -> Mapping[RegimeName, EGMCarry]:
         """Filter the carry to this period's targets and place it on the co-map mesh.
@@ -1486,7 +1542,7 @@ class _RideAlongArgumentBuilder:
         )
 
     def _co_map_sharding(
-        self, *, states: Mapping[str, object]
+        self, *, states: Mapping[StateName, ContinuousState | DiscreteState]
     ) -> jax.NamedSharding | None:
         """Sharding of the flattened ride-cell axis over the co-mapped states.
 
@@ -1510,11 +1566,11 @@ class _RideAlongArgumentBuilder:
 
 # keyword-only-exempt: library-callback=jax.tree.map
 def _place_on_co_map_mesh(
-    leaf: object,
+    leaf: PytreeValue,
     *,
     mesh: jax.sharding.Mesh | jax.sharding.AbstractMesh,
     replicated: jax.NamedSharding,
-) -> object:
+) -> PytreeValue:
     """Replicate a carry leaf onto the co-map mesh unless it already lives there."""
     leaf_sharding = getattr(leaf, "sharding", None)
     if isinstance(leaf_sharding, jax.NamedSharding) and leaf_sharding.mesh == mesh:
@@ -1571,7 +1627,7 @@ class _RideAlongNBEGMPeriodKernel:
     per cell, published so an independent reader can evaluate the same
     declarations."""
 
-    continuation_plan: Any
+    continuation_plan: ContinuationPlan
     """The `ContinuationPlan` (regime transition, child reads, stochastic weights)
     the programs read the continuation through, published for the same reason."""
 
@@ -1620,7 +1676,7 @@ class _RideAlongNBEGMPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1648,15 +1704,19 @@ class _RideAlongNBEGMPeriodKernel:
         )
         outputs = compiled_cores[name](**arguments)
         if name == "main":
-            V_arr, carry = outputs
+            V_arr, carry = cast("tuple[FloatND, EGMCarry]", outputs)
             return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
         if self.statics.n_action_branches:
-            V_arr, carry, inner_action, branch_value, branch_inner_action = outputs
+            V_arr, carry, inner_action, branch_value, branch_inner_action = cast(
+                "tuple[FloatND, EGMCarry, FloatND, FloatND, FloatND]", outputs
+            )
             branch_discrete_actions = jnp.asarray(
                 self.statics.discrete_action_codes, dtype=jnp.int32
             )
         else:
-            V_arr, carry, inner_action = outputs
+            V_arr, carry, inner_action = cast(
+                "tuple[FloatND, EGMCarry, FloatND]", outputs
+            )
             branch_value = None
             branch_inner_action = None
             branch_discrete_actions = None
@@ -1680,9 +1740,9 @@ class _RideAlongNBEGMPeriodKernel:
 class _NBEGMCaseSpec:
     """Build-time statics describing one binary case split."""
 
-    below_callable: Callable
+    below_callable: UserFunction
     """Piece contribution on the lower side of the liquid boundary."""
-    above_callable: Callable
+    above_callable: UserFunction
     """Piece contribution on the upper side of the liquid boundary."""
     below_func: FunctionName
     """Qualified-name prefix of the lower piece's params."""
@@ -1818,7 +1878,7 @@ def _validate_nbegm_case_piece_declarations(
 def _validate_nbegm_boundary_scope(
     *,
     registry: NBEGMRegistry,
-    functions: Mapping[FunctionName, Callable[..., object]],
+    functions: Mapping[FunctionName, UserFunction],
     liquid_state_name: StateName,
     reserved_names: frozenset[str],
 ) -> None:
@@ -2062,17 +2122,7 @@ def _fail_if_budget_node_differs_from_kernel_cash_on_hand(
         raise RegimeInitializationError(msg)
 
 
-def _flat_params(func: Callable[..., object]) -> frozenset[str]:
-    """Return the qualified flat parameters a function reads.
-
-    States, actions, and other DAG nodes reach a function under their bare
-    names; a flat parameter always arrives qualified by the function that owns
-    it, so the qualifying separator is what tells the two apart.
-    """
-    return frozenset(name for name in _parameter_names(func) if QNAME_DELIMITER in name)
-
-
-def _parameter_names(func: Callable[..., object]) -> frozenset[str]:
+def _parameter_names(func: TransitionFunction) -> frozenset[str]:
     """Return a function's parameter names, empty when it has no signature."""
     import inspect  # noqa: PLC0415
 
@@ -2283,7 +2333,7 @@ class _ParameterCaseThreshold:
 class _ComputedCaseThreshold:
     """A case threshold composed from the regime's own functions."""
 
-    threshold_dag: Callable[..., object]
+    threshold_dag: Callable[..., FloatND]
     """The composed function evaluating the threshold from its params."""
 
     argument_names: tuple[str, ...]
@@ -2303,7 +2353,7 @@ def _build_nbegm_core(
     consumption_action: ActionName,
     case_spec: _NBEGMCaseSpec,
     envelope_arithmetic: ComparisonArithmetic = "certified",
-) -> Callable:
+) -> _NBEGMCaseCore:
     """Build the jittable case-piece EGM core closing over the case split.
 
     The core evaluates each piece's additive contribution and the boundary
@@ -2422,7 +2472,7 @@ class _NBEGMSource:
     """Discontinuity kind: `continuous_kink`, `jump`, or `hard_constraint`."""
     equality_owner: Literal["below", "above"]
     """Side of the schedule coordinate containing the exact threshold."""
-    derived_of_liquid_dag: Callable | None
+    derived_of_liquid_dag: Callable[..., FloatND] | None
     """Composed schedule variable as a function of the liquid state, or `None`
     when the schedule varies in the liquid state directly (no preimage needed)."""
     derived_param_names: tuple[ParameterName, ...]
@@ -2447,11 +2497,11 @@ class _NBEGMSource:
 class _NBEGMScheduleSpec:
     """Build-time statics for a continuous piecewise-affine schedule regime."""
 
-    coh_of_liquid_dag: Callable
+    coh_of_liquid_dag: Callable[..., FloatND]
     """Composed `coh` as a function of the liquid state and qualified params."""
     coh_param_names: tuple[QualifiedName, ...]
     """Qualified parameter names `coh` reads (everything but the state axes)."""
-    utility_dag: Callable
+    utility_dag: Callable[..., FloatND]
     """Composed period utility as a function of the consumption action, the
     ride-along states it reads, and qualified utility params. The ride-along core
     binds it per cell to invert the Euler equation and evaluate the period value."""
@@ -2475,7 +2525,7 @@ class _NBEGMScheduleSpec:
     sources: tuple[_NBEGMSource, ...] = ()
     """Every breakpoint across all declared schedules, merged on the liquid axis.
     The ride-along core maps each source to its own per-cell asset preimage."""
-    discount_factor_dag: Callable | None = None
+    discount_factor_dag: Callable[..., FloatND] | None = None
     """Composed `discount_factor` as a function of its ride-along state arguments and
     qualified params, or `None` when the regime uses pylcm's flat
     `koopmans_aggregator__discount_factor` parameter. When set, the ride-along
@@ -2545,7 +2595,7 @@ def _fail_if_discrete_action_feeds_continuation(
         )
 
     regime = context.user_regimes[context.regime_name]
-    funcs: dict[str, Callable[..., object]] = {
+    funcs: dict[FunctionName, UserFunction] = {
         name: func
         for name, func in regime.decomposed_functions.items()
         if callable(func)
@@ -2592,9 +2642,9 @@ def _reject_continuation_feed(
 
 def _law_reads_action(
     *,
-    law: Callable[..., object],
+    law: Callable[..., FloatND | IntND],
     cut_budget: bool,
-    funcs: Mapping[str, Callable[..., object]],
+    funcs: Mapping[FunctionName, UserFunction],
     budget_nodes: frozenset[str | None],
     action_name: ActionName,
 ) -> bool:
@@ -2620,7 +2670,7 @@ def _law_reads_action(
 
 def _state_laws(
     *, transitions: TransitionFunctionsMapping
-) -> Iterator[tuple[StateName, Callable[..., object]]]:
+) -> Iterator[tuple[StateName, Callable[..., FloatND | IntND]]]:
     """Yield each canonical state law with the state it evolves.
 
     Reads the canonical per-target laws rather than a regime's declared
@@ -2649,12 +2699,12 @@ def _state_laws(
 
 def _continuation_action_names(
     *,
-    regime_transition: Callable[..., Any],
-    target_laws: Mapping[RegimeName, tuple[Callable[..., Any], ...]],
-    target_weight_laws: Mapping[RegimeName, Callable[..., Any] | None],
+    regime_transition: _ContinuationLaw,
+    target_laws: Mapping[RegimeName, tuple[_ContinuationLaw, ...]],
+    target_weight_laws: Mapping[RegimeName, _ContinuationLaw | None],
     target_resources_arg_names: Mapping[RegimeName, frozenset[str]],
-    discount_factor_dag: Callable[..., Any] | None,
-    interval_schedule_dags: tuple[Callable[..., Any] | None, ...],
+    discount_factor_dag: Callable[..., FloatND] | None,
+    interval_schedule_dags: tuple[Callable[..., FloatND] | None, ...],
     action_names: tuple[ActionName, ...],
 ) -> tuple[ActionName, ...]:
     """Name the discrete actions the per-cell continuation read consumes.
@@ -2692,7 +2742,7 @@ def _continuation_action_names(
     return tuple(name for name in action_names if name in consumed)
 
 
-def _declared_parameter_names(func: Callable[..., Any] | None) -> frozenset[str]:
+def _declared_parameter_names(func: _ContinuationLaw | None) -> frozenset[str]:
     """Parameter names of a callable, empty for an absent one."""
     if func is None:
         return frozenset()
@@ -2760,14 +2810,14 @@ def _branch_inputs(
     cont_marginal: FloatND | None,
     extra_cont_value: FloatND | None,
     cliff_savings: FloatND | None,
-) -> dict[str, Any]:
+) -> dict[str, FloatND | IntND]:
     """Assemble the pytree `lax.map` streams over the branch axis.
 
     The optional continuations enter only where the regime supplies them, so a
     regime without child cliffs or an extra continuation maps a narrower tree
     rather than one padded with sentinels that every branch would then carry.
     """
-    inputs: dict[str, Any] = {"codes": codes}
+    inputs: dict[str, FloatND | IntND] = {"codes": codes}
     if cont_value is not None:
         inputs["cont_value"] = cont_value
     if cont_marginal is not None:
@@ -2816,7 +2866,7 @@ def _liquid_affinity_samples(
 def _budget_affinity_check(
     *,
     context: SolverBuildContext,
-    coh_dag: Callable[..., object],
+    coh_dag: Callable[..., FloatND],
     liquid_state_name: StateName,
     require_unit_slope: bool,
     probe_failure: Literal["reject", "assume_declared"],
@@ -2844,7 +2894,7 @@ def _budget_affinity_check(
 
 def _fail_if_budget_nonaffine_in_liquid(
     *,
-    coh_dag: Callable[..., object],
+    coh_dag: Callable[..., FloatND],
     liquid_name: str,
     require_unit_slope: bool,
     regime_name: RegimeName,
@@ -2853,7 +2903,7 @@ def _fail_if_budget_nonaffine_in_liquid(
     liquid_samples: Float1D,
     breakpoint_sources: tuple[_NBEGMSource, ...] = (),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
-    derivative_programs: Mapping[object, Callable[..., object]] | None = None,
+    derivative_programs: Mapping[int, _BudgetProbeProgram] | None = None,
 ) -> None:
     """Reject budgets violating affinity or required slope on any live interval.
 
@@ -2962,7 +3012,7 @@ class _FlowProbeReadings:
 
 def _fail_if_flow_not_single_power(
     *,
-    utility_dag: Callable[..., object],
+    utility_dag: Callable[..., FloatND],
     consumption_action_name: ActionName,
     regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
@@ -3122,15 +3172,15 @@ jax.tree_util.register_pytree_node(
 
 
 # The names a stringified parameter annotation is resolved against: the public
-# type aliases plus the grouped-param leaf types — the vocabulary model functions
-# annotate their parameters in, and so the whole of what a composed function's
-# stringified annotations can name.
-_PROBE_ANNOTATION_VOCABULARY: MappingProxyType[str, object] = MappingProxyType(
+# classes and type aliases plus the grouped-param leaf types — the vocabulary
+# model functions annotate their parameters in, and so the whole of what a
+# composed function's stringified annotations can name.
+_PROBE_ANNOTATION_VOCABULARY: MappingProxyType[str, AnnotationForm] = MappingProxyType(
     {
         **{
             name: value
             for name, value in vars(lcm_typing).items()
-            if not name.startswith("_")
+            if not name.startswith("_") and isinstance(value, type | TypeAliasType)
         },
         "MappingLeaf": MappingLeaf,
         "UserMappingLeaf": UserMappingLeaf,
@@ -3167,7 +3217,7 @@ class _ProbeArguments:
     """Arguments whose consumers annotate them with a boolean dtype."""
     mapping_leaf_arg_names: frozenset[ReferenceName] = frozenset()
     """Arguments whose consumers annotate them as grouped params."""
-    param_values: MappingProxyType[str, object] = MappingProxyType({})
+    param_values: MappingProxyType[QualifiedName, ParamsLeaf] = MappingProxyType({})
     """The model's own parameter values, empty until `with_params` runs."""
 
     @property
@@ -3184,7 +3234,7 @@ class _ProbeArguments:
         underneath, because a probe may differentiate a law that carries into a
         target regime and reads that target's params.
         """
-        merged: dict[str, object] = {}
+        merged: dict[QualifiedName, ParamsLeaf] = {}
         for path, regime_params in flat_namespaces(flat_params):
             if path != (regime_name,) and path[0] != EDGES:
                 merged.update(regime_params)
@@ -3199,7 +3249,7 @@ class _ProbeArguments:
         array_floats: bool = False,
         array_rank: int = 1,
         leaf_rank: int = 1,
-    ) -> object:
+    ) -> ParamsLeaf:
         """Build one argument at the given fill level and rung."""
         return _probe_fill(
             name=name,
@@ -3237,7 +3287,7 @@ class _ProbeFillRung:
     int_overrides: Mapping[str, int]
     """Integer-coded arguments pinned to one grid code each."""
 
-    def argument(self, *, name: str, probe_arguments: _ProbeArguments) -> object:
+    def argument(self, *, name: str, probe_arguments: _ProbeArguments) -> ParamsLeaf:
         """Build one argument of the probed function at this rung."""
         if name in self.int_overrides:
             return jnp.asarray(self.int_overrides[name], dtype=jnp.int32)
@@ -3259,7 +3309,7 @@ class _FilledScalarFunction:
     through a single vectorized call.
     """
 
-    func: Callable[..., object]
+    func: Callable[..., FloatND]
     """The composed function being probed."""
     arg_names: tuple[ReferenceName, ...]
     """Its parameter names, in signature order."""
@@ -3293,7 +3343,7 @@ class _LiquidAffinityProbe:
     cell — and, for the curvature diagnostic, at the broad grid samples too.
     """
 
-    coh_dag: Callable[..., object]
+    coh_dag: Callable[..., FloatND]
     """The composed cash-on-hand as a function of the liquid state and params."""
     arg_names: tuple[ReferenceName, ...]
     """The composed budget's parameter names."""
@@ -3307,11 +3357,11 @@ class _LiquidAffinityProbe:
     """Broad grid-node and midpoint samples for the curvature diagnostic."""
     breakpoint_sources: tuple[_NBEGMSource, ...]
     """The declared breakpoints, resolved per rung into liquid-space values."""
-    dtype: type
+    dtype: DTypeLike
     """The canonical float dtype every probe value is cast to."""
     int_sweeps: tuple[MappingProxyType[str, int], ...]
     """The one-at-a-time integer-code overrides every fill is swept over."""
-    derivative_programs: Mapping[object, Callable[..., object]] | None = None
+    derivative_programs: Mapping[int, _BudgetProbeProgram] | None = None
     """Model-owned derivatives with current filled arguments supplied dynamically."""
 
     def budget_of_liquid(self, *, rung: _ProbeFillRung) -> _FilledScalarFunction:
@@ -3583,7 +3633,7 @@ def _flow_of_consumption(
     array_floats: bool,
     array_rank: int,
     leaf_rank: int,
-    utility_dag: Callable[..., object],
+    utility_dag: Callable[..., FloatND],
     arg_names: tuple[ReferenceName, ...],
     consumption_action_name: ActionName,
     probe_arguments: _ProbeArguments,
@@ -3650,7 +3700,7 @@ def _deferred_probe(
     regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
     probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
-    **bound: object,
+    **bound: _ProbeBinding,
 ) -> ParamCheck:
     """Configure a probe at model build and run it as its schedule asks.
 
@@ -3669,7 +3719,7 @@ def _deferred_probe(
         bound["derivative_programs"] = MappingProxyType(
             {
                 order: _make_liquid_probe_program(
-                    func=cast("Callable[..., ArrayTree]", bound["coh_dag"]),
+                    func=cast("Callable[..., FloatND]", bound["coh_dag"]),
                     liquid_name=cast("str", bound["liquid_name"]),
                     order=order,
                     scalar=True,
@@ -3678,8 +3728,6 @@ def _deferred_probe(
             }
         )
     elif probe is _fail_if_liquid_reading_next_state_varies_within_interval:
-        from _lcm.egm.continuation import ContinuationPlan  # noqa: PLC0415
-
         plan = cast("ContinuationPlan", bound["continuation_plan"])
         funcs = (
             *(
@@ -3693,15 +3741,14 @@ def _deferred_probe(
             plan.compute_regime_transition_probs,
         )
         liquid_name = cast("str", bound["liquid_name"])
-        bound["derivative_programs"] = MappingProxyType(
-            {
-                func: _make_liquid_probe_program(
-                    func=func, liquid_name=liquid_name, order=1, scalar=False
-                )
-                for func in funcs
-                if liquid_name in inspect.signature(func).parameters
-            }
-        )
+        law_programs: dict[_ContinuationLaw, _LawProbeProgram] = {
+            func: _make_liquid_probe_program(
+                func=func, liquid_name=liquid_name, order=1, scalar=False
+            )
+            for func in funcs
+            if liquid_name in inspect.signature(func).parameters
+        }
+        bound["derivative_programs"] = MappingProxyType(law_programs)
     return _DeferredProbe(
         probe=probe,
         regime_name=regime_name,
@@ -3711,9 +3758,9 @@ def _deferred_probe(
     )
 
 
-def _make_liquid_probe_program(
-    *, func: Callable[..., ArrayTree], liquid_name: str, order: int, scalar: bool
-) -> Callable[..., object]:
+def _make_liquid_probe_program[T: ArrayTree](
+    *, func: Callable[..., T], liquid_name: str, order: int, scalar: bool
+) -> Callable[[FloatND, EconFunctionKwargs], T]:
     """Construct a derivative program closing over model structure only."""
     derivative = _DynamicLiquidProbe(func=func, liquid_name=liquid_name, scalar=scalar)
     for _ in range(order):
@@ -3738,15 +3785,32 @@ class _DynamicLiquidProbe:
         return jnp.asarray(result).reshape(()) if self.scalar else result
 
 
-def _evaluate_liquid_probe_program(
-    *, program: Callable[..., object], points: FloatND, arguments: Mapping[str, object]
-) -> Any:  # Scalar budget or pytree-valued continuation Jacobian.
-    """Evaluate current fills and release failed abstract specializations."""
+def _evaluate_liquid_probe_program[T](
+    *,
+    program: Callable[[FloatND, EconFunctionKwargs], T],
+    points: FloatND,
+    arguments: EconFunctionKwargs,
+) -> T:
+    """Evaluate current fills and release failed abstract specializations.
+
+    The result is the budget's derivative at every point, or a continuation law's
+    Jacobian tree.
+    """
     try:
         return program(points, arguments)
     except Exception:
-        cast("Any", program).clear_cache()
+        if isinstance(program, _CacheClearing):
+            program.clear_cache()
         raise
+
+
+@runtime_checkable
+class _CacheClearing(Protocol):
+    """A compiled program that can drop the specializations it has cached."""
+
+    def clear_cache(self) -> None:
+        """Drop every cached specialization."""
+        ...
 
 
 @dataclass(eq=False, kw_only=True)
@@ -3770,7 +3834,7 @@ class _DeferredProbe:
     probe_schedule: Literal["first_solve", "every_solve", "never"]
     """Which draws the probe evaluates."""
 
-    bound: Mapping[str, object]
+    bound: Mapping[str, _ProbeBinding]
     """The probe's structural arguments, fixed at model build."""
 
     checked: bool = False
@@ -3821,11 +3885,11 @@ def _probe_fill(
     array_arg_ranks: Mapping[str, int] = MappingProxyType({}),
     bool_arg_names: frozenset[ReferenceName] = frozenset(),
     mapping_leaf_arg_names: frozenset[ReferenceName] = frozenset(),
-    param_values: Mapping[str, object] = MappingProxyType({}),
+    param_values: Mapping[QualifiedName, ParamsLeaf] = MappingProxyType({}),
     array_floats: bool = False,
     array_rank: int = 1,
     leaf_rank: int = 1,
-) -> object:
+) -> ParamsLeaf:
     """Build a probe argument, preferring the model's own parameter value.
 
     A parameter the model declares answers with its own value: the probes run only
@@ -3883,8 +3947,8 @@ def _probe_fill(
 
 
 def _bind_all_but_liquid(
-    *, positional: Callable[..., object], liquid_pos: int, bound: list[object]
-) -> Callable[[FloatND], object]:
+    *, positional: _PositionalCall, liquid_pos: int, bound: list[ParamsLeaf]
+) -> _LiquidBoundLaw:
     """Return the law as a function of the liquid argument alone.
 
     Every other argument is a probe fill that is constant for the rung, so binding
@@ -3900,16 +3964,16 @@ def _bind_all_but_liquid(
 class _LiquidBoundLaw:
     """A positional law with every argument but the liquid one bound."""
 
-    positional: Callable[..., object]
+    positional: _PositionalCall
     """The law, taking its arguments positionally in signature order."""
 
     liquid_pos: int
     """Position of the liquid argument."""
 
-    bound: tuple[object, ...]
+    bound: tuple[ParamsLeaf, ...]
     """One value per argument; the liquid slot is replaced at each call."""
 
-    def __call__(self, liquid_value: FloatND) -> object:
+    def __call__(self, liquid_value: FloatND) -> ArrayTree:
         """Evaluate the law at `liquid_value` with the other arguments bound."""
         called = list(self.bound)
         called[self.liquid_pos] = liquid_value
@@ -3969,7 +4033,7 @@ def _evaluate_on_first_workable_fill[T](evaluate: Callable[..., T]) -> T:
 def _probe_annotation_sources(
     *,
     context: SolverBuildContext,
-) -> MappingProxyType[str, Callable[..., object]]:
+) -> MappingProxyType[str, UserFunction]:
     """The functions whose signatures classify this regime's probe fills."""
     return _annotation_source_functions(
         functions=context.functions,
@@ -3981,7 +4045,7 @@ def _probe_annotation_sources(
 
 def _indexed_arg_ranks(
     *,
-    functions: Mapping[str, Callable[..., object]],
+    functions: Mapping[str, UserFunction],
 ) -> MappingProxyType[str, int]:
     """Axis count per leaf parameter, read off how its consumers subscript it.
 
@@ -4025,7 +4089,7 @@ def _indexed_arg_ranks(
     return MappingProxyType(ranks)
 
 
-def _resolved_annotation(annotation: object) -> object | None:
+def _resolved_annotation(annotation: object) -> object | None:  # noqa: PAN001 - a parameter annotation is whatever expression its author wrote
     """The annotation object a probe can read a fill contract off, or `None`.
 
     A function composed for the DAG carries its parameters' types as names rather
@@ -4059,13 +4123,23 @@ def _probe_arg_spellings(
     return (arg_name, f"{func_name}__{arg_name}")
 
 
+@runtime_checkable
+class _DeclaresFunctions(Protocol):
+    """A regime as the probe classifiers read it: through its declared functions."""
+
+    @property
+    def functions(self) -> Mapping[FunctionName, FunctionEntry]:
+        """The regime's functions, keyed by name."""
+        ...
+
+
 def _annotation_source_functions(
     *,
-    functions: Mapping[str, Callable[..., object]],
-    transitions: Mapping[str, Mapping[str, object]],
-    user_regimes: Mapping[str, object] = MappingProxyType({}),
-    compute_regime_transition_probs: Callable[..., object] | None = None,
-) -> MappingProxyType[str, Callable[..., object]]:
+    functions: Mapping[str, UserFunction],
+    transitions: Mapping[RegimeName, Mapping[TransitionFunctionName, UserFunction]],
+    user_regimes: Mapping[RegimeName, _DeclaresFunctions] = MappingProxyType({}),
+    compute_regime_transition_probs: UserFunction | None = None,
+) -> MappingProxyType[str, UserFunction]:
     """Every function whose signature classifies a probe fill.
 
     A probe differentiates a composed DAG, and `concatenate_functions` carries
@@ -4085,7 +4159,7 @@ def _annotation_source_functions(
     name collide with one that does. Entries are keyed so that no source
     displaces another.
     """
-    sources: dict[FunctionName | QualifiedName, Callable[..., object]] = dict(functions)
+    sources: dict[FunctionName | QualifiedName, UserFunction] = dict(functions)
     for target, target_laws in transitions.items():
         for law_name, candidate in target_laws.items():
             func = getattr(candidate, "func", candidate)
@@ -4102,7 +4176,7 @@ def _annotation_source_functions(
 
 def _array_float_arg_names(
     *,
-    functions: Mapping[str, Callable[..., object]],
+    functions: Mapping[str, UserFunction],
 ) -> frozenset[str]:
     """Leaf parameter names that must be filled as unit-1D arrays, from annotations.
 
@@ -4130,7 +4204,7 @@ def _array_float_arg_names(
 
 def _annotated_int_arg_names(
     *,
-    functions: Mapping[str, Callable[..., object]],
+    functions: Mapping[str, UserFunction],
 ) -> frozenset[str]:
     """Leaf parameter names that must be filled as integers, from annotations.
 
@@ -4144,7 +4218,7 @@ def _annotated_int_arg_names(
 
 def _annotated_bool_arg_names(
     *,
-    functions: Mapping[str, Callable[..., object]],
+    functions: Mapping[str, UserFunction],
 ) -> frozenset[str]:
     """Leaf parameter names that must be filled as booleans, from annotations.
 
@@ -4158,7 +4232,7 @@ def _annotated_bool_arg_names(
 
 def _annotated_mapping_leaf_arg_names(
     *,
-    functions: Mapping[str, Callable[..., object]],
+    functions: Mapping[str, UserFunction],
 ) -> frozenset[str]:
     """Leaf parameter names declared as grouped param mappings, from annotations.
 
@@ -4183,7 +4257,7 @@ def _annotated_mapping_leaf_arg_names(
 
 def _annotated_dtype_arg_names(
     *,
-    functions: Mapping[str, Callable[..., object]],
+    functions: Mapping[str, UserFunction],
     dtype_prefix: str,
 ) -> frozenset[str]:
     """Leaf parameter names every consumer annotates with the given dtype family.
@@ -4254,12 +4328,12 @@ def _int_probe_arg_values(
 
 def _fail_if_liquid_reading_next_state_varies_within_interval(
     *,
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan,
     liquid_name: str,
     regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
-    derivative_programs: Mapping[object, Callable[..., object]] | None = None,
+    derivative_programs: Mapping[_ContinuationLaw, _LawProbeProgram] | None = None,
 ) -> None:
     """Reject a carried-state law that varies smoothly in the liquid state.
 
@@ -4340,12 +4414,12 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
 
 def _max_abs_first_liquid_derivative(
     *,
-    func: Callable[..., object],
+    func: _ContinuationLaw,
     liquid_name: str,
     regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"],
-    derivative_programs: Mapping[object, Callable[..., object]] | None = None,
+    derivative_programs: Mapping[_ContinuationLaw, _LawProbeProgram] | None = None,
 ) -> float | None:
     """Largest absolute liquid derivative of `func` over the probe's fills.
 
@@ -4399,16 +4473,35 @@ def _max_abs_first_liquid_derivative(
         ) from probe_error
 
 
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _PositionalCall:
+    """A keyword-bound function called with its arguments in signature order.
+
+    The arguments are the probe's own fills (parameter leaves, integer codes) and
+    the varied liquid value.
+    """
+
+    func: _ContinuationLaw
+    """The function, bound by parameter name."""
+
+    arg_names: tuple[ReferenceName, ...]
+    """Its parameter names, in signature order."""
+
+    def __call__(self, *args: ParamsLeaf) -> ArrayTree:
+        """Call `func` with `args` bound to its parameters by position."""
+        return self.func(**dict(zip(self.arg_names, args, strict=True)))
+
+
 def _worst_liquid_jacobian(
     *,
     array_floats: bool,
     array_rank: int,
     leaf_rank: int,
-    positional: Callable[..., object],
+    positional: _PositionalCall,
     arg_names: tuple[ReferenceName, ...],
     liquid_pos: int,
     probe_arguments: _ProbeArguments,
-    program: Callable[..., object] | None = None,
+    program: _LawProbeProgram | None = None,
 ) -> float:
     """Largest absolute liquid-Jacobian entry over one fill rung's assignments."""
     worst = 0.0
@@ -4421,7 +4514,7 @@ def _worst_liquid_jacobian(
     )
     for fills in _fill_assignments(len(arg_names)):
         for overrides in sweeps:
-            args: list[object] = [
+            args: list[ParamsLeaf] = [
                 probe_arguments.fill(
                     name=name,
                     fill=fill,
@@ -4481,27 +4574,6 @@ def _fill_assignments(n_args: int) -> tuple[tuple[float, ...], ...]:
     ramp_up = tuple(1.0 + 2.0 * position for position in range(n_args))
     ramp_down = tuple(reversed(ramp_up))
     return (constant_1, constant_3, ramp_up, ramp_down)
-
-
-@dataclass(frozen=True, eq=False, kw_only=True)
-class _PositionalCall:
-    """A keyword-bound function called with its arguments in signature order.
-
-    The arguments are annotated `object` deliberately: they are the probe's own
-    fills, and whether each satisfies its contract is what the model's functions
-    are being called to decide. A narrower union here would only manufacture a
-    violation for every fill kind the union has not caught up with.
-    """
-
-    func: Callable[..., object]
-    """The function, bound by parameter name."""
-
-    arg_names: tuple[ReferenceName, ...]
-    """Its parameter names, in signature order."""
-
-    def __call__(self, *args: object) -> object:
-        """Call `func` with `args` bound to its parameters by position."""
-        return self.func(**dict(zip(self.arg_names, args, strict=True)))
 
 
 def _collect_nbegm_schedule_spec(
@@ -4569,7 +4641,9 @@ def _collect_nbegm_schedule_spec(
     )
 
     # Cache the composed derived-variable DAG per variable across its breakpoints.
-    derived_dags: dict[str, tuple[Callable, tuple[str, ...], tuple[str, ...]]] = {}
+    derived_dags: dict[
+        str, tuple[Callable[..., FloatND], tuple[str, ...], tuple[str, ...]]
+    ] = {}
 
     sources: list[_NBEGMSource] = []
     for schedule in schedules:
@@ -4669,7 +4743,7 @@ def _derived_variable_dag(
     context: SolverBuildContext,
     state_names: tuple[StateName, ...],
     ride_along_state_names: tuple[StateName, ...],
-) -> tuple[Callable, tuple[str, ...], tuple[str, ...]]:
+) -> tuple[Callable[..., FloatND], tuple[str, ...], tuple[str, ...]]:
     """Compose a derived schedule variable and name its params and states read.
 
     A discrete action the schedule variable reads is bound per branch by the
@@ -4719,7 +4793,7 @@ def _sorted_thresholds(*, raw: Float1D, order_sensitive: bool) -> Float1D:
 
 def _fail_if_single_liquid_schedules_unsupported(
     *,
-    schedules: tuple[Any, ...],
+    schedules: tuple[PiecewiseAffineMeta, ...],
     ride_along_state_names: tuple[StateName, ...],
     regime_name: RegimeName,
 ) -> None:
@@ -4927,41 +5001,6 @@ def _solve_cliffed_budget(
     )
 
 
-def _build_nbegm_continuous_core(
-    *,
-    savings_grid: Float1D,
-    functions: EconFunctionsMapping,
-    consumption_action: ActionName,
-    schedule_spec: _NBEGMScheduleSpec,
-    feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
-    envelope_arithmetic: ComparisonArithmetic = "certified",
-) -> Callable:
-    """Build the jittable continuous-schedule EGM core for one continuation target.
-
-    The core reads the schedule's thresholds as liquid breakpoints, recovers the
-    active affine cash-on-hand segment per interval by differentiating the composed
-    `coh` at each interval's representative, and runs the kind-appropriate EGM step.
-    """
-    from _lcm.egm.preferences import (  # noqa: PLC0415
-        NEWTON_ACTION_FLOOR,
-        get_preferences_builder,
-        newton_action_ceiling,
-    )
-
-    return _NBEGMContinuousCore(
-        savings_grid=savings_grid,
-        build_preferences=get_preferences_builder(
-            functions=functions,
-            action_name=consumption_action,
-            action_lower=NEWTON_ACTION_FLOOR,
-            action_upper=newton_action_ceiling(savings_grid),
-        ),
-        schedule_spec=schedule_spec,
-        feasibility_constraints=feasibility_constraints,
-        envelope_arithmetic=envelope_arithmetic,
-    )
-
-
 @dataclass(frozen=True, eq=False, kw_only=True)
 class _NBEGMContinuousCore:
     """The jittable continuous-schedule EGM core of one solver group.
@@ -5087,6 +5126,41 @@ class _NBEGMContinuousCore:
         return value_at_liquid, carry
 
 
+def _build_nbegm_continuous_core(
+    *,
+    savings_grid: Float1D,
+    functions: EconFunctionsMapping,
+    consumption_action: ActionName,
+    schedule_spec: _NBEGMScheduleSpec,
+    feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
+    envelope_arithmetic: ComparisonArithmetic = "certified",
+) -> _NBEGMContinuousCore:
+    """Build the jittable continuous-schedule EGM core for one continuation target.
+
+    The core reads the schedule's thresholds as liquid breakpoints, recovers the
+    active affine cash-on-hand segment per interval by differentiating the composed
+    `coh` at each interval's representative, and runs the kind-appropriate EGM step.
+    """
+    from _lcm.egm.preferences import (  # noqa: PLC0415
+        NEWTON_ACTION_FLOOR,
+        get_preferences_builder,
+        newton_action_ceiling,
+    )
+
+    return _NBEGMContinuousCore(
+        savings_grid=savings_grid,
+        build_preferences=get_preferences_builder(
+            functions=functions,
+            action_name=consumption_action,
+            action_lower=NEWTON_ACTION_FLOOR,
+            action_upper=newton_action_ceiling(savings_grid),
+        ),
+        schedule_spec=schedule_spec,
+        feasibility_constraints=feasibility_constraints,
+        envelope_arithmetic=envelope_arithmetic,
+    )
+
+
 @dataclass(frozen=True, eq=False, kw_only=True)
 class _BoundScalarFunction:
     """A composed function as a function of one named argument.
@@ -5115,8 +5189,7 @@ def _build_nbegm_continuation_plan(
     context: SolverBuildContext,
     period: int,
     post_decision_name: FunctionName,
-) -> Any:  # `ContinuationPlan`; not annotated precisely (importing
-    # module scope closes an import cycle (`continuation` → … → `lcm.solvers`).
+) -> ContinuationPlan:
     """Assemble the period's continuation plan for the ride-along case-piece core."""
     from _lcm.egm.continuation import (  # noqa: PLC0415
         build_continuation_plan,
@@ -5179,7 +5252,7 @@ def _build_nbegm_continuation_plan(
 def _solve_ride_along_cell_step(
     *,
     has_jump: bool,
-    jump_positions: tuple[Any, ...],
+    jump_positions: tuple[JumpPosition, ...],
     cont_value: Float1D,
     cont_marginal: Float1D,
     liquid_grid: Float1D,
@@ -5291,7 +5364,7 @@ def _partition_jumps(
     jump_flags: BoolND,
     n_jumps: int,
     static_jump_positions: tuple[int, ...],
-) -> tuple[Float1D, tuple[Any, ...]]:
+) -> tuple[Float1D, tuple[JumpPosition, ...]]:
     """Sort a cell's breakpoint preimages and locate the jumps in the sorted order.
 
     With fixed jump positions the declared-order positions carry over; when the
@@ -5307,12 +5380,12 @@ def _partition_jumps(
 
 def _indexed_threshold_value(
     *,
-    table: Any,  # scalar param, threshold table, or mapping leaf
+    table: EconFunctionArg,
     subkey: str | None,
     index_state: StateName | None,
     static_index: int | None,
-    cell: dict[str, Any],
-) -> Any:
+    cell: Mapping[StateName, EconFunctionArg],
+) -> EconFunctionArg:
     """Read a breakpoint threshold from its param for one ride-along cell.
 
     The param is resolved to a value in this order:
@@ -5321,10 +5394,26 @@ def _indexed_threshold_value(
     - `static_index` selects a column (e.g. a bracket edge).
 
     A scalar threshold leaves every step disabled and passes through unchanged.
+
+    Raises:
+        TypeError: If `subkey` is set on a param that is not a `MappingLeaf`, or
+            an index is set on a value that is not an array.
+
     """
     value = table
     if subkey is not None:
+        if not isinstance(value, MappingLeaf):
+            msg = (
+                f"A threshold entry {subkey!r} is read from a grouped param; got "
+                f"{type(value).__name__}."
+            )
+            raise TypeError(msg)
         value = value.data[subkey]
+    if index_state is None and static_index is None:
+        return value
+    if not isinstance(value, jax.Array):
+        msg = f"An indexed threshold is read from an array; got {type(value).__name__}."
+        raise TypeError(msg)
     if index_state is not None:
         value = value[cell[index_state]]
     if static_index is not None:
@@ -5444,19 +5533,12 @@ class _NBEGMRideAlongStatics:
         """Number of continuation reads per ride cell across the branches."""
         return len(self.continuation_representatives)
 
-    def n_ride_cells(self, *, states: Mapping[str, object]) -> int:
-        """Number of flattened ride-along cells for the given state grids."""
-        count = 1
-        for name in self.ride_names:
-            count *= int(jnp.asarray(states[name]).shape[0])
-        return count
-
 
 def _nbegm_ride_along_statics(
     *,
     savings_grid: Float1D,
     schedule_spec: _NBEGMScheduleSpec,
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan,
     envelope_arithmetic: ComparisonArithmetic = "certified",
     cell_width: int = 0,
     interval_width: int = 0,
@@ -5653,11 +5735,11 @@ def _nbegm_cell_breakpoints(
     *,
     statics: _NBEGMRideAlongStatics,
     kwargs: EconFunctionKwargs,
-    cell: dict[str, Any],
+    cell: Mapping[StateName, EconFunctionArg],
     liquid_grid: Float1D,
-    dtype: Any,  # canonical float dtype
-    action_binding: Mapping[str, Any] = MappingProxyType({}),
-) -> tuple[Float1D, tuple[Any, ...]]:
+    dtype: DTypeLike,
+    action_binding: Mapping[ActionName, EconFunctionArg] = MappingProxyType({}),
+) -> tuple[Float1D, tuple[JumpPosition, ...]]:
     """Build one ride-along cell's sorted liquid breakpoints and jump positions.
 
     Each declared schedule's threshold maps to its asset value in its own variable
@@ -5707,9 +5789,9 @@ def _cell_breakpoint(
     source: _NBEGMSource,
     liquid_name: str,
     kwargs: EconFunctionKwargs,
-    cell: dict[str, Any],
-    dtype: Any,  # canonical float dtype
-    action_binding: Mapping[str, Any],
+    cell: Mapping[StateName, EconFunctionArg],
+    dtype: DTypeLike,
+    action_binding: Mapping[ActionName, EconFunctionArg],
 ) -> FloatND:
     """One source's threshold as the liquid value where the cell crosses it.
 
@@ -5768,7 +5850,7 @@ def cliff_target_margin(
     s_star: FloatND,
     slope: FloatND,
     intercept: FloatND,
-    dtype: Any,
+    dtype: DTypeLike,
 ) -> FloatND:
     """Return the savings displacement that lands just past each cliff preimage.
 
@@ -5803,13 +5885,13 @@ def cliff_target_margin(
 
 def _cliff_savings_targets(
     *,
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan,
     regime_name: RegimeName,
     statics: _NBEGMRideAlongStatics,
     child_carry: EGMCarry,
     combo_pool: EconFunctionKwargs,
     savings_grid: Float1D,
-    dtype: Any,
+    dtype: DTypeLike,
     midpoints: Float1D | None = None,
 ) -> FloatND:
     """Map the self-read child's value cliffs to one-sided savings targets.
@@ -5892,13 +5974,13 @@ def _jump_breakpoint_states(*, statics: _NBEGMRideAlongStatics) -> frozenset[str
 def _cliff_targets_for_pool(
     *,
     pool: EconFunctionKwargs,
-    read: Any,  # `_ChildRead`; import-cycle-safe
+    read: _ChildRead,
     breakpoints: FloatND,
     jump_states: frozenset[str],
     co_map_state_names: frozenset[StateName],
     post_decision_name: str,
     savings_grid: Float1D,
-    dtype: Any,
+    dtype: DTypeLike,
 ) -> FloatND:
     """One-sided savings targets of every child row's jumps under one combo pool.
 
@@ -5921,8 +6003,8 @@ def _cliff_targets_for_pool(
     )
     law_draws = euler_draw_nodes(read=read, combo_pool=pool)
     # Per carry axis: a fixed row index, or the name of the node axis supplying it.
-    row: list[Any] = []
-    node_axes: dict[str, Any] = {}
+    row: list[IntND | str] = []
+    node_axes: dict[str, IntND] = {}
     stochastic_positions = dict(
         zip(
             read.stochastic_state_names,
@@ -5964,7 +6046,7 @@ def _cliff_targets_for_pool(
         )
         raise ValueError(msg)
 
-    def targets_at(node: Mapping[str, Any]) -> FloatND:
+    def targets_at(node: Mapping[str, FloatND | IntND]) -> FloatND:
         draws = {
             name: law_draws[name][node[name]] if name in node_axes else node[name]
             for name in law_draws
@@ -5991,12 +6073,12 @@ def _cliff_targets_for_pool(
 def _cliff_targets_at_node(
     *,
     pool: EconFunctionKwargs,
-    next_state_func: Callable[..., Any],
+    next_state_func: Callable[..., Mapping[TransitionFunctionName, FloatND | IntND]],
     next_state_key: str,
     post_decision_name: str,
     jumps: Float1D,
     savings_grid: Float1D,
-    dtype: Any,
+    dtype: DTypeLike,
 ) -> FloatND:
     """One-sided savings targets of every jump with every input in `pool` fixed."""
     intercept = _next_euler_state(
@@ -6035,10 +6117,10 @@ def _next_euler_state(
     *,
     savings_value: FloatND,
     pool: EconFunctionKwargs,
-    next_state_func: Callable[..., Any],
+    next_state_func: Callable[..., Mapping[TransitionFunctionName, FloatND | IntND]],
     next_state_key: str,
     post_decision_name: str,
-    dtype: Any,
+    dtype: DTypeLike,
 ) -> FloatND:
     """The child's liquid (Euler) state reached from `savings_value` under `pool`."""
     next_states = next_state_func(**pool, **{post_decision_name: savings_value})
@@ -6076,7 +6158,7 @@ def _leading_axis_or_none(leaf: FloatND, *, axis: int | None) -> int | None:
 def _ride_along_core_programs(
     *,
     savings_grid: Float1D,
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan,
     statics: _NBEGMRideAlongStatics,
     regime_name: RegimeName,
     cliff_candidates: bool,
@@ -6199,7 +6281,7 @@ def _with_ride_marginal_reads(
     kernel: PeriodKernel,
     context: SolverBuildContext,
     period: int,
-    adapted: dict[tuple[int, int], tuple[CoreArgumentBuilder, Callable]],
+    adapted: dict[tuple[int, int], tuple[CoreArgumentBuilder, MarginalLeafCore]],
 ) -> PeriodKernel:
     """Install the adapter and its complete reads together on the top-level route.
 
@@ -6263,7 +6345,7 @@ def _with_ride_marginal_reads(
 
 def _ride_along_stochastic_axes(
     *,
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan,
     state_action_space: StateActionSpace,
 ) -> tuple[ReducedAxis, ...]:
     """Declare only a nontrivial child node mesh present in the program's inputs.
@@ -6297,7 +6379,7 @@ def _ride_along_output_roles(
     schedule_spec: _NBEGMScheduleSpec,
     n_published_boundaries: int,
     publish_replay: bool,
-) -> tuple[object, ...]:
+) -> tuple[OutputRoleTree, ...]:
     """Describe the tile-local core's outputs by the state axes that lead them.
 
     - The value array is the regime's value on the productmap state order.
@@ -6369,14 +6451,14 @@ class _NBEGMIntervalBlockReader:
 def _build_nbegm_tiled_core(
     *,
     savings_grid: Float1D,
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan,
     statics: _NBEGMRideAlongStatics,
     regime_name: RegimeName,
     cliff_candidates: bool,
     schedule_spec: _NBEGMScheduleSpec,
     envelope_build: _NBEGMEnvelopeBuild,
     publish_replay: bool,
-) -> Callable:
+) -> _NBEGMTiledCore:
     """Build the tile-local core of the ride-along solve.
 
     One compiled body walks the ride cells in blocks of `statics.cell_width`.
@@ -6418,7 +6500,7 @@ class _NBEGMTiledCore:
     savings_grid: Float1D
     """Exogenous post-decision savings grid the cells read the continuation on."""
 
-    continuation_plan: Any  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan
     """The period's continuation plan the cell reads bind into."""
 
     statics: _NBEGMRideAlongStatics
@@ -6447,7 +6529,7 @@ class _NBEGMTiledCore:
         __lcm_interval_width__: int = 0,
         __lcm_branch_width__: int = 0,
         __lcm_stochastic_node_width__: int | None = None,
-        **kwargs: Any,  # state grids + flat params (mixed dtypes)
+        **kwargs: EconFunctionArg,  # state grids + flat params (mixed dtypes)
     ) -> (
         tuple[FloatND, EGMCarry]
         | tuple[FloatND, EGMCarry, FloatND]
@@ -6502,11 +6584,11 @@ class _NBEGMTiledCore:
 def _solve_nbegm_inner_mesh(
     *,
     carry: MappingProxyType[RegimeName, EGMCarry],
-    comap_bindings: dict[str, Any],
+    comap_bindings: Mapping[StateName, _RideCoordinate],
     kwargs: EconFunctionKwargs,
     solve_one_cell: Callable[..., tuple[FloatND, ...]],
     savings_grid: Float1D,
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan,
     statics: _NBEGMRideAlongStatics,
     regime_name: RegimeName,
     cliff_candidates: bool,
@@ -6545,13 +6627,14 @@ def _solve_nbegm_inner_mesh(
 
 # keyword-only-exempt: library-callback=_lcm.utils.dispatchers.map_over_leading_axis
 def _solve_nbegm_cell(
-    inner_values: tuple[Any, ...],
+    inner_values: tuple[_RideCoordinate, ...],
     *,
     cell_continuation: Callable[
-        [tuple[Any, ...]], tuple[FloatND, ...] | _NBEGMIntervalContinuation
+        [tuple[_RideCoordinate, ...]],
+        tuple[FloatND, ...] | _NBEGMIntervalContinuation,
     ],
     solve_one_cell: Callable[..., tuple[FloatND, ...]],
-    comap_values: tuple[Any, ...],
+    comap_values: tuple[_RideCoordinate, ...],
     cliff_candidates: bool,
 ) -> tuple[FloatND, ...]:
     """Read one inner ride cell's continuation and solve its envelope step."""
@@ -6604,7 +6687,7 @@ def _solve_nbegm_over_co_map(
     *,
     kwargs: EconFunctionKwargs,
     carry: MappingProxyType[RegimeName, EGMCarry],
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan,
     co_map_names: tuple[str, ...],
     solve_inner: Callable[..., tuple[FloatND, ...]],
 ) -> tuple[FloatND, ...]:
@@ -6630,9 +6713,9 @@ def _solve_with_co_map(
     *,
     carry: MappingProxyType[RegimeName, EGMCarry],
     remaining: tuple[str, ...],
-    comap_bindings: dict[str, Any],
+    comap_bindings: Mapping[StateName, _RideCoordinate],
     kwargs: EconFunctionKwargs,
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan,
     solve_inner: Callable[..., tuple[FloatND, ...]],
 ) -> tuple[FloatND, ...]:
     """Peel one co-mapped state off `remaining` per `vmap` level, then solve."""
@@ -6666,14 +6749,14 @@ def _solve_with_co_map(
 
 # keyword-only-exempt: library-callback=jax.vmap
 def _slice_solve(
-    head_value: Any,
+    head_value: _RideCoordinate,
     sliced_carry: MappingProxyType[RegimeName, EGMCarry],
     *,
     head: str,
     tail: tuple[str, ...],
-    comap_bindings: dict[str, Any],
+    comap_bindings: Mapping[StateName, _RideCoordinate],
     kwargs: EconFunctionKwargs,
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan,
     solve_inner: Callable[..., tuple[FloatND, ...]],
 ) -> tuple[FloatND, ...]:
     """Solve one slice of the co-mapped state `head` against its carry slice."""
@@ -6684,42 +6767,6 @@ def _slice_solve(
         kwargs=kwargs,
         continuation_plan=continuation_plan,
         solve_inner=solve_inner,
-    )
-
-
-def _bind_nbegm_cell_continuation(
-    *,
-    kwargs: EconFunctionKwargs,
-    carry: MappingProxyType[RegimeName, EGMCarry],
-    comap_bindings: Mapping[str, Any],
-    savings_grid: Float1D,
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
-    statics: _NBEGMRideAlongStatics,
-    regime_name: RegimeName,
-    cliff_candidates: bool,
-    schedule_spec: _NBEGMScheduleSpec,
-) -> Callable[[tuple[Any, ...]], tuple[FloatND, ...] | _NBEGMIntervalContinuation]:
-    """Bind one period's inputs into the per-cell continuation read.
-
-    The returned callable takes one inner ride cell's coordinates (the ride states
-    that are not co-mapped, in `ride_names` order) and returns the cell's
-    continuation rows: expected value and expected marginal over the savings grid,
-    each with a leading branch axis when the regime carries a discrete action and an
-    interval axis when the continuation reads the liquid state, plus the
-    save-to-cliff savings targets when the one-sided read publishes jump topology.
-    With a positive interval batch size it instead returns a branch-bindable reader;
-    the interval scan requests and consumes one fixed-width row block at a time.
-    """
-    return _NBEGMCellContinuation(
-        kwargs=kwargs,
-        carry=carry,
-        comap_bindings=comap_bindings,
-        savings_grid=savings_grid,
-        continuation_plan=continuation_plan,
-        statics=statics,
-        regime_name=regime_name,
-        cliff_candidates=cliff_candidates,
-        schedule_spec=schedule_spec,
     )
 
 
@@ -6743,13 +6790,13 @@ class _NBEGMCellContinuation:
     carry: MappingProxyType[RegimeName, EGMCarry]
     """The filtered child carries, sliced to this co-map slice."""
 
-    comap_bindings: Mapping[str, Any]
+    comap_bindings: Mapping[StateName, _RideCoordinate]
     """The co-mapped ride states' coordinates of this slice."""
 
     savings_grid: Float1D
     """Exogenous post-decision savings grid the rows are read on."""
 
-    continuation_plan: Any  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan
     """The period's continuation plan."""
 
     statics: _NBEGMRideAlongStatics
@@ -6764,7 +6811,7 @@ class _NBEGMCellContinuation:
     schedule_spec: _NBEGMScheduleSpec
     """The composed budget, its thresholds, and the discrete actions."""
 
-    dtype: type = field(init=False)
+    dtype: DTypeLike = field(init=False)
     """The canonical float dtype; derived at construction."""
 
     liquid: Float1D = field(init=False)
@@ -6801,7 +6848,7 @@ class _NBEGMCellContinuation:
         )
 
     def __call__(
-        self, ride_values: tuple[Any, ...]
+        self, ride_values: tuple[_RideCoordinate, ...]
     ) -> tuple[FloatND, ...] | _NBEGMIntervalContinuation:
         """Read one inner ride cell's continuation rows, or bind their reader."""
         statics = self.statics
@@ -7014,15 +7061,51 @@ class _NBEGMCellContinuation:
         )
 
 
+def _bind_nbegm_cell_continuation(
+    *,
+    kwargs: EconFunctionKwargs,
+    carry: MappingProxyType[RegimeName, EGMCarry],
+    comap_bindings: Mapping[StateName, _RideCoordinate],
+    savings_grid: Float1D,
+    continuation_plan: ContinuationPlan,
+    statics: _NBEGMRideAlongStatics,
+    regime_name: RegimeName,
+    cliff_candidates: bool,
+    schedule_spec: _NBEGMScheduleSpec,
+) -> _NBEGMCellContinuation:
+    """Bind one period's inputs into the per-cell continuation read.
+
+    The returned callable takes one inner ride cell's coordinates (the ride states
+    that are not co-mapped, in `ride_names` order) and returns the cell's
+    continuation rows: expected value and expected marginal over the savings grid,
+    each with a leading branch axis when the regime carries a discrete action and an
+    interval axis when the continuation reads the liquid state, plus the
+    save-to-cliff savings targets when the one-sided read publishes jump topology.
+    With a positive interval batch size it instead returns a branch-bindable reader;
+    the interval scan requests and consumes one fixed-width row block at a time.
+    """
+    return _NBEGMCellContinuation(
+        kwargs=kwargs,
+        carry=carry,
+        comap_bindings=comap_bindings,
+        savings_grid=savings_grid,
+        continuation_plan=continuation_plan,
+        statics=statics,
+        regime_name=regime_name,
+        cliff_candidates=cliff_candidates,
+        schedule_spec=schedule_spec,
+    )
+
+
 # keyword-only-exempt: library-callback=jax.vmap
 def _interval_rows(
     interval_inputs: tuple[FloatND, ...],
     *,
     combo_pool: EconFunctionKwargs,
     liquid_name: str,
-    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: ContinuationPlan,
     carry: MappingProxyType[RegimeName, EGMCarry],
-    dtype: type,
+    dtype: DTypeLike,
     stochastic_node_width: int | None,
     co_map_names: tuple[str, ...],
     savings_grid: Float1D,
@@ -7172,7 +7255,7 @@ class _NBEGMCellSolver:
     kwargs: EconFunctionKwargs
     """The period's state grids and flat params."""
 
-    dtype: type
+    dtype: DTypeLike
     """The canonical float dtype."""
 
     liquid: Float1D
@@ -7193,7 +7276,7 @@ class _NBEGMCellSolver:
     def __call__(
         self,
         *,
-        ride_values: tuple[Any, ...],
+        ride_values: tuple[_RideCoordinate, ...],
         cont_value: FloatND | None = None,
         cont_marginal: FloatND | None = None,
         cliff_savings: FloatND | None = None,
@@ -7448,7 +7531,7 @@ class _NBEGMBranchSolver:
     cell_solver: _NBEGMCellSolver
     """The cell's period-bound solve."""
 
-    cell: dict[str, Any]
+    cell: Mapping[StateName, _RideCoordinate]
     """Every ride state's coordinate of this cell."""
 
     query_grid: Float1D
@@ -7618,7 +7701,7 @@ class _NBEGMBranchSolver:
 
 # keyword-only-exempt: library-callback=_lcm.utils.dispatchers.map_over_leading_axis
 def _solve_one_branch(
-    inputs: dict[str, Any],
+    inputs: Mapping[str, FloatND | IntND],
     *,
     branch_solver: _NBEGMBranchSolver,
     branch_action_names: tuple[ActionName, ...],
@@ -7686,7 +7769,7 @@ class _NBEGMDiscreteSpec:
     is taken by the upper envelope over the branch values.
     """
 
-    coh_of_liquid_dag: Callable
+    coh_of_liquid_dag: Callable[..., FloatND]
     """Composed `coh` as a function of the liquid state, the discrete actions, and
     qualified params."""
     coh_param_names: tuple[QualifiedName, ...]
@@ -7772,7 +7855,7 @@ class _NBEGMScheduleDiscreteSpec:
     branch values.
     """
 
-    coh_of_liquid_action_dag: Callable
+    coh_of_liquid_action_dag: Callable[..., FloatND]
     """Composed budget node as a function of the liquid state, the discrete actions,
     and qualified params."""
     coh_param_names: tuple[QualifiedName, ...]
@@ -7929,7 +8012,7 @@ def _build_nbegm_schedule_discrete_core(
     spec: _NBEGMScheduleDiscreteSpec,
     taste_shock_scale: float,
     envelope_arithmetic: ComparisonArithmetic = "certified",
-) -> Callable:
+) -> _NBEGMScheduleDiscreteCore:
     """Build the discrete-envelope core over a cliffed single-liquid budget.
 
     Per discrete-action value the core recovers the schedule's per-interval affine
@@ -8073,7 +8156,7 @@ def _build_nbegm_discrete_core(
     discrete_spec: _NBEGMDiscreteSpec,
     taste_shock_scale: float,
     envelope_arithmetic: ComparisonArithmetic = "certified",
-) -> Callable:
+) -> _NBEGMDiscreteCore:
     """Build the jittable discrete-envelope core for one continuation target.
 
     Per discrete-action value the core recovers the smooth budget's affine cash-on-
@@ -8200,7 +8283,7 @@ def _build_nbegm_single_axis_group(
     savings_grid: Float1D,
     feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...],
 ) -> tuple[
-    Callable,
+    OneRowCore,
     Callable[..., tuple[Float1D, Float1D]],
     tuple[ParamCheck, ...],
 ]:
@@ -8298,7 +8381,7 @@ def _assemble_ride_carry(
     liquid: Float1D,
     ride_shape: tuple[int, ...],
     liquid_axis_pos: int,
-    dtype: Any,  # jnp dtype object
+    dtype: DTypeLike,
 ) -> (
     tuple[FloatND, EGMCarry, FloatND]
     | tuple[FloatND, EGMCarry, FloatND, FloatND, FloatND]

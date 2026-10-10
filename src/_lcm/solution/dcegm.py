@@ -46,7 +46,7 @@ from _lcm.execution.core_program import (
     ReducedAxis,
     TiledOutputAxis,
 )
-from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.execution.reductions import WEIGHTED_EXPECTATION_REDUCTION
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
@@ -505,7 +505,7 @@ class DCEGM(OneMarginSolver):
             has_taste_shocks=context.has_taste_shocks,
             age_values=context.ages.values,
         )
-        steps: Mapping[int, Callable] = build.steps
+        steps: Mapping[int, EGMStepFunction] = build.steps
         argument_builder = _DCEGMArgumentBuilder(
             regime_name=context.regime_name,
             stateful_targets=build.stateful_targets,
@@ -780,7 +780,7 @@ class EGMStepBuild:
 
 def _dcegm_output_roles(
     *, build: EGMStepBuild, publish_replay: bool
-) -> tuple[object, ...]:
+) -> tuple[OutputRoleTree, ...]:
     """Describe the step's outputs by the state axes that lead them.
 
     - The value array is the regime's value on the productmap state order.
@@ -815,7 +815,9 @@ def _dcegm_output_roles(
 
 
 def _dcegm_values_core(
-    *, core: Callable[..., tuple[FloatND, EGMCarry, object]], **kwargs: object
+    *,
+    core: Callable[..., tuple[FloatND, EGMCarry, EGMSimPolicy]],
+    **kwargs: PytreeValue,
 ) -> tuple[FloatND, EGMCarry]:
     """Run DC-EGM without retaining its optional simulation-policy output."""
     value, carry, _policy = core(**kwargs)
@@ -1021,7 +1023,7 @@ class _DCEGMPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1045,12 +1047,14 @@ class _DCEGMPeriodKernel:
         )
         outputs = compiled_cores[name](**arguments)
         if name == "main":
-            V_arr, egm_carry = outputs
+            V_arr, egm_carry = cast("tuple[FloatND, EGMCarry]", outputs)
             return KernelOutput(
                 value=V_arr,
                 continuations={EGM_CONTINUATION: egm_carry},
             )
-        V_arr, egm_carry, sim_policy = outputs
+        V_arr, egm_carry, sim_policy = cast(
+            "tuple[FloatND, EGMCarry, EGMSimPolicy]", outputs
+        )
         return KernelOutput(
             value=V_arr,
             continuations={EGM_CONTINUATION: egm_carry},

@@ -478,7 +478,7 @@ def _no_dissolution(D_target: BoolND) -> BoolND:
 
 # keyword-only-exempt: primary-argument=law
 def _until_last_age(
-    law: Mapping[str, object], *, terminal: str, last_age: int
+    law: Mapping[str, StochasticTransition], *, terminal: str, last_age: int
 ) -> ByAge:
     """Apply `law` until the age before `last_age`, then only its `terminal` cell."""
     return ByAge.until(

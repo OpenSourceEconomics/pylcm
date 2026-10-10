@@ -57,9 +57,9 @@ def offload_chunk[T](
     return result
 
 
-def _copy_reservation(
+def _copy_reservation[T](
     *,
-    tree: object,
+    tree: T,
     host_device: jax.Device,
     host_excluded: bool,
     devices: tuple[jax.Device, ...],

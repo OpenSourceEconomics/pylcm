@@ -40,6 +40,7 @@ from lcm.exceptions import (
     InvalidParamsError,
     ModelInitializationError,
 )
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -469,9 +470,9 @@ def test_kernel_params_refuse_a_key_both_the_regime_and_its_edges_hold():
     """A source's kernels cannot bind one key from two namespaces."""
     flat_params = MappingProxyType(
         {
-            "working": MappingProxyType({"dead__rate": 1.0}),
+            "working": MappingProxyType({"dead__rate": jnp.array(1.0)}),
             "edges": MappingProxyType(
-                {"working": MappingProxyType({"dead__rate": 2.0})}
+                {"working": MappingProxyType({"dead__rate": jnp.array(2.0)})}
             ),
         }
     )
@@ -629,7 +630,7 @@ _LATE_LAW = {
 def _mortal_model(
     *,
     ages: AgeGrid = _AGES,
-    law: object = None,
+    law: TransitionLaw | None = None,
     fixed_params: UserParams | None = None,
 ) -> Model:
     """Working regime that survives a year at a time, then dies at the last age.

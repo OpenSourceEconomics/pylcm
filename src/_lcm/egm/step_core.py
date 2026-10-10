@@ -13,10 +13,11 @@ orchestration that maps it over the discrete-combo product.
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import (
@@ -394,7 +395,9 @@ def tile_block_size(*, width: int | None, extent: int) -> int:
 
 def _compute_nodes_over_savings(
     *,
-    compute_node: Callable,
+    compute_node: Callable[
+        [ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+    ],
     savings_nodes: Float1D,
     savings_point_width: int | None,
 ) -> tuple[FloatND, FloatND, FloatND, FloatND]:
@@ -425,7 +428,7 @@ def _get_compute_node(
     discount_factor: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-    dtype: Any,
+    dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:

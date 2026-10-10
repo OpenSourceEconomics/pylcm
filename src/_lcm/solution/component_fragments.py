@@ -653,7 +653,9 @@ class _DatasetNames:
     names: set[str]
 
     # keyword-only-exempt: library-callback=h5py.Group.visititems
-    def __call__(self, name: str, item: object) -> None:
+    def __call__(
+        self, name: str, item: h5py.Group | h5py.Dataset | h5py.Datatype
+    ) -> None:
         """Record the addresses of numerical datasets."""
         if isinstance(item, h5py.Dataset):
             self.names.add(name)

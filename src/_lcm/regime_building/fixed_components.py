@@ -26,7 +26,7 @@ from _lcm.regime_building.broadcast import merge_model_slots
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from _lcm.transition_plans import OriginalLotteryLayout, signature_with_state
-from _lcm.typing import RegimeNamesToIds
+from _lcm.typing import DataclassInstance, EconFunctionArg, RegimeNamesToIds
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime, StateTransitionEntry
@@ -39,10 +39,12 @@ from lcm.transition import (
 from lcm.typing import (
     DiscreteState,
     FloatND,
+    FunctionName,
     IntND,
     RegimeName,
     ScalarInt,
     StateName,
+    UserFunction,
     UserInitialConditions,
     UserParams,
     UserParamsNode,
@@ -77,7 +79,7 @@ class FixedComponentLaw:
     original_layout: OriginalLotteryLayout
 
     @no_type_check
-    def __call__(self, *args: object, **kwargs: object) -> FloatND:
+    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
         return self.restricted(*args, **kwargs)
 
 
@@ -156,7 +158,7 @@ def factor_fixed_components(
     functions: Mapping[str, object],
     constraints: Mapping[str, object],
     actions: Mapping[str, object],
-    derived_categoricals: Mapping[str, object],
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
 ) -> tuple[
     Mapping[str, Regime],
     UserParams,
@@ -367,7 +369,7 @@ def _lower_next_output_reads(  # noqa: PLR0911 — one return per declaration ki
 def _build_with_next_outputs(
     age: float,
     *,
-    build: Callable[[float], object],
+    build: Callable[[float], UserFunction],
     next_outputs: Mapping[str, Callable[..., DiscreteState]],
 ) -> object:
     """Decode next-state reads in an age-specialized helper's concrete DAG."""
@@ -526,7 +528,9 @@ def _read_initial_codes(
     return values.astype(np.int32)
 
 
-def _law_leaves(law: object) -> tuple[object, ...]:
+def _law_leaves(
+    law: StateTransitionEntry,
+) -> tuple[UserFunction | StochasticTransition | None, ...]:
     """Flatten declaration containers without changing phase or target ownership."""
     if isinstance(law, Phased):
         return _law_leaves(law.solve) + _law_leaves(law.simulate)
@@ -536,7 +540,11 @@ def _law_leaves(law: object) -> tuple[object, ...]:
 
 
 def _lower_law(
-    *, law: object, name: str, split: FixedComponentSplit, code_by_parts: np.ndarray
+    *,
+    law: StateTransitionEntry,
+    name: str,
+    split: FixedComponentSplit,
+    code_by_parts: np.ndarray,
 ) -> StateTransitionEntry:
     """Restrict every supported leaf, preserving its phase and target containers."""
     if isinstance(law, Phased):
@@ -604,7 +612,7 @@ def _publish_fixed_component_law(
     bound = provenance.__call__
 
     @no_type_check
-    def forwarded(*args: object, **kwargs: object) -> FloatND:
+    def forwarded(*args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
         return bound(*args, **kwargs)
 
     forwarded.__wrapped__ = bound  # ty: ignore[unresolved-attribute]
@@ -667,7 +675,7 @@ def _restricted_law(
     # Generated per model, so the claw must not wrap it: model fingerprinting reads
     # a plain closure, but refuses a beartype wrapper it did not capture at import.
     @no_type_check
-    def restricted(*args: object, **kwargs: object) -> FloatND:
+    def restricted(*args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
         arguments = dict(zip(names, args, strict=False)) | kwargs
         call_arguments = (
             arguments
@@ -724,9 +732,12 @@ def _gather_codes(*, table: IntND, index: IntND) -> IntND:
     return jnp.squeeze(gathered, axis=-1)
 
 
-def _labels(*, prefix: str, n: int) -> type:
-    return categorical(ordered=False)(
+def _labels(*, prefix: str, n: int) -> type[DataclassInstance]:
+    # `make_dataclass` is typed as returning a bare `type`.
+    labels = cast(
+        "type[DataclassInstance]",
         make_dataclass(
             prefix.title().replace("_", ""), [(f"c{i}", ScalarInt) for i in range(n)]
-        )
+        ),
     )
+    return categorical(ordered=False)(labels)

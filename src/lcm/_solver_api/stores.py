@@ -5,13 +5,12 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
-    Any,
     cast,
 )
 
 import jax
 
-from lcm._solver_api.authority import _ArrayCopier
+from lcm._solver_api.authority import _ArrayCopier, _CanonicalArtifactTemplate
 from lcm._solver_api.contract import (
     ArtifactRef,
     _same_exact_artifact_contract,
@@ -26,6 +25,7 @@ from lcm._solver_api.entries import (
 )
 from lcm._solver_api.identity import (
     ArtifactKey,
+    ArtifactPayload,
     LoadState,
 )
 from lcm.exceptions import ExecutionPlanningError
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     type _RegimeNameBoundary = RegimeName
     type _ArtifactRefBoundary = ArtifactRef
     type _ArtifactKeyBoundary = ArtifactKey
+    type _ArtifactEntriesBoundary = Mapping[ArtifactRef, object]
 else:
     # Lazy stores own their validation and materialization boundaries. Runtime
     # annotation traversal would load them before those explicit checks run.
@@ -55,11 +56,12 @@ else:
     type _RegimeNameBoundary = object
     type _ArtifactRefBoundary = object
     type _ArtifactKeyBoundary = object
+    type _ArtifactEntriesBoundary = object
 
 
-def _traverse_public_mapping_items(
-    *, mapping: object, label: str
-) -> list[tuple[object, object]]:
+def _traverse_public_mapping_items[K, V](
+    *, mapping: Mapping[K, V], label: str
+) -> list[tuple[K, V]]:
     """Consume one item traversal of a public mapping into an owned list of pairs.
 
     A public mapping may be any `Mapping` implementation, so its key view, item
@@ -96,7 +98,7 @@ def _require_exact_regime_name(regime: object) -> RegimeName:
     return regime
 
 
-def _require_exact_artifact_key(key: object) -> ArtifactKey:
+def _require_exact_artifact_key(key: _ArtifactKeyBoundary) -> ArtifactKey:
     if type(key) is not ArtifactKey:
         raise TypeError("Artifact keys must be exact ArtifactKey objects.")
     if type(key.type_id) is not str or not key.type_id:
@@ -106,7 +108,7 @@ def _require_exact_artifact_key(key: object) -> ArtifactKey:
     return key
 
 
-def _require_exact_artifact_ref(ref: object) -> ArtifactRef:
+def _require_exact_artifact_ref(ref: _ArtifactRefBoundary) -> ArtifactRef:
     if type(ref) is not ArtifactRef:
         raise TypeError("Artifact addresses must be exact ArtifactRef objects.")
     _require_exact_value_period(ref.period)
@@ -143,7 +145,7 @@ def _admit_value_entry(
     period: object,
     regime: object,
     value: object,
-    entries: dict[tuple[int, RegimeName], object],
+    entries: dict[tuple[int, RegimeName], _LazyEntry],
     regimes_by_period: dict[int, list[RegimeName]],
     array_copier: _ArrayCopier | None = None,
 ) -> None:
@@ -205,7 +207,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                 "or by periods, not by both."
             )
 
-        entries: dict[tuple[int, RegimeName], object] = {}
+        entries: dict[tuple[int, RegimeName], _LazyEntry] = {}
         regimes_by_period: dict[int, list[RegimeName]] = {}
 
         if all(is_flat):
@@ -295,7 +297,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         else:
             fresh = entry.fresh_value() if isinstance(entry, _LazyEntry) else None
             if fresh is not None:
-                return cast("FloatND", fresh)
+                return fresh
             value = _materialize_entry(entry=entry)
         if type(entry) is not _CanonicalValueEntry:
             label = f"Solution value at period={period}, regime={regime!r}"
@@ -389,9 +391,9 @@ class ArtifactStore(Mapping[ArtifactRef, object]):
     key.
     """
 
-    # Typed with ``Any`` keys so the runtime annotation check does not traverse the
-    # key view; ``__post_init__`` is the one admission boundary.
-    _entries: Mapping[Any, object] = field(default_factory=dict, repr=False)
+    # ``__post_init__`` is the one admission boundary, so the runtime annotation
+    # check does not traverse the key view.
+    _entries: _ArtifactEntriesBoundary = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         # One item traversal; each raw address is an exact ``ArtifactRef`` and unique
@@ -411,13 +413,15 @@ class ArtifactStore(Mapping[ArtifactRef, object]):
         return _materialize_entry(entry=self._entries[ref])
 
     def __iter__(self) -> Iterator[ArtifactRef]:
-        return iter(cast("Mapping[ArtifactRef, object]", self._entries))
+        return iter(self._entries)
 
     def __len__(self) -> int:
         return len(self._entries)
 
     def __contains__(self, ref: object) -> bool:
         """Check one artifact address without materializing its payload."""
+        if type(ref) is not ArtifactRef:
+            return False
         try:
             ref = _require_exact_artifact_ref(ref)
         except TypeError, ValueError:
@@ -454,7 +458,7 @@ class ArtifactStore(Mapping[ArtifactRef, object]):
 
     # keyword-only-exempt: primary-argument=ref
     def materialize(
-        self, ref: _ArtifactRefBoundary, *, template: object | None = None
+        self, ref: _ArtifactRefBoundary, *, template: ArtifactPayload | None = None
     ) -> object:
         """Load one entry and optionally rebuild its declared PyTree shape."""
         ref = _require_exact_artifact_ref(ref)
@@ -468,7 +472,7 @@ class ArtifactStore(Mapping[ArtifactRef, object]):
         self,
         ref: _ArtifactRefBoundary,
         *,
-        template_snapshot: object,
+        template_snapshot: _CanonicalArtifactTemplate | None,
     ) -> object:
         """Load one entry through an engine-owned cached PyTree declaration."""
         ref = _require_exact_artifact_ref(ref)

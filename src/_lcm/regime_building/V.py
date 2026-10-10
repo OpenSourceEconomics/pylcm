@@ -23,7 +23,7 @@ from _lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.ndimage import map_coordinates
-from _lcm.typing import StateName
+from _lcm.typing import ArrayTree, StateName
 from _lcm.utils.functools import all_as_kwargs
 from _lcm.variables import from_regime, get_grids
 from lcm.regime import Regime as UserRegime
@@ -884,7 +884,7 @@ class _Interpolator:
 
 def _publish_signature(
     *,
-    target: object,
+    target: Callable[..., ArrayTree],
     args: Mapping[ReferenceName, str],
     return_annotation: str,
     name: str,

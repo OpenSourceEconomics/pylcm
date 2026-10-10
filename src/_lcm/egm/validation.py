@@ -70,7 +70,7 @@ from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.phases import _resolve_solve_functions
-from _lcm.regime_law import RegimeLaw, RegimeLaws
+from _lcm.regime_law import DecomposedTransition, RegimeLaw, RegimeLaws
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.nbegm import _BoundNBEGM
 from _lcm.typing import (
@@ -83,6 +83,7 @@ from _lcm.typing import (
 from lcm.exceptions import GridInitializationError, ModelInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
+from lcm.regime import ActionEntry, StateEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.transition import ByAge, DeterministicTransition, StochasticTransition
@@ -1486,7 +1487,7 @@ def _combo_contexts(
 
 def _solve_grids(
     *,
-    slot: Mapping[StateName, object] | Mapping[ActionName, object],
+    slot: Mapping[StateName, StateEntry] | Mapping[ActionName, ActionEntry],
 ) -> dict[StateOrActionName, Grid]:
     """Solve-phase grids of a `states` or `actions` slot.
 
@@ -1514,7 +1515,7 @@ def _continuous_non_process_names(
 
 def _transition_variants(
     *,
-    value: object,
+    value: StateTransitionEntry | DecomposedTransition,
 ) -> list[tuple[str, UserFunction]]:
     """Unpack a `state_transitions` entry into labeled callables.
 
@@ -1646,7 +1647,13 @@ def _call_with_varied(
     return func(**fixed, **{k: v for k, v in varied.items() if k in arg_names})
 
 
-def _isclose(*, actual: object, expected: object, rtol: float, atol: float) -> bool:
+def _isclose(
+    *,
+    actual: FloatND | IntND,
+    expected: FloatND | IntND | float,
+    rtol: float,
+    atol: float,
+) -> bool:
     """Eager scalar closeness check, robust to 0-d JAX arrays."""
     return bool(
         jnp.isclose(jnp.asarray(actual), jnp.asarray(expected), rtol=rtol, atol=atol)

@@ -14,7 +14,7 @@ lazily; this module also hosts the grid shape-invariance traits (`_grid_traits` 
 
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
-from typing import Any, Final, cast
+from typing import Final, cast
 
 import numpy as np
 
@@ -39,14 +39,16 @@ class _Invariant:
 INVARIANT: Final[Hashable] = _Invariant()
 
 
-def resolve_node(*, node: object, age: float) -> object:
+def resolve_node(*, node: UserFunction | AgeSpecializedFunction, age: float) -> object:
     """Return the concrete function for `age`, or the node if age-invariant."""
     if isinstance(node, AgeSpecializedFunction):
         return node.build(age)
     return node
 
 
-def node_signature(*, node: object, age: float) -> Hashable:
+def node_signature(
+    *, node: UserFunction | AgeSpecializedFunction, age: float
+) -> Hashable:
     """Fingerprint `node`'s closure at `age`.
 
     `INVARIANT` for a plain callable; `node.signature(age)` for a specialized node.
@@ -94,7 +96,7 @@ class _NodeSignatureAtAge:
     age: int | float
     """The age every node is fingerprinted at."""
 
-    def __call__(self, node: object) -> Hashable:
+    def __call__(self, node: UserFunction | AgeSpecializedFunction) -> Hashable:
         return node_signature(node=node, age=self.age)
 
 
@@ -116,11 +118,11 @@ class _GridTraits:
     shape-invariance violation.
     """
 
-    cls: type
+    cls: type[ContinuousGrid]
     pass_points_at_runtime: bool
     n_points: int
     shape: tuple[int, ...] | None
-    dtype: np.dtype[Any] | None
+    dtype: np.dtype[np.generic] | None
     weak_type: bool | None
 
 

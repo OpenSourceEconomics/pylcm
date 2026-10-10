@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.workspace_planning import compiler_peak_bytes
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
@@ -234,8 +235,11 @@ def test_static_bindings_include_types_and_reject_arrays() -> None:
     np.testing.assert_array_equal(boolean, np.arange(4.0) + 1)
     np.testing.assert_array_equal(integer, np.arange(4.0) + 2)
     assert len(dispatcher.cache) == 2
-    with pytest.raises(ExecutionPlanningError, match="static"):
-        dispatcher.dispatch(**kwargs, static_arguments={"selector": state})
+    with pytest.raises(BeartypeCallHintParamViolation):
+        dispatcher.dispatch(
+            **kwargs,
+            static_arguments={"selector": state},  # ty: ignore[invalid-argument-type]
+        )
 
 
 def test_ordered_subject_meshes_have_distinct_compiled_placement() -> None:

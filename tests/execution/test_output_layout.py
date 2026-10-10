@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.execution.core_program import (
@@ -407,9 +408,10 @@ def test_the_loop_publishes_values_only_through_planned_cores():
     """A compiled core without a resolved layout cannot publish a value."""
     template = _template()
 
-    with pytest.raises(TypeError, match="PlannedCore"):
+    with pytest.raises(BeartypeCallHintParamViolation, match="PlannedCore"):
         _publish_kernel_value(
-            value=template, compiled_cores={"main": lambda **_kwargs: template}
+            value=template,
+            compiled_cores={"main": lambda **_kwargs: template},  # ty: ignore[invalid-argument-type]
         )
 
 

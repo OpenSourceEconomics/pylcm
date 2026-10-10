@@ -15,10 +15,15 @@ import inspect
 import math
 import textwrap
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
+from types import UnionType
 from typing import TYPE_CHECKING, cast
 
+from beartype import beartype
+
+from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import PowerMean, aggregates_nonlinearly
+from _lcm.constraints.processed import ConstraintLike
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
@@ -28,7 +33,13 @@ from _lcm.regime_building.phases import (
     validate_law_free_phase_grammar,
 )
 from _lcm.regime_law import DecomposedTransition, RegimeLaw, RegimeLaws
-from _lcm.typing import ProcessName, RegimeName, StateName
+from _lcm.typing import (
+    FunctionName,
+    ProcessName,
+    RegimeName,
+    StateName,
+    StateOrActionName,
+)
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
@@ -38,29 +49,41 @@ from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
+    ByAge,
     JointTransition,
     StochasticTransition,
 )
+from lcm.typing import UserFunction
 
 if TYPE_CHECKING:
-    from lcm.regime import Regime, StateTransitionEntry
+    from lcm.regime import Regime, StateEntry, StateTransitionEntry
 else:
-    # `lcm.regime` imports this module, so neither `Regime` nor
-    # `StateTransitionEntry` is importable here at runtime; a regime's own
-    # constructor checks its fields.
+    # `lcm.regime` imports this module, so neither `Regime` nor its field aliases
+    # are importable here at runtime; a regime's own constructor checks its fields,
+    # and the validators below report every malformed entry with their own message.
     type Regime = object
+    type StateEntry = object
     type StateTransitionEntry = object
 
+# A declared law or slot entry the walkers below unwrap: a regime law, a state
+# law as declared, or a function or constraint. State laws reach the walkers
+# before their entries are validated, so at runtime the alias admits any value.
+type _TransitionValue = DecomposedTransition | StateTransitionEntry | ConstraintLike
+# What `_iter_transition_nodes` yields once `Phased` sides and per-target cells
+# are unwrapped.
+type _TransitionLeaf = ConstraintLike | StochasticTransition | ByAge | None
 
+
+@beartype(conf=REGIME_CONF)
 def _grid_mapping_errors(
     *,
     attr_name: str,
-    mapping: Mapping[str, object],
+    mapping: Mapping[StateOrActionName, StateEntry],
     allow_phase_variants: bool,
     allow_age_specialized_grid: bool = False,
 ) -> list[str]:
     """Collect key/value type errors for a grid-valued mapping (states/actions)."""
-    allowed: object = Grid | Phased if allow_phase_variants else Grid
+    allowed: type[Grid] | UnionType = Grid | Phased if allow_phase_variants else Grid
     suffix = " or Phased" if allow_phase_variants else ""
     if allow_age_specialized_grid:
         # An age-varying continuous-state grid is a valid state (states only).
@@ -86,8 +109,12 @@ def _grid_mapping_errors(
     return error_messages
 
 
+@beartype(conf=REGIME_CONF)
 def _callable_mapping_errors(
-    *, attr_name: str, mapping: Mapping[str, object], allow_phase_variants: bool
+    *,
+    attr_name: str,
+    mapping: Mapping[FunctionName, ConstraintLike | Phased | None],
+    allow_phase_variants: bool,
 ) -> list[str]:
     """Collect key/value type errors for a callable-valued mapping."""
     error_messages: list[str] = []
@@ -665,7 +692,7 @@ def _terminal_regime_message(*, slot: str, names: list[str]) -> str:
     )
 
 
-def _iter_transition_nodes(value: object) -> Iterator[object]:
+def _iter_transition_nodes(value: _TransitionValue) -> Iterator[_TransitionLeaf]:
     """Yield leaf transition nodes, unwrapping `Phased` sides and per-target dicts."""
     if isinstance(value, Phased):
         yield from _iter_transition_nodes(value.solve)
@@ -677,6 +704,7 @@ def _iter_transition_nodes(value: object) -> Iterator[object]:
         yield value
 
 
+@beartype(conf=REGIME_CONF)
 def _state_transition_marker_errors(
     state_transitions: Mapping[StateName, StateTransitionEntry],
 ) -> list[str]:
@@ -705,9 +733,9 @@ def _state_transition_marker_errors(
 
 def _first_age_specialized_ancestor_of_transition(
     *,
-    transition: object,
-    functions: Mapping[str, object],
-    constraints: Mapping[str, object],
+    transition: DecomposedTransition,
+    functions: Mapping[FunctionName, UserFunction | Phased | None],
+    constraints: Mapping[FunctionName, ConstraintLike | Phased | None],
 ) -> str | None:
     """Return the name of an `AgeSpecializedFunction` the transition reads, if any.
 
@@ -718,7 +746,10 @@ def _first_age_specialized_ancestor_of_transition(
     specialized function name reached, or `None` when the transition's dependency
     graph is policy-free.
     """
-    pool: dict[str, object] = {**functions, **constraints}
+    pool: dict[FunctionName, ConstraintLike | Phased | None] = {
+        **functions,
+        **constraints,
+    }
     specialized_names = {
         name
         for name, value in pool.items()
@@ -744,7 +775,7 @@ def _first_age_specialized_ancestor_of_transition(
     return None
 
 
-def _transition_node_arg_names(value: object) -> list[str]:
+def _transition_node_arg_names(value: _TransitionValue) -> list[str]:
     """List the parameter names of every callable node inside a transition value."""
     names: list[str] = []
     for node in _iter_transition_nodes(value):
@@ -759,9 +790,9 @@ def _transition_node_arg_names(value: object) -> list[str]:
 
 def _age_specialized_scope_errors(
     *,
-    transition: object,
-    functions: Mapping[str, object],
-    constraints: Mapping[str, object],
+    transition: DecomposedTransition,
+    functions: Mapping[FunctionName, UserFunction | Phased | None],
+    constraints: Mapping[FunctionName, ConstraintLike | Phased | None],
     terminal: bool,
 ) -> list[str]:
     """Reject the `AgeSpecializedFunction` compositions that are out of scope.
@@ -827,7 +858,7 @@ def _age_specialized_scope_errors(
     return error_messages
 
 
-def _regime_transition_grammar_errors(transition: object) -> list[str]:
+def _regime_transition_grammar_errors(transition: DecomposedTransition) -> list[str]:
     """Validate the vocabulary of a regime's law between regimes.
 
     A `Phased` container's sides are each held to the bare vocabulary
@@ -1197,8 +1228,8 @@ def _validate_function_output_grid_indexing(
 
 
 def _function_input_names(
-    functions: Mapping[str, Callable | Phased],
-) -> dict[str, set[str]]:
+    functions: Mapping[FunctionName, UserFunction | Phased],
+) -> dict[FunctionName, set[str]]:
     """Return each regime function's input-parameter names.
 
     A `Phased` contributes the union of both variants' parameters;
@@ -1219,13 +1250,13 @@ def _function_input_names(
 # keyword-only-exempt: primary-argument=regime
 def _collect_indexing_consumers(
     regime: Regime, *, law: RegimeLaw
-) -> list[tuple[str, Callable]]:
+) -> list[tuple[FunctionName, ConstraintLike]]:
     """Return `(name, callable)` pairs whose bodies are scanned for the clash.
 
     Functions and constraints contribute every variant of a
     `Phased`; the regime transition contributes itself.
     """
-    consumers: list[tuple[str, Callable]] = []
+    consumers: list[tuple[FunctionName, ConstraintLike]] = []
     for name, func in regime.decomposed_functions.items():
         if func is None:
             continue
@@ -1240,21 +1271,24 @@ def _collect_indexing_consumers(
 
 
 def _function_variants(
-    func: Callable | Phased,
-) -> tuple[Callable, ...]:
+    func: ConstraintLike | Phased,
+) -> tuple[ConstraintLike, ...]:
     """Return the callable variants of a regime-function entry.
 
     A plain function is itself; a `Phased` yields its `solve` and `simulate`
     callables so both phases are scanned.
     """
     if isinstance(func, Phased):
-        return (cast("Callable", func.solve), cast("Callable", func.simulate))
-    return (cast("Callable", func),)
+        return (
+            cast("ConstraintLike", func.solve),
+            cast("ConstraintLike", func.simulate),
+        )
+    return (func,)
 
 
 def _find_function_output_grid_indexing(
     *,
-    func: Callable,
+    func: ConstraintLike,
     function_output_names: set[str],
     discrete_grid_names: set[str],
 ) -> list[tuple[str, str]]:
@@ -1488,7 +1522,7 @@ def _phased_per_target_shape_mismatch(
     return []
 
 
-def _law_has_free_parameter(*, law: object, regime: Regime) -> bool:
+def _law_has_free_parameter(*, law: StateTransitionEntry, regime: Regime) -> bool:
     """Whether a bare state-transition law reads a free parameter (a template leaf).
 
     A free parameter is any argument that is not a state, action, `next_<state>` node,
@@ -1514,7 +1548,7 @@ def _law_has_free_parameter(*, law: object, regime: Regime) -> bool:
 
 
 def _state_transition_value_errors(
-    *, name: StateName, value: object, regime: Regime
+    *, name: StateName, value: StateTransitionEntry, regime: Regime
 ) -> list[str]:
     """Validate one `state_transitions` entry against the value vocabulary.
 
@@ -1556,10 +1590,7 @@ def _state_transition_value_errors(
             continue
         if isinstance(variant, Mapping):
             error_messages.extend(
-                _validate_per_target_dict(
-                    state_name=name,
-                    targets=cast("Mapping[RegimeName, object]", variant),
-                )
+                _validate_per_target_dict(state_name=name, targets=variant)
             )
         else:
             error_messages.append(
@@ -1571,7 +1602,7 @@ def _state_transition_value_errors(
 
 
 def _fixed_transition_name_mismatch(
-    *, state_name: StateName, value: object, label: str
+    *, state_name: StateName, value: StateTransitionEntry, label: str
 ) -> list[str]:
     """Reject a `fixed_transition` whose argument differs from its dict key."""
     if (
@@ -1587,7 +1618,9 @@ def _fixed_transition_name_mismatch(
     return []
 
 
-def _state_transition_variants(value: object) -> tuple[tuple[object, str], ...]:
+def _state_transition_variants(
+    value: StateTransitionEntry,
+) -> tuple[tuple[StateTransitionEntry, str], ...]:
     """Return a state-transition entry's per-phase variants with display labels.
 
     A bare value is its own single variant; a `Phased` yields its solve and
@@ -1603,12 +1636,12 @@ def _fold_state_names(regime: Regime) -> tuple[StateName, ...]:
     return tuple(name for name, grid in regime.states.items() if _is_folded(grid))
 
 
-def _is_folded(grid: object) -> bool:
+def _is_folded(grid: StateEntry) -> bool:
     """Whether a state's grid is an IID process declaring `fold=True`."""
     return isinstance(grid, _IIDProcess) and grid.fold
 
 
-def _flatten_transition_callables(value: object) -> list[Callable]:
+def _flatten_transition_callables(value: _TransitionValue) -> list[UserFunction]:
     """Return every callable reachable from a state or regime transition entry.
 
     Unwraps `Phased` (both variants) and per-target `Mapping`s; `StochasticTransition`
@@ -1623,17 +1656,19 @@ def _flatten_transition_callables(value: object) -> list[Callable]:
             value.solve
         ) + _flatten_transition_callables(value.simulate)
     if isinstance(value, Mapping):
-        out: list[Callable] = []
+        out: list[UserFunction] = []
         for entry in value.values():
             out.extend(_flatten_transition_callables(entry))
         return out
     if callable(value):
-        return [cast("Callable", value)]
+        return [cast("UserFunction", value)]
     return []
 
 
 def _fold_dependency_closure(
-    *, roots: tuple[Callable, ...], resolution_table: Mapping[str, Callable | Phased]
+    *,
+    roots: tuple[ConstraintLike, ...],
+    resolution_table: Mapping[FunctionName, ConstraintLike | Phased],
 ) -> set[str]:
     """Return every argument name in the transitive DAG ancestry of `roots`.
 
@@ -1646,7 +1681,7 @@ def _fold_dependency_closure(
     question is about *argument names*, not source text.
     """
     seen_names: set[str] = set()
-    stack: list[Callable] = list(roots)
+    stack: list[ConstraintLike] = list(roots)
     visited_ids: set[int] = set()
     while stack:
         func = stack.pop()
@@ -1990,7 +2025,9 @@ def _moving_conditioner_errors(
     return error_messages
 
 
-def _fold_resolution_table(regime: Regime) -> dict[str, Callable | Phased]:
+def _fold_resolution_table(
+    regime: Regime,
+) -> dict[FunctionName, ConstraintLike | Phased]:
     """Regime functions/constraints usable as DAG-ancestor resolution targets."""
     return {
         **{k: v for k, v in regime.decomposed_constraints.items() if v is not None},
@@ -1998,7 +2035,7 @@ def _fold_resolution_table(regime: Regime) -> dict[str, Callable | Phased]:
     }
 
 
-def _fold_same_period_roots(regime: Regime) -> list[tuple[str, Callable]]:
+def _fold_same_period_roots(regime: Regime) -> list[tuple[str, UserFunction]]:
     """Named same-period gate / value-constraint / reference-projection roots.
 
     Deliberately EXCLUDES this regime's own OUTBOUND `gated_edges[...].gate`
@@ -2021,7 +2058,7 @@ def _fold_same_period_roots(regime: Regime) -> list[tuple[str, Callable]]:
     (source) regime's own grid/DAG, so a source-local name collision there
     is a real same-period read of this regime's own fold name.
     """
-    roots: list[tuple[str, Callable]] = []
+    roots: list[tuple[str, UserFunction]] = []
     for name, predicate in regime.value_constraints.items():
         roots.extend(
             (f"constraint {name!r}", variant)
@@ -2062,7 +2099,7 @@ def _fold_same_period_read_errors(
 def _fold_transition_read_errors(
     *,
     regime: Regime,
-    transition_roots: list[Callable],
+    transition_roots: list[UserFunction],
     fold_names: tuple[StateName, ...],
 ) -> list[str]:
     """Reject a fold name read by a next-period state / regime transition."""
@@ -2094,8 +2131,9 @@ def _fold_names_ordered_intersection(
     return [name for name in fold_names if name in other]
 
 
+@beartype(conf=REGIME_CONF)
 def _validate_per_target_dict(
-    *, state_name: StateName, targets: Mapping[RegimeName, object]
+    *, state_name: StateName, targets: Mapping[RegimeName, StateTransitionEntry]
 ) -> list[str]:
     """Validate a per-target transition dict for stochastic consistency and types."""
     error_messages: list[str] = []
@@ -2212,6 +2250,6 @@ def _scaled_capability_errors(certainty_equivalent: CertaintyEquivalent) -> list
     return []
 
 
-def _method_owner(*, mean_type: type, name: str) -> type:
+def _method_owner(*, mean_type: type[CertaintyEquivalent], name: str) -> type:  # noqa: PAN006 - an MRO entry may be any class, a mixin included
     """Return the most-derived class in `mean_type`'s MRO that defines `name`."""
     return next(klass for klass in mean_type.__mro__ if name in vars(klass))

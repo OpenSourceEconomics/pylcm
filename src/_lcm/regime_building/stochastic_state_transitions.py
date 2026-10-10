@@ -12,7 +12,7 @@ user-facing `Regime`.
 """
 
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -23,9 +23,9 @@ from _lcm.utils.ast_inspection import _get_func_indexing_params
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.regime import StateTransitionEntry
+from lcm.regime import StateEntry, StateTransitionEntry
 from lcm.transition import StochasticTransition
-from lcm.typing import Phase, StateName
+from lcm.typing import FloatND, Phase, StateName
 
 
 def collect_stochastic_state_transitions(
@@ -190,7 +190,7 @@ def _find_state_grid(
     target_regime_name: RegimeName | None,
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
-) -> object:
+) -> StateEntry:
     """Look up the state's grid for outcome-axis sizing.
 
     For a per-target dict entry the **target** regime's grid is authoritative:
@@ -217,7 +217,7 @@ def _find_state_grid(
 
 def _check_subscript_order(
     *,
-    func: object,
+    func: Callable[..., FloatND],
     indexing_params: tuple[str, ...],
     state_name: StateName,
 ) -> None:
@@ -229,7 +229,7 @@ def _check_subscript_order(
     """
     if not indexing_params:
         return
-    sig = inspect.signature(func)  # ty: ignore[invalid-argument-type]
+    sig = inspect.signature(func)
     sig_order = tuple(
         p for p in sig.parameters if p != "probs_array" and p in indexing_params
     )

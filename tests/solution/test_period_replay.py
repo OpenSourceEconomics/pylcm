@@ -23,6 +23,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from jax._src import compilation_cache as jax_compilation_cache
 from jaxlib import (
     _hlo,  # ty: ignore[unresolved-import] - installed native API has no stub
@@ -333,7 +334,7 @@ def test_a_capture_without_tile_widths_is_refused(*, monkeypatch, tmp_path):
     ("widths", "error"),
     [
         ({"main": {"action_product": 0}}, ValueError),
-        ({"main": {"action_product": 2.0}}, TypeError),
+        ({"main": {"action_product": 2.0}}, BeartypeCallHintParamViolation),
         ({"other": {"action_product": 2}}, ValueError),
     ],
     ids=["nonpositive-width", "noninteger-width", "wrong-core-names"],

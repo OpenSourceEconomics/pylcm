@@ -110,7 +110,13 @@ from _lcm.transition_checks import (
     regime_probability_flags,
     regime_probability_inactive_indices,
 )
-from _lcm.typing import FlatParams, RegimeNamesToIds, ShapeDtypePytree
+from _lcm.typing import (
+    FlatParams,
+    RegimeName,
+    RegimeNamesToIds,
+    ShapeDtypePytree,
+    SimulationPolicy,
+)
 from _lcm.utils.logging import LogLevel, get_logger
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY
@@ -144,7 +150,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     widths: Mapping[str, int],
     independent_taste: bool,
     log_level: LogLevel,
-    policies: Mapping[int, Mapping[str, object]] | None = None,
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
 ) -> SimulationChunkProfile:
@@ -1063,7 +1069,7 @@ def _period_copy_reservation(
     flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     period: int,
     devices: tuple[jax.Device, ...],
-    policies: Mapping[int, Mapping[str, object]] | None = None,
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
 ) -> dict[jax.Device, int]:
     """Reserve declared nonaligned copies once per period/address/ordered layout."""
     policy_sources = _policy_read_sources(
@@ -1156,7 +1162,7 @@ def _host_outside_device_ceiling(
 
 
 def _policy_read_sources(
-    *, policies: Mapping[str, object], period: int
+    *, policies: Mapping[RegimeName, SimulationPolicy], period: int
 ) -> dict[ValueArtifactAddress, jax.Array]:
     """Index canonical retained finite leaves by the actual period-owner addresses."""
     sources = {}

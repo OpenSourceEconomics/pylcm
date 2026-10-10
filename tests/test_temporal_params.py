@@ -147,7 +147,8 @@ def test_temporal_invalid_inputs_fail_before_solving(*, kind: str, fixed: bool) 
             values=jnp.array([1.0, 2.0]), ages=(0, 1)
         ),
         "fractional": lambda: lcm.TimeVarying(
-            values=jnp.array([1.0, 2.0, 3.0]), periods=(0, 1, 9.5)
+            values=jnp.array([1.0, 2.0, 3.0]),
+            periods=(0, 1, 9.5),  # ty: ignore[invalid-argument-type]
         ),
         "boolean": lambda: lcm.TimeVarying(
             values=jnp.array([1.0, 2.0]), periods=(False, True)
@@ -654,12 +655,10 @@ def test_managed_parameter_rejects_a_nested_container(kind: str) -> None:
 
 
 def test_temporal_age_labels_reject_numpy_booleans() -> None:
-    with pytest.raises(lcm.exceptions.InvalidParamsError, match="age coordinates"):
-        align_time_varying(
-            value=lcm.TimeVarying(values=jnp.array([1.0]), ages=(np.bool_(1),)),
-            ages=lcm.AgeGrid(start=1, inclusive_stop=2, step="Y"),
-            required_periods=(0,),
-            name="wage",
+    with pytest.raises(lcm.exceptions.InvalidParamsError, match="ages"):
+        lcm.TimeVarying(
+            values=jnp.array([1.0]),
+            ages=(np.bool_(1),),  # ty: ignore[invalid-argument-type]
         )
 
 

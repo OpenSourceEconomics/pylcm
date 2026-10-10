@@ -484,7 +484,9 @@ class SolutionPhase:
     validation_regime_transition_probs: RegimeTransitionFunction | None
     """Probability function retaining declared cells for runtime validation."""
 
-    compute_intermediates: MappingProxyType[int, Callable]
+    compute_intermediates: MappingProxyType[
+        int, Callable[..., Mapping[str, FloatND | Mapping[RegimeName, FloatND]]]
+    ]
     """Immutable mapping of period to intermediate-computation closures.
 
     Productmap-wrapped and fused with on-device reductions inside a single
@@ -852,7 +854,7 @@ class EGMPolicyRead:
         return ReplayMode.EXACT_REPLAY
 
     @property
-    def payload_type(self) -> type[object] | None:
+    def payload_type(self) -> type[EGMSimPolicy]:
         """The exact replay payload class this route reads."""
         return EGMSimPolicy
 
@@ -992,7 +994,7 @@ class NNBEGMPolicyRead:
         return ReplayMode.EXACT_REPLAY
 
     @property
-    def payload_type(self) -> type[object] | None:
+    def payload_type(self) -> type[NestedEGMSimPolicy | NNBEGMSimPolicy] | None:
         """The exact replay payload class, `None` when none is retained."""
         if self.replay_mode is ReplayMode.VALID_RECOMPUTATION:
             return None
