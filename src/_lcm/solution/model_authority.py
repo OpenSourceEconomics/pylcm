@@ -92,6 +92,7 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
     _snapshot_artifact_template_once,
 )
+from lcm.typing import ActionName
 
 _EGM_CONTINUATION_ROUTE = ReplayRouteIdentity(
     route_id="pylcm.egm_continuation",
@@ -1635,7 +1636,7 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
     )
     policy_read = regime.simulation.egm_policy_read
     if template.policy is None:
-        policy_action_names: tuple[str, ...] = ()
+        policy_action_names: tuple[ActionName, ...] = ()
     elif isinstance(policy_read, EGMPolicyRead):
         policy_action_names = (policy_read.action_name,)
     elif isinstance(policy_read, NNBEGMPolicyRead):
@@ -1689,7 +1690,7 @@ def _declared_carry_trailing_state(
     *,
     regime: Regime,
     state_action_space: StateActionSpace,
-    row_state_names: tuple[str, ...],
+    row_state_names: tuple[StateName, ...],
 ) -> str | None:
     """Return the one model state used as a carry's shared abscissa."""
     if not state_action_space.states and not row_state_names and regime.terminal:
@@ -1719,8 +1720,8 @@ def _model_role_axes(
     *,
     names: tuple[str, ...],
     lengths: tuple[int, ...],
-    state_names: tuple[str, ...],
-    action_names: tuple[str, ...],
+    state_names: tuple[StateName, ...],
+    action_names: tuple[ActionName, ...],
 ) -> tuple[AxisAuthority, ...]:
     """Build deferred-coordinate axes for exact model state/action roles."""
     if len(names) != len(lengths):

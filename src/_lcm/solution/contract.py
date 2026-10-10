@@ -74,6 +74,7 @@ from _lcm.typing import (
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     QAndFFunction,
+    QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
@@ -195,7 +196,7 @@ class ConstraintRouteContext:
     variables: Variables
     """The phase's states and actions, with kind and topology tags."""
 
-    flat_param_names: frozenset[str]
+    flat_param_names: frozenset[QualifiedName]
     """Names supplied as parameters rather than computed."""
 
     active_periods: tuple[int, ...]
@@ -391,7 +392,7 @@ class SolverBuildContext:
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]]
     """Immutable mapping of regime names to their active period tuples."""
 
-    flat_param_names: frozenset[str]
+    flat_param_names: frozenset[QualifiedName]
     """Frozenset of flat parameter names for the regime."""
 
     regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]]

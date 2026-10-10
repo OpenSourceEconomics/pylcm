@@ -72,6 +72,7 @@ from _lcm.typing import (
     ConstraintFunction,
     EconFunctionsMapping,
     FunctionName,
+    QualifiedName,
     RegimeName,
     StateName,
     TransitionFunction,
@@ -85,6 +86,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    ReferenceName,
 )
 
 # Suffix under which a target regime's dissolution flag `D` (cast to float) is passed
@@ -253,7 +255,7 @@ def bind_edge_period_context(
     return {name: values[name] for name in accepted}
 
 
-def is_target_value_operand(arg_name: str) -> bool:
+def is_target_value_operand(arg_name: ReferenceName) -> bool:
     """Return whether an edge callable's argument names a target value component.
 
     A gate reads the target regime's value as `V_target` for a singleton target
@@ -340,7 +342,9 @@ class _ProvenanceBuilder:
         self._states = states
         self._params: dict[str, tuple[str, str]] = {}
 
-    def expose(self, *, qname: str, namespace: str, qualify: bool = True) -> str:
+    def expose(
+        self, *, qname: QualifiedName, namespace: str, qualify: bool = True
+    ) -> str:
         """Return the exposed name for `qname` in `namespace`, recording it.
 
         `qualify=False` exposes the parameter under its plain qname. Legal only
@@ -370,7 +374,10 @@ class _ProvenanceBuilder:
         return exposed
 
     def build(
-        self, *, outer_arg_names: tuple[str, ...], engine_args: set[str]
+        self,
+        *,
+        outer_arg_names: tuple[ReferenceName, ...],
+        engine_args: set[ReferenceName],
     ) -> EdgeArgProvenance:
         """Finalize, checking the provenance PARTITIONS the outer signature.
 
@@ -828,7 +835,7 @@ def _reject_injected_name_collision(
 
 def _reject_d_target_read_on_singleton_target(
     *,
-    gate_arg_names: Iterable[str],
+    gate_arg_names: Iterable[ReferenceName],
     target_stakeholders: tuple[str, ...] | None,
     edge_target: RegimeName,
     context: str,
@@ -998,7 +1005,7 @@ def _build_target_dag_pool(
 def _fence_edge_consumer(
     *,
     dag_pool: Mapping[FunctionName | TransitionFunctionName, Callable[..., FloatND]],
-    seed_args: Iterable[str],
+    seed_args: Iterable[ReferenceName],
     edge_target: RegimeName,
     context: str,
 ) -> None:
@@ -1103,7 +1110,7 @@ class _CompiledEdgeGate:
     gate_evaluator: Callable[..., BoolND]
     """The gate predicate concatenated with the target regime's DAG nodes."""
 
-    gate_arg_names: tuple[str, ...]
+    gate_arg_names: tuple[ReferenceName, ...]
     """`gate_evaluator`'s arguments: the injected operands it reads, the target
     states it reads, and its own free params under their qualified names."""
 
@@ -1475,7 +1482,7 @@ def _get_edge_branch_combiner(
     edge: ResolvedGatedEdge,
     channels: EdgeChannels,
     gate_evaluator: Callable[..., FloatND],
-    gate_arg_names: tuple[str, ...],
+    gate_arg_names: tuple[ReferenceName, ...],
     injected_names: frozenset[str],
     state_names: tuple[StateName, ...],
     target_component_names: tuple[str, ...],
@@ -2087,7 +2094,7 @@ class _EdgeSurfaces:
     """The target regime's stakeholders, or `None`."""
     channels: EdgeChannels
     """Which operands become channels, and in which order."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -2132,7 +2139,7 @@ class _EdgeBranchCombine:
     """Which operands the stacked channels carry, and in which order."""
     gate_evaluator: Callable[..., FloatND]
     """The gate predicate, concatenated with the target DAG."""
-    gate_arg_names: tuple[str, ...]
+    gate_arg_names: tuple[ReferenceName, ...]
     """Every argument the gate reads."""
     gate_ref_names: tuple[str, ...]
     """The gate references, read at the landing point under their own names."""
@@ -2144,7 +2151,7 @@ class _EdgeBranchCombine:
     """Per leg, the keyword its fallback value arrives under."""
     singleton_source: bool
     """Whether the source is a singleton regime, publishing one leg's value."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -2204,12 +2211,12 @@ class _ArgExposure:
 
     state_names: frozenset[StateName]
     """The target's states, exposed under their own names."""
-    engine_args: frozenset[str]
+    engine_args: frozenset[ReferenceName]
     """Engine-supplied arguments, exposed under their own names."""
     provenance_builder: _ProvenanceBuilder
     """Records every parameter's namespace as it is exposed."""
 
-    def expose(self, *, arg: str, namespace: str) -> str:
+    def expose(self, *, arg: ReferenceName, namespace: str) -> str:
         """Return the exposed name of `arg`, recording its provenance."""
         if arg in self.state_names or arg in self.engine_args:
             return arg
@@ -2242,13 +2249,13 @@ class _SimulateGateEvaluator:
     """Per gate reference, its reader's arguments and their exposed names."""
     gate_evaluator: Callable[..., FloatND]
     """The gate predicate, concatenated with the target DAG."""
-    gate_arg_names: tuple[str, ...]
+    gate_arg_names: tuple[ReferenceName, ...]
     """Every argument the gate reads."""
     state_names: tuple[StateName, ...]
     """The target's states."""
     gate_extra_exposed: Mapping[str, str]
     """The gate's own free arguments and the names they are exposed under."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
     arg_provenance: EdgeArgProvenance
     """Which namespace resolves each argument, for the value router."""
@@ -2350,7 +2357,7 @@ class _FallbackStateProjector:
     """Per fallback state, the arguments its projection reads."""
     fallback_simulate_state_names: tuple[StateName, ...]
     """The fallback regime's simulate states, in order."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
     arg_provenance: EdgeArgProvenance
     """Which namespace resolves each argument, for the value router."""
@@ -2377,7 +2384,7 @@ class _FallbackStateProjector:
 
 
 def _fail_if_arguments_do_not_match(
-    *, kwargs: Mapping[str, object], arg_names: tuple[str, ...], name: str
+    *, kwargs: Mapping[str, object], arg_names: tuple[ReferenceName, ...], name: str
 ) -> None:
     """Fail if a router-facing callable is handed the wrong keyword arguments.
 
@@ -2407,7 +2414,7 @@ def _fail_if_arguments_do_not_match(
 def _publish_signature(
     *,
     target: object,
-    arg_names: tuple[str, ...],
+    arg_names: tuple[ReferenceName, ...],
     return_annotation: str,
     name: str,
 ) -> None:
@@ -2431,7 +2438,7 @@ def _publish_signature(
 
 def _assemble_gate_kwargs(
     *,
-    gate_arg_names: tuple[str, ...],
+    gate_arg_names: tuple[ReferenceName, ...],
     target_components: Mapping[str, FloatND],
     d_value: FloatND | None,
     gate_ref_values: Mapping[str, FloatND],

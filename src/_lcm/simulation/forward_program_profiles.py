@@ -40,6 +40,7 @@ from _lcm.solution.backward_induction import CompilationWave, _states_for_period
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import RegimeName
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -551,7 +552,7 @@ def _prepare_program(
     n_subjects: int,
     widths: Mapping[str, int],
     family: str,
-    regime_name: str,
+    regime_name: RegimeName,
     profiles: dict[str, ForwardProgramProfile],
     wave: CompilationWave | None,
     feeds_forward: bool = False,

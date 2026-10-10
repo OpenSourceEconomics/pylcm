@@ -73,6 +73,7 @@ from _lcm.typing import (
     ActionName,
     EconFunctionsMapping,
     FunctionName,
+    QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
@@ -87,6 +88,7 @@ from lcm.typing import (
     Float1D,
     FloatND,
     IntND,
+    ReferenceName,
     ScalarBool,
     ScalarFloat,
     ScalarInt,
@@ -179,10 +181,10 @@ class _ChildRead:
     resources_func: Callable[..., ScalarFloat]
     """The child's concatenated resources function (kwargs-based)."""
 
-    resources_arg_names: frozenset[str]
+    resources_arg_names: frozenset[ReferenceName]
     """Leaf argument names of the child's resources function."""
 
-    resources_param_names: frozenset[str]
+    resources_param_names: frozenset[QualifiedName]
     """Qualified param leaves of the child's resources function.
 
     Bound per node from the combo pool (the regime's flat params, plus `age`
@@ -330,7 +332,7 @@ class ContinuationPlan:
     post_decision_name: FunctionName
     """Name of the post-decision function (the savings node's input slot)."""
 
-    risk_aversion_param_name: str | None = None
+    risk_aversion_param_name: QualifiedName | None = None
     """Flat-param name of the certainty equivalent's risk-aversion coefficient.
 
     `None` for the linear (expected-utility) continuation. When set, the child
@@ -596,7 +598,7 @@ def build_continuation_plan(
     post_decision_name: FunctionName,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     age_values: FloatND | IntND,
-    risk_aversion_param_name: str | None = None,
+    risk_aversion_param_name: QualifiedName | None = None,
 ) -> ContinuationPlan:
     """Assemble a `ContinuationPlan` from the regime's continuation statics.
 

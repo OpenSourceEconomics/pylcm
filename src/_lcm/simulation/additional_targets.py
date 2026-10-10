@@ -14,19 +14,20 @@ from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.engine import Regime
 from _lcm.typing import (
     FlatRegimeParams,
+    QualifiedName,
     RegimeName,
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
-from lcm.typing import BoolND, FloatND, IntND, UserFunction
+from lcm.typing import BoolND, FloatND, FunctionName, IntND, UserFunction
 
 
 def _resolve_targets(
     *,
     additional_targets: list[str] | Literal["all"] | None,
-    available_targets: list[str],
+    available_targets: list[FunctionName],
 ) -> list[str] | None:
     """Resolve and validate additional targets.
 
@@ -60,7 +61,7 @@ def _collect_all_available_targets(
     regimes: MappingProxyType[RegimeName, Regime],
 ) -> set[str]:
     """Collect all available target names across all regimes."""
-    all_targets: set[str] = set()
+    all_targets: set[FunctionName] = set()
     for regime in regimes.values():
         all_targets.update(_get_available_targets_for_regime(regime))
     return all_targets
@@ -213,7 +214,7 @@ def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:
 
 def _filter_targets_for_regime(
     *,
-    targets: list[str],
+    targets: list[FunctionName],
     regime: Regime,
 ) -> list[str]:
     """Filter targets to only those available in this regime."""
@@ -224,7 +225,7 @@ def _filter_targets_for_regime(
 def _compute_targets(
     *,
     data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]],
-    targets: list[str],
+    targets: list[FunctionName],
     regime: Regime,
     regime_params: FlatRegimeParams,
     subject_batch_size: int | None = None,
@@ -302,7 +303,7 @@ def _one_value_per_row(
 
 def _fail_if_targets_depend_on_age_specialized(
     *,
-    targets: list[str],
+    targets: list[FunctionName],
     functions_pool: dict[str, UserFunction],
     regime: Regime,
 ) -> None:
@@ -344,7 +345,7 @@ def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:
 def _create_target_function(
     *,
     functions_pool: dict[str, UserFunction],
-    targets: list[str],
+    targets: list[FunctionName],
 ) -> UserFunction:
     """Create combined function for computing targets."""
     return concatenate_functions(
@@ -358,7 +359,7 @@ def _create_target_function(
 def _get_function_variables(
     *,
     func: Callable[..., Any],
-    param_names: frozenset[str],
+    param_names: frozenset[QualifiedName],
 ) -> tuple[str, ...]:
     """Get variable names from signature, excluding flat param names."""
     return tuple(p for p in inspect.signature(func).parameters if p not in param_names)

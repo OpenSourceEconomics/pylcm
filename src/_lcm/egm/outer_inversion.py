@@ -31,7 +31,14 @@ import jax.numpy as jnp
 from _lcm.egm.outer_affine_structure import certify_outer_coefficient
 from lcm.exceptions import RegimeInitializationError
 from lcm.solver_api import _register_artifact_static_metadata_dataclass
-from lcm.typing import BoolND, FloatND, ScalarFloat
+from lcm.typing import (
+    ActionName,
+    BoolND,
+    FloatND,
+    ReferenceName,
+    RegimeName,
+    ScalarFloat,
+)
 
 __all__ = [
     "DeclaredOuterInverse",
@@ -82,12 +89,12 @@ class OuterInversion:
 def certify_declared_outer_inverse(
     *,
     func: Callable[..., Mapping[str, FloatND]],
-    arg_names: tuple[str, ...],
+    arg_names: tuple[ReferenceName, ...],
     abstract_args: Iterable[object],
-    outer_action_name: str,
+    outer_action_name: ActionName,
     outer_post_decision_name: str,
     outer_state_domain: tuple[float, float],
-    regime_name: str,
+    regime_name: RegimeName,
 ) -> DeclaredOuterInverse:
     """Return the inverse of `func`, refusing a map it cannot invert exactly.
 
@@ -167,7 +174,7 @@ class _OuterPostDecisionTarget:
     func: Callable[..., Mapping[str, FloatND]]
     """The resolved post-decision DAG, returning a mapping of targets."""
 
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """Names of `func`'s arguments, in the positional order it is called with."""
 
     outer_post_decision_name: str

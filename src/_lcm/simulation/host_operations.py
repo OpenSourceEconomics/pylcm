@@ -47,6 +47,7 @@ from _lcm.simulation.residency import (
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _lowering_key
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName
 
 type StaticArgument = bool | int | float | str | tuple[StaticArgument, ...] | None
 
@@ -89,7 +90,7 @@ class ProfiledSimulationOperations:
         *,
         function: Callable[..., object],
         arguments: Mapping[str, object],
-        subject_arg_names: tuple[str, ...],
+        subject_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
         live_footprint: Callable[[], DeviceBufferFootprint],
         budget_devices: tuple[jax.Device, ...],
@@ -171,7 +172,7 @@ class ProfiledSimulationOperations:
         *,
         function: Callable[..., object],
         arguments: Mapping[str, object],
-        subject_arg_names: tuple[str, ...],
+        subject_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
         static_arguments: Mapping[str, object] = MappingProxyType({}),
         subject_outputs: bool = False,
@@ -203,7 +204,7 @@ class ProfiledSimulationOperations:
         *,
         function: Callable[..., object],
         arguments: Mapping[str, object],
-        subject_arg_names: tuple[str, ...],
+        subject_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
         wave: CompilationWave,
         label: str,
@@ -384,7 +385,7 @@ def _abstract_operation(
     *,
     function: Callable[..., object],
     arguments: Mapping[str, object],
-    subject_arg_names: tuple[str, ...],
+    subject_arg_names: tuple[ReferenceName, ...],
     devices: tuple[jax.Device, ...],
     static_arguments: Mapping[str, object],
     subject_outputs: bool,

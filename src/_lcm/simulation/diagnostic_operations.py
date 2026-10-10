@@ -12,7 +12,7 @@ from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.utils.logging import LogLevel, _owned_values, non_finite_by_regime
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import BoolND, FloatND, Int1D
+from lcm.typing import BoolND, FloatND, Int1D, ReferenceName
 
 
 def period_value_flags(
@@ -65,7 +65,7 @@ class DiagnosticBinding:
 
     function: Callable[..., object]
     arguments: Mapping[str, object]
-    subject_arg_names: tuple[str, ...]
+    subject_arg_names: tuple[ReferenceName, ...]
     static_arguments: Mapping[str, StaticArgument] = field(
         default_factory=lambda: MappingProxyType({})
     )

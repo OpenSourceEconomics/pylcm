@@ -131,6 +131,7 @@ from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
+    QualifiedName,
     RegimeName,
     TransitionFunctionsMapping,
 )
@@ -154,6 +155,8 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     IntND,
+    ParameterName,
+    ReferenceName,
     ScalarFloat,
     StateName,
     StateOrActionName,
@@ -1678,9 +1681,9 @@ class _NBEGMCaseSpec:
     """Qualified-name prefix of the lower piece's params."""
     above_func: FunctionName
     """Qualified-name prefix of the upper piece's params."""
-    below_param_names: tuple[str, ...]
+    below_param_names: tuple[ReferenceName, ...]
     """Parameter names of the lower piece."""
-    above_param_names: tuple[str, ...]
+    above_param_names: tuple[ReferenceName, ...]
     """Parameter names of the upper piece."""
     threshold_resolver: Callable[[Mapping[str, ValueND]], FloatND]
     """Resolve the literal, parameter, or computed boundary value."""
@@ -1809,7 +1812,7 @@ def _validate_nbegm_boundary_scope(
     *,
     registry: NBEGMRegistry,
     functions: Mapping[FunctionName, Callable[..., object]],
-    liquid_state_name: str,
+    liquid_state_name: StateName,
     reserved_names: frozenset[str],
 ) -> None:
     """Reject case-piece declarations the case-piece kernels cannot solve.
@@ -1991,7 +1994,7 @@ def _fail_if_budget_node_differs_from_kernel_cash_on_hand(
     *,
     context: SolverBuildContext,
     routes_to_case_piece_core: bool,
-    budget_target: str,
+    budget_target: FunctionName,
     liquid_state_name: StateName,
 ) -> None:
     """Check the regime declares the cash-on-hand the case-piece kernels form.
@@ -2261,7 +2264,7 @@ class _LiteralCaseThreshold:
 class _ParameterCaseThreshold:
     """A case threshold read from one qualified parameter."""
 
-    qualified_name: str
+    qualified_name: QualifiedName
     """The `<predicate>__<threshold>` key the boundary value is read under."""
 
     def __call__(self, params: Mapping[str, ValueND]) -> FloatND:
@@ -2406,7 +2409,7 @@ class _NBEGMSource:
 
     variable: str
     """Name of the monotone schedule variable this breakpoint brackets on."""
-    threshold_param_name: str
+    threshold_param_name: QualifiedName
     """Qualified parameter name of this breakpoint's threshold."""
     kind: str
     """Discontinuity kind: `continuous_kink`, `jump`, or `hard_constraint`."""
@@ -2415,12 +2418,12 @@ class _NBEGMSource:
     derived_of_liquid_dag: Callable | None
     """Composed schedule variable as a function of the liquid state, or `None`
     when the schedule varies in the liquid state directly (no preimage needed)."""
-    derived_param_names: tuple[str, ...]
+    derived_param_names: tuple[ParameterName, ...]
     """Unqualified parameter names the schedule variable reads (non-state args)."""
-    derived_state_names: tuple[str, ...] = ()
+    derived_state_names: tuple[StateName, ...] = ()
     """Ride-along state names the schedule variable reads, so the per-cell call
     passes only the cell entries the derived DAG accepts."""
-    threshold_index_state: str | None = None
+    threshold_index_state: StateName | None = None
     """Ride-along state indexing this breakpoint's threshold table, or `None` for a
     scalar threshold. When set, the threshold is read per cell as
     `threshold[cell_state, static_index]`."""
@@ -2439,7 +2442,7 @@ class _NBEGMScheduleSpec:
 
     coh_of_liquid_dag: Callable
     """Composed `coh` as a function of the liquid state and qualified params."""
-    coh_param_names: tuple[str, ...]
+    coh_param_names: tuple[QualifiedName, ...]
     """Qualified parameter names `coh` reads (everything but the state axes)."""
     utility_dag: Callable
     """Composed period utility as a function of the consumption action, the
@@ -2447,9 +2450,9 @@ class _NBEGMScheduleSpec:
     binds it per cell to invert the Euler equation and evaluate the period value."""
     consumption_action_name: ActionName
     """Name of the continuous consumption action the period utility reads."""
-    liquid_state_name: str
+    liquid_state_name: StateName
     """Name of the liquid state the schedule and budget vary in."""
-    ride_along_state_names: tuple[str, ...]
+    ride_along_state_names: tuple[StateName, ...]
     """State axes other than the liquid axis (the budget varies per ride-along cell)."""
     liquid_axis_pos: int
     """Index of the liquid axis in the canonical productmap state order. The
@@ -2458,7 +2461,7 @@ class _NBEGMScheduleSpec:
     the productmap order — a no-op when every ride-along axis is a discrete state
     sorting ahead of the liquid axis, a genuine transpose for a continuous co-state
     declared after it."""
-    threshold_param_names: tuple[str, ...]
+    threshold_param_names: tuple[QualifiedName, ...]
     """Qualified parameter names of the schedule's thresholds."""
     breakpoint_kinds: tuple[str, ...]
     """Discontinuity kind per threshold, in the schedule's declared order."""
@@ -2489,10 +2492,10 @@ class _NBEGMScheduleSpec:
 def _fail_if_discrete_action_feeds_continuation(
     *,
     context: SolverBuildContext,
-    action_name: str,
-    liquid_state_name: str,
-    budget_target: str,
-    post_decision_function: str | None,
+    action_name: ActionName,
+    liquid_state_name: StateName,
+    budget_target: FunctionName,
+    post_decision_function: FunctionName | None,
     allow_continuation_feed: bool = False,
 ) -> None:
     """Reject a discrete action that shifts the continuation, not just the budget.
@@ -2567,7 +2570,7 @@ def _fail_if_discrete_action_feeds_continuation(
 
 
 def _reject_continuation_feed(
-    *, where: str, action_name: str, regime_name: RegimeName
+    *, where: str, action_name: ActionName, regime_name: RegimeName
 ) -> None:
     """Raise for a discrete action reaching the continuation through `where`."""
     msg = (
@@ -2586,7 +2589,7 @@ def _law_reads_action(
     cut_budget: bool,
     funcs: Mapping[str, Callable[..., object]],
     budget_nodes: frozenset[str | None],
-    action_name: str,
+    action_name: ActionName,
 ) -> bool:
     """Whether `law`, composed over the regime's functions, reads the action.
 
@@ -2837,7 +2840,7 @@ def _fail_if_budget_nonaffine_in_liquid(
     coh_dag: Callable[..., object],
     liquid_name: str,
     require_unit_slope: bool,
-    regime_name: str,
+    regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
     liquid_grid: Float1D,
     liquid_samples: Float1D,
@@ -2953,7 +2956,7 @@ class _FlowProbeReadings:
 def _fail_if_flow_not_single_power(
     *,
     utility_dag: Callable[..., object],
-    consumption_action_name: str,
+    consumption_action_name: ActionName,
     regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"],
@@ -3147,15 +3150,15 @@ class _ProbeArguments:
 
     int_arg_values: MappingProxyType[str, tuple[int, ...]] = MappingProxyType({})
     """Grid codes per integer-coded argument, swept one code at a time."""
-    array_float_arg_names: frozenset[str] = frozenset()
+    array_float_arg_names: frozenset[ReferenceName] = frozenset()
     """Arguments whose consumers annotate them as float arrays."""
     array_arg_ranks: MappingProxyType[str, int] = MappingProxyType({})
     """Axis count per array argument, read off how its consumers subscript it."""
-    annotated_int_arg_names: frozenset[str] = frozenset()
+    annotated_int_arg_names: frozenset[ReferenceName] = frozenset()
     """Arguments whose consumers annotate them with an integer dtype."""
-    bool_arg_names: frozenset[str] = frozenset()
+    bool_arg_names: frozenset[ReferenceName] = frozenset()
     """Arguments whose consumers annotate them with a boolean dtype."""
-    mapping_leaf_arg_names: frozenset[str] = frozenset()
+    mapping_leaf_arg_names: frozenset[ReferenceName] = frozenset()
     """Arguments whose consumers annotate them as grouped params."""
     param_values: MappingProxyType[str, object] = MappingProxyType({})
     """The model's own parameter values, empty until `with_params` runs."""
@@ -3251,7 +3254,7 @@ class _FilledScalarFunction:
 
     func: Callable[..., object]
     """The composed function being probed."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """Its parameter names, in signature order."""
     varied_name: str
     """The one argument the call varies."""
@@ -3285,7 +3288,7 @@ class _LiquidAffinityProbe:
 
     coh_dag: Callable[..., object]
     """The composed cash-on-hand as a function of the liquid state and params."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The composed budget's parameter names."""
     liquid_name: str
     """Name of the liquid state the budget is differentiated in."""
@@ -3462,7 +3465,7 @@ class _LiquidAffinityProbe:
 def _fail_unprobeable(
     *,
     probe_error: Exception,
-    regime_name: str,
+    regime_name: RegimeName,
     liquid_name: str,
     probe_failure: Literal["reject", "assume_declared"],
 ) -> None:
@@ -3574,8 +3577,8 @@ def _flow_of_consumption(
     array_rank: int,
     leaf_rank: int,
     utility_dag: Callable[..., object],
-    arg_names: tuple[str, ...],
-    consumption_action_name: str,
+    arg_names: tuple[ReferenceName, ...],
+    consumption_action_name: ActionName,
     probe_arguments: _ProbeArguments,
     fill: float,
 ) -> ScalarFloat:
@@ -3806,11 +3809,11 @@ def _probe_fill(
     *,
     name: str,
     fill: float,
-    int_arg_names: frozenset[str],
-    array_float_arg_names: frozenset[str] = frozenset(),
+    int_arg_names: frozenset[ReferenceName],
+    array_float_arg_names: frozenset[ReferenceName] = frozenset(),
     array_arg_ranks: Mapping[str, int] = MappingProxyType({}),
-    bool_arg_names: frozenset[str] = frozenset(),
-    mapping_leaf_arg_names: frozenset[str] = frozenset(),
+    bool_arg_names: frozenset[ReferenceName] = frozenset(),
+    mapping_leaf_arg_names: frozenset[ReferenceName] = frozenset(),
     param_values: Mapping[str, object] = MappingProxyType({}),
     array_floats: bool = False,
     array_rank: int = 1,
@@ -4036,7 +4039,9 @@ def _resolved_annotation(annotation: object) -> object | None:
     return getattr(annotation, "__value__", annotation)
 
 
-def _probe_arg_spellings(*, func_name: str, arg_name: str) -> tuple[str, str]:
+def _probe_arg_spellings(
+    *, func_name: FunctionName, arg_name: ReferenceName
+) -> tuple[str, str]:
     """Both names a classified parameter can reach the probe under.
 
     Processing qualifies a function's parameters with the function's own name,
@@ -4073,7 +4078,7 @@ def _annotation_source_functions(
     name collide with one that does. Entries are keyed so that no source
     displaces another.
     """
-    sources: dict[str, Callable[..., object]] = dict(functions)
+    sources: dict[FunctionName | QualifiedName, Callable[..., object]] = dict(functions)
     for target, target_laws in transitions.items():
         for law_name, candidate in target_laws.items():
             func = getattr(candidate, "func", candidate)
@@ -4103,8 +4108,8 @@ def _array_float_arg_names(
     scalar index clamps into its table. A parameter whose annotation carries no
     resolvable shape is left to the scalar default.
     """
-    scalar_args: set[str] = set()
-    array_args: set[str] = set()
+    scalar_args: set[ReferenceName] = set()
+    array_args: set[ReferenceName] = set()
     for func_name, func in functions.items():
         for arg_name, param in inspect.signature(func).parameters.items():
             resolved = _resolved_annotation(param.annotation)
@@ -4154,8 +4159,8 @@ def _annotated_mapping_leaf_arg_names(
     rates, and intercepts — reaches the DAG as a single `MappingLeaf` argument
     rather than as separate arrays, so no array fill satisfies it.
     """
-    leaf_args: set[str] = set()
-    other_args: set[str] = set()
+    leaf_args: set[ReferenceName] = set()
+    other_args: set[ReferenceName] = set()
     for func_name, func in functions.items():
         for arg_name, param in inspect.signature(func).parameters.items():
             resolved = _resolved_annotation(param.annotation)
@@ -4198,7 +4203,7 @@ def _annotated_dtype_arg_names(
 
 def _int_code_sweeps(
     *,
-    arg_names: tuple[str, ...],
+    arg_names: tuple[ReferenceName, ...],
     int_arg_values: Mapping[str, tuple[int, ...]],
 ) -> tuple[MappingProxyType[str, int], ...]:
     """One-at-a-time overrides sweeping each discrete argument's actual codes.
@@ -4244,7 +4249,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
     *,
     continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     liquid_name: str,
-    regime_name: str,
+    regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
     derivative_programs: Mapping[object, Callable[..., object]] | None = None,
@@ -4330,7 +4335,7 @@ def _max_abs_first_liquid_derivative(
     *,
     func: Callable[..., object],
     liquid_name: str,
-    regime_name: str,
+    regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"],
     derivative_programs: Mapping[object, Callable[..., object]] | None = None,
@@ -4393,7 +4398,7 @@ def _worst_liquid_jacobian(
     array_rank: int,
     leaf_rank: int,
     positional: Callable[..., object],
-    arg_names: tuple[str, ...],
+    arg_names: tuple[ReferenceName, ...],
     liquid_pos: int,
     probe_arguments: _ProbeArguments,
     program: Callable[..., object] | None = None,
@@ -4484,7 +4489,7 @@ class _PositionalCall:
     func: Callable[..., object]
     """The function, bound by parameter name."""
 
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """Its parameter names, in signature order."""
 
     def __call__(self, *args: object) -> object:
@@ -4655,8 +4660,8 @@ def _derived_variable_dag(
     *,
     variable: str,
     context: SolverBuildContext,
-    state_names: tuple[str, ...],
-    ride_along_state_names: tuple[str, ...],
+    state_names: tuple[StateName, ...],
+    ride_along_state_names: tuple[StateName, ...],
 ) -> tuple[Callable, tuple[str, ...], tuple[str, ...]]:
     """Compose a derived schedule variable and name its params and states read.
 
@@ -5297,7 +5302,7 @@ def _indexed_threshold_value(
     *,
     table: Any,  # scalar param, threshold table, or mapping leaf
     subkey: str | None,
-    index_state: str | None,
+    index_state: StateName | None,
     static_index: int | None,
     cell: dict[str, Any],
 ) -> Any:
@@ -5354,7 +5359,7 @@ class _NBEGMRideAlongStatics:
     """Name of the liquid (Euler) state."""
     ride_names: tuple[str, ...]
     """Ride-along state axes (the budget varies per cell over these)."""
-    state_names: tuple[str, ...]
+    state_names: tuple[StateName, ...]
     """Liquid plus ride-along state names — the kwargs that are state grids."""
     continuation_reads_liquid: bool
     """Whether the continuation reads the current liquid state — through a carry
@@ -5374,17 +5379,17 @@ class _NBEGMRideAlongStatics:
     folds the whole node mesh in one block."""
     consumption_action_name: ActionName
     """Name of the continuous consumption action the period utility reads."""
-    utility_param_names: tuple[str, ...]
+    utility_param_names: tuple[QualifiedName, ...]
     """Qualified utility params (excluding the consumption action and states)."""
-    utility_state_names: tuple[str, ...]
+    utility_state_names: tuple[StateName, ...]
     """Ride-along states the period utility reads, bound per cell."""
-    coh_state_names: tuple[str, ...]
+    coh_state_names: tuple[StateName, ...]
     """Ride-along states the cash-on-hand schedule reads, bound per cell."""
-    discount_param_names: tuple[str, ...]
+    discount_param_names: tuple[QualifiedName, ...]
     """Qualified params the discount-factor DAG reads, or empty for flat discount."""
-    discount_state_names: tuple[str, ...]
+    discount_state_names: tuple[StateName, ...]
     """Ride-along states the discount-factor DAG reads, or empty for flat discount."""
-    discount_action_names: tuple[str, ...]
+    discount_action_names: tuple[ActionName, ...]
     """Discrete actions the discount-factor DAG reads, bound per branch."""
     n_intervals: int
     """Number of liquid intervals the breakpoints split each cell into (N + 1)."""
@@ -5413,7 +5418,7 @@ class _NBEGMRideAlongStatics:
     continuation_representatives: tuple[int, ...] = ()
     """Per continuation class, the first branch carrying it: the branch whose
     rows the class reads. Empty without discrete actions."""
-    co_map_state_names: tuple[str, ...] = ()
+    co_map_state_names: tuple[StateName, ...] = ()
     """Fixed, distributed ride-along states co-mapped with the child carry.
 
     A leading prefix of `ride_names`: each is distributed (sharded one block per
@@ -5451,7 +5456,7 @@ def _nbegm_ride_along_statics(
     branch_width: int = 0,
     stochastic_node_width: int | None = None,
     publish_jump_topology: bool = True,
-    co_map_state_names: tuple[str, ...] = (),
+    co_map_state_names: tuple[StateName, ...] = (),
 ) -> _NBEGMRideAlongStatics:
     """Derive the static config of the ride-along tile-local core.
 
@@ -5544,9 +5549,9 @@ def _nbegm_ride_along_statics(
     # ride-along state arguments, and the branch's action codes.
     discount_factor_dag = schedule_spec.discount_factor_dag
     if discount_factor_dag is None:
-        discount_param_names: tuple[str, ...] = ()
-        discount_state_names: tuple[str, ...] = ()
-        discount_action_names: tuple[str, ...] = ()
+        discount_param_names: tuple[QualifiedName, ...] = ()
+        discount_state_names: tuple[StateName, ...] = ()
+        discount_action_names: tuple[ActionName, ...] = ()
     else:
         discount_arg_names = tuple(inspect.signature(discount_factor_dag).parameters)
         discount_param_names = tuple(
@@ -5883,7 +5888,7 @@ def _cliff_targets_for_pool(
     read: Any,  # `_ChildRead`; import-cycle-safe
     breakpoints: FloatND,
     jump_states: frozenset[str],
-    co_map_state_names: frozenset[str],
+    co_map_state_names: frozenset[StateName],
     post_decision_name: str,
     savings_grid: Float1D,
     dtype: Any,
@@ -7378,7 +7383,7 @@ class _NBEGMCellBinder:
     action_upper: ScalarFloat
     """Initial upper bracket of the numerical Euler inversion."""
 
-    utility_arg_names: frozenset[str]
+    utility_arg_names: frozenset[ReferenceName]
     """The utility DAG's parameter names; an action binds only if named here."""
 
     n_published_boundaries: int
@@ -7670,10 +7675,10 @@ class _NBEGMDiscreteSpec:
     coh_of_liquid_dag: Callable
     """Composed `coh` as a function of the liquid state, the discrete actions, and
     qualified params."""
-    coh_param_names: tuple[str, ...]
+    coh_param_names: tuple[QualifiedName, ...]
     """Qualified parameter names `coh` reads (excluding the liquid state and the
     discrete actions)."""
-    liquid_state_name: str
+    liquid_state_name: StateName
     """Name of the liquid state the budget varies in."""
     discrete_actions: DiscreteActionCodes
     """Each discrete action enveloped over, paired with its grid codes."""
@@ -7756,14 +7761,14 @@ class _NBEGMScheduleDiscreteSpec:
     coh_of_liquid_action_dag: Callable
     """Composed budget node as a function of the liquid state, the discrete actions,
     and qualified params."""
-    coh_param_names: tuple[str, ...]
+    coh_param_names: tuple[QualifiedName, ...]
     """Qualified parameter names the budget reads (excluding the liquid state and the
     discrete actions)."""
-    liquid_state_name: str
+    liquid_state_name: StateName
     """Name of the liquid (Euler) state the budget varies in."""
     discrete_actions: DiscreteActionCodes
     """Each discrete action enveloped over, paired with its grid codes."""
-    threshold_param_names: tuple[str, ...]
+    threshold_param_names: tuple[QualifiedName, ...]
     """Qualified parameter names of the schedule's thresholds (liquid breakpoints)."""
     breakpoint_kinds: tuple[str, ...]
     """Discontinuity kind per threshold, in the schedule's declared order."""

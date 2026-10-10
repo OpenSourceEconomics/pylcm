@@ -32,7 +32,7 @@ from _lcm.time import TimeAxis
 from _lcm.typing import ActionName, FlatParams, RegimeName, StateName
 from lcm._solver_api.entries import _LazyEntry
 from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, FloatND, FunctionName
 
 if TYPE_CHECKING:
     _PeriodValuesBoundary: TypeAlias = Mapping[int, Mapping[RegimeName, FloatND]]  # noqa: UP040
@@ -483,7 +483,7 @@ class _SavedMetadata:
     result_metadata: ResultMetadata
     """Pre-computed metadata; rebuilt to avoid re-deriving from regimes."""
 
-    available_targets: list[str]
+    available_targets: list[FunctionName]
     """Names of all additional targets exposed via `to_dataframe`."""
 
     subject_batch_size: int | None = None

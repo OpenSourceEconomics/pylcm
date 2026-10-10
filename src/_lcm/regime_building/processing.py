@@ -247,6 +247,7 @@ from _lcm.typing import (
     NextStateSimulationFunction,
     ProcessName,
     QAndFFunction,
+    QualifiedName,
     RegimeName,
     RegimeNamesToIds,
     RegimeParamsTemplate,
@@ -295,7 +296,15 @@ from lcm.solvers import (
     UniformObservedFixedCost,
 )
 from lcm.transition import JointTransition, StochasticTransition, Transition
-from lcm.typing import Float1D, FloatND, Int1D, IntND, ParameterName, UserFunction
+from lcm.typing import (
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ParameterName,
+    ReferenceName,
+    UserFunction,
+)
 
 type _TransitionBundles = dict[
     RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
@@ -6412,7 +6421,7 @@ def _build_validation_regime_transition_probs(
     grids: MappingProxyType[StateOrActionName, Grid],
     edge_params_template: EdgeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     enable_jit: bool,
 ) -> RegimeTransitionFunction:
     """Build a validation function that retains every declared target cell."""
@@ -6726,7 +6735,7 @@ def _declaration_param_expansions(
 
 
 def _extract_template_names_key(
-    *, func_name: str, regime_params_template: RegimeParamsTemplate
+    *, func_name: FunctionName, regime_params_template: RegimeParamsTemplate
 ) -> str:
     """Extract the template key under which a function's param names live.
 
@@ -7616,7 +7625,7 @@ def build_regime_transition_probs_functions(
     compute_regime_transition_probs: TransitionFunction | None,
     grids: MappingProxyType[StateOrActionName, Grid],
     regime_names_to_ids: RegimeNamesToIds,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     is_stochastic: bool,
     enable_jit: bool,
     shape: Literal["grid", "per_subject"],
@@ -7717,7 +7726,7 @@ def build_per_subject_regime_transition_probs(
     compute_regime_transition_probs: TransitionFunction | None,
     grids: MappingProxyType[StateOrActionName, Grid],
     regime_names_to_ids: RegimeNamesToIds,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     is_stochastic: bool,
     next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None = None,
 ) -> _PerSubjectFunction:
@@ -7764,7 +7773,7 @@ def per_subject_regime_transition_probs(
     *,
     next_regime: RegimeTransitionFunction,
     grids: MappingProxyType[StateOrActionName, Grid],
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     target_regime_names: tuple[RegimeName, ...],
 ) -> _PerSubjectFunction:
     """Return the regime-transition probabilities at one subject's state cell.
@@ -8021,8 +8030,8 @@ def _wrap_deterministic_regime_transition(
 
 def _get_vmap_params(
     *,
-    all_args: tuple[str, ...],
-    flat_param_names: frozenset[str],
+    all_args: tuple[ReferenceName, ...],
+    flat_param_names: frozenset[QualifiedName],
 ) -> tuple[str, ...]:
     """Get parameter names that should be vmapped (states and actions)."""
     non_vmap = {"period", "age"} | flat_param_names
@@ -8202,7 +8211,7 @@ def _build_period_state_axes(
 def _build_terminal_collective_Q_and_F_per_period(
     *,
     n_periods: int,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     stakeholders: tuple[str, ...],
@@ -8295,7 +8304,7 @@ def _build_Q_and_F_per_period(
     transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
     period_to_regime_v_interp: (
@@ -8675,7 +8684,7 @@ def _build_next_state_vmapped(
     transitions: TransitionFunctionsMapping,
     transition_plans: TargetTransitionPlans,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     enable_jit: bool,
 ) -> _NextStateBuild:
     """Build a per-period vmapped next-state function for simulation.
@@ -8883,7 +8892,7 @@ def _route_constraints(
     phase: Literal["solve", "simulate"],
     functions: EconFunctionsMapping,
     variables: Variables,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     active_periods: tuple[int, ...],
     grids: MappingProxyType[StateOrActionName, Grid],
 ) -> _ConstraintRoutingResult:
@@ -9025,7 +9034,7 @@ def _fail_if_a_synthesized_constraint_is_unmet(
     regime_name: RegimeName,
     functions: EconFunctionsMapping,
     variables: Variables,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     active_periods: tuple[int, ...],
     grids: MappingProxyType[StateOrActionName, Grid],
 ) -> None:

@@ -17,7 +17,7 @@ from _lcm.simulation.result_metadata import ResultMetadata
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.typing import ActionName, FlatParams, FlatRegimeParams, RegimeName, StateName
 from lcm.exceptions import PyLCMError
-from lcm.typing import BoolND, FloatND, IntND
+from lcm.typing import BoolND, FloatND, FunctionName, IntND
 
 
 def _create_flat_dataframe(
@@ -28,7 +28,7 @@ def _create_flat_dataframe(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     metadata: ResultMetadata,
-    additional_targets: list[str] | None,
+    additional_targets: list[FunctionName] | None,
     ages: TimeAxis,
     subject_batch_size: int | None = None,
 ) -> pd.DataFrame:
@@ -114,7 +114,7 @@ def _process_regime(
     regime_params: FlatRegimeParams,
     stakeholders: tuple[str, ...] | None,
     publishes_role: bool,
-    additional_targets: list[str] | None,
+    additional_targets: list[FunctionName] | None,
     ages: TimeAxis,
     subject_batch_size: int | None = None,
 ) -> pd.DataFrame:

@@ -21,6 +21,7 @@ from _lcm.simulation.operand_placement import subject_operand_sharding
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.value_placement import simulation_value_sharding
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName
 
 
 # keyword-only-exempt: library-callback=jax.tree.map
@@ -92,7 +93,7 @@ class ChunkProfileInventory:
         *,
         function: Callable[..., object],
         arguments: Mapping[str, object],
-        subject_arg_names: tuple[str, ...] = (),
+        subject_arg_names: tuple[ReferenceName, ...] = (),
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
         subject_outputs: bool = False,
         devices: tuple[jax.Device, ...] | None = None,

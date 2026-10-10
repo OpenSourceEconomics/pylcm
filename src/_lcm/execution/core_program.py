@@ -28,6 +28,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.typing import ActionName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
+from lcm.typing import RegimeName
 
 _CORE_PROGRAM_VERSION = 7
 _INT32_MAX = 2_147_483_647
@@ -395,13 +396,13 @@ class CoreBuildContext:
     """Immutable inputs from which a core builds its dynamic argument mapping."""
 
     state_action_space: object
-    next_regime_to_V_arr: Mapping[str, object]
-    next_regime_to_continuation: Mapping[str, object]
+    next_regime_to_V_arr: Mapping[RegimeName, object]
+    next_regime_to_continuation: Mapping[RegimeName, object]
     flat_params: Mapping[str, object]
     period: int
     ages: object
-    edge_regime_to_V_arr: Mapping[str, object] | None = None
-    same_period_regime_to_V_arr: Mapping[str, object] | None = None
+    edge_regime_to_V_arr: Mapping[RegimeName, object] | None = None
+    same_period_regime_to_V_arr: Mapping[RegimeName, object] | None = None
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned mappings and reject ambiguous period values."""

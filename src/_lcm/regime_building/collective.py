@@ -26,11 +26,11 @@ from _lcm.regime_building.argmax import (
     _move_axes_to_back,
     argmax_and_max,
 )
-from _lcm.typing import FunctionName, RegimeName, StateName, _ParamsLeaf
+from _lcm.typing import FunctionName, QualifiedName, RegimeName, StateName, _ParamsLeaf
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import sum_in_value_order, zero_safe_weighted_term
 from lcm.collective import ParetoObjective
-from lcm.typing import BoolND, FloatND, IntND, UserFunction
+from lcm.typing import BoolND, FloatND, IntND, ReferenceName, UserFunction
 
 # Up to this many stakeholders, the scalarization's reduction order is not a choice:
 # one term is returned as-is and two admit a single association. From three terms on,
@@ -276,10 +276,10 @@ class ParetoWeights:
     the check that a declaration is a Pareto weighting has to see it as written.
     """
 
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """States, `period` / `age`, and qualified params `compute` reads."""
 
-    param_names: tuple[str, ...]
+    param_names: tuple[QualifiedName, ...]
     """The subset of `arg_names` supplied from the regime's flat params."""
 
     normalization: str
@@ -332,7 +332,7 @@ def build_pareto_weights(
     )
     context = frozenset({"period", "age"})
     per_stakeholder: dict[str, tuple[Callable[..., FloatND], tuple[str, ...]]] = {}
-    param_names: set[str] = set()
+    param_names: set[QualifiedName] = set()
     for name in stakeholders:
         weight = declared[name]
         if not callable(weight):

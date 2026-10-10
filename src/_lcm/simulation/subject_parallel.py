@@ -14,6 +14,8 @@ from typing import Protocol, runtime_checkable
 
 import jax
 
+from lcm.typing import ReferenceName
+
 
 @runtime_checkable
 class SubjectShardable(Protocol):
@@ -62,7 +64,7 @@ def declared_subject_shard_arg_names(
 def shard_subject_function(
     *,
     function: Callable[..., object],
-    subject_arg_names: tuple[str, ...],
+    subject_arg_names: tuple[ReferenceName, ...],
     arguments: Mapping[str, object],
     static_kwargs: Mapping[str, int],
     devices: tuple[jax.Device, ...],
@@ -113,7 +115,7 @@ def shard_subject_function(
 
 
 def _subject_extent(
-    *, arguments: Mapping[str, object], subject_arg_names: tuple[str, ...]
+    *, arguments: Mapping[str, object], subject_arg_names: tuple[ReferenceName, ...]
 ) -> int:
     """Validate declared leading dimensions from metadata, never device values."""
     extents: set[int] = set()

@@ -13,6 +13,7 @@ from _lcm.egm.outer_inversion import (
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead
+from lcm.typing import ActionName, StateName
 
 
 def _same_exactly_typed(*, actual: object, expected: object) -> bool:
@@ -157,9 +158,9 @@ def validate_nested_egm_sim_policy(  # noqa: PLR0911
 def _validate_egm_payload(
     *,
     policy: EGMSimPolicy,
-    expected_discrete_state_names: tuple[str, ...],
-    expected_passive_state_names: tuple[str, ...],
-    expected_discrete_action_names: tuple[str, ...],
+    expected_discrete_state_names: tuple[StateName, ...],
+    expected_passive_state_names: tuple[StateName, ...],
+    expected_discrete_action_names: tuple[ActionName, ...],
     expected_axis_lengths: tuple[int, ...],
     expected_node_count: int,
     expected_float_dtype: str,
