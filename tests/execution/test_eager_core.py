@@ -5,6 +5,7 @@ import functools
 import gc
 import weakref
 from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import NoReturn, cast
 
 import jax
@@ -45,14 +46,14 @@ def eager_program(
     return ResolvedCoreProgram(
         name="main",
         function=function,
-        arguments=arguments,
-        static_kwargs={},
+        arguments=MappingProxyType(dict(arguments)),
+        static_kwargs=MappingProxyType({}),
         requirements=CoreExecutionRequirements(),
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.DENSE,
         disposition_reason="eager placement witness",
         donation_candidates=(),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         specialization_key=(),
         input_transfer_plan=(),
     )
@@ -113,7 +114,7 @@ def test_eager_partial_keeps_fixed_array_and_static_width() -> None:
                 )
             },
         ),
-        static_kwargs={"width": 2},
+        static_kwargs=MappingProxyType({"width": 2}),
     )
     adapter = make_eager_core(program=program, execution_sharding=target)
     np.testing.assert_array_equal(adapter(value=source), np.asarray([4.0, 7.0, 11.0]))
@@ -291,9 +292,9 @@ def test_internal_eager_builder_requires_exact_abstract_declared_inputs(
     else:
         program = dataclasses.replace(
             program,
-            arguments={
-                "produced": jax.ShapeDtypeStruct((), jnp.float32, sharding=target)
-            },
+            arguments=MappingProxyType(
+                {"produced": jax.ShapeDtypeStruct((), jnp.float32, sharding=target)}
+            ),
         )
     with pytest.raises(ExecutionPlanningError, match="internal input"):
         make_eager_core(

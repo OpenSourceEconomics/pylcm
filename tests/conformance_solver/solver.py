@@ -299,9 +299,9 @@ class _PeriodKernel:
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[str, FloatND],
         next_regime_to_continuation: Mapping[str, ContinuationArtifact],
-        flat_params: Mapping[str, object],
+        flat_params: Mapping[str, object],  # noqa: ARG002
         period: int,
-        ages: object,
+        ages: object,  # noqa: ARG002
         logger: object,  # noqa: ARG002
         **_unused: object,
     ) -> KernelOutput:
@@ -310,9 +310,9 @@ class _PeriodKernel:
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
+            flat_params=MappingProxyType({}),
             period=period,
-            ages=ages,
+            ages=None,
         )
         selected_name = "replay" if "replay" in compiled_cores else "values"
         arguments = self.programs[selected_name].argument_builder(context)

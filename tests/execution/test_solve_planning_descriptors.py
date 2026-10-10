@@ -54,7 +54,7 @@ def _program(
     return MaterializedCoreProgram(
         name="main",
         function=_identity,
-        arguments=arguments,
+        arguments=MappingProxyType(dict(arguments)),
         requirements=CoreExecutionRequirements(),
         output_roles="value",
         disposition=CoreExecutionDisposition.PLANNED,

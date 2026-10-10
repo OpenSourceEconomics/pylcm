@@ -77,7 +77,7 @@ def _context() -> CoreBuildContext:
         next_regime_to_continuation=MappingProxyType({}),
         flat_params=MappingProxyType({}),
         period=3,
-        ages=object(),
+        ages=None,
     )
 
 

@@ -30,6 +30,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.solution import backward_induction
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
+from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, FloatND, PytreeValue
 from lcm import (
     AgeGrid,
@@ -228,7 +229,7 @@ class _ScalarEdgeKernel:
         next_regime_to_continuation: Mapping[str, ContinuationArtifact],
         flat_params: FlatParams,
         period: int,
-        ages: object,
+        ages: TimeAxis,
         **unused: object,
     ) -> KernelOutput:
         """Hand the producer's published scalar to the consumer and publish its row."""

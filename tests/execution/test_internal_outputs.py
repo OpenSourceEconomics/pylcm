@@ -599,7 +599,7 @@ def test_a_producer_traced_without_its_static_width_is_refused() -> None:
                     ),
                     tile_widths={"candidate": 2},
                 ),
-                static_kwargs={},
+                static_kwargs=MappingProxyType({}),
             ),
             templates=resolved.internal_input_templates,
         )

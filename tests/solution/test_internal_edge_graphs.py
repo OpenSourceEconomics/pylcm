@@ -43,6 +43,7 @@ from _lcm.execution.internal_outputs import topological_program_order
 from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.solution.period_replay import replay_period
+from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, FloatND, PytreeValue
 from lcm import (
     AgeGrid,
@@ -222,7 +223,7 @@ class _GraphKernel:
         next_regime_to_continuation: Mapping[str, ContinuationArtifact],
         flat_params: FlatParams,
         period: int,
-        ages: object,
+        ages: TimeAxis,
         **unused: object,
     ) -> KernelOutput:
         """Run every program once, handing each producer's labelled subtree on."""

@@ -873,7 +873,7 @@ def _program_reading(
     return MaterializedCoreProgram(
         name="main",
         function=_consume,
-        arguments={"next_regime_to_V_arr": argument_branch},
+        arguments=MappingProxyType({"next_regime_to_V_arr": argument_branch}),
         requirements=CoreExecutionRequirements(value_reads=(read,)),
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,

@@ -28,10 +28,13 @@ from _lcm.execution.value_transfer import (
     ValueViewDescriptor,
     apply_value_transfer_plan,
 )
+from _lcm.time import TimeAxis
 from _lcm.typing import (
     ActionName,
     ArgumentTree,
     ArtifactPayload,
+    FlatEdgeParams,
+    FlatRegimeParams,
     PytreeValue,
     ShapeDtypePytree,
     StateName,
@@ -412,9 +415,9 @@ class CoreBuildContext:
     state_action_space: StateActionSpace | None
     next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
-    flat_params: Mapping[str, object]
+    flat_params: Mapping[RegimeName, FlatRegimeParams | FlatEdgeParams]
     period: int
-    ages: object
+    ages: TimeAxis | None
     edge_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None = (
         None
     )
@@ -529,7 +532,7 @@ class MaterializedCoreProgram:
 
     name: str
     function: Callable[..., PytreeValue]
-    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
+    arguments: MappingProxyType[ReferenceName, PytreeValue | ShapeDtypePytree]
     requirements: CoreExecutionRequirements
     output_roles: OutputRoleTree
     disposition: CoreExecutionDisposition
@@ -546,9 +549,8 @@ class MaterializedCoreProgram:
     """The invariant code this program evaluates, inherited from the declaration."""
 
     def __post_init__(self) -> None:
-        """Snapshot the exact dynamic argument tree."""
+        """Snapshot the planning containers."""
         _validate_compiler_options(self.compiler_options)
-        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
         object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
         object.__setattr__(
@@ -1010,7 +1012,8 @@ def materialize_core_program(
     materialized = MaterializedCoreProgram(
         name=program.name,
         function=program.function,
-        arguments=arguments,
+        # A solver's argument builder may return any mapping; freeze a copy here.
+        arguments=MappingProxyType(dict(arguments)),
         requirements=program.requirements,
         output_roles=program.output_roles,
         disposition=program.disposition,
@@ -1041,13 +1044,13 @@ class ResolvedCoreProgram:
 
     name: str
     function: Callable[..., PytreeValue]
-    arguments: Mapping[str, ArgumentTree]
-    static_kwargs: Mapping[str, int]
+    arguments: MappingProxyType[str, ArgumentTree]
+    static_kwargs: MappingProxyType[str, int]
     requirements: CoreExecutionRequirements
     output_roles: OutputRoleTree
     disposition: CoreExecutionDisposition
     donation_candidates: tuple[str, ...]
-    tile_widths: Mapping[str, int]
+    tile_widths: MappingProxyType[str, int]
     specialization_key: Hashable
     """Static program fragment composed into the engine's full lowering key."""
     input_transfer_plan: tuple[ResolvedValueTransfer, ...]
@@ -1063,20 +1066,9 @@ class ResolvedCoreProgram:
     """The invariant code this program evaluates; its code is a runtime operand."""
 
     def __post_init__(self) -> None:
-        """Snapshot the materialized argument and planning containers."""
+        """Snapshot the planning containers."""
         _validate_compiler_options(self.compiler_options)
-        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
         object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
-        object.__setattr__(
-            self,
-            "static_kwargs",
-            MappingProxyType(dict(self.static_kwargs)),
-        )
-        object.__setattr__(
-            self,
-            "tile_widths",
-            MappingProxyType(dict(self.tile_widths)),
-        )
         object.__setattr__(
             self, "retained_artifact_keys", tuple(self.retained_artifact_keys)
         )
@@ -1183,7 +1175,7 @@ def _resolve_core_program(
         raise ValueError(msg)
 
     resolved_widths: dict[str, int] = {}
-    width_bindings: dict[str, int] = {}
+    widths_by_keyword: dict[str, int] = {}
     compilation_axes: list[Hashable] = []
     for axis in axes:
         width = _validate_tile_width(
@@ -1191,7 +1183,7 @@ def _resolve_core_program(
             width=requested_widths[axis.name],
         )
         resolved_widths[axis.name] = width
-        width_bindings[axis.width_keyword] = width
+        widths_by_keyword[axis.width_keyword] = width
         compilation_axes.append(
             (
                 axis.name,
@@ -1205,6 +1197,8 @@ def _resolve_core_program(
             if isinstance(axis, ReducedAxis)
             else (axis.name, axis.extent, axis.width_keyword, width)
         )
+
+    width_bindings = MappingProxyType(widths_by_keyword)
 
     return ResolvedCoreProgram(
         name=program.name,
@@ -1229,7 +1223,7 @@ def _resolve_core_program(
         internal_outputs=program.internal_outputs,
         compiler_options=program.compiler_options,
         invariant_binding=program.invariant_binding,
-        tile_widths=resolved_widths,
+        tile_widths=MappingProxyType(resolved_widths),
         input_transfer_plan=resolved_input_transfer_plan,
         specialization_key=(
             "core-program",

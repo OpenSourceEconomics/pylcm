@@ -7,6 +7,7 @@ inventory interfaces as test_continuous_transfer_admission.py.
 
 import dataclasses
 import math
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -171,13 +172,13 @@ def _case(*, axis: int, code: int, cells: int, shared: bool) -> _Case:
     program = ResolvedCoreProgram(
         name="main",
         function=_shape_only,
-        arguments=args,
-        static_kwargs={},
+        arguments=MappingProxyType(dict(args)),
+        static_kwargs=MappingProxyType({}),
         requirements=requirements,
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         specialization_key=(),
         input_transfer_plan=(transfer,),
     )
@@ -218,7 +219,7 @@ def _case(*, axis: int, code: int, cells: int, shared: bool) -> _Case:
         live={},
         peer_bytes={device.id: 0},
         declared_inputs=(),
-        fixed_bytes={device.id: owner_bytes},
+        fixed_bytes=MappingProxyType({device.id: owner_bytes}),
         shared_copies=copies,
         transfer_scratch_bytes=scratch,
     )
@@ -302,6 +303,8 @@ def test_pruned_selected_view_has_the_exact_conservative_admission_threshold(
         plan(budget=ceiling - 1, inventory=case.inventory)
     assert plan(budget=ceiling, inventory=case.inventory).compiled is case.compiled
     # Negative control: omitted selection scratch incorrectly admits that same ceiling.
-    omitted = dataclasses.replace(case.inventory, transfer_scratch_bytes={})
+    omitted = dataclasses.replace(
+        case.inventory, transfer_scratch_bytes=MappingProxyType({})
+    )
     assert plan(budget=ceiling - 1, inventory=omitted).compiled is case.compiled
     assert not case.owner.is_deleted()

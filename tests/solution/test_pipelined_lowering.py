@@ -3,6 +3,7 @@
 import logging
 import threading
 from collections.abc import Hashable
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -50,13 +51,13 @@ def _run_wave(*, n_workers: int) -> dict[Hashable, jax.stages.Compiled]:
         candidate: ResolvedCoreProgram(
             name=candidate[0][2],
             function=_program,
-            arguments={"wealth": wealth},
-            static_kwargs={"scale": i + 1},
+            arguments=MappingProxyType({"wealth": wealth}),
+            static_kwargs=MappingProxyType({"scale": i + 1}),
             requirements=CoreExecutionRequirements(),
             output_roles=VALUE,
             disposition=CoreExecutionDisposition.PLANNED,
             donation_candidates=(),
-            tile_widths={},
+            tile_widths=MappingProxyType({}),
             specialization_key=(),
             input_transfer_plan=(),
         )

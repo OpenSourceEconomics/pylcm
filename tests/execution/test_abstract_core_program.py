@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import replace
+from types import MappingProxyType
 from typing import cast
 
 import jax
@@ -56,7 +57,9 @@ def _inputs() -> tuple[MaterializedCoreProgram, ResolvedValueTransfer]:
     program = MaterializedCoreProgram(
         name="main",
         function=_read_value,
-        arguments={"next_regime_to_V_arr": {"future": value}, "extra": value},
+        arguments=MappingProxyType(
+            {"next_regime_to_V_arr": {"future": value}, "extra": value}
+        ),
         requirements=CoreExecutionRequirements(
             value_reads=(ValueRead(target=target, source=source),)
         ),
@@ -107,10 +110,12 @@ def test_abstract_copy_uses_destination_layout_and_keeps_source_cost(
     )
     candidate = replace(
         program,
-        arguments={
-            "next_regime_to_V_arr": {"future": descriptor},
-            "extra": program.arguments["extra"],
-        },
+        arguments=MappingProxyType(
+            {
+                "next_regime_to_V_arr": {"future": descriptor},
+                "extra": program.arguments["extra"],
+            }
+        ),
     )
 
     def forbidden(*_args: object, **_kwargs: object) -> object:
@@ -149,7 +154,7 @@ def test_abstract_resolution_rejects_concrete_arguments_everywhere(
     )
     with pytest.raises(ExecutionPlanningError, match=r"abstract|Abstract"):
         resolve_core_program(
-            program=replace(program, arguments=replacement),
+            program=replace(program, arguments=MappingProxyType(replacement)),
             input_transfer_plan=(transfer,),
             abstract_inputs=True,
         )
@@ -178,10 +183,12 @@ def test_abstract_read_requires_exact_destination_metadata(mismatch: str) -> Non
         resolve_core_program(
             program=replace(
                 program,
-                arguments={
-                    "next_regime_to_V_arr": {"future": wrong},
-                    "extra": program.arguments["extra"],
-                },
+                arguments=MappingProxyType(
+                    {
+                        "next_regime_to_V_arr": {"future": wrong},
+                        "extra": program.arguments["extra"],
+                    }
+                ),
             ),
             input_transfer_plan=(transfer,),
             abstract_inputs=True,
