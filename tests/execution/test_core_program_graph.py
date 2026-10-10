@@ -384,8 +384,8 @@ class _CoresOnlyKernel:
 
 def test_core_program_graph_rejects_a_kernel_without_a_native_graph() -> None:
     """A kernel is executable only through its own native core-program graph."""
-    with pytest.raises(TypeError, match="native core-program graph"):
-        core_program_graph(kernel=_CoresOnlyKernel())
+    with pytest.raises(BeartypeCallHintParamViolation, match="parameter kernel"):
+        core_program_graph(kernel=_CoresOnlyKernel())  # ty: ignore[invalid-argument-type]
 
 
 def test_every_disposition_is_planned_dense_or_host_driven() -> None:
@@ -422,7 +422,7 @@ def _scoped_program(
         if scope in {ProgramScope.REPLAY, ProgramScope.ARTIFACT}
         else ()
     )
-    retained_artifact_payload_types = dict.fromkeys(retained_artifact_keys, object)
+    retained_artifact_payload_types = dict.fromkeys(retained_artifact_keys, jax.Array)
     return CoreProgram(
         name=name,
         function=_identity,

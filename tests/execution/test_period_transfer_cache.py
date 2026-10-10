@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import NoReturn
 
 import jax
 import jax.numpy as jnp
@@ -483,7 +484,7 @@ def _planned_core(*, name: str, transfer: ResolvedValueTransfer) -> PlannedCore:
     )
 
 
-def _unreachable_core(**_kwargs: object) -> object:
+def _unreachable_core(**_kwargs: object) -> NoReturn:
     """Stand in for a compiled core the plan never calls."""
     raise AssertionError
 

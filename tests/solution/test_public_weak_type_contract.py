@@ -219,7 +219,7 @@ class _ScalarEdgeKernel:
         *,
         compiled_cores: Mapping[str, Any],
         state_action_space: object,
-        next_regime_to_V_arr: Mapping[str, object],
+        next_regime_to_V_arr: Mapping[str, FloatND],
         next_regime_to_continuation: Mapping[str, object],
         flat_params: FlatParams,
         period: int,

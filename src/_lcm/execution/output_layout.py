@@ -169,9 +169,9 @@ class ResolvedOutputLayout:
 def resolve_output_layout(
     *,
     core_key: str,
-    value_template: object,
+    value_template: FloatND | jax.ShapeDtypeStruct,
     state_order: tuple[StateName, ...],
-    output_roles: object,
+    output_roles: OutputRoleTree,
 ) -> ResolvedOutputLayout:
     """Resolve one program-owned output-role tree on the V-template placement.
 
@@ -228,7 +228,9 @@ def resolve_output_layout(
     )
 
 
-def _require_value_sharding(*, value_template: object) -> jax.sharding.Sharding:
+def _require_value_sharding(
+    *, value_template: FloatND | jax.ShapeDtypeStruct
+) -> jax.sharding.Sharding:
     """Return the concrete sharding required by a program-owned output contract."""
     value_sharding = getattr(value_template, "sharding", None)
     if not isinstance(value_sharding, jax.sharding.Sharding):
@@ -336,9 +338,9 @@ def _state_axes_leading_sharding(
 
 def _validate_output_roles(
     *,
-    roles: object,
+    roles: OutputRoleTree,
     core_key: str,
-    value_template: object,
+    value_template: FloatND | jax.ShapeDtypeStruct,
     state_order: tuple[StateName, ...],
 ) -> None:
     """Fail closed outside the supported logical output trees."""
@@ -465,7 +467,7 @@ def _assert_output_metadata(
 class PlannedCore:
     """Callable compiled core carrying the output and input plans used to lower it."""
 
-    compiled: Callable
+    compiled: Callable[..., PytreeValue]
     layout: ResolvedOutputLayout
     tile_widths: Mapping[str, int]
     """Width this core was lowered at, per execution axis of its program."""
