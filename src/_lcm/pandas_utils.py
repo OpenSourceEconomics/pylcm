@@ -61,6 +61,7 @@ from lcm.transition import (
     ByAge,
     JointTransition,
     Transition,
+    _period_by_age,
     _select_periods,
 )
 from lcm.typing import (
@@ -678,9 +679,7 @@ def _edge_param_periods(
 ) -> tuple[int, ...]:
     """Read scheduled laws at their source, and gate functions at their target."""
     required: set[int] = set()
-    period_by_age: dict[object, int] = {
-        age: period for period, age in enumerate(ages.exact_values)
-    }
+    period_by_age = _period_by_age(ages)
     variants: tuple[tuple[Phase | None, Transition], ...] = (
         tuple((None, declaration) for declaration in declarations)
         if declarations_by_phase is None

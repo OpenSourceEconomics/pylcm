@@ -63,6 +63,7 @@ from lcm.transition import (
     PeriodSelector,
     StochasticTransition,
     _fail_if_invalid_age_selector,
+    _period_by_age,
     _select_periods,
 )
 from lcm.typing import FloatND, IntND, Period, UserAge, UserFunction
@@ -499,9 +500,7 @@ def resolve_demand(
             where no problem is available.
 
     """
-    period_by_age: dict[object, int] = {
-        age: period for period, age in enumerate(ages.exact_values)
-    }
+    period_by_age = _period_by_age(ages)
     available = {
         name: frozenset(periods)
         for name, periods in schedules.coverage_by_regime.items()
@@ -709,9 +708,7 @@ def resolve_initial_nodes(
     entries = _initial_node_entries(
         initial_nodes=initial_nodes, kind=coordinate_kind(ages)
     )
-    period_by_age: dict[object, int] = {
-        age: period for period, age in enumerate(ages.exact_values)
-    }
+    period_by_age = _period_by_age(ages)
     permitted: set[tuple[UserAge, RegimeName]] = set()
     for selector, value in entries:
         names = _entry_names(value)

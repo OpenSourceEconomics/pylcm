@@ -333,6 +333,7 @@ from lcm.transition import (
     Periods,
     PhaseEdges,
     Transition,
+    _period_by_age,
     snapshot_transition_containers,
 )
 from lcm.typing import (
@@ -340,7 +341,6 @@ from lcm.typing import (
     FloatND,
     IntND,
     Phase,
-    UserAge,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
@@ -4382,9 +4382,7 @@ class Model:
             )
             if code in ids_to_names and admissible
         }
-        period_by_age: dict[UserAge, int] = {
-            age: p for p, age in enumerate(self._time.exact_values)
-        }
+        period_by_age = _period_by_age(self._time)
         permitted = {
             (period_by_age[age], name) for age, name in self._resolved_initial_nodes
         }

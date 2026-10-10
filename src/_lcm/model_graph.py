@@ -59,9 +59,10 @@ from lcm.transition import (
     StochasticTransition,
     Transition,
     _fail_if_invalid_age_selector,
+    _period_by_age,
     _select_periods,
 )
-from lcm.typing import RegimeName, UserAge, UserFunction, UserParams
+from lcm.typing import AgeLabel, RegimeName, UserAge, UserFunction, UserParams
 
 type ResolvedEdges = MappingProxyType[
     RegimeName, MappingProxyType[RegimeName, frozenset[UserAge]]
@@ -451,10 +452,7 @@ def _transition_targets(
             "Mapping[RegimeName, AgeSelector | PeriodSelector]", transition.targets
         )
     if transition.targets is not None:
-        # Keyed by `object`: a selector value of any type is looked up in it.
-        period_by_age: dict[object, int] = {
-            age: period for period, age in enumerate(ages.exact_values)
-        }
+        period_by_age = _period_by_age(ages)
         # No transition leaves the final age, so a selector that also selects
         # it names the same destinations as one that stops before it.
         final_age = ages.exact_values[-1]
@@ -899,9 +897,7 @@ def _resolve_edges(
             "`edges` must map source regimes to destination-to-source-age "
             f"selectors, or be a `Phased` of those mappings; got {edges!r}."
         )
-    period_by_age: dict[object, int] = {
-        age: period for period, age in enumerate(ages.exact_values)
-    }
+    period_by_age = _period_by_age(ages)
     resolved: dict[str, MappingProxyType[str, frozenset[UserAge]]] = {}
     for source, destinations in edges.items():
         if not isinstance(source, str) or source not in regimes:
@@ -943,7 +939,7 @@ def _selected_source_ages(
     selector: AgeSelector | PeriodSelector,
     edge: str,
     ages: TimeAxis,
-    period_by_age: Mapping[object, int],
+    period_by_age: Mapping[AgeLabel, int],
 ) -> frozenset[UserAge]:
     """Resolve one edge's selector to the source ages at which it can fire."""
     try:
