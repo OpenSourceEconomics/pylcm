@@ -16,7 +16,7 @@ import math
 import textwrap
 from collections import Counter
 from collections.abc import Iterator, Mapping
-from types import UnionType
+from types import MappingProxyType, UnionType
 from typing import TYPE_CHECKING, cast
 
 from beartype import beartype
@@ -82,7 +82,7 @@ def _grid_mapping_errors(
     mapping: Mapping[StateOrActionName, StateEntry],
     allow_phase_variants: bool,
     allow_age_specialized_grid: bool = False,
-) -> list[str]:
+) -> tuple[str, ...]:
     """Collect key/value type errors for a grid-valued mapping (states/actions)."""
     allowed: type[Grid] | UnionType = Grid | Phased if allow_phase_variants else Grid
     suffix = " or Phased" if allow_phase_variants else ""
@@ -107,7 +107,7 @@ def _grid_mapping_errors(
             error_messages.append(
                 f"{attr_name} value {v!r} must be an LCM grid{suffix}."
             )
-    return error_messages
+    return tuple(error_messages)
 
 
 @beartype(conf=REGIME_CONF)
@@ -116,7 +116,7 @@ def _callable_mapping_errors(
     attr_name: str,
     mapping: Mapping[FunctionName, ConstraintLike | Phased | None],
     allow_phase_variants: bool,
-) -> list[str]:
+) -> tuple[str, ...]:
     """Collect key/value type errors for a callable-valued mapping."""
     error_messages: list[str] = []
     for k, v in mapping.items():
@@ -137,7 +137,7 @@ def _callable_mapping_errors(
             error_messages.append(
                 f"{attr_name} value {v!r} must be a Condition or a callable."
             )
-    return error_messages
+    return tuple(error_messages)
 
 
 def validate_regimes(*, regimes: Mapping[RegimeName, Regime], laws: RegimeLaws) -> None:
@@ -314,26 +314,26 @@ def _validate_collective_regime(regime: Regime) -> None:
         raise RegimeInitializationError(format_messages(error_messages))
 
 
-def _stakeholders_tuple_errors(stakeholders: tuple[str, ...]) -> list[str]:
+def _stakeholders_tuple_errors(stakeholders: tuple[str, ...]) -> tuple[str, ...]:
     """Collect errors for an empty or duplicate-containing `stakeholders` tuple."""
     if not stakeholders:
-        return ["`stakeholders` must be a non-empty tuple for a collective regime."]
+        return ("`stakeholders` must be a non-empty tuple for a collective regime.",)
 
     duplicate_counts = Counter(stakeholders)
     duplicates = sorted(name for name, count in duplicate_counts.items() if count > 1)
     if duplicates:
-        return [
+        return (
             (
                 f"`stakeholders` must not contain duplicate names; got "
                 f"{stakeholders} (duplicated: {duplicates})."
-            )
-        ]
-    return []
+            ),
+        )
+    return ()
 
 
 def _collective_weights_errors(
     *, regime: Regime, stakeholders: tuple[str, ...]
-) -> list[str]:
+) -> tuple[str, ...]:
     """Collect errors for a collective regime's `pareto_objective`.
 
     Weight keys must match `stakeholders`, and a weight declared as a constant
@@ -346,19 +346,19 @@ def _collective_weights_errors(
     """
     objective = regime.pareto_objective
     if objective is None:
-        return []
+        return ()
 
     declared = set(objective.weights)
     if declared != set(stakeholders):
         missing = sorted(set(stakeholders) - declared)
         extra = sorted(declared - set(stakeholders))
-        return [
+        return (
             (
                 f"`pareto_objective.weights` weighs {sorted(declared)}, but "
                 f"this regime's stakeholders are {sorted(stakeholders)}: "
                 f"missing {missing}, unknown {extra}."
-            )
-        ]
+            ),
+        )
 
     constants = {
         name: float(weight)
@@ -371,24 +371,24 @@ def _collective_weights_errors(
         if not math.isfinite(weight) or weight < 0
     }
     if non_finite_or_negative:
-        return [
+        return (
             (
                 "`pareto_objective.weights` must be finite and non-negative "
                 f"for every stakeholder; got {non_finite_or_negative}."
-            )
-        ]
+            ),
+        )
     if len(constants) == len(objective.weights) and sum(constants.values()) <= 0:
-        return [
+        return (
             (
                 "`pareto_objective.weights` must leave a positive total; an "
                 "all-zero declaration leaves the household scalarization "
                 "identically zero for every action, so the argmax is undefined."
-            )
-        ]
-    return []
+            ),
+        )
+    return ()
 
 
-def _collective_value_constraint_errors(regime: Regime) -> list[str]:
+def _collective_value_constraint_errors(regime: Regime) -> tuple[str, ...]:
     """Collect the regime-local errors of `value_constraints` / `same_period_refs`.
 
     Cross-regime properties — the reference regime's
@@ -445,10 +445,10 @@ def _collective_value_constraint_errors(regime: Regime) -> list[str]:
                 "the same name. Rename it."
             )
 
-    return error_messages
+    return tuple(error_messages)
 
 
-def _reference_projection_free_param_errors(regime: Regime) -> list[str]:
+def _reference_projection_free_param_errors(regime: Regime) -> tuple[str, ...]:
     """Reject regime-level reference projections that introduce free parameters.
 
     A `same_period_refs` projection resolves through the DECLARING regime's DAG
@@ -473,7 +473,7 @@ def _reference_projection_free_param_errors(regime: Regime) -> list[str]:
         | set(regime.derived_categoricals)
         | {"period", "age"}
     )
-    return [
+    return tuple(
         f"The projection of reference {ref_name!r} for state "
         f"'{state_name}' takes argument '{arg}', which the declaring regime "
         "does not supply. A regime-level reference projection resolves through "
@@ -485,7 +485,7 @@ def _reference_projection_free_param_errors(regime: Regime) -> list[str]:
         for state_name, func in ref.projection.items()
         for arg in inspect.signature(func).parameters
         if arg not in supplied
-    ]
+    )
 
 
 def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:
@@ -708,7 +708,7 @@ def _iter_transition_nodes(value: _TransitionValue) -> Iterator[_TransitionLeaf]
 @beartype(conf=REGIME_CONF)
 def _state_transition_marker_errors(
     state_transitions: Mapping[StateName, StateTransitionEntry],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Collect errors for `AgeSpecializedFunction` markers inside state transitions."""
     error_messages: list[str] = []
     for name, value in state_transitions.items():
@@ -729,7 +729,7 @@ def _state_transition_marker_errors(
                     f"motion as a plain transition function that reads an "
                     f"`AgeSpecializedFunction` entry of `functions` instead.",
                 )
-    return error_messages
+    return tuple(error_messages)
 
 
 def _first_age_specialized_ancestor_of_transition(
@@ -763,7 +763,7 @@ def _first_age_specialized_ancestor_of_transition(
         return None
 
     seen: set[str] = set()
-    stack = _transition_node_arg_names(transition)
+    stack = list(_transition_node_arg_names(transition))
     while stack:
         name = stack.pop()
         if name in seen:
@@ -776,7 +776,7 @@ def _first_age_specialized_ancestor_of_transition(
     return None
 
 
-def _transition_node_arg_names(value: _TransitionValue) -> list[str]:
+def _transition_node_arg_names(value: _TransitionValue) -> tuple[str, ...]:
     """List the parameter names of every callable node inside a transition value."""
     names: list[str] = []
     for node in _iter_transition_nodes(value):
@@ -786,7 +786,7 @@ def _transition_node_arg_names(value: _TransitionValue) -> list[str]:
                 names.extend(inspect.signature(func).parameters)
             except TypeError, ValueError:
                 continue
-    return names
+    return tuple(names)
 
 
 def _age_specialized_scope_errors(
@@ -795,7 +795,7 @@ def _age_specialized_scope_errors(
     functions: Mapping[FunctionName, UserFunction | Phased | None],
     constraints: Mapping[FunctionName, ConstraintLike | Phased | None],
     terminal: bool,
-) -> list[str]:
+) -> tuple[str, ...]:
     """Reject the `AgeSpecializedFunction` compositions that are out of scope.
 
     `AgeSpecializedFunction` is supported in `functions` and `constraints` of
@@ -856,10 +856,12 @@ def _age_specialized_scope_errors(
                         f"program is built once and shared across all periods.",
                     )
 
-    return error_messages
+    return tuple(error_messages)
 
 
-def _regime_transition_grammar_errors(transition: DecomposedTransition) -> list[str]:
+def _regime_transition_grammar_errors(
+    transition: DecomposedTransition,
+) -> tuple[str, ...]:
     """Validate the vocabulary of a regime's law between regimes.
 
     A `Phased` container's sides are each held to the bare vocabulary
@@ -904,7 +906,7 @@ def _regime_transition_grammar_errors(transition: DecomposedTransition) -> list[
                     f"supported (use the coarse form, or `StochasticTransition` "
                     f"with indicator probabilities).",
                 )
-    return error_messages
+    return tuple(error_messages)
 
 
 def _validate_completeness(
@@ -912,7 +914,7 @@ def _validate_completeness(
     regime: Regime,
     law: RegimeLaw,
     reserved_value_columns: frozenset[str],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Collect completeness errors for a finalized (post-merge) regime.
 
     Args:
@@ -976,12 +978,12 @@ def _validate_completeness(
             f"are used in both states and actions: {states_and_actions_overlap}.",
         )
 
-    return error_messages
+    return tuple(error_messages)
 
 
 def _published_value_column_errors(
     *, regime: Regime, reserved_value_columns: frozenset[str]
-) -> list[str]:
+) -> tuple[str, ...]:
     """Collect errors for declarations that shadow a published value column.
 
     A collective regime publishes one `value_<stakeholder>` column per
@@ -1003,18 +1005,18 @@ def _published_value_column_errors(
     )
     colliding = sorted(reserved_value_columns & declared)
     if not colliding:
-        return []
-    return [
+        return ()
+    return (
         (
             "A collective regime publishes a `value_<stakeholder>` column for "
             "each of its stakeholders, so those names are reserved. Rename the "
             f"following declarations: {colliding}."
         ),
-    ]
+    )
 
 
 # keyword-only-exempt: primary-argument=regime
-def _koopmans_aggregator_errors(regime: Regime, *, law: RegimeLaw) -> list[str]:
+def _koopmans_aggregator_errors(regime: Regime, *, law: RegimeLaw) -> tuple[str, ...]:
     """Collect errors for a regime's Koopmans aggregator declaration.
 
     - `CE` is the reserved name the aggregator receives the continuation under,
@@ -1047,10 +1049,10 @@ def _koopmans_aggregator_errors(regime: Regime, *, law: RegimeLaw) -> list[str]:
             "A terminal regime cannot declare `koopmans_aggregator`: there is "
             "no continuation value to aggregate."
         )
-    return error_messages
+    return tuple(error_messages)
 
 
-def _expected_utility_aggregator_errors(regime: Regime) -> list[str]:
+def _expected_utility_aggregator_errors(regime: Regime) -> tuple[str, ...]:
     """Refuse a non-additive aggregator on the endogenous-grid EU route.
 
     Without a nonlinear certainty equivalent, NBEGM and NNBEGM run the
@@ -1061,11 +1063,11 @@ def _expected_utility_aggregator_errors(regime: Regime) -> list[str]:
     if not isinstance(regime.solver, (NBEGM, NNBEGM)) or aggregates_nonlinearly(
         regime.certainty_equivalent
     ):
-        return []
+        return ()
     declared = regime.koopmans_aggregator
     solve_W = declared.solve if isinstance(declared, Phased) else declared
     if solve_W is None or isinstance(solve_W, LinearAggregator):
-        return []
+        return ()
     msg = (
         f"{type(regime.solver).__name__} without a nonlinear "
         "`certainty_equivalent` solves the additive aggregator "
@@ -1074,11 +1076,11 @@ def _expected_utility_aggregator_errors(regime: Regime) -> list[str]:
         "(or leave it unset), pair a `CESAggregator` with `PowerMean()`, or "
         "solve the regime with GridSearch()."
     )
-    return [msg]
+    return (msg,)
 
 
 # keyword-only-exempt: primary-argument=regime
-def _certainty_equivalent_errors(regime: Regime, *, law: RegimeLaw) -> list[str]:
+def _certainty_equivalent_errors(regime: Regime, *, law: RegimeLaw) -> tuple[str, ...]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
     - terminal regimes have no continuation value to aggregate
@@ -1097,7 +1099,7 @@ def _certainty_equivalent_errors(regime: Regime, *, law: RegimeLaw) -> list[str]
     subject to the composition rules.
     """
     if regime.certainty_equivalent is None:
-        return []
+        return ()
     # Which class owns which reduction is a separate question from linearity, so
     # it is asked before the linear default is waved through: a subclass of
     # `LinearExpectation` that restates `aggregate` is an instance of it, and
@@ -1110,7 +1112,7 @@ def _certainty_equivalent_errors(regime: Regime, *, law: RegimeLaw) -> list[str]
             "is no continuation value to aggregate."
         )
     if _is_plain_linear_expectation(regime.certainty_equivalent):
-        return error_messages
+        return tuple(error_messages)
     if (
         regime.solver.required_continuation_keys
         and not regime.solver.supports_nonlinear_certainty_equivalent
@@ -1155,13 +1157,13 @@ def _certainty_equivalent_errors(regime: Regime, *, law: RegimeLaw) -> list[str]
             "the certainty-equivalent transform, so the Epstein-Zin recursion "
             "and taste shocks do not compose."
         )
-    return error_messages
+    return tuple(error_messages)
 
 
 # keyword-only-exempt: primary-argument=regime
 def _validate_function_output_grid_indexing(
     regime: Regime, *, law: RegimeLaw
-) -> list[str]:
+) -> tuple[str, ...]:
     """Detect the regime-function-output / discrete-grid-indexed-input name clash.
 
     The unsafe pattern is: a regime function `f` takes a discrete grid `g`
@@ -1188,7 +1190,7 @@ def _validate_function_output_grid_indexing(
         | set(regime.derived_categoricals)
     )
     if not function_output_names or not discrete_grid_names:
-        return []
+        return ()
 
     # Only treat `func_output[grid]` as unsafe when the producing function
     # *also* takes `grid` as an input — that is the case where the output
@@ -1225,18 +1227,18 @@ def _validate_function_output_grid_indexing(
                 f"or refactor '{func_output_name}' not to take '{grid_name}' "
                 f"as input."
             )
-    return errors
+    return tuple(errors)
 
 
 def _function_input_names(
     functions: Mapping[FunctionName, UserFunction | Phased],
-) -> dict[FunctionName, set[str]]:
+) -> MappingProxyType[FunctionName, frozenset[str]]:
     """Return each regime function's input-parameter names.
 
     A `Phased` contributes the union of both variants' parameters;
     unintrospectable callables contribute the empty set.
     """
-    result: dict[str, set[str]] = {}
+    result: dict[FunctionName, frozenset[str]] = {}
     for name, func in functions.items():
         params: set[str] = set()
         for variant in _function_variants(func):
@@ -1244,14 +1246,14 @@ def _function_input_names(
                 params |= set(inspect.signature(variant).parameters)
             except ValueError, TypeError:
                 continue
-        result[name] = params
-    return result
+        result[name] = frozenset(params)
+    return MappingProxyType(result)
 
 
 # keyword-only-exempt: primary-argument=regime
 def _collect_indexing_consumers(
     regime: Regime, *, law: RegimeLaw
-) -> list[tuple[FunctionName, ConstraintLike]]:
+) -> tuple[tuple[FunctionName, ConstraintLike], ...]:
     """Return `(name, callable)` pairs whose bodies are scanned for the clash.
 
     Functions and constraints contribute every variant of a
@@ -1268,7 +1270,7 @@ def _collect_indexing_consumers(
         consumers.extend((name, variant) for variant in _function_variants(constraint))
     if is_user_function(law.transition):
         consumers.append(("regime_transition", law.transition))
-    return consumers
+    return tuple(consumers)
 
 
 def _function_variants(
@@ -1292,16 +1294,16 @@ def _find_function_output_grid_indexing(
     func: ConstraintLike,
     function_output_names: set[str],
     discrete_grid_names: set[str],
-) -> list[tuple[str, str]]:
+) -> tuple[tuple[str, str], ...]:
     """Return `(function_output_name, grid_name)` clashes inside `func`'s body."""
     try:
         source = textwrap.dedent(inspect.getsource(func))
     except OSError, TypeError:
-        return []
+        return ()
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return []
+        return ()
 
     clashes: list[tuple[str, str]] = []
     for node in ast.walk(tree):
@@ -1316,20 +1318,20 @@ def _find_function_output_grid_indexing(
         if node.slice.id not in discrete_grid_names:
             continue
         clashes.append((node.value.id, node.slice.id))
-    return clashes
+    return tuple(clashes)
 
 
-def _state_transition_grammar_errors(regime: Regime) -> list[str]:
+def _state_transition_grammar_errors(regime: Regime) -> tuple[str, ...]:
     """Validate each `state_transitions` entry against the value vocabulary."""
     error_messages: list[str] = []
     for name, value in regime.state_transitions.items():
         error_messages.extend(
             _state_transition_value_errors(name=name, value=value, regime=regime)
         )
-    return error_messages
+    return tuple(error_messages)
 
 
-def _joint_transition_grammar_errors(regime: Regime) -> list[str]:  # noqa: C901
+def _joint_transition_grammar_errors(regime: Regime) -> tuple[str, ...]:  # noqa: C901
     """Validate the locally knowable joint-kernel grammar.
 
     Whether a target is reachable is a question about the model's edges
@@ -1337,7 +1339,7 @@ def _joint_transition_grammar_errors(regime: Regime) -> list[str]:  # noqa: C901
     kernels at all depends on its law (`_validate_law_consistency`).
     """
     if not regime.joint_transitions:
-        return []
+        return ()
 
     error_messages: list[str] = []
     # A joint node's name may not clash with anything already spoken for,
@@ -1406,11 +1408,13 @@ def _joint_transition_grammar_errors(regime: Regime) -> list[str]:  # noqa: C901
                         "`Phased` wrapping one for each phase."
                     )
                     break
-    return error_messages
+    return tuple(error_messages)
 
 
 # keyword-only-exempt: primary-argument=regime
-def _state_transition_coverage_errors(regime: Regime, *, law: RegimeLaw) -> list[str]:
+def _state_transition_coverage_errors(
+    regime: Regime, *, law: RegimeLaw
+) -> tuple[str, ...]:
     """Validate that ordinary or joint laws cover the regime's states."""
     error_messages: list[str] = []
 
@@ -1448,7 +1452,7 @@ def _state_transition_coverage_errors(regime: Regime, *, law: RegimeLaw) -> list
                     slot="state_transitions", names=sorted(regime.state_transitions)
                 )
             )
-        return error_messages
+        return tuple(error_messages)
 
     joint_output_names = {
         output_name
@@ -1466,12 +1470,12 @@ def _state_transition_coverage_errors(regime: Regime, *, law: RegimeLaw) -> list
             f"fixed states.",
         )
 
-    return error_messages
+    return tuple(error_messages)
 
 
 def _phased_per_target_shape_mismatch(
     *, name: StateName, value: Phased, regime: Regime
-) -> list[str]:
+) -> tuple[str, ...]:
     """Constrain how the two variants of a `Phased` state law may be shaped.
 
     A `Phased` whose variants are per-target dicts is normalized into one entry per
@@ -1498,17 +1502,17 @@ def _phased_per_target_shape_mismatch(
     solve_per_target = isinstance(value.solve, Mapping)
     simulate_per_target = isinstance(value.simulate, Mapping)
     if solve_per_target and simulate_per_target:
-        return []
+        return ()
     if solve_per_target == simulate_per_target:
         # Both bare: one coarse node (parameterized or not) — nothing to reject.
-        return []
+        return ()
     # Map-vs-bare: one side per-target, the other bare. The bare side broadcasts; a
     # free parameter on it would be replicated per target with only the first leaf live.
     bare_side, phase_label = (
         (value.simulate, "simulate") if solve_per_target else (value.solve, "solve")
     )
     if _law_has_free_parameter(law=bare_side, regime=regime):
-        return [
+        return (
             (
                 f"state_transitions['{name}']: the {phase_label} variant is a bare "
                 f"(coarse) law with a free parameter, opposite a per-target dict "
@@ -1519,8 +1523,8 @@ def _phased_per_target_shape_mismatch(
                 f"or as an explicit per-target dict on the {phase_label} side (one "
                 f"parameter per target)."
             ),
-        ]
-    return []
+        )
+    return ()
 
 
 def _law_has_free_parameter(*, law: StateTransitionEntry, regime: Regime) -> bool:
@@ -1550,7 +1554,7 @@ def _law_has_free_parameter(*, law: StateTransitionEntry, regime: Regime) -> boo
 
 def _state_transition_value_errors(
     *, name: StateName, value: StateTransitionEntry, regime: Regime
-) -> list[str]:
+) -> tuple[str, ...]:
     """Validate one `state_transitions` entry against the value vocabulary.
 
     Each variant of a `Phased` entry is held to the vocabulary of a bare value —
@@ -1599,24 +1603,24 @@ def _state_transition_value_errors(
                 f"StochasticTransition, `fixed_transition(...)`, or a per-target "
                 f"Mapping, got {type(variant).__name__}.",
             )
-    return error_messages
+    return tuple(error_messages)
 
 
 def _fixed_transition_name_mismatch(
     *, state_name: StateName, value: StateTransitionEntry, label: str
-) -> list[str]:
+) -> tuple[str, ...]:
     """Reject a `fixed_transition` whose argument differs from its dict key."""
     if (
         isinstance(value, _IdentityTransition) and value._state_name != state_name  # noqa: SLF001
     ):
-        return [
+        return (
             (
                 f"state_transitions['{state_name}']{label}: "
                 f"`fixed_transition('{value._state_name}')` is assigned to state "  # noqa: SLF001
                 f"'{state_name}' — the names must match."
             ),
-        ]
-    return []
+        )
+    return ()
 
 
 def _state_transition_variants(
@@ -1642,7 +1646,7 @@ def _is_folded(grid: StateEntry) -> bool:
     return isinstance(grid, _IIDProcess) and grid.fold
 
 
-def _flatten_transition_callables(value: _TransitionValue) -> list[UserFunction]:
+def _flatten_transition_callables(value: _TransitionValue) -> tuple[UserFunction, ...]:
     """Return every callable reachable from a state or regime transition entry.
 
     Unwraps `Phased` (both variants) and per-target `Mapping`s; `StochasticTransition`
@@ -1651,7 +1655,7 @@ def _flatten_transition_callables(value: _TransitionValue) -> list[UserFunction]
     `__signature__`), so `inspect.signature` resolves them correctly downstream.
     """
     if value is None:
-        return []
+        return ()
     if isinstance(value, Phased):
         return _flatten_transition_callables(
             value.solve
@@ -1660,17 +1664,17 @@ def _flatten_transition_callables(value: _TransitionValue) -> list[UserFunction]
         out: list[UserFunction] = []
         for entry in value.values():
             out.extend(_flatten_transition_callables(entry))
-        return out
+        return tuple(out)
     if callable(value):
-        return [cast("UserFunction", value)]
-    return []
+        return (cast("UserFunction", value),)
+    return ()
 
 
 def _fold_dependency_closure(
     *,
     roots: tuple[ConstraintLike, ...],
     resolution_table: Mapping[FunctionName, ConstraintLike | Phased],
-) -> set[str]:
+) -> frozenset[str]:
     """Return every argument name in the transitive DAG ancestry of `roots`.
 
     Walks argument names of each root; whenever a name matches an entry of
@@ -1700,7 +1704,7 @@ def _fold_dependency_closure(
             entry = resolution_table.get(name)
             if entry is not None:
                 stack.extend(_function_variants(entry))
-    return seen_names
+    return frozenset(seen_names)
 
 
 def _validate_fold_declarations(regime: Regime) -> None:
@@ -1746,11 +1750,11 @@ def _validate_fold_declarations(regime: Regime) -> None:
     if not fold_names:
         return
 
-    transition_roots = [
+    transition_roots = tuple(
         func
         for value in regime.state_transitions.values()
         for func in _flatten_transition_callables(value)
-    ]
+    )
     error_messages = [
         *_fold_scope_errors(regime=regime, fold_names=fold_names),
         *_fold_same_period_read_errors(regime=regime, fold_names=fold_names),
@@ -1924,7 +1928,7 @@ def _state_law_can_move(
 
 def _fold_scope_errors(
     *, regime: Regime, fold_names: tuple[StateName, ...]
-) -> list[str]:
+) -> tuple[str, ...]:
     """Collect the regime-wide (not DAG-dependency) fold restrictions."""
     error_messages: list[str] = []
     runtime_params = [
@@ -1976,12 +1980,12 @@ def _fold_scope_errors(
     error_messages.extend(
         _moving_conditioner_errors(regime=regime, fold_names=fold_names)
     )
-    return error_messages
+    return tuple(error_messages)
 
 
 def _moving_conditioner_errors(
     *, regime: Regime, fold_names: tuple[StateName, ...]
-) -> list[str]:
+) -> tuple[str, ...]:
     """Reject a folded conditioned shock whose conditioning state has a law.
 
     `StateConditioned` dates the conditioning value at `t`: the scale of the
@@ -2023,20 +2027,22 @@ def _moving_conditioner_errors(
             f"from. Declare {conditioned.on!r} with "
             f"`fixed_transition({conditioned.on!r})`, or drop `fold=True`."
         )
-    return error_messages
+    return tuple(error_messages)
 
 
 def _fold_resolution_table(
     regime: Regime,
-) -> dict[FunctionName, ConstraintLike | Phased]:
+) -> MappingProxyType[FunctionName, ConstraintLike | Phased]:
     """Regime functions/constraints usable as DAG-ancestor resolution targets."""
-    return {
-        **{k: v for k, v in regime.decomposed_constraints.items() if v is not None},
-        **{k: v for k, v in regime.decomposed_functions.items() if v is not None},
-    }
+    return MappingProxyType(
+        {
+            **{k: v for k, v in regime.decomposed_constraints.items() if v is not None},
+            **{k: v for k, v in regime.decomposed_functions.items() if v is not None},
+        }
+    )
 
 
-def _fold_same_period_roots(regime: Regime) -> list[tuple[str, UserFunction]]:
+def _fold_same_period_roots(regime: Regime) -> tuple[tuple[str, UserFunction], ...]:
     """Named same-period gate / value-constraint / reference-projection roots.
 
     Deliberately EXCLUDES this regime's own OUTBOUND `gated_edges[...].gate`
@@ -2069,12 +2075,12 @@ def _fold_same_period_roots(regime: Regime) -> list[tuple[str, UserFunction]]:
         roots.extend(
             (f"reference {ref_name!r}", func) for func in ref.projection.values()
         )
-    return roots
+    return tuple(roots)
 
 
 def _fold_same_period_read_errors(
     *, regime: Regime, fold_names: tuple[StateName, ...]
-) -> list[str]:
+) -> tuple[str, ...]:
     """Reject a fold name read by a same-period gate / value-constraint."""
     resolution_table = _fold_resolution_table(regime)
     error_messages: list[str] = []
@@ -2094,15 +2100,15 @@ def _fold_same_period_read_errors(
                 "averaged away before the period's value is published. Drop "
                 "`fold=True` on the shock, or stop reading it there."
             )
-    return error_messages
+    return tuple(error_messages)
 
 
 def _fold_transition_read_errors(
     *,
     regime: Regime,
-    transition_roots: list[UserFunction],
+    transition_roots: tuple[UserFunction, ...],
     fold_names: tuple[StateName, ...],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Reject a fold name read by a next-period state / regime transition."""
     resolution_table = _fold_resolution_table(regime)
     transition_hit: set[str] = set()
@@ -2112,8 +2118,8 @@ def _fold_transition_read_errors(
         )
     transition_hit &= set(fold_names)
     if not transition_hit:
-        return []
-    return [
+        return ()
+    return (
         (
             f"fold=True on state(s) {sorted(transition_hit)} conflicts with a "
             "next-period transition that reads the shock's realized value: a "
@@ -2121,21 +2127,21 @@ def _fold_transition_read_errors(
             "state or regime transition may condition on which node was "
             "realized. Drop `fold=True`, or stop conditioning the transition "
             "on it."
-        )
-    ]
+        ),
+    )
 
 
 def _fold_names_ordered_intersection(
-    *, fold_names: tuple[StateName, ...], other: set[str]
-) -> list[StateName]:
+    *, fold_names: tuple[StateName, ...], other: frozenset[str]
+) -> tuple[StateName, ...]:
     """Return `fold_names` filtered to `other`, preserving `fold_names`' order."""
-    return [name for name in fold_names if name in other]
+    return tuple(name for name in fold_names if name in other)
 
 
 @beartype(conf=REGIME_CONF)
 def _validate_per_target_dict(
     *, state_name: StateName, targets: Mapping[RegimeName, StateTransitionEntry]
-) -> list[str]:
+) -> tuple[str, ...]:
     """Validate a per-target transition dict for stochastic consistency and types."""
     error_messages: list[str] = []
     markov_count = 0
@@ -2173,7 +2179,7 @@ def _validate_per_target_dict(
             f"consistently stochastic: either all values are "
             f"StochasticTransition or none are.",
         )
-    return error_messages
+    return tuple(error_messages)
 
 
 def _is_plain_linear_expectation(
@@ -2196,7 +2202,9 @@ def _is_plain_linear_expectation(
     )
 
 
-def _scaled_capability_errors(certainty_equivalent: CertaintyEquivalent) -> list[str]:
+def _scaled_capability_errors(
+    certainty_equivalent: CertaintyEquivalent,
+) -> tuple[str, ...]:
     """Collect errors for a certainty equivalent that cannot take scaled weights.
 
     A continuation lottery's weights reach the certainty equivalent as
@@ -2237,7 +2245,7 @@ def _scaled_capability_errors(certainty_equivalent: CertaintyEquivalent) -> list
             "the smallest positive float cannot be handed to an arbitrary "
             f"`aggregate` as an ordinary number. {remedy}"
         )
-        return [boundary]
+        return (boundary,)
     order = mean_type.__mro__
     if order.index(ordinary_owner) < order.index(scaled_owner):
         mismatch = (
@@ -2247,8 +2255,8 @@ def _scaled_capability_errors(certainty_equivalent: CertaintyEquivalent) -> list
             "would disagree, and which of them ran would depend on whether the "
             f"lottery carried scales. {remedy}"
         )
-        return [mismatch]
-    return []
+        return (mismatch,)
+    return ()
 
 
 def _method_owner(*, mean_type: type[CertaintyEquivalent], name: str) -> type:  # noqa: PAN006 - an MRO entry may be any class, a mixin included
