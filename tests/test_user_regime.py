@@ -16,7 +16,7 @@ from _lcm.regime_building.transitions import (
     _IdentityTransition,
     collect_state_transitions,
 )
-from _lcm.regime_law import bind_regime_law
+from _lcm.regime_law import RegimeLawDeclaration, bind_regime_law
 from _lcm.user_regime_validation import validate_regime_law
 from _lcm.utils.error_messages import path_segment_name_errors
 from lcm import (
@@ -555,7 +555,7 @@ def test_regime_has_no_activity_argument():
 
 
 # keyword-only-exempt: primary-argument=regime
-def _finalize(regime: UserRegime, *, law: object) -> UserRegime:
+def _finalize(regime: UserRegime, *, law: RegimeLawDeclaration) -> UserRegime:
     """Run the completeness validation the model applies to a regime and its law."""
     return finalize_regimes(
         user_regimes={"regime": regime},

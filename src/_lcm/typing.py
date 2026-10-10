@@ -680,3 +680,18 @@ class NextStateSimulationFunction(Protocol):
     ) -> MappingProxyType[
         RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
     ]: ...
+
+
+@runtime_checkable
+class NextStateSolutionFunction(Protocol):
+    """The function that computes one target's next states during the solution.
+
+    Returns a flat mapping `{next_<state>: array}`. The mapping is the plain
+    dict the `dags` composition returns.
+
+    """
+
+    def __call__(
+        self,
+        **kwargs: EconFunctionArg,
+    ) -> Mapping[TransitionFunctionName, DiscreteState | ContinuousState]: ...

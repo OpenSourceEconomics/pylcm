@@ -56,7 +56,7 @@ from _lcm.typing import (
     EconFunction,
     EconFunctionArg,
     EconFunctionsMapping,
-    NextStateSimulationFunction,
+    NextStateSolutionFunction,
     ParamsLeaf,
     QAndFArg,
     QAndFFunction,
@@ -2701,7 +2701,7 @@ class _ComputeCE:
 class _TargetContinuation:
     """Everything built once for one reachable target's continuation."""
 
-    next_states: NextStateSimulationFunction
+    next_states: NextStateSolutionFunction
     """Next-period states of this target at one state-action point."""
 
     lottery_weights: Callable[..., dict[str, FloatND | IntND]]
