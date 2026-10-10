@@ -752,7 +752,9 @@ class _ShockAverageReader:
             )
 
         shape = (len(combos), len(kept_combos), weights.shape[0])
-        grid = jnp.meshgrid(*(jnp.arange(n) for n in shape), indexing="ij")
+        grid = jnp.meshgrid(
+            *(jnp.arange(n, dtype=jnp.int32) for n in shape), indexing="ij"
+        )
         shocks = jax.vmap(shock_at)(
             {key: axis.ravel() for key, axis in zip("cjk", grid, strict=True)}
         ).reshape(shape)
