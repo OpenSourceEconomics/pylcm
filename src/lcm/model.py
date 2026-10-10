@@ -247,6 +247,7 @@ from _lcm.typing import (
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
+    PytreeByPeriod,
     PytreeValue,
     RegimeName,
     RegimeNamesToIds,
@@ -372,6 +373,10 @@ type _EntryInputs = (
     | pd.DataFrame
     | tuple[Mapping[StateName, jax.Array], Mapping[ActionName, jax.Array] | None]
 )
+
+# The caller's array owners a solve keeps charged while it runs, in groups; a group
+# resolved from a consumed solution holds per-period trees.
+type _RetainedInputArrays = tuple[tuple[PytreeByPeriod, ...], ...]
 
 type _PeriodToRegimeToReplayReader = MappingProxyType[
     int, MappingProxyType[RegimeName, PreparedReplayReader]
@@ -1670,7 +1675,7 @@ class Model:
         max_compilation_workers: int | None,
         log_path: str | Path | None,
         log_keep_n_latest: int,
-        retained_input_arrays: object = (),
+        retained_input_arrays: _RetainedInputArrays = (),
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
         period_capture: CaptureContext | None = None,
@@ -1892,7 +1897,7 @@ class Model:
         retain_all_artifacts: bool = False,
         persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
         collect_solver_diagnostics: bool = False,
-        retained_input_arrays: object = (),
+        retained_input_arrays: _RetainedInputArrays = (),
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
         period_capture: CaptureContext | None = None,
