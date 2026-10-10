@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "a35fde426e10851febe35ea7773cfeac76b40e7130be78c634bca01a97fb77a2",
+  "source_inventory_sha256": "36cd37c83cf578da07d913a28eca5e6616456ae81c9fd4bf89cd82f102bdff6f",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -70,7 +70,7 @@
     },
     {
       "path": "src/_lcm/execution/scheduler.py",
-      "sha256": "b5eb17b3df8fcaf5ab06ee7abf8703ce2b9ff589d596c0a0ed1d462d7c4f3a52"
+      "sha256": "8910d9a15e1f1186c48f41aa7f869c4b2f9b0b719430683647f3196e836888e1"
     },
     {
       "path": "src/_lcm/execution/value_transfer.py",
@@ -350,7 +350,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "8bfab9900ff663ba9fc91f5806bac2dc98d47426aaf0e2ee1c7bb12be71cf840"
+      "sha256": "b1ad7db1ed868ffc3a0c62c870d53995986e46692a518b173a805674bb741878"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -386,7 +386,7 @@
     },
     {
       "path": "src/_lcm/solution/model_authority.py",
-      "sha256": "77a25558a7a35b428f25fd9f0f782a81c254c24ef179f5477de168a11120cf61"
+      "sha256": "32647270dba80b48e33ecc27bb77609bf30d04a5b34b754b8a7340f208a8c9a0"
     },
     {
       "path": "src/_lcm/solution/native_values.py",
@@ -470,7 +470,7 @@
     },
     {
       "path": "src/lcm/_solver_api/replay.py",
-      "sha256": "3d581f3b0f6e07a024adc1bc223cf072ec0e49d3d5349d0c01994236bc9a4925"
+      "sha256": "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e"
     },
     {
       "path": "src/lcm/_solver_api/stores.py",
@@ -478,7 +478,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "7ff607b8cb5c8f0bea7db3fa0c6ca619e15c1221b032167686397594394eb47a"
+      "sha256": "2c31d5e67a3f416fada7205a9f0bb80aeed0ea0b6280b5bd2d00fc21a5022f98"
     },
     {
       "path": "src/lcm/result.py",

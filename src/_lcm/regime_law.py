@@ -12,8 +12,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import cast
 
-from beartype.door import is_bearable
+from beartype import beartype
 
+from _lcm.beartype_conf import REGIME_CONF
 from _lcm.gated_edge import GatedEdge
 from _lcm.regime_building.schedules import (
     RegimeTransitionLaw,
@@ -26,7 +27,6 @@ from _lcm.regime_building.transition_support import (
 )
 from _lcm.typing import RegimeName
 from _lcm.utils.containers import ensure_containers_are_immutable
-from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.transition import (
     ByAge,
@@ -104,9 +104,9 @@ type RegimeLawDeclaration = (
 
 
 # keyword-only-exempt: primary-argument=transition
+@beartype(conf=REGIME_CONF)
 def bind_regime_law(
-    # Any value: the declaration check below is what refuses a non-law.
-    transition: object,
+    transition: RegimeLawDeclaration,
     *,
     gated_edges: Mapping[RegimeName, GatedEdge] = MappingProxyType({}),
 ) -> RegimeLaw:
@@ -125,13 +125,6 @@ def bind_regime_law(
         RegimeInitializationError: If the law is not one of the declaration forms
             or nests a schedule inside `Phased`.
     """
-    if not is_bearable(transition, RegimeLawDeclaration):
-        raise RegimeInitializationError(
-            "A regime transition law is a regime name, a function or "
-            "`DeterministicTransition` returning a regime code, a "
-            "`StochasticTransition`, a per-target mapping of probabilities, or a "
-            f"`ByAge` or `Phased` of these; got {transition!r}."
-        )
     law = cast("RegimeTransitionLaw", transition)
     fail_if_phased_wraps_a_schedule(law)
     named = _named_targets(law)

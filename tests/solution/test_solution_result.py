@@ -616,6 +616,18 @@ def test_legacy_model_pickle_backfills_solution_instance_id() -> None:
     assert solution.metadata.model_instance_id == restored._solution_model_instance_id
 
 
+def test_model_archive_with_dict_fixed_component_splits_restores_them_read_only() -> (
+    None
+):
+    """An archive holding the fixed-component splits as a dict restores them frozen."""
+    model, _, _ = _small_grid_search_inputs()
+    model._fixed_component_splits = dict(model._fixed_component_splits)  # ty: ignore[invalid-assignment]
+
+    restored = cloudpickle.loads(cloudpickle.dumps(model))
+
+    assert isinstance(restored._fixed_component_splits, MappingProxyType)
+
+
 def test_retained_finite_nnbegm_result_replay_matches_automatic_solve() -> None:
     model = _build("finite")
     solution = model.solve(params=_PARAMS, log_level="off")

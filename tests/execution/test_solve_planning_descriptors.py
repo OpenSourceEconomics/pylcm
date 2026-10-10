@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.abstract_program_inputs import abstract_program_inputs
 from _lcm.execution.core_program import (
@@ -26,7 +27,10 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
     resolve_value_transfer,
 )
-from _lcm.solution.backward_induction import _abstract_arguments_key
+from _lcm.solution.backward_induction import (
+    _abstract_arguments_key,
+    _abstract_value_key,
+)
 from _lcm.typing import PytreeValue, ShapeDtypePytree
 from tests.test_dropped_models_release_nested_functions import _live_nested_functions
 
@@ -263,3 +267,24 @@ def test_exact_occurrences_of_one_original_keep_distinct_required_layouts(
     )
     assert original.sharding == source_layout
     np.testing.assert_array_equal(original, np.arange(4.0))
+
+
+def test_abstract_value_key_describes_a_period_keyed_input_by_leaf_metadata() -> None:
+    """A period-keyed simulation input is keyed by its structure and leaf metadata."""
+    leaf = jnp.zeros(2, dtype=jnp.float32)
+    value = MappingProxyType({0: MappingProxyType({"x": leaf})})
+
+    key = _abstract_value_key(value=value)
+
+    assert key == (
+        jax.tree.structure(value),
+        ((jax.Array, (2,), np.dtype("float32"), False, leaf.sharding),),
+    )
+
+
+def test_abstract_value_key_refuses_a_value_outside_every_described_tree() -> None:
+    """A value that is no array, host value or tree of them is refused on entry."""
+    with pytest.raises(
+        BeartypeCallHintParamViolation, match=r"_abstract_value_key\(\) parameter value"
+    ):
+        _abstract_value_key(value=object())  # ty: ignore[invalid-argument-type]

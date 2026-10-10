@@ -2047,14 +2047,18 @@ def _replay_model_context_from_state_action_space(
         period=period,
         state_names=tuple(state_action_space.state_names),
         action_names=tuple(state_action_space.action_names),
-        state_nodes={
-            name: jnp.asarray(nodes)
-            for name, nodes in state_action_space.states.items()
-        },
-        action_nodes={
-            name: jnp.asarray(nodes)
-            for name, nodes in state_action_space.actions.items()
-        },
+        state_nodes=MappingProxyType(
+            {
+                name: jnp.asarray(nodes)
+                for name, nodes in state_action_space.states.items()
+            }
+        ),
+        action_nodes=MappingProxyType(
+            {
+                name: jnp.asarray(nodes)
+                for name, nodes in state_action_space.actions.items()
+            }
+        ),
     )
 
 

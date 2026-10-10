@@ -12,6 +12,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.scheduler import (
@@ -26,6 +27,7 @@ from _lcm.execution.scheduler import (
     shard_identities,
 )
 from lcm.exceptions import ExecutionPlanningError
+from lcm.solver_api import ArtifactKey
 
 
 def _logger() -> logging.Logger:
@@ -643,3 +645,19 @@ def test_a_declaration_drops_the_shards_no_live_array_declares() -> None:
     registry.declare_not_produced(tree=(fresh,))
 
     assert frozenset(registry._unproduced_shards) == shard_identities(array=fresh)
+
+
+def test_declare_not_produced_refuses_a_string_leaf() -> None:
+    """A buffer declaration admits footprint trees only, never a string."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="tree"):
+        BufferRegistry().declare_not_produced(tree="wealth")  # ty: ignore[invalid-argument-type]
+
+
+def test_declare_not_produced_admits_artifact_keyed_payload_maps() -> None:
+    """Retained payloads keyed by regime and artifact key are declared."""
+    array = jnp.arange(4.0)
+    registry = BufferRegistry()
+    registry.declare_not_produced(
+        tree=({("working", ArtifactKey(type_id="example.carry")): array},)
+    )
+    assert registry.declared_shards == frozenset(shard_identities(array=array))

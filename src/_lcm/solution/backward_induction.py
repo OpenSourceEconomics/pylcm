@@ -235,6 +235,7 @@ from _lcm.typing import (
     ArgumentTree,
     ArtifactPayload,
     FlatParams,
+    FootprintTree,
     HostArray,
     ParamsLeaf,
     PRNGKeyND,
@@ -7046,7 +7047,7 @@ def _abstract_arguments_key(
     )
 
 
-def _abstract_value_key(*, value: object) -> Hashable:
+def _abstract_value_key(*, value: FootprintTree) -> Hashable:
     """Describe one dynamic argument without retaining its concrete value."""
     tree = jax.tree.structure(value)
     leaves = jax.tree.leaves(value)

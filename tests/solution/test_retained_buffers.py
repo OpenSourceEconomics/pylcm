@@ -202,8 +202,8 @@ def test_consumed_reader_retains_snapshot_authorities_and_grid_context() -> None
     reader = PreparedReplayReader(
         route=cast("ExecutableReplayRoute", Mock(spec=ExecutableReplayRoute)),
         snapshot=ReplayRouteSnapshot(
-            artifacts={ref.key: cast("ArtifactPayload", payload)},
-            authorities={ref.key: base._artifact_authority[ref]},
+            artifacts=MappingProxyType({ref.key: cast("ArtifactPayload", payload)}),
+            authorities=MappingProxyType({ref.key: base._artifact_authority[ref]}),
             metadata=base.metadata,
         ),
         context=SimulationBuildContext(
@@ -211,8 +211,8 @@ def test_consumed_reader_retains_snapshot_authorities_and_grid_context() -> None
             regime_name="working",
             state_names=("state",),
             action_names=("action",),
-            state_nodes={"state": state},
-            action_nodes={"action": action},
+            state_nodes=MappingProxyType({"state": state}),
+            action_nodes=MappingProxyType({"action": action}),
         ),
     )
     solution = replace(base, replay_artifacts=ArtifactStore())

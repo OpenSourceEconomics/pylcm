@@ -29,6 +29,7 @@ from _lcm.typing import (
     ArrayTree,
     EconFunctionsMapping,
     NextStateSimulationFunction,
+    NextStateSolutionFunction,
     PRNGKeyND,
     PytreeValue,
     QualifiedName,
@@ -58,7 +59,7 @@ def get_next_state_function_for_solution(
     transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
     functions: EconFunctionsMapping,
     targets: Sequence[TransitionFunctionName] | None = None,
-) -> NextStateSimulationFunction:
+) -> NextStateSolutionFunction:
     """Get function that computes the next states during the solution.
 
     Args:

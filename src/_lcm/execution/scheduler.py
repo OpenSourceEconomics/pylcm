@@ -25,7 +25,7 @@ from jaxtyping import PyTree
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.pending_work import BeforeArrayDelete
 from _lcm.execution.value_transfer import ResolvedValueTransfer, transfer_result_key
-from _lcm.typing import RegimeName
+from _lcm.typing import FootprintTree, RegimeName
 from lcm.exceptions import ExecutionPlanningError
 
 _logger = logging.getLogger(__name__)
@@ -134,7 +134,7 @@ class BufferRegistry:
         self._keys_by_shard: dict[ShardIdentity, dict[Hashable, _DeclaringArrays]] = {}
         self._unproduced_shards: dict[ShardIdentity, _DeclaringArrays] = {}
 
-    def declare_not_produced(self, *, tree: PyTree) -> None:
+    def declare_not_produced(self, *, tree: FootprintTree) -> None:
         """Mark every array leaf of `tree` as a buffer no dispatch produced.
 
         Takes the arrays the model holds for its whole life — its materialized

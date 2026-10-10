@@ -141,7 +141,7 @@ def test_regime_transition_must_be_callable():
     """Binding a non-callable regime transition law is rejected."""
     regime = UserRegime(states={}, actions={}, functions={"utility": lambda: 0})
     with pytest.raises(RegimeInitializationError, match="transition"):
-        validate_regime_law(regime, law=bind_regime_law(42))
+        validate_regime_law(regime, law=bind_regime_law(42))  # ty: ignore[invalid-argument-type]
 
 
 def test_model_requires_terminal_regime(binary_category_class):

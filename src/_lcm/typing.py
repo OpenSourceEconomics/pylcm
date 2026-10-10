@@ -254,12 +254,15 @@ type ArgumentTree = (
 )
 
 if TYPE_CHECKING:
+    from lcm.solver_api import ArtifactKey
+
     # ty keeps mapping keys invariant, so `Mapping[Hashable, ...]` admits no mapping
     # with narrower keys; the key types that reach a footprint are named for ty.
     type _FootprintValueForTy = (
         PytreeByPeriod
         | ArgumentTree
         | Mapping[tuple[str, str], FootprintTree]
+        | Mapping[tuple[str, ArtifactKey], FootprintTree]
         | Mapping[int, FootprintTree]
         | Mapping[str, FootprintTree]
     )
@@ -677,3 +680,18 @@ class NextStateSimulationFunction(Protocol):
     ) -> MappingProxyType[
         RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
     ]: ...
+
+
+@runtime_checkable
+class NextStateSolutionFunction(Protocol):
+    """The function that computes one target's next states during the solution.
+
+    Returns a flat mapping `{next_<state>: array}`. The mapping is the plain
+    dict the `dags` composition returns.
+
+    """
+
+    def __call__(
+        self,
+        **kwargs: EconFunctionArg,
+    ) -> Mapping[TransitionFunctionName, DiscreteState | ContinuousState]: ...

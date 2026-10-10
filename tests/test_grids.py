@@ -276,8 +276,7 @@ def test_categorical_instance_attr_is_scalar_int():
         first: ScalarInt
         second: ScalarInt
 
-    # `@categorical` fields take no constructor argument, which
-    # `dataclass_transform` cannot express.
+    # `dataclass_transform` cannot express the decorator's `init=False` fields.
     instance = Cat()  # ty: ignore[missing-argument]
     assert instance.first.shape == ()
     assert instance.first.dtype == jnp.int32
