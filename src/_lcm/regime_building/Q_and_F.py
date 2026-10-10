@@ -14,7 +14,7 @@ import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, cast, no_type_check
+from typing import cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -95,6 +95,10 @@ from lcm.typing import (
 type Intermediates = tuple[
     FloatND, BoolND | bool, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
 ]
+
+# What the utilities-and-feasibility DAG returns at a cell: each felicity, then
+# the feasibility mask (a Python `bool` for a regime without constraints).
+type UtilitiesAndF = tuple[FloatND | IntND | BoolND | bool, ...]
 
 
 def _compare_swap_values(
@@ -440,7 +444,7 @@ def _continuation_reads(
 class _QAndF:
     """State-action value and feasibility of a non-terminal period at one cell."""
 
-    U_and_F: Callable[..., tuple[Any, ...]]
+    U_and_F: Callable[..., UtilitiesAndF]
     """Utility and feasibility at the cell."""
     compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
     """The continuation aggregator."""
@@ -609,7 +613,7 @@ def get_compute_intermediates(
 class _ComputeIntermediates:
     """Every `Q_and_F` intermediate of a non-terminal period at one cell."""
 
-    U_and_F: Callable[..., tuple[Any, ...]]
+    U_and_F: Callable[..., UtilitiesAndF]
     """Utility and feasibility at the cell."""
     compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
     """The continuation aggregator."""
@@ -692,7 +696,7 @@ def get_Q_and_F_terminal(
 class _TerminalQAndF:
     """State-action value and feasibility of a terminal period at one cell."""
 
-    U_and_F: Callable[..., tuple[Any, ...]]
+    U_and_F: Callable[..., UtilitiesAndF]
     """Utility and feasibility at the cell."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
@@ -820,7 +824,7 @@ def get_Q_and_F_terminal_collective(
 class _TerminalCollectiveQAndF:
     """Stacked per-stakeholder terminal payoffs and the shared feasibility at a cell."""
 
-    utilities_and_F: Callable[..., tuple[Any, ...]]
+    utilities_and_F: Callable[..., UtilitiesAndF]
     """Every stakeholder's utility and the shared feasibility at the cell."""
     value_constraint_machinery: _ValueConstraintMachinery
     """The value-constraint readers and evaluators."""
@@ -1527,7 +1531,7 @@ def get_Q_and_F_collective(
 class _CollectiveQAndF:
     """Per-stakeholder state-action values and the shared feasibility at one cell."""
 
-    utilities_and_F: Callable[..., tuple[Any, ...]]
+    utilities_and_F: Callable[..., UtilitiesAndF]
     """Every stakeholder's utility and the shared feasibility at the cell."""
     compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
     """The continuation aggregator."""
@@ -3653,7 +3657,7 @@ def _get_U_and_F(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     utility_names: tuple[str, ...] = ("utility",),
-) -> Callable[..., tuple[Any, ...]]:
+) -> Callable[..., UtilitiesAndF]:
     """Get the instantaneous utilities and the one feasibility function.
 
     Note:

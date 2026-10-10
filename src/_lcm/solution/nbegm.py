@@ -4094,7 +4094,7 @@ def _indexed_arg_ranks(
     return MappingProxyType(ranks)
 
 
-def _resolved_annotation(annotation: object) -> object | None:  # noqa: PAN001 - a parameter annotation is whatever expression its author wrote
+def _resolved_annotation(annotation: AnnotationForm) -> AnnotationForm | None:
     """The annotation object a probe can read a fill contract off, or `None`.
 
     A function composed for the DAG carries its parameters' types as names rather
@@ -4109,9 +4109,10 @@ def _resolved_annotation(annotation: object) -> object | None:  # noqa: PAN001 -
     if annotation is inspect.Parameter.empty:
         return None
     if isinstance(annotation, str):
-        annotation = _PROBE_ANNOTATION_VOCABULARY.get(annotation)
-        if annotation is None:
+        named = _PROBE_ANNOTATION_VOCABULARY.get(annotation)
+        if named is None:
             return None
+        annotation = named
     return getattr(annotation, "__value__", annotation)
 
 

@@ -58,7 +58,9 @@ from lcm.transition import (
     DeterministicTransition,
     JointTransition,
     StochasticTransition,
+    TargetLawCell,
     Transition,
+    TransitionLaw,
 )
 from lcm.typing import ParameterName, Phase, ReferenceName, UserFunction
 
@@ -73,6 +75,9 @@ type _TemplateBranch = dict[str, _TemplateNode]
 # function, a law (a stochastic one, a per-target mapping, or a phase pair), or
 # `None` for a masked entry.
 type _CallableSlot = StateTransitionEntry | DecomposedTransition
+# A node of a declared regime law: the law, one of its age cases or phases, or a
+# per-target cell; `None` where a schedule selects no law.
+type _LawNode = TransitionLaw | TargetLawCell | None
 
 
 def create_regime_params_template(
@@ -485,9 +490,8 @@ def iter_transition_callables(
 
 
 def iter_edge_callables(
-    # Any value: the final branch is what refuses a value that is no law form.
     *,
-    law: object,
+    law: _LawNode,
     path: tuple[str, ...],
     phase: Phase | None = None,
 ) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
@@ -523,8 +527,8 @@ def iter_edge_callables(
             yield from iter_edge_callables(
                 law=cell, path=(*path, target_regime_name), phase=phase
             )
-    elif callable(law):
-        yield path, cast("UserFunction", law), None
+    elif is_user_function(law):
+        yield path, law, None
     else:
         msg = (
             f"A declared law holds a {type(law).__name__!r} at "

@@ -338,11 +338,11 @@ def test_get_U_and_F_with_annotated_constraints():
     # Verify it works correctly
     U, F = U_and_F(consumption=5.0, wealth=10.0)
     assert jnp.isclose(U, jnp.log(6.0))
-    assert F.item() is True
+    assert bool(F) is True
 
     # Test infeasible case
     U, F = U_and_F(consumption=15.0, wealth=10.0)
-    assert F.item() is False
+    assert bool(F) is False
 
 
 def _health_probs(*, health: DiscreteState, probs_array: FloatND) -> FloatND:

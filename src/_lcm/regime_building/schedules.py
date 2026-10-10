@@ -55,10 +55,12 @@ from lcm.initial_nodes import InitialNodes, UserInitialNodes
 from lcm.phased import Phased
 from lcm.transition import (
     AgeRange,
+    AgeSelector,
     ByAge,
     DeterministicTransition,
     PeriodRange,
     Periods,
+    PeriodSelector,
     StochasticTransition,
     _fail_if_invalid_age_selector,
     _select_periods,
@@ -67,10 +69,18 @@ from lcm.typing import FloatND, IntND, Period, UserAge, UserFunction
 
 if TYPE_CHECKING:
     from _lcm.regime_law import RegimeLaw
+
+    # One `initial_nodes` entry's coordinate selector, and one legacy exact pair.
+    type _InitialSelector = AgeSelector | PeriodSelector
+    type _InitialPair = tuple[UserAge | float, RegimeName]
 else:
     # `_lcm.regime_law` imports this module, so `RegimeLaw` is not importable here
     # at runtime; the law's own constructor checks its fields.
     type RegimeLaw = object
+    # A malformed `initial_nodes` entry reaches the normalizers, whose checks
+    # refuse it with a model error naming it rather than a type violation.
+    type _InitialSelector = object
+    type _InitialPair = object
 
 type PhaseKey = str
 type Side = Literal["solve", "simulate"]
@@ -340,7 +350,7 @@ def resolve_regime_schedules(
 def lower_demanded_transitions(
     *,
     schedules: RegimeSchedules,
-    declared_transitions: Mapping[RegimeName, object],
+    declared_transitions: Mapping[RegimeName, RegimeTransitionLaw],
     code_by_name: Mapping[str, int],
 ) -> MappingProxyType[RegimeName, EngineLaw | None]:
     """Lower each regime's law over the periods demand requires, only.
@@ -732,7 +742,7 @@ _INITIAL_NODE_ARITY = 2
 
 def _initial_node_entries(
     *, initial_nodes: UserInitialNodes, kind: str = "age"
-) -> Sequence[tuple[object, str | Sequence[str]]]:
+) -> Sequence[tuple[_InitialSelector, RegimeName | Sequence[RegimeName]]]:
     """Normalize exact-pair or selector-mapping entries before grid selection."""
     if isinstance(initial_nodes, InitialNodes):
         selected = initial_nodes.by_age if kind == "age" else initial_nodes.by_period
@@ -768,7 +778,7 @@ def _initial_node_entries(
     return entries
 
 
-def _initial_node_pair(pair: object) -> tuple[object, RegimeName]:
+def _initial_node_pair(pair: _InitialPair) -> tuple[_InitialSelector, RegimeName]:
     """Normalize one legacy exact age pair."""
     if (
         not isinstance(pair, Sequence)
@@ -1035,9 +1045,7 @@ def _phase_side[L](*, law: L | Phased[L, L], side: Side) -> L:
 
 def _edge_support(
     *,
-    # Any value: the graph binder passes laws a `ByAge` resolves, which
-    # `ResolvedSchedule` types as `object`.
-    law: object,
+    law: PhaseLaw,
     source: RegimeName,
     period: int,
     ages: TimeAxis,
@@ -1059,7 +1067,7 @@ def _edge_support(
 
 
 def _declared_support(
-    *, law: object, regime_names: tuple[RegimeName, ...]
+    *, law: PhaseLaw, regime_names: tuple[RegimeName, ...]
 ) -> tuple[str, ...]:
     """The targets one nonterminal law declares."""
     if isinstance(law, str):
