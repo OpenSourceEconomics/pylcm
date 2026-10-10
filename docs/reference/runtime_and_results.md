@@ -401,7 +401,8 @@ codes = solution.value_frame(period=0, regime="working", use_labels=False)
 ```
 
 `value_frame` returns a long pandas DataFrame: state columns in
-`metadata.value_schemas[(period, regime)].axis_names` order, followed by `V`. Discrete
+`metadata.value_schemas[(period, regime)].axis_names` order, followed by `V`. Axis names
+must be unique and cannot be `V`, which is reserved for the value column. Discrete
 states use categorical labels and ordering matching simulation; `use_labels=False` keeps
 integer codes. Collective regimes also have a `stakeholder` column. Coordinates are the
 resolved grid nodes used by the solve, including parameter-dependent process grids and

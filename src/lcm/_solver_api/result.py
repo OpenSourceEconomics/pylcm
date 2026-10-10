@@ -156,6 +156,7 @@ class SolutionResult:
         discrete states use pandas categoricals matching simulation labels;
         otherwise they retain integer codes. Resolved process and period-specific
         grid nodes are those used by this solve.
+        Axis names must be unique and must not use the value column name `V`.
 
         This explicit call materializes one row per grid point and stakeholder,
         so large grids produce large frames. For values between nodes, use
@@ -163,6 +164,12 @@ class SolutionResult:
         """
         value = np.asarray(self.value(period=period, regime=regime))
         schema = self.metadata.value_schemas[period, regime]
+        if "V" in schema.axis_names or len(set(schema.axis_names)) != len(
+            schema.axis_names
+        ):
+            raise ValueError(
+                "Value-frame axes must be unique and must not be named 'V'."
+            )
         if len(schema.named_axes) != value.ndim:
             raise ValueError("This value schema does not retain grid coordinates.")
         if value.shape != schema.shape:

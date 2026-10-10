@@ -54,6 +54,7 @@ from lcm.solver_api import (
     ArtifactKey,
     ArtifactRef,
     ArtifactStore,
+    AxisDescriptor,
     AxisRole,
     LoadState,
     OmissionReason,
@@ -1673,6 +1674,46 @@ def test_value_frame_labels_grid_nodes(
     np.testing.assert_array_equal(
         result.value_frame(period=0, regime="alive")["V"], [1, 2, 3, 11, 12, 13]
     )
+
+
+@pytest.mark.parametrize("axis_names", [("V",), ("wealth", "wealth")])
+def test_value_frame_rejects_colliding_column_names(
+    axis_names: tuple[str, ...],
+) -> None:
+    """A frame must not silently overwrite coordinates with another column."""
+    shape = (2,) * len(axis_names)
+    result = SolutionResult(
+        values=ValueStore({(0, "alive"): jnp.ones(shape, dtype=jnp.float32)}),
+        metadata=SolutionMetadata(
+            retention=ResultRetention.VALUES,
+            n_periods=1,
+            regime_names=("alive",),
+            solver_types={"alive": "example.Grid"},
+            model_instance_id="model-1",
+            params_fingerprint="0" * 64,
+            value_schemas={
+                (0, "alive"): ValueArraySchema(
+                    shape=shape,
+                    dtype="float32",
+                    axis_names=axis_names,
+                    named_axes=tuple(
+                        AxisDescriptor(
+                            name=name,
+                            length=2,
+                            role=AxisRole.STATE,
+                            coordinates=(1.0, 2.0),
+                        )
+                        for name in axis_names
+                    ),
+                )
+            },
+        ),
+    )
+    np.testing.assert_array_equal(
+        result.value(period=0, regime="alive"), np.ones(shape)
+    )
+    with pytest.raises(ValueError, match=r"unique.*'V'"):
+        result.value_frame(period=0, regime="alive")
 
 
 def test_value_frame_scalar_and_collective() -> None:
