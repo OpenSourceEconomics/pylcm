@@ -474,7 +474,7 @@ def _lower(
 def resolve_demand(
     *,
     schedules: RegimeSchedules,
-    initial_nodes: frozenset[tuple[object, RegimeName]],
+    initial_nodes: frozenset[tuple[UserAge, RegimeName]],
     same_period_refs_by_regime: Mapping[RegimeName, tuple[RegimeName, ...]],
     terminal_regimes: frozenset[RegimeName],
     ages: TimeAxis,

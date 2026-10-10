@@ -60,6 +60,7 @@ from _lcm.solution.contract import Solver, SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.time import TimeAxis, coordinate_kind, specialization_coordinate_at
 from _lcm.typing import (
+    DataclassInstance,
     EconFunctionKwargs,
     EGMCarryProducer,
     FlatParams,
@@ -255,7 +256,7 @@ def validate_model_inputs(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
-    regime_id_class: type,
+    regime_id_class: type[DataclassInstance],
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],

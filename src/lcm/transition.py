@@ -866,7 +866,7 @@ class ByAge:
             )
         )
 
-    def with_mapped_laws(self, *, func: Callable[[object], object]) -> Self:
+    def with_mapped_laws(self, *, func: Callable[[AgeCaseLaw], AgeCaseLaw]) -> Self:
         """Return this schedule with every law replaced by `func(law)`.
 
         The selectors are kept. Returns `self` when `func` leaves every law
@@ -889,7 +889,7 @@ class ByAge:
         )
         if self._default is None:
             return type(self)(cases=cases)
-        return type(self)(cases=cases, default=cast("AgeCaseLaw", mapped[-1]))
+        return type(self)(cases=cases, default=mapped[-1])
 
     @property
     def laws(self) -> tuple[AgeCaseLaw, ...]:
