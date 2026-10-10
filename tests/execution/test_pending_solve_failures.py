@@ -66,7 +66,7 @@ def test_nested_immutable_copy_is_matched_in_keyword_relative_compiler_paths(
     core = PlannedCore(
         compiled=compiled,
         name="main",
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         layout=resolve_output_layout(
             core_key="main", value_template=template, state_order=(), output_roles=VALUE
         ),
@@ -116,7 +116,7 @@ def test_full_output_tree_is_owned_before_layout_failure(
     core = PlannedCore(
         compiled=compiled,
         name="main",
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         layout=layout,
         pending_work=owner,
     )
@@ -185,7 +185,7 @@ def test_failed_call_keeps_the_returned_copy_until_owner_close(
     core = PlannedCore(
         compiled=compiled,
         name="main",
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         layout=resolve_output_layout(
             core_key="main", value_template=template, state_order=(), output_roles=VALUE
         ),

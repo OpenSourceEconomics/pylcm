@@ -1055,7 +1055,7 @@ class _NNBEGMPeriodKernel:
     own graph key.
     """
 
-    _core_programs: Mapping[str, CoreProgram] = field(
+    _core_programs: MappingProxyType[str, CoreProgram] = field(
         init=False, repr=False, compare=False
     )
     """The republished graph, the keeper's programs then the adjuster's, each

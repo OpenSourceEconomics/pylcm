@@ -221,7 +221,7 @@ def _core(*, case: _Case, owner: PendingSolveWork, shared: bool) -> PlannedCore:
     return PlannedCore(
         compiled=case.executable,
         name="main",
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         layout=resolve_output_layout(
             core_key="main",
             value_template=case.source,

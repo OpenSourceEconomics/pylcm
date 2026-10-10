@@ -16,6 +16,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from _lcm.engine import Regime
 from _lcm.execution.compiler_memory import (
     CompilerMemoryBytes,
     compiler_memory_bytes,
@@ -24,6 +25,13 @@ from _lcm.solution import period_replay
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from _lcm.time import ModelTime
 from lcm import AgeGrid
+
+
+class _StandInRegime(Regime):
+    """An engine `Regime` with no fields, for payloads whose regime is never read."""
+
+    def __init__(self) -> None:
+        """Leave every field unset; the code under test only passes it through."""
 
 
 class _CompileOnlyExecutable:
@@ -95,7 +103,7 @@ def test_core_memory_analyzer_compiles_but_never_executes(
         period_replay, "_compile_cores_for_one_period", fake_production_compile
     )
     payload = {
-        "regime": object(),
+        "regime": _StandInRegime(),
         "period": 1,
         "core_tile_widths": {},
         "kernel_kwargs": {

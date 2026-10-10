@@ -913,10 +913,12 @@ def _placement_on_model_devices(
 
     """
     return SubmeshPlacement(
-        device_ids_by_regime={
-            regime_name: tuple(device_ids[position] for position in positions)
-            for regime_name, positions in placement.device_ids_by_regime.items()
-        },
+        device_ids_by_regime=MappingProxyType(
+            {
+                regime_name: tuple(device_ids[position] for position in positions)
+                for regime_name, positions in placement.device_ids_by_regime.items()
+            }
+        ),
         n_devices=placement.n_devices,
     )
 

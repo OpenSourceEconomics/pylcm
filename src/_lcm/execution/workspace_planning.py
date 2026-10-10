@@ -123,15 +123,11 @@ class CompilerMemoryReservation:
 class WorkspacePlan[Compiled]:
     """One selected width mapping and its already-compiled executable."""
 
-    widths: Mapping[str, int]
+    widths: MappingProxyType[str, int]
     peak_bytes: int | None
     compiled: Compiled
     reservation_bytes: int | None = None
     """Selected represented compiler requirement, or None without a budget."""
-
-    def __post_init__(self) -> None:
-        """Own an immutable snapshot of the planner-selected widths."""
-        object.__setattr__(self, "widths", MappingProxyType(dict(self.widths)))
 
 
 def workspace_width_candidates(

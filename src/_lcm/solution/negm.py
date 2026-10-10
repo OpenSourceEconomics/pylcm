@@ -776,7 +776,7 @@ class _NEGMPeriodKernel:
     fixed_sweep_kwargs: Mapping[QualifiedName, ParamsLeaf] = MappingProxyType({})
     """The regime's and its targets' fixed params, bound into the sweep."""
 
-    _core_programs: Mapping[str, CoreProgram] = field(
+    _core_programs: MappingProxyType[str, CoreProgram] = field(
         init=False, repr=False, compare=False
     )
     """The native graph, `keeper` then `outer_sweep`; derived at construction."""

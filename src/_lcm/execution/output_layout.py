@@ -469,10 +469,10 @@ class PlannedCore:
 
     compiled: Callable[..., PytreeValue]
     layout: ResolvedOutputLayout
-    tile_widths: Mapping[str, int]
+    tile_widths: MappingProxyType[str, int]
     """Width this core was lowered at, per execution axis of its program."""
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()
-    internal_input_templates: Mapping[ReferenceName, ShapeDtypePytree] = (
+    internal_input_templates: MappingProxyType[ReferenceName, ShapeDtypePytree] = (
         MappingProxyType({})
     )
     """Abstract template per internal input this core was lowered against."""
@@ -488,8 +488,8 @@ class PlannedCore:
     """Graph key of the program this core was compiled for."""
 
     def __post_init__(self) -> None:
-        """Snapshot the exact lowering widths and resolved input transfer plan."""
-        widths = dict(self.tile_widths)
+        """Check the lowering widths and snapshot the resolved input transfer plan."""
+        widths = self.tile_widths
         if any(not isinstance(name, str) or not name for name in widths):
             msg = "PlannedCore tile-width names must be non-empty strings."
             raise TypeError(msg)
@@ -499,7 +499,6 @@ class PlannedCore:
         if any(width <= 0 for width in widths.values()):
             msg = "PlannedCore tile widths must be positive."
             raise ValueError(msg)
-        object.__setattr__(self, "tile_widths", MappingProxyType(widths))
 
         plan = tuple(self.input_transfer_plan)
         if any(not isinstance(item, ResolvedValueTransfer) for item in plan):
@@ -507,13 +506,12 @@ class PlannedCore:
             raise TypeError(msg)
         object.__setattr__(self, "input_transfer_plan", plan)
 
-        templates = dict(self.internal_input_templates)
-        if any(not isinstance(name, str) or not name for name in templates):
+        if any(
+            not isinstance(name, str) or not name
+            for name in self.internal_input_templates
+        ):
             msg = "PlannedCore internal-input names must be non-empty strings."
             raise TypeError(msg)
-        object.__setattr__(
-            self, "internal_input_templates", MappingProxyType(templates)
-        )
 
         if self.transfer_cache is not None and not isinstance(
             self.transfer_cache, TransferCache

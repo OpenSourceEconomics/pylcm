@@ -543,15 +543,10 @@ def test_selected_executable_is_never_executed_or_recompiled() -> None:
     )
 
 
-def test_workspace_plan_owns_an_immutable_width_snapshot() -> None:
-    source = {"action_product": 2}
-    plan = WorkspacePlan(widths=source, peak_bytes=4, compiled=object())
-
-    source["action_product"] = 8
-
-    assert plan.widths == {"action_product": 2}
-    with pytest.raises(TypeError):
-        cast("dict[str, int]", plan.widths)["action_product"] = 4
+def test_workspace_plan_refuses_a_plain_dict_of_widths() -> None:
+    """A workspace plan holds a read-only width mapping; a plain dict is refused."""
+    with pytest.raises(BeartypeCallHintViolation, match="widths"):
+        WorkspacePlan(widths={"action_product": 2}, peak_bytes=4, compiled=object())  # ty: ignore[invalid-argument-type]
 
 
 def test_duplicate_axis_names_are_rejected_before_compilation() -> None:

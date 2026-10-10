@@ -5,6 +5,7 @@ import weakref
 from collections.abc import Callable
 from dataclasses import replace
 from functools import partial
+from types import MappingProxyType
 from typing import cast
 
 import jax
@@ -217,7 +218,7 @@ def _exercise_copy(  # noqa: PLR0915 -- one real transfer/dispatch/lifetime witn
             state_order=(),
             output_roles=VALUE,
         ),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         input_transfer_plan=(transfer,),
         name="main",
         pending_work=owner,

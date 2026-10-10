@@ -1,5 +1,7 @@
 """Actual complete device footprints control asynchronous solve completion."""
 
+from types import MappingProxyType
+
 import jax
 import pytest
 
@@ -89,7 +91,7 @@ def test_actual_execution_and_copy_endpoints_determine_completion(  # noqa: PLR0
     first = PlannedCore(
         compiled=producer,
         name="producer",
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         layout=resolve_output_layout(
             core_key="producer", value_template=work, state_order=(), output_roles=VALUE
         ),
@@ -98,7 +100,7 @@ def test_actual_execution_and_copy_endpoints_determine_completion(  # noqa: PLR0
     second = PlannedCore(
         compiled=consumer,
         name="consumer",
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         layout=resolve_output_layout(
             core_key="consumer",
             value_template=output_template,
