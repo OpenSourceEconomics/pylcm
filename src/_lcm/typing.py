@@ -168,23 +168,13 @@ type PytreeValue = (
     | None
 )
 
-# A value tree whose mapping levels may also be keyed by period, as the solve and
-# the simulation hold their per-period inputs, outputs and intermediates. Code that
-# only walks a tree with JAX's tree utilities takes it; code that reads a level by
-# name takes a `PytreeValue`. One level never mixes names and periods.
-if TYPE_CHECKING:
-    type PeriodPytree = (
-        PytreeValue
-        | tuple[PeriodPytree, ...]
-        | list[PeriodPytree]
-        | Mapping[str, PeriodPytree]
-        | Mapping[int, PeriodPytree]
-    )
-else:
-    # beartype cannot build a check for a recursive alias over `PytreeValue` with
-    # more than one self-referencing container, and these trees only reach JAX's
-    # tree utilities, so the claw checks nothing here.
-    type PeriodPytree = object
+# A value tree keyed by period at its top levels, as the solve and the simulation
+# hold their per-period inputs, outputs and intermediates. Period levels sit only at
+# the top or under other period levels; a site whose period levels sit below a name
+# level or inside a tuple spells that outer level, as in
+# `Mapping[RegimeName, PytreeByPeriod]`. One self-reference keeps the alias
+# checkable by the beartype claw.
+type PytreeByPeriod = PytreeValue | Mapping[int, PytreeByPeriod]
 
 # The abstract counterpart of a `PytreeValue`, for lowering and memory profiling.
 type ShapeDtypePytree = (
