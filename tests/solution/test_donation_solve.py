@@ -22,7 +22,7 @@ from _lcm.solution import backward_induction
 from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.kernel_output import ConsumedKernelOutput
 from _lcm.solution.solve_inputs import SolveInputMappings
-from _lcm.typing import PytreeValue
+from _lcm.typing import FootprintTree, PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
     ArtifactKey,
@@ -367,7 +367,7 @@ class _SnapshottingRegistry(BufferRegistry):
         self.snapshots: list[frozenset[tuple[int, int]]] = []
         _REGISTRIES.append(self)
 
-    def declare_not_produced(self, *, tree: object) -> None:
+    def declare_not_produced(self, *, tree: FootprintTree) -> None:
         """Declare, then record the shards declared at that moment."""
         super().declare_not_produced(tree=tree)
         self.snapshots.append(self.declared_shards)
