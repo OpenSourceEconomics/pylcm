@@ -25,7 +25,7 @@ from fractions import Fraction
 import jax
 from jax.extend.core import Jaxpr, JaxprEqn, Literal, Var
 
-from lcm.typing import ActionName, FloatND, FunctionName, ReferenceName
+from lcm.typing import ActionName, FloatND, FunctionName, ReferenceName, ValueND
 
 __all__ = ["OuterAffineCertificate", "certify_outer_coefficient"]
 
@@ -73,7 +73,7 @@ def certify_outer_coefficient(
     *,
     func: Callable[..., FloatND],
     outer_action_name: ActionName,
-    abstract_args: Iterable[jax.ShapeDtypeStruct],
+    abstract_args: Iterable[jax.ShapeDtypeStruct | ValueND],
     arg_names: tuple[ReferenceName, ...],
 ) -> OuterAffineCertificate:
     """Return the exact coefficient of `outer_action_name` in `func`.
@@ -81,7 +81,8 @@ def certify_outer_coefficient(
     Args:
         func: The traced outer post-decision map.
         outer_action_name: The argument whose coefficient is certified.
-        abstract_args: Positional sample arguments to trace `func` against.
+        abstract_args: Positional sample arguments to trace `func` against, as
+            shapes and dtypes or as concrete arrays.
         arg_names: Positional names of `func`'s arguments, aligned with
             `abstract_args`, used to locate the outer action's input variable.
 

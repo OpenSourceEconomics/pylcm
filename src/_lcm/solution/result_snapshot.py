@@ -761,7 +761,10 @@ def _validate_solution_metadata_fields(
         "model_fingerprint",
         "pylcm_version",
     ):
-        _require_exact_str(getattr(metadata, field_name), label=field_name)
+        # A mutated record can hold any object here, so the check runs before
+        # any typed helper and names the field.
+        if type(getattr(metadata, field_name)) is not str:
+            raise TypeError(f"{field_name} must be an exact str.")
     if type(metadata.source) is not SolutionSource:
         raise TypeError("Solution metadata source must be exact SolutionSource.")
     _require_positive_exact_int(

@@ -64,20 +64,15 @@ class ReplayPayload:
         )
 
 
-# A payload leaf as JAX hands it back: a pytree child, or the `ArgInfo` that AOT
-# lowering rebuilds a payload with when it reports the compiled arguments.
-type _PayloadChild = PytreeChild | jax.stages.ArgInfo
-
-
 def _flatten_payload(
     payload: ReplayPayload,
-) -> tuple[tuple[_PayloadChild, ...], jax.tree_util.PyTreeDef]:
+) -> tuple[tuple[PytreeChild, ...], jax.tree_util.PyTreeDef]:
     return payload.arrays, payload.structure
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_payload(
-    structure: jax.tree_util.PyTreeDef, arrays: Sequence[_PayloadChild]
+    structure: jax.tree_util.PyTreeDef, arrays: Sequence[PytreeChild]
 ) -> ReplayPayload:
     result = object.__new__(ReplayPayload)
     object.__setattr__(result, "arrays", tuple(arrays))
