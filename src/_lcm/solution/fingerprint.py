@@ -29,6 +29,7 @@ from beartype import BeartypeConf
 from beartype import beartype as _beartype_decorator
 from jax import Array
 
+import _lcm.additive_shock_transition as additive_shock_declarations
 import _lcm.certainty_equivalent as certainty_equivalent_declarations
 import _lcm.constraints.ir as constraint_ir
 import _lcm.egm.interp as interp_declarations
@@ -2064,6 +2065,7 @@ def _capture_shipped_beartype_wrappers() -> tuple[  # noqa: C901, PLR0912
 ]:
     """Capture exact wrapper/code/wrappee identities from shipped dependency roots."""
     explicit_roots = (
+        additive_shock_declarations,
         certainty_equivalent_declarations,
         constraint_ir,
         functools_declarations,
