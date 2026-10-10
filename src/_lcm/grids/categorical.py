@@ -181,7 +181,7 @@ def validate_category_class(category_class: type) -> list[str]:
     return error_messages
 
 
-def _is_scalar_int(value: object) -> bool:
+def _is_scalar_int(value: object) -> bool:  # noqa: PAN001 - a dataclass field may hold any value
     """Return True iff `value` is a 0-d integer jax array (`ScalarInt`)."""
     return (
         isinstance(value, jax.Array)

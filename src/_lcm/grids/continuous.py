@@ -9,7 +9,6 @@ import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
 
 import jax.numpy as jnp
 from beartype import beartype
@@ -351,15 +350,12 @@ def _validate_continuous_grid(
         raise GridInitializationError(msg)
 
 
-def _validate_irreg_spaced_grid(points: Sequence[Any] | Float1D) -> None:
+@beartype(conf=GRID_CONF)
+def _validate_irreg_spaced_grid(points: Sequence[float] | Float1D) -> None:
     """Validate the irregular spaced grid parameters.
 
-    The element type is `Any` because the function's manual loop is what
-    surfaces the user-facing `GridInitializationError` for non-numeric
-    entries; tightening to `Sequence[float]` makes beartype's package-
-    claw deep-check intercept first (observed flaking under cuda12 +
-    32-bit precision in CI), raising raw `BeartypeCallHintViolation`
-    before the manual check fires.
+    Decorated with the grid conf, so a non-numeric entry that beartype samples
+    raises the same `GridInitializationError` as the manual check below.
 
     Args:
         points: The grid points.
