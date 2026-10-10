@@ -292,7 +292,7 @@ def _consume_declared_artifacts(
 
 def _canonicalize_declared_artifact(
     *,
-    payload: object,
+    payload: ArtifactPayload,
     authority: ArtifactAuthority,
     channel: ArtifactChannel,
     key: ArtifactKey,
