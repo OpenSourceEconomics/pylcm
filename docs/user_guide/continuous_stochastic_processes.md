@@ -46,6 +46,9 @@ NormalIIDProcess(n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0)
 - `n_std`: Number of standard deviations for the grid boundary. Mutually exclusive with
   `gauss_hermite=True`.
 
+With `gauss_hermite=True`, both even and odd `n_points` are supported. The examples use
+odd counts, which include a node at the mean; even counts have no mean node.
+
 ### LogNormalIIDProcess
 
 Discretized log-normal distribution where $\ln X \sim N(\mu, \sigma^2)$.
@@ -115,6 +118,10 @@ TauchenAR1Process(
 - `gauss_hermite`: If `True`, use Gauss-Hermite quadrature nodes.
 - `n_std`: Number of unconditional standard deviations for the grid boundary. Mutually
   exclusive with `gauss_hermite=True`.
+
+Gauss-Hermite supports even counts here too. Only odd counts include the unconditional
+mean. Transition probabilities still use midpoint CDF bins, rather than quadrature
+weights.
 
 ### RouwenhorstAR1Process
 

@@ -288,18 +288,10 @@ class _ContinuousStochasticProcess(ContinuousGrid):
 
 def _validate_gauss_hermite_grid(
     *,
-    n_points: int,
     gauss_hermite: bool,
     n_std: float | None,
 ) -> None:
-    """Validate `n_points` / `gauss_hermite` / `n_std` consistency."""
-    if gauss_hermite and n_points % 2 == 0:
-        msg = (
-            f"n_points must be odd (got {n_points}). Odd n guarantees"
-            " a quadrature node at the mean (Abramowitz & Stegun, 1972,"
-            " Table 25.10)."
-        )
-        raise GridInitializationError(msg)
+    """Validate `gauss_hermite` / `n_std` consistency."""
     if gauss_hermite and n_std is not None:
         msg = "gauss_hermite=True and n_std are mutually exclusive."
         raise GridInitializationError(msg)

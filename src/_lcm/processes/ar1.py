@@ -54,6 +54,8 @@ class TauchenAR1Process(_AR1Process):
 
     When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
     with CDF-based transition probabilities computed at midpoints between nodes.
+    Even and odd `n_points` are supported; only odd counts include the unconditional
+    mean.
 
     When `gauss_hermite=False`, it uses equally spaced points spanning
     $\pm n_\text{std}$ unconditional standard deviations, following
@@ -84,7 +86,6 @@ class TauchenAR1Process(_AR1Process):
     def __post_init__(self) -> None:
         super().__post_init__()
         _validate_gauss_hermite_grid(
-            n_points=self.n_points,
             gauss_hermite=self.gauss_hermite,
             n_std=self.n_std,
         )

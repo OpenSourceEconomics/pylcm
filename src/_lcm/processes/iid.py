@@ -115,6 +115,8 @@ class NormalIIDProcess(_IIDProcess):
     it uses `n_points` equally spaced points spanning
     $\mu_\varepsilon \pm n_\text{std} \cdot \sigma_\varepsilon$.
 
+    Gauss-Hermite supports even and odd `n_points`; only odd counts include the mean.
+
     """
 
     gauss_hermite: bool
@@ -136,9 +138,7 @@ class NormalIIDProcess(_IIDProcess):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        _validate_gauss_hermite_grid(
-            n_points=self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
-        )
+        _validate_gauss_hermite_grid(gauss_hermite=self.gauss_hermite, n_std=self.n_std)
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
@@ -187,7 +187,10 @@ class NormalIIDProcess(_IIDProcess):
 @beartype(conf=GRID_CONF)
 @dataclass(frozen=True, kw_only=True)
 class LogNormalIIDProcess(_IIDProcess):
-    r"""Discretized IID log-normal process: $\ln X \sim N(\mu, \sigma^2)$."""
+    r"""Discretized IID log-normal process: $\ln X \sim N(\mu, \sigma^2)$.
+
+    Gauss-Hermite supports even and odd `n_points`; only odd counts include `exp(mu)`.
+    """
 
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
@@ -207,9 +210,7 @@ class LogNormalIIDProcess(_IIDProcess):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        _validate_gauss_hermite_grid(
-            n_points=self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
-        )
+        _validate_gauss_hermite_grid(gauss_hermite=self.gauss_hermite, n_std=self.n_std)
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
