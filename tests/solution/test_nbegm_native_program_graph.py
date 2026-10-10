@@ -199,7 +199,9 @@ def test_the_builder_omits_target_values_and_filters_the_carry():
 def test_with_fixed_params_rebinds_both_programs():
     kernel, _ = _smooth_kernel()
     graph = core_program_graph(kernel=kernel)
-    fixed = MappingProxyType({kernel.regime_name: MappingProxyType({"beta": 0.9})})
+    fixed = MappingProxyType(
+        {kernel.regime_name: MappingProxyType({"beta": jax.numpy.asarray(0.9)})}
+    )
 
     bound = kernel.with_fixed_params(fixed_flat_params=fixed)
     bound_graph = core_program_graph(kernel=bound)

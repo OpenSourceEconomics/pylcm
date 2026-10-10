@@ -257,7 +257,11 @@ def test_with_fixed_params_rebinds_both_roles():
     kernel, _ = _kernel("finite")
     graph = core_program_graph(kernel=kernel)
     fixed = MappingProxyType(
-        {kernel.regime_name: MappingProxyType({"discount_factor": 0.9})}
+        {
+            kernel.regime_name: MappingProxyType(
+                {"discount_factor": jax.numpy.asarray(0.9)}
+            )
+        }
     )
 
     bound_graph = core_program_graph(

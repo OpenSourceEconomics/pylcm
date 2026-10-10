@@ -478,7 +478,9 @@ def test_block_width_leaves_every_periods_solved_values_within_ulp(*, width: int
 def _fixed_flat_params() -> FlatParams:
     return cast(
         "FlatParams",
-        MappingProxyType({_REGIME: MappingProxyType({"final_age_alive": 30.0})}),
+        MappingProxyType(
+            {_REGIME: MappingProxyType({"final_age_alive": jnp.asarray(30.0)})}
+        ),
     )
 
 
