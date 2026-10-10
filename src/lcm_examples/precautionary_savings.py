@@ -35,6 +35,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 
 type ShockType = Literal["normal_gh", "rouwenhorst", "tauchen"]
@@ -213,7 +214,7 @@ def get_params(
     rho: float = 0.0,
     interest_rate: float = 0.0,
     discount_factor: float = 0.95,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the precautionary savings model.
 
     Args:
