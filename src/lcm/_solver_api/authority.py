@@ -10,7 +10,6 @@ from enum import Enum, auto
 from threading import RLock
 from types import GetSetDescriptorType, MappingProxyType, MemberDescriptorType
 from typing import (
-    TYPE_CHECKING,
     Literal,
     Protocol,
     SupportsIndex,
@@ -20,7 +19,9 @@ from typing import (
 
 import jax
 import numpy as np
+from beartype import beartype
 
+from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.contract import (
     _artifact_static_metadata_field_names,
     _same_exact_artifact_contract,
@@ -54,30 +55,21 @@ from lcm._solver_api.identity import (
 )
 from lcm.exceptions import ExecutionPlanningError
 
-if TYPE_CHECKING:
-    # One node of a callback-free construction plan.
-    type _ConstructionPlan = (
-        _ArtifactLeafSlot
-        | _ArtifactStaticPlan
-        | _ArtifactTuplePlan
-        | _ArtifactDataclassPlan
-    )
-    # A JAX key path as `jax.tree_util.tree_flatten_with_path` reports it.
-    type _JaxKeyPath = tuple[
-        jax.tree_util.GetAttrKey
-        | jax.tree_util.SequenceKey
-        | jax.tree_util.FlattenedIndexKey
-        | jax.tree_util.DictKey,
-        ...,
-    ]
-    type _PickleStateBoundary = _ArtifactAuthorityPickleState
-else:
-    # Plans, key paths and transported state are checked node by node by exact type
-    # identity in the bodies, which never run plugin code; the claw checks nothing
-    # here.
-    type _ConstructionPlan = object
-    type _JaxKeyPath = object
-    type _PickleStateBoundary = object
+# One node of a callback-free construction plan.
+type _ConstructionPlan = (
+    _ArtifactLeafSlot
+    | _ArtifactStaticPlan
+    | _ArtifactTuplePlan
+    | _ArtifactDataclassPlan
+)
+# A JAX key path as `jax.tree_util.tree_flatten_with_path` reports it.
+type _JaxKeyPath = tuple[
+    jax.tree_util.GetAttrKey
+    | jax.tree_util.SequenceKey
+    | jax.tree_util.FlattenedIndexKey
+    | jax.tree_util.DictKey,
+    ...,
+]
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -540,6 +532,7 @@ def _artifact_authority_template_snapshot(
     )
 
 
+@beartype(conf=SOLVER_API_CONF)
 def _normalize_jax_tree_path(path: _JaxKeyPath) -> TreePath:  # noqa: C901
     """Encode a JAX key path without collapsing distinct key kinds or types."""
     normalized: list[str] = []
@@ -1247,6 +1240,7 @@ def _compile_artifact_construction_plan(
     )
 
 
+@beartype(conf=SOLVER_API_CONF)
 def _snapshot_plan_node(  # noqa: C901, PLR0912
     *, node: _ConstructionPlan, seen: list[int], active_ids: set[int]
 ) -> _ConstructionPlan:
@@ -1334,6 +1328,7 @@ def _snapshot_plan_node(  # noqa: C901, PLR0912
     raise TypeError("Artifact construction plan contains an unsupported node.")
 
 
+@beartype(conf=SOLVER_API_CONF)
 def _snapshot_artifact_construction_plan(
     *, plan: _ConstructionPlan, leaf_count: int
 ) -> _ConstructionPlan:
@@ -2133,8 +2128,9 @@ def _artifact_authority_pickle_state(
     )
 
 
+@beartype(conf=SOLVER_API_CONF)
 def _restore_artifact_authority_from_pickle(
-    state: _PickleStateBoundary,
+    state: _ArtifactAuthorityPickleState,
 ) -> ArtifactAuthority:
     """Rebuild one transported authority through the validated private constructor."""
     if type(state) is not _ArtifactAuthorityPickleState:
