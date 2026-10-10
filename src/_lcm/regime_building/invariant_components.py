@@ -46,7 +46,7 @@ from _lcm.time import TimeAxis
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.transition import AgeSpecializedGrid, StochasticTransition
-from lcm.typing import UserFunction
+from lcm.typing import UserAge, UserFunction
 
 type Phase = Literal["solve", "simulate"]
 # A law a phase slice declares for a state toward one target, or the marker of
@@ -128,7 +128,7 @@ def analyze_invariant_components(
     laws: RegimeLaws,
     regimes: Mapping[RegimeName, Regime],
     reachability: ModelReachability,
-    initial_nodes: frozenset[tuple[object, RegimeName]],
+    initial_nodes: frozenset[tuple[UserAge, RegimeName]],
     ages: TimeAxis,
     fixed_component_splits: Mapping[StateName, FixedComponentSplit],
 ) -> MappingProxyType[StateName, InvariantComponent]:
@@ -154,7 +154,7 @@ def analyze_invariant_components(
         name: normalize_regime_phases(regime, law=laws[name])
         for name, regime in user_regimes.items()
     }
-    period_of_age: dict[object, int] = {
+    period_of_age: dict[UserAge, int] = {
         age: period for period, age in enumerate(ages.exact_values)
     }
     generated = {

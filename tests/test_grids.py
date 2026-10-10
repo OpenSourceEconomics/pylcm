@@ -1,4 +1,6 @@
+import dataclasses
 from dataclasses import make_dataclass
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -18,13 +20,14 @@ from _lcm.grids import (
 )
 from _lcm.grids.categorical import _validate_discrete_grid
 from _lcm.grids.continuous import _validate_continuous_grid
+from _lcm.typing import DataclassInstance
 from _lcm.utils.containers import get_field_names_and_values
 from lcm.exceptions import CategoricalDefinitionError, GridInitializationError
 from lcm.typing import ScalarInt
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 
-def _make_dc(name: str, *fields: tuple[str, object]) -> type:
+def _make_dc(name: str, *fields: tuple[str, object]) -> type[DataclassInstance]:
     """Build a dataclass with `ScalarInt` class attrs.
 
     Sidesteps `@dataclass(frozen=True)`'s rejection of `jax.Array`
@@ -33,7 +36,11 @@ def _make_dc(name: str, *fields: tuple[str, object]) -> type:
     `validate_category_class` reads field values via `getattr(cls, name)`,
     so the class attrs are what get checked.
     """
-    cls = make_dataclass(name, [(fname, ScalarInt) for fname, _ in fields])
+    # `make_dataclass` is typed as returning a bare `type`.
+    cls = cast(
+        "type[DataclassInstance]",
+        make_dataclass(name, [(fname, ScalarInt) for fname, _ in fields]),
+    )
     for fname, fval in fields:
         type.__setattr__(cls, fname, fval)
     return cls
@@ -60,7 +67,7 @@ def test_get_fields_empty():
 
 
 def test_validate_discrete_grid_empty():
-    category_class = make_dataclass("Category", [])
+    category_class = _make_dc("Category")
     error_msg = "category_class must have at least one field"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
@@ -123,7 +130,7 @@ def test_validate_category_class_not_dataclass():
         a = 0
         b = 1
 
-    errors = validate_category_class(NotDataclass)
+    errors = validate_category_class(NotDataclass)  # ty: ignore[invalid-argument-type]
     assert len(errors) == 1
     assert "must be a dataclass" in errors[0]
 
@@ -235,6 +242,18 @@ def test_categorical_error_lists_all_offending_fields():
             y: str
 
 
+@categorical(ordered=False)
+class _LaborSupply:
+    work: ScalarInt
+    retire: ScalarInt
+
+
+def test_categorical_class_is_a_dataclass_of_its_categories():
+    """A `@categorical` class is a dataclass whose fields are its categories."""
+    names = [field.name for field in dataclasses.fields(_LaborSupply)]
+    assert names == ["work", "retire"]
+
+
 def test_categorical_class_attr_is_scalar_int():
     """Class-level access returns a 0-d int32 jax scalar."""
 
@@ -257,7 +276,9 @@ def test_categorical_instance_attr_is_scalar_int():
         first: ScalarInt
         second: ScalarInt
 
-    instance = Cat()
+    # `@categorical` fields take no constructor argument, which
+    # `dataclass_transform` cannot express.
+    instance = Cat()  # ty: ignore[missing-argument]
     assert instance.first.shape == ()
     assert instance.first.dtype == jnp.int32
     assert int(instance.second) == 1

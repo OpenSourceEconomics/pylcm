@@ -87,7 +87,7 @@ class ModelGraph:
 
     edges: GraphEdges
     """All declared edges, including edges removed by fixed-zero proofs."""
-    initial_nodes: frozenset[tuple[object, RegimeName]]
+    initial_nodes: frozenset[tuple[UserAge, RegimeName]]
     """Admissible exact age-regime starting pairs."""
     reachability: ModelReachability
     """Effective phase graphs and their demanded nodes."""
@@ -223,7 +223,7 @@ def prepare_graph(
     laws: RegimeLaws,
     edges: GraphEdges,
     ages: TimeAxis,
-    initial_nodes: frozenset[tuple[object, RegimeName]],
+    initial_nodes: frozenset[tuple[UserAge, RegimeName]],
     fixed_params: UserParams,
 ) -> GraphPreparation:
     """Bind laws, prove fixed zeros, and close physical and value demand."""

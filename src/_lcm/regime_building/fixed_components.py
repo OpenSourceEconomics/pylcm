@@ -27,9 +27,17 @@ from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from _lcm.transition_plans import OriginalLotteryLayout, signature_with_state
 from _lcm.typing import DataclassInstance, EconFunctionArg, RegimeNamesToIds
+from lcm.collective import CollectiveUtility
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.regime import Regime, StateTransitionEntry
+from lcm.regime import (
+    ActionEntry,
+    ConstraintEntry,
+    FunctionEntry,
+    Regime,
+    StateEntry,
+    StateTransitionEntry,
+)
 from lcm.transition import (
     AgeSpecializedFunction,
     JointTransition,
@@ -37,6 +45,7 @@ from lcm.transition import (
     fixed_transition,
 )
 from lcm.typing import (
+    ActionName,
     DiscreteState,
     FloatND,
     FunctionName,
@@ -48,6 +57,19 @@ from lcm.typing import (
     UserInitialConditions,
     UserParams,
     UserParamsNode,
+)
+
+# A declaration `_lower_next_output_reads` walks: a law or helper, a `Phased`
+# pair, or a mapping of declarations by name.
+type _DeclarationNode = (
+    UserFunction
+    | StochasticTransition
+    | JointTransition
+    | AgeSpecializedFunction
+    | CollectiveUtility
+    | Phased
+    | Mapping[str, _DeclarationNode]
+    | None
 )
 
 
@@ -153,18 +175,18 @@ def factor_fixed_components(
     regimes: Mapping[str, Regime],
     laws: RegimeLaws,
     fixed_params: UserParams,
-    states: Mapping[str, object],
+    states: Mapping[StateName, StateEntry],
     state_transitions: Mapping[StateName, StateTransitionEntry],
-    functions: Mapping[str, object],
-    constraints: Mapping[str, object],
-    actions: Mapping[str, object],
+    functions: Mapping[FunctionName, FunctionEntry],
+    constraints: Mapping[FunctionName, ConstraintEntry],
+    actions: Mapping[ActionName, ActionEntry],
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
 ) -> tuple[
     Mapping[str, Regime],
     UserParams,
-    Mapping[str, object],
+    Mapping[StateName, StateEntry],
     Mapping[StateName, StateTransitionEntry],
-    Mapping[str, object],
+    Mapping[FunctionName, FunctionEntry],
     Mapping[str, FixedComponentSplit],
 ]:
     """Inventory declarations, then lower each grid and law in its original slot."""
@@ -262,11 +284,15 @@ def factor_fixed_components(
         rename_split_params(params=fixed_params, splits=splits),
         MappingProxyType(model_states),
         MappingProxyType(model_laws),
-        MappingProxyType(
-            {
-                name: _lower_next_output_reads(node=func, next_outputs=next_outputs)
-                for name, func in functions.items()
-            }
+        # Lowering keeps each declaration's kind and replaces only its leaves.
+        cast(
+            "Mapping[FunctionName, FunctionEntry]",
+            MappingProxyType(
+                {
+                    name: _lower_next_output_reads(node=func, next_outputs=next_outputs)
+                    for name, func in functions.items()
+                }
+            ),
         ),
         MappingProxyType(splits),
     )
@@ -306,8 +332,8 @@ def _lower_state_laws(
 
 
 def _lower_next_output_reads(  # noqa: PLR0911 — one return per declaration kind
-    *, node: object, next_outputs: Mapping[str, Callable[..., DiscreteState]]
-) -> object:
+    *, node: _DeclarationNode, next_outputs: Mapping[str, Callable[..., DiscreteState]]
+) -> _DeclarationNode:
     """Substitute original next-state reads with their deterministic decode DAG.
 
     The lowered arguments name the same target's realized transition outputs.
@@ -371,9 +397,13 @@ def _build_with_next_outputs(
     *,
     build: Callable[[float], UserFunction],
     next_outputs: Mapping[str, Callable[..., DiscreteState]],
-) -> object:
+) -> UserFunction:
     """Decode next-state reads in an age-specialized helper's concrete DAG."""
-    return _lower_next_output_reads(node=build(age), next_outputs=next_outputs)
+    # Lowering a function yields a function.
+    return cast(
+        "UserFunction",
+        _lower_next_output_reads(node=build(age), next_outputs=next_outputs),
+    )
 
 
 def rename_split_params(

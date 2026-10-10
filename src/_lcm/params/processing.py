@@ -121,7 +121,7 @@ def process_params(
 
 def broadcast_to_template(
     *,
-    params: Mapping,
+    params: UserParams,
     template: ParamsTemplate,
     required: bool = True,
     already_consumed: frozenset[str] = frozenset(),

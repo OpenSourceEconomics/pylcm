@@ -47,8 +47,14 @@ from lcm.collective import CollectiveUtility
 from lcm.consumption_savings_regime import NetOfAdjustmentCost
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
+from lcm.regime import (
+    ActionEntry,
+    ConstraintEntry,
+    FunctionEntry,
+    StateEntry,
+    StateTransitionEntry,
+)
 from lcm.regime import Regime as UserRegime
-from lcm.regime import StateTransitionEntry
 from lcm.transition import (
     AgeSpecializedFunction,
     JointTransition,
@@ -59,6 +65,11 @@ from lcm.typing import UserFunction
 # Which `Phased` side each `PhasedRegimeSpec` slice is built from.
 _PHASE_OF_SLICE: Mapping[PhaseName, Literal["solve", "simulate"]] = MappingProxyType(
     {"solution": "solve", "simulation": "simulate"}
+)
+
+# One value of a broadcastable slot, at model or regime level.
+type SlotEntry = (
+    FunctionEntry | ConstraintEntry | StateEntry | StateTransitionEntry | ActionEntry
 )
 
 _BROADCASTABLE_SLOTS = (
@@ -74,7 +85,7 @@ def merge_model_slots(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
-    model_slots: Mapping[str, Mapping[str, object]],
+    model_slots: Mapping[str, Mapping[str, SlotEntry]],
 ) -> tuple[
     MappingProxyType[RegimeName, UserRegime],
     MappingProxyType[RegimeName, frozenset[StateOrActionName]],
@@ -102,7 +113,7 @@ def merge_model_slots(
     broadcast_variables: dict[RegimeName, frozenset[StateOrActionName]] = {}
 
     for regime_name, user_regime in user_regimes.items():
-        replacements: dict[str, Mapping[str, object]] = {}
+        replacements: dict[str, Mapping[str, SlotEntry]] = {}
         for slot_name in _BROADCASTABLE_SLOTS:
             regime_slot = dict(getattr(user_regime, slot_name))
             model_slot = dict(model_slots.get(slot_name, {}))
@@ -718,7 +729,7 @@ def _resolved_at_representative_age(
         ages=ages, period=active_periods[0]
     )
     return {
-        name: cast("UserFunction", resolve_node(node=value, age=representative_age))
+        name: resolve_node(node=value, age=representative_age)
         for name, value in mapping.items()
     }
 
@@ -946,8 +957,8 @@ def _merge_one_slot(
     *,
     slot_name: str,
     regime_name: RegimeName,
-    regime_slot: Mapping[str, object],
-    model_slot: Mapping[str, object],
+    regime_slot: Mapping[str, SlotEntry],
+    model_slot: Mapping[str, SlotEntry],
 ) -> list[str]:
     """Apply the exactly-one-level rule to one slot of one regime.
 
@@ -1005,7 +1016,7 @@ def _names_the_household_writes(*, user_regime: UserRegime) -> frozenset[str]:
 
 def _model_slot_value_errors(
     *,
-    model_slots: Mapping[str, Mapping[str, object]],
+    model_slots: Mapping[str, Mapping[str, SlotEntry]],
 ) -> list[str]:
     """Reject `None` values in model-level slots (masks are regime-level).
 
@@ -1024,7 +1035,7 @@ def _model_slot_value_errors(
     return errors
 
 
-def validate_model_slots(*, model_slots: Mapping[str, Mapping[str, object]]) -> None:
+def validate_model_slots(*, model_slots: Mapping[str, Mapping[str, SlotEntry]]) -> None:
     """Raise on merge-specific vocabulary errors in model-level slots."""
     errors = _model_slot_value_errors(model_slots=model_slots)
     if errors:
