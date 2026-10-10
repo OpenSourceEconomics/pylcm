@@ -108,6 +108,7 @@ included:
 - `PAN006` ⇒ a generic without its type arguments (`Callable`, `dict`, `type`, ...),
   which leaves them `Any`
 - `PAN007` ⇒ an alias not written as a `type X = ...` statement
+- `PAN008` ⇒ a `# noqa: PANxxx` on a line that reports no `PANxxx`
 
 Two placements are exempt by rule:
 

@@ -784,13 +784,8 @@ NOQA_SUPPRESSIONS = (
 NOQA_NON_SUPPRESSIONS = (
     pytest.param(
         "value: object  # noqa: PAN002 - another code\n",
-        [(1, "PAN001", "variable")],
+        [(1, "PAN001", "variable"), (1, "PAN008", "noqa")],
         id="another-code",
-    ),
-    pytest.param(
-        "# noqa: PAN001 - on the line above\nvalue: object\n",
-        [(2, "PAN001", "variable")],
-        id="line-above",
     ),
     pytest.param(
         "value: object  # noqa\n", [(1, "PAN001", "variable")], id="blanket-noqa"
@@ -809,6 +804,48 @@ NOQA_NON_SUPPRESSIONS = (
         "# annotation-exempt: heterogeneous=leaf\nvalue: object\n",
         [(2, "PAN001", "variable")],
         id="annotation-exempt-comment",
+    ),
+)
+
+STALE_NOQA = (
+    pytest.param(
+        "value: int  # noqa: PAN001 - nothing to suppress\n",
+        [(1, "PAN008", "noqa")],
+        id="precise-line",
+    ),
+    pytest.param(
+        "from typing import Any\n\n"
+        "value: object  # noqa: PAN001, PAN002 - only one applies\n",
+        [(3, "PAN008", "noqa")],
+        id="one-of-two-codes",
+    ),
+    pytest.param(
+        "value: int  # noqa: PAN001\n", [(1, "PAN008", "noqa")], id="without-reason"
+    ),
+    pytest.param(
+        "# noqa: PAN001 - on the line above\nvalue: object\n",
+        [(1, "PAN008", "noqa"), (2, "PAN001", "variable")],
+        id="line-above-its-finding",
+    ),
+    pytest.param(
+        "class C:\n"
+        "    def __eq__(self, other: object) -> bool: ...  # noqa: PAN001 - dunder\n",
+        [(2, "PAN008", "noqa")],
+        id="exempt-by-rule",
+    ),
+    pytest.param(
+        "value: int  # noqa: PAN004 - a retired code\n",
+        [(1, "PAN008", "noqa")],
+        id="unknown-code",
+    ),
+)
+
+USED_NOQA = (
+    pytest.param("value: int  # noqa: ARG001\n", id="another-linter"),
+    pytest.param("value: int  # noqa\n", id="blanket"),
+    pytest.param(
+        "value: object  # noqa: E501, PAN001 - beside another linter's code\n",
+        id="used-beside-another-code",
     ),
 )
 
@@ -1096,6 +1133,35 @@ def test_find_annotation_violations_asks_for_the_reason_of_a_bare_noqa(
 
     assert _details(find_annotation_violations(paths=[source])) == [
         (1, "PAN001", BARE_NOQA_DETAIL)
+    ]
+
+
+@pytest.mark.parametrize(("text", "expected"), STALE_NOQA)
+def test_find_annotation_violations_reports_noqa_codes_without_a_finding(
+    *, tmp_path: Path, text: str, expected: list[tuple[int, str, str]]
+) -> None:
+    """A `# noqa` that names a `PAN` code its line does not report is a finding."""
+    source = _write(tmp_path=tmp_path, text=text)
+
+    assert _summarize(find_annotation_violations(paths=[source])) == expected
+
+
+@pytest.mark.parametrize("text", USED_NOQA)
+def test_find_annotation_violations_leaves_other_noqa_codes_alone(
+    *, tmp_path: Path, text: str
+) -> None:
+    """Codes of other linters and blanket `noqa` comments are not this check's."""
+    source = _write(tmp_path=tmp_path, text=text)
+
+    assert find_annotation_violations(paths=[source]) == ()
+
+
+def test_find_annotation_violations_names_the_stale_noqa_code(tmp_path: Path) -> None:
+    """The stale-noqa finding names the code to remove."""
+    source = _write(tmp_path=tmp_path, text="value: int  # noqa: PAN002 - none\n")
+
+    assert _details(find_annotation_violations(paths=[source])) == [
+        (1, "PAN008", "`# noqa: PAN002` matches no finding on this line; remove it")
     ]
 
 
