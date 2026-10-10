@@ -93,7 +93,7 @@ _UNBUDGETED_SUBJECT_BLOCK_BYTES = 16 * 1024 * 1024
 _MIN_SUBJECT_ARGUMENT_BYTES = 64
 
 
-def _empty_widths() -> Mapping[str, int]:
+def _empty_widths() -> MappingProxyType[str, int]:
     """Supply an immutable empty specialization for an unbound compiler result."""
     return MappingProxyType({})
 
@@ -105,10 +105,12 @@ class CompiledSimulationProgram:
     executable: Callable[..., PytreeValue]
     """The exact executable selected by workspace planning."""
 
-    static_kwargs: Mapping[str, int]
+    static_kwargs: MappingProxyType[str, int]
     """Bindings used only by eager execution; compiled programs already bind them."""
 
-    widths: Mapping[str, int] = dataclasses.field(default_factory=_empty_widths)
+    widths: MappingProxyType[str, int] = dataclasses.field(
+        default_factory=_empty_widths
+    )
     """Concrete compiler specialization, never a cached budget admission."""
 
     memory: CompilerMemoryReservation | None = None
@@ -680,7 +682,7 @@ class _PreparedRoute:
     requirements: CoreExecutionRequirements
     """Subject-extent descriptor: planner axes and addressed value reads."""
 
-    widths: Mapping[str, int]
+    widths: MappingProxyType[str, int]
     """The selected candidate's width map, reused instead of re-derived.
 
     Pinned from the compiled candidate itself, so an explicit `ExecutionConfig`
@@ -871,7 +873,7 @@ def _dispatch_widths(
     configured: Mapping[str, int],
     residency: SimulationDispatchContext | None,
     width_ceilings: Mapping[str, int] = MappingProxyType({}),
-) -> Mapping[str, int]:
+) -> MappingProxyType[str, int]:
     """Resolve explicit, budgeted, or derived inner simulation widths.
 
     An unbudgeted simulation keeps the complete population in one outer chunk.

@@ -481,7 +481,7 @@ class SimulationProcessGrids:
         argument_buffers = measure_buffer_footprint(tree=placed)
         live = union_buffer_footprints(footprints=(self.snapshot(), argument_buffers))
         abstract = jax.tree.map(_abstract_grid_parameter, dict(placed))
-        static: Mapping[ReferenceName, StaticArgument] = MappingProxyType(
+        static: MappingProxyType[ReferenceName, StaticArgument] = MappingProxyType(
             {"n_points": n_points}
         )
         function: Callable[..., ValueND] = _compute_uniform_grid

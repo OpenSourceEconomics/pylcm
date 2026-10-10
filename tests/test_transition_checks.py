@@ -918,7 +918,7 @@ def test_solve_fixed_inventory_charges_derived_categorical_codes(
     """A standalone budgeted solve counts the code arrays among its fixed owners."""
     model = _budgeted_model_with_derived_law(phased=phased)
     codes = _derived_code_footprint(model=model, phased=phased)
-    trees: list[object] = []
+    trees: list[FootprintTree] = []
     original: Callable[..., object] = backward_induction_module.concrete_device_bytes
 
     def record(*, tree: FootprintTree) -> object:
