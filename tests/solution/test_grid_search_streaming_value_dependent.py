@@ -60,7 +60,7 @@ def _materialize_program(
     )
     regime = model._regimes[regime_name]
     edge_kwargs = cast(
-        "dict[str, Any]",
+        "Mapping[str, Any]",
         _edge_kwargs(
             regime=regime,
             regime_name=regime_name,
@@ -323,3 +323,36 @@ def test_value_dependent_reference_matches_dense_eager_jit_and_aot(width: int) -
 
     for actual in (eager, jitted, aot):
         _assert_tree_equal(actual=actual, expected=dense)
+
+
+def _consent_edge_kwargs() -> Mapping[str, Mapping[str, jax.Array]]:
+    """Build the gated-edge kernel argument of the consent fixture's source regime."""
+    model = _make_consent_model()
+    flat_params = model._process_params({"discount_factor": 0.95})
+    _next_V, _next_continuation, next_edges = _build_continuation_templates(
+        regimes=model._regimes,
+        flat_params=flat_params,
+    )
+    return _edge_kwargs(
+        regime=model._regimes["single"],
+        regime_name="single",
+        next_edge_to_V_arr=next_edges,
+    )
+
+
+def test_edge_kwargs_are_a_read_only_mapping() -> None:
+    """A source kernel's gated-edge argument bundle is a read-only view."""
+    assert type(_consent_edge_kwargs()) is MappingProxyType
+
+
+def test_edge_kwargs_round_trip_through_jax_tree_utilities() -> None:
+    """The gated-edge argument bundle rebuilds as a read-only view of its targets."""
+    edge_kwargs = _consent_edge_kwargs()
+    leaves, treedef = jax.tree_util.tree_flatten(edge_kwargs)
+
+    rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+
+    assert (type(rebuilt), {name: tuple(value) for name, value in rebuilt.items()}) == (
+        MappingProxyType,
+        {name: tuple(value) for name, value in edge_kwargs.items()},
+    )

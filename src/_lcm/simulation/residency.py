@@ -28,6 +28,7 @@ from types import MappingProxyType
 
 import jax
 
+from _lcm.typing import FootprintTree, PytreeByPeriod
 from lcm.exceptions import ExecutionPlanningError
 
 type _Spans = tuple[tuple[int, int], ...]
@@ -54,7 +55,7 @@ class DeviceBufferFootprint:
         )
 
 
-def measure_buffer_footprint(*, tree: object) -> DeviceBufferFootprint:
+def measure_buffer_footprint(*, tree: FootprintTree) -> DeviceBufferFootprint:
     """Measure every live addressable JAX payload in an explicitly supplied tree.
 
     Plain Python and NumPy leaves occupy no JAX device storage until placed. Opaque
@@ -136,7 +137,7 @@ def resident_bytes_by_device(
     live: DeviceBufferFootprint,
     arguments: DeviceBufferFootprint,
     devices: tuple[jax.Device, ...],
-) -> Mapping[jax.Device, int]:
+) -> MappingProxyType[jax.Device, int]:
     """Count live bytes outside the actual arguments already in compiler peaks.
 
     Subtract only each argument's covered address range on the same actual device.
@@ -277,7 +278,7 @@ class OwnerLedger:
         self._bindings[owner] = footprint
         self._extend(footprint=footprint)
 
-    def measure(self, *, owner: str, tree: object) -> None:
+    def measure(self, *, owner: str, tree: PytreeByPeriod) -> None:
         """Await and measure one owner tree exactly once, at its placement.
 
         The readiness barrier moves to the binding instead of repeating on every

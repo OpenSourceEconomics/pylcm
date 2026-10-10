@@ -1,4 +1,5 @@
 import dataclasses
+from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType, SimpleNamespace
 
 import jax
@@ -15,7 +16,7 @@ from _lcm.execution.core_program import (
     ResolvedCoreProgram,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.execution.output_layout import VALUE
+from _lcm.execution.output_layout import VALUE, PlannedCore, resolve_output_layout
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
@@ -30,8 +31,11 @@ from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.solution.backward_induction import (
+    _count_triples_per_lowering_key,
     _drain_V_arr_shards,
+    _group_cores_by_regime_period,
     _mark_reused_transfers,
+    _uncompiled,
     solve,
 )
 from _lcm.solution.contract import PeriodKernel
@@ -461,3 +465,74 @@ def test_two_source_cores_of_one_period_share_one_transfer() -> None:
     )
 
     assert _marks(marked=marked) == [True, True]
+
+
+def _planned_core(*, name: str) -> PlannedCore:
+    """One compiled core that is grouped but never called."""
+    return PlannedCore(
+        compiled=_never_called,
+        layout=resolve_output_layout(
+            core_key=name,
+            value_template=jnp.arange(3.0),
+            state_order=("wealth",),
+            output_roles=VALUE,
+        ),
+        tile_widths={},
+        name=name,
+    )
+
+
+def _never_called() -> jax.Array:
+    raise AssertionError("A grouped core must not be called.")
+
+
+def _grouped_cores() -> Mapping[tuple[str, int], Mapping[str, PlannedCore]]:
+    return _group_cores_by_regime_period(
+        {
+            ("working", 0, "main"): _planned_core(name="main"),
+            ("working", 0, "aux"): _planned_core(name="aux"),
+            ("retired", 0, "main"): _planned_core(name="main"),
+        }
+    )
+
+
+_WIDE = (("working", 0, "main"), (("consumption", 2),))
+_NARROW = (("working", 0, "main"), (("consumption", 1),))
+
+
+def _uncompiled_candidates() -> Mapping[Hashable, Hashable]:
+    return _uncompiled(keys={_WIDE: "shared", _NARROW: "narrow"}, compiled={})
+
+
+def _triples_per_lowering() -> Mapping[Hashable, int]:
+    return _count_triples_per_lowering_key(
+        lowering_keys={_WIDE: "shared", _NARROW: "shared"}
+    )
+
+
+_PLANNING_MAPS = pytest.mark.parametrize(
+    "build",
+    [_grouped_cores, _uncompiled_candidates, _triples_per_lowering],
+    ids=["cores_by_cell", "uncompiled", "triples_per_lowering"],
+)
+
+
+@_PLANNING_MAPS
+def test_planning_maps_are_read_only(
+    build: Callable[[], Mapping[Hashable, object]],
+) -> None:
+    """Planning maps handed from one compile stage to the next are read-only views."""
+    assert type(build()) is MappingProxyType
+
+
+@_PLANNING_MAPS
+def test_planning_maps_round_trip_through_jax_tree_utilities(
+    build: Callable[[], Mapping[Hashable, object]],
+) -> None:
+    """A planning map flattens and rebuilds as a read-only view of the same items."""
+    built = build()
+    leaves, treedef = jax.tree_util.tree_flatten(built)
+
+    rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+
+    assert (type(rebuilt), dict(rebuilt)) == (MappingProxyType, dict(built))

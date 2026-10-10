@@ -14,6 +14,7 @@ from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.simulate import _compute_starting_periods, _initial_own_stakeholder
+from _lcm.typing import FootprintTree
 from lcm import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from tests.simulation.test_budget_lifecycle import (
@@ -31,7 +32,7 @@ def _forbid_concrete(*_args: object, **_kwargs: object) -> object:
     raise _UnadmittedAllocationError("Population setup allocated before admission")
 
 
-def _memory(*, inputs: object, budget: int) -> SimulationMemory:
+def _memory(*, inputs: FootprintTree, budget: int) -> SimulationMemory:
     devices = (jax.devices()[0],)
     return SimulationMemory(
         budget_bytes=budget,

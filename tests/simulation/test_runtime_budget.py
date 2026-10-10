@@ -36,7 +36,7 @@ class _LiveArrays:
 
     def __call__(self) -> DeviceBufferFootprint:
         jax.block_until_ready(self.arrays)
-        return measure_buffer_footprint(tree=self.arrays)
+        return measure_buffer_footprint(tree=tuple(self.arrays))
 
 
 def _runtime(*, budget: int, enable_jit: bool = True) -> SimulationRuntime:
