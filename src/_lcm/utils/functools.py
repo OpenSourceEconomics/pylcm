@@ -11,10 +11,13 @@ and `dags` see the function they stand in for.
 import inspect
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TypeVar, cast
+from typing import TypeIs, TypeVar, cast
+
+import jax.numpy as jnp
+from jax import Array
 
 from _lcm.typing import ArrayTree, PytreeValue
-from lcm.typing import ReferenceName, UserFunction
+from lcm.typing import ReferenceName, UserFunction, UserFunctionResult, ValueND
 
 ReturnType = TypeVar("ReturnType")
 
@@ -181,7 +184,51 @@ def publish_signature(
     object.__setattr__(target, "__signature__", signature)
 
 
-def get_union_of_args(list_of_functions: Sequence[UserFunction]) -> set[str]:
+def is_user_function[T](value: T | UserFunction) -> TypeIs[UserFunction]:
+    """Whether a declared value is a user function rather than a constant or spec.
+
+    Every callable in a model declaration is a user function: its parameters are
+    resolved by name and its result is used as the model value it declares.
+
+    Args:
+        value: A declared value, such as a weight, a law or a kernel slot.
+
+    Returns:
+        Whether `value` is callable.
+
+    """
+    return callable(value)
+
+
+def array_result(value: UserFunctionResult) -> ValueND:
+    """Return a user function's result where its role requires an array.
+
+    A utility, a resources map, a constraint or a probability cell is evaluated on
+    arrays and returns one. A Python scalar, such as a constant function's value,
+    becomes a 0-d array; a mapping or tuple there is a model error.
+
+    Args:
+        value: What the user function returned.
+
+    Returns:
+        `value` as an array.
+
+    Raises:
+        TypeError: If `value` is a mapping or a tuple.
+
+    """
+    if isinstance(value, Array):
+        return value
+    if isinstance(value, float | int):
+        return jnp.asarray(value)
+    msg = (
+        f"A model function returned a {type(value).__name__} where an array is "
+        "required."
+    )
+    raise TypeError(msg)
+
+
+def get_union_of_args[R](list_of_functions: Sequence[Callable[..., R]]) -> set[str]:
     """Return the union of arguments of a list of functions.
 
     Args:

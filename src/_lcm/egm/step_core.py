@@ -50,7 +50,6 @@ from lcm.typing import (
     ScalarBool,
     ScalarFloat,
     ScalarInt,
-    UserFunction,
 )
 
 # Refined-row fields every envelope backend returns, ahead of the optional
@@ -101,10 +100,10 @@ class _EgmKernelPieces:
     euler_axis_in_V: int
     """Canonical axis of the Euler state in the published value-function array."""
 
-    utility_func: UserFunction
+    utility_func: Callable[..., FloatND]
     """The regime's concatenated utility function."""
 
-    inverse_marginal_utility_func: UserFunction | None
+    inverse_marginal_utility_func: Callable[..., FloatND] | None
     """The regime's concatenated inverse-marginal-utility function.
 
     `None` when the regime supplies no analytic inverse: EGM then inverts `u'`
@@ -112,7 +111,7 @@ class _EgmKernelPieces:
     at the call site.
     """
 
-    own_resources_func: UserFunction
+    own_resources_func: Callable[..., FloatND]
     """The regime's concatenated resources function."""
 
     feasibility_func: Callable[..., ScalarBool] | None
@@ -368,7 +367,7 @@ class _SolveOneCombo:
 class ResourcesOfState:
     """The regime's resources as a function of its Euler state, all else bound."""
 
-    resources_func: UserFunction
+    resources_func: Callable[..., FloatND]
     """The regime's concatenated resources function."""
 
     euler_state_name: StateName

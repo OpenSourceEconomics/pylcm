@@ -116,7 +116,7 @@ class CompiledSimulationProgram:
     compilation. `None` for an eager or host-driven callable, which never
     reaches budgeted dispatch."""
 
-    def __call__(self, **arguments: object) -> PytreeValue:
+    def __call__(self, **arguments: PytreeValue | ShapeDtypePytree) -> PytreeValue:
         """Execute with live arrays; retain no call arguments on the cache entry."""
         return self.executable(**arguments, **self.static_kwargs)
 
@@ -281,7 +281,13 @@ class SimulationRuntime:
         program: CoreProgram,
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
-    ) -> tuple[CompiledSimulationProgram, Mapping[str, object]] | None:
+    ) -> (
+        tuple[
+            CompiledSimulationProgram,
+            Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+        ]
+        | None
+    ):
         """Bind this call's live leaves onto a cached static preparation.
 
         Returns the selected executable together with freshly built and freshly
@@ -689,7 +695,9 @@ class _PreparedRoute:
     """The selected executable, already owned by the shared compiler cache."""
 
 
-def _operand_signature(*, arguments: Mapping[str, object]) -> Hashable | None:
+def _operand_signature(
+    *, arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
+) -> Hashable | None:
     """Return one argument tree's complete abstract identity.
 
     Tree structure — which also pins the argument names, so an added or dropped
@@ -944,7 +952,9 @@ def _simulation_memory(
     return compiled.memory
 
 
-def _require_abstract_arguments(*, arguments: Mapping[str, object]) -> None:
+def _require_abstract_arguments(
+    *, arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
+) -> None:
     """Require shape-only leaves with explicit layouts before abstract lowering."""
     if any(
         not isinstance(leaf, jax.ShapeDtypeStruct)
@@ -962,7 +972,7 @@ class _SimulationResidentBytes:
     """Call-owned inventory outside this candidate's compiler-counted operands."""
 
     live: DeviceBufferFootprint
-    arguments: Mapping[str, object]
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     devices: tuple[jax.Device, ...]
 
     def __call__(self, compiled: CompiledSimulationProgram) -> int:

@@ -49,6 +49,7 @@ from lcm.solver_api import (
     ValueArraySchema,
     ValueStore,
 )
+from lcm.typing import FloatND
 
 _REGIME = "working"
 _REPLAY_KEY = ArtifactKey(type_id="example.static_policy", schema_version=1)
@@ -186,7 +187,7 @@ class _ArtifactMutatingLazyEntry(solver_api_module._LazyEntry):
     def load_state(self) -> LoadState:
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:
         del template
         self.materialization_count += 1
         target_leaf = cast("jax.Array", self.target.value)
@@ -196,7 +197,7 @@ class _ArtifactMutatingLazyEntry(solver_api_module._LazyEntry):
             "value",
             jnp.asarray([99.0, 99.0], dtype=jnp.float32),
         )
-        return self.value
+        return cast("ArtifactPayload", self.value)
 
 
 class _ObjectDtypeLazyEntry(solver_api_module._LazyEntry):
@@ -206,7 +207,7 @@ class _ObjectDtypeLazyEntry(solver_api_module._LazyEntry):
     def load_state(self) -> LoadState:
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:
         del template
         return np.asarray([object()], dtype=object)
 
@@ -224,7 +225,7 @@ class _SaveEnvelopeMutatingLazyEntry(solver_api_module._LazyEntry):
         """Report an unloaded adversarial value."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
         """Replace caller fields after the save envelope should be owned."""
         if self.solution is None:
             raise AssertionError("The adversarial entry has no owning solution.")
@@ -251,7 +252,7 @@ class _SaveEnvelopeMutatingLazyEntry(solver_api_module._LazyEntry):
             MappingProxyType(dict.fromkeys(_REPLAY_REFS, OmissionReason.NOT_REQUESTED)),
         )
         object.__setattr__(solution, "_artifact_authority", MappingProxyType({}))
-        return self._value
+        return cast("ArtifactPayload", self._value)
 
 
 def _read_manifest(archive: h5py.File) -> dict[str, object]:
@@ -1168,7 +1169,7 @@ def test_failed_save_leaves_existing_archive_unchanged(tmp_path: Path) -> None:
     )
     original_bytes = path.read_bytes()
     source = _make_solution()
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         coordinate: source.value(period=coordinate[0], regime=coordinate[1])
         for coordinate in _VALUE_COORDINATES
     }
@@ -1248,7 +1249,7 @@ def test_save_rejects_weakly_typed_compatibility_versions(
     assert invalid == current
     assert type(invalid) is not int
     object.__setattr__(metadata, field_name, invalid)
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime): source.value(period=period, regime=regime)
         for period, regime in _VALUE_COORDINATES
     }
@@ -1324,7 +1325,7 @@ def test_save_rejects_armed_metadata_key_before_hashing(tmp_path: Path) -> None:
     hostile_key.armed = True
     metadata = dataclasses.replace(source.metadata)
     object.__setattr__(metadata, "solver_types", MappingProxyType(solver_types))
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         coordinate: source.value(period=coordinate[0], regime=coordinate[1])
         for coordinate in _VALUE_COORDINATES
     }
@@ -1361,7 +1362,7 @@ def test_save_rejects_nonexact_value_schema_shape_before_comparison(
     schemas[coordinate] = schema
     metadata = dataclasses.replace(source.metadata)
     object.__setattr__(metadata, "value_schemas", MappingProxyType(schemas))
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         item: source.value(period=item[0], regime=item[1])
         for item in _VALUE_COORDINATES
     }
@@ -1568,7 +1569,7 @@ def test_save_owns_the_complete_envelope_before_lazy_materialization(
 ) -> None:
     """A lazy value cannot mix caller mutations into the written ledger."""
     source = _make_solution()
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime): source.values[period][regime]
         for period, regime in _VALUE_COORDINATES
     }
@@ -1615,7 +1616,7 @@ def test_save_detaches_eager_artifact_before_lazy_value_mutates_it(
         "_StatefulPersistenceTree",
         source.replay_artifacts._raw(ref),
     )
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime): source.values[period][regime]
         for period, regime in _VALUE_COORDINATES
     }

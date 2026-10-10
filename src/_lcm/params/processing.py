@@ -36,7 +36,7 @@ from jax import Array
 from _lcm.dtypes import CanonicalArrayWriter, safe_to_float_dtype, safe_to_int_dtype
 from _lcm.engine import Regime
 from _lcm.params.edges import EDGES, user_path
-from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
+from _lcm.params.mapping_leaf import LeafEntry, MappingLeaf, UserMappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 from _lcm.typing import (
     EdgeParamsTemplate,
@@ -121,7 +121,7 @@ def process_params(
 
 def broadcast_to_template(
     *,
-    params: Mapping,
+    params: UserParams,
     template: ParamsTemplate,
     required: bool = True,
     already_consumed: frozenset[str] = frozenset(),
@@ -399,7 +399,7 @@ def _cast_shared(
 
 def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
     *,
-    value: UserParamsLeaf,
+    value: LeafEntry,
     name: str,
     array_writer: CanonicalArrayWriter | None,
 ) -> ParamsLeaf:

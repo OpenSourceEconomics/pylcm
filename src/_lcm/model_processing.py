@@ -76,6 +76,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.containers import get_field_names_and_values
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
+from _lcm.utils.functools import is_user_function
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.params import MappingLeaf
 from lcm.phased import Phased
@@ -403,7 +404,7 @@ def _reserved_age_errors(
                         if isinstance(raw, Phased)
                         else raw,
                     )
-                    if callable(joint.support):
+                    if is_user_function(joint.support):
                         functions[f"__joint_support__{target}__{name}"] = joint.support
             if "age" in functions:
                 continue
@@ -588,18 +589,15 @@ def _validate_all_variables_used(
             simulated_age = specialization_coordinate_at(
                 ages=ages, period=visited_periods[0]
             )
-            user_functions = cast(
-                "dict[FunctionName, UserFunction]",
-                {
-                    name: resolve_node(
-                        node=func,
-                        age=simulated_age
-                        if name.endswith("__simulate")
-                        else representative_age,
-                    )
-                    for name, func in user_functions.items()
-                },
-            )
+            user_functions = {
+                name: resolve_node(
+                    node=func,
+                    age=simulated_age
+                    if name.endswith("__simulate")
+                    else representative_age,
+                )
+                for name, func in user_functions.items()
+            }
 
         targets = [
             *roots,
@@ -816,13 +814,10 @@ def _validate_constraint_phase_invariance(
             representative_age = specialization_coordinate_at(
                 ages=ages, period=active_periods[0]
             )
-            ancestry_funcs = cast(
-                "dict[FunctionName, UserFunction]",
-                {
-                    name: resolve_node(node=func, age=representative_age)
-                    for name, func in solve_funcs.items()
-                },
-            )
+            ancestry_funcs = {
+                name: resolve_node(node=func, age=representative_age)
+                for name, func in solve_funcs.items()
+            }
 
         for constraint_name in user_regime.decomposed_constraints:
             ancestors = get_ancestors(

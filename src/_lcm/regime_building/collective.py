@@ -27,7 +27,7 @@ from _lcm.regime_building.argmax import (
     argmax_and_max,
 )
 from _lcm.typing import FunctionName, ParamsLeaf, QualifiedName, RegimeName, StateName
-from _lcm.utils.functools import get_union_of_args
+from _lcm.utils.functools import get_union_of_args, is_user_function
 from _lcm.zero_safe import sum_in_value_order, zero_safe_weighted_term
 from lcm.collective import ParetoObjective
 from lcm.typing import BoolND, FloatND, IntND, ReferenceName, UserFunction
@@ -331,11 +331,11 @@ def build_pareto_weights(
         else objective.weights
     )
     context = frozenset({"period", "age"})
-    per_stakeholder: dict[str, tuple[Callable[..., FloatND], tuple[str, ...]]] = {}
+    per_stakeholder: dict[str, tuple[UserFunction, tuple[str, ...]]] = {}
     param_names: set[QualifiedName] = set()
     for name in stakeholders:
         weight = declared[name]
-        if not callable(weight):
+        if not is_user_function(weight):
             per_stakeholder[name] = (_constant_weight(float(weight)), ())
             continue
         imputation_params: frozenset[str] = frozenset()

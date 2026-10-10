@@ -35,7 +35,7 @@ from _lcm.solution.contract import (
 )
 from _lcm.solution.kernel_output import ConsumedKernelOutput, consume_kernel_output
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.typing import RegimeName
+from _lcm.typing import ArtifactPayload, RegimeName
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -130,7 +130,7 @@ def test_kernel_output_is_public_dependency_safe_and_defensively_immutable() -> 
     assert not any(name == "_lcm" or name.startswith("_lcm.") for name in imports)
 
     key = ArtifactKey(type_id="example.continuation")
-    source = {key: "payload"}
+    source = {key: cast("ArtifactPayload", "payload")}
     output = KernelOutput(value=jnp.asarray([1.0]), continuations=source)
     source.clear()
 
@@ -193,8 +193,8 @@ def test_kernel_output_rejects_one_artifact_identity_in_multiple_channels(
         KernelOutput(
             value=jnp.asarray([1.0]),
             **{
-                left_channel: {key: "left"},
-                right_channel: {key: "right"},
+                left_channel: {key: cast("ArtifactPayload", "left")},
+                right_channel: {key: cast("ArtifactPayload", "right")},
             },
         )
 
@@ -286,7 +286,9 @@ def test_the_consumer_normalizes_an_accepted_numpy_value_to_jax() -> None:
             KernelOutput(
                 value=jnp.asarray([1.0]),
                 continuations={
-                    ArtifactKey(type_id="example.unknown", schema_version=1): object()
+                    ArtifactKey(type_id="example.unknown", schema_version=1): cast(
+                        "ArtifactPayload", object()
+                    )
                 },
             ),
             "Regime 'saving'.*period 2.*unconsumed.*example.unknown",
@@ -298,7 +300,7 @@ def test_the_consumer_normalizes_an_accepted_numpy_value_to_jax() -> None:
                     ArtifactKey(
                         type_id=EGM_CONTINUATION.type_id,
                         schema_version=2,
-                    ): object()
+                    ): cast("ArtifactPayload", object())
                 },
             ),
             "Regime 'saving'.*period 2.*version.*2.*expected.*1",
@@ -322,7 +324,7 @@ def test_the_consumer_refuses_every_unconsumed_artifact_channel(channel: str) ->
     output = KernelOutput(
         value=jnp.asarray([1.0]),
         continuations={EGM_CONTINUATION: _carry()},
-        **{channel: {key: object()}},
+        **{channel: {key: cast("ArtifactPayload", object())}},
     )
 
     with pytest.raises(
@@ -335,7 +337,7 @@ def test_the_consumer_refuses_every_unconsumed_artifact_channel(channel: str) ->
 def test_the_consumer_refuses_a_wrong_payload_under_the_continuation_key() -> None:
     output = KernelOutput(
         value=jnp.asarray([1.0]),
-        continuations={EGM_CONTINUATION: object()},
+        continuations={EGM_CONTINUATION: cast("ArtifactPayload", object())},
     )
 
     with pytest.raises(
@@ -410,7 +412,9 @@ def test_the_consumer_refuses_a_generated_authority_without_a_policy() -> None:
 def test_the_consumer_refuses_a_known_key_with_the_wrong_payload_type(
     *, channel: str, key: ArtifactKey
 ) -> None:
-    output = KernelOutput(value=jnp.asarray([1.0]), **{channel: {key: object()}})
+    output = KernelOutput(
+        value=jnp.asarray([1.0]), **{channel: {key: cast("ArtifactPayload", object())}}
+    )
 
     with pytest.raises(RuntimeError, match=f"'saving'.*period 2.*{key.type_id}"):
         _consume(output=output, continuation_key=None)

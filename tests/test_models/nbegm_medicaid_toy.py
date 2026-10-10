@@ -14,7 +14,7 @@ uses the `NBEGM` solver over the decorated case pieces.
 """
 
 import functools
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 
@@ -22,7 +22,7 @@ import lcm
 from _lcm.grids.base import Grid
 from lcm import LinSpacedGrid, Model, cash_on_hand_with_subsidy
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, FloatND, UserFunction
 
 # RegimeId, bequest, and the survival probabilities are re-exported: the
 # medicaid agreement test assembles its own validation models from these
@@ -80,8 +80,8 @@ def build_model(
     n_savings: int = 100,
     savings_max: float = 20.0,
     liquid_grid: Grid | None = None,
-    constraints: Mapping[str, Callable[..., object]] | None = None,
-    utility_function: Callable[..., object] | AgeSpecializedFunction = utility,
+    constraints: Mapping[str, UserFunction] | None = None,
+    utility_function: UserFunction | AgeSpecializedFunction = utility,
     include_split_output: bool = True,
     envelope_arithmetic: str = "certified",
 ) -> Model:

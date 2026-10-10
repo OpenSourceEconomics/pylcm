@@ -13,7 +13,6 @@ from dataclasses import Field
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
-    Any,
     ClassVar,
     Literal,
     Protocol,
@@ -168,23 +167,13 @@ type PytreeValue = (
     | None
 )
 
-# A value tree whose mapping levels may also be keyed by period, as the solve and
-# the simulation hold their per-period inputs, outputs and intermediates. Code that
-# only walks a tree with JAX's tree utilities takes it; code that reads a level by
-# name takes a `PytreeValue`. One level never mixes names and periods.
-if TYPE_CHECKING:
-    type PeriodPytree = (
-        PytreeValue
-        | tuple[PeriodPytree, ...]
-        | list[PeriodPytree]
-        | Mapping[str, PeriodPytree]
-        | Mapping[int, PeriodPytree]
-    )
-else:
-    # beartype cannot build a check for a recursive alias over `PytreeValue` with
-    # more than one self-referencing container, and these trees only reach JAX's
-    # tree utilities, so the claw checks nothing here.
-    type PeriodPytree = object
+# A value tree keyed by period at its top levels, as the solve and the simulation
+# hold their per-period inputs, outputs and intermediates. Period levels sit only at
+# the top or under other period levels; a site whose period levels sit below a name
+# level or inside a tuple spells that outer level, as in
+# `Mapping[RegimeName, PytreeByPeriod]`. One self-reference keeps the alias
+# checkable by the beartype claw.
+type PytreeByPeriod = PytreeValue | Mapping[int, PytreeByPeriod]
 
 # The abstract counterpart of a `PytreeValue`, for lowering and memory profiling.
 type ShapeDtypePytree = (
@@ -466,7 +455,7 @@ class QAndFFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,
+        **kwargs: QAndFArg,
     ) -> tuple[FloatND, BoolND]: ...
 
 
@@ -486,7 +475,7 @@ class MaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,
+        **kwargs: QAndFArg,
     ) -> FloatND | tuple[FloatND, BoolND]: ...
 
 
@@ -497,7 +486,9 @@ class EGMStepFunction(Protocol):
     Consumes the regime's exogenous state grids, the rolling EGM-carry
     mapping, and the regime's flat params; returns the regime's value-function
     array on the exogenous state grid, the carry its parents interpolate, and
-    the published consumption policy simulation interpolates off-grid.
+    the published consumption policy simulation interpolates off-grid. The
+    `_lcm_*` keywords are the static block widths the execution plan tiles the
+    kernel's loops with.
 
     Used for both type checking and beartype runtime checks.
 
@@ -507,7 +498,12 @@ class EGMStepFunction(Protocol):
         self,
         *,
         next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-        **kwargs: Any,
+        _lcm_stochastic_node_width: int | None = None,
+        _lcm_cell_width: int | None = None,
+        _lcm_savings_point_width: int | None = None,
+        _lcm_euler_point_width: int | None = None,
+        _lcm_envelope_cell_width: int = 1,
+        **kwargs: EconFunctionArg,
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]: ...
 
 
@@ -526,7 +522,7 @@ class EGMCarryProducer(Protocol):
         self,
         *,
         V_arr: FloatND,
-        **kwargs: Any,
+        **kwargs: EconFunctionArg,
     ) -> EGMCarry: ...
 
 
@@ -544,7 +540,7 @@ class ArgmaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,
+        **kwargs: QAndFArg,
     ) -> tuple[IntND, FloatND]: ...
 
 

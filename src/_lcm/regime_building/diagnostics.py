@@ -301,11 +301,11 @@ class _ReducedIntermediates:
 
 def _productmap_over_state_action_space(
     *,
-    func: Callable,
+    func: Callable[..., Intermediates],
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
     state_batch_sizes: dict[StateName, int],
-) -> Callable:
+) -> Callable[..., Intermediates]:
     """Wrap a scalar state-action function with productmap over actions then states.
 
     Matches the pattern used by `get_max_Q_over_a`: actions form the inner

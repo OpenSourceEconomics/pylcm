@@ -416,7 +416,7 @@ def test_the_charge_never_falls_below_a_fresh_measurement_of_the_live_owners(
 # ------------------------------------------------------------------ operand charging
 
 
-def _placement_arguments(*, device: jax.Device) -> Mapping[str, object]:
+def _placement_arguments(*, device: jax.Device) -> Mapping[str, PytreeValue]:
     """Mix an already-placed array with leaves placement still has to move."""
     return MappingProxyType(
         {
@@ -432,12 +432,12 @@ def _placement_arguments(*, device: jax.Device) -> Mapping[str, object]:
 
 def _place(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, PytreeValue],
     device: jax.Device,
     budget_bytes: int,
     live: DeviceBufferFootprint,
     argument_footprint: DeviceBufferFootprint | None = None,
-) -> Mapping[str, object]:
+) -> Mapping[str, PytreeValue]:
     """Place the same operands under the two spellings of the live inventory."""
     return place_simulation_arguments(
         arguments=arguments,

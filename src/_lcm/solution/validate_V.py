@@ -56,7 +56,7 @@ def _entry_support_cause(entered_process_names: tuple[str, ...]) -> str:
     )
 
 
-def validate_V[PartialSolution](
+def validate_V[PartialSolution: PeriodToRegimeToVArr](
     *,
     V_arr: FloatND,
     age: float | ScalarInt | ScalarFloat,
@@ -139,7 +139,7 @@ def validate_V[PartialSolution](
     raise exc
 
 
-def value_function_nan_error[PartialSolution](
+def value_function_nan_error[PartialSolution: PeriodToRegimeToVArr](
     *,
     n_nan: int,
     total: int,

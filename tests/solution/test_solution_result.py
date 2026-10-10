@@ -26,6 +26,7 @@ from _lcm.solution import backward_induction
 from _lcm.solution.contract import GENERATED_REPLAY_AUTHORITY
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
+    ArtifactPayload,
     FlatParams,
 )
 from lcm import ExecutionConfig, LinSpacedGrid, Model
@@ -54,7 +55,7 @@ from lcm.solver_api import (
     ValueStore,
 )
 from lcm.solvers import MSSEnvelope
-from lcm.typing import UserInitialConditions, UserParams
+from lcm.typing import FloatND, UserInitialConditions, UserParams
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
     _make_dissolution_model,
@@ -89,7 +90,7 @@ class _RaisingLazyValueEntry(solver_api_module._LazyEntry):
         """Report that the adversarial entry has not materialized."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
         """Raise the configured decoder exception."""
         raise self._error
 
@@ -186,7 +187,7 @@ def test_artifact_store_is_immutable_and_projects_one_artifact_type() -> None:
         ArtifactRef(period=0, regime="alive", key=policy): "p0",
         ArtifactRef(period=0, regime="alive", key=diagnostic): "d0",
     }
-    store = ArtifactStore(refs)
+    store = ArtifactStore(cast("Mapping[ArtifactRef, ArtifactPayload]", refs))
 
     assert dict(store) == refs
     projected = store.project(policy)
@@ -264,7 +265,7 @@ def test_store_lookups_reject_nonexact_coordinates_before_hashing() -> None:
 
     key = ArtifactKey(type_id="example.policy")
     ref = ArtifactRef(period=0, regime="alive", key=key)
-    artifacts = ArtifactStore({ref: object()})
+    artifacts = ArtifactStore({ref: cast("ArtifactPayload", object())})
     hostile_ref = replace(ref)
     object.__setattr__(hostile_ref, "regime", hostile_regime)
 
@@ -364,7 +365,7 @@ def test_model_rejects_a_present_inapplicable_artifact() -> None:
     )
     malformed = replace(
         solution,
-        replay_artifacts=ArtifactStore({policy_ref: object()}),
+        replay_artifacts=ArtifactStore({policy_ref: cast("ArtifactPayload", object())}),
         omissions={
             ref: reason
             for ref, reason in solution.omissions.items()
@@ -874,7 +875,7 @@ def test_lazy_value_decoder_errors_cross_the_public_boundary(
     """Normalize decoder mechanics without hiding archive-domain exceptions."""
     model, params, initial_conditions = _small_grid_search_inputs()
     solution = model.solve(params=params, log_level="off")
-    entries: dict[object, object] = {
+    entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime_name): value
         for period, regime_to_value in solution.values.items()
         for regime_name, value in regime_to_value.items()
@@ -1519,7 +1520,7 @@ def _with_artifact(
 ) -> SolutionResult:
     """Return a result with one test artifact added to the named store."""
     store = cast("ArtifactStore", getattr(solution, channel))
-    replacement = ArtifactStore(dict(store) | {ref: object()})
+    replacement = ArtifactStore(dict(store) | {ref: cast("ArtifactPayload", object())})
     return replace(
         solution,
         **{channel: replacement},

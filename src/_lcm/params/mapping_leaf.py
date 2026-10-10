@@ -1,7 +1,7 @@
 """A Mapping wrapper that is a JAX pytree but not itself a Mapping."""
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import jax
 
@@ -40,19 +40,14 @@ class UserMappingLeaf:
     __slots__ = ("data",)
 
     if TYPE_CHECKING:
-        data: Mapping[str, UserParamsLeaf]
+        data: Mapping[str, LeafEntry]
 
     def __init__(self, data: Mapping[str, LeafEntry]) -> None:
         from _lcm.utils.containers import (  # noqa: PLC0415
             ensure_containers_are_immutable,
         )
 
-        # Consumers read `data` in its concrete-value form; nested containers
-        # arrive frozen, and JAX's abstract children stand in for values while
-        # it traces.
-        self.data = cast(
-            "Mapping[str, UserParamsLeaf]", ensure_containers_are_immutable(data)
-        )
+        self.data = ensure_containers_are_immutable(data)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({dict(self.data)!r})"
@@ -85,9 +80,7 @@ class MappingLeaf(UserMappingLeaf):
         data: Mapping[str, ParamsLeaf]
 
 
-def _user_flatten(
-    leaf: UserMappingLeaf,
-) -> tuple[list[UserParamsLeaf], tuple[str, ...]]:
+def _user_flatten(leaf: UserMappingLeaf) -> tuple[list[LeafEntry], tuple[str, ...]]:
     keys = tuple(sorted(leaf.data.keys()))
     values = [leaf.data[k] for k in keys]
     return values, keys
@@ -95,14 +88,14 @@ def _user_flatten(
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _user_unflatten(
-    keys: tuple[str, ...], values: Sequence[UserParamsLeaf | PytreeChild]
+    keys: tuple[str, ...], values: Sequence[LeafEntry]
 ) -> UserMappingLeaf:
     return UserMappingLeaf(dict(zip(keys, values, strict=True)))
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _canonical_unflatten(
-    keys: tuple[str, ...], values: Sequence[UserParamsLeaf | PytreeChild]
+    keys: tuple[str, ...], values: Sequence[LeafEntry]
 ) -> MappingLeaf:
     return MappingLeaf(dict(zip(keys, values, strict=True)))
 

@@ -22,6 +22,7 @@ from _lcm.simulation.residency import (
     measure_buffer_footprint,
     resident_bytes_by_device,
 )
+from _lcm.typing import PytreeValue
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -446,7 +447,7 @@ def test_joint_mapping_owners_expose_all_array_leaves(
     original_set_derived = SimulationMemory.set_derived
 
     # keyword-only-exempt: library-callback=SimulationMemory.set_derived
-    def set_derived_and_record(self: SimulationMemory, tree: object) -> None:
+    def set_derived_and_record(self: SimulationMemory, tree: PytreeValue) -> None:
         leaves = [leaf for leaf in jax.tree.leaves(tree) if isinstance(leaf, jax.Array)]
         if leaves:
             observed_leaf_counts.append(len(leaves))
@@ -613,7 +614,7 @@ def test_joint_owner_contexts_restore_memory_after_probability_error(
     original_set_derived = SimulationMemory.set_derived
 
     # keyword-only-exempt: library-callback=SimulationMemory.set_derived
-    def set_derived_and_keep(self: SimulationMemory, tree: object) -> None:
+    def set_derived_and_keep(self: SimulationMemory, tree: PytreeValue) -> None:
         if all(self is not memory for memory in memories):
             memories.append(self)
         original_set_derived(self, tree)

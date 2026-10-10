@@ -11,8 +11,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import fields
 from itertools import chain
 from types import MappingProxyType
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar, cast, overload
 
+from _lcm.params.mapping_leaf import LeafEntry
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.typing import ScalarInt
 
@@ -136,8 +137,16 @@ def first_non_none(*args: T | None) -> T:
     raise ValueError("All arguments are None")
 
 
+@overload
+def _make_immutable(value: LeafEntry) -> LeafEntry: ...
+@overload
+def _make_immutable(value: _ContainerValue) -> _ContainerValue: ...
 def _make_immutable(value: _ContainerValue) -> _ContainerValue:
-    """Recursively convert a value to its immutable equivalent."""
+    """Recursively convert a value to its immutable equivalent.
+
+    A frozen params leaf entry is again a leaf entry: mappings become
+    `MappingProxyType`, lists become tuples, and leaves are returned as they are.
+    """
     if isinstance(value, (UserMappingLeaf, UserSequenceLeaf)):
         return value  # already immutable by construction
     if isinstance(value, (MappingProxyType, tuple, frozenset)):

@@ -29,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypedDict, Unpack
+from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from _lcm.continuation import ContinuationPayload
     from _lcm.engine import StateActionSpace
     from _lcm.time import TimeAxis
-    from _lcm.typing import FlatParams, PytreeValue
+    from _lcm.typing import FlatParams, FlatRegimeParams, PytreeValue
     from lcm._solver_api.replay import KernelOutput
     from lcm.solvers import AdaptiveOuterMesh
 
@@ -77,12 +77,19 @@ class KernelCall(TypedDict):
     logger: logging.Logger
 
 
+class _Capture(TypedDict, total=False):
+    """The kernel and its arguments, recorded when the capture period is entered."""
+
+    kernel: _nnbegm._NNBEGMPeriodKernel
+    kwargs: KernelCall
+
+
 @dataclass
 class PilotProblem:
     """The captured period kernel plus everything a node solve needs."""
 
     kernel: _nnbegm._NNBEGMPeriodKernel
-    kernel_kwargs: dict
+    kernel_kwargs: KernelCall
     adjuster_cores: Mapping[str, Callable[..., PytreeValue]]
     theta_key: str
     theta_baseline: float
@@ -132,7 +139,7 @@ def capture_pilot_problem(
             value_rtol=1e-3,
             golden_iterations=24,
         )
-    captured: dict = {}
+    captured: _Capture = {}
     original_call = _nnbegm._NNBEGMPeriodKernel.__call__  # noqa: SLF001
 
     def capturing_call(
@@ -185,6 +192,10 @@ def capture_pilot_problem(
             f"found {theta_keys}"
         )
         raise RuntimeError(msg)
+    theta_baseline = regime_params[theta_keys[0]]
+    if not isinstance(theta_baseline, jax.Array):
+        msg = f"flat param {theta_keys[0]!r} is not an array: {theta_baseline!r}"
+        raise TypeError(msg)
     return PilotProblem(
         kernel=kernel,
         kernel_kwargs=kw,
@@ -192,7 +203,7 @@ def capture_pilot_problem(
             compiled_cores=kw["compiled_cores"], role="adjuster"
         ),
         theta_key=theta_keys[0],
-        theta_baseline=float(regime_params[theta_keys[0]]),
+        theta_baseline=float(theta_baseline),
     )
 
 
@@ -208,11 +219,13 @@ def node_value(
     kw = problem.kernel_kwargs
     regime_name = problem.kernel.regime_name
     base = kw["flat_params"]
-    flat_params = MappingProxyType(
+    # A regime's name keys its own flat params; only `edges` keys the edge level.
+    regime_params = cast("FlatRegimeParams", base[regime_name])
+    flat_params: FlatParams = MappingProxyType(
         {
             **dict(base),
             regime_name: MappingProxyType(
-                {**base[regime_name], problem.theta_key: jnp.asarray(theta)}
+                {**regime_params, problem.theta_key: jnp.asarray(theta)}
             ),
         }
     )

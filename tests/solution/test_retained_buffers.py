@@ -19,6 +19,7 @@ from _lcm.persistence import solution as persistence
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.model_authority import SolutionAuthority
+from _lcm.typing import ArtifactPayload
 from lcm._solver_api import authority as authority_module
 from lcm._solver_api.entries import (
     _canonical_artifact_entry_from_authority,
@@ -26,6 +27,7 @@ from lcm._solver_api.entries import (
     _LazyEntry,
 )
 from lcm.exceptions import ExecutionPlanningError
+from lcm.model import _ResolvedSolution
 from lcm.persistence import load_solution, save_solution
 from lcm.solver_api import (
     ArtifactStore,
@@ -176,17 +178,13 @@ def test_owned_and_every_previously_consumed_view_remain_in_inventory() -> None:
         authority=SolutionAuthority(values=empty, replay=empty),
     )
     object.__setattr__(solution, "_engine_view", view)
-    solution._consumed_views["first"] = (
-        {0: {"working": arrays[3]}},
-        {0: {"working": arrays[4]}},
-        {},
-        {},
+    solution._consumed_views[("first", "params")] = cast(
+        "_ResolvedSolution",
+        ({0: {"working": arrays[3]}}, {0: {"working": arrays[4]}}, {}, {}),
     )
-    solution._consumed_views["second"] = (
-        {0: {"working": arrays[5]}},
-        {},
-        {0: {"working": arrays[6]}},
-        {},
+    solution._consumed_views[("second", "params")] = cast(
+        "_ResolvedSolution",
+        ({0: {"working": arrays[5]}}, {}, {0: {"working": arrays[6]}}, {}),
     )
     expected = (*_backing_values(solution), *arrays, flags)
     assert {id(array) for array in _buffers(solution)} == {
@@ -204,7 +202,7 @@ def test_consumed_reader_retains_snapshot_authorities_and_grid_context() -> None
     reader = PreparedReplayReader(
         route=cast("ExecutableReplayRoute", Mock(spec=ExecutableReplayRoute)),
         snapshot=ReplayRouteSnapshot(
-            artifacts={ref.key: payload},
+            artifacts={ref.key: cast("ArtifactPayload", payload)},
             authorities={ref.key: base._artifact_authority[ref]},
             metadata=base.metadata,
         ),
@@ -218,7 +216,9 @@ def test_consumed_reader_retains_snapshot_authorities_and_grid_context() -> None
         ),
     )
     solution = replace(base, replay_artifacts=ArtifactStore())
-    solution._consumed_views["consumer"] = ({}, {}, {}, {0: {"working": reader}})
+    solution._consumed_views[("consumer", "params")] = cast(
+        "_ResolvedSolution", ({}, {}, {}, {0: {"working": reader}})
+    )
     authority = base._artifact_authority[ref]
     binding = authority_module._ARTIFACT_AUTHORITY_TEMPLATE_BINDINGS[id(authority)]
     assert binding.snapshot is not None
@@ -242,7 +242,7 @@ class _OpaqueLazy(_LazyEntry):
     def load_state(self) -> LoadState:
         raise AssertionError("Unknown lazy state was called")
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(self, *, template: object | None = None) -> ArtifactPayload:
         del template
         raise AssertionError("Unknown lazy decoder was called")
 
@@ -259,7 +259,9 @@ def test_unknown_raw_artifact_is_refused_without_pytree_callbacks() -> None:
     """An opaque payload may retain arrays outside any declared tree leaves."""
     base = _make_solution()
     ref = next(iter(base.replay_artifacts))
-    solution = replace(base, replay_artifacts=ArtifactStore({ref: object()}))
+    solution = replace(
+        base, replay_artifacts=ArtifactStore({ref: cast("ArtifactPayload", object())})
+    )
     with pytest.raises(ExecutionPlanningError, match="unsupported retained"):
         _buffers(solution)
 

@@ -4,7 +4,7 @@ import dataclasses
 import math
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
-from typing import Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 import jax
 import numpy as np
@@ -18,9 +18,25 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
-from _lcm.typing import HostArray
+from _lcm.typing import HostArray, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
+
+if TYPE_CHECKING:
+    # An operand tree as callers hand it to placement: a value tree, its abstract
+    # counterpart, or a process-grid parameter, which may be a Python complex.
+    type _Operand = (
+        PytreeValue
+        | ShapeDtypePytree
+        | complex
+        | tuple[_Operand, ...]
+        | list[_Operand]
+        | Mapping[str, _Operand]
+    )
+else:
+    # beartype cannot build a check for a recursive alias over `PytreeValue` with
+    # more than one self-referencing container, and placement only walks the tree.
+    type _Operand = object
 
 
 @runtime_checkable
@@ -33,7 +49,7 @@ class SubjectArgumentNames(Protocol):
         ...
 
 
-def place_simulation_arguments[T](
+def place_simulation_arguments[T: _Operand](
     *,
     arguments: Mapping[str, T],
     subject_arg_names: tuple[ReferenceName, ...],
@@ -117,7 +133,7 @@ def place_simulation_arguments[T](
 
 def _require_operand_headroom(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, _Operand],
     subject_arg_names: tuple[ReferenceName, ...],
     subject_sharding: jax.sharding.Sharding,
     shared_sharding: jax.sharding.Sharding,
@@ -203,8 +219,8 @@ def _required_operand_bytes(
 
 
 def _operand_leaves(
-    *, tree: object, protected: frozenset[tuple[str | int, ...]]
-) -> Iterator[object]:
+    *, tree: _Operand, protected: frozenset[tuple[str | int, ...]]
+) -> Iterator[_Operand]:
     """Walk the same operand containers while leaving addressed values untouched."""
     if () in protected:
         return
@@ -236,10 +252,10 @@ def _paths_below(
 
 def _place_operand_tree(
     *,
-    tree: object,
+    tree: _Operand,
     sharding: jax.sharding.Sharding,
     protected: frozenset[tuple[str | int, ...]],
-) -> object:
+) -> _Operand:
     """Rebuild only operand containers around the explicitly protected leaves."""
     if () in protected:
         return tree
@@ -280,7 +296,7 @@ def _place_operand_tree(
     return _place_operand_leaf(leaf=tree, sharding=sharding)
 
 
-def _place_operand_leaf(*, leaf: object, sharding: jax.sharding.Sharding) -> object:
+def _place_operand_leaf(*, leaf: _Operand, sharding: jax.sharding.Sharding) -> _Operand:
     """Move a numeric leaf while preserving already-correct buffers and metadata."""
     if isinstance(leaf, jax.Array) and leaf.sharding == sharding:
         return leaf

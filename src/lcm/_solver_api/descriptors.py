@@ -3,10 +3,10 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import (
-    TYPE_CHECKING,
-)
 
+from beartype import beartype
+
+from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.identity import (
     ArtifactChannel,
     ArtifactKey,
@@ -22,31 +22,17 @@ from lcm._solver_api.identity import (
     _CategoricalDomainsBoundary,
 )
 
-if TYPE_CHECKING:
-    type _MappingNameBoundary = str
-    type _TreePathBoundary = TreePath
-    type _CategoryDomainBoundary = CategoryDomain
-    type _RuntimeTypeBoundary = ArtifactRuntimeType
-    type _LeafAuthorityBoundary = LeafAuthority
-else:
-    # Each raw key and value of a public mapping is checked by exact type in the
-    # body before it is hashed or inserted, so the claw checks nothing here and no
-    # `__class__` or `__hash__` of a plugin object runs first.
-    type _MappingNameBoundary = object
-    type _TreePathBoundary = object
-    type _CategoryDomainBoundary = object
-    type _RuntimeTypeBoundary = object
-    type _LeafAuthorityBoundary = object
 
-
-def _capture_nonempty_mapping_name(value: _MappingNameBoundary) -> str:
+@beartype(conf=SOLVER_API_CONF)
+def _capture_nonempty_mapping_name(value: str) -> str:
     """Canonicalize one exact nonempty mapping-name key before hashing it."""
     if type(value) is not str or not value:
         raise TypeError("Artifact mapping keys must be nonempty exact strs.")
     return value
 
 
-def _capture_artifact_tree_path(value: _TreePathBoundary) -> TreePath:
+@beartype(conf=SOLVER_API_CONF)
+def _capture_artifact_tree_path(value: TreePath) -> TreePath:
     """Canonicalize one exact TreePath before hashing it."""
     if type(value) is not tuple:
         raise TypeError("Artifact mapping keys must be exact TreePaths.")
@@ -56,15 +42,17 @@ def _capture_artifact_tree_path(value: _TreePathBoundary) -> TreePath:
     return tuple(component for component in components)
 
 
-def _capture_category_domain(value: _CategoryDomainBoundary) -> CategoryDomain:
+@beartype(conf=SOLVER_API_CONF)
+def _capture_category_domain(value: CategoryDomain) -> CategoryDomain:
     """Require one exact categorical-domain value before insertion."""
     if type(value) is not CategoryDomain:
         raise TypeError("Artifact categorical domains must be exact CategoryDomains.")
     return value
 
 
+@beartype(conf=SOLVER_API_CONF)
 def _capture_container_runtime_type(
-    value: _RuntimeTypeBoundary,
+    value: ArtifactRuntimeType,
 ) -> ArtifactRuntimeType:
     """Require one runtime-type declaration before insertion."""
     if not isinstance(value, type):
@@ -72,7 +60,8 @@ def _capture_container_runtime_type(
     return value
 
 
-def _capture_leaf_authority(value: _LeafAuthorityBoundary) -> LeafAuthority:
+@beartype(conf=SOLVER_API_CONF)
+def _capture_leaf_authority(value: LeafAuthority) -> LeafAuthority:
     """Require one exact leaf authority and validate its path before insertion."""
     if type(value) is not LeafAuthority:
         raise TypeError("Artifact leaves must be exact LeafAuthority objects.")

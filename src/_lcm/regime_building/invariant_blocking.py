@@ -36,6 +36,7 @@ from _lcm.time import TimeAxis
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import InvariantBlockSchedule
+from lcm.typing import UserAge
 
 _REMEDY = (
     "Remove the state from ExecutionConfig.invariant_block_widths to solve it "
@@ -225,7 +226,7 @@ def admit_invariant_blocking(
     laws: RegimeLaws,
     regimes: Mapping[RegimeName, Regime],
     reachability: ModelReachability,
-    initial_nodes: frozenset[tuple[object, RegimeName]],
+    initial_nodes: frozenset[tuple[UserAge, RegimeName]],
     ages: TimeAxis,
     fixed_component_splits: Mapping[StateName, FixedComponentSplit],
     block_widths: Mapping[StateName, int],

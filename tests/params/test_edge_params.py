@@ -15,6 +15,7 @@ from typing import cast
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from jax import Array
 
 from _lcm.params.edges import edge_params, regime_kernel_params
@@ -482,8 +483,13 @@ def test_kernel_params_refuse_a_key_both_the_regime_and_its_edges_hold():
 
 def test_edge_callables_refuse_a_value_that_is_no_law_form():
     """A declared law cell that is neither a law nor a callable is named by type."""
-    with pytest.raises(TypeError, match="'float'"):
-        list(iter_edge_callables(law={"dead": 0.5}, path=()))
+    with pytest.raises(BeartypeCallHintParamViolation, match=r"value float 0\.5"):
+        list(
+            iter_edge_callables(
+                law={"dead": 0.5},  # ty: ignore[invalid-argument-type]
+                path=(),
+            )
+        )
 
 
 def test_invalid_law_argument_name_is_reported_at_its_edges_path():

@@ -115,7 +115,7 @@ def _evaluate_operands(q: _QAndF) -> Callable[..., Any]:
     @jax.jit
     def evaluate(
         *, cell: dict[str, Any], values: MappingProxyType
-    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    ) -> tuple[jax.Array | bool, jax.Array, jax.Array, jax.Array | bool]:
         utility, feasible = q.U_and_F(**cell)
         continuation, _ = q.compute_CE(
             next_regime_to_V_arr=values,

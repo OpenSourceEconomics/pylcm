@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 # runtime check reads the exception attributes, so the alias is imported for
 # type checking only.
 if TYPE_CHECKING:
-    from _lcm.typing import JSONValue
+    from _lcm.typing import JSONValue, PeriodToRegimeToVArr
 
 
 class PyLCMError(Exception):
@@ -33,7 +33,7 @@ class InvalidValueFunctionError(PyLCMError):
 
     """
 
-    partial_solution: object = None
+    partial_solution: PeriodToRegimeToVArr | None = None
     diagnostics: Mapping[str, JSONValue] | None = None
 
 

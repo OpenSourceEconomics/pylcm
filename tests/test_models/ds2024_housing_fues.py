@@ -23,6 +23,7 @@ from typing import Literal
 
 import jax.numpy as jnp
 
+from _lcm.typing import DataclassInstance
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -59,7 +60,7 @@ from tests.test_models.ds2024_housing import (
 START_AGE = 60
 
 
-def _make_housing_levels(*, n_housing: int) -> type:
+def _make_housing_levels(*, n_housing: int) -> type[DataclassInstance]:
     """Create an ordered categorical with one field per discrete housing level.
 
     The class name is model-unique so it never collides with another model's

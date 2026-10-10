@@ -12,7 +12,14 @@ from collections import OrderedDict
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    NotRequired,
+    Protocol,
+    TypedDict,
+    cast,
+    runtime_checkable,
+)
 
 import jax
 import jax.numpy as jnp
@@ -50,6 +57,7 @@ from _lcm.grids import (
     PiecewiseLogSpacedGrid,
 )
 from _lcm.model_graph import (
+    DroppedCells,
     ModelGraph,
     bind_edge_laws,
     collect_declared_transitions,
@@ -72,7 +80,7 @@ from _lcm.params.processing import (
     cast_params_to_canonical_dtypes,
     materialize_granular_transition_params,
 )
-from _lcm.params.regime_template import create_edge_vocabulary
+from _lcm.params.regime_template import EdgeVocabulary, create_edge_vocabulary
 from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
@@ -96,6 +104,7 @@ from _lcm.regime_building.finalize import (
     finalize_regimes,
 )
 from _lcm.regime_building.fixed_components import (
+    FixedComponentSplit,
     factor_fixed_components,
     rename_split_params,
     split_initial_conditions,
@@ -230,6 +239,7 @@ from _lcm.time_validation import validate_time_declarations
 from _lcm.transition_checks import validate_regime_selection, validate_transitions
 from _lcm.typing import (
     ActionName,
+    ArtifactPayload,
     FlatParams,
     FunctionName,
     InitialConditions,
@@ -237,6 +247,7 @@ from _lcm.typing import (
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
+    PytreeByPeriod,
     PytreeValue,
     RegimeName,
     RegimeNamesToIds,
@@ -259,6 +270,7 @@ from _lcm.utils.logging import (
 )
 from _lcm.variables import carried_state_grids, from_regime, get_grids
 from lcm._solver_api.authority import _ArrayCopier
+from lcm._solver_api.contract import ArtifactContractValue
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import (
@@ -344,7 +356,9 @@ else:
     type _ArtifactStoreBoundary = object
 
 
-def _same_exactly_typed(*, actual: object, expected: object) -> bool:
+def _same_exactly_typed(
+    *, actual: ArtifactContractValue, expected: ArtifactContractValue
+) -> bool:
     """Compare trusted metadata without admitting equal values of another type."""
     return _same_exact_artifact_contract(
         actual=actual,
@@ -359,6 +373,10 @@ type _EntryInputs = (
     | pd.DataFrame
     | tuple[Mapping[StateName, jax.Array], Mapping[ActionName, jax.Array] | None]
 )
+
+# The caller's array owners a solve keeps charged while it runs, in groups; a group
+# resolved from a consumed solution holds per-period trees.
+type _RetainedInputArrays = tuple[tuple[PytreeByPeriod, ...], ...]
 
 type _PeriodToRegimeToReplayReader = MappingProxyType[
     int, MappingProxyType[RegimeName, PreparedReplayReader]
@@ -377,8 +395,44 @@ type _ResolvedSolution = tuple[
 class _ReplayPayloadSource(Protocol):
     """How a plugin replay payload is obtained from a consumed solution."""
 
-    def __call__(self, *, ref: ArtifactRef, authority: ArtifactAuthority) -> object:
+    def __call__(
+        self, *, ref: ArtifactRef, authority: ArtifactAuthority
+    ) -> ArtifactPayload:
         """Return the payload stored at `ref` in the form `authority` declares."""
+
+
+class _PickledModel(TypedDict):
+    """The attributes a pickled `Model` carries.
+
+    `__setstate__` rebuilds everything else: the per-process state, the published
+    initial nodes and the binding seal. Archives written before the model clock,
+    the ephemeral identity and the structure digest lack those entries.
+    """
+
+    description: str | None
+    durable_identity: NotRequired[bool]
+    ages: AgeGrid | None
+    _time: NotRequired[ModelTime]
+    n_periods: int
+    fixed_params: UserParams
+    _edges: ModelEdges
+    _declared_transitions: MappingProxyType[RegimeName, tuple[Transition, ...]]
+    _fixed_component_splits: Mapping[str, FixedComponentSplit]
+    _solution_model_instance_id: NotRequired[str]
+    _declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
+    _cells_without_edges: MappingProxyType[tuple[RegimeName, int], DroppedCells]
+    pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
+    user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
+    regime_names_to_ids: RegimeNamesToIds
+    _execution: ResolvedExecution
+    reachability: ModelReachability
+    _graph: ModelGraph
+    _params_template: ParamsTemplate
+    _regimes: MappingProxyType[RegimeName, Regime]
+    stakeholder_names_to_ids: MappingProxyType[str, int]
+    enable_jit: bool
+    simulation_output_dtypes: MappingProxyType[str, pd.CategoricalDtype]
+    _model_structure_fingerprint: NotRequired[str]
 
 
 # Distinct grid supports whose declared solution authority a model keeps.
@@ -472,9 +526,9 @@ def _materialize_artifact_projection(
     authority: SolutionAuthority,
     required_only: bool = False,
     array_copier: _ArrayCopier | None = None,
-) -> MappingProxyType[int, MappingProxyType[RegimeName, object]]:
+) -> MappingProxyType[int, MappingProxyType[RegimeName, ArtifactPayload]]:
     """Materialize one consumed replay projection into an immutable snapshot."""
-    projected: dict[int, dict[RegimeName, object]] = {}
+    projected: dict[int, dict[RegimeName, ArtifactPayload]] = {}
     for ref in store:
         if ref.key != key:
             continue
@@ -1189,30 +1243,49 @@ class Model:
             f"n_periods={self.n_periods}{pruned_part})"
         )
 
-    def __getstate__(self) -> dict[str, object]:
-        """Return a copy of `__dict__` with per-process state removed.
+    def __getstate__(self) -> _PickledModel:
+        """Return the attributes a restored model needs.
 
-        Drops runtime executors and their lock, declared-authority state,
-        the parameter projection, and sealed bindings that name this process's
-        namespaces and closure cells. `__setstate__` rebuilds them.
+        Leaves out runtime executors and their lock, declared-authority state,
+        the parameter projection, the creating process, the published initial
+        nodes, and sealed bindings that name this process's namespaces and
+        closure cells. `__setstate__` rebuilds them. The attributes an archive may
+        lack are written only when the model holds them.
         """
-        state = self.__dict__.copy()
-        for transient in (
-            "_simulate_compile_lock",
-            "_simulate_runtime_regimes",
-            "_simulate_entry_operations",
-            "_declared_authority_cache",
-            "_declared_authority_lock",
-            "_validated_selection_params",
-            "_gather_checks",
-            "_structural_blueprints",
-            "_solution_param_projection",
-            "_sealed_bindings",
-        ):
-            state.pop(transient, None)
+        state = _PickledModel(
+            description=self.description,
+            ages=self.ages,
+            n_periods=self.n_periods,
+            fixed_params=self.fixed_params,
+            _edges=self._edges,
+            _declared_transitions=self._declared_transitions,
+            _fixed_component_splits=self._fixed_component_splits,
+            _declared_edge_vocabulary=self._declared_edge_vocabulary,
+            _cells_without_edges=self._cells_without_edges,
+            pruned_variables=self.pruned_variables,
+            user_regimes=self.user_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            _execution=self._execution,
+            reachability=self.reachability,
+            _graph=self._graph,
+            _params_template=self._params_template,
+            _regimes=self._regimes,
+            stakeholder_names_to_ids=self.stakeholder_names_to_ids,
+            enable_jit=self.enable_jit,
+            simulation_output_dtypes=self.simulation_output_dtypes,
+        )
+        held = vars(self)
+        if "durable_identity" in held:
+            state["durable_identity"] = self.durable_identity
+        if "_time" in held:
+            state["_time"] = self._time
+        if "_solution_model_instance_id" in held:
+            state["_solution_model_instance_id"] = self._solution_model_instance_id
+        if "_model_structure_fingerprint" in held:
+            state["_model_structure_fingerprint"] = self._model_structure_fingerprint
         return state
 
-    def __setstate__(self, state: dict[str, object]) -> None:
+    def __setstate__(self, state: _PickledModel) -> None:
         """Restore transient state and reseal the model in this process.
 
         Durable models retain their saved structure digest and result compatibility.
@@ -1611,7 +1684,7 @@ class Model:
         max_compilation_workers: int | None,
         log_path: str | Path | None,
         log_keep_n_latest: int,
-        retained_input_arrays: object = (),
+        retained_input_arrays: _RetainedInputArrays = (),
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
         period_capture: CaptureContext | None = None,
@@ -1833,7 +1906,7 @@ class Model:
         retain_all_artifacts: bool = False,
         persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
         collect_solver_diagnostics: bool = False,
-        retained_input_arrays: object = (),
+        retained_input_arrays: _RetainedInputArrays = (),
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
         period_capture: CaptureContext | None = None,
@@ -1892,7 +1965,7 @@ class Model:
                 snap_dir = _save_solve_snapshot(
                     model=self,
                     params=params,
-                    period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
+                    period_to_regime_to_V_arr=exc.partial_solution,
                     log_path=Path(log_path),
                     log_keep_n_latest=log_keep_n_latest,
                 )
@@ -2013,7 +2086,7 @@ class Model:
         consumed_views = solution._consumed_views  # noqa: SLF001
         remembered = consumed_views.get(memo_key)
         if remembered is not None:
-            return cast("_ResolvedSolution", remembered)
+            return remembered
         engine_view = solution._engine_view  # noqa: SLF001
         if (
             type(engine_view) is OwnedSolutionView
@@ -2084,7 +2157,9 @@ class Model:
         )
         replay_artifacts = engine_view.replay_artifacts
 
-        def owned_payload(*, ref: ArtifactRef, authority: ArtifactAuthority) -> object:
+        def owned_payload(
+            *, ref: ArtifactRef, authority: ArtifactAuthority
+        ) -> ArtifactPayload:
             del authority
             return replay_artifacts[ref]
 
@@ -2155,7 +2230,7 @@ class Model:
 
         def validated_payload(
             *, ref: ArtifactRef, authority: ArtifactAuthority
-        ) -> object:
+        ) -> ArtifactPayload:
             materialized = replay_store._materialize_from_template_snapshot(  # noqa: SLF001
                 ref,
                 template_snapshot=snapshot_artifact_template_declaration(authority),
@@ -2896,7 +2971,7 @@ class Model:
                         f"({period}, {regime_name!r})."
                     )
 
-                snapshot_artifacts: dict[ArtifactKey, object] = {}
+                snapshot_artifacts: dict[ArtifactKey, ArtifactPayload] = {}
                 snapshot_authorities: dict[ArtifactKey, ArtifactAuthority] = {}
                 defects: list[str] = []
                 for key, declared_authority in declared.items():
@@ -2967,7 +3042,7 @@ class Model:
         *,
         solution: _SolutionResultBoundary,
         authority: SolutionAuthority,
-        policies: Mapping[int, Mapping[RegimeName, object]],
+        policies: Mapping[int, Mapping[RegimeName, ArtifactPayload]],
         values: PeriodToRegimeToVArr,
     ) -> None:
         """Require each solver decision that cannot be reconstructed from values."""
@@ -3037,7 +3112,7 @@ class Model:
         *,
         solution: _SolutionResultBoundary,
         authority: SolutionAuthority,
-        dissolution_flags: Mapping[int, Mapping[RegimeName, object]],
+        dissolution_flags: Mapping[int, Mapping[RegimeName, ArtifactPayload]],
     ) -> None:
         """Validate and require only flags consumed by model-declared gates."""
         missing_dissolution_flags = self._find_malformed_dissolution_flags(
@@ -3066,7 +3141,7 @@ class Model:
     def _find_malformed_dissolution_flags(
         self,
         *,
-        dissolution_flags: Mapping[int, Mapping[RegimeName, object]],
+        dissolution_flags: Mapping[int, Mapping[RegimeName, ArtifactPayload]],
         authority: SolutionAuthority,
     ) -> list[tuple[int, RegimeName, str]]:
         """Return structural defects among materialized required flags."""
@@ -3641,7 +3716,7 @@ class Model:
             or engine_view.model_instance_id != self._solution_model_instance_id
         ):
             return None
-        return cast("RetainedComponentValues | None", engine_view.component_values)
+        return engine_view.component_values
 
     def _fail_if_another_instances_result(
         self, *, solution: _SolutionResultBoundary | None

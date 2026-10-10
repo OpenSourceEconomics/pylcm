@@ -10,7 +10,6 @@ from enum import Enum, auto
 from threading import RLock
 from types import GetSetDescriptorType, MappingProxyType, MemberDescriptorType
 from typing import (
-    TYPE_CHECKING,
     Literal,
     Protocol,
     SupportsIndex,
@@ -20,7 +19,9 @@ from typing import (
 
 import jax
 import numpy as np
+from beartype import beartype
 
+from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.contract import (
     _artifact_static_metadata_field_names,
     _same_exact_artifact_contract,
@@ -54,30 +55,21 @@ from lcm._solver_api.identity import (
 )
 from lcm.exceptions import ExecutionPlanningError
 
-if TYPE_CHECKING:
-    # One node of a callback-free construction plan.
-    type _ConstructionPlan = (
-        _ArtifactLeafSlot
-        | _ArtifactStaticPlan
-        | _ArtifactTuplePlan
-        | _ArtifactDataclassPlan
-    )
-    # A JAX key path as `jax.tree_util.tree_flatten_with_path` reports it.
-    type _JaxKeyPath = tuple[
-        jax.tree_util.GetAttrKey
-        | jax.tree_util.SequenceKey
-        | jax.tree_util.FlattenedIndexKey
-        | jax.tree_util.DictKey,
-        ...,
-    ]
-    type _PickleStateBoundary = _ArtifactAuthorityPickleState
-else:
-    # Plans, key paths and transported state are checked node by node by exact type
-    # identity in the bodies, which never run plugin code; the claw checks nothing
-    # here.
-    type _ConstructionPlan = object
-    type _JaxKeyPath = object
-    type _PickleStateBoundary = object
+# One node of a callback-free construction plan.
+type _ConstructionPlan = (
+    _ArtifactLeafSlot
+    | _ArtifactStaticPlan
+    | _ArtifactTuplePlan
+    | _ArtifactDataclassPlan
+)
+# A JAX key path as `jax.tree_util.tree_flatten_with_path` reports it.
+type _JaxKeyPath = tuple[
+    jax.tree_util.GetAttrKey
+    | jax.tree_util.SequenceKey
+    | jax.tree_util.FlattenedIndexKey
+    | jax.tree_util.DictKey,
+    ...,
+]
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -540,6 +532,7 @@ def _artifact_authority_template_snapshot(
     )
 
 
+@beartype(conf=SOLVER_API_CONF)
 def _normalize_jax_tree_path(path: _JaxKeyPath) -> TreePath:  # noqa: C901
     """Encode a JAX key path without collapsing distinct key kinds or types."""
     normalized: list[str] = []
@@ -581,7 +574,7 @@ def _collect_container_types(  # noqa: C901
     path: TreePath,
     leaf_offset: int,
     leaf_paths: tuple[TreePath, ...],
-    containers: dict[TreePath, type[object]],
+    containers: dict[TreePath, ArtifactRuntimeType],
 ) -> int:
     """Record one PyTree node's container class and descend into its children."""
     children = node.children()
@@ -642,9 +635,9 @@ def _collect_container_types(  # noqa: C901
 
 def _container_types_from_tree(
     *, tree: jax.tree_util.PyTreeDef, leaf_paths: tuple[TreePath, ...]
-) -> dict[TreePath, type[object]]:
+) -> dict[TreePath, ArtifactRuntimeType]:
     """Derive exact container classes from a PyTreeDef and its ordered leaf paths."""
-    containers: dict[TreePath, type[object]] = {}
+    containers: dict[TreePath, ArtifactRuntimeType] = {}
 
     consumed = _collect_container_types(
         leaf_paths=leaf_paths, containers=containers, node=tree, path=(), leaf_offset=0
@@ -656,8 +649,8 @@ def _container_types_from_tree(
 
 def _same_container_runtime_types(
     *,
-    actual: Mapping[TreePath, type[object]],
-    expected: Mapping[TreePath, type[object]],
+    actual: Mapping[TreePath, ArtifactRuntimeType],
+    expected: Mapping[TreePath, ArtifactRuntimeType],
 ) -> bool:
     """Require identical paths and class identities without metaclass equality."""
     return len(actual) == len(expected) and all(
@@ -669,7 +662,7 @@ def _same_container_runtime_types(
 def _check_approved_artifact_containers(
     *,
     payload_runtime_type: type[object],
-    container_runtime_types: Mapping[TreePath, type[object]],
+    container_runtime_types: Mapping[TreePath, ArtifactRuntimeType],
 ) -> None:
     """Accept only closed container layouts that can form detached snapshots."""
     if container_runtime_types:
@@ -1109,7 +1102,7 @@ class _MissingLeaf(Enum):
 def _mark_static_provenance_node(
     *,
     node: _ConstructionPlan,
-    source: object,
+    source: ArtifactValue | Literal[_MissingLeaf.MISSING],
     missing: Literal[_MissingLeaf.MISSING],
 ) -> _ConstructionPlan:
     """Copy one plan node, marking static metadata the declaration payload carried."""
@@ -1134,7 +1127,7 @@ def _mark_static_provenance_node(
     if node_type is _ArtifactTuplePlan:
         tuple_plan = cast("_ArtifactTuplePlan", node)
         source_children = (
-            source
+            cast("tuple[ArtifactValue, ...]", source)
             if type(source) is tuple and len(source) == len(tuple_plan.children)
             else None
         )
@@ -1187,7 +1180,7 @@ def _mark_static_provenance_node(
 
 
 def _mark_artifact_static_provenance(
-    *, plan: _ConstructionPlan, payload: object
+    *, plan: _ConstructionPlan, payload: ArtifactPayload
 ) -> _ConstructionPlan:
     """Mark static fields represented identically by the declaration payload.
 
@@ -1206,7 +1199,7 @@ def _compile_artifact_construction_plan(
     *,
     tree: jax.tree_util.PyTreeDef,
     payload_runtime_type: type[object],
-    declaration_payload: object,
+    declaration_payload: ArtifactPayload,
 ) -> _ConstructionPlan:
     """Compile one callback result into a closed callback-free construction plan."""
     if tree.node_data() is None:
@@ -1247,6 +1240,7 @@ def _compile_artifact_construction_plan(
     )
 
 
+@beartype(conf=SOLVER_API_CONF)
 def _snapshot_plan_node(  # noqa: C901, PLR0912
     *, node: _ConstructionPlan, seen: list[int], active_ids: set[int]
 ) -> _ConstructionPlan:
@@ -1334,6 +1328,7 @@ def _snapshot_plan_node(  # noqa: C901, PLR0912
     raise TypeError("Artifact construction plan contains an unsupported node.")
 
 
+@beartype(conf=SOLVER_API_CONF)
 def _snapshot_artifact_construction_plan(
     *, plan: _ConstructionPlan, leaf_count: int
 ) -> _ConstructionPlan:
@@ -1626,7 +1621,7 @@ def _validate_cached_artifact_template(  # noqa: C901, PLR0912
     template: ArtifactPayload,
     snapshot: _CanonicalArtifactTemplate | None,
     payload_runtime_type: type[object],
-    containers: Mapping[TreePath, type[object]],
+    containers: Mapping[TreePath, ArtifactRuntimeType],
     leaves: Mapping[TreePath, LeafAuthority],
 ) -> tuple[
     jax.tree_util.PyTreeDef,
@@ -1718,7 +1713,7 @@ def _rebuild_cached_artifact_template(
     template: ArtifactPayload,
     snapshot: _CanonicalArtifactTemplate | None,
     payload_runtime_type: type[object],
-    containers: Mapping[TreePath, type[object]],
+    containers: Mapping[TreePath, ArtifactRuntimeType],
     leaves: Mapping[TreePath, LeafAuthority],
 ) -> _CanonicalArtifactTemplate:
     """Rebuild a detached template solely from its cached declaration."""
@@ -1743,7 +1738,7 @@ def _canonicalize_declared_template_snapshot(
     *,
     template: ArtifactPayload,
     payload_runtime_type: type[object],
-    containers: Mapping[TreePath, type[object]],
+    containers: Mapping[TreePath, ArtifactRuntimeType],
     leaves: Mapping[TreePath, LeafAuthority],
 ) -> _CanonicalArtifactTemplate:
     """Validate and cache one declaration after exactly one flatten observation."""
@@ -1822,9 +1817,9 @@ def _canonicalize_declared_template_snapshot(
 
 def _snapshot_artifact_template_once(
     *,
-    template: object,
+    template: ArtifactPayload,
     payload_runtime_type: type[object],
-) -> tuple[_CanonicalArtifactTemplate, dict[TreePath, type[object]]]:
+) -> tuple[_CanonicalArtifactTemplate, dict[TreePath, ArtifactRuntimeType]]:
     """Observe an engine template once and derive its owned numerical layout."""
     if not _payload_has_runtime_type(
         payload=template,
@@ -1894,7 +1889,7 @@ def _validate_artifact_authority_declarations(  # noqa: C901, PLR0912
     *,
     descriptor: ArtifactDescriptor,
     payload_runtime_type: type[object],
-    containers: Mapping[TreePath, type[object]],
+    containers: Mapping[TreePath, ArtifactRuntimeType],
     leaves: Mapping[TreePath, LeafAuthority],
     axes: tuple[AxisAuthority, ...],
     state_roles: tuple[str, ...],
@@ -1977,7 +1972,9 @@ def _artifact_authority_from_template_snapshot(
     descriptor: ArtifactDescriptor,
     payload_runtime_type: type[object],
     template_snapshot: _CanonicalArtifactTemplate | None,
-    container_runtime_types: Mapping[TreePath, type[object]] = MappingProxyType({}),
+    container_runtime_types: Mapping[TreePath, ArtifactRuntimeType] = MappingProxyType(
+        {}
+    ),
     leaves: Mapping[TreePath, LeafAuthority] = MappingProxyType({}),
     axes: tuple[AxisAuthority, ...] = (),
     state_roles: tuple[str, ...] = (),
@@ -2131,8 +2128,9 @@ def _artifact_authority_pickle_state(
     )
 
 
+@beartype(conf=SOLVER_API_CONF)
 def _restore_artifact_authority_from_pickle(
-    state: _PickleStateBoundary,
+    state: _ArtifactAuthorityPickleState,
 ) -> ArtifactAuthority:
     """Rebuild one transported authority through the validated private constructor."""
     if type(state) is not _ArtifactAuthorityPickleState:
@@ -2158,7 +2156,7 @@ def _canonicalize_declared_template(
     *,
     template: ArtifactPayload,
     payload_runtime_type: type[object],
-    containers: Mapping[TreePath, type[object]],
+    containers: Mapping[TreePath, ArtifactRuntimeType],
     leaves: Mapping[TreePath, LeafAuthority],
 ) -> ArtifactPayload:
     """Validate and detach a template for callback-free lazy reconstruction."""

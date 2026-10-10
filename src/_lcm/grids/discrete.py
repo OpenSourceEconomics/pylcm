@@ -9,7 +9,7 @@ from beartype import beartype
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.grids.base import Grid
-from _lcm.grids.categorical import _validate_discrete_grid
+from _lcm.grids.categorical import DataclassInstance, _validate_discrete_grid
 from _lcm.utils.containers import get_field_names_and_values
 from lcm.typing import Int1D
 
@@ -31,8 +31,8 @@ class DiscreteGrid(Grid):
     @beartype(conf=GRID_CONF)
     def __init__(
         self,
-        *legacy_category_class: type,
-        category_class: type | None = None,
+        *legacy_category_class: type[DataclassInstance],
+        category_class: type[DataclassInstance] | None = None,
     ) -> None:
         if len(legacy_category_class) > 1:
             msg = "DiscreteGrid accepts at most one positional argument."

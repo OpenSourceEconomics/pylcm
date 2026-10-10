@@ -267,7 +267,7 @@ from _lcm.typing import (
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from _lcm.utils.error_messages import format_messages
-from _lcm.utils.functools import get_union_of_args
+from _lcm.utils.functools import get_union_of_args, is_user_function
 from _lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 from _lcm.variables import (
     from_regime,
@@ -2003,7 +2003,7 @@ def _fail_if_a_pareto_weight_reads_an_action(user_regime: UserRegime) -> None:
         return
     actions = set(user_regime.actions)
     for name, weight in objective.weights.items():
-        if not callable(weight):
+        if not is_user_function(weight):
             continue
         read = sorted(actions & set(get_union_of_args([weight])))
         if read:
@@ -6007,7 +6007,7 @@ def _names_read_by(
 
 def _get_source_process_nodes(
     *, name: ProcessName, grid: _ContinuousStochasticProcess
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """Get the provider of a source process's nodes, the support of its draw."""
     if grid.params_to_pass_at_runtime:
         fixed_params = dict(grid.params)
@@ -6836,7 +6836,7 @@ def _fail_if_a_markov_law_names_a_continuous_state(
 
 def _get_discrete_markov_next_function(
     *, func: UserFunction, grid: Int1D
-) -> UserFunction:
+) -> Callable[..., IntND]:
     @with_signature(args=None, return_annotation="Int1D")
     @functools.wraps(func)
     def next_func(**kwargs: EconFunctionArg) -> Int1D:  # noqa: ARG001
@@ -6847,7 +6847,7 @@ def _get_discrete_markov_next_function(
 
 def _get_stochastic_next_function_for_process(
     *, name: str, grid: Float1D
-) -> UserFunction:
+) -> Callable[..., IntND]:
     """Get function returning the indices in the vf arr of the next process states."""
 
     @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
@@ -7038,7 +7038,7 @@ def _get_conditioned_weights_func(
     grid: _ContinuousStochasticProcess,
     sc: StateConditioned,
     grids: Mapping[StateOrActionName, Grid],
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """Build the direct-CDF weights function for a state-conditioned process.
 
     The transition row is computed directly at the time-$t$ value on the fixed common
@@ -7131,7 +7131,7 @@ def _get_weights_func_for_process(
     name: str,
     grid: _ContinuousStochasticProcess,
     grids: Mapping[StateOrActionName, Grid] = MappingProxyType({}),
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """Get function that uses linear interpolation to calculate the process weights.
 
     For processes whose params are supplied at runtime, the grid points and
@@ -7200,7 +7200,7 @@ def _get_weights_func_for_process(
     return weights_func
 
 
-def _get_entry_next_for_process(*, grid: Float1D) -> UserFunction:
+def _get_entry_next_for_process(*, grid: Float1D) -> Callable[..., IntND]:
     """Get the next-index function for a process the source does not carry.
 
     The target's nodes are the process's own, and no current value selects
@@ -7214,7 +7214,9 @@ def _get_entry_next_for_process(*, grid: Float1D) -> UserFunction:
     return next_func
 
 
-def _get_entry_weights_for_process(*, name: str, grid: _IIDProcess) -> UserFunction:
+def _get_entry_weights_for_process(
+    *, name: str, grid: _IIDProcess
+) -> Callable[..., FloatND]:
     """Get the entry weights of an IID process the source does not carry.
 
     Every row of an IID transition matrix is the same unconditional
@@ -7257,7 +7259,7 @@ def _get_explicit_entry_weights_for_process(
     physical_name: TransitionFunctionName,
     target: RegimeName,
     state_name: ProcessName,
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """Get the weights that place a declared entry value on a process's nodes.
 
     A declared entry law names a physical value, but a discretized process holds
@@ -8901,7 +8903,7 @@ def _route_constraints(
     solver: Solver,
     regime_name: RegimeName,
     phase: Literal["solve", "simulate"],
-    functions: EconFunctionsMapping,
+    functions: MappingProxyType[FunctionName, UserFunction],
     variables: Variables,
     flat_param_names: frozenset[QualifiedName],
     active_periods: tuple[int, ...],
@@ -8971,7 +8973,9 @@ def _route_constraints(
 
 
 def _routing_pool(
-    *, functions: EconFunctionsMapping, active_periods: tuple[int, ...]
+    *,
+    functions: MappingProxyType[FunctionName, UserFunction],
+    active_periods: tuple[int, ...],
 ) -> EconFunctionsMapping:
     """The pool constraint routing resolves leaves through.
 
@@ -8979,12 +8983,14 @@ def _routing_pool(
     same parameters at every age, so its first active period's callable stands
     for all of them.
     """
-    if not active_periods:
-        return functions
-    return cast(
-        "EconFunctionsMapping",
-        resolve_periodized_nodes(mapping=functions, period=active_periods[0]),
+    pool = (
+        resolve_periodized_nodes(mapping=functions, period=active_periods[0])
+        if active_periods
+        else functions
     )
+    # The route context names the pool by the engine protocol; routing never
+    # calls a function in it.
+    return cast("EconFunctionsMapping", pool)
 
 
 def _fail_if_a_constraint_cannot_be_met(*, plan: ConstraintPlan) -> None:

@@ -17,7 +17,7 @@ reach. The constancy probe differentiates laws of motion, so a parameter that
 only ever appears in a state-transition law is classified from that law.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import cast
@@ -46,6 +46,7 @@ from lcm.typing import (
     ScalarBool,
     ScalarFloat,
     ScalarInt,
+    UserFunction,
 )
 
 
@@ -72,7 +73,7 @@ def _schedule_entry(*, schedule: MappingLeaf, key: str) -> FloatND:
 class _FakeRegime:
     """Stand-in carrying only the regime slot the classifiers read."""
 
-    functions: Mapping[str, Callable[..., object]] = field(default_factory=dict)
+    functions: Mapping[str, UserFunction] = field(default_factory=dict)
     """The regime's functions, keyed by name."""
 
 

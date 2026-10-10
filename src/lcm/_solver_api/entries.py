@@ -23,10 +23,10 @@ from lcm._solver_api.identity import (
 )
 from lcm.typing import FloatND
 
-# One numerical solution value: a device or host array, a NumPy scalar, or a Python
-# number.
+# One numerical solution value: a device or host array, a NumPy scalar, or a real
+# Python number.
 type _SolutionValue = (
-    jax.Array | npt.NDArray[np.generic] | np.generic | bool | int | float | complex
+    jax.Array | npt.NDArray[np.generic] | np.generic | bool | int | float
 )
 
 
@@ -34,7 +34,7 @@ type _SolutionValue = (
 class _ValueMaterializer(Protocol):  # noqa: PYI046 — private store boundary protocol
     """Call-local trusted value loader; never retained by a public store."""
 
-    def __call__(self, *, entry: _LazyEntry) -> object:
+    def __call__(self, *, entry: _LazyEntry) -> ArtifactPayload:
         """Materialize one explicitly admitted entry with its private ownership."""
         ...
 
@@ -48,7 +48,9 @@ class _LazyEntry(ABC):
         """Return the materialization state without loading the entry."""
 
     @abstractmethod
-    def materialize(self, *, template: ArtifactPayload | None = None) -> object:
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
         """Load and verify the entry, optionally rebuilding a declared PyTree."""
 
     def host_value(self) -> npt.NDArray[np.generic] | None:
@@ -80,7 +82,7 @@ class _LazyEntry(ABC):
         self,
         *,
         template_snapshot: _CanonicalArtifactTemplate,
-    ) -> object:
+    ) -> ArtifactPayload:
         """Fallback for lazy implementations that only consume a template object."""
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
             raise TypeError("Lazy materialization requires an exact template snapshot.")
@@ -93,10 +95,10 @@ class _LazyEntry(ABC):
 
 def _materialize_entry(
     *,
-    entry: object,
+    entry: _LazyEntry | ArtifactPayload,
     template: ArtifactPayload | None = None,
     template_snapshot: _CanonicalArtifactTemplate | None = None,
-) -> object:
+) -> ArtifactPayload:
     """Materialize an internal lazy entry while leaving eager objects untouched."""
     if isinstance(entry, _LazyEntry):
         if template is not None and template_snapshot is not None:
@@ -174,7 +176,7 @@ class _CanonicalArtifactEntry(_LazyEntry):
 
 def _canonical_artifact_entry_from_authority(
     *,
-    payload: object,
+    payload: ArtifactPayload,
     authority: ArtifactAuthority,
     borrow: bool = False,
 ) -> _CanonicalArtifactEntry:
@@ -209,7 +211,10 @@ def _canonical_artifact_entry_from_authority(
 
 
 def _copy_solution_value(
-    *, value: object, label: str, array_copier: _ArrayCopier | None = None
+    *,
+    value: ArtifactPayload | _LazyEntry,
+    label: str,
+    array_copier: _ArrayCopier | None = None,
 ) -> _SolutionValue:
     """Copy one numerical value without changing its concrete representation."""
     if isinstance(value, jax.Array):
@@ -234,8 +239,8 @@ def _copy_solution_value(
         ):
             raise TypeError(f"{label} is not numerical or Boolean.")
         return np.array(value, copy=True)[()]
-    if any(type(value) is allowed for allowed in (bool, int, float, complex)):
-        return cast("bool | int | float | complex", value)
+    if any(type(value) is allowed for allowed in (bool, int, float)):
+        return cast("bool | int | float", value)
     raise TypeError(f"{label} is not a supported numerical value.")
 
 
@@ -243,7 +248,7 @@ def _copy_solution_value(
 class _CanonicalValueEntry(_LazyEntry):
     """Private numerical state that returns a fresh value on every read."""
 
-    value: object
+    value: _SolutionValue
 
     @property
     def load_state(self) -> LoadState:
@@ -265,7 +270,7 @@ class _CanonicalValueEntry(_LazyEntry):
 
 
 def _canonical_value_entry(
-    *, value: object, array_copier: _ArrayCopier | None = None
+    *, value: _SolutionValue | _LazyEntry, array_copier: _ArrayCopier | None = None
 ) -> _CanonicalValueEntry:
     """Detach one eager value before any lazy result callback may run."""
     if type(value) is _CanonicalValueEntry:

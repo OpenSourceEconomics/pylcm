@@ -324,7 +324,7 @@ def test_period_diagnostic_levels_and_error_order_are_preserved(
 def test_host_nan_report_keeps_exception_payload_and_enrichment_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    payload = object()
+    payload = MappingProxyType({})
     seen: list[InvalidValueFunctionError] = []
 
     def enrich(**arguments: Any) -> None:
