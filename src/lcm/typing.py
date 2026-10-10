@@ -155,7 +155,7 @@ class UserFunction(Protocol):
     constructors. Any callable satisfies this protocol structurally.
     """
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...  # noqa: ANN401
+    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 outer_unchanged: FunctionName = "__outer_unchanged__"

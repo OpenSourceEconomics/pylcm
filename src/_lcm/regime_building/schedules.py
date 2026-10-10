@@ -864,7 +864,7 @@ class _Constant:
         object.__setattr__(self, "__name__", "constant")
 
     @no_type_check
-    def __call__(self) -> Any:  # noqa: ANN401
+    def __call__(self) -> Any:
         return jnp.asarray(self.value)
 
 
@@ -885,7 +885,7 @@ class _DeclaredExit:
         object.__setattr__(self, "__name__", "declared_exit")
 
     @no_type_check
-    def __call__(self) -> Any:  # noqa: ANN401
+    def __call__(self) -> Any:
         raise RuntimeError(
             f"The declaration view of an exit into {self.target!r} is for "
             "construction-time checks only and is never evaluated."
@@ -916,7 +916,7 @@ class _Indicator:
     """The arguments `selector` reads."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         if self.code is None:
             raise RuntimeError(
                 "A declaration view is for construction-time checks only and is "
@@ -949,7 +949,7 @@ class _PeriodMasked:
     """The arguments `cell` reads."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         value = self.cell(**{name: kwargs[name] for name in self.names})
         selected = jnp.isin(kwargs["period"], jnp.asarray(self.periods))
         return jnp.where(selected, value, jnp.zeros_like(value))
@@ -984,7 +984,7 @@ class _PeriodDispatch:
     """The position in `cases` selected at each period."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         # Every case is evaluated and the selected one kept. Each case is a
         # declared law of this regime evaluated on the same arguments, so an
         # unselected case can at worst produce a value that is discarded. The
@@ -1263,7 +1263,7 @@ def _mapping_union(
     return MappingProxyType(merged)
 
 
-def _masked(*, cell: Any, periods: tuple[int, ...]) -> Callable[..., Any]:  # noqa: ANN401
+def _masked(*, cell: Any, periods: tuple[int, ...]) -> Callable[..., Any]:
     func = cell.func if isinstance(cell, StochasticTransition) else cell
     return _period_masked(
         cell=func, periods=tuple(sorted(periods)), names=_argument_names(func)
@@ -1291,7 +1291,7 @@ class _PeriodSum:
     """The arguments each part reads."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         values = [
             part(**{name: kwargs[name] for name in names})
             for part, names in zip(self.parts, self.part_names, strict=True)

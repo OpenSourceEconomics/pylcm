@@ -2999,7 +2999,7 @@ class _ResolveAtNode:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Mapping[str, FloatND]:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Mapping[str, FloatND]:
         drawn: dict[str, Any] = {}
         for name in self.read_as_a_draw:
             index = kwargs[name].astype(jnp.int32)
@@ -3044,7 +3044,7 @@ class _InterpolateAtNode:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> FloatND:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> FloatND:
         resolved = self.resolve_at_this_node(
             **{k: v for k, v in kwargs.items() if k in self.resolver_arg_names}
         )

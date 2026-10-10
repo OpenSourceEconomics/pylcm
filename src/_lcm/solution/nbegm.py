@@ -3730,7 +3730,7 @@ class _DynamicLiquidProbe:
 
 def _evaluate_liquid_probe_program(
     *, program: Callable[..., object], points: FloatND, arguments: Mapping[str, object]
-) -> Any:  # noqa: ANN401  # Scalar budget or pytree-valued continuation Jacobian.
+) -> Any:  # Scalar budget or pytree-valued continuation Jacobian.
     """Evaluate current fills and release failed abstract specializations."""
     try:
         return program(points, arguments)
@@ -4242,7 +4242,7 @@ def _int_probe_arg_values(
 
 def _fail_if_liquid_reading_next_state_varies_within_interval(
     *,
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     liquid_name: str,
     regime_name: str,
     probe_arguments: _ProbeArguments,
@@ -5103,7 +5103,7 @@ def _build_nbegm_continuation_plan(
     context: SolverBuildContext,
     period: int,
     post_decision_name: FunctionName,
-) -> Any:  # noqa: ANN401  # `ContinuationPlan`; not annotated precisely (importing
+) -> Any:  # `ContinuationPlan`; not annotated precisely (importing
     # module scope closes an import cycle (`continuation` → … → `lcm.solvers`).
     """Assemble the period's continuation plan for the ride-along case-piece core."""
     from _lcm.egm.continuation import (  # noqa: PLC0415
@@ -5295,12 +5295,12 @@ def _partition_jumps(
 
 def _indexed_threshold_value(
     *,
-    table: Any,  # noqa: ANN401  # scalar param, threshold table, or mapping leaf
+    table: Any,  # scalar param, threshold table, or mapping leaf
     subkey: str | None,
     index_state: str | None,
     static_index: int | None,
     cell: dict[str, Any],
-) -> Any:  # noqa: ANN401
+) -> Any:
     """Read a breakpoint threshold from its param for one ride-along cell.
 
     The param is resolved to a value in this order:
@@ -5444,7 +5444,7 @@ def _nbegm_ride_along_statics(
     *,
     savings_grid: Float1D,
     schedule_spec: _NBEGMScheduleSpec,
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     envelope_arithmetic: ComparisonArithmetic = "certified",
     cell_width: int = 0,
     interval_width: int = 0,
@@ -5643,7 +5643,7 @@ def _nbegm_cell_breakpoints(
     kwargs: Mapping[str, Any],
     cell: dict[str, Any],
     liquid_grid: Float1D,
-    dtype: Any,  # noqa: ANN401  # canonical float dtype
+    dtype: Any,  # canonical float dtype
     action_binding: Mapping[str, Any] = MappingProxyType({}),
 ) -> tuple[Float1D, tuple[Any, ...]]:
     """Build one ride-along cell's sorted liquid breakpoints and jump positions.
@@ -5696,7 +5696,7 @@ def _cell_breakpoint(
     liquid_name: str,
     kwargs: Mapping[str, Any],
     cell: dict[str, Any],
-    dtype: Any,  # noqa: ANN401  # canonical float dtype
+    dtype: Any,  # canonical float dtype
     action_binding: Mapping[str, Any],
 ) -> FloatND:
     """One source's threshold as the liquid value where the cell crosses it.
@@ -5756,7 +5756,7 @@ def cliff_target_margin(
     s_star: FloatND,
     slope: FloatND,
     intercept: FloatND,
-    dtype: Any,  # noqa: ANN401
+    dtype: Any,
 ) -> FloatND:
     """Return the savings displacement that lands just past each cliff preimage.
 
@@ -5791,13 +5791,13 @@ def cliff_target_margin(
 
 def _cliff_savings_targets(
     *,
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     regime_name: RegimeName,
     statics: _NBEGMRideAlongStatics,
     child_carry: EGMCarry,
     combo_pool: dict[str, Any],
     savings_grid: Float1D,
-    dtype: Any,  # noqa: ANN401
+    dtype: Any,
     midpoints: Float1D | None = None,
 ) -> FloatND:
     """Map the self-read child's value cliffs to one-sided savings targets.
@@ -5880,13 +5880,13 @@ def _jump_breakpoint_states(*, statics: _NBEGMRideAlongStatics) -> frozenset[str
 def _cliff_targets_for_pool(
     *,
     pool: dict[str, Any],
-    read: Any,  # noqa: ANN401  # `_ChildRead`; import-cycle-safe
+    read: Any,  # `_ChildRead`; import-cycle-safe
     breakpoints: FloatND,
     jump_states: frozenset[str],
     co_map_state_names: frozenset[str],
     post_decision_name: str,
     savings_grid: Float1D,
-    dtype: Any,  # noqa: ANN401
+    dtype: Any,
 ) -> FloatND:
     """One-sided savings targets of every child row's jumps under one combo pool.
 
@@ -5984,7 +5984,7 @@ def _cliff_targets_at_node(
     post_decision_name: str,
     jumps: Float1D,
     savings_grid: Float1D,
-    dtype: Any,  # noqa: ANN401
+    dtype: Any,
 ) -> FloatND:
     """One-sided savings targets of every jump with every input in `pool` fixed."""
     intercept = _next_euler_state(
@@ -6026,7 +6026,7 @@ def _next_euler_state(
     next_state_func: Callable[..., Any],
     next_state_key: str,
     post_decision_name: str,
-    dtype: Any,  # noqa: ANN401
+    dtype: Any,
 ) -> FloatND:
     """The child's liquid (Euler) state reached from `savings_value` under `pool`."""
     next_states = next_state_func(**pool, **{post_decision_name: savings_value})
@@ -6064,7 +6064,7 @@ def _leading_axis_or_none(leaf: FloatND, *, axis: int | None) -> int | None:
 def _ride_along_core_programs(
     *,
     savings_grid: Float1D,
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     statics: _NBEGMRideAlongStatics,
     regime_name: RegimeName,
     cliff_candidates: bool,
@@ -6251,7 +6251,7 @@ def _with_ride_marginal_reads(
 
 def _ride_along_stochastic_axes(
     *,
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     state_action_space: StateActionSpace,
 ) -> tuple[ReducedAxis, ...]:
     """Declare only a nontrivial child node mesh present in the program's inputs.
@@ -6357,7 +6357,7 @@ class _NBEGMIntervalBlockReader:
 def _build_nbegm_tiled_core(
     *,
     savings_grid: Float1D,
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     statics: _NBEGMRideAlongStatics,
     regime_name: RegimeName,
     cliff_candidates: bool,
@@ -6435,7 +6435,7 @@ class _NBEGMTiledCore:
         __lcm_interval_width__: int = 0,
         __lcm_branch_width__: int = 0,
         __lcm_stochastic_node_width__: int | None = None,
-        **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
+        **kwargs: Any,  # state grids + flat params (mixed dtypes)
     ) -> (
         tuple[FloatND, EGMCarry]
         | tuple[FloatND, EGMCarry, FloatND]
@@ -6494,7 +6494,7 @@ def _solve_nbegm_inner_mesh(
     kwargs: dict[str, Any],
     solve_one_cell: Callable[..., tuple[FloatND, ...]],
     savings_grid: Float1D,
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     statics: _NBEGMRideAlongStatics,
     regime_name: RegimeName,
     cliff_candidates: bool,
@@ -6592,7 +6592,7 @@ def _solve_nbegm_over_co_map(
     *,
     kwargs: Mapping[str, Any],
     carry: MappingProxyType[RegimeName, EGMCarry],
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     co_map_names: tuple[str, ...],
     solve_inner: Callable[..., tuple[FloatND, ...]],
 ) -> tuple[FloatND, ...]:
@@ -6620,7 +6620,7 @@ def _solve_with_co_map(
     remaining: tuple[str, ...],
     comap_bindings: dict[str, Any],
     kwargs: Mapping[str, Any],
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     solve_inner: Callable[..., tuple[FloatND, ...]],
 ) -> tuple[FloatND, ...]:
     """Peel one co-mapped state off `remaining` per `vmap` level, then solve."""
@@ -6654,14 +6654,14 @@ def _solve_with_co_map(
 
 # keyword-only-exempt: library-callback=jax.vmap
 def _slice_solve(
-    head_value: Any,  # noqa: ANN401
+    head_value: Any,
     sliced_carry: MappingProxyType[RegimeName, EGMCarry],
     *,
     head: str,
     tail: tuple[str, ...],
     comap_bindings: dict[str, Any],
     kwargs: Mapping[str, Any],
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     solve_inner: Callable[..., tuple[FloatND, ...]],
 ) -> tuple[FloatND, ...]:
     """Solve one slice of the co-mapped state `head` against its carry slice."""
@@ -6681,7 +6681,7 @@ def _bind_nbegm_cell_continuation(
     carry: MappingProxyType[RegimeName, EGMCarry],
     comap_bindings: Mapping[str, Any],
     savings_grid: Float1D,
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     statics: _NBEGMRideAlongStatics,
     regime_name: RegimeName,
     cliff_candidates: bool,
@@ -7006,7 +7006,7 @@ def _interval_rows(
     *,
     combo_pool: dict[str, Any],
     liquid_name: str,
-    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    continuation_plan: Any,  # `ContinuationPlan`; import-cycle-safe
     carry: MappingProxyType[RegimeName, EGMCarry],
     dtype: type,
     stochastic_node_width: int | None,
@@ -8279,7 +8279,7 @@ def _assemble_ride_carry(
     liquid: Float1D,
     ride_shape: tuple[int, ...],
     liquid_axis_pos: int,
-    dtype: Any,  # noqa: ANN401  # jnp dtype object
+    dtype: Any,  # jnp dtype object
 ) -> (
     tuple[FloatND, EGMCarry, FloatND]
     | tuple[FloatND, EGMCarry, FloatND, FloatND, FloatND]

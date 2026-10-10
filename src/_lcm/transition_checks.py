@@ -1524,7 +1524,7 @@ def _evaluate_joint_support(
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     memory: SimulationMemory | None = None,
-) -> Any:  # noqa: ANN401
+) -> Any:
     """Bind and admit one complete parameter-bound joint-support provider."""
     kwargs: dict[str, object] = {}
     for name in inspect.signature(func).parameters:
@@ -2446,7 +2446,7 @@ class _NamedArgumentsCall:
     """The argument names the function declares."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         return self.func(**{k: v for k, v in kwargs.items() if k in self.names})
 
 
@@ -2460,7 +2460,7 @@ class _LawAndFeasibility:
     """The conjunction of the regime's constraints."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         return self.law(**kwargs), self.feasibility(**kwargs)
 
 
@@ -2479,6 +2479,6 @@ class _GridPointCall:
     # Python scalars, arrays of either integer width -- so its annotations
     # document the contract and are not enforced at call time.
     @no_type_check
-    def __call__(self, *args: FloatND | IntND) -> Any:  # noqa: ANN401
+    def __call__(self, *args: FloatND | IntND) -> Any:
         kwargs = dict(zip(self.names, args, strict=True))
         return self.func(**kwargs, **self.scalar_kwargs)

@@ -345,7 +345,7 @@ def bind_continuation(
     plan: ContinuationPlan,
     combo_pool: dict[str, Any],
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-    dtype: Any,  # noqa: ANN401
+    dtype: Any,
     stochastic_node_width: int | None = None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
     co_map_state_names: tuple[StateName, ...] = (),

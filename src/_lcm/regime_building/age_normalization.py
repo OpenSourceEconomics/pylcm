@@ -87,7 +87,7 @@ class PeriodizedUserFunction:
         """Return the dedup signature for `period`."""
         return self.signature_by_period[period]
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ARG002
         msg = (
             "PeriodizedUserFunction is an internal model-build object and must be "
             "resolved by period before DAG construction."
@@ -117,7 +117,7 @@ class PeriodizedEconFunction:
         """Return the dedup signature for `period`."""
         return self.signature_by_period[period]
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ARG002
         msg = (
             "PeriodizedEconFunction is an internal model-build object and must be "
             "resolved by period before DAG tracing."

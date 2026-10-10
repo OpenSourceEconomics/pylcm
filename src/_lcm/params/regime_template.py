@@ -644,7 +644,7 @@ def _record_params(
         function_params[name] = function_params.get(name, {}) | params
 
 
-def _freeze_template_node(value: Any) -> Any:  # noqa: ANN401
+def _freeze_template_node(value: Any) -> Any:
     """Recursively freeze a parameter-template branch."""
     if isinstance(value, Mapping):
         return MappingProxyType(

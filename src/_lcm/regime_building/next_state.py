@@ -400,7 +400,7 @@ class _RealizedJointNode:
     # Python scalars, arrays of either integer width -- so its annotations
     # document the contract and are not enforced at call time.
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         index = jax.random.choice(
             key=kwargs[f"key_{self.qname}"],
             a=self.support_size,

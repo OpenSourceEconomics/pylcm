@@ -141,7 +141,7 @@ class _TemporalDecorator:
         # Outer instrumentation binds away callable-object metadata; keep a function.
         @no_type_check
         @wraps(func)
-        def consume(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        def consume(*args: Any, **kwargs: Any) -> Any:
             arguments = dict(defaults)
             arguments.update(zip(parameter_names[: len(args)], args, strict=True))
             arguments.update(kwargs)

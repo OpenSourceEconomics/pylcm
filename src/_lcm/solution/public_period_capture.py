@@ -423,7 +423,7 @@ def _canonicalize_optimized_hlo(text: str) -> str:
     return "\n".join(line.rstrip() for line in "".join(pieces).splitlines()).rstrip()
 
 
-def plain_metadata(value: Any) -> Any:  # noqa: ANN401
+def plain_metadata(value: Any) -> Any:
     """Convert known metadata containers into non-executable JSON values."""
     if isinstance(value, enum.Enum):
         return plain_metadata(value.value)

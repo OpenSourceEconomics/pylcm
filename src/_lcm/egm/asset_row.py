@@ -395,7 +395,7 @@ def _continuation_of_euler_state(
     pieces: _EgmKernelPieces,
     combo_pool: dict[str, Any],
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-    dtype: Any,  # noqa: ANN401
+    dtype: Any,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND],
 ) -> ScalarFloat:
@@ -453,7 +453,7 @@ def _get_expected_continuation_value(
     pieces: _EgmKernelPieces,
     combo_pool: dict[str, Any],
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-    dtype: Any,  # noqa: ANN401
+    dtype: Any,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], ScalarFloat]:
