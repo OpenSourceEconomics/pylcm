@@ -74,7 +74,9 @@ from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     EGMStepFunction,
     FlatParams,
+    PytreeValue,
     RegimeName,
+    ShapeDtypePytree,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.exceptions import (
@@ -94,6 +96,7 @@ from lcm.typing import (
     ActionName,
     FloatND,
     FunctionName,
+    ReferenceName,
     StateName,
 )
 
@@ -919,7 +922,9 @@ class _DCEGMArgumentBuilder:
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         flat_params = cast("FlatParams", context.flat_params)

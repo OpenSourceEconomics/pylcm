@@ -55,6 +55,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.solution import backward_induction
 from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.kernel_output import ConsumedKernelOutput, KernelOutput
+from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
     ArtifactKey,
@@ -77,7 +78,7 @@ from lcm.solvers import (
 from lcm.solvers import (
     CoreExecutionRequirements as PublicRequirements,
 )
-from lcm.typing import Float1D, FloatND, StateName
+from lcm.typing import Float1D, FloatND, ReferenceName, StateName
 from tests.test_solver_api_out_of_tree import _N_PERIODS, _two_regime_model
 
 _KEY = ArtifactKey(type_id="tests.donation_read_multiplicity", schema_version=1)
@@ -135,7 +136,7 @@ def _sibling_sum(*, wealth: Float1D, other: FloatND) -> Float1D:
     return wealth + other
 
 
-def _one_read_arguments(build: object) -> dict[str, object]:
+def _one_read_arguments(build: object) -> Mapping[ReferenceName, PytreeValue]:
     """Feed the state grid and the target's published count to the program."""
     payload = build.next_regime_to_continuation["alive"]  # ty: ignore[unresolved-attribute]
     _DISPATCHED.append(payload.count)
@@ -145,7 +146,7 @@ def _one_read_arguments(build: object) -> dict[str, object]:
     }
 
 
-def _two_read_arguments(build: object) -> dict[str, object]:
+def _two_read_arguments(build: object) -> Mapping[ReferenceName, PytreeValue]:
     """Feed one published count array to two declared arguments of one core."""
     payload = build.next_regime_to_continuation["alive"]  # ty: ignore[unresolved-attribute]
     _DISPATCHED.append(payload.count)
@@ -156,7 +157,7 @@ def _two_read_arguments(build: object) -> dict[str, object]:
     }
 
 
-def _sibling_arguments(build: object) -> dict[str, object]:
+def _sibling_arguments(build: object) -> Mapping[ReferenceName, PytreeValue]:
     """Feed the same published count array to the non-donating sibling core."""
     payload = build.next_regime_to_continuation["alive"]  # ty: ignore[unresolved-attribute]
     return {

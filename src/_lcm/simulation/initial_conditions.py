@@ -59,6 +59,7 @@ from _lcm.typing import (
     FlatParams,
     InitialConditions,
     ParamsLeaf,
+    PytreeValue,
     QualifiedName,
     RegimeIdsToNames,
     RegimeName,
@@ -1650,7 +1651,7 @@ def _run_profiled_feasibility(
     *,
     memory: SimulationMemory,
     function: Callable[..., BoolND | bool],
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue],
 ) -> BoolND:
     """Admit one user DAG with explicit dynamic input owners.
 

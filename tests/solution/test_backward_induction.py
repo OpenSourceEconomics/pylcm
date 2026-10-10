@@ -251,7 +251,7 @@ def test_backward_induction():
                 # pick [0, 1, 2] such that no coordinate mapping is needed
                 # lazy is like a type, it influences utility but is not affected
                 # by actions
-                "lazy": jnp.array([0, 1]),
+                "lazy": jnp.array([0, 1], dtype=jnp.int32),
                 "wealth": jnp.array([0.0, 1.0, 2.0]),
             }
         ),

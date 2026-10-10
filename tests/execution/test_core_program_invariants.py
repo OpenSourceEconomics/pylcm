@@ -107,7 +107,7 @@ def _program(
     arguments: Mapping[str, object] | None = None,
     coordinate_extent: int = 2,
     reduction: ReductionDeclaration = HARD_MAX_REDUCTION,
-    function: Callable[..., object] = _core,
+    function: Callable[..., jax.Array] = _core,
 ) -> MaterializedCoreProgram:
     """Build one canonical action-product declaration for resolver tests."""
     if arguments is None:

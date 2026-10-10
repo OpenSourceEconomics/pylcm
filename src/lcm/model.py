@@ -237,6 +237,7 @@ from _lcm.typing import (
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
+    PytreeValue,
     RegimeName,
     RegimeNamesToIds,
     StateName,
@@ -4070,7 +4071,7 @@ class Model:
                     "coordinates."
                 )
                 raise InvalidSimulationInputError(msg)
-            return cast("jax.Array", period_axes[period][state_name])
+            return period_axes[period][state_name]
         return states[state_name]
 
     @beartype(conf=PARAMS_CONF)
@@ -4745,12 +4746,12 @@ def _fail_if_a_sharded_state_is_pruned(
         raise ExecutionPlanningError(msg)
 
 
-def _place_lookup_values[T](
+def _place_lookup_values[T: PytreeValue](
     *,
     values: T,
     runtime: SimulationRuntime,
     allocations: SimulationEntryAllocations | None,
-    call_roots: object,
+    call_roots: PytreeValue,
 ) -> T:
     """Copy a lookup's values to their subject-device layout, admitted if budgeted.
 
@@ -4799,7 +4800,7 @@ def _place_values_on_subject_devices[T](
 
 def _require_value_placement_headroom(
     *,
-    values: object,
+    values: PytreeValue,
     devices: tuple[jax.Device, ...],
     live: DeviceBufferFootprint,
     budget_bytes: int,
@@ -4840,7 +4841,7 @@ def _require_value_placement_headroom(
 
 
 def _lookup_live_footprint(
-    *, allocations: SimulationEntryAllocations, call_roots: object
+    *, allocations: SimulationEntryAllocations, call_roots: PytreeValue
 ) -> DeviceBufferFootprint:
     """Union the entry owner's current inventory with a lookup's call-local arrays."""
     return union_buffer_footprints(
@@ -4854,7 +4855,7 @@ def _trim_lookup_rows(
     n_rows: int | None,
     allocations: SimulationEntryAllocations | None,
     unit: SimulationUnitExecutor | None,
-    call_roots: object,
+    call_roots: PytreeValue,
 ) -> PolicyLookup:
     """Keep the leading `n_rows` rows of every lookup output; `None` keeps all.
 
@@ -4886,7 +4887,7 @@ def _admit_trimmed_lookup_rows(
     n_rows: int,
     allocations: SimulationEntryAllocations,
     unit: SimulationUnitExecutor,
-    call_roots: object,
+    call_roots: PytreeValue,
 ) -> PolicyLookup:
     """Trim a budgeted lookup's padded rows, admitting each trimmed output first.
 
@@ -4896,7 +4897,7 @@ def _admit_trimmed_lookup_rows(
     still-live padded outputs and the outputs trimmed before it, and refused
     before allocation when it does not fit the budget.
     """
-    kept: list[jax.Array] = []
+    kept: list[PytreeValue] = []
 
     def trim(array: jax.Array) -> jax.Array:
         result = cast(

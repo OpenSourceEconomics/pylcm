@@ -38,6 +38,7 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     InitialConditions,
+    PytreeValue,
     RegimeName,
 )
 
@@ -50,7 +51,7 @@ class SimulationEntryAllocations:
     """Original caller buffers retained until the public call returns."""
     solution: object | None
     """Currently resolved value, policy and replay-artifact owners."""
-    model_roots: tuple[object, ...]
+    model_roots: tuple[PytreeValue, ...]
     """Already materialized model grids, fixed parameters, IDs and ages."""
     devices: tuple[jax.Device, ...]
     """Actual ordered execution devices; the first owns entry staging."""

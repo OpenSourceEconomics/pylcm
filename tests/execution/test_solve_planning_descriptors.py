@@ -27,6 +27,7 @@ from _lcm.execution.value_transfer import (
     resolve_value_transfer,
 )
 from _lcm.solution.backward_induction import _abstract_arguments_key
+from _lcm.typing import PytreeValue
 from tests.test_dropped_models_release_nested_functions import _live_nested_functions
 
 
@@ -37,7 +38,9 @@ class _Payload:
     other: object
 
 
-def _identity(*, payload: object, scalar: object) -> object:
+def _identity(
+    *, payload: PytreeValue, scalar: PytreeValue
+) -> tuple[PytreeValue, PytreeValue]:
     return payload, scalar
 
 

@@ -65,6 +65,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
+    Float1D,
     FloatND,
     Int1D,
     IntND,
@@ -517,7 +518,7 @@ class SolutionPhase:
     """Base state-action space before runtime grid substitution."""
 
     period_state_axes: (
-        MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
+        MappingProxyType[int, MappingProxyType[StateOrActionName, Float1D]] | None
     ) = None
     """Per-period node arrays for age-varying (`AgeSpecializedGrid`) states.
 

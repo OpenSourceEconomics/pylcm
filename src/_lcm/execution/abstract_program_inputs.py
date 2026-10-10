@@ -12,6 +12,8 @@ from _lcm.execution.core_program import (
     _value_read_argument_leaf,
 )
 from _lcm.execution.value_transfer import ResolvedValueTransfer
+from _lcm.typing import ShapeDtypePytree
+from lcm.typing import ReferenceName
 
 
 def abstract_program_inputs(
@@ -64,7 +66,7 @@ def abstract_program_inputs(
             ),
             sharding=transfer.source_sharding,
         )
-    required: Mapping[str, object] = jax.tree.map(
+    required: Mapping[ReferenceName, ShapeDtypePytree] = jax.tree.map(
         lambda leaf: replacements.get(id(leaf), leaf), arguments
     )
     return replace(program, arguments=required)

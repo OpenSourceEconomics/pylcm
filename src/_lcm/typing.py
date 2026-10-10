@@ -7,10 +7,19 @@ they are re-exported here so engine-internal code can import everything from
 `_lcm.typing`.
 """
 
+import types
 from collections.abc import Mapping, Sequence
 from dataclasses import Field
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Literal,
+    Protocol,
+    TypeAliasType,
+    runtime_checkable,
+)
 
 import jax
 import numpy as np
@@ -134,6 +143,73 @@ type ShapeDtypeTree = (
     | Mapping[str, ShapeDtypeTree]
     | None
 )
+
+# A value tree as JAX flattens it, wider than `ArrayTree` at both ends:
+# - a node may also be a registered pytree class: a params leaf, or a dataclass such
+#   as `EGMCarry` or a published policy, which the claw checks as a whole;
+# - a leaf may also be a host NumPy array or scalar.
+# Every `ArrayTree` is a `PytreeValue`; naming it as a member keeps that true for
+# ty, which would otherwise hold `list[ArrayTree]` apart from `list[PytreeValue]`.
+type PytreeValue = (
+    ArrayTree
+    | ValueND
+    | HostArray
+    | np.generic
+    | bool
+    | int
+    | float
+    | MappingLeaf
+    | SequenceLeaf
+    | DataclassInstance
+    | _PluginPytree
+    | tuple[PytreeValue, ...]
+    | list[PytreeValue]
+    | Mapping[str, PytreeValue]
+    | None
+)
+
+# The abstract counterpart of a `PytreeValue`, for lowering and memory profiling.
+type ShapeDtypePytree = (
+    ShapeDtypeTree
+    | jax.ShapeDtypeStruct
+    | MappingLeaf
+    | SequenceLeaf
+    | DataclassInstance
+    | tuple[ShapeDtypePytree, ...]
+    | list[ShapeDtypePytree]
+    | Mapping[str, ShapeDtypePytree]
+    | None
+)
+
+if TYPE_CHECKING:
+    from _lcm.solution.solver_diagnostics import SolverDiagnostics
+    from lcm._solver_api.replay import ContinuationArtifact
+
+    # A payload a solver publishes under an artifact key: a simulation policy, a
+    # continuation artifact, solver diagnostics, or a value tree.
+    type ArtifactPayload = (
+        SimulationPolicy | ContinuationArtifact | SolverDiagnostics | PytreeValue
+    )
+    # A solver plugin's continuation artifact, which a value tree may carry.
+    type _PluginPytree = ContinuationArtifact
+else:
+    # Solver plugins publish payload classes of their own; the claw checks nothing
+    # here rather than run `isinstance` against a protocol on plugin objects.
+    type ArtifactPayload = object
+    # A plugin artifact inside a value tree is checked as the registered
+    # dataclass it is, never against the protocol.
+    type _PluginPytree = DataclassInstance
+
+# A child JAX hands a registered pytree's `unflatten`: a concrete or traced array,
+# a host array or scalar during calls, a `jax.ShapeDtypeStruct` during AOT
+# lowering, or `None` for an absent leaf.
+type PytreeChild = (
+    ValueND | HostArray | np.generic | jax.ShapeDtypeStruct | bool | int | float | None
+)
+
+# A runtime annotation object: a class, a `type` alias, a subscripted generic, an
+# `X | Y` union, or a string forward reference.
+type AnnotationForm = type | TypeAliasType | types.GenericAlias | types.UnionType | str  # noqa: PAN006 - an annotation may name any class
 
 # Shardings laid out like the tree they place.
 type ShardingTree = (

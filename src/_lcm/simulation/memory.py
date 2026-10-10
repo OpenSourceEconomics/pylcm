@@ -32,6 +32,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_reads import PeriodSimulationReads
+from _lcm.typing import ArrayTree, PytreeValue
 from lcm.typing import ReferenceName
 
 # Fields already holding measured spans; the ledger binds them without a walk.
@@ -74,7 +75,7 @@ class SimulationMemory:
     chunk_inputs: DeviceBufferFootprint = field(
         default_factory=lambda: DeviceBufferFootprint(spans={})
     )
-    unit_inputs: object = ()
+    unit_inputs: ArrayTree = ()
     derived: object = ()
     period_owner: PeriodSimulationReads | None = None
     ledger: OwnerLedger = field(default_factory=OwnerLedger, repr=False)
@@ -159,15 +160,15 @@ class SimulationMemory:
             devices=devices,
         )
 
-    def budget_snapshot(self, *, additional: object = ()) -> DeviceBufferFootprint:
+    def budget_snapshot(self, *, additional: PytreeValue = ()) -> DeviceBufferFootprint:
         """Read current live roots while projecting retained admission metadata."""
         return self.snapshot(additional=additional, devices=self.devices)
 
-    def set_chunk_inputs(self, *, tree: object) -> None:
+    def set_chunk_inputs(self, *, tree: PytreeValue) -> None:
         """Replace a chunk's grids/params while its actual owners remain alive."""
         self.chunk_inputs = measure_buffer_footprint(tree=tree)
 
-    def publish(self, *, tree: object) -> None:
+    def publish(self, *, tree: PytreeValue) -> None:
         """Record results whose actual owners survive the period."""
         self.outputs = union_buffer_footprints(
             footprints=(self.outputs, measure_buffer_footprint(tree=tree))
@@ -215,11 +216,11 @@ class SimulationMemory:
             devices=self.devices,
         )
 
-    def run[T](
+    def run[T: PytreeValue](
         self,
         *,
         function: Callable[..., T],
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue],
         subject_arg_names: tuple[ReferenceName, ...] = (),
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
         subject_outputs: bool = False,
@@ -270,11 +271,11 @@ class SimulationMemory:
         return footprint
 
 
-def run_simulation_operation[T](
+def run_simulation_operation[T: PytreeValue](
     *,
     memory: SimulationMemory | None,
     function: Callable[..., T],
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue],
     subject_arg_names: tuple[ReferenceName, ...] = (),
     static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
     subject_outputs: bool = False,

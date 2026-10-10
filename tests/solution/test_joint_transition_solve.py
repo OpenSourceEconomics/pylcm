@@ -11,6 +11,7 @@ from _lcm.transition_plans import (
     TransitionLotteryInfo,
     TransitionOutputInfo,
 )
+from _lcm.typing import PytreeValue
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -95,7 +96,7 @@ def _build_model(
     *,
     enable_jit: bool,
     probabilities: Callable[[], FloatND] = _joint_probabilities,
-    support: object = _SUPPORT,
+    support: PytreeValue | Callable[..., PytreeValue] = _SUPPORT,
 ) -> Model:
     return Model(
         regimes={

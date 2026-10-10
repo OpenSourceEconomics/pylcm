@@ -37,6 +37,7 @@ from _lcm.simulation import (
     host_operations,
     process_grids,
 )
+from _lcm.typing import PytreeValue
 from _lcm.utils.logging import LogLevel, get_logger
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm.execution import ExecutionConfig
@@ -226,7 +227,7 @@ def test_value_dependent_operation_checks_still_raise(log_level: LogLevel) -> No
     `host_operations.py:73-151,287-318`).
     """
 
-    def _pure_operation(*, value: object) -> object:
+    def _pure_operation(*, value: PytreeValue) -> PytreeValue:
         return value
 
     # Exercise the check under each log level's logger, exactly like a real

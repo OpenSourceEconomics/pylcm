@@ -11,8 +11,10 @@ import pandas as pd
 import pytest
 
 from _lcm.simulation.program_types import SimulationPrograms
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm import ExecutionConfig
 from lcm.exceptions import InvalidSimulationInputError
+from lcm.typing import ReferenceName
 from tests.test_models import taste_shocks_toy
 
 simulation = importlib.import_module("_lcm.simulation.simulate")
@@ -35,9 +37,9 @@ def _capture_decision_keys(*, monkeypatch: pytest.MonkeyPatch) -> list[np.ndarra
         programs: SimulationPrograms,
         family: str,
         period: int,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         n_subjects: int,
-    ) -> object:
+    ) -> PytreeValue:
         if family == "decision" and "taste_shock_key" in arguments:
             captured.append(
                 np.array(

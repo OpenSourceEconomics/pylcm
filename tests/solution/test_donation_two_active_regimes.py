@@ -28,6 +28,7 @@ from _lcm.execution.value_transfer import ValueArtifactAddress
 from _lcm.solution import backward_induction
 from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.solve_inputs import SolveInputMappings, locate_artifact
+from _lcm.typing import PytreeValue
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -54,7 +55,14 @@ from lcm.solvers import (
     SolverBuildContext,
     StateAxesLeading,
 )
-from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, StateName
+from lcm.typing import (
+    Float1D,
+    FloatND,
+    ReferenceName,
+    ScalarFloat,
+    ScalarInt,
+    StateName,
+)
 from tests.test_solver_api_out_of_tree import TerminalPublisher
 
 _N_PERIODS = 3
@@ -122,7 +130,7 @@ def _counting_value(
 # keyword-only-exempt: library-callback=lcm.solvers.CoreProgram.argument_builder
 def _counting_arguments(
     build: CoreBuildContext, /, *, regime_name: str
-) -> dict[str, object]:
+) -> Mapping[ReferenceName, PytreeValue]:
     """Feed the state grid and the regime's own published count to the program."""
     return {
         "wealth": build.state_action_space.states["wealth"],  # ty: ignore[unresolved-attribute]

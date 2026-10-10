@@ -43,11 +43,13 @@ from lcm.transition import (
 )
 
 if TYPE_CHECKING:
-    from lcm.regime import Regime
+    from lcm.regime import Regime, StateTransitionEntry
 else:
-    # `lcm.regime` imports this module, so `Regime` is not importable here at
-    # runtime; a regime's own constructor checks its fields.
+    # `lcm.regime` imports this module, so neither `Regime` nor
+    # `StateTransitionEntry` is importable here at runtime; a regime's own
+    # constructor checks its fields.
     type Regime = object
+    type StateTransitionEntry = object
 
 
 def _grid_mapping_errors(
@@ -676,7 +678,7 @@ def _iter_transition_nodes(value: object) -> Iterator[object]:
 
 
 def _state_transition_marker_errors(
-    state_transitions: Mapping[str, object],
+    state_transitions: Mapping[StateName, StateTransitionEntry],
 ) -> list[str]:
     """Collect errors for `AgeSpecializedFunction` markers inside state transitions."""
     error_messages: list[str] = []

@@ -14,6 +14,7 @@ from typing import Protocol, runtime_checkable
 
 import jax
 
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.typing import ReferenceName
 
 
@@ -34,7 +35,7 @@ class SubjectShardable(Protocol):
 
 
 def declared_subject_shard_arg_names(
-    *, function: Callable[..., object]
+    *, function: Callable[..., PytreeValue]
 ) -> tuple[str, ...] | None:
     """Return the subject arguments a callable declares, seen through partials.
 
@@ -50,7 +51,7 @@ def declared_subject_shard_arg_names(
     Returns ``None`` when no callable in the chain declares the capability.
     """
     bound: set[str] = set()
-    inner: object = function
+    inner: Callable[..., PytreeValue] = function
     while isinstance(inner, partial):
         if inner.args:
             return None
@@ -63,13 +64,13 @@ def declared_subject_shard_arg_names(
 
 def shard_subject_function(
     *,
-    function: Callable[..., object],
+    function: Callable[..., PytreeValue],
     subject_arg_names: tuple[ReferenceName, ...],
     arguments: Mapping[str, object],
     static_kwargs: Mapping[str, int],
     devices: tuple[jax.Device, ...],
     subject_width_keyword: str,
-) -> Callable[..., object]:
+) -> Callable[..., PytreeValue]:
     """Wrap the complete tile loop, not each tile, in one manual device map.
 
     Only names, shapes, static widths, and the function survive construction.
@@ -115,7 +116,9 @@ def shard_subject_function(
 
 
 def _subject_extent(
-    *, arguments: Mapping[str, object], subject_arg_names: tuple[ReferenceName, ...]
+    *,
+    arguments: Mapping[str, object],
+    subject_arg_names: tuple[ReferenceName, ...],
 ) -> int:
     """Validate declared leading dimensions from metadata, never device values."""
     extents: set[int] = set()
@@ -139,12 +142,12 @@ def _subject_extent(
 
 # keyword-only-exempt: library-callback=jax.shard_map
 def _evaluate_local_subjects(
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     *,
-    function: Callable[..., object],
+    function: Callable[..., PytreeValue],
     static_kwargs: Mapping[str, int],
     local_extent: int,
-) -> object:
+) -> PytreeValue:
     """Run one partition's existing tiling body, retaining its output tree."""
     result = function(**arguments, **static_kwargs)
     for leaf in jax.tree.leaves(result):
@@ -158,8 +161,10 @@ def _evaluate_local_subjects(
 class _KeywordSubjectMap:
     """Preserve the existing keyword-only dynamic-argument compiler interface."""
 
-    mapped: Callable[..., object]
+    mapped: Callable[
+        [Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]], PytreeValue
+    ]
 
-    def __call__(self, **arguments: object) -> object:
+    def __call__(self, **arguments: PytreeValue | ShapeDtypePytree) -> PytreeValue:
         """Dispatch all device partitions together, with no Python device loop."""
         return self.mapped(arguments)

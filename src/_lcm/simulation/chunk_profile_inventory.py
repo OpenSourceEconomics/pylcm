@@ -20,6 +20,7 @@ from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.operand_placement import subject_operand_sharding
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.value_placement import simulation_value_sharding
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 
@@ -41,12 +42,12 @@ def _abstract_leaf(
     )
 
 
-def abstract_tree(*, tree: object, sharding: jax.sharding.Sharding) -> object:
+def abstract_tree(*, tree: object, sharding: jax.sharding.Sharding) -> ShapeDtypePytree:
     """Copy only shape/dtype metadata onto the required ordered layout."""
     return jax.tree.map(partial(_abstract_leaf, sharding=sharding), tree)
 
 
-def payload_bytes(*, tree: object) -> dict[jax.Device, int]:
+def payload_bytes(*, tree: ShapeDtypePytree) -> dict[jax.Device, int]:
     """Size declared shard payloads, including extended PRNG-key dtypes."""
     result: dict[jax.Device, int] = {}
     for leaf in jax.tree.leaves(tree):
@@ -91,13 +92,13 @@ class ChunkProfileInventory:
     def operation(
         self,
         *,
-        function: Callable[..., object],
-        arguments: Mapping[str, object],
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         subject_arg_names: tuple[ReferenceName, ...] = (),
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
         subject_outputs: bool = False,
         devices: tuple[jax.Device, ...] | None = None,
-    ) -> object:
+    ) -> ShapeDtypePytree:
         """Use the same argument placement, compiler and numerical body as dispatch."""
         devices = self.runtime.subject_devices if devices is None else devices
         subject = subject_operand_sharding(devices=devices)
@@ -130,9 +131,9 @@ class ChunkProfileInventory:
         name: str,
         executable: jax.stages.Compiled,
         memory: CompilerMemoryReservation,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, ShapeDtypePytree],
         devices: tuple[jax.Device, ...] | None = None,
-    ) -> object:
+    ) -> ShapeDtypePytree:
         """Adopt the caller's already-read compiler report; never reread it here."""
         self.stages.append(
             SimulationStageProfile(
