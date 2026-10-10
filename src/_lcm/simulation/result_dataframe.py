@@ -73,7 +73,7 @@ def _create_flat_dataframe(
 
 def _stakeholder_value_column_names(
     *,
-    regime_names: list[RegimeName],
+    regime_names: tuple[RegimeName, ...],
     regime_to_stakeholders: Mapping[RegimeName, tuple[str, ...] | None],
 ) -> list[str]:
     """Name the per-stakeholder value columns in the order the regimes declare them.
@@ -340,8 +340,8 @@ def _to_host(value: FloatND | IntND | BoolND) -> np.ndarray:
 def _assemble_dataframe(
     *,
     regime_dfs: list[pd.DataFrame],
-    state_names: list[StateName],
-    action_names: list[ActionName],
+    state_names: tuple[StateName, ...],
+    action_names: tuple[ActionName, ...],
     stakeholder_value_names: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Combine regime DataFrames, add missing columns, reorder, and sort."""
@@ -361,8 +361,8 @@ def _assemble_dataframe(
 
 def _empty_dataframe(
     *,
-    state_names: list[StateName],
-    action_names: list[ActionName],
+    state_names: tuple[StateName, ...],
+    action_names: tuple[ActionName, ...],
 ) -> pd.DataFrame:
     """Create empty DataFrame with correct columns."""
     columns = ["subject_id", "period", "regime_name", "value"]
@@ -374,8 +374,8 @@ def _empty_dataframe(
 def _add_missing_columns(
     *,
     df: pd.DataFrame,
-    state_names: list[StateName],
-    action_names: list[ActionName],
+    state_names: tuple[StateName, ...],
+    action_names: tuple[ActionName, ...],
 ) -> pd.DataFrame:
     """Add NaN columns for states/actions not present in DataFrame."""
     for name in state_names:
@@ -390,8 +390,8 @@ def _add_missing_columns(
 def _reorder_columns(
     *,
     df: pd.DataFrame,
-    state_names: list[StateName],
-    action_names: list[ActionName],
+    state_names: tuple[StateName, ...],
+    action_names: tuple[ActionName, ...],
     stakeholder_value_names: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Reorder columns: id, period, regime_name, role, value, states, actions, rest.
@@ -421,7 +421,7 @@ def _reorder_columns(
         set(base) | set(state_names) | set(action_names) | set(stakeholder_value_cols)
     )
     rest = [c for c in df.columns if c not in known]
-    return df[base + stakeholder_value_cols + state_names + action_names + rest]
+    return df[[*base, *stakeholder_value_cols, *state_names, *action_names, *rest]]
 
 
 def _convert_to_categorical(

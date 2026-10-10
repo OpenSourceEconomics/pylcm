@@ -2,6 +2,7 @@ import shutil
 from pathlib import Path
 from types import MappingProxyType
 
+import cloudpickle
 import jax.numpy as jnp
 import pandas as pd
 import pytest
@@ -489,8 +490,54 @@ def regression_simulation_result():
 def test_available_targets_property(regression_simulation_result):
     """Test that available_targets shows what can be computed."""
     result = regression_simulation_result
-    assert isinstance(result.available_targets, list)
     assert {"utility", "borrowing_constraint"} <= set(result.available_targets)
+
+
+_NAME_LISTINGS = ("regime_names", "state_names", "action_names", "available_targets")
+
+
+@pytest.mark.parametrize("name", _NAME_LISTINGS)
+def test_simulation_result_name_listing_is_a_tuple(
+    *, regression_simulation_result, name
+):
+    """Each name listing of a simulation result is a tuple."""
+    assert isinstance(getattr(regression_simulation_result, name), tuple)
+
+
+@pytest.mark.parametrize("name", _NAME_LISTINGS)
+def test_simulation_result_name_listing_cannot_be_mutated(
+    *, regression_simulation_result, name
+):
+    """Writing into a name listing of a simulation result is refused."""
+    names = getattr(regression_simulation_result, name)
+
+    with pytest.raises(TypeError):
+        names[0] = "renamed"
+
+
+@pytest.mark.parametrize("name", _NAME_LISTINGS)
+def test_load_returns_name_listings_archived_as_lists_as_tuples(
+    *, tmp_path, regression_simulation_result, name
+):
+    """An archive holding a result's name listings as lists loads them as tuples."""
+    save_dir = tmp_path / "result"
+    regression_simulation_result.save(directory=save_dir)
+    metadata_path = save_dir / "metadata.pkl"
+    with metadata_path.open("rb") as fh:
+        saved = cloudpickle.load(fh)
+    for field in ("regime_names", "state_names", "action_names"):
+        object.__setattr__(
+            saved.result_metadata,
+            field,
+            list(getattr(saved.result_metadata, field)),
+        )
+    object.__setattr__(saved, "available_targets", list(saved.available_targets))
+    with metadata_path.open("wb") as fh:
+        cloudpickle.dump(saved, fh)
+
+    loaded = SimulationResult.load(directory=save_dir)
+
+    assert isinstance(getattr(loaded, name), tuple)
 
 
 def test_additional_targets_all(regression_simulation_result):

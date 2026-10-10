@@ -17,13 +17,13 @@ from lcm.regime import Regime as UserRegime
 class ResultMetadata:
     """Pre-computed metadata about a `SimulationResult`."""
 
-    regime_names: list[RegimeName]
+    regime_names: tuple[RegimeName, ...]
     """Names of all regimes in the model."""
 
-    state_names: list[StateName]
+    state_names: tuple[StateName, ...]
     """Sorted union of state variable names across all regimes."""
 
-    action_names: list[ActionName]
+    action_names: tuple[ActionName, ...]
     """Sorted union of action variable names across all regimes."""
 
     n_periods: int
@@ -139,7 +139,7 @@ def _compute_metadata(
     `NestedEGMSimPolicy`. It is a property of the solved MODEL, not of the
     simulated subjects, so the dataframe schema it gates stays data-independent.
     """
-    regime_names = list(regimes.keys())
+    regime_names = tuple(regimes.keys())
 
     all_states: set[StateName] = set()
     all_actions: set[ActionName] = set()
@@ -187,8 +187,8 @@ def _compute_metadata(
 
     return ResultMetadata(
         regime_names=regime_names,
-        state_names=sorted(all_states),
-        action_names=sorted(all_actions),
+        state_names=tuple(sorted(all_states)),
+        action_names=tuple(sorted(all_actions)),
         n_periods=n_periods,
         n_subjects=n_subjects,
         regime_to_states=MappingProxyType(regime_to_states),
