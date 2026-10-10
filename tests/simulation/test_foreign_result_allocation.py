@@ -424,7 +424,7 @@ def test_unexpected_supplied_artifact_is_rejected_before_unprofiled_copy(
     object.__setattr__(foreign, "_artifact_authority", {ref: artifact_authority})
     original = authority_module._copy_artifact_array_leaf
 
-    def guard(*, leaf: object, label: str, **kwargs: Any) -> jax.Array:
+    def guard(*, leaf: jax.Array, label: str, **kwargs: Any) -> jax.Array:
         if kwargs.get("array_copier") is None:
             raise _UnadmittedForeignCopyError(
                 "Unexpected artifact reached unprofiled copy"

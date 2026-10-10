@@ -294,7 +294,7 @@ def test_bulk_materialization_accounts_for_source_and_copy(
         return original_assembly(self, period=period, regime=regime)
 
     def observe_copy(
-        *, leaf: object, label: str, array_copier: _ArrayCopier | None = None
+        *, leaf: jax.Array, label: str, array_copier: _ArrayCopier | None = None
     ) -> jax.Array:
         nonlocal retained_output_bytes
         copied = original_copy(leaf=leaf, label=label, array_copier=array_copier)

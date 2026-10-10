@@ -3,13 +3,57 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from fractions import Fraction
 from typing import (
     TYPE_CHECKING,
 )
 
+import jax
 import numpy as np
 
 from lcm.version import __version__
+
+if TYPE_CHECKING:
+    from _lcm.typing import ArtifactPayload, DataclassInstance, HostArray
+
+    # A frozen dataclass record inside an artifact payload.
+    type ArtifactRecord = DataclassInstance
+    # One numerical leaf of an artifact payload, as a solver supplies it.
+    type ArtifactLeafValue = jax.Array | HostArray | np.generic | bool | int | float
+    # The class of every numerical leaf a model-authoritative artifact declares.
+    type ArtifactLeafArray = jax.Array
+    # Static metadata an artifact PyTree carries beside its numerical leaves.
+    type InertMetadata = (
+        bool
+        | int
+        | float
+        | complex
+        | str
+        | bytes
+        | Fraction
+        | tuple[InertMetadata, ...]
+        | frozenset[InertMetadata]
+        | ArtifactRecord
+        | None
+    )
+    # Any value in an artifact graph: the payload, a container or leaf inside it, or
+    # its static metadata.
+    type ArtifactValue = (
+        ArtifactPayload | ArtifactLeafValue | InertMetadata | tuple[ArtifactValue, ...]
+    )
+else:
+    # Artifact payloads and everything inside them come from solver plugins. The
+    # authority checks them by exact type identity without running plugin code, so
+    # the claw checks nothing here rather than run `isinstance` on plugin objects.
+    type ArtifactPayload = object
+    type ArtifactRecord = object
+    type ArtifactLeafValue = object
+    type ArtifactLeafArray = object
+    type InertMetadata = object
+    type ArtifactValue = object
+
+# The exact class of an artifact payload or of one container node inside it.
+type ArtifactRuntimeType = type[ArtifactPayload]
 
 _SHA256_HEX_LENGTH = 64
 PYLCM_VERSION = __version__
@@ -374,7 +418,7 @@ class LeafAuthority:
 
     path: TreePath
     """Stable path of the leaf inside the artifact PyTree; `()` for a root array."""
-    runtime_type: type[object]
+    runtime_type: type[ArtifactLeafArray]
     """Exact runtime class of the leaf."""
     shape: tuple[int, ...]
     """Exact array shape."""
@@ -410,7 +454,7 @@ class LeafAuthority:
 
 if TYPE_CHECKING:
     type _CategoricalDomainsBoundary = Mapping[str, CategoryDomain]
-    type _ContainerRuntimeTypesBoundary = Mapping[TreePath, type[object]]
+    type _ContainerRuntimeTypesBoundary = Mapping[TreePath, ArtifactRuntimeType]
     type _LeafAuthoritiesBoundary = Mapping[TreePath, LeafAuthority]
 else:
     # These public constructors own exact, single-traversal mapping validation.
