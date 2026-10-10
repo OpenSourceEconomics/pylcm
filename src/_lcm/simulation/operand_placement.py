@@ -18,24 +18,26 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
-from _lcm.typing import HostArray, PytreeValue, ShapeDtypePytree
+from _lcm.typing import ArgumentTree, HostArray
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import ReferenceName
+from lcm.typing import ReferenceName, ValueND
+
+# One process-grid parameter: a runtime or fixed numerical value, which may be a
+# Python complex.
+type _ProcessParameter = ValueND | HostArray | np.generic | int | float | complex
+
+# A placement operand as callers hand it over: a core-program argument tree, or a
+# process-grid parameter, alone or in its parameter mapping.
+type _OperandValue = ArgumentTree | _ProcessParameter | Mapping[str, _ProcessParameter]
 
 if TYPE_CHECKING:
-    # An operand tree as callers hand it to placement: a value tree, its abstract
-    # counterpart, or a process-grid parameter, which may be a Python complex.
+    # An operand tree as the placement walk descends and rebuilds it.
     type _Operand = (
-        PytreeValue
-        | ShapeDtypePytree
-        | complex
-        | tuple[_Operand, ...]
-        | list[_Operand]
-        | Mapping[str, _Operand]
+        _OperandValue | tuple[_Operand, ...] | list[_Operand] | Mapping[str, _Operand]
     )
 else:
-    # beartype cannot build a check for a recursive alias over `PytreeValue` with
-    # more than one self-referencing container, and placement only walks the tree.
+    # beartype cannot build a check for a recursive alias over other recursive
+    # pytree aliases; callers' operands are checked against `_OperandValue`.
     type _Operand = object
 
 
@@ -49,7 +51,7 @@ class SubjectArgumentNames(Protocol):
         ...
 
 
-def place_simulation_arguments[T: _Operand](
+def place_simulation_arguments[T: _OperandValue](
     *,
     arguments: Mapping[str, T],
     subject_arg_names: tuple[ReferenceName, ...],

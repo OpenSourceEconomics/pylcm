@@ -28,7 +28,7 @@ from types import MappingProxyType
 
 import jax
 
-from _lcm.typing import PytreeByPeriod
+from _lcm.typing import FootprintTree, PytreeByPeriod
 from lcm.exceptions import ExecutionPlanningError
 
 type _Spans = tuple[tuple[int, int], ...]
@@ -55,7 +55,7 @@ class DeviceBufferFootprint:
         )
 
 
-def measure_buffer_footprint(*, tree: object) -> DeviceBufferFootprint:
+def measure_buffer_footprint(*, tree: FootprintTree) -> DeviceBufferFootprint:
     """Measure every live addressable JAX payload in an explicitly supplied tree.
 
     Plain Python and NumPy leaves occupy no JAX device storage until placed. Opaque

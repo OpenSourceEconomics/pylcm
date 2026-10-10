@@ -19,6 +19,7 @@ from _lcm.simulation.residency import (
     measure_buffer_footprint,
     resident_bytes_by_device,
 )
+from _lcm.typing import FootprintTree
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -74,7 +75,7 @@ def _controlled_post_validation_refusal(*args: Any, **kwargs: Any) -> Any:
     raise ExecutionPlanningError("controlled refusal after process validation")
 
 
-def _owner(*, parameters: object) -> process_grids.SimulationProcessGrids:
+def _owner(*, parameters: FootprintTree) -> process_grids.SimulationProcessGrids:
     return process_grids.SimulationProcessGrids(
         live_footprint=lambda: measure_buffer_footprint(tree=parameters),
         devices=(jax.devices()[0],),

@@ -23,6 +23,7 @@ from _lcm.simulation.residency import (
     measure_buffer_footprint,
 )
 from _lcm.simulation.value_reads import PeriodSimulationReads
+from _lcm.typing import FootprintTree
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -67,7 +68,7 @@ class _CountingMeasure:
     def __init__(self) -> None:
         self.calls = 0
 
-    def __call__(self, *, tree: object) -> DeviceBufferFootprint:
+    def __call__(self, *, tree: FootprintTree) -> DeviceBufferFootprint:
         self.calls += 1
         return measure_buffer_footprint(tree=tree)
 

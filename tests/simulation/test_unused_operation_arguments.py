@@ -12,6 +12,7 @@ import pytest
 
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
+from _lcm.typing import FootprintTree
 from lcm.exceptions import ExecutionPlanningError
 
 _SUBJECT_COUNT = 262_144
@@ -41,7 +42,7 @@ def _input() -> _RetainedInput:
     )
 
 
-def _payload_bytes(*, tree: object, device: jax.Device) -> int:
+def _payload_bytes(*, tree: FootprintTree, device: jax.Device) -> int:
     footprint = measure_buffer_footprint(tree=tree)
     return sum(stop - start for start, stop in footprint.spans.get(device, ()))
 

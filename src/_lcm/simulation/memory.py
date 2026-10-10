@@ -179,7 +179,7 @@ class SimulationMemory:
         self, *, tree: Sequence[Mapping[RegimeName, PytreeByPeriod]]
     ) -> None:
         """Reset publication metadata after offload and release of the old owners."""
-        self.outputs = measure_buffer_footprint(tree=tree)
+        self.outputs = measure_buffer_footprint(tree=tuple(tree))
 
     def set_derived(self, tree: PytreeValue) -> None:
         """Replace the current host adapter's live derived-input snapshot."""

@@ -27,7 +27,7 @@ from _lcm.simulation.transitions import (
     _advance_states_for_subjects,
     _draw_random_regime_ids,
 )
-from _lcm.typing import PytreeValue
+from _lcm.typing import FootprintTree, PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 from tests.conftest import assert_agrees_to_ulp
@@ -59,7 +59,7 @@ class _BudgetedDispatchArguments(_DispatchArguments):
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _OwnedInputs:
-    arrays: list[object]
+    arrays: list[FootprintTree]
 
     def __call__(self) -> DeviceBufferFootprint:
         jax.block_until_ready(self.arrays)

@@ -49,7 +49,7 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
     union_buffer_footprints,
 )
-from _lcm.typing import PytreeValue
+from _lcm.typing import FootprintTree, PytreeValue
 from benchmarks.asv._simulation_witnesses import dissolution
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
@@ -365,7 +365,7 @@ class _ChargeWitness:
             devices=scope.devices,
         )[device]
         owner = scope.period_owner
-        trees: list[object] = [
+        trees: list[FootprintTree] = [
             tuple(scope._held),
             scope.unit_inputs,
             scope.derived,
