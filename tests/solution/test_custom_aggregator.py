@@ -33,6 +33,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    Period,
     ScalarInt,
 )
 from tests.conftest import bind_laws
@@ -623,10 +624,10 @@ class _AgeIndexedRegimeId:
 
 
 def _W_age_varying_discount(
-    *, utility: FloatND, CE: FloatND, discount_factor: FloatND, age: FloatND
+    *, utility: FloatND, CE: FloatND, discount_factor: FloatND, period: Period
 ) -> FloatND:
-    """Aggregate with a discount factor read off an age-indexed array."""
-    return utility + discount_factor[age] * CE
+    """Read an age-labelled discount factor from its normalized period position."""
+    return utility + discount_factor[period] * CE
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -634,9 +635,9 @@ class _AgeVaryingDiscountAggregator:
     """The same aggregator, written as a callable specification object."""
 
     def __call__(
-        self, *, utility: FloatND, CE: FloatND, discount_factor: FloatND, age: FloatND
+        self, *, utility: FloatND, CE: FloatND, discount_factor: FloatND, period: Period
     ) -> FloatND:
-        return utility + discount_factor[age] * CE
+        return utility + discount_factor[period] * CE
 
 
 def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
@@ -655,22 +656,22 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        ages=AgeGrid(start=40, inclusive_stop=42, step="Y"),
         regime_id_class=_AgeIndexedRegimeId,
-        initial_nodes={0: "alive"},
+        initial_nodes={40: "alive"},
         edges={
             "alive": Transition(
-                targets={"alive": 0, "dead": (0, 1)},
+                targets={"alive": 40, "dead": (40, 41)},
                 law=DeterministicTransition(
                     func=lambda age: jnp.where(
-                        age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+                        age < 41, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
                     )
                 ),
             )
         },
     )
     discount_factor = pd.Series(
-        [0.99, 0.90, 0.80], index=pd.Index([0.0, 1.0, 2.0], name="age")
+        [0.99, 0.90, 0.80], index=pd.Index([40.0, 41.0, 42.0], name="age")
     )
     params = {"alive": {"koopmans_aggregator": {"discount_factor": discount_factor}}}
     return model.solve(params=params, log_level="debug").values[0]["alive"]

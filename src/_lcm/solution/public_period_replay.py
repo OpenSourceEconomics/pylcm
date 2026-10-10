@@ -36,9 +36,9 @@ from _lcm.solution.public_period_capture import (
     validate_capture_route,
 )
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
+from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams
 from _lcm.utils.logging import get_logger
-from lcm.ages import AgeGrid
 from lcm.period_capture import CapturedPeriodReplay
 
 
@@ -47,7 +47,7 @@ def replay_public_period(
     directory: Path,
     flat_params: FlatParams,
     regimes: MappingProxyType[str, Regime],
-    ages: AgeGrid,
+    ages: TimeAxis,
     execution: ResolvedExecution,
     enable_jit: bool,
     source_identity: Mapping[str, str],
@@ -176,7 +176,7 @@ def _restore_public_inputs(
     execution: ResolvedExecution,
     name: str,
     period: int,
-    ages: AgeGrid,
+    ages: TimeAxis,
     retain_replay: bool,
 ) -> dict[str, Any]:
     """Validate persisted values against fresh topology and rebuild adapter inputs."""

@@ -135,21 +135,26 @@ _PROFILED_HELPER_MUTATIONS = {
     "simulation_pandas:series_writer_omitted": (
         "src/lcm/model.py",
         (
-            "                regime_names_to_ids=self.regime_names_to_ids,\n"
-            "                array_writer=array_writer,"
+            "            regime_names_to_ids=self.regime_names_to_ids,\n"
+            "            array_writer=array_writer,"
         ),
         (
-            "                regime_names_to_ids=self.regime_names_to_ids,\n"
-            "                array_writer=None,"
+            "            regime_names_to_ids=self.regime_names_to_ids,\n"
+            "            array_writer=None,"
         ),
     ),
     "simulation_pandas:nested_writer_omitted": (
         "src/_lcm/pandas_utils.py",
         (
             "        array_writer=array_writer,\n"
-            "    )\n\n    if isinstance(value, pd.Series):"
+            "        required_periods=required_periods,\n"
+            "    )\n\n    managed = param_name in temporal_parameter_names(func)"
         ),
-        ("        array_writer=None,\n    )\n\n    if isinstance(value, pd.Series):"),
+        (
+            "        array_writer=None,\n"
+            "        required_periods=required_periods,\n"
+            "    )\n\n    managed = param_name in temporal_parameter_names(func)"
+        ),
     ),
     "simulation_pandas:materialization_admission_bypassed": (
         "src/_lcm/pandas_utils.py",
@@ -250,8 +255,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_entry:entry_model_roots_omitted": (
         "src/lcm/model.py",
-        "            model_roots=(\n                self.ages.values,",
-        "            model_roots=() and (\n                self.ages.values,",
+        "            model_roots=(\n                self._time.values,",
+        "            model_roots=() and (\n                self._time.values,",
     ),
     "simulation_entry:preflight_owner_inventory_omitted": (
         "src/lcm/model.py",

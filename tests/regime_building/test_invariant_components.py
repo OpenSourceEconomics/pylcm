@@ -299,6 +299,7 @@ def _work_to_gap(age: float) -> ScalarInt:
 
 
 def _components(model: Model) -> dict[str, InvariantComponent]:
+    assert model.ages is not None
     return dict(
         analyze_invariant_components(
             user_regimes=model.user_regimes,

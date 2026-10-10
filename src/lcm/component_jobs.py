@@ -544,7 +544,7 @@ def collect_component_jobs(
     validate_transitions(
         regimes=model._regimes,  # noqa: SLF001
         flat_params=flat_params,
-        ages=model.ages,
+        ages=model._time,  # noqa: SLF001
         logger=log,
         process_grid_resolver=None,
     )
@@ -918,7 +918,7 @@ def _solve_job(
     validate_transitions(
         regimes=model._regimes,  # noqa: SLF001
         flat_params=flat_params,
-        ages=model.ages,
+        ages=model._time,  # noqa: SLF001
         logger=log,
         process_grid_resolver=None,
     )
@@ -1281,7 +1281,7 @@ def _collected_simulation(
         regimes=regimes,
         flat_params=flat_params,
         period_to_regime_to_V_arr=solution.values,
-        ages=model.ages,
+        ages=model._time,  # noqa: SLF001
         simulation_output_dtypes=model.simulation_output_dtypes,
         subject_batch_size=widths.pop(),
         nested_policy_regimes=frozenset(

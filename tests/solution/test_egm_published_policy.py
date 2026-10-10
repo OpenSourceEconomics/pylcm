@@ -79,6 +79,7 @@ def _kernel_published_policies(
         return output
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
+    assert model.ages is not None
     backward_induction.solve(
         program_fingerprint="test_egm_published_policy",
         flat_params=model._process_params(params),
@@ -143,6 +144,7 @@ def test_retained_policies_are_host_resident():
     is a nested solver regime whose route reads one.
     """
     model = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=2)
+    assert model.ages is not None
     result = backward_induction.solve(
         program_fingerprint="test_egm_published_policy",
         flat_params=model._process_params({"discount_factor": 0.95}),

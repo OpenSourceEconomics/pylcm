@@ -24,7 +24,11 @@ import pandas as pd
 from jax import Array
 from jaxtyping import Bool, Float, Int, Int32, Scalar, Shaped
 
-from lcm.params import UserMappingLeaf, UserSequenceLeaf
+# Any model dtype; use only for genuinely dtype-polymorphic slots. Parameter
+# wrappers import this alias, so define it before importing them below.
+type ValueND = Shaped[Array, "..."]
+
+from lcm.params import TimeVarying, UserMappingLeaf, UserSequenceLeaf  # noqa: E402
 
 if TYPE_CHECKING:
     from lcm.initial_nodes import InitialNodes, UserInitialNodes  # noqa: F401
@@ -42,11 +46,6 @@ type FloatND = Float[Array, "..."]
 type IntND = Int32[Array, "..."]
 type BoolND = Bool[Array, "..."]
 
-# Any model value, whatever its dtype: a continuous state or action is float, a
-# discrete one an integer code, a flag a boolean. Use it only where a slot is
-# genuinely dtype-polymorphic -- a slot that means one of them takes that alias.
-type ValueND = Shaped[Array, "..."]
-
 type Float1D = Float[Array, "_"]  # noqa: F821
 type Int1D = Int32[Array, "_"]  # noqa: F821
 type Bool1D = Bool[Array, "_"]  # noqa: F821
@@ -59,7 +58,8 @@ type ScalarInt = Int32[Scalar, ""]
 type ScalarFloat = Float[Scalar, ""]
 type ScalarBool = Bool[Scalar, ""]
 
-type Period = ScalarInt
+# Keep equivalent period annotations identical when DAGs reconcile their names.
+Period = ScalarInt
 type Age = ScalarInt | ScalarFloat
 
 # `jax.lax.fori_loop` body index. BOTH forms are admitted deliberately: with
@@ -123,6 +123,7 @@ type _UserParamsLeaf = (
     | BoolND
     | np.ndarray
     | pd.Series
+    | TimeVarying
     | UserMappingLeaf
     | UserSequenceLeaf
 )

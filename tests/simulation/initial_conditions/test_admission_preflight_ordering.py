@@ -52,6 +52,7 @@ from tests.test_transition_checks import _model_with_state_probs
 
 def _validate(*, model: Model, initial: InitialConditions) -> None:
     """Reach the same canonical initial validator with concrete processed params."""
+    assert model.ages is not None
     validate_simulation_inputs(
         initial_conditions=initial,
         regimes=model._regimes,
@@ -232,6 +233,7 @@ def test_changed_transition_params_are_validated_again_on_the_same_model() -> No
         }
     )
     logger = get_logger(log_level="debug")
+    assert model.ages is not None
     validate_transitions(
         regimes=regimes, flat_params=valid, ages=model.ages, logger=logger
     )
@@ -391,6 +393,7 @@ def test_earlier_transition_failure_precedes_a_later_python_exception(
     armed = True
     logger = get_logger(log_level=log_level)
     caplog.clear()
+    assert model.ages is not None
     if log_level == "off":
         validate_transitions(
             regimes=regimes, flat_params=flat_params, ages=model.ages, logger=logger

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import cloudpickle
 import jax
 import jax.numpy as jnp
+import pytest
 
 from _lcm.execution.compiler_memory import (
     CompilerMemoryBytes,
@@ -20,6 +21,8 @@ from _lcm.execution.compiler_memory import (
 )
 from _lcm.solution import period_replay
 from _lcm.solution.period_capture import _PAYLOAD_NAME
+from _lcm.time import ModelTime
+from lcm import AgeGrid
 
 
 class _CompileOnlyExecutable:
@@ -58,8 +61,19 @@ def _reports(
     return read
 
 
+@pytest.mark.parametrize(
+    ("ages", "expected_age"),
+    [
+        (AgeGrid(start=40, inclusive_stop=41, step="Y"), 41.0),
+        (ModelTime(n_periods=2), None),
+    ],
+)
 def test_core_memory_analyzer_compiles_but_never_executes(
-    *, monkeypatch, tmp_path: Path
+    *,
+    monkeypatch,
+    tmp_path: Path,
+    ages: AgeGrid | ModelTime,
+    expected_age: float | None,
 ) -> None:
     """Production cores are reported per name; none is called."""
     executables = {
@@ -85,7 +99,7 @@ def test_core_memory_analyzer_compiles_but_never_executes(
         "core_tile_widths": {},
         "kernel_kwargs": {
             "regime_name": "parent",
-            "ages": SimpleNamespace(values=jnp.array([40.0, 41.0])),
+            "ages": ages,
         },
     }
     with (tmp_path / _PAYLOAD_NAME).open("wb") as stream:
@@ -97,7 +111,11 @@ def test_core_memory_analyzer_compiles_but_never_executes(
     assert _reports(analysis.core_memory_bytes) == {
         name: vars(executable.stats) for name, executable in executables.items()
     }
-    assert (analysis.regime_name, analysis.period, analysis.age) == ("parent", 1, 41.0)
+    assert (analysis.regime_name, analysis.period, analysis.age) == (
+        "parent",
+        1,
+        expected_age,
+    )
     assert analysis.preserves_production_sharding is False
     assert not any(core.compiled.executed for core in production.values())
 

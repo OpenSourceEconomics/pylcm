@@ -61,6 +61,7 @@ from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
+from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin, TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
@@ -80,7 +81,6 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
-from lcm.ages import AgeGrid
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -220,7 +220,7 @@ class SolverBuildContext:
     regime_name: RegimeName
     """Name of the regime the kernels are built for."""
 
-    ages: AgeGrid
+    ages: TimeAxis
     """The model's lifecycle age grid.
 
     A solver whose kernels or preconditions depend on the age a period
@@ -645,7 +645,7 @@ class PeriodKernel(Protocol):
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,
     ) -> KernelOutput:
         """Invoke the compiled program(s) and assemble the period's output.

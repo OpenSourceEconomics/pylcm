@@ -15,7 +15,7 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import jax
 from beartype import beartype
@@ -23,8 +23,8 @@ from beartype import beartype
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
+from _lcm.time import ModelTime, TimeAxis, coordinate_kind
 from _lcm.typing import StateName
-from lcm.ages import AgeGrid
 from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
@@ -64,11 +64,50 @@ class AgeRange:
     """Exclusive upper bound, or `None` for beyond the last age."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class PeriodRange:
+    """The computational periods in `[start, exclusive_stop)`."""
+
+    start: int | None = None
+    """Inclusive first period, or `None` for the horizon's start."""
+
+    exclusive_stop: int | None = None
+    """Exclusive last period, or `None` for the horizon's end."""
+
+    def __post_init__(self) -> None:
+        for value in (self.start, self.exclusive_stop):
+            if value is not None and type(value) is not int:
+                raise RegimeInitializationError("PeriodRange bounds must be integers.")
+        if (
+            self.start is not None
+            and self.exclusive_stop is not None
+            and self.start >= self.exclusive_stop
+        ):
+            raise RegimeInitializationError(
+                "PeriodRange start must be below exclusive_stop."
+            )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Periods:
+    """Explicit computational period positions in a graph declaration."""
+
+    values: tuple[int, ...]
+    """Zero-based period positions; no age-to-period interpretation is inferred."""
+
+    def __post_init__(self) -> None:
+        if any(type(value) is not int for value in self.values):
+            raise RegimeInitializationError("Periods values must be integers.")
+
+
+type PeriodSelector = PeriodRange | Periods
 type AgeSelector = UserAge | float | tuple[UserAge | float, ...] | range | AgeRange
 
 # One phase's edges: each source regime maps to its destinations' source-age
 # selectors, or to a `Transition` whose law chooses among them.
-type PhaseEdges = Mapping[RegimeName, Transition | Mapping[RegimeName, AgeSelector]]
+type PhaseEdges = Mapping[
+    RegimeName, Transition | Mapping[RegimeName, AgeSelector | PeriodSelector]
+]
 
 # What `Model(edges=...)` takes: one phase's edges for both phases, or a
 # `Phased` pair of them.
@@ -153,7 +192,7 @@ class Transition:
     whether a row stays there or takes its route's fallback.
     """
 
-    targets: Mapping[RegimeName, AgeSelector] | None = None
+    targets: Mapping[RegimeName, AgeSelector | PeriodSelector] | None = None
     """Destination regimes and the source ages at which each edge fires.
 
     Optional when the law names its targets — a per-target mapping, a regime
@@ -647,6 +686,41 @@ class AgeSpecializedGrid(_AgeSpecialized):
     against the resolved nodes at build time."""
 
 
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True)
+class PeriodSpecializedFunction(AgeSpecializedFunction):
+    """Bind a function at an integer computational period.
+
+    ``build(period)`` and ``signature(period)`` follow the same determinism,
+    signature and deduplication contracts as ``AgeSpecializedFunction``.
+    This declaration is valid only in a period model.
+    """
+
+    # Coordinate-kind validation prevents using period callbacks in age models.
+    build: Callable[[int], UserFunction]
+    """Factory returning the concrete function for an integer period."""
+
+    signature: Callable[[int], Hashable]
+    """Hashable identity of the period's closure."""
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True)
+class PeriodSpecializedGrid(AgeSpecializedGrid):
+    """Bind a continuous-state grid at an integer computational period.
+
+    Shape invariance, signature verification and interpolation support follow
+    ``AgeSpecializedGrid``. This declaration is valid only in a period model.
+    """
+
+    # Coordinate-kind validation prevents using period callbacks in age models.
+    build: Callable[[int], ContinuousGrid]
+    """Factory returning the concrete continuous grid for an integer period."""
+
+    signature: Callable[[int], Hashable]
+    """Hashable identity of the period's grid, checked against its nodes."""
+
+
 _MISSING = object()
 
 
@@ -678,7 +752,7 @@ class ByAge:
     without outgoing edges in `Model(edges=...)`.
     """
 
-    def __init__[K: AgeSelector](
+    def __init__[K: AgeSelector | PeriodSelector](
         self,
         *,
         cases: Mapping[K, _DeclaredCaseLaw],
@@ -689,6 +763,12 @@ class ByAge:
         for law in (*cases.values(), *(() if default is _MISSING else (default,))):
             _fail_if_not_a_nonterminal_law(law)
         for selector in cases:
+            if isinstance(self, ByPeriod):
+                _fail_if_invalid_period_selector(selector)
+            elif isinstance(selector, PeriodRange | Periods):
+                raise RegimeInitializationError(
+                    "ByAge requires age selectors, not period selectors."
+                )
             _fail_if_invalid_age_selector(selector)
         self._cases: tuple[tuple[object, object], ...] = tuple(
             (selector, snapshot_transition_containers(law))
@@ -702,7 +782,7 @@ class ByAge:
         self._until: _Until | None = None
 
     @classmethod
-    def _from_until(cls, *, until: _Until) -> ByAge:
+    def _from_until(cls, *, until: _Until) -> Self:
         """A schedule that resolves through `until` instead of cases."""
         schedule = cls.__new__(cls)
         vars(schedule).update(
@@ -746,7 +826,7 @@ class ByAge:
             )
         )
 
-    def with_mapped_laws(self, *, func: Callable[[object], object]) -> ByAge:
+    def with_mapped_laws(self, *, func: Callable[[object], object]) -> Self:
         """Return this schedule with every law replaced by `func(law)`.
 
         The selectors are kept. Returns `self` when `func` leaves every law
@@ -757,7 +837,7 @@ class ByAge:
             return self
         if self._until is not None:
             law, then = mapped
-            return ByAge._from_until(
+            return type(self)._from_until(  # noqa: SLF001
                 until=dataclasses.replace(self._until, law=law, then=then)
             )
         cases = cast(
@@ -768,8 +848,8 @@ class ByAge:
             },
         )
         if self._default is None:
-            return ByAge(cases=cases)
-        return ByAge(cases=cases, default=mapped[-1])
+            return type(self)(cases=cases)
+        return type(self)(cases=cases, default=mapped[-1])
 
     @property
     def laws(self) -> tuple[object, ...]:
@@ -781,8 +861,12 @@ class ByAge:
             *(() if self._default is None else (self._default,)),
         )
 
-    def resolve(self, ages: AgeGrid) -> ResolvedSchedule:
+    def resolve(self, ages: TimeAxis) -> ResolvedSchedule:
         """Resolve the selectors against `ages` without evaluating any law."""
+        if isinstance(self, ByPeriod) != (coordinate_kind(ages) == "period"):
+            raise RegimeInitializationError(
+                "ByPeriod requires a period model; ByAge requires an age model."
+            )
         period_by_age: dict[object, int] = {
             age: period for period, age in enumerate(ages.exact_values)
         }
@@ -816,11 +900,69 @@ class ByAge:
         )
 
 
+class ByPeriod(ByAge):
+    """Select transition laws by zero-based computational period.
+
+    Integer keys, integer tuples, ranges, PeriodRange and Periods declare periods.
+    A stage advances one computational slot, without implying elapsed calendar time.
+    """
+
+    @classmethod
+    # The explicit period vocabulary deliberately differs from ByAge's keywords.
+    def until(  # ty: ignore[invalid-method-override]
+        cls,
+        *,
+        stop_period_exclusive: int,
+        law: object,
+        then: object,
+        start_period_inclusive: int | None = None,
+    ) -> ByPeriod:
+        """Use `law` before the predecessor of the stop and `then` on it."""
+        for value in (stop_period_exclusive, start_period_inclusive):
+            if value is not None:
+                _fail_if_invalid_period_selector(value)
+        _fail_if_not_a_nonterminal_law(law)
+        _fail_if_not_a_nonterminal_law(then)
+        return cls._from_until(
+            until=_Until(
+                stop_age_exclusive=stop_period_exclusive,
+                start_age_inclusive=start_period_inclusive,
+                law=law,
+                then=then,
+            )
+        )
+
+    # Period horizons are named; the inherited age-only form retains positional use.
+    def resolve(  # ty: ignore[invalid-method-override]
+        self, *, ages: TimeAxis | None = None, n_periods: int | None = None
+    ) -> ResolvedSchedule:
+        """Resolve against a period horizon, with no implied age labels."""
+        if ages is not None and n_periods is not None:
+            raise RegimeInitializationError("Supply exactly one period horizon.")
+        axis = (
+            ModelTime.from_inputs(ages=None, n_periods=n_periods)
+            if ages is None
+            else ages
+        )
+        return super().resolve(ages=axis)
+
+
+def _fail_if_invalid_period_selector(selector: object) -> None:
+    """Require genuinely integer period coordinates, without numeric coercion."""
+    if isinstance(selector, PeriodRange | Periods):
+        return
+    values = selector if isinstance(selector, tuple | range) else (selector,)
+    if any(type(value) is not int for value in values):
+        raise RegimeInitializationError(
+            "Period selectors must contain integers or PeriodRange/Periods."
+        )
+
+
 @dataclass(frozen=True, kw_only=True)
 class ResolvedSchedule:
     """A schedule resolved against one age grid; inspection only."""
 
-    ages: AgeGrid
+    ages: TimeAxis
     """The grid the schedule was resolved against."""
 
     law_by_period: MappingProxyType[int, object]
@@ -829,6 +971,8 @@ class ResolvedSchedule:
     @property
     def covered_ages(self) -> tuple[UserAge, ...]:
         """The exact ages the schedule covers, ascending."""
+        if coordinate_kind(self.ages) == "period":
+            raise AttributeError("A period schedule has no covered_ages; use periods.")
         return tuple(self.ages.exact_values[period] for period in self.law_by_period)
 
     @property
@@ -842,6 +986,8 @@ class ResolvedSchedule:
         `age` must equal a grid age exactly, as a selector does; a float that
         only approximates a grid age is uncovered.
         """
+        if coordinate_kind(self.ages) == "period" and type(age) is not int:
+            raise TypeError("Schedule lookup requires an integer period.")
         period = {exact: p for p, exact in enumerate(self.ages.exact_values)}.get(age)
         if period is None or period not in self.law_by_period:
             raise KeyError(age)
@@ -914,10 +1060,12 @@ def _fail_if_not_a_nonterminal_law(law: object) -> None:
 def _fail_if_invalid_age_selector(selector: object) -> None:
     """Reject selectors whose values can never be grid ages."""
     values = selector if isinstance(selector, tuple | range) else (selector,)
-    if isinstance(selector, AgeRange):
+    if isinstance(selector, AgeRange | PeriodRange):
         values = tuple(
             v for v in (selector.start, selector.exclusive_stop) if v is not None
         )
+    if isinstance(selector, Periods):
+        values = selector.values
     for value in values:
         if isinstance(value, bool) or not isinstance(value, int | float | Fraction):
             raise RegimeInitializationError(
@@ -940,10 +1088,10 @@ def _fail_if_invalid_age_selector(selector: object) -> None:
 
 
 def _select_periods(
-    *, selector: object, ages: AgeGrid, period_by_age: Mapping[object, int]
+    *, selector: object, ages: TimeAxis, period_by_age: Mapping[object, int]
 ) -> tuple[int, ...]:
     """Return the periods an exact selector names; off-grid points raise."""
-    if isinstance(selector, AgeRange):
+    if isinstance(selector, AgeRange | PeriodRange):
         return tuple(
             period
             for period, age in enumerate(ages.exact_values)
@@ -952,11 +1100,16 @@ def _select_periods(
         )
     values = selector if isinstance(selector, tuple | range) else (selector,)
     periods = set()
+    if isinstance(selector, Periods):
+        values = selector.values
     for value in values:
         if value not in period_by_age:
+            kind = coordinate_kind(ages)
+            article = "an" if kind == "age" else "a"
             raise RegimeInitializationError(
-                f"Age {value} in selector {selector!r} is not an age of the model; "
-                f"valid ages are {list(ages.exact_values)}."
+                f"{kind.title()} {value} in selector {selector!r} is not "
+                f"{article} {kind} of the model; "
+                f"valid {kind}s are {list(ages.exact_values)}."
             )
         periods.add(period_by_age[value])
     return tuple(sorted(periods))
@@ -965,7 +1118,7 @@ def _select_periods(
 def _resolve_until(
     *,
     until: _Until,
-    ages: AgeGrid,
+    ages: TimeAxis,
     period_by_age: Mapping[object, int],
 ) -> dict[int, object]:
     """Resolve `ByAge.until` into per-period laws."""

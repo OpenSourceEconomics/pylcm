@@ -306,6 +306,7 @@ def _cell_arguments(
         if name == "period":
             arguments[name] = jnp.int32(period)
         elif name == "age":
+            assert model.ages is not None
             arguments[name] = model.ages.values[period]
         elif name.startswith("key_"):
             arguments[name] = jax.random.key(0)

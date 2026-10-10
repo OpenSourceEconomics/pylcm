@@ -140,6 +140,7 @@ def test_external_replay_scores_actions_with_same_period_reference_inputs() -> N
     solution = model.solve(params=params, log_level="off")
     assert isinstance(solution.values, ValueStore)
 
+    assert model.ages is not None
     result = simulate_with_replay_readers(
         flat_params=model._process_params(params),
         initial_conditions=initial_conditions,

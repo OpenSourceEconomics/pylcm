@@ -18,6 +18,7 @@ def test_validate_initial_conditions_valid_input(
     *, model: Model, flat_params: FlatParams
 ) -> None:
     """Valid input should not raise."""
+    assert model.ages is not None
     validate_initial_conditions(
         initial_conditions={
             "age": jnp.array([0.0, 0.0]),
@@ -36,6 +37,7 @@ def test_validate_initial_conditions_missing_state(
     *, model: Model, flat_params: FlatParams
 ) -> None:
     """Missing state should raise InvalidInitialConditionsError."""
+    assert model.ages is not None
     with pytest.raises(
         InvalidInitialConditionsError, match=r"Missing model states: \['health'\]"
     ):
@@ -56,6 +58,7 @@ def test_validate_initial_conditions_extra_state(
     *, model: Model, flat_params: FlatParams
 ) -> None:
     """Extra state should raise InvalidInitialConditionsError."""
+    assert model.ages is not None
     with pytest.raises(InvalidInitialConditionsError, match="Unknown initial states"):
         validate_initial_conditions(
             initial_conditions={
@@ -76,6 +79,7 @@ def test_validate_initial_conditions_inconsistent_lengths(
     *, model: Model, flat_params: FlatParams
 ) -> None:
     """Arrays with different lengths should raise InvalidInitialConditionsError."""
+    assert model.ages is not None
     with pytest.raises(InvalidInitialConditionsError, match="same length"):
         validate_initial_conditions(
             initial_conditions={
@@ -95,6 +99,7 @@ def test_validate_initial_conditions_invalid_regime_id(
     *, model: Model, flat_params: FlatParams
 ) -> None:
     """Invalid regime id should raise InvalidInitialConditionsError."""
+    assert model.ages is not None
     with pytest.raises(InvalidInitialConditionsError, match="Invalid regime"):
         validate_initial_conditions(
             initial_conditions={
@@ -114,6 +119,7 @@ def test_validate_initial_conditions_invalid_age_values(
     *, model: Model, flat_params: FlatParams
 ) -> None:
     """Age values not on the grid should raise InvalidInitialConditionsError."""
+    assert model.ages is not None
     with pytest.raises(InvalidInitialConditionsError, match="Invalid age values"):
         validate_initial_conditions(
             initial_conditions={
@@ -131,6 +137,7 @@ def test_validate_initial_conditions_invalid_age_values(
 
 def test_missing_age_error_message(*, model: Model, flat_params: FlatParams) -> None:
     """Missing 'age' in initial conditions should produce a helpful message."""
+    assert model.ages is not None
     with pytest.raises(
         InvalidInitialConditionsError,
         match="'age' must be provided in initial_states",
@@ -156,6 +163,7 @@ def test_subject_in_a_regime_not_solved_at_its_starting_age() -> None:
     )
     _alive = model.regime_names_to_ids["alive"]
 
+    assert model.ages is not None
     with pytest.raises(InvalidInitialConditionsError, match="not declared"):
         validate_initial_conditions(
             initial_conditions={
@@ -179,6 +187,7 @@ def test_all_subjects_in_regime_with_fewer_states() -> None:
     )
     _dead = model.regime_names_to_ids["dead"]
 
+    assert model.ages is not None
     validate_initial_conditions(
         initial_conditions={
             "age": jnp.array([2.0, 2.0]),
@@ -204,6 +213,7 @@ def test_mixed_regimes_all_union_states_provided() -> None:
     _alive = model.regime_names_to_ids["alive"]
     _dead = model.regime_names_to_ids["dead"]
 
+    assert model.ages is not None
     validate_initial_conditions(
         initial_conditions={
             "age": jnp.array([0.0, 2.0]),

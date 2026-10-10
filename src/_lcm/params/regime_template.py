@@ -28,6 +28,7 @@ from _lcm.params.edges import (
     ROUTES,
     user_path,
 )
+from _lcm.params.temporal import validate_temporal_variants
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
 from _lcm.regime_building.gated_edges import (
@@ -58,7 +59,7 @@ from lcm.transition import (
     StochasticTransition,
     Transition,
 )
-from lcm.typing import ParameterName, ReferenceName, UserFunction
+from lcm.typing import ParameterName, Phase, ReferenceName, UserFunction
 
 
 def create_regime_params_template(
@@ -447,13 +448,17 @@ def _fail_if_coarse_law_params_meet_per_target_cells(
         )
 
 
+# keyword-only-exempt: primary-argument=transition
 def iter_transition_callables(
     transition: Transition,
+    *,
+    phase: Phase | None = None,
 ) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
     """Yield every callable a `Transition` holds, at its declaration path.
 
     Args:
         transition: A source's declared `Transition`.
+        phase: Restrict traversal to one phase, or include both when omitted.
 
     Yields:
         Triples of the path below the source's edge branch, the callable, and the
@@ -461,9 +466,9 @@ def iter_transition_callables(
         projection); `None` for the law's callables.
 
     """
-    yield from iter_edge_callables(law=transition.law, path=())
+    yield from iter_edge_callables(law=transition.law, path=(), phase=phase)
     for target_regime_name, gate in transition.gates.items():
-        yield from _gate_callables(gate=gate, path=(target_regime_name,))
+        yield from _gate_callables(gate=gate, path=(target_regime_name,), phase=phase)
 
 
 def iter_edge_callables(
@@ -471,12 +476,14 @@ def iter_edge_callables(
     *,
     law: object,
     path: tuple[str, ...],
+    phase: Phase | None = None,
 ) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
     """Yield every callable a declared law holds, at its declaration path.
 
     Args:
         law: A declared law, or one of its cases, phases or cells.
         path: The declaration path of `law` below the source's edge branch.
+        phase: Restrict traversal to one phase, or include both when omitted.
 
     Yields:
         Triples of the path, the callable, and `None`: a law's callables run on
@@ -491,15 +498,18 @@ def iter_edge_callables(
         return
     if isinstance(law, ByAge):
         for case in law.laws:
-            yield from iter_edge_callables(law=case, path=path)
+            yield from iter_edge_callables(law=case, path=path, phase=phase)
     elif isinstance(law, Phased):
-        yield from iter_edge_callables(law=law.solve, path=path)
-        yield from iter_edge_callables(law=law.simulate, path=path)
+        variants = {"solve": law.solve, "simulate": law.simulate}
+        for side in variants if phase is None else (phase,):
+            yield from iter_edge_callables(law=variants[side], path=path, phase=phase)
     elif isinstance(law, DeterministicTransition | StochasticTransition):
         yield path, cast("UserFunction", law.func), None
     elif isinstance(law, Mapping):
         for target_regime_name, cell in law.items():
-            yield from iter_edge_callables(law=cell, path=(*path, target_regime_name))
+            yield from iter_edge_callables(
+                law=cell, path=(*path, target_regime_name), phase=phase
+            )
     elif callable(law):
         yield path, cast("UserFunction", law), None
     else:
@@ -511,7 +521,7 @@ def iter_edge_callables(
 
 
 def _gate_callables(
-    *, gate: Gate, path: tuple[str, ...]
+    *, gate: Gate, path: tuple[str, ...], phase: Phase | None = None
 ) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
     """Yield a gate's callables at their declaration paths below its target."""
     yield (*path, PREDICATE), gate.predicate, gate
@@ -519,17 +529,19 @@ def _gate_callables(
         for state_name, projection in ref.projection.items():
             yield (*path, REFERENCES, ref_name, state_name), projection, gate
     for route_name, route in gate.routes.items():
-        for phase, ref in _fallbacks_by_phase(
+        for fallback_phase, ref in _fallbacks_by_phase(
             solve=route.solve_fallback,
             simulate=route.simulate_fallback,
             is_phased=route.fallback_is_phased,
         ):
+            if phase is not None and fallback_phase not in (None, phase):
+                continue
             prefix = (
                 *path,
                 ROUTES,
                 route_name,
                 FALLBACK,
-                *(() if phase is None else (phase,)),
+                *(() if fallback_phase is None else (fallback_phase,)),
             )
             for state_name, projection in ref.projection.items():
                 yield (*prefix, state_name), projection, gate
@@ -731,11 +743,14 @@ def _union_callable_params(
     tree: dict[str, str] = {}
     for index, func in enumerate(functions):
         tree |= _input_types({f"role_{index}": func})
-    return {
+    params = {
         arg_name: annotation
         for arg_name, annotation in sorted(tree.items())
         if arg_name not in non_params
     }
+    return _annotate_temporal_params(
+        params=params, functions=functions, name="joint transition"
+    )
 
 
 def _input_types(functions: Mapping[str, UserFunction]) -> dict[str, str]:
@@ -795,11 +810,32 @@ def _discovered_params(
         raise InvalidNameError(errors[0])
     # The check above admits no delimiter in a parameter's name, so every
     # parameter is a top-level leaf of `tree` holding its annotation string.
-    return {
+    params = {
         arg_name: cast("str", annotation)
         for arg_name, annotation in sorted(tree.items())
         if arg_name not in non_params
         and not (strip_target_value_operands and is_target_value_operand(arg_name))
+    }
+    return _annotate_temporal_params(
+        params=params, functions=list(_callables_in(value=func)), name=name
+    )
+
+
+def _annotate_temporal_params(
+    *, params: dict[str, str], functions: list[UserFunction], name: str
+) -> dict[str, str]:
+    """Expose managed time slots consistently across ordinary and joint roles."""
+    temporal = validate_temporal_variants(functions=functions, name=name)
+    if conflicts := temporal - params.keys():
+        raise ModelInitializationError(
+            f"{name}: temporal markers {sorted(conflicts)} must name parameter "
+            "arguments, not engine-wired inputs."
+        )
+    return {
+        param: f"TimeVarying[{annotation}] or scalar"
+        if param in temporal
+        else annotation
+        for param, annotation in params.items()
     }
 
 

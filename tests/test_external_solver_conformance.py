@@ -1001,6 +1001,7 @@ def test_opaque_solver_marker_cannot_hide_a_distinct_accepted_core() -> None:
 
     stateless = _model(solver=ReferenceSolver())
     stateless_flat_params = stateless._process_params(_PARAMS)
+    assert stateless.ages is not None
     assert fingerprint_module.fingerprint_model(
         ages=stateless.ages,
         regimes=stateless._regimes,
@@ -1372,6 +1373,7 @@ def test_lazy_value_cannot_mutate_cached_model_authority_used_for_replay() -> No
     fingerprint = fingerprint_solution_support(
         regimes=model._regimes, flat_params=flat_params
     )
+    assert model.ages is not None
     cached_authority = model_module.build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,
@@ -1427,6 +1429,7 @@ def test_mutated_cached_authority_is_normalized_before_forward_simulation(
     fingerprint = fingerprint_solution_support(
         regimes=model._regimes, flat_params=flat_params
     )
+    assert model.ages is not None
     cached_authority = model_module.build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,
@@ -1511,6 +1514,7 @@ def test_hostile_cached_value_shape_is_rejected_before_materialization() -> None
     fingerprint = fingerprint_solution_support(
         regimes=model._regimes, flat_params=flat_params
     )
+    assert model.ages is not None
     cached = model_module.build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,
@@ -1565,6 +1569,7 @@ def test_type_different_descriptor_axis_is_rejected_before_forward_simulation(
     fingerprint = fingerprint_solution_support(
         regimes=model._regimes, flat_params=flat_params
     )
+    assert model.ages is not None
     cached = model_module.build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,

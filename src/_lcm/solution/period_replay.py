@@ -34,6 +34,7 @@ from _lcm.execution.compiler_memory import (
 )
 from _lcm.execution.core_program import (
     CoreBuildContext,
+    CoreExecutionDisposition,
     MaterializedCoreProgram,
     _value_read_argument_leaf,
     core_program_graph,
@@ -81,8 +82,8 @@ from _lcm.solution.period_capture import (
     describe_sharding,
     rebuild_sharding,
 )
+from _lcm.time import TimeAxis, age_at
 from _lcm.typing import FlatParams, RegimeName
-from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import KernelOutput
 
@@ -105,10 +106,10 @@ class PeriodReplay:
     """Name of the regime the captured kernel belongs to."""
 
     period: int
-    """Index of the captured period in the model's age grid."""
+    """Index of the captured period in the model horizon."""
 
-    age: float
-    """Age the captured period sits at, for reading against a solve log."""
+    age: float | None
+    """Age at capture, or `None` for a period model."""
 
     output: KernelOutput
     """What the kernel returned: the value array and its artifact channels."""
@@ -131,10 +132,10 @@ class PeriodCoreMemoryAnalysis:
     """Name of the regime the captured kernel belongs to."""
 
     period: int
-    """Index of the captured period in the model's age grid."""
+    """Index of the captured period in the model horizon."""
 
-    age: float
-    """Age the captured period sits at, for reading against a solve log."""
+    age: float | None
+    """Age at capture, or `None` for a period model."""
 
     preserves_production_sharding: bool
     """Always false: period capture serializes neither sharding nor placement."""
@@ -181,7 +182,7 @@ def replay_period(*, directory: Path) -> PeriodReplay:
     return PeriodReplay(
         regime_name=kernel_kwargs["regime_name"],
         period=period,
-        age=float(kernel_kwargs["ages"].values[period]),
+        age=age_at(ages=kernel_kwargs["ages"], period=period),
         output=output,
         scope="logical",
     )
@@ -219,7 +220,7 @@ def analyze_period_core_memory(*, directory: Path) -> PeriodCoreMemoryAnalysis:
     return PeriodCoreMemoryAnalysis(
         regime_name=kernel_kwargs["regime_name"],
         period=period,
-        age=float(kernel_kwargs["ages"].values[period]),
+        age=age_at(ages=kernel_kwargs["ages"], period=period),
         preserves_production_sharding=False,
         core_memory_bytes=MappingProxyType(
             {
@@ -587,7 +588,7 @@ def replay_period_on_recorded_layout(
     return PeriodReplay(
         regime_name=kernel_kwargs["regime_name"],
         period=payload["period"],
-        age=float(kernel_kwargs["ages"].values[payload["period"]]),
+        age=age_at(ages=kernel_kwargs["ages"], period=payload["period"]),
         output=output,
         scope="layout",
     )
@@ -772,7 +773,12 @@ def _restore_input_transfer_plan(
     Read addresses come from the current declaration, never by parsing repr
     strings in the capture. The rebuilt operator must match every captured field.
     """
-    reads = program.requirements.value_reads
+    # Ordinary execution owns transfers only for planned cores.
+    reads = (
+        program.requirements.value_reads
+        if program.disposition is CoreExecutionDisposition.PLANNED
+        else ()
+    )
     if len(reads) != len(recorded.input_transfer_plan):
         raise ValueError(
             f"Core {recorded.name!r} declares {len(reads)} value reads but the "
@@ -1061,10 +1067,10 @@ class DeclaredCoreCompilation:
     """Regime the core belongs to."""
 
     period: int
-    """Index of the declared period in the model's age grid."""
+    """Index of the declared period in the model horizon."""
 
-    age: float
-    """Age that period sits at, for reading against a solve log."""
+    age: float | None
+    """Age at this period, or `None` for a period model."""
 
     core_name: str
     """Key the period kernel publishes this core under."""
@@ -1096,7 +1102,7 @@ def compile_declared_period_cores(
     *,
     regimes: MappingProxyType[RegimeName, Any],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     regime_name: RegimeName,
     period: int,
     axis_widths: Mapping[str, int],
@@ -1182,7 +1188,7 @@ def compile_declared_period_cores(
         _declared_compilation(
             regime_name=regime_name,
             period=period,
-            age=float(ages.values[period]),
+            age=age_at(ages=ages, period=period),
             core_name=core_name,
             core=core,
             timing=timings[core_name],
@@ -1262,7 +1268,7 @@ def _declared_compilation(
     *,
     regime_name: RegimeName,
     period: int,
-    age: float,
+    age: float | None,
     core_name: str,
     core: PlannedCore,
     timing: tuple[float, float],

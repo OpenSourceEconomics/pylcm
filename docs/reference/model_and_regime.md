@@ -23,10 +23,17 @@ model = lcm.Model(
 )
 ```
 
-Required arguments are `ages`, `regimes`, `edges`, `initial_nodes`, and
-`regime_id_class`, a class created with `@categorical(ordered=False)` whose fields match
-the regime names. A model must contain at least one terminal regime; a model whose
-starts are all terminal needs no other.
+Required arguments are exactly one of `ages` and `n_periods`, plus `regimes`, `edges`,
+`initial_nodes`, and `regime_id_class`, a class created with
+`@categorical(ordered=False)` whose fields match the regime names. A model must contain
+at least one terminal regime; a model whose starts are all terminal needs no other.
+
+`n_periods` is a positive integer excluding booleans and counts every computational
+slot, including an explicitly represented terminal slot. In this mode `model.ages` is
+`None`, graph selectors use `PeriodRange` or `Periods`, starts use
+`InitialNodes(by_period={0: "working"})`, and simulation inputs carry a `period` column.
+The model does not assign an age or elapsed duration to a period. See
+[Periods and temporal parameters](../user_guide/period_time.md).
 
 `edges` declares every regime transition, structure and law. Each source maps to a plain
 `{target: source_ages}` mapping when every source age has one destination (the graph is
@@ -53,13 +60,14 @@ Public inspection attributes include:
 - `ages`, `n_periods`, and `regime_names_to_ids`;
 - `user_regimes`, the finalized declarations in user vocabulary;
 - `edges`, the edges exactly as declared, `Transition` laws included;
-- `initial_nodes`, a normalized immutable `InitialNodes` whose `by_age` mapping contains
-  exact ages and sorted, unique tuples of regime names;
+- `initial_nodes`, a normalized immutable `InitialNodes` whose `by_age` or `by_period`
+  mapping contains exact coordinates and sorted, unique tuples of regime names;
 - `graph`, immutable declared edges, effective phase graphs, valued/visited nodes,
   pruning reasons and `laws`, each regime's law as the solver and simulator evaluate it:
   bound to the graph, pruned of fixed-zero cells and lowered to the demanded ages
   (`laws[name].terminal` is true for a regime without outgoing edges,
   `laws[name].gated_edges` holds the edges its `Transition.gates` declare);
+- `graph.coordinate_kind`, the meaning of the first coordinate in graph nodes and edges;
 - `pruned_variables`;
 - `get_params_template()`, which returns a mutable nested template.
 
@@ -94,16 +102,28 @@ raises `UnsupportedOperationError`, from these methods and from `simulate` alike
 
 ## `InitialNodes`
 
-`InitialNodes(by_age={25: "working"})` declares admissible starting nodes. Keys use the
-same age selectors as edges: exact ages, tuples, integer ranges, or
-`AgeRange(start=..., exclusive_stop=...)`. Values are one regime name or a nonempty
-sequence or set of names. The mapping must be nonempty; its containers are copied and
-frozen at construction. The model checks selectors against its grid and names against
-its regimes. Overlapping selectors union their pairs.
+Declare admissible starts with exactly one of `InitialNodes(by_age={25: "working"})` or
+`InitialNodes(by_period={0: "working"})`. The keyword declares the coordinate kind; a
+model rejects a declaration for the other clock. Values are regime names or nonempty
+collections of names. Selectors contribute their Cartesian product with the names, and
+overlapping selectors are unioned.
 
-`Model(initial_nodes=...)` also accepts legacy exact-pair collections and bare selector
-mappings, and always publishes an `InitialNodes`. `model.graph.initial_nodes` exposes
-the expanded immutable pairs. Neither representation specifies population weights.
+Age keys accept numeric ages, tuples, Python ranges, and `AgeRange`. Period keys accept
+integers, tuples of integers, Python ranges, `Periods`, and `PeriodRange`. Booleans and
+fractional period keys are invalid. `AgeRange` and `PeriodRange` intersect the model's
+grid; exact keys, tuples, Python ranges, and `Periods` must name existing coordinates. A
+selector that admits no node is an error. Initial-node selectors do not use the
+parameter-table rule that silently discards surplus coordinates.
+
+The declaration copies and freezes its mappings and name collections. After model
+construction, `model.initial_nodes` contains exact coordinates and sorted, unique regime
+tuples under the same keyword; the unused mapping is `None`. Pass this object directly
+back into `Model(initial_nodes=...)`. `model.graph.initial_nodes` exposes expanded
+coordinate–regime pairs, whose meaning is given by `graph.coordinate_kind`.
+
+Legacy bare pairs and selector mappings remain accepted in age models. Period models
+require `InitialNodes(by_period=...)`. `ByAge` and `ByPeriod` select transition laws;
+they do not supply initial-node regime names.
 
 (api-period-candidate-lowering)=
 

@@ -42,8 +42,8 @@ from _lcm.regime_building.phases import (
     normalize_regime_phases,
 )
 from _lcm.regime_law import RegimeLaws
+from _lcm.time import TimeAxis
 from _lcm.typing import RegimeName, StateName
-from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 
 type Phase = Literal["solve", "simulate"]
@@ -124,7 +124,7 @@ def analyze_invariant_components(
     regimes: Mapping[RegimeName, Regime],
     reachability: ModelReachability,
     initial_nodes: frozenset[tuple[object, RegimeName]],
-    ages: AgeGrid,
+    ages: TimeAxis,
     fixed_component_splits: Mapping[StateName, FixedComponentSplit],
 ) -> MappingProxyType[StateName, InvariantComponent]:
     """Analyse every identity-law state of a built model.

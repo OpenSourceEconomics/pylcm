@@ -189,6 +189,7 @@ def log_non_finite_values(
     age: float | ScalarInt | ScalarFloat,
     regime_names: tuple[RegimeName, ...],
     flags: tuple[bool, ...],
+    time_kind: Literal["age", "period"] = "age",
 ) -> None:
     """Warn once for each regime holding a NaN or an Inf among the values it owns.
 
@@ -198,12 +199,13 @@ def log_non_finite_values(
         regime_names: Names of the regimes the flags belong to, in flag order.
         flags: Whether each regime owns a non-finite value, already on the host
             so that reporting a whole period costs no further device transfer.
+        time_kind: Whether the coordinate is an age or a computational period.
 
     """
     for regime_name, flag in zip(regime_names, flags, strict=True):
         if flag:
             logger.warning(
-                "NaN/Inf in V_arr for regime '%s' at age %s", regime_name, age
+                "NaN/Inf in V_arr for regime '%s' at %s %s", regime_name, time_kind, age
             )
 
 
@@ -212,6 +214,7 @@ def log_period_header(
     logger: logging.Logger,
     age: float | ScalarInt | ScalarFloat,
     n_active_regimes: int,
+    time_kind: Literal["age", "period"] = "age",
 ) -> None:
     """Log the start of a period.
 
@@ -219,9 +222,10 @@ def log_period_header(
         logger: Logger instance.
         age: Age corresponding to the current period.
         n_active_regimes: Number of active regimes in the period.
+        time_kind: Whether the coordinate is an age or a computational period.
 
     """
-    logger.info("Age %s (%d regimes):", age, n_active_regimes)
+    logger.info("%s %s (%d regimes):", time_kind.capitalize(), age, n_active_regimes)
 
 
 def log_period_timing(

@@ -14,8 +14,8 @@ from _lcm.simulation.additional_targets import (
     _filter_targets_for_regime,
 )
 from _lcm.simulation.result_metadata import ResultMetadata
+from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.typing import ActionName, FlatParams, FlatRegimeParams, RegimeName, StateName
-from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -29,7 +29,7 @@ def _create_flat_dataframe(
     flat_params: FlatParams,
     metadata: ResultMetadata,
     additional_targets: list[str] | None,
-    ages: AgeGrid,
+    ages: TimeAxis,
     subject_batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Create a single flat DataFrame from all regime results.
@@ -115,7 +115,7 @@ def _process_regime(
     stakeholders: tuple[str, ...] | None,
     publishes_role: bool,
     additional_targets: list[str] | None,
-    ages: AgeGrid,
+    ages: TimeAxis,
     subject_batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Process results for a single regime into a DataFrame.
@@ -174,7 +174,8 @@ def _process_regime(
         )
         raise PyLCMError(msg)
 
-    data["age"] = ages.values[data["period"]]  # noqa: PD011
+    if coordinate_kind(ages) == "age":
+        data["age"] = ages.values[data["period"]]  # noqa: PD011
     data["regime_name"] = [regime_name] * len(data["period"])
 
     if additional_targets:

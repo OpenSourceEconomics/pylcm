@@ -173,6 +173,7 @@ def _key_for_initial_conditions(
 ) -> tuple:
     regimes = model._runtime_regimes_for_shape(compile_batch_size=3)
     runtime = _budgeted_runtime(model=model)
+    assert model.ages is not None
     return _simulation_chunk_profile_key(
         runtime=runtime,
         regimes=regimes,

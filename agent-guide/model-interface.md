@@ -129,7 +129,7 @@ Model(
         "working": working_regime,
         "retired": retired_regime,
     },
-    ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),  # Required: lifecycle age grid
+    ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),  # Or n_periods=...; exactly one
     regime_id_class=RegimeId,  # Required: dataclass mapping names to indices
     edges={"working": {"retired": 25}},  # Source → destination → source ages
     initial_nodes=InitialNodes(by_age={25: "working"}),  # Required: admissible starts
@@ -184,10 +184,11 @@ model's actual core programs declare.
   exact ages, nonempty tuples, integer ranges, or
   `AgeRange(start=..., exclusive_stop=...)`. An edge lands at the next `AgeGrid`
   coordinate. Terminal regimes have no outgoing edges.
-- `initial_nodes` is required with no default. Use `InitialNodes(by_age={25: "working"})`.
-  Values are a regime name or a nonempty sequence or set of names. Legacy exact pairs
-  and bare selector mappings are also accepted. `model.initial_nodes` is a normalized
-  immutable `InitialNodes`, mapping exact ages to sorted, unique regime tuples;
+- `initial_nodes` is required with no default. Use `InitialNodes(by_age={25: "working"})`
+  or `InitialNodes(by_period={0: "working"})`, matching the model's clock. Values are a
+  regime name or a nonempty sequence or set of names. Legacy exact pairs and bare
+  selector mappings remain age-only inputs. `model.initial_nodes` is a normalized
+  immutable `InitialNodes`, mapping exact coordinates to sorted, unique regime tuples;
   `model.graph.initial_nodes` contains expanded pairs. Overlapping initial selectors
   union. Solve demand includes realized visits and their perceived value dependencies.
 - Wrappers and decorator factories are targetless and shared by state and regime laws:
@@ -485,6 +486,13 @@ initial_conditions = {
   engine-internal; user code should read `user_regimes`.
 - `model.pruned_variables` - Immutable mapping of regime names to the broadcast
   states/actions pruned from that regime by DAG reachability
-- `model.ages` - The AgeGrid defining the lifecycle
-- `model.n_periods` - Number of periods in the model (derived from `ages`)
+- `model.ages` - The AgeGrid defining the lifecycle, or `None` in period mode
+- `model.n_periods` - Number of computational slots, including explicit terminal slots
 - `model.regime_names_to_ids` - Immutable mapping from regime names to integer indices
+
+Period models use `InitialNodes(by_period={0: "working"})`, `PeriodRange` and `Periods`
+in graph declarations, and `period` in simulation inputs. `ByPeriod` and
+`PeriodSpecializedFunction` / `PeriodSpecializedGrid` preserve their age counterparts'
+contracts while taking integer periods. Never infer an age from an integer period.
+See [period time](../docs/user_guide/period_time.md) for temporal parameters and the
+mandatory distinction between computational stages and economic time.

@@ -147,6 +147,7 @@ from _lcm.solution.backward_induction import _states_for_period
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
+from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import (
     ActionName,
     EconFunctionArg,
@@ -173,7 +174,6 @@ from _lcm.utils.logging import (
     raise_or_warn,
     validation_enabled,
 )
-from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidSimulationInputError,
@@ -208,7 +208,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
-    ages: AgeGrid,
+    ages: TimeAxis,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
@@ -243,7 +243,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         logger: Logger that logs to stdout.
         period_to_regime_to_V_arr: Immutable mapping of periods to regime
             value function arrays.
-        ages: AgeGrid for the model, used to convert periods to ages.
+        ages: TimeAxis for the model, used to convert periods to ages.
         period_to_regime_to_sim_policy: Immutable mapping of periods to each
             EGM regime's published off-grid simulation policy, or `None` when
             the caller supplies no compatible policy mapping. Sparse over
@@ -792,7 +792,7 @@ def _simulate_subject_chunk(
         int, MappingProxyType[RegimeName, BoolND]
     ],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     seed: int,
     logger: logging.Logger,
     initial_own_stakeholder: Int1D,
@@ -910,7 +910,12 @@ def _simulate_subject_chunk(
         new_subject_regime_ids = subject_regime_ids
         new_own_stakeholder = own_stakeholder
 
-        log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))
+        log_period_header(
+            logger=logger,
+            age=age,
+            n_active_regimes=len(active_regimes),
+            time_kind=coordinate_kind(ages),
+        )
 
         period_policies = (period_to_regime_to_sim_policy or {}).get(period, {})
         period_readers = period_to_regime_to_replay_reader.get(period, {})
@@ -1011,7 +1016,7 @@ def _simulate_subject_chunk(
                     own_stakeholder=own_stakeholder,
                     new_own_stakeholder=new_own_stakeholder,
                     gated_edge_fold_age=(
-                        ages.period_to_age(period + 1)
+                        coordinate_at(ages=ages, period=period + 1)
                         if regime.gated_edges and period + 1 < ages.n_periods
                         else None
                     ),
@@ -1059,6 +1064,7 @@ def _simulate_subject_chunk(
         _validate_period_values(
             logger=logger,
             age=age,
+            time_kind=coordinate_kind(ages),
             memory=memory,
             period_results=tuple(
                 (regime_name, simulation_results[regime_name][period])
@@ -1439,6 +1445,7 @@ def _validate_period_values(
     age: ScalarInt | ScalarFloat,
     period_results: tuple[tuple[RegimeName, PeriodRegimeSimulationData], ...],
     memory: SimulationMemory | None = None,
+    time_kind: Literal["age", "period"] = "age",
 ) -> None:
     """Validate one period's simulated values for every regime active in it.
 
@@ -1485,6 +1492,7 @@ def _validate_period_values(
         age=age,
         regime_names=regime_names,
         flags=tuple(has_non_finite),
+        time_kind=time_kind,
     )
     for (regime_name, data), flag in zip(period_results, has_nan, strict=True):
         if flag:
@@ -1495,6 +1503,7 @@ def _validate_period_values(
                 regime_name=regime_name,
                 logger=logger,
                 memory=memory,
+                time_kind=time_kind,
             )
 
 
@@ -1506,6 +1515,7 @@ def _validate_simulated_value(
     regime_name: RegimeName,
     logger: logging.Logger,
     memory: SimulationMemory | None = None,
+    time_kind: Literal["age", "period"] = "age",
 ) -> None:
     """Validate values only for subjects whose current regime owns the rows."""
     if not validation_enabled(logger):
@@ -1525,6 +1535,7 @@ def _validate_simulated_value(
                     total=int(value.size),
                     age=age,
                     regime_name=regime_name,
+                    time_kind=time_kind,
                 )
             return
         # Out-of-regime subjects carry placeholder entries (their state is
@@ -1538,6 +1549,7 @@ def _validate_simulated_value(
             V_arr=jnp.where(in_regime_mask, value, 0.0),
             age=age,
             regime_name=regime_name,
+            time_kind=time_kind,
         )
     except InvalidValueFunctionError as error:
         raise_or_warn(logger=logger, error=error)
@@ -1842,9 +1854,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 ),
             ),
         )
-        # A stateless collective result lacks the leading subject axis that
+        # A scalar stateless decision lacks the leading subject axis that
         # every downstream simulation operation expects.
-        if regime.stakeholders is not None and not state_action_space.states:
+        if not state_action_space.states and indices_optimal_actions.ndim == 0:
             indices_optimal_actions, V_arr = chunk_operations.broadcast_collective(
                 indices=indices_optimal_actions,
                 value=V_arr,
@@ -4181,15 +4193,15 @@ vmapped_unravel_index = jax.jit(
 
 def _compute_starting_periods(
     *,
-    initial_ages: Float1D,
-    ages: AgeGrid,
+    initial_ages: Float1D | Int1D,
+    ages: TimeAxis,
     memory: SimulationMemory | None = None,
 ) -> Int1D:
     """Convert per-subject initial ages to starting period indices.
 
     Args:
         initial_ages: Array of initial ages for each subject.
-        ages: AgeGrid defining the lifecycle.
+        ages: TimeAxis defining the lifecycle.
 
     Returns:
         Array of starting period indices (one per subject).

@@ -69,6 +69,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
+from _lcm.time import TimeAxis
 from _lcm.transition_plans import LotteryLifetime, declared_law_over_codes
 from _lcm.typing import (
     EconFunction,
@@ -82,7 +83,6 @@ from _lcm.typing import (
 )
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
-from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidRegimeTransitionProbabilitiesError,
@@ -288,7 +288,7 @@ def validate_transitions(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
@@ -353,7 +353,7 @@ def _validate_transition_sequence(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     logger: logging.Logger,
     summary: _ValidationSummary | None,
     process_grid_resolver: ProcessGridResolver | None = None,
@@ -457,7 +457,7 @@ def validate_regime_selection(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     process_grid_resolver: ProcessGridResolver | None = None,
     memory: SimulationMemory | None = None,
 ) -> None:
@@ -487,7 +487,7 @@ def validate_regime_transition_probs_all_periods(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     logger: logging.Logger | None,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
@@ -586,7 +586,7 @@ def _validate_regime_transition_single(
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
     period: int,
-    ages: AgeGrid,
+    ages: TimeAxis,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     memory: SimulationMemory | None = None,
@@ -689,7 +689,7 @@ def _validate_regime_law_on_feasible_rows(
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
     period: int,
-    ages: AgeGrid,
+    ages: TimeAxis,
     memory: SimulationMemory | None,
 ) -> None:
     """Validate a regime law on the rows where the regime's constraints hold.
@@ -1112,7 +1112,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
@@ -1226,7 +1226,7 @@ def validate_joint_transitions_all_periods(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,

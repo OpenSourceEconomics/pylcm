@@ -113,6 +113,7 @@ from _lcm.solution.periodization import (
     solver_period_group_key,
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
+from _lcm.time import TimeAxis
 from _lcm.typing import (
     EconFunction,
     EconFunctionArg,
@@ -122,7 +123,6 @@ from _lcm.typing import (
     SimulationPolicy,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
-from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
@@ -1163,7 +1163,7 @@ class _NNBEGMPeriodKernel:
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,
     ) -> KernelOutput:
         """Solve the keeper, settle the replay capability, run the outer search.
@@ -1225,7 +1225,7 @@ class _NNBEGMPeriodKernel:
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,
     ) -> KernelOutput:
         """Run the outer search against the solved keeper; concrete per subclass."""
@@ -1240,7 +1240,7 @@ class _NNBEGMPeriodKernel:
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,
     ) -> KernelOutput:
         """Run the keeper inner solve — the state-dependent no-adjustment branch."""
@@ -1265,7 +1265,7 @@ class _NNBEGMPeriodKernel:
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,
     ) -> OuterCandidateResult:
         """Run one adjuster node's exact conditional inner solve."""
@@ -1300,7 +1300,7 @@ class _NNBEGMPeriodKernel:
         state_action_space: StateActionSpace,
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
     ) -> DeclaredOuterInverse:
         """Return the declared outer map's certified inverse for this period.
 
@@ -1382,7 +1382,7 @@ class _NNBEGMPeriodKernel:
         state_action_space: StateActionSpace,
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         state_names: tuple[StateName, ...],
         logger: logging.Logger,
     ) -> FloatND:
@@ -1606,7 +1606,7 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,
     ) -> KernelOutput:
         """Fold finite candidates and, retaining replay, their complete identities."""
@@ -1681,7 +1681,7 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         state_action_space: StateActionSpace,
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,
     ) -> NNBEGMSimPolicy:
         """Assemble the finite candidate banks the nested replay ranks."""
@@ -1779,7 +1779,7 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,
     ) -> KernelOutput:
         """Adaptively refine the shared outer mesh, then collapse continuously.
@@ -2080,7 +2080,7 @@ class _AdaptiveNodeSolver:
     period: int
     """The period being solved."""
 
-    ages: AgeGrid
+    ages: TimeAxis
     """The model's lifecycle age grid."""
 
     logger: logging.Logger
@@ -2125,7 +2125,7 @@ def derive_nnbegm_replay_capability(
     state_action_space: StateActionSpace,
     flat_params: FlatParams,
     period: int,
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> OuterReplayCapability:
     """Derive one period's replay capability from canonical model inputs.
 
@@ -2515,7 +2515,7 @@ def _fail_if_aggregator_unsupported(aggregator: OuterBranchAggregator) -> None:
 def _branch_scale_check(
     *,
     regime_name: RegimeName,
-    ages: AgeGrid,
+    ages: TimeAxis,
     branch_aggregation_by_period: Mapping[
         int, tuple[UniformObservedFixedCost | None, Callable[..., FloatND] | None]
     ],
@@ -2557,7 +2557,7 @@ def _fail_if_branch_scale_outside_support(
         int, tuple[UniformObservedFixedCost | None, Callable[..., FloatND] | None]
     ],
     regime_params: Mapping[str, object],
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> None:
     """Reject a fixed-cost scale outside the closed form's support.
 
@@ -2594,7 +2594,7 @@ def _resolve_branch_scale(
     scale_function: Callable[..., FloatND] | None,
     regime_params: Mapping[str, object],
     period: int,
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> FloatND:
     """Evaluate the fixed cost's per-period scalar scale at kernel-call time."""
     import inspect  # noqa: PLC0415

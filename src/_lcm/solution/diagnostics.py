@@ -13,6 +13,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -25,10 +26,10 @@ from _lcm.solution.v_topology import (
     _get_regime_V_shapes_and_shardings,
 )
 from _lcm.solution.validate_V import validate_V
+from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.transition_plans import InterpolationBasisInfo
 from _lcm.typing import FlatParams, RegimeName
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
-from lcm.ages import AgeGrid
 from lcm.typing import BoolND, FloatND
 
 
@@ -49,7 +50,9 @@ class _DiagnosticRow:
     period: int
     """Period index in the backward-induction loop."""
     age: float
-    """Age corresponding to `period` (pulled off `AgeGrid.values`)."""
+    """Internal time coordinate, read from exact host values."""
+    time_kind: Literal["age", "period"] = "age"
+    """Meaning of the coordinate in reports."""
 
 
 def _init_diagnostic_accumulators() -> tuple[
@@ -80,7 +83,7 @@ def _fold_period_diagnostics(
     V_arr: FloatND,
     regime_name: RegimeName,
     period: int,
-    ages: AgeGrid,
+    ages: TimeAxis,
     diagnostics_enabled: bool,
     stats_enabled: bool,
     diagnostic_rows: list[_DiagnosticRow],
@@ -128,6 +131,7 @@ def _fold_period_diagnostics(
             regime_name=regime_name,
             period=period,
             age=float(ages.exact_values[period]),
+            time_kind=coordinate_kind(ages),
         )
     )
     return (
@@ -293,6 +297,7 @@ def _raise_at(
         next_regime_to_V_arr=next_regime_to_V_arr,
         flat_params=effective_regime_params,
         period=row.period,
+        time_kind=row.time_kind,
         entered_process_names=tuple(
             law.next_state_name.removeprefix("next_")
             for plan in regime.solution.transition_plans.values()
@@ -374,9 +379,10 @@ def _warn_inf_rows(
         V_arr = solution[row.period][row.regime_name]
         if jnp.any(jnp.isinf(V_arr)).item():
             logger.warning(
-                "Inf in V_arr for regime '%s' at age %s",
+                "Inf in V_arr for regime '%s' at %s %s",
                 row.regime_name,
-                row.age,
+                row.time_kind,
+                row.age if row.time_kind == "age" else row.period,
             )
 
 
@@ -393,9 +399,10 @@ def _log_per_period_stats(
         diagnostic_rows, mins.tolist(), maxs.tolist(), means.tolist(), strict=True
     ):
         logger.debug(
-            "  %s  age %s   V min=%.3g  max=%.3g  mean=%.3g",
+            "  %s  %s %s   V min=%.3g  max=%.3g  mean=%.3g",
             row.regime_name,
-            row.age,
+            row.time_kind,
+            row.age if row.time_kind == "age" else row.period,
             V_min,
             V_max,
             V_mean,

@@ -257,7 +257,7 @@ class _ReducedIntermediates:
         **kwargs: MappingProxyType[RegimeName, FloatND] | FloatND | IntND | BoolND,
     ) -> dict[str, Any]:
         U_arr, F_arr, CE, Q_arr, regime_probs = self.func(**kwargs)
-        F_float = F_arr.astype(float)
+        F_float = jnp.asarray(F_arr, dtype=float)
         # NaN-count arrays are masked by feasibility: only feasible cells
         # contribute to numerators. Infeasible cells are zeroed out because
         # the solver masks them before the max, so a NaN there never

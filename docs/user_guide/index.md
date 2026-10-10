@@ -16,6 +16,8 @@ If you have not solved the tiny model yet, start with
 - [Write economics, not glue code](write_economics.ipynb) introduces named-function
   composition.
 - [Defining models](defining_models.md) assembles the model-wide objects.
+- [Periods and temporal parameters](period_time.md) defines a horizon without ages and
+  aligns parameter profiles by their labels.
 - [Regimes](regimes.ipynb) covers qualitatively different decision problems.
 - [Grids](grids.md) defines numerical outcome spaces.
 - [Transitions](transitions.ipynb) covers deterministic, stochastic, joint, and regime

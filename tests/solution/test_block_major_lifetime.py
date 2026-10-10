@@ -446,6 +446,7 @@ def _create_rounding_panel(
             "work": MappingProxyType({**result.raw_results["work"], 0: changed}),
         }
     )
+    assert model.ages is not None
     return SimulationResult(
         raw_results=raw,
         regimes=model._regimes,

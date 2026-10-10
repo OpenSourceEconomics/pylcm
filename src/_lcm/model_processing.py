@@ -19,7 +19,7 @@ from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
-from _lcm.pandas_utils import convert_series_in_params, has_series
+from _lcm.pandas_utils import convert_series_in_params
 from _lcm.params.edges import (
     EDGES,
     edge_params,
@@ -58,6 +58,7 @@ from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.policy_programs import declare_finite_replay_programs
 from _lcm.solution.contract import SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
+from _lcm.time import TimeAxis, coordinate_kind, specialization_coordinate_at
 from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
@@ -68,23 +69,24 @@ from _lcm.typing import (
 )
 from _lcm.utils.containers import get_field_names_and_values
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
-from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.params import MappingLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.typing import UserParams
+from lcm.transition import JointTransition, Transition
+from lcm.typing import Phase, UserParams
 
 
 def build_regimes_and_template(
     *,
-    ages: AgeGrid,
+    ages: TimeAxis,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
     params_already_consumed: frozenset[str],
     prepared_structure: PreparedModelStructure,
+    phase_transitions: Mapping[Phase, Mapping[RegimeName, Transition]],
     execution: ResolvedExecution | None = None,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and params template in a single pass.
@@ -129,6 +131,7 @@ def build_regimes_and_template(
             fixed_params=fixed_params,
             params_already_consumed=params_already_consumed,
             prepared_structure=prepared_structure,
+            phase_transitions=phase_transitions,
             execution=execution,
         )
 
@@ -145,13 +148,14 @@ def build_regimes_and_template(
 
 def _build_regimes_and_template_with_fixed_params(
     *,
-    ages: AgeGrid,
+    ages: TimeAxis,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
     params_already_consumed: frozenset[str],
     prepared_structure: PreparedModelStructure,
+    phase_transitions: Mapping[Phase, Mapping[RegimeName, Transition]],
     execution: ResolvedExecution | None = None,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and template, then partial in fixed params.
@@ -188,16 +192,32 @@ def _build_regimes_and_template_with_fixed_params(
         template=raw_params_template,
         already_consumed=params_already_consumed,
     )
-    if has_series(fixed_flat_params):
-        fixed_flat_params = convert_series_in_params(
-            flat_params=fixed_flat_params,
-            ages=ages,
-            user_regimes=user_regimes,
-            laws=prepared_structure.laws,
-            regime_names_to_ids=regime_names_to_ids,
-            declared_transitions=prepared_structure.declared_transitions,
-            declared_vocabulary=prepared_structure.declared_edge_vocabulary,
-        )
+    fixed_flat_params = convert_series_in_params(
+        flat_params=fixed_flat_params,
+        ages=ages,
+        user_regimes=user_regimes,
+        laws=prepared_structure.laws,
+        regime_names_to_ids=regime_names_to_ids,
+        declared_transitions=prepared_structure.declared_transitions,
+        phase_transitions=phase_transitions,
+        declared_vocabulary=prepared_structure.declared_edge_vocabulary,
+        reachability=prepared_structure.reachability,
+        required_periods_by_regime={
+            name: tuple(
+                sorted(
+                    set(regime.active_periods)
+                    | {
+                        period
+                        for period, active in enumerate(
+                            regime.simulation.reachability.active_regimes_by_period
+                        )
+                        if name in active
+                    }
+                )
+            )
+            for name, regime in raw_regimes.items()
+        },
+    )
     fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)
     _validate_param_types(fixed_flat_params)
 
@@ -229,7 +249,7 @@ def validate_model_inputs(
     laws: RegimeLaws,
     regime_id_class: type,
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
-    ages: AgeGrid,
+    ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     removed_edge_reads: Mapping[
@@ -292,7 +312,9 @@ def validate_model_inputs(
             )
         )
 
-    error_messages: list[str] = []
+    error_messages = _reserved_age_errors(
+        user_regimes=solver_validation_regimes, laws=laws, ages=ages
+    )
 
     if not user_regimes:
         error_messages.append("At least one terminal regime must be provided.")
@@ -349,11 +371,54 @@ def validate_model_inputs(
         raise ModelInitializationError(msg)
 
 
+def _reserved_age_errors(
+    *, user_regimes: Mapping[RegimeName, UserRegime], laws: RegimeLaws, ages: TimeAxis
+) -> list[str]:
+    """Prevent unresolved ages from becoming runtime parameters in period mode."""
+    errors: list[str] = []
+    if coordinate_kind(ages) != "period":
+        return errors
+    for regime_name, regime in user_regimes.items():
+        for phase in ("solve", "simulate"):
+            functions = dict(
+                regime.get_all_functions(phase=phase, law=laws[regime_name])
+            )
+            functions.update(
+                root_functions(
+                    regime_name=regime_name, regime=regime, laws=laws, phase=phase
+                )
+            )
+            for target, kernels in regime.joint_transitions.items():
+                for name, raw in kernels.items():
+                    joint = cast(
+                        "JointTransition",
+                        (raw.solve if phase == "solve" else raw.simulate)
+                        if isinstance(raw, Phased)
+                        else raw,
+                    )
+                    if callable(joint.support):
+                        functions[f"__joint_support__{target}__{name}"] = joint.support
+            if "age" in functions:
+                continue
+            consumers = sorted(
+                name
+                for name, func in functions.items()
+                if "age" in inspect.signature(func).parameters
+            )
+            if consumers:
+                errors.append(
+                    f"Period model regime {regime_name!r} has an unresolved age "
+                    f"dependency in {phase} functions {consumers}. Supply ages "
+                    "or define a separately named biological_age from explicit inputs."
+                )
+    return errors
+
+
 def _representative_for_validation(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
-    ages: AgeGrid,
+    ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> Mapping[RegimeName, UserRegime]:
@@ -408,7 +473,7 @@ def _validate_all_variables_used(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
-    ages: AgeGrid,
+    ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     removed_edge_reads: Mapping[
@@ -510,8 +575,12 @@ def _validate_all_variables_used(
                 if visited_periods_by_regime is None
                 else visited_periods_by_regime.get(regime_name, ())
             ) or active_periods
-            representative_age = float(ages.period_to_age(active_periods[0]))
-            simulated_age = float(ages.period_to_age(visited_periods[0]))
+            representative_age = specialization_coordinate_at(
+                ages=ages, period=active_periods[0]
+            )
+            simulated_age = specialization_coordinate_at(
+                ages=ages, period=visited_periods[0]
+            )
             user_functions = cast(
                 "dict[str, Callable[..., object]]",
                 {
@@ -659,7 +728,7 @@ def _validate_constraint_phase_invariance(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
-    ages: AgeGrid,
+    ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
 ) -> list[str]:
     """Reject a constraint whose dependency ancestry contains a phase-varying node.
@@ -737,7 +806,9 @@ def _validate_constraint_phase_invariance(
         # resolved once at model construction are the single canonical source.
         active_periods = active_periods_by_regime.get(regime_name, ())
         if active_periods:
-            representative_age = float(ages.period_to_age(active_periods[0]))
+            representative_age = specialization_coordinate_at(
+                ages=ages, period=active_periods[0]
+            )
             ancestry_funcs = cast(
                 "dict[str, Callable[..., object]]",
                 {

@@ -370,6 +370,7 @@ def test_cached_invalid_flags_preserve_complete_ordered_serial_diagnostics(
         caplog.clear()
         evaluations.clear()
         error = None
+        assert model.ages is not None
         try:
             if serial:
                 checks._validate_transition_sequence(

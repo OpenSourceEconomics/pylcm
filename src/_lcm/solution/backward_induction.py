@@ -221,6 +221,7 @@ from _lcm.solution.v_topology import (
     _RegimeVTopology,
     placed_V_sharding,
 )
+from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import FlatParams, RegimeName, SimulationPolicy, StateName
 from _lcm.utils.logging import (
     format_duration,
@@ -230,7 +231,6 @@ from _lcm.utils.logging import (
     validation_enabled,
     validation_raises,
 )
-from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidValueFunctionError,
@@ -301,7 +301,7 @@ _NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({
 def solve(  # noqa: C901, PLR0912, PLR0915
     *,
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
     logger: logging.Logger,
@@ -674,6 +674,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     logger=logger,
                     age=ages.values[period],
                     n_active_regimes=len(active_regimes),
+                    time_kind=coordinate_kind(ages),
                 )
 
                 shared_transfer_counts, regime_shared_transfer_keys = (
@@ -1330,7 +1331,7 @@ def _run_period_kernel(
     capture_target: PeriodCaptureTarget | None,
     state_action_space: StateActionSpace,
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     logger: logging.Logger,
@@ -1710,7 +1711,7 @@ type _EdgeKey = tuple[RegimeName, RegimeName]
 def _roll_gated_edges(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
-    ages: AgeGrid,
+    ages: TimeAxis,
     period: int,
     period_solution: dict[RegimeName, FloatND],
     period_dissolution_flags: dict[RegimeName, BoolND],
@@ -1763,7 +1764,7 @@ def _roll_gated_edges(
         wbar = _evaluate_edge_fold(
             fold=fold,
             fold_period=period,
-            fold_age=ages.period_to_age(period),
+            fold_age=coordinate_at(ages=ages, period=period),
             target_states=cast(
                 "Mapping[str, ContinuousState | DiscreteState]",
                 _states_for_period(
@@ -3510,7 +3511,7 @@ def _prepare_solve_programs(
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
@@ -3637,7 +3638,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
@@ -4567,7 +4568,7 @@ def _lower_and_compile_candidate(
     all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
     internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
     donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
-    ages: AgeGrid,
+    ages: TimeAxis,
     budget_bytes: int | None,
     n_workers: int,
     logger: logging.Logger,
@@ -5033,7 +5034,7 @@ def _lower_and_compile_wave(
     all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
     internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
     donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
-    ages: AgeGrid,
+    ages: TimeAxis,
     n_triples_per_lowering: Mapping[Hashable, int],
     log_kernel_memory: bool,
     n_workers: int,
@@ -5058,7 +5059,8 @@ def _lower_and_compile_wave(
             regime_name, period, core_key = triple
             resolved = resolved_programs[candidate]
             label = (
-                f"{regime_name} {core_key} (age {ages.values[period].item()}, "
+                f"{regime_name} {core_key} "
+                f"({coordinate_kind(ages)} {ages.values[period].item()}, "
                 f"widths={dict(resolved.tile_widths)!r})"
             )
             labels[lowering_key] = label
@@ -5713,7 +5715,7 @@ def _resolve_output_layouts_and_lowering_keys(
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
@@ -5882,7 +5884,7 @@ def _build_structural_blueprint(
     all_programs: Mapping[_CoreTriple, CoreProgram],
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
@@ -6184,7 +6186,7 @@ def _structural_key(
     all_programs: Mapping[_CoreTriple, CoreProgram],
     program_fingerprint: str,
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     next_regime_to_V_arr: Mapping[RegimeName, FloatND],
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: Mapping[_EdgeKey, FloatND],

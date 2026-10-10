@@ -105,13 +105,13 @@ from _lcm.solution.backward_induction import (
     CompilationWave,
     _resolve_compilation_workers,
 )
+from _lcm.time import TimeAxis
 from _lcm.transition_checks import (
     regime_probability_flags,
     regime_probability_inactive_indices,
 )
 from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.logging import LogLevel, get_logger
-from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY
 
@@ -129,7 +129,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
     flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
-    ages: AgeGrid,
+    ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
     n_subjects: int,
@@ -373,7 +373,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                         inventory=inventory, profile=decision, family="decision"
                     ),
                 )
-                if regime.stakeholders is not None and not base_spaces[name].states:
+                if not base_spaces[name].states and indices.ndim == 0:
                     indices, value = cast(
                         "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
                         inventory.operation(

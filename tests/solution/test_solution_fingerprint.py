@@ -1153,6 +1153,7 @@ def test_default_model_declaration_has_a_closed_fingerprint() -> None:
     model = get_toy_model()
     flat_params = model._process_params(get_toy_params(scale=1.0))
 
+    assert model.ages is not None
     digest = fingerprints.fingerprint_model(
         ages=model.ages,
         regimes=model._regimes,

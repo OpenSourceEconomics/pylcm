@@ -295,17 +295,16 @@ def test_period_diagnostic_levels_and_error_order_are_preserved(
         inputs=(first, second, mask), budget=1 if level == "off" else 1_000_000
     )
     logger = get_logger(log_level=level)
-    arguments = {
-        "logger": logger,
-        "age": jnp.asarray(0, dtype=jnp.int32),
-        "period_results": records,
-        "memory": memory,
-    }
+    age = jnp.asarray(0, dtype=jnp.int32)
     if level == "debug":
         with pytest.raises(InvalidValueFunctionError, match="1 of 3 values are NaN"):
-            simulation._validate_period_values(**arguments)
+            simulation._validate_period_values(
+                logger=logger, age=age, period_results=records, memory=memory
+            )
     else:
-        simulation._validate_period_values(**arguments)
+        simulation._validate_period_values(
+            logger=logger, age=age, period_results=records, memory=memory
+        )
     warnings = [
         record.getMessage()
         for record in caplog.records

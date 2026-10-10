@@ -147,7 +147,7 @@ def broadcast_collective(
     n_subjects: int,
     memory: SimulationMemory | None,
 ) -> tuple[jax.Array, jax.Array]:
-    """Add the subject axis to the original stateless collective outputs."""
+    """Add the subject axis to stateless singleton or collective outputs."""
     return run_simulation_operation(
         memory=memory,
         function=_broadcast_collective,

@@ -12,7 +12,7 @@ diagnostic-intermediates closure (built during regime canonicalization in
 import logging
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 import jax.numpy as jnp
 
@@ -56,6 +56,7 @@ def validate_V(
     flat_params: FlatRegimeParams | None = None,
     period: int | None = None,
     entered_process_names: tuple[str, ...] = (),
+    time_kind: Literal["age", "period"] = "age",
 ) -> None:
     """Validate the value function array for NaN values.
 
@@ -65,7 +66,7 @@ def validate_V(
 
     Args:
         V_arr: The value function array to validate.
-        age: The age for which the value function is being validated.
+        age: Current coordinate, carried under the historical internal name.
         regime_name: Name of the regime (for error messages).
         partial_solution: Value function arrays for periods completed before
             the error. Attached to the exception for debug snapshots.
@@ -79,6 +80,7 @@ def validate_V(
         entered_process_names: Processes this regime enters through a declared
             law. Named in the message, because leaving such a process's support
             is the one NaN cause the engine mints deliberately.
+        time_kind: Meaning of the coordinate in diagnostics.
 
     The NaN reduction stays sharded via `v_array_has_nan` (jit-wrapped so GSPMD
     partitions it across the V-array's devices instead of gathering V onto the
@@ -100,6 +102,7 @@ def validate_V(
         regime_name=regime_name,
         partial_solution=partial_solution,
         entered_process_names=entered_process_names,
+        time_kind=time_kind,
     )
 
     if compute_intermediates is not None and state_action_space is not None:
@@ -113,6 +116,7 @@ def validate_V(
                 regime_name=regime_name or "",
                 age=float(age),
                 period=period,
+                time_kind=time_kind,
             )
         except Exception:
             logging.getLogger("lcm").warning(
@@ -131,13 +135,14 @@ def value_function_nan_error(
     regime_name: RegimeName | None = None,
     partial_solution: object = None,
     entered_process_names: tuple[str, ...] = (),
+    time_kind: Literal["age", "period"] = "age",
 ) -> InvalidValueFunctionError:
     """Build the host report after an admitted NaN count is available."""
     regime_part = f" in regime '{regime_name}'" if regime_name else ""
     all_nan = n_nan == total
     fraction_hint = "all" if all_nan else f"{n_nan} of {total}"
     exc = InvalidValueFunctionError(
-        f"Value function at age {age}{regime_part}: {fraction_hint} values "
+        f"Value function at {time_kind} {age}{regime_part}: {fraction_hint} values "
         f"are NaN.\n\n"
         "NaN propagates through Q = U + beta * CE. Common causes:\n"
         "- A missing feasibility constraint (e.g. negative leisure passed "
@@ -169,6 +174,7 @@ def _enrich_with_diagnostics(
     regime_name: RegimeName,
     age: float,
     period: int | None,
+    time_kind: Literal["age", "period"] = "age",
 ) -> None:
     """Run diagnostic intermediates and attach summary to exception.
 
@@ -221,6 +227,8 @@ def _enrich_with_diagnostics(
         variable_names=all_names,
         regime_name=regime_name,
         age=age,
+        period=period,
+        time_kind=time_kind,
     )
     exc.add_note(_format_diagnostic_summary(exc.diagnostics))
 
@@ -231,6 +239,8 @@ def _summarize_diagnostics(
     variable_names: tuple[str, ...],
     regime_name: RegimeName,
     age: float,
+    period: int | None = None,
+    time_kind: Literal["age", "period"] = "age",
 ) -> dict[str, Any]:
     """Restructure the flat reduction pytree into the summary dict shape.
 
@@ -251,7 +261,10 @@ def _summarize_diagnostics(
         `"regime_probs"` mapping, suitable for `_format_diagnostic_summary`.
 
     """
-    summary: dict[str, Any] = {"regime_name": regime_name, "age": age}
+    summary: dict[str, Any] = {
+        "regime_name": regime_name,
+        time_kind: age if time_kind == "age" else period,
+    }
 
     for key_out, key_in in [
         ("U_nan_fraction", "U_nan"),
@@ -285,8 +298,12 @@ def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
         Human-readable multi-line string suitable for `Exception.add_note`.
 
     """
+    time_kind = "age" if "age" in summary else "period"
     lines = [
-        f"\nDiagnostics for regime '{summary['regime_name']}' at age {summary['age']}:",
+        (
+            f"\nDiagnostics for regime '{summary['regime_name']}' "
+            f"at {time_kind} {summary[time_kind]}:"
+        ),
     ]
 
     u_frac = summary.get("U_nan_fraction", {}).get("overall", 0)
