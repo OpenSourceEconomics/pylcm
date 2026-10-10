@@ -12,7 +12,7 @@ import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal, cast
+from typing import ClassVar, Literal, TypedDict, Unpack, cast
 
 from beartype import beartype
 
@@ -66,6 +66,37 @@ type FunctionEntry = UserFunction | Phased | CollectiveUtility | None
 # One `Regime.constraints` value; `None` masks a model-level constraint. `Phased`
 # passes the type check so the validator can reject it with an explanation.
 type ConstraintEntry = ConstraintLike | Phased | ValueDependentConstraint | None
+
+
+class _SlotsBesideFunctions(TypedDict, total=False):
+    """The replaceable slots other than `functions`, each with its declared type.
+
+    `Regime.with_engine_functions` writes `functions` itself and takes these
+    beside it.
+    """
+
+    states: Mapping[StateName, StateEntry]
+    state_transitions: Mapping[StateName, StateTransitionEntry]
+    joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition | Phased]]
+    actions: Mapping[ActionName, ActionEntry]
+    constraints: Mapping[FunctionName, ConstraintEntry]
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid]
+    solver: _solvers.Solver
+    taste_shocks: ExtremeValueTasteShocks | None
+    koopmans_aggregator: UserFunction | Phased | None
+    certainty_equivalent: CertaintyEquivalent | None
+    description: str
+
+
+class RegimeReplacement(_SlotsBesideFunctions, total=False):
+    """The slots `Regime.replace` may replace, each with its declared type.
+
+    These are the slots a regime is constructed from. The derived slots
+    (`stakeholders`, `pareto_objective`, `value_constraints` and
+    `same_period_refs`) are read off a regime and are not among them.
+    """
+
+    functions: Mapping[FunctionName, FunctionEntry]
 
 
 @beartype(conf=REGIME_CONF)
@@ -631,7 +662,7 @@ class Regime:
         self,
         *,
         engine_functions: Mapping[FunctionName, UserFunction | Phased | None],
-        **other_slots: Any,
+        **other_slots: Unpack[_SlotsBesideFunctions],
     ) -> Regime:
         """Overlay engine-composed functions without disturbing the declarations.
 
@@ -702,7 +733,7 @@ class Regime:
             )
         return written
 
-    def replace(self, **kwargs: Any) -> Regime:
+    def replace(self, **kwargs: Unpack[RegimeReplacement]) -> Regime:
         """Replace the attributes of the regime.
 
         Replacing a slot that carries a `CollectiveUtility` or

@@ -24,6 +24,7 @@ import pytest
 
 from _lcm.model_graph import bind_edge_laws
 from _lcm.regime_building.broadcast import (
+    ModelSlots,
     _joint_phase_closure,
     merge_model_slots,
 )
@@ -501,7 +502,7 @@ def _closure_arguments() -> dict[str, Any]:
     """Assemble the arguments the joint closure takes for the chain model."""
     regimes = _chain_regimes()
     laws, _ = bind_edge_laws(edges=_CHAIN_EDGES, regimes=regimes, ages=_CHAIN_AGES)
-    model_slots: dict[str, Mapping[str, Any]] = {
+    model_slots: ModelSlots = {
         "functions": {},
         "constraints": {},
         "states": _CHAIN_MODEL_STATES,
