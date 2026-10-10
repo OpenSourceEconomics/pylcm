@@ -1112,7 +1112,7 @@ def test_template_leaf_scalar_grammar_uses_runtime_type_identity() -> None:
 
     with pytest.raises(TypeError, match="not numerical"):
         solver_api_module._snapshot_artifact_template_once(
-            template=(_FloatSpoof(),),
+            template=cast("ArtifactPayload", (_FloatSpoof(),)),
             payload_runtime_type=tuple,
         )
 

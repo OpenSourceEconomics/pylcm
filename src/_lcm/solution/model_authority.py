@@ -62,6 +62,7 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
+from lcm._solver_api.identity import ArtifactRuntimeType
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     SIMULATION_POLICY,
@@ -1764,7 +1765,7 @@ def _authority_from_template(
     """Observe one engine template once, then build its exact authority."""
     if template is None:
         template_snapshot = None
-        containers: dict[TreePath, type[object]] = {}
+        containers: dict[TreePath, ArtifactRuntimeType] = {}
     else:
         template_snapshot, containers = _snapshot_artifact_template_once(
             template=template,
@@ -1795,7 +1796,7 @@ def _authority_from_observed_template(
     persistence: PersistencePolicy,
     payload_runtime_type: type[object],
     template_snapshot: _CanonicalArtifactTemplate | None,
-    container_runtime_types: dict[TreePath, type[object]],
+    container_runtime_types: dict[TreePath, ArtifactRuntimeType],
     leaf_axis_names: dict[TreePath, tuple[str, ...]] | None = None,
     axes: tuple[AxisAuthority, ...] | None = None,
     state_roles: tuple[str, ...] = (),

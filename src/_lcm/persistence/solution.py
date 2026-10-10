@@ -40,7 +40,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_value_store,
 )
 from _lcm.solution.solver_diagnostics import diagnostics_template_snapshot
-from _lcm.typing import HostArray, JSONValue, ValueND
+from _lcm.typing import ArtifactPayload, HostArray, JSONValue, ValueND
 from lcm._solver_api.authority import _ArrayCopier
 from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
 from lcm.solver_api import (
@@ -308,7 +308,7 @@ class _LazyHdf5Entry(_LazyEntry):
             LoadState.UNLOADED if self._cache.value is _UNLOADED else LoadState.LOADED
         )
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(self, *, template: ArtifactPayload | None = None) -> object:
         """Load through the compatibility path that accepts a template object."""
         if template is None and self.standard_template_snapshot is not None:
             return self._materialize(
@@ -333,7 +333,7 @@ class _LazyHdf5Entry(_LazyEntry):
     def _materialize(  # noqa: C901
         self,
         *,
-        template: object | None,
+        template: ArtifactPayload | None,
         template_snapshot: _CanonicalArtifactTemplate | None,
         array_writer: CanonicalArrayWriter | None = None,
         array_copier: _ArrayCopier | None = None,
