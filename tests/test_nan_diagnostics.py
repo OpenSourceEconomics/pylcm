@@ -9,6 +9,7 @@ import pytest
 from _lcm.engine import StateActionSpace
 from _lcm.grids import LinSpacedGrid
 from _lcm.solution.validate_V import validate_V
+from _lcm.utils.logging import LogLevel
 from lcm import Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
@@ -146,9 +147,7 @@ def _build_nan_model() -> tuple[Model, dict]:
 def _build_always_nan_model() -> tuple[Model, dict]:
     """Build a model whose utility is unconditionally NaN.
 
-    Used to test that the NaN/Inf validation in `simulate` honours `log_level`.
-    At `log_level="debug"` the NaN-bearing V_arr must flow through without
-    raising; at `"warning"`/`"debug"` validation fires.
+    Used to test checked and explicitly unchecked simulation independently of output.
     """
 
     @categorical(ordered=False)
@@ -193,13 +192,30 @@ def _build_always_nan_model() -> tuple[Model, dict]:
     return model, params
 
 
-def test_simulate_log_level_warning_does_not_raise_on_nan_V_arr() -> None:
-    """`simulate(log_level="warning")` warns rather than raising on NaN V_arr.
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_simulate_runtime_checks_reject_nan_at_every_log_level(
+    log_level: LogLevel,
+) -> None:
+    """Automatic solve rejects NaN independently of diagnostic verbosity."""
+    model, params = _build_always_nan_model()
+    initial_conditions = {
+        "wealth": jnp.array([1.5]),
+        "age": jnp.array([0.0]),
+        "regime_id": jnp.zeros(1, dtype=jnp.int32),
+    }
+    with pytest.raises(InvalidValueFunctionError, match="NaN"):
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            log_level=log_level,
+        )
 
-    Mirrors `solve(log_level="warning")`: NaN is reported as a warning and
-    the run completes, so the caller gets back a (NaN-bearing) result rather
-    than an exception. Only `log_level="debug"` raises.
-    """
+
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_simulate_runtime_checks_false_permits_nan_at_every_log_level(
+    log_level: LogLevel,
+) -> None:
+    """Explicitly disabled checks permit NaN independently of output level."""
     model, params = _build_always_nan_model()
     initial_conditions = {
         "wealth": jnp.array([1.5]),
@@ -209,33 +225,16 @@ def test_simulate_log_level_warning_does_not_raise_on_nan_V_arr() -> None:
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        log_level="warning",
+        log_level=log_level,
+        runtime_checks=False,
     )
     assert set(result._raw_results) == {"non_terminal", "terminal"}
 
 
-def test_simulate_log_level_off_skips_nan_validation() -> None:
-    """`simulate(log_level="off")` runs to completion on a NaN-bearing V_arr.
-
-    Mirrors `solve(log_level="off")`: at `"off"` no NaN check fires, so the
-    NaN flows through to the result without raising. The caller has opted
-    out of validation and is responsible for handling NaN downstream.
-    """
-    model, params = _build_always_nan_model()
-    initial_conditions = {
-        "wealth": jnp.array([1.5]),
-        "age": jnp.array([0.0]),
-        "regime_id": jnp.zeros(1, dtype=jnp.int32),
-    }
-    result = model.simulate(
-        params=params,
-        initial_conditions=initial_conditions,
-        log_level="off",
-    )
-    assert set(result._raw_results) == {"non_terminal", "terminal"}
-
-
-def test_nan_diagnostics_end_to_end() -> None:
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_nan_diagnostics_end_to_end(
+    *, log_level: LogLevel, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Real model: `model.solve()` attaches a diagnostics dict when V has NaN.
 
     This exercises the full build → productmap → reduction → summarize
@@ -246,7 +245,12 @@ def test_nan_diagnostics_end_to_end() -> None:
     model, params = _build_nan_model()
 
     with pytest.raises(InvalidValueFunctionError) as exc_info:
-        model.solve(log_level="debug", params=params)
+        model.solve(log_level=log_level, params=params)
+
+    if log_level == "off":
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
 
     exc = exc_info.value
     assert exc.diagnostics is not None, (

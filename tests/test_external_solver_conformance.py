@@ -1124,6 +1124,7 @@ def test_external_reader_rejects_non_finite_actions_with_validation_off(
             initial_conditions=_initial_conditions(),
             solution=solution,
             log_level="off",
+            runtime_checks=False,
         )
 
 
