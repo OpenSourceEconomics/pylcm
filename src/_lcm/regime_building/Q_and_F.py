@@ -58,6 +58,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     NextStateSimulationFunction,
     ParamsLeaf,
+    QAndFArg,
     QAndFFunction,
     QAndFKwargs,
     QualifiedName,
@@ -1712,9 +1713,7 @@ def _apply_value_constraints(
     machinery: _ValueConstraintMachinery,
     Q_arr: FloatND,
     F_arr: BoolND,
-    # `object` values: besides ordinary `ParamsLeaf` leaves, the cell kwargs
-    # carry the same-period V mapping under `SAME_PERIOD_V_ARG`.
-    states_actions_params: Mapping[str, object],
+    states_actions_params: QAndFKwargs,
 ) -> BoolND:
     """AND every value constraint into the feasibility of one (state, action) cell.
 
@@ -1735,7 +1734,7 @@ def _apply_value_constraints(
         for ref_name, reader in machinery.reference_readers.items()
     }
     for constraint_name, evaluate in machinery.evaluators.items():
-        predicate_kwargs: dict[str, object] = {}
+        predicate_kwargs: dict[ReferenceName, QAndFArg] = {}
         for arg in machinery.evaluator_args[constraint_name]:
             if arg in machinery.q_value_index:
                 predicate_kwargs[arg] = Q_arr[..., machinery.q_value_index[arg]]
@@ -1825,7 +1824,7 @@ def evaluate_projected_readers(
     *,
     readers: tuple[ProjectedLandingReader, ...],
     landing_states: Mapping[StateName, ContinuousState | DiscreteState],
-    other_values: Mapping[str, object],
+    other_values: QAndFKwargs,
 ) -> dict[str, FloatND]:
     """Read each projected reference at one landing point.
 
@@ -3734,7 +3733,7 @@ def _aggregate_joint_lottery(
     lottery_weights: Sequence[FloatND],
     lottery_shifts: Sequence[IntND],
     ce_flat_param_names: Mapping[str, str],
-    states_actions_params: Mapping[str, Any],
+    states_actions_params: QAndFKwargs,
 ) -> FloatND:
     """Aggregate the continuation nodes of every retained target in one piece.
 

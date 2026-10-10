@@ -16,7 +16,7 @@ import jax
 import numpy as np
 import numpy.typing as npt
 from jax import Array
-from jaxtyping import Key
+from jaxtyping import Int, Key
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
@@ -100,11 +100,13 @@ type EconFunctionArg = FloatND | IntND | BoolND | float | MappingLeaf | Sequence
 type EconFunctionKwargs = Mapping[ReferenceName, EconFunctionArg]
 
 # One argument of a generated `QAndFFunction` or `MaxQOverAFunction`: an argument
-# of a user function, or a per-regime mapping of value arrays or of flat params.
+# of a user function, an integer index array of any width, or a per-regime mapping
+# of value arrays or of flat params.
 type QAndFArg = (
     EconFunctionArg
+    | Int[Array, "..."]
     | Mapping[RegimeName, FloatND]
-    | Mapping[RegimeName, FlatRegimeParams]
+    | Mapping[RegimeName, Mapping[QualifiedName, ParamsLeaf]]
 )
 type QAndFKwargs = Mapping[ReferenceName, QAndFArg]
 
