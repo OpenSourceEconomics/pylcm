@@ -36,7 +36,8 @@ from _lcm.solution.action_reduction import (
 from _lcm.solution.logsumexp_action_reduction import (
     BoundLogSumExpReduction,
 )
-from lcm.typing import ActionName
+from _lcm.typing import QAndFArg
+from lcm.typing import ActionName, ReferenceName
 
 _INT32_MAX = 2_147_483_647
 _COLLECTIVE_BLOCK_NDIM = 2
@@ -349,7 +350,7 @@ class _StreamingHardMax:
     action_names: tuple[ActionName, ...]
     block_width: int
 
-    def __call__(self, **kwargs: Any) -> HardMaxResult:
+    def __call__(self, **kwargs: QAndFArg) -> HardMaxResult:
         if not self.action_names:
             return _reduce_no_action(Q_and_F=self.Q_and_F, kwargs=kwargs)
 
@@ -387,7 +388,7 @@ class _PartitionedStreamingHardMax:
     n_partitions: int
     axis_name: str
 
-    def __call__(self, **kwargs: Any) -> HardMaxResult:
+    def __call__(self, **kwargs: QAndFArg) -> HardMaxResult:
         """Reduce this member's partition, exchange accumulators and merge them."""
         partition = jax.lax.axis_index(self.axis_name).astype(jnp.int32)
         local = self.local(partition=partition, **kwargs)
@@ -396,7 +397,7 @@ class _PartitionedStreamingHardMax:
             accumulators=gathered, order=tuple(range(self.n_partitions))
         )
 
-    def local(self, *, partition: jax.Array, **kwargs: Any) -> HardMaxAccumulator:
+    def local(self, *, partition: jax.Array, **kwargs: QAndFArg) -> HardMaxAccumulator:
         """Reduce the blocks one partition owns into an unfinalized accumulator."""
         action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
             action_names=self.action_names,
@@ -455,7 +456,7 @@ class _StreamingEV1ExpectedMax:
     block_width: int
     scale: Any
 
-    def __call__(self, **kwargs: Any) -> LogSumExpResult:
+    def __call__(self, **kwargs: QAndFArg) -> LogSumExpResult:
         action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
             action_names=self.action_names,
             kwargs=kwargs,
@@ -529,7 +530,7 @@ class _StreamingCollectiveHardMax:
     stakeholders: tuple[str, ...]
     weights: Mapping[str, Any]
 
-    def __call__(self, **kwargs: Any) -> CollectiveHardMaxResult:
+    def __call__(self, **kwargs: QAndFArg) -> CollectiveHardMaxResult:
         if not self.action_names:
             return _reduce_collective_no_action(
                 Q_and_F=self.Q_and_F,
@@ -574,8 +575,10 @@ class _StreamingCollectiveHardMax:
 
 
 def _prepare_action_call(
-    *, action_names: tuple[ActionName, ...], kwargs: dict[str, Any]
-) -> tuple[tuple[jax.Array, ...], dict[str, Any], tuple[int, ...], int]:
+    *,
+    action_names: tuple[ActionName, ...],
+    kwargs: dict[ReferenceName, QAndFArg],
+) -> tuple[tuple[jax.Array, ...], dict[ReferenceName, QAndFArg], tuple[int, ...], int]:
     """Validate grids and split them from scalar Q arguments."""
     missing = tuple(name for name in action_names if name not in kwargs)
     if missing:
@@ -607,7 +610,7 @@ def _evaluate_block(
     action_names: tuple[ActionName, ...],
     action_grids: tuple[jax.Array, ...],
     action_sizes: tuple[int, ...],
-    fixed_kwargs: dict[str, Any],
+    fixed_kwargs: dict[ReferenceName, QAndFArg],
     n_actions: int,
     block_width: int,
     block_offsets: jax.Array,
@@ -654,7 +657,7 @@ def _evaluate_ev1_branch_block(
     action_names: tuple[ActionName, ...],
     action_grids: tuple[jax.Array, ...],
     action_sizes: tuple[int, ...],
-    fixed_kwargs: dict[str, Any],
+    fixed_kwargs: dict[ReferenceName, QAndFArg],
     n_discrete_branches: int,
     continuous_extent: int,
     branches_per_block: int,
@@ -710,7 +713,7 @@ def _evaluate_collective_block(
     action_names: tuple[ActionName, ...],
     action_grids: tuple[jax.Array, ...],
     action_sizes: tuple[int, ...],
-    fixed_kwargs: dict[str, Any],
+    fixed_kwargs: dict[ReferenceName, QAndFArg],
     n_actions: int,
     block_width: int,
     block_offsets: jax.Array,
@@ -758,7 +761,7 @@ def _evaluate_one_action(
     action_names: tuple[ActionName, ...],
     action_grids: tuple[jax.Array, ...],
     action_sizes: tuple[int, ...],
-    fixed_kwargs: dict[str, Any],
+    fixed_kwargs: dict[ReferenceName, QAndFArg],
 ) -> tuple[Any, Any]:
     """Evaluate ``Q_and_F`` at one global C-order action identity."""
     action_kwargs = _decode_action(
@@ -1065,7 +1068,9 @@ def _flush_ev1_branch_group(
 
 
 def _reduce_no_action(
-    *, Q_and_F: Callable[..., tuple[Any, Any]], kwargs: dict[str, Any]
+    *,
+    Q_and_F: Callable[..., tuple[Any, Any]],
+    kwargs: dict[ReferenceName, QAndFArg],
 ) -> HardMaxResult:
     """Treat an empty action product as the one-cell identity product."""
     value, feasible = Q_and_F(**kwargs)
@@ -1152,7 +1157,7 @@ def _reduce_collective_no_action(
     Q_and_F: Callable[..., tuple[Any, Any]],
     stakeholders: tuple[str, ...],
     weights: Mapping[str, Any],
-    kwargs: dict[str, Any],
+    kwargs: dict[ReferenceName, QAndFArg],
 ) -> CollectiveHardMaxResult:
     """Treat a collective empty action product as one shared identity cell."""
     stakeholder_values, feasible = Q_and_F(**kwargs)

@@ -199,7 +199,10 @@ _TERMINAL_INSIDE = "marks a terminal regime only as the top-level"
             lambda: ByAge(cases={61: None}),  # ty: ignore[invalid-argument-type]
             _TERMINAL_INSIDE,
         ),
-        (lambda: ByAge(cases={61: "a"}, default=None), _TERMINAL_INSIDE),
+        (
+            lambda: ByAge(cases={61: "a"}, default=None),  # ty: ignore[invalid-argument-type]
+            _TERMINAL_INSIDE,
+        ),
         (
             lambda: ByAge.until(stop_age_exclusive=62, law="a", then=None),
             _TERMINAL_INSIDE,

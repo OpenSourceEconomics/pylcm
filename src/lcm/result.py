@@ -29,7 +29,7 @@ from _lcm.simulation.result_dataframe import (
 )
 from _lcm.simulation.result_metadata import ResultMetadata, _compute_metadata
 from _lcm.time import TimeAxis
-from _lcm.typing import ActionName, FlatParams, RegimeName, StateName
+from _lcm.typing import ActionName, ArrayTree, FlatParams, RegimeName, StateName
 from lcm._solver_api.entries import _LazyEntry
 from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
 from lcm.typing import BoolND, FloatND, FunctionName
@@ -529,7 +529,7 @@ def _coerce_jax_scalar_for_arrow(value: object) -> object:
 
 def _collect_array_tree_leaf_sizes(
     *,
-    tree: dict[str, Any],
+    tree: Mapping[str, ArrayTree],
 ) -> list[_ArrayTreeLeaf]:
     """Walk `tree` and return one `_ArrayTreeLeaf` per `jax.Array` leaf.
 
@@ -567,7 +567,7 @@ def _walk_tree(
 
 def _log_top_array_tree_leaves(
     *,
-    tree: dict[str, Any],
+    tree: Mapping[str, ArrayTree],
     top_k: int,
     label: str,
 ) -> None:
@@ -675,7 +675,7 @@ def _raw_results_to_array_tree(
     raw_results: MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
-) -> dict[str, dict[str, dict[str, Any]]]:
+) -> dict[RegimeName, dict[str, dict[str, ArrayTree]]]:
     """Convert raw results into a plain-dict tree of JAX arrays.
 
     Periods are stringified so orbax can use them as path components.

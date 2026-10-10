@@ -18,25 +18,27 @@ import jax
 import jax.numpy as jnp
 from jax import vmap
 
-from _lcm.typing import ActionName, StateName
+from _lcm.typing import ActionName, ArrayTree, QAndFArg, StateName
 from _lcm.utils.containers import find_duplicates
 from _lcm.utils.functools import allow_args, allow_only_kwargs, publish_signature
 from lcm.exceptions import FunctionDispatchError
-from lcm.typing import BoolND, FloatND, IntND
+from lcm.typing import BoolND, FloatND, IntND, ReferenceName, RegimeName, ValueND
 
 _MAX_FLAT_CELL_INDEX = 2**31 - 1
 
+# What a dispatched function returns: an array, a pair of arrays, or arrays
+# keyed by name one or two levels deep.
+type _ArrayReturn = (
+    FloatND
+    | IntND
+    | BoolND
+    | tuple[FloatND | IntND | BoolND, FloatND | IntND | BoolND]
+    | MappingProxyType[str, FloatND | IntND]
+    | MappingProxyType[str, MappingProxyType[str, FloatND | IntND]]
+)
+
 FunctionWithArrayReturn = TypeVar(
-    "FunctionWithArrayReturn",
-    bound=Callable[
-        ...,
-        FloatND
-        | IntND
-        | BoolND
-        | tuple[FloatND | IntND | BoolND, FloatND | IntND | BoolND]
-        | MappingProxyType[str, FloatND | IntND]
-        | MappingProxyType[str, MappingProxyType[str, FloatND | IntND]],
-    ],
+    "FunctionWithArrayReturn", bound=Callable[..., _ArrayReturn]
 )
 
 
@@ -152,7 +154,10 @@ def vmap_1d(
     func: FunctionWithArrayReturn,
     variables: tuple[str, ...],
     callable_with: Literal["only_args", "only_kwargs"] = "only_kwargs",
-    co_mapped_in_axes: MappingProxyType[str, Any] | None = None,
+    co_mapped_in_axes: MappingProxyType[
+        ReferenceName, int | MappingProxyType[RegimeName, int | None]
+    ]
+    | None = None,
 ) -> FunctionWithArrayReturn:
     """Apply vmap such that func is mapped over the specified variables.
 
@@ -386,16 +391,16 @@ class _CountBroadcastExtentInWidth:
     plain mapper, whose flat cell includes the broadcast variables.
     """
 
-    func: Callable[..., Any]
+    func: Callable[..., ArrayTree]
     """Mapper whose outer vmaps run over the broadcast variables."""
-    plain: Callable[..., Any]
+    plain: Callable[..., ArrayTree]
     """Mapper over the same product whose cell includes the broadcast variables."""
     variables: tuple[str, ...]
     """Broadcast variables, each mapped whole around every cell window."""
     width_keyword: str
     """Static keyword naming the width in points of the whole product."""
 
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> ArrayTree:
         width = kwargs.get(self.width_keyword, 1)
         # An invalid width passes through unchanged for the cell mapper to refuse.
         if type(width) is int and width >= 1:
@@ -412,12 +417,12 @@ class _CountBroadcastExtentInWidth:
 class _RestoreProductAxisOrder:
     """Restore the declared state order after mapping untiled axes outside cells."""
 
-    func: Callable[..., Any]
+    func: Callable[..., ArrayTree]
     """Mapped scalar computation producing outer axes followed by cell axes."""
     axes: tuple[int, ...]
     """Permutation from mapped state axes to the original declared order."""
 
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> ArrayTree:
         return jax.tree.map(
             partial(_transpose_product_axes, axes=self.axes), self.func(**kwargs)
         )
@@ -433,14 +438,14 @@ def _transpose_product_axes(value: jax.Array, *, axes: tuple[int, ...]) -> jax.A
 class _TiledProductMap:
     """Evaluate separate coordinate grids through a bounded Cartesian window."""
 
-    func: Callable[..., Any]
+    func: Callable[..., ArrayTree]
     """Unchanged scalar function evaluated at each product coordinate."""
     variables: tuple[str, ...]
     """Product coordinates in canonical C order, outermost first."""
     width_keyword: str
     """Static keyword consumed by this mapping boundary."""
 
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> ArrayTree:
         width = kwargs.pop(self.width_keyword, 1)
         if type(width) is not int or width < 1:
             msg = f"Tile width must be a positive static integer, got {width!r}."
@@ -493,13 +498,13 @@ class _TiledProductMap:
 
 def _map_grouped_product(
     *,
-    func: Callable[..., Any],
+    func: Callable[..., ArrayTree],
     variables: tuple[str, ...],
     coordinates: tuple[jax.Array, ...],
     shape: tuple[int, ...],
-    arguments: MappingProxyType[str, Any],
+    arguments: MappingProxyType[ReferenceName, QAndFArg],
     width: int,
-) -> Any:
+) -> ArrayTree:
     """Map a flat prefix and final coordinate with at most two cell batch axes.
 
     The rectangle's two widths multiply to at most the requested width. Separate
@@ -538,7 +543,7 @@ def _map_grouped_product(
 class _MapOverFinalCoordinate:
     """Evaluate the final coordinate for one decoded prefix cell."""
 
-    func: Callable[..., Any]
+    func: Callable[..., ArrayTree]
     """Unchanged scalar cell function."""
     variable: str
     """Name of the final Cartesian coordinate."""
@@ -547,7 +552,7 @@ class _MapOverFinalCoordinate:
     width: int
     """Active final-coordinate window within the requested cell budget."""
 
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> ArrayTree:
         evaluate = _EvaluateTiledCell(
             func=self.func,
             variables=(self.variable,),
@@ -564,11 +569,11 @@ class _MapOverFinalCoordinate:
 
 def _map_whole_product(
     *,
-    func: Callable[..., Any],
+    func: Callable[..., ArrayTree],
     variables: tuple[str, ...],
     coordinates: tuple[jax.Array, ...],
-    arguments: MappingProxyType[str, Any],
-) -> Any:
+    arguments: MappingProxyType[ReferenceName, QAndFArg],
+) -> ArrayTree:
     """Map coordinates whose windows cover them, without decoding a flat index.
 
     Enumerating a grid by index and gathering every element back out of it is an
@@ -578,7 +583,9 @@ def _map_whole_product(
     the same values either way, so results are unchanged.
     """
     mapped = productmap(
-        func=func, variables=variables, batch_sizes=dict.fromkeys(variables, 0)
+        func=cast("Callable[..., _ArrayReturn]", func),
+        variables=variables,
+        batch_sizes=dict.fromkeys(variables, 0),
     )
     named = dict(zip(variables, coordinates, strict=True))
     return mapped(**arguments, **named)
@@ -599,14 +606,14 @@ def _final_mapper(
 class _MapWholeCoordinate:
     """Evaluate the final coordinate over its whole grid for one prefix cell."""
 
-    func: Callable[..., Any]
+    func: Callable[..., ArrayTree]
     """Unchanged scalar cell function."""
     variable: str
     """Name of the final Cartesian coordinate."""
     coordinate: jax.Array
     """Separate final-coordinate grid, mapped in full."""
 
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> ArrayTree:
         return _map_whole_product(
             func=self.func,
             variables=(self.variable,),
@@ -619,7 +626,7 @@ class _MapWholeCoordinate:
 class _EvaluateTiledCell:
     """Decode one flat index and evaluate the unchanged scalar cell function."""
 
-    func: Callable[..., Any]
+    func: Callable[..., ArrayTree]
     """Scalar cell function receiving the decoded coordinate values."""
     variables: tuple[str, ...]
     """Coordinate names in the same order as their separate arrays."""
@@ -627,10 +634,10 @@ class _EvaluateTiledCell:
     """Separate coordinate arrays, without a materialized product mesh."""
     strides: tuple[int, ...]
     """C-order integer strides used to decode a flat cell index."""
-    arguments: MappingProxyType[str, Any]
+    arguments: MappingProxyType[ReferenceName, QAndFArg]
     """Non-coordinate arguments forwarded unchanged to the cell function."""
 
-    def __call__(self, index: jax.Array) -> Any:
+    def __call__(self, index: jax.Array) -> ArrayTree:
         cell = {
             name: coordinate[(index // stride) % coordinate.shape[0]]
             for name, coordinate, stride in zip(
@@ -699,7 +706,7 @@ class _ProductMapBatched:
     contract.
     """
 
-    func: Callable[..., Any]
+    func: Callable[..., ArrayTree]
     """The function evaluated at every point of the product."""
     product_axes: tuple[str, ...]
     """Names of the arguments whose values span the product, outermost first."""
@@ -717,7 +724,7 @@ class _ProductMapBatched:
                 getattr(self.func, attribute, type(self).__qualname__),
             )
 
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: Any) -> ArrayTree:
         non_array_kwargs = {
             key: val for key, val in kwargs.items() if key not in self.product_axes
         }
@@ -743,7 +750,7 @@ class _ProductMapBatched:
 class _MappedOverOneMoreAxis:
     """`loop_func` mapped with `jax.lax.map` over the values of one product axis."""
 
-    loop_func: Callable[..., Any]
+    loop_func: Callable[..., ArrayTree]
     """The function evaluated once per value of `axis`."""
     axis: str
     """The argument of `loop_func` that takes one value of the axis per evaluation."""
@@ -754,9 +761,9 @@ class _MappedOverOneMoreAxis:
 
     def __call__(
         self,
-        *already_mapped_args: Any,
-        **already_mapped_kwargs: Any,
-    ) -> Any:
+        *already_mapped_args: ValueND,
+        **already_mapped_kwargs: ValueND,
+    ) -> ArrayTree:
         return jax.lax.map(
             partial(
                 _evaluate_at_axis_value,
@@ -774,10 +781,10 @@ class _MappedOverOneMoreAxis:
 def _evaluate_at_axis_value(
     axis_value: Any,
     *,
-    loop_func: Callable[..., Any],
+    loop_func: Callable[..., ArrayTree],
     axis: str,
-    mapped_args: tuple[Any, ...],
-    mapped_kwargs: dict[str, Any],
-) -> Any:
+    mapped_args: tuple[ValueND, ...],
+    mapped_kwargs: dict[ReferenceName, ValueND],
+) -> ArrayTree:
     """Evaluate `loop_func` at one value of `axis`, forwarding the other arguments."""
     return loop_func(*mapped_args, **{axis: axis_value}, **mapped_kwargs)

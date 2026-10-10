@@ -23,6 +23,7 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_director
 from _lcm.regime_building.age_specialization import INVARIANT
 from _lcm.solution.cuda_lowering_identity import capture_cuda_lowering_identity
 from _lcm.solution.fingerprint import _semantic_fingerprint
+from _lcm.typing import JSONValue
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -131,7 +132,7 @@ def _describe_tree(value: object) -> object:
     raise ExecutionPlanningError(f"Unspecified descriptor type: {type(value)}")
 
 
-def capture_lowering_identity() -> Mapping[str, object]:
+def capture_lowering_identity() -> Mapping[str, JSONValue]:
     """Read exact bytes before observation; reuse existing native/source seals."""
     # This diagnostic requires an identifiable source checkout and installed native
     # payload. A wheel without source inputs cannot satisfy this schema.
@@ -184,7 +185,7 @@ def capture_lowering_identity() -> Mapping[str, object]:
     )
     if not devices:
         raise ExecutionPlanningError("Lowering identity requires a device.")
-    extra_identity: Mapping[str, object] = {}
+    extra_identity: Mapping[str, JSONValue] = {}
     if not all(device[2] == "cpu" for device in devices):
         extra_identity = capture_cuda_lowering_identity(
             root=root,

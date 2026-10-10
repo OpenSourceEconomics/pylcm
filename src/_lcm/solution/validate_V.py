@@ -17,7 +17,13 @@ from typing import Any, Literal
 import jax.numpy as jnp
 
 from _lcm.engine import StateActionSpace
-from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeName
+from _lcm.typing import (
+    FlatRegimeParams,
+    PeriodToRegimeToVArr,
+    QAndFArg,
+    ReferenceName,
+    RegimeName,
+)
 from _lcm.utils.logging import v_array_has_nan
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
@@ -44,12 +50,12 @@ def _entry_support_cause(entered_process_names: tuple[str, ...]) -> str:
     )
 
 
-def validate_V(
+def validate_V[PartialSolution](
     *,
     V_arr: FloatND,
     age: float | ScalarInt | ScalarFloat,
     regime_name: RegimeName | None = None,
-    partial_solution: object = None,
+    partial_solution: PartialSolution | None = None,
     compute_intermediates: Callable | None = None,
     state_action_space: StateActionSpace | None = None,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] | None = None,
@@ -127,13 +133,13 @@ def validate_V(
     raise exc
 
 
-def value_function_nan_error(
+def value_function_nan_error[PartialSolution](
     *,
     n_nan: int,
     total: int,
     age: float | ScalarInt | ScalarFloat,
     regime_name: RegimeName | None = None,
-    partial_solution: object = None,
+    partial_solution: PartialSolution | None = None,
     entered_process_names: tuple[str, ...] = (),
     time_kind: Literal["age", "period"] = "age",
 ) -> InvalidValueFunctionError:
@@ -213,7 +219,7 @@ def _enrich_with_diagnostics(
     # Wrap Python scalars as JAX arrays so the call matches the dtype used
     # at trace time in `_build_compute_intermediates_per_period`; avoids a
     # retrace for the diagnostic invocation.
-    call_kwargs: dict[str, Any] = {
+    call_kwargs: dict[ReferenceName, QAndFArg | None] = {
         **state_action_kwargs,
         "next_regime_to_V_arr": next_regime_to_V_arr,
         **param_kwargs,

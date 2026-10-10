@@ -60,6 +60,7 @@ from _lcm.solution.contract import SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.time import TimeAxis, coordinate_kind, specialization_coordinate_at
 from _lcm.typing import (
+    EconFunctionKwargs,
     FlatParams,
     FlatRegimeParams,
     ParamsTemplate,
@@ -1086,8 +1087,8 @@ def _partial_fixed_params_into_regimes(
 
 
 def _filter_kwargs_for_func(
-    *, func: Callable, kwargs: Mapping[str, object]
-) -> Mapping[str, object]:
+    *, func: Callable, kwargs: EconFunctionKwargs
+) -> EconFunctionKwargs:
     """Filter kwargs to only those accepted by func's signature."""
     try:
         sig = inspect.signature(func)

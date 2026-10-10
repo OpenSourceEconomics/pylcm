@@ -275,7 +275,7 @@ def test_invalid_archive_cache_is_refused_without_materialization(
         "persistence._LazyHdf5Entry",
         cast("ValueStore", solution.values)._raw(period=0, regime="working"),
     )
-    entry._cache.value = object()
+    entry._cache.value = object()  # ty: ignore[invalid-assignment]
     with pytest.raises(ExecutionPlanningError, match="unsupported retained"):
         _buffers(solution)
 

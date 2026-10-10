@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 
+from _lcm.typing import ArrayTree
 from lcm.typing import ReferenceName
 
 ReturnType = TypeVar("ReturnType")
@@ -74,13 +75,13 @@ def allow_only_kwargs(
     )
 
 
-def _split_bound_arguments(
+def _split_bound_arguments[T](
     *,
     bound: inspect.BoundArguments,
     n_positional: int,
     original_signature: inspect.Signature,
     adapted_signature: inspect.Signature,
-) -> tuple[list[Any], dict[str, Any]]:
+) -> tuple[list[T], dict[ReferenceName, T]]:
     """Preserve how positional-or-keyword values reached the adapter."""
     positional_origins: set[str] = set()
     remaining_positional = n_positional
@@ -97,8 +98,8 @@ def _split_bound_arguments(
             positional_origins.add(parameter.name)
             break
 
-    forwarded_args: list[Any] = []
-    forwarded_kwargs: dict[str, Any] = {}
+    forwarded_args: list[T] = []
+    forwarded_kwargs: dict[ReferenceName, T] = {}
     for name, value in bound.arguments.items():
         kind = original_signature.parameters[name].kind
         if kind == inspect.Parameter.VAR_POSITIONAL:
@@ -169,7 +170,7 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
 
 
 def publish_signature(
-    *, target: Callable[..., Any], signature: inspect.Signature
+    *, target: Callable[..., ArrayTree], signature: inspect.Signature
 ) -> None:
     """Set the signature `inspect.signature` reports for `target`.
 
@@ -193,12 +194,12 @@ def get_union_of_args(list_of_functions: list[Callable[..., Any]]) -> set[str]:
     return set().union(*arguments)
 
 
-def all_as_kwargs(
+def all_as_kwargs[T](
     *,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
+    args: tuple[T, ...],
+    kwargs: dict[ReferenceName, T],
     arg_names: list[ReferenceName],
-) -> dict[str, Any]:
+) -> dict[ReferenceName, T]:
     """Return kwargs dictionary containing all arguments.
 
     Args:
@@ -213,12 +214,12 @@ def all_as_kwargs(
     return dict(zip(arg_names[: len(args)], args, strict=True)) | kwargs
 
 
-def all_as_args(
+def all_as_args[T](
     *,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
+    args: tuple[T, ...],
+    kwargs: dict[ReferenceName, T],
     arg_names: list[ReferenceName],
-) -> tuple[Any, ...]:
+) -> tuple[T, ...]:
     """Return args tuple containing all arguments.
 
     Args:
@@ -233,9 +234,9 @@ def all_as_args(
     return args + tuple(convert_kwargs_to_args(kwargs=kwargs, arg_names=arg_names))
 
 
-def convert_kwargs_to_args(
-    *, kwargs: dict[str, Any], arg_names: list[ReferenceName]
-) -> list[Any]:
+def convert_kwargs_to_args[T](
+    *, kwargs: dict[ReferenceName, T], arg_names: list[ReferenceName]
+) -> list[T]:
     """Convert kwargs to args in the order of arg_names.
 
     Args:
@@ -253,10 +254,10 @@ def convert_kwargs_to_args(
 
 
 @dataclass(frozen=True, eq=False)
-class _WrappedCallable:
+class _WrappedCallable[R]:
     """Base of the adapters: a callable standing in for `func` under `signature`."""
 
-    func: Callable[..., Any]
+    func: Callable[..., R]
     """The wrapped function."""
     signature: inspect.Signature
     """The signature `inspect.signature` reports for the adapter."""
@@ -283,7 +284,7 @@ class _WrappedCallable:
 
 
 @dataclass(frozen=True, eq=False)
-class _KeywordOnlyAdapter(_WrappedCallable):
+class _KeywordOnlyAdapter[R](_WrappedCallable[R]):
     """Forward keyword arguments to `func`, refusing positional ones."""
 
     signature_parameter_names: tuple[str, ...]
@@ -337,7 +338,7 @@ class _KeywordOnlyAdapter(_WrappedCallable):
 
 
 @dataclass(frozen=True, eq=False)
-class _PositionalAdapter(_WrappedCallable):
+class _PositionalAdapter[R](_WrappedCallable[R]):
     """Accept positional arguments for `func` and forward them as `func` takes them."""
 
     original_signature: inspect.Signature

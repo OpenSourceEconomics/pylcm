@@ -1636,7 +1636,10 @@ def place_template_on_regime_devices[Template](
 
 
 def _fail_if_template_is_misplaced(
-    *, regime_name: RegimeName, template: object, expected_device_ids: tuple[int, ...]
+    *,
+    regime_name: RegimeName,
+    template: ContinuationPayload | None,
+    expected_device_ids: tuple[int, ...],
 ) -> None:
     """Require every continuation array leaf to use the regime's assigned devices."""
     expected = tuple(

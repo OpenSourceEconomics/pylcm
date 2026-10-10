@@ -27,21 +27,72 @@ reports fidelity `logical`; `replay_period_on_recorded_layout` reinstates the
 recorded layout from these descriptors and reports `layout`.
 """
 
+import logging
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType
+from typing import TypedDict
 
 import jax
 import numpy as np
 
+from _lcm.continuation import ContinuationPayload
+from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.value_transfer import ResolvedValueTransfer
 from _lcm.persistence.io import _save_pkl
-from _lcm.typing import RegimeName
+from _lcm.time import TimeAxis
+from _lcm.typing import FlatParams, FloatND, RegimeName
+from lcm.solver_api import ArtifactKey
 
 type PeriodCaptureTarget = tuple[RegimeName, int]
+
+
+class PeriodCompileInputs(TypedDict):
+    """The inputs one regime-period's cores are lowered against."""
+
+    regime_name: RegimeName
+    """Regime whose period adapter runs."""
+
+    period: int
+    """Index of the period in the model horizon."""
+
+    state_action_space: StateActionSpace
+    """The regime's state-action space on its base axes."""
+
+    flat_params: FlatParams
+    """Every regime's flat parameters."""
+
+    ages: TimeAxis
+    """The model's time axis."""
+
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
+    """Next period's value array per regime."""
+
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload]
+    """Next period's continuation payload per publishing regime."""
+
+    next_edge_to_V_arr: MappingProxyType[tuple[RegimeName, RegimeName], FloatND]
+    """Next period's gated-edge value per `(source, target)` edge."""
+
+    retain_replay: bool
+    """Whether the replay artifacts are retained."""
+
+    selected_artifact_keys: frozenset[ArtifactKey]
+    """Artifacts the result retention selects."""
+
+
+class PeriodKernelKwargs(PeriodCompileInputs):
+    """The arguments the backward loop hands one regime's period adapter."""
+
+    logger: logging.Logger
+    """Logger the adapter reports through."""
+
+    period_solution: Mapping[RegimeName, FloatND]
+    """Value arrays of the regimes already solved in this period."""
+
 
 _TARGET_ENV = "LCM_CAPTURE_PERIOD"
 _DIR_ENV = "LCM_CAPTURE_DIR"
@@ -237,7 +288,9 @@ def describe_sharding(*, sharding: object) -> ShardingDescriptor:
     )
 
 
-def describe_array_leaves(*, tree: object) -> tuple[LeafLayoutDescriptor, ...]:
+def describe_array_leaves(
+    *, tree: PeriodKernelKwargs
+) -> tuple[LeafLayoutDescriptor, ...]:
     """Describe every `jax.Array` leaf of a pytree, in leaf order.
 
     Non-array leaves — a logger, a frozen set of artifact keys, a Python int —
@@ -296,10 +349,10 @@ def describe_core(*, name: str, core: PlannedCore) -> CoreLayoutDescriptor | Non
 def capture_kernel_inputs(
     *,
     capture_target: PeriodCaptureTarget | None,
-    regime: Any,  # the canonical Regime, circular to import here
+    regime: Regime,
     regime_name: RegimeName,
     period: int,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: PeriodKernelKwargs,
     compiled_cores: Mapping[str, PlannedCore],
 ) -> None:
     """Write this regime-period's kernel inputs if it is the selected target.
@@ -337,9 +390,9 @@ def capture_kernel_inputs(
 
 def _period_layouts(
     *,
-    regime: Any,  # the canonical Regime, circular to import here
+    regime: Regime,
     period: int,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: PeriodKernelKwargs,
     compiled_cores: Mapping[str, PlannedCore],
 ) -> PeriodLayouts:
     """Collect the layout descriptors of one regime-period."""

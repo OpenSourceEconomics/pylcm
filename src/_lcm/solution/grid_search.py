@@ -83,8 +83,11 @@ from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
+    FlatRegimeParams,
     MaxQOverAFunction,
+    QAndFArg,
     QAndFFunction,
+    ReferenceName,
     RegimeName,
     StateName,
 )
@@ -702,7 +705,7 @@ class _GridSearchArgumentBuilder:
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     edge_target_regimes: tuple[RegimeName, ...] = ()
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(self, context: CoreBuildContext) -> Mapping[ReferenceName, QAndFArg]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         next_regime_to_V_arr = cast(
@@ -718,7 +721,7 @@ class _GridSearchArgumentBuilder:
                 context.edge_regime_to_V_arr,
             ),
         )
-        arguments: dict[str, object] = {
+        arguments: dict[ReferenceName, QAndFArg] = {
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
             "next_regime_to_V_arr": next_regime_to_V_arr,
@@ -735,7 +738,10 @@ class _GridSearchArgumentBuilder:
                     }
                 )
                 if context.same_period_regime_to_V_arr is None
-                else context.same_period_regime_to_V_arr
+                else cast(
+                    "Mapping[RegimeName, FloatND]",
+                    context.same_period_regime_to_V_arr,
+                )
             )
             arguments["same_period_regime_to_V_arr"] = reference_values
             arguments["same_period_regime_to_params"] = self._same_period_params(
@@ -781,7 +787,11 @@ class _GridSearchArgumentBuilder:
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         flat_params: FlatParams,
-    ) -> dict[str, object]:
+    ) -> dict[
+        ReferenceName,
+        MappingProxyType[RegimeName, FloatND]
+        | MappingProxyType[RegimeName, FlatRegimeParams],
+    ]:
         """Build the edge-reference value and parameter channels."""
         if not self.edge_reference_regimes:
             return {}
@@ -802,7 +812,7 @@ class _GridSearchArgumentBuilder:
 
     def _same_period_params(
         self, *, flat_params: FlatParams
-    ) -> MappingProxyType[RegimeName, Mapping[str, object]]:
+    ) -> MappingProxyType[RegimeName, FlatRegimeParams]:
         """Return each same-period reference regime's own flat parameters."""
         return MappingProxyType(
             {

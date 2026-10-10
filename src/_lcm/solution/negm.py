@@ -1096,7 +1096,7 @@ class _NodeSolver:
 def _fail_if_sweep_inputs_collide_with_the_adjusters(
     *,
     arguments: Mapping[str, object],
-    own: Mapping[str, object],
+    own: Mapping[ReferenceName, FloatND],
     regime_name: RegimeName,
 ) -> None:
     collisions = sorted(set(arguments) & set(own))

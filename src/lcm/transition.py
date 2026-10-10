@@ -13,9 +13,10 @@ import dataclasses
 import math
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from fractions import Fraction
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 import jax
 from beartype import beartype
@@ -721,7 +722,10 @@ class PeriodSpecializedGrid(AgeSpecializedGrid):
     """Hashable identity of the period's grid, checked against its nodes."""
 
 
-_MISSING = object()
+class _Missing(Enum):
+    """The marker of a `ByAge` declared without a default."""
+
+    MISSING = auto()
 
 
 class ByAge:
@@ -756,11 +760,14 @@ class ByAge:
         self,
         *,
         cases: Mapping[K, _DeclaredCaseLaw],
-        default: object = _MISSING,
+        default: _DeclaredCaseLaw | Literal[_Missing.MISSING] = _Missing.MISSING,
     ) -> None:
-        if not cases and default is _MISSING:
+        if not cases and default is _Missing.MISSING:
             raise RegimeInitializationError("`ByAge` needs at least one case.")
-        for law in (*cases.values(), *(() if default is _MISSING else (default,))):
+        for law in (
+            *cases.values(),
+            *(() if default is _Missing.MISSING else (default,)),
+        ):
             _fail_if_not_a_nonterminal_law(law)
         for selector in cases:
             if isinstance(self, ByPeriod):
@@ -777,7 +784,9 @@ class ByAge:
         # Stored as `None` rather than the signature sentinel, so the model
         # fingerprint sees plain data.
         self._default = (
-            None if default is _MISSING else snapshot_transition_containers(default)
+            None
+            if default is _Missing.MISSING
+            else snapshot_transition_containers(default)
         )
         self._until: _Until | None = None
 
@@ -849,7 +858,7 @@ class ByAge:
         )
         if self._default is None:
             return type(self)(cases=cases)
-        return type(self)(cases=cases, default=mapped[-1])
+        return type(self)(cases=cases, default=cast("AgeCaseLaw", mapped[-1]))
 
     @property
     def laws(self) -> tuple[object, ...]:

@@ -68,9 +68,15 @@ from lcm.typing import (
     Phase,
     ReferenceName,
     UserFunction,
+    UserParamsNode,
+    ValueND,
 )
 
 _JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH = 4
+
+# A params node between broadcast and canonicalization: a user-form leaf or
+# mapping, with every Series and `TimeVarying` replaced by its JAX array.
+type _ConvertedParamsNode = UserParamsNode | ValueND
 
 
 def has_series(params: Mapping) -> bool:
@@ -334,7 +340,7 @@ def _map_discrete_labels(
 
 def convert_series_in_params(
     *,
-    flat_params: Mapping[RegimeName, Mapping[str, object]],
+    flat_params: Mapping[RegimeName, Mapping[str, UserParamsNode]],
     ages: TimeAxis,
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
@@ -385,7 +391,7 @@ def convert_series_in_params(
 
     """
     # User leaves (scalars, arrays, Series, mapping and sequence leaves).
-    result: dict[RegimeName, Mapping[str, object]] = {}
+    result: dict[RegimeName, Mapping[str, _ConvertedParamsNode]] = {}
     for regime_name, regime_params in flat_params.items():
         if regime_name == EDGES:
             result[EDGES] = MappingProxyType(
@@ -393,7 +399,7 @@ def convert_series_in_params(
                     source: MappingProxyType(
                         _convert_edge_params(
                             source=source,
-                            leaves=cast("Mapping[str, object]", leaves),
+                            leaves=cast("Mapping[str, UserParamsNode]", leaves),
                             declared_transitions=declared_transitions.get(source, ()),
                             ages=ages,
                             user_regimes=user_regimes,
@@ -445,7 +451,7 @@ def convert_series_in_params(
         )
         if aggregator_variants:
             all_funcs["koopmans_aggregator"] = aggregator_variants[0]
-        converted_regime: dict[str, object] = {}
+        converted_regime: dict[str, _ConvertedParamsNode] = {}
         for func_param, value in regime_params.items():
             # Function lookup exists only to infer a Series leaf's indexing axes.
             # Scalars and already-materialized arrays need no source inspection;
@@ -509,7 +515,7 @@ def _convert_edge_params(
     *,
     source: RegimeName,
     # User leaves, keyed by slot path; the values are heterogeneous.
-    leaves: Mapping[str, object],
+    leaves: Mapping[str, UserParamsNode],
     declared_transitions: tuple[Transition, ...],
     ages: TimeAxis,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -519,7 +525,7 @@ def _convert_edge_params(
     required_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     reachability: ModelReachability | None = None,
     declarations_by_phase: Mapping[Phase, Transition] | None = None,
-) -> dict[str, object]:
+) -> dict[str, _ConvertedParamsNode]:
     """Convert the Series leaves of one source's `edges` slots.
 
     A slot's key is the declaration path of the callable reading it, so that
@@ -549,7 +555,7 @@ def _convert_edge_params(
         for path, func, gate in iter_transition_callables(transition):
             readers.setdefault(path, []).append((func, gate is not None))
     # User leaves (scalars, arrays, Series, mapping and sequence leaves).
-    converted: dict[str, object] = {}
+    converted: dict[str, _ConvertedParamsNode] = {}
     for key, value in leaves.items():
         if not _needs_param_preflight(value):
             converted[key] = value
@@ -856,7 +862,7 @@ def _resolve_param_consumer(
 
 def _convert_param_value(
     *,
-    value: object,
+    value: UserParamsNode,
     func: Callable | None,
     param_name: ParameterName,
     func_name: FunctionName,
@@ -867,7 +873,7 @@ def _convert_param_value(
     declared_categoricals: Mapping[ReferenceName, DiscreteGrid],
     array_writer: CanonicalArrayWriter | None = None,
     required_periods: tuple[int, ...] | None = None,
-) -> object:
+) -> _ConvertedParamsNode:
     """Convert a single param value, dispatching on type.
 
     Args:
