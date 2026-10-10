@@ -14,6 +14,7 @@ from lcm.transition import (
     AgeSelector,
     PeriodRange,
     Periods,
+    _DeclaredSelector,
     _fail_if_invalid_age_selector,
     _fail_if_invalid_period_selector,
 )
@@ -44,7 +45,7 @@ class InitialNodes:
     """Period selectors and sorted, unique regime names; absent in age mode."""
 
     @beartype(conf=MODEL_CONF)
-    def __init__[K](
+    def __init__[K: _DeclaredSelector](
         self,
         *,
         by_age: Mapping[K, str | Sequence[str] | AbstractSet[str]] | None = None,
