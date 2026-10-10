@@ -19,6 +19,7 @@ from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
+from _lcm.grids.categorical import get_category_codes
 from _lcm.pandas_utils import convert_series_in_params
 from _lcm.params.edges import (
     EDGES,
@@ -75,7 +76,6 @@ from _lcm.typing import (
     StateName,
     VmappedRegimeTransitionFunction,
 )
-from _lcm.utils.containers import get_field_names_and_values
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from _lcm.utils.functools import is_user_function
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
@@ -337,7 +337,7 @@ def validate_model_inputs(
     if len(terminal_regimes) < 1:
         error_messages.append("lcm.Model must have at least one terminal regime.")
 
-    regime_id_fields = sorted(get_field_names_and_values(regime_id_class).keys())
+    regime_id_fields = sorted(get_category_codes(regime_id_class))
     regime_names = sorted(user_regimes.keys())
     if regime_id_fields != regime_names:
         error_messages.append(

@@ -1,5 +1,6 @@
 import dataclasses
 from dataclasses import make_dataclass
+from types import MappingProxyType
 from typing import cast
 
 import jax
@@ -18,16 +19,17 @@ from _lcm.grids import (
     categorical,
     validate_category_class,
 )
-from _lcm.grids.categorical import _validate_discrete_grid
+from _lcm.grids.categorical import _validate_discrete_grid, get_category_codes
 from _lcm.grids.continuous import _validate_continuous_grid
 from _lcm.typing import DataclassInstance
-from _lcm.utils.containers import get_field_names_and_values
 from lcm.exceptions import CategoricalDefinitionError, GridInitializationError
 from lcm.typing import ScalarInt
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 
-def _make_dc(name: str, *fields: tuple[str, object]) -> type[DataclassInstance]:
+def _make_dc(
+    name: str, *fields: tuple[str, jax.Array | str | None]
+) -> type[DataclassInstance]:
     """Build a dataclass with `ScalarInt` class attrs.
 
     Sidesteps `@dataclass(frozen=True)`'s rejection of `jax.Array`
@@ -46,24 +48,35 @@ def _make_dc(name: str, *fields: tuple[str, object]) -> type[DataclassInstance]:
     return cls
 
 
-def test_get_fields_with_defaults():
-    category_class = make_dataclass("Category", [("a", int, 1), ("b", int, 2)])
-    assert get_field_names_and_values(category_class) == {"a": 1, "b": 2}
+@categorical(ordered=False)
+class _Category:
+    a: ScalarInt
+    b: ScalarInt
 
 
-def test_get_fields_no_defaults():
-    category_class = make_dataclass("Category", [("a", int), ("b", int)])
-    assert get_field_names_and_values(category_class) == {"a": None, "b": None}
+def test_get_category_codes_returns_each_category_code():
+    """Each category of a validated class maps to its integer code, in order."""
+    codes = get_category_codes(_Category)
+    assert [(name, int(code)) for name, code in codes.items()] == [("a", 0), ("b", 1)]
 
 
-def test_get_fields_instance():
-    category_class = make_dataclass("Category", [("a", int), ("b", int)])
-    assert get_field_names_and_values(category_class(a=1, b=2)) == {"a": 1, "b": 2}
+def test_get_category_codes_returns_a_read_only_mapping():
+    """The category codes come back read-only."""
+    assert type(get_category_codes(_Category)) is MappingProxyType
 
 
-def test_get_fields_empty():
-    category_class = make_dataclass("Category", [])
-    assert get_field_names_and_values(category_class) == {}
+def test_discrete_grid_reports_a_field_without_a_value():
+    """A category field without a value is reported like any non-`ScalarInt`."""
+    category_class = cast(
+        "type[DataclassInstance]", make_dataclass("Category", [("a", ScalarInt)])
+    )
+    error_msg = (
+        "Field values of the category_class must be `ScalarInt` "
+        r"\(0-d int32 jax scalars\). The values to the following "
+        r"fields are not: \['a'\]"
+    )
+    with pytest.raises(GridInitializationError, match=error_msg):
+        DiscreteGrid(category_class=category_class)
 
 
 def test_validate_discrete_grid_empty():
@@ -75,6 +88,18 @@ def test_validate_discrete_grid_empty():
 
 def test_validate_discrete_grid_non_scalar_input():
     category_class = _make_dc("Category", ("a", jnp.int32(1)), ("b", "s"))
+    error_msg = (
+        "Field values of the category_class must be `ScalarInt` "
+        r"\(0-d int32 jax scalars\). The values to the following "
+        r"fields are not: \['b'\]"
+    )
+    with pytest.raises(GridInitializationError, match=error_msg):
+        _validate_discrete_grid(category_class)
+
+
+def test_validate_discrete_grid_non_int32_input():
+    """A 0-d integer scalar of another width is no `ScalarInt` code."""
+    category_class = _make_dc("Category", ("a", jnp.int32(0)), ("b", jnp.int16(1)))
     error_msg = (
         "Field values of the category_class must be `ScalarInt` "
         r"\(0-d int32 jax scalars\). The values to the following "
