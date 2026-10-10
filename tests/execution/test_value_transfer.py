@@ -240,12 +240,12 @@ def test_resolver_rejects_path_that_does_not_address_artifact() -> None:
 
 
 def test_resolver_requires_concrete_shape_dtype_and_sharding() -> None:
-    with pytest.raises(TypeError, match="shape and dtype"):
+    with pytest.raises(BeartypeCallHintParamViolation, match="stored_template"):
         resolve_value_transfer(
             target=_target(),
             source=_source(),
             kind=ValueTransferKind.ALIGNED_LOCAL,
-            stored_template=object(),
+            stored_template=object(),  # ty: ignore[invalid-argument-type]
             source_sharding=_named_sharding(),
         )
     with pytest.raises(TypeError, match="concrete JAX sharding"):

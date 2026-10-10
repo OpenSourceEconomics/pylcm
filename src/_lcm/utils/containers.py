@@ -18,6 +18,10 @@ from lcm.typing import ScalarInt
 
 T = TypeVar("T")
 
+# A value inside a nested container: a leaf the caller stores, such as a grid, a
+# function, an array or a params leaf, or a container of such values.
+type _ContainerValue = object  # noqa: PAN001 - callers nest any leaf, and the conversion changes the container type at every level
+
 
 class Unset:
     """Sentinel for parameters that haven't been explicitly set."""
@@ -132,7 +136,7 @@ def first_non_none(*args: T | None) -> T:
     raise ValueError("All arguments are None")
 
 
-def _make_immutable(value: Any) -> Any:
+def _make_immutable(value: _ContainerValue) -> _ContainerValue:
     """Recursively convert a value to its immutable equivalent."""
     if isinstance(value, (UserMappingLeaf, UserSequenceLeaf)):
         return value  # already immutable by construction
@@ -147,7 +151,7 @@ def _make_immutable(value: Any) -> Any:
     return value
 
 
-def _make_mutable(value: Any) -> Any:  # noqa: PLR0911
+def _make_mutable(value: _ContainerValue) -> _ContainerValue:  # noqa: PLR0911
     """Recursively convert a value to its mutable equivalent."""
     if isinstance(value, UserMappingLeaf):
         return {k: _make_mutable(v) for k, v in value.data.items()}

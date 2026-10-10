@@ -290,7 +290,7 @@ def _observable_route() -> tuple[Callable[..., object], MaterializedCoreProgram]
     program = materialize_core_program(
         program=declaration,
         context=CoreBuildContext(
-            state_action_space=object(),
+            state_action_space=None,
             next_regime_to_V_arr={},
             next_regime_to_continuation={},
             flat_params={},

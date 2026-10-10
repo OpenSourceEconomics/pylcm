@@ -53,6 +53,7 @@ from lcm.solvers import (
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    StateActionSpace,
     StateAxesLeading,
 )
 from lcm.typing import (
@@ -157,7 +158,7 @@ class _GraphKernel:
         self,
         *,
         compiled_cores: Mapping[str, object],
-        state_action_space: object,
+        state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[str, FloatND],
         next_regime_to_continuation: Mapping[str, object],
         flat_params: Mapping[str, object],

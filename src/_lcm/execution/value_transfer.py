@@ -710,12 +710,37 @@ class ResolvedValueTransfer:
         )
 
 
+@runtime_checkable
+class StoredValueTemplate(Protocol):
+    """A stored value, or the abstract template lowering holds for it.
+
+    A concrete JAX array and a `jax.ShapeDtypeStruct` both satisfy it. A transfer
+    reads the placement, so a template built without one is refused when the
+    transfer is resolved.
+    """
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Return the absolute shape."""
+        ...
+
+    @property
+    def dtype(self) -> DTypeLike:
+        """Return the element dtype."""
+        ...
+
+    @property
+    def sharding(self) -> jax.sharding.Sharding:
+        """Return the placement."""
+        ...
+
+
 def resolve_value_transfer(
     *,
     target: ValueArtifactAddress,
     source: ValueConsumerAddress,
     kind: ValueTransferKind,
-    stored_template: object,
+    stored_template: StoredValueTemplate,
     source_sharding: jax.sharding.Sharding,
     view: ValueViewDescriptor | None = None,
 ) -> ResolvedValueTransfer:

@@ -16,11 +16,11 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 import jax
-from jax.typing import DTypeLike
 
 from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
+    StoredValueTemplate,
     ValueArtifactAddress,
     ValueConsumerAddress,
     ValueInputChannel,
@@ -42,6 +42,7 @@ _CORE_PROGRAM_VERSION = 7
 _INT32_MAX = 2_147_483_647
 
 if TYPE_CHECKING:
+    from _lcm.engine import StateActionSpace
     from _lcm.execution.output_layout import OutputRoleTree
     from _lcm.solution.contract import PeriodKernel
 
@@ -58,6 +59,9 @@ else:
     # The solver contract reaches this module through the engine at import time,
     # so a kernel is checked as the graph publisher the body requires.
     type PeriodKernel = CoreProgramGraphAware
+    # The engine imports this module through the simulation program types, so
+    # the claw checks no state-action space.
+    type StateActionSpace = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -141,15 +145,6 @@ class InvariantBinding:
         if self.start < 0:
             msg = f"An invariant binding's position must be non-negative: {self.start}."
             raise ValueError(msg)
-
-
-@runtime_checkable
-class _TransferArgumentLeaf(Protocol):
-    """Array-like dynamic leaf validated before transfer planning."""
-
-    shape: tuple[int, ...]
-    dtype: DTypeLike
-    sharding: jax.sharding.Sharding | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -412,7 +407,7 @@ class ProgramScope(StrEnum):
 class CoreBuildContext:
     """Immutable inputs from which a core builds its dynamic argument mapping."""
 
-    state_action_space: object
+    state_action_space: StateActionSpace | None
     next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]
     next_regime_to_continuation: Mapping[RegimeName, object]
     flat_params: Mapping[str, object]
@@ -1434,7 +1429,7 @@ def _validate_value_reads(*, program: MaterializedCoreProgram) -> None:
 
 def _value_read_argument_leaf(
     *, program: MaterializedCoreProgram, read: ValueRead
-) -> _TransferArgumentLeaf:
+) -> StoredValueTemplate:
     """Resolve one declared consumer path to an array-like lowering leaf."""
     root = read.source.argument or read.source.channel.value
     if root not in program.arguments:
@@ -1475,7 +1470,7 @@ def _value_read_argument_leaf(
             "an array-like leaf with shape and dtype."
         )
         raise TypeError(msg)
-    return cast("_TransferArgumentLeaf", value)
+    return cast("StoredValueTemplate", value)
 
 
 def _validate_transfer_argument_metadata(

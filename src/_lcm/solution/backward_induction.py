@@ -133,6 +133,7 @@ from _lcm.execution.scheduler import (
 )
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
+    StoredValueTemplate,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
@@ -6733,7 +6734,7 @@ def _bound_block_view(
     *,
     program: MaterializedCoreProgram,
     read: ValueRead,
-    stored_template: object,
+    stored_template: StoredValueTemplate,
     source_sharding: jax.sharding.Sharding,
     value_axis_names: Mapping[RegimeName, tuple[StateName, ...]],
 ) -> tuple[ValueViewDescriptor, jax.sharding.Sharding] | None:
@@ -6750,7 +6751,7 @@ def _bound_block_view(
     axis_names = value_axis_names.get(read.target.regime, ())
     if binding.state_name not in axis_names:
         return None
-    stored_sharding = stored_template.sharding  # ty: ignore[unresolved-attribute]
+    stored_sharding = stored_template.sharding
     selected_sharding = block_layout(
         layout=stored_sharding,
         axis=axis_names.index(binding.state_name),

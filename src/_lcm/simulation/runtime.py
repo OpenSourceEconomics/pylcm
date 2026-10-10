@@ -1105,7 +1105,7 @@ class _SimulationCandidateCompiler:
                             program=self.program, read=read
                         )
                     ),
-                    source_sharding=cast("jax.sharding.Sharding", leaf.sharding),
+                    source_sharding=leaf.sharding,
                 )
                 for read in self.program.requirements.value_reads
             )
