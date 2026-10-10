@@ -25,6 +25,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     feasible,
@@ -137,7 +138,7 @@ def build_params(
     subsidy_high: float = 3.0,
     fpl_cliff_lo: float = 14.0,
     fpl_cliff_hi: float = 11.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the kind-indexed-threshold subsidy-cliff toy.
 
     `fpl_cliff` is a length-2 array indexed by the `kind` code (`lo`, `hi`). With

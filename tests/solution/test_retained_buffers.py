@@ -5,7 +5,7 @@ from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import Never, cast
 from unittest.mock import Mock
 
 import jax
@@ -80,7 +80,7 @@ def test_eager_entries_and_both_authority_templates_are_observed_without_reads(
         *_authority_arrays(solution),
     )
 
-    def forbidden(*_args: object, **_kwargs: object) -> object:
+    def forbidden[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
         raise AssertionError("Public store materialization was called")
 
     monkeypatch.setattr(ValueStore, "__getitem__", forbidden)
@@ -242,7 +242,9 @@ class _OpaqueLazy(_LazyEntry):
     def load_state(self) -> LoadState:
         raise AssertionError("Unknown lazy state was called")
 
-    def materialize(self, *, template: object | None = None) -> ArtifactPayload:
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
         del template
         raise AssertionError("Unknown lazy decoder was called")
 

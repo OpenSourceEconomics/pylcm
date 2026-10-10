@@ -8,7 +8,7 @@ per-target dict. The factory argument must match the `state_transitions` key
 it is assigned to.
 """
 
-from typing import Any
+from typing import Unpack
 
 import jax.numpy as jnp
 import pytest
@@ -26,6 +26,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.regime import RegimeReplacement
 from lcm.typing import FloatND, ScalarInt
 
 
@@ -53,9 +54,9 @@ def _next_regime(age: float) -> ScalarInt:
     return jnp.where(age >= 1, _RegimeId.dead, _RegimeId.work)
 
 
-def _build_regime(**overrides: Any) -> UserRegime:
+def _build_regime(**overrides: Unpack[RegimeReplacement]) -> UserRegime:
     """A small valid regime with a fixed health state; tests override slots."""
-    spec: dict[str, Any] = {
+    spec: RegimeReplacement = {
         "states": {
             "health": DiscreteGrid(category_class=_Health),
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),

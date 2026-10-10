@@ -39,6 +39,7 @@ w=3: L: m fails.  W Q=(6, 3): both pass -> V=(6, 3); the unconstrained
 """
 
 from types import MappingProxyType
+from typing import TypedDict
 
 import jax.numpy as jnp
 import numpy as np
@@ -47,8 +48,9 @@ import pytest
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
-from _lcm.regime_law import RegimeLaws
+from _lcm.regime_law import RegimeLawDeclaration, RegimeLaws
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import FlatParams
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -57,6 +59,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    Transition,
     ValueDependentConstraint,
     categorical,
     fixed_transition,
@@ -64,16 +67,31 @@ from lcm import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.regime import ProjectedRegimeValue, Regime
+from lcm.regime import (
+    ActionEntry,
+    ProjectedRegimeValue,
+    Regime,
+    StateEntry,
+    StateTransitionEntry,
+)
 from lcm.transition import StochasticTransition
 from lcm.typing import (
+    ActionName,
     BoolND,
     ContinuousState,
     DiscreteAction,
     FloatND,
+    RegimeName,
     ScalarInt,
+    StateName,
 )
 from tests.conftest import bind_laws, build_prepared_structure
+
+
+class _CollectiveKwargs(TypedDict):
+    states: dict[StateName, StateEntry]
+    state_transitions: dict[StateName, StateTransitionEntry]
+    actions: dict[ActionName, ActionEntry]
 
 
 @categorical(ordered=True)
@@ -222,7 +240,9 @@ def _make_ir_regimes(
 
 # keyword-only-exempt: primary-argument=regimes
 def _laws(
-    regimes: dict[str, Regime], *, overrides: dict[str, object] | None = None
+    regimes: dict[str, Regime],
+    *,
+    overrides: dict[RegimeName, RegimeLawDeclaration | Transition] | None = None,
 ) -> RegimeLaws:
     """Bind each regime's law the way a model built from these regimes would.
 
@@ -241,7 +261,7 @@ def _laws(
     return bind_laws({name: declared.get(name) for name in regimes})
 
 
-def _to_at_age_zero(target: str) -> ByAge:
+def _to_at_age_zero(target: RegimeName) -> ByAge:
     """Move to `target` with probability one at age 0."""
     return ByAge(
         cases={
@@ -262,7 +282,7 @@ _IR_REGIME_IDS = MappingProxyType(
 )
 
 
-def _flat_params_for_ir_model() -> MappingProxyType:
+def _flat_params_for_ir_model() -> FlatParams:
     return MappingProxyType(
         {
             "single_f": MappingProxyType(
@@ -699,7 +719,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
 # Scope fences and build-time validation
 
 
-def _minimal_collective_kwargs() -> dict:
+def _minimal_collective_kwargs() -> _CollectiveKwargs:
     return {
         "states": {"wage": _WAGE_GRID},
         "state_transitions": {"wage": fixed_transition("wage")},

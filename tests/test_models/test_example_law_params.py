@@ -24,10 +24,15 @@ from lcm_examples import (
 )
 from tests.test_models.deterministic import base, ds_pension, housing
 
+type EdgeTemplate = dict[str, str | EdgeTemplate]
+
+
 _SMALL_HOUSING = {"n_liquid": 3, "n_housing": 3, "n_consumption": 3, "n_new_housing": 3}
 
 # Each builder takes a horizon index from the cases below and returns a model.
-_EDGES_TEMPLATES: dict[str, tuple[Callable[[int], Model], tuple[int, ...], dict]] = {
+_EDGES_TEMPLATES: dict[
+    str, tuple[Callable[[int], Model], tuple[int, ...], EdgeTemplate]
+] = {
     "tiny": (
         lambda n: tiny.get_model(n_periods=n),
         (2, 3, 4),
@@ -86,7 +91,7 @@ _EDGES_TEMPLATES: dict[str, tuple[Callable[[int], Model], tuple[int, ...], dict]
     ],
 )
 def test_declared_law_keeps_its_edges_slots_at_every_horizon(
-    *, builder: Callable[[int], Model], horizon: int, expected: dict
+    *, builder: Callable[[int], Model], horizon: int, expected: EdgeTemplate
 ) -> None:
     """The `edges` template of an example equals its law's slots at any horizon."""
     assert builder(horizon).get_params_template()["edges"] == expected

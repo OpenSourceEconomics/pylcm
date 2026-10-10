@@ -1,13 +1,15 @@
 """A planner tile changes the working window, preserving the full state product."""
 
 import functools
-from collections.abc import Callable
-from typing import Any, cast
+from collections.abc import Callable, Sequence
+from typing import Protocol, TypeGuard, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.core import ShapedArray
+from jax.extend.core import JaxprEqn
 from numpy.testing import assert_array_equal
 
 from _lcm.utils import dispatchers
@@ -22,16 +24,27 @@ def _evaluate_grouped_cell(
     return jnp.sqrt(first + second) + jnp.exp(last)
 
 
-def _primitive_input_shapes(*, graph: Any, name: str) -> list[tuple[int, ...]]:
+class _GraphEquations(Protocol):
+    @property
+    def eqns(self) -> Sequence[JaxprEqn]: ...
+
+
+def _has_equations[GraphValue](graph: GraphValue) -> TypeGuard[_GraphEquations]:
+    return hasattr(graph, "eqns")
+
+
+def _primitive_input_shapes(*, graph: object, name: str) -> list[tuple[int, ...]]:  # noqa: PAN001 - Foreign IR parameters include arbitrary non-graph metadata.
     """Collect operand shapes through nested mapping and reduction bodies."""
-    if not hasattr(graph, "eqns"):
+    if not _has_equations(graph=graph):
         if hasattr(graph, "jaxpr"):
             return _primitive_input_shapes(graph=graph.jaxpr, name=name)
         return []
     shapes = []
     for equation in graph.eqns:
         if equation.primitive.name == name:
-            shapes.append(equation.invars[0].aval.shape)
+            aval = equation.invars[0].aval
+            assert isinstance(aval, ShapedArray)
+            shapes.append(aval.shape)
         for parameter in equation.params.values():
             children = (
                 parameter if isinstance(parameter, tuple | list) else (parameter,)
@@ -46,7 +59,7 @@ def test_tiled_product_limits_coordinate_only_nonlinear_work(*, width: int) -> N
     """Grouped final-coordinate work fits its grid; flat work fits the window."""
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=("first", "second", "last"),
@@ -71,7 +84,7 @@ def test_partial_product_bounds_prefix_nonlinear_rank() -> None:
     """A partial window's prefix work adds at most one batch axis to the scalar body."""
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=("first", "second", "last"),
@@ -94,7 +107,7 @@ def test_grouped_product_respects_combined_window(*, width: int) -> None:
     """The two independent nonlinear operand windows fit the admitted cell width."""
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=("first", "second", "last"),
@@ -149,7 +162,7 @@ def test_grouped_product_matches_scalar_enumeration(
         expected = expected.transpose((2, 1, 0))
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=variables,
@@ -177,9 +190,12 @@ def _build_mapper(
     variables: tuple[str, ...],
     untiled_variables: tuple[str, ...] = (),
     broadcast_variables: tuple[str, ...] = (),
-) -> Callable[..., Any]:
+) -> Callable[..., tuple[FloatND, BoolND]]:
     """Obtain the new mapping boundary without hiding a missing implementation."""
-    build = cast("Callable[..., Callable[..., Any]]", dispatchers.tiled_productmap)
+    build = cast(
+        "Callable[..., Callable[..., tuple[FloatND, BoolND]]]",
+        dispatchers.tiled_productmap,
+    )
     return build(
         func=_evaluate_cell,
         variables=variables,
@@ -341,9 +357,9 @@ def test_untiled_outer_axes_restore_exact_flag_order(
     assert_array_equal(flags, np.asarray([[False, False, False], [True, False, False]]))
 
 
-def _primitive_count(*, graph: Any, name: str) -> int:
+def _primitive_count(*, graph: object, name: str) -> int:  # noqa: PAN001 - Foreign IR parameters include arbitrary non-graph metadata.
     """Count one primitive across nested mapping and reduction bodies."""
-    if not hasattr(graph, "eqns"):
+    if not _has_equations(graph=graph):
         if hasattr(graph, "jaxpr"):
             return _primitive_count(graph=graph.jaxpr, name=name)
         return 0
@@ -394,7 +410,7 @@ def test_whole_coordinate_windows_read_their_grid_without_an_index_gather(
     }
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=variables,
@@ -419,7 +435,7 @@ def test_whole_coordinate_windows_do_not_move_a_single_bit(
         "last": jnp.asarray([0.25]),
     }
     mapped = cast(
-        "Callable[..., Any]",
+        "Callable[..., FloatND]",
         dispatchers.tiled_productmap(
             func=_evaluate_grouped_cell,
             variables=variables,
@@ -427,7 +443,7 @@ def test_whole_coordinate_windows_do_not_move_a_single_bit(
         ),
     )
     untiled = cast(
-        "Callable[..., Any]",
+        "Callable[..., FloatND]",
         dispatchers.productmap(
             func=_evaluate_grouped_cell,
             variables=variables,
@@ -473,7 +489,7 @@ def _max_operand_size(*, width: int, broadcast: tuple[str, ...], primitive: str)
     """Largest operand of `primitive` in the traced 2 x 3 x 5 product."""
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_first_blind_work,
                 variables=("first", "second", "last"),

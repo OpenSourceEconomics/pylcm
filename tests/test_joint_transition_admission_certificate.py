@@ -8,6 +8,9 @@ from pathlib import Path
 
 import pytest
 
+type PythonSource = str
+
+
 _ROOT = Path(__file__).parents[1]
 _TRANSITION_CHECKS = "src/_lcm/transition_checks.py"
 
@@ -40,7 +43,7 @@ def _keyword(*, call: ast.Call, name: str) -> str | None:
     return values[0] if values else None
 
 
-def _mutate_definition(*, source: str, name: str, old: str, new: str) -> str:
+def _mutate_definition(*, source: PythonSource, name: str, old: str, new: str) -> str:
     """Replace one exact expression inside one named function."""
     tree = ast.parse(source)
     node = _definition(tree=tree, name=name)
@@ -54,7 +57,7 @@ def _mutate_definition(*, source: str, name: str, old: str, new: str) -> str:
 
 
 def _joint_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
-    *, source: str
+    *, source: PythonSource
 ) -> list[str]:
     tree = ast.parse(source)
     errors: list[str] = []

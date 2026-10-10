@@ -4,8 +4,6 @@ This diagnostic preserves the historical ASV benchmark and runs only when invoke
 explicitly. Each cell owns a fresh process and a fixed validation realization.
 """
 
-from __future__ import annotations
-
 import argparse
 import contextlib
 import dataclasses
@@ -19,8 +17,9 @@ import statistics
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 import jax
 import numpy as np
@@ -29,6 +28,11 @@ from jax import monitoring
 
 from lcm.execution import ExecutionConfig
 from lcm_examples import precautionary_savings
+
+if TYPE_CHECKING:
+    from _lcm.simulation.chunk_admission import PreparedSimulationChunks
+    from _lcm.typing import JSONValue
+    from lcm.typing import UserInitialConditions, UserParamsNode
 
 N_SUBJECTS = 1_000_000
 SIMULATION_SEED = 20_250_915
@@ -46,7 +50,7 @@ def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def _array_identity(value: Any) -> dict[str, Any]:
+def _array_identity(value: UserParamsNode) -> dict[str, JSONValue]:
     array = np.asarray(value)
     return {
         "shape": list(array.shape),
@@ -55,13 +59,13 @@ def _array_identity(value: Any) -> dict[str, Any]:
     }
 
 
-def _tree_identity(tree: Any) -> Any:
+def _tree_identity(tree: UserParamsNode) -> dict[str, JSONValue]:
     if isinstance(tree, dict):
         return {str(key): _tree_identity(tree[key]) for key in sorted(tree, key=str)}
     return _array_identity(tree)
 
 
-def _frame_identity(frame: pd.DataFrame) -> dict[str, Any]:
+def _frame_identity(frame: pd.DataFrame) -> dict[str, JSONValue]:
     hashed = pd.util.hash_pandas_object(frame, index=True).to_numpy()
     return {
         "shape": list(frame.shape),
@@ -71,7 +75,7 @@ def _frame_identity(frame: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def _memory_snapshot() -> list[dict[str, Any]]:
+def _memory_snapshot() -> list[dict[str, JSONValue]]:
     rows = []
     for device in jax.devices():
         try:
@@ -96,7 +100,7 @@ def _memory_snapshot() -> list[dict[str, Any]]:
     return rows
 
 
-def _physical_device_identity() -> dict[str, Any]:
+def _physical_device_identity() -> dict[str, JSONValue]:
     command = [
         "nvidia-smi",
         "--query-gpu=uuid,name,memory.total,memory.free,driver_version",
@@ -120,7 +124,7 @@ def _physical_device_identity() -> dict[str, Any]:
 
 
 @contextlib.contextmanager
-def _compilation_events():
+def _compilation_events() -> Iterator[dict[str, float]]:
     totals: dict[str, float] = {}
 
     # keyword-only-exempt: library-callback=jax.monitoring.duration_listener
@@ -135,7 +139,7 @@ def _compilation_events():
         monitoring.unregister_event_duration_secs_listener(listener)
 
 
-def _plan_identity(prepared: Any) -> dict[str, Any]:
+def _plan_identity(prepared: PreparedSimulationChunks) -> dict[str, JSONValue]:
     profile = prepared.plan.profile
     receipt = prepared.plan.receipt
     return {
@@ -159,7 +163,7 @@ def _plan_identity(prepared: Any) -> dict[str, Any]:
     }
 
 
-def _source_identity() -> dict[str, Any]:
+def _source_identity() -> dict[str, JSONValue]:
     root = Path(__file__).resolve().parents[2]
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -185,7 +189,7 @@ def _source_identity() -> dict[str, Any]:
     }
 
 
-def _make_initial_conditions() -> dict[str, Any]:
+def _make_initial_conditions() -> UserInitialConditions:
     import jax.numpy as jnp
 
     return {
@@ -198,7 +202,7 @@ def _make_initial_conditions() -> dict[str, Any]:
 
 def run_cell(
     *, name: str, _policy: str, width: int, budget_bytes: int
-) -> dict[str, Any]:
+) -> dict[str, JSONValue]:
     devices = jax.devices()
     if len(devices) != 1 or devices[0].platform != "gpu":
         raise RuntimeError(f"Expected exactly one GPU, got {devices!r}.")
@@ -249,12 +253,19 @@ def run_cell(
     original_prepare = model_module.prepare_simulation_chunks
     plans = []
 
-    def capture_prepare(**kwargs: Any) -> Any:
-        prepared = original_prepare(**kwargs)
-        plans.append(_plan_identity(prepared))
-        return prepared
+    def observe_prepare[**P](
+        prepare: Callable[P, PreparedSimulationChunks],
+    ) -> Callable[P, PreparedSimulationChunks]:
+        def capture_prepare(
+            *args: P.args, **kwargs: P.kwargs
+        ) -> PreparedSimulationChunks:
+            prepared = prepare(*args, **kwargs)
+            plans.append(_plan_identity(prepared))
+            return prepared
 
-    model_module.prepare_simulation_chunks = capture_prepare
+        return capture_prepare
+
+    model_module.prepare_simulation_chunks = observe_prepare(original_prepare)
     raw_seconds = []
     conversion_seconds = []
     compile_events = []
@@ -365,12 +376,12 @@ def run_cell(
     }
 
 
-def _write_json(*, path: Path, payload: dict[str, Any]) -> None:
+def _write_json(*, path: Path, payload: dict[str, JSONValue]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n")
 
 
-def run_all(*, output_dir: Path, budget_bytes: int) -> dict[str, Any]:
+def run_all(*, output_dir: Path, budget_bytes: int) -> dict[str, JSONValue]:
     output_dir.mkdir(parents=True, exist_ok=True)
     results = []
     commands = []

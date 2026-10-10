@@ -14,7 +14,7 @@ import inspect
 import itertools
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any, cast, get_args, get_type_hints
+from typing import Unpack, cast, get_args, get_type_hints
 
 import jax
 import jax.numpy as jnp
@@ -35,7 +35,7 @@ from _lcm.solution.contract import (
 )
 from _lcm.solution.kernel_output import ConsumedKernelOutput, consume_kernel_output
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.typing import ArtifactPayload, RegimeName
+from _lcm.typing import ArtifactPayload, HostArray, RegimeName
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -44,12 +44,15 @@ from lcm.solver_api import (
     ArtifactKey,
     KernelOutput,
     ResultRetention,
+    SolutionResult,
 )
-from lcm.solvers import EGM
+from lcm.solvers import EGM, OuterSearch
 from lcm.typing import FloatND
 from tests.solution.test_dissolution_flag_retention import _make_dissolution_model
 from tests.solution.test_egm_solver import _SAVINGS_GRID, _model, _params
 from tests.solution.test_n_nbegm_fixed_cost import _MESH
+from tests.solution.test_nbegm_retention_specialization import _NativeKernelKwargs
+from tests.solution.test_solution_result import _KernelKwargs
 from tests.test_models import n_nbegm_toy, nbegm_ride_along_toy
 
 
@@ -100,7 +103,9 @@ def _consume(
     )
 
 
-def _run_unwrapped_kernel_output_post_init(*, value: object) -> None:
+def _run_unwrapped_kernel_output_post_init(
+    *, value: list[float] | HostArray | jax.Array
+) -> None:
     """Exercise pylcm's own guard without the package-claw type wrapper."""
     output = object.__new__(KernelOutput)
     object.__setattr__(output, "value", value)
@@ -164,7 +169,9 @@ def test_kernel_output_value_annotation_matches_runtime_float_contract() -> None
     ],
     ids=["python-sequence", "integer", "boolean", "complex"],
 )
-def test_kernel_output_rejects_non_float_array_values(value: object) -> None:
+def test_kernel_output_rejects_non_float_array_values(
+    value: list[float] | HostArray | jax.Array,
+) -> None:
     """A kernel value is one floating NumPy/JAX array leaf, not an implicit cast."""
     with pytest.raises(TypeError, match=r"KernelOutput\.value.*floating.*array"):
         _run_unwrapped_kernel_output_post_init(value=value)
@@ -208,7 +215,7 @@ def test_kernel_output_rejects_one_artifact_identity_in_multiple_channels(
     ],
 )
 def test_artifact_key_rejects_runtime_types_that_cannot_name_a_schema(
-    *, kwargs: dict[str, object], match: str
+    *, kwargs: dict[str, str | int], match: str
 ) -> None:
     key = object.__new__(ArtifactKey)
     object.__setattr__(key, "type_id", kwargs["type_id"])
@@ -230,8 +237,10 @@ def test_raw_egm_kernel_publishes_the_exact_public_continuation_key(
     seen: list[KernelOutput] = []
     original = egm_module._EGMPeriodKernel.__call__
 
-    def recording_call(kernel: object, **kwargs: object) -> KernelOutput:
-        output = original(kernel, **kwargs)  # ty: ignore[invalid-argument-type]
+    def recording_call(
+        kernel: egm_module._EGMPeriodKernel, **kwargs: Unpack[_NativeKernelKwargs]
+    ) -> KernelOutput:
+        output = original(kernel, **kwargs)
         seen.append(output)
         return output
 
@@ -453,13 +462,13 @@ def test_values_only_result_does_not_suppress_solve_time_continuation() -> None:
 
 
 def _record_kernel_outputs(
-    *, solve: Callable[[], object], monkeypatch: pytest.MonkeyPatch
-) -> dict[tuple[int, RegimeName], object]:
+    *, solve: Callable[[], SolutionResult | None], monkeypatch: pytest.MonkeyPatch
+) -> dict[tuple[int, RegimeName], KernelOutput]:
     """Run one solve and return what every period kernel returned, by cell."""
-    recorded: dict[tuple[int, RegimeName], object] = {}
+    recorded: dict[tuple[int, RegimeName], KernelOutput] = {}
     original = backward_induction._run_period_kernel
 
-    def recording(**kwargs: Any) -> Any:
+    def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
         output = original(**kwargs)
         recorded[(kwargs["period"], kwargs["regime_name"])] = output
         return output
@@ -494,15 +503,17 @@ def _solve_nbegm() -> None:
     )
 
 
-def _solve_nnbegm(*, outer_search: object = None) -> None:
+def _solve_nnbegm(*, outer_search: OuterSearch | None = None) -> None:
     n_nbegm_toy.build_model(
         variant="n_nbegm",
         n_periods=2,
-        outer_search=outer_search,  # ty: ignore[invalid-argument-type]
+        outer_search=outer_search,
     ).solve(params={"discount_factor": 0.95}, log_level="off")
 
 
-_SHIPPED_KERNELS: dict[str, tuple[Callable[[], None], RegimeName, dict[str, set]]] = {
+_SHIPPED_KERNELS: dict[
+    str, tuple[Callable[[], None], RegimeName, dict[str, set[ArtifactKey]]]
+] = {
     "grid_search_singleton": (
         _solve_collective,
         "single_f",
@@ -557,7 +568,7 @@ def test_every_shipped_kernel_returns_a_kernel_output_on_the_declared_channels(
     assert outputs, f"regime {regime_name!r} never ran"
     assert all(isinstance(output, KernelOutput) for output in outputs)
     for output in outputs:
-        keys = _channel_keys(output)  # ty: ignore[invalid-argument-type]
+        keys = _channel_keys(output)
         for channel, expected in expected_channels.items():
             assert keys[channel] == frozenset(expected), (case, channel)
 
@@ -574,10 +585,7 @@ def test_a_values_only_solve_publishes_no_replay_artifact(
         monkeypatch=monkeypatch,
     )
 
-    assert all(
-        not output.replay  # ty: ignore[unresolved-attribute]
-        for output in recorded.values()
-    )
+    assert all(not output.replay for output in recorded.values())
 
 
 def test_a_kernel_output_survives_a_dataclass_replace_of_its_value() -> None:

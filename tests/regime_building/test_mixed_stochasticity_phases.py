@@ -8,7 +8,8 @@ reverse — build, solve, and simulate with the belief/truth split intact: Q is 
 under the belief, the draw follows the truth.
 """
 
-from typing import Any
+from collections.abc import Mapping
+from typing import TypedDict
 
 import jax.numpy as jnp
 import pandas as pd
@@ -24,7 +25,22 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
+from lcm.regime import ActionEntry, FunctionEntry, StateEntry, StateTransitionEntry
+from lcm.typing import (
+    ActionName,
+    DiscreteAction,
+    FloatND,
+    FunctionName,
+    Period,
+    ScalarInt,
+    StateName,
+)
+
+
+class _CommonKwargs(TypedDict):
+    states: Mapping[StateName, StateEntry]
+    actions: Mapping[ActionName, ActionEntry]
+    functions: Mapping[FunctionName, FunctionEntry]
 
 
 @categorical(ordered=True)
@@ -81,8 +97,8 @@ PARAMS = {"discount_factor": 0.95, "live": {}, "last": {}}
 IC = pd.DataFrame({"regime_name": "live", "age": 0, "good": ["bad"] * 8})
 
 
-def _simulate(law: Any) -> pd.DataFrame:
-    common: dict[str, Any] = {
+def _simulate(law: StateTransitionEntry) -> pd.DataFrame:
+    common: _CommonKwargs = {
         "states": {"good": DiscreteGrid(category_class=Good)},
         "actions": {"move": DiscreteGrid(category_class=Move)},
         "functions": {"utility": utility},

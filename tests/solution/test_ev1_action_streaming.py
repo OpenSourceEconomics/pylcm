@@ -8,21 +8,25 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.extend.core import ClosedJaxpr, Jaxpr
 from numpy.testing import assert_allclose, assert_array_equal
 
 from _lcm.solution.action_streaming import (
     _evaluate_ev1_branch_block,
     build_streaming_ev1_max_Q_over_a,
 )
+from lcm.typing import ActionName
 
 
 def _numpy_ev1_oracle(
     *,
-    Q_and_F: Callable[..., tuple[object, object]],
-    action_names: tuple[str, ...],
+    Q_and_F: Callable[
+        ..., tuple[jax.Array | float | np.floating, jax.Array | bool | np.bool_]
+    ],
+    action_names: tuple[ActionName, ...],
     n_discrete_action_axes: int,
     action_grids: Mapping[str, np.ndarray],
-    fixed_kwargs: Mapping[str, object],
+    fixed_kwargs: Mapping[str, float],
     scale: float,
 ) -> float:
     """Enumerate branch maxima and their log-sum independently in NumPy."""
@@ -61,12 +65,12 @@ def _numpy_ev1_oracle(
     return float(anchor + scale * np.log(mass))
 
 
-def _nested_scan_lengths(closed_jaxpr: object) -> list[int]:  # noqa: C901
+def _nested_scan_lengths(closed_jaxpr: Jaxpr | ClosedJaxpr) -> list[int]:  # noqa: C901
     """Collect scan lengths recursively from a closed action-core Jaxpr."""
     lengths: list[int] = []
     seen: set[int] = set()
 
-    def visit(value: object) -> None:
+    def visit[T](value: T) -> None:
         if id(value) in seen:
             return
         seen.add(id(value))

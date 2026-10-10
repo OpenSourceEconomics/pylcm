@@ -31,7 +31,7 @@ def test_series_uploads_use_the_entry_writer(
     model = get_model(3)
     series = _build_partner_probs_series(model)
     key = "next_partner__probs_array"
-    value: object = series
+    value: pd.Series | UserMappingLeaf | UserSequenceLeaf = series
     if form == "scalar":
         key = "labor_income__wage"
         value = pd.Series([10.0])

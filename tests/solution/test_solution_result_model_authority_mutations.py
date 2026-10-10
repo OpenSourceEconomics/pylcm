@@ -63,7 +63,7 @@ class _EqualStr(str):
     __slots__ = ()
 
 
-class _EqualTuple(tuple):
+class _EqualTuple(tuple[str, ...]):
     """A value-equal tuple whose runtime type is not the built-in type."""
 
     __slots__ = ()
@@ -93,7 +93,7 @@ class _AlternatingProjectArtifactStore(ArtifactStore):
         return MappingProxyType({})
 
 
-def _must_not_run(**_kwargs: object) -> None:
+def _must_not_run[Argument](**_kwargs: Argument) -> None:
     raise AssertionError("forward simulation ran before mutation rejection")
 
 
@@ -796,7 +796,7 @@ def test_co_mutated_value_shape_and_axis_schema_is_rejected_before_forward(
 def test_solution_metadata_versions_require_exact_int(
     *,
     field: str,
-    bad_value: object,
+    bad_value: bool | float | np.int64,
     finite_authority_fixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -856,7 +856,7 @@ def test_solution_identity_strings_require_exact_str(
 )
 def test_builtin_artifact_key_schema_version_requires_exact_int(
     *,
-    bad_version: object,
+    bad_version: bool | float,
     finite_authority_fixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

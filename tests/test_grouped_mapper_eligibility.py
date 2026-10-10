@@ -2,7 +2,7 @@
 
 import functools
 from collections.abc import Callable
-from typing import Any, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -23,7 +23,7 @@ def test_width_64_retains_flat_batches_for_final_extent_50() -> None:
     """A 300-cell product uses four 64-cell batches and one 44-cell remainder."""
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=("first", "second", "last"),
@@ -78,7 +78,7 @@ def test_two_final_coordinate_groups_are_the_batching_threshold(
     """Known flat and grouped loop windows cover each side of the threshold."""
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., FloatND]",
             dispatchers.tiled_productmap(
                 func=_evaluate_grouped_cell,
                 variables=("first", "second", "last"),
@@ -162,7 +162,7 @@ def test_threshold_routes_preserve_scalar_values_and_exact_flags(
     axes = tuple(canonical.index(variable) for variable in variables)
     mapped = functools.partial(
         cast(
-            "Callable[..., Any]",
+            "Callable[..., tuple[FloatND, BoolND]]",
             dispatchers.tiled_productmap(
                 func=_evaluate_value_and_flag,
                 variables=variables,

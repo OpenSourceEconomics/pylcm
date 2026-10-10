@@ -9,16 +9,19 @@ import dataclasses
 import re
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import Unpack
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.execution.core_program import CoreBuildContext
 from _lcm.execution.donation import DonatedBuffer, ResolvedDonation
 from _lcm.execution.scheduler import BufferRegistry, DispatchUnit, shard_identities
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.solution import backward_induction
+from _lcm.solution.backward_induction import _DonatedInput
 from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.kernel_output import ConsumedKernelOutput
 from _lcm.solution.solve_inputs import SolveInputMappings
@@ -27,6 +30,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
     ArtifactKey,
     ContinuationCapabilities,
+    SolutionResult,
     SolverExecutionCapabilities,
 )
 from lcm.solvers import (
@@ -42,6 +46,7 @@ from lcm.solvers import (
     StateAxesLeading,
 )
 from lcm.typing import Float1D, FloatND, ReferenceName, StateName
+from tests.solution._callback_types import ConsumeOutputKwargs
 from tests.solution.test_compilation_identity import _lowering_key
 from tests.test_solver_api_out_of_tree import (
     _N_PERIODS,
@@ -91,11 +96,14 @@ def _counting_value(
     return wealth + count, _ReadableCounter(count=count + 1.0)
 
 
-def _counting_arguments(build: object) -> Mapping[ReferenceName, PytreeValue]:
+def _counting_arguments(build: CoreBuildContext) -> Mapping[ReferenceName, PytreeValue]:
     """Feed the state grid and the target's published count to the program."""
+    assert build.state_action_space is not None
+    counter = build.next_regime_to_continuation["alive"]
+    assert isinstance(counter, _ReadableCounter)
     arguments = {
-        "wealth": build.state_action_space.states["wealth"],  # ty: ignore[unresolved-attribute]
-        "count": build.next_regime_to_continuation["alive"].count,  # ty: ignore[unresolved-attribute]
+        "wealth": build.state_action_space.states["wealth"],
+        "count": counter.count,
     }
     _DISPATCHED.append(arguments["count"])
     return arguments
@@ -171,7 +179,7 @@ class _DonatingCounterSolver(_CounterSolver):
     donation_candidates = ("count",)
 
 
-def _solve(*, solver: Solver) -> object:
+def _solve(*, solver: Solver) -> SolutionResult:
     """Solve the self-looping two-regime model with the given solver."""
     _TEMPLATES.clear()
     _DISPATCHED.clear()
@@ -187,8 +195,8 @@ def _reads_deleted_at_dispatch(
     observed: list[tuple[int, bool]] = []
     consume = backward_induction.consume_kernel_output
 
-    def _observe(**kwargs: object) -> ConsumedKernelOutput:
-        result = consume(**kwargs)  # ty: ignore[invalid-argument-type]
+    def _observe(**kwargs: Unpack[ConsumeOutputKwargs]) -> ConsumedKernelOutput:
+        result = consume(**kwargs)
         if kwargs["regime_name"] == "alive":
             period = kwargs["period"]
             assert isinstance(period, int)
@@ -232,11 +240,11 @@ def published_values() -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
     plain = _solve(solver=_CounterSolver())
     return (
         {
-            period: np.asarray(donating.values[period]["alive"])  # ty: ignore[unresolved-attribute]
+            period: np.asarray(donating.values[period]["alive"])
             for period in range(_N_PERIODS)
         },
         {
-            period: np.asarray(plain.values[period]["alive"])  # ty: ignore[unresolved-attribute]
+            period: np.asarray(plain.values[period]["alive"])
             for period in range(_N_PERIODS)
         },
     )
@@ -284,7 +292,7 @@ def _locate_donated(
     value: FloatND,
     template: FloatND,
     registry: BufferRegistry,
-) -> tuple[object, ...]:
+) -> tuple[_DonatedInput, ...]:
     """Run the loop's pre-dispatch donation check over one dispatch unit."""
     return backward_induction._donated_input_arrays(
         donations=donations,

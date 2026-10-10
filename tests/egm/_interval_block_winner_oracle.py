@@ -11,9 +11,9 @@ from fractions import Fraction
 from itertools import product
 from typing import Literal
 
-Ordering = Literal["ordinary", "certified"]
-Identity = Literal["stable", "position"]
-CarrySlot = Literal["head", "middle", "tail"]
+type Ordering = Literal["ordinary", "certified"]
+type Identity = Literal["stable", "position"]
+type CarrySlot = Literal["head", "middle", "tail"]
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,9 @@ class Candidate:
     marginal: Fraction = Fraction(0)
 
 
-def _primary_rank(*, candidate: Candidate, ordering: Ordering) -> tuple[object, ...]:
+def _primary_rank(
+    *, candidate: Candidate, ordering: Ordering
+) -> tuple[Fraction | bool | int, ...]:
     """Return all rank fields except the final identity field."""
     if ordering == "ordinary":
         return (
@@ -48,7 +50,7 @@ def _rank(
     ordering: Ordering,
     identity: Identity,
     position: int,
-) -> tuple[object, ...]:
+) -> tuple[Fraction | bool | int, ...]:
     """Return a largest-wins total-order key.
 
     The contract says the smaller stable global index wins the final tie, hence
@@ -156,7 +158,9 @@ def partition_by_sizes(
     return tuple(blocks)
 
 
-def winner_signature(candidate: Candidate | None) -> tuple[object, ...] | None:
+def winner_signature(
+    candidate: Candidate | None,
+) -> tuple[int, Fraction, Fraction, Fraction] | None:
     """Identity plus all published channels, suitable for bit/exact comparison."""
     if candidate is None:
         return None

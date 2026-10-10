@@ -8,12 +8,14 @@ every failed condition. These checks need one device; the multi-device route
 itself is exercised in `test_action_partitions_devices.py`.
 """
 
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import TypedDict, Unpack
 
 import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
+from jax.sharding import Sharding
 
 from _lcm.execution.core_program import core_program_graph
 from _lcm.execution.execution_plan import ResolvedExecution
@@ -22,11 +24,14 @@ from _lcm.regime_building.action_partitioning import action_partition_width_ceil
 from _lcm.typing import DataclassInstance
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import RegimeName, UserInitialNodes, UserParams
 from tests import collective_fixtures
 from tests.test_models import dcegm_paper_twin, many_actions, taste_shocks_toy
 
 
-def _values_bits(*, model: Model, params: dict) -> dict:
+def _values_bits(
+    *, model: Model, params: UserParams
+) -> dict[tuple[int, RegimeName], tuple[np.dtype[np.generic], bytes, Sharding]]:
     values = model.solve(params=params, log_level="off").values
     return {
         (period, regime): (
@@ -62,11 +67,11 @@ def test_execution_config_action_partitions_are_frozen() -> None:
     ],
 )
 def test_execution_config_refuses_an_unusable_partition_count(
-    *, partitions: dict, error: type[Exception]
+    *, partitions: dict[RegimeName, int | float], error: type[Exception]
 ) -> None:
     """A count is a positive exact integer keyed by a non-empty regime name."""
     with pytest.raises(error):
-        ExecutionConfig(action_partitions=partitions)
+        ExecutionConfig(action_partitions=partitions)  # ty: ignore[invalid-argument-type] - Deliberately invalid partition counts.
 
 
 @pytest.mark.parametrize(
@@ -118,13 +123,18 @@ def test_a_count_of_one_keeps_the_ordinary_kernel_and_placement() -> None:
     )
 
 
-def _refusal(*, build: object) -> str:
+def _refusal(*, build: Callable[[], Model]) -> str:
     with pytest.raises(ExecutionPlanningError) as caught:
-        build()  # ty: ignore[call-non-callable]
+        build()
     return str(caught.value)
 
 
-def _many_actions(**config: Any) -> Model:
+class _ExecutionOptions(TypedDict, total=False):
+    action_partitions: Mapping[RegimeName, int]
+    axis_widths: Mapping[str, int]
+
+
+def _many_actions(**config: Unpack[_ExecutionOptions]) -> Model:
     return many_actions.get_model(execution_config=ExecutionConfig(**config))
 
 
@@ -132,8 +142,8 @@ def _rebuilt(
     *,
     model: Model,
     regime_id_class: type[DataclassInstance],
-    initial_nodes: dict,
-    **config: Any,
+    initial_nodes: UserInitialNodes,
+    **config: Unpack[_ExecutionOptions],
 ) -> Model:
     return Model(
         edges=model.edges,
@@ -145,7 +155,7 @@ def _rebuilt(
     )
 
 
-def _collective(**config: Any) -> Model:
+def _collective(**config: Unpack[_ExecutionOptions]) -> Model:
     model, _ = collective_fixtures.make_two_stakeholder_model()
     return _rebuilt(
         model=model,
@@ -155,7 +165,7 @@ def _collective(**config: Any) -> Model:
     )
 
 
-def _folded(**config: Any) -> Model:
+def _folded(**config: Unpack[_ExecutionOptions]) -> Model:
     model, _ = collective_fixtures.make_folding_singleton_model()
     return _rebuilt(
         model=model,
@@ -165,7 +175,7 @@ def _folded(**config: Any) -> Model:
     )
 
 
-def _dcegm(**config: Any) -> Model:
+def _dcegm(**config: Unpack[_ExecutionOptions]) -> Model:
     return _rebuilt(
         model=dcegm_paper_twin.get_model("dcegm"),
         regime_id_class=dcegm_paper_twin.TwinRegimeId,
@@ -262,7 +272,10 @@ def test_a_refusal_names_every_failed_condition_and_the_remedy() -> None:
     ],
 )
 def test_partitioned_regimes_cap_the_action_width_so_every_device_owns_a_block(
-    *, count: int, fixed: dict, expected: dict
+    *,
+    count: int,
+    fixed: dict[RegimeName, dict[str, int]],
+    expected: dict[RegimeName, dict[str, int]],
 ) -> None:
     model = many_actions.get_model()
 
@@ -301,7 +314,7 @@ def test_a_regime_ceiling_tightens_but_never_loosens_the_model_wide_one() -> Non
 
 
 def _request(
-    *, name: str, extents: tuple[int, ...] = (), partitions: int = 1
+    *, name: RegimeName, extents: tuple[int, ...] = (), partitions: int = 1
 ) -> PlacementRequest:
     return PlacementRequest(
         regime_name=name,
@@ -345,7 +358,10 @@ def _request(
     ids=["action_only", "state_by_action", "beside_a_state_mesh", "state_shrinks"],
 )
 def test_a_partitioned_regime_spans_its_state_mesh_times_its_partitions(
-    *, requests: tuple, n_devices: int, expected: dict
+    *,
+    requests: tuple[PlacementRequest, ...],
+    n_devices: int,
+    expected: dict[RegimeName, tuple[int, ...]],
 ) -> None:
     placement = plan_submesh_placement(requests=requests, n_devices=n_devices)
 

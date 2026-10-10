@@ -21,7 +21,7 @@ The exact centres come from `_cliff_pullback_reference`.
 
 from collections.abc import Callable
 from fractions import Fraction
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -29,13 +29,15 @@ import pytest
 
 import lcm
 from lcm import DiscreteGrid, LinSpacedGrid, Model
-from lcm.typing import ContinuousState, DiscreteState, FloatND
+from lcm.regime import StateTransitionEntry
+from lcm.typing import ContinuousState, DiscreteState, FloatND, StateName
 from tests.solution._cliff_pullback_reference import (
     child_cliff_preimages,
     sibling_draw_preimages,
 )
 from tests.solution.test_nbegm_draw_conditioned_cliffs import (
     _exact,
+    _ModelParams,
     _params,
     _solved_seam,
     _targets,
@@ -132,13 +134,13 @@ def _income_derived_from_shock(
 def _model(
     *,
     geometry: _Geometry,
-    geometry_state: str,
-    law_state: str,
+    geometry_state: StateName,
+    law_state: StateName,
     reverse_declaration_order: bool = False,
     fixed_geometry_state: bool = False,
 ) -> Model:
-    income: Callable[..., object] = gross_income
-    subsidy: Callable[..., object] = _scalar_threshold_subsidy
+    income: Callable[..., FloatND] = gross_income
+    subsidy: Callable[..., FloatND] = _scalar_threshold_subsidy
     if geometry == "indexed":
         subsidy = (
             kind_indexed_subsidy if geometry_state == "kind" else _shock_indexed_subsidy
@@ -150,7 +152,7 @@ def _model(
             else _income_derived_from_shock
         )
     state_order = ("shock", "kind") if reverse_declaration_order else ("kind", "shock")
-    transitions: dict[str, object] = {
+    transitions: dict[StateName, StateTransitionEntry] = {
         "kind": lcm.StochasticTransition(func=_kind_probabilities),
         "shock": lcm.StochasticTransition(func=_shock_probabilities),
     }
@@ -186,7 +188,7 @@ def _model(
     )
 
 
-def _model_params(*, geometry: _Geometry) -> dict[str, Any]:
+def _model_params(*, geometry: _Geometry) -> _ModelParams:
     """Thresholds putting the child liquid cliffs at 9 and 6 (9 when invariant)."""
     fpl_cliff = jnp.asarray((11.0, 8.0)) if geometry == "indexed" else 11.0
     params = _params(fpl_cliff=fpl_cliff, law_slope=1.0, law_offset=(0.0, 0.0))
@@ -240,8 +242,8 @@ _ROLES = [("kind", "shock"), ("shock", "kind")]
 def test_cliff_varying_with_a_sibling_state_targets_every_joint_child(
     *,
     geometry: _Geometry,
-    geometry_state: str,
-    law_state: str,
+    geometry_state: StateName,
+    law_state: StateName,
     reverse_declaration_order: bool,
 ) -> None:
     """Cliffs (9, 6) by one state and law `s + other / 10` give 9, 8.9, 6, 5.9."""
@@ -263,7 +265,7 @@ def test_cliff_varying_with_a_sibling_state_targets_every_joint_child(
 @pytest.mark.parametrize("state", ["kind", "shock"])
 @pytest.mark.parametrize("geometry", ["indexed", "derived"])
 def test_cliff_varying_with_the_drawn_state_targets_each_child_row(
-    *, geometry: _Geometry, state: str
+    *, geometry: _Geometry, state: StateName
 ) -> None:
     """Cliffs (9, 6) and law `s + state / 10` on the same state give 9 and 5.9."""
     centres = frozenset(
@@ -278,7 +280,7 @@ def test_cliff_varying_with_the_drawn_state_targets_each_child_row(
 
 @pytest.mark.parametrize(("geometry_state", "law_state"), _ROLES)
 def test_cliff_invariant_across_states_targets_one_cliff_per_draw(
-    *, geometry_state: str, law_state: str
+    *, geometry_state: StateName, law_state: StateName
 ) -> None:
     """A cliff at 9 for every kind and law `s + state / 10` give 9 and 8.9."""
     centres = sibling_draw_preimages(
@@ -300,7 +302,11 @@ def test_cliff_invariant_across_states_targets_one_cliff_per_draw(
 @pytest.mark.parametrize(("geometry_state", "law_state"), _ROLES)
 @pytest.mark.parametrize("geometry", ["indexed", "derived"])
 def test_cliff_varying_with_a_fixed_state_targets_the_source_cells_cliff(
-    *, geometry: _Geometry, geometry_state: str, law_state: str, source_code: int
+    *,
+    geometry: _Geometry,
+    geometry_state: StateName,
+    law_state: StateName,
+    source_code: int,
 ) -> None:
     """A fixed geometry state keeps the source cliff `c`, giving `c` and `c - 0.1`."""
     centres = sibling_draw_preimages(

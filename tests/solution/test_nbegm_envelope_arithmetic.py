@@ -8,6 +8,7 @@ native call and reproduce the certified value where crossings are well separated
 """
 
 from collections.abc import Mapping
+from typing import TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -15,18 +16,22 @@ import numpy as np
 import pytest
 
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
+from _lcm.egm.preferences import Preferences
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
-from lcm.typing import FloatND
+from lcm.typing import FloatND, RegimeName
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.solution._crra_preferences import crra_preferences
 from tests.test_models import nbegm_ride_along_toy as toy
+from tests.test_models.nbegm_common import NBEGMKwargs
 
 _CRRA = 2.0
 _N_SAVINGS = 40
 _N_LIQUID = 30
 
 
-def _solve(**overrides: object) -> Mapping[int, Mapping[str, FloatND]]:
+def _solve(
+    **overrides: Unpack[NBEGMKwargs],
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the ride-along tax toy with the given NBEGM overrides."""
     model = toy.build_model(variant="nbegm", nbegm_overrides=overrides)
     return model.solve(params=toy.build_params(), log_level="debug").values
@@ -40,7 +45,19 @@ def _inverse_marginal_utility(marginal_continuation):
     return marginal_continuation ** (-1.0 / _CRRA)
 
 
-def _per_interval_inputs(n_intervals: int) -> dict:
+class _PerIntervalInputs(TypedDict):
+    cont_value: FloatND
+    cont_marginal: FloatND
+    liquid_grid: FloatND
+    savings_grid: FloatND
+    discount_factor: FloatND
+    preferences: Preferences
+    coh_slopes: FloatND
+    coh_intercepts: FloatND
+    breakpoints: FloatND
+
+
+def _per_interval_inputs(n_intervals: int) -> _PerIntervalInputs:
     """Build one ride cell's per-interval continuation step inputs."""
     shift = jnp.linspace(0.0, 1.0, n_intervals)[:, None]
     return {

@@ -2,7 +2,7 @@
 
 import importlib
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -22,6 +22,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.typing import ScalarInt
+from tests.simulation._callback_types import ChunkResults, SimulationChunkInputs
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
@@ -71,7 +72,7 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
     start_counts: list[tuple[SimulationRuntime, int]] = []
     run_chunk = simulation._simulate_subject_chunk
 
-    def observe_chunk(**call: Any) -> object:
+    def observe_chunk(**call: Unpack[SimulationChunkInputs]) -> ChunkResults:
         runtime = next(iter(call["regimes"].values())).simulation.programs.executor
         assert isinstance(runtime, SimulationRuntime)
         start_counts.append((runtime, len(runtime.cache)))
@@ -199,7 +200,7 @@ def test_profiled_public_chunks_need_no_additional_core_compilation(
     before: list[tuple[SimulationRuntime, int]] = []
     actual_chunk = simulation._simulate_subject_chunk
 
-    def observe_chunk(**call: Any) -> object:
+    def observe_chunk(**call: Unpack[SimulationChunkInputs]) -> ChunkResults:
         runtime = next(iter(call["regimes"].values())).simulation.programs.executor
         assert isinstance(runtime, SimulationRuntime)
         before.append((runtime, len(runtime.cache)))
@@ -239,7 +240,7 @@ def test_nongated_chunk_does_not_allocate_an_unused_edge_age(
         )
         return get_age(self, period)
 
-    def observe_chunk(**call: Any) -> object:
+    def observe_chunk(**call: Unpack[SimulationChunkInputs]) -> ChunkResults:
         active[0] = True
         try:
             return actual_chunk(**call)

@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from tests.ci import ci_workloads
+from tests.ci._workflow_types import Workflow
 from tests.ci.cpu_suite_invocations import (
     benchmark_harness_invocation_argvs,
     cpu_suite_invocation_argvs,
@@ -18,7 +19,7 @@ _BENCHMARK_SUBPROJECTS = (
 )
 
 
-def _cpu_workflow() -> dict:
+def _cpu_workflow() -> Workflow:
     return yaml.safe_load(Path(".github/workflows/cpu.yml").read_text(encoding="utf-8"))
 
 

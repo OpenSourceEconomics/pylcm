@@ -6,7 +6,7 @@ import logging
 import weakref
 from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any, TypedDict
+from typing import NotRequired, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -19,21 +19,32 @@ from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
-from _lcm.typing import FlatRegimeParams
+from _lcm.typing import FlatRegimeParams, PytreeValue
 from _lcm.utils.logging import LogLevel, get_logger
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm import ExecutionConfig
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
-from lcm.typing import DiscreteState, FloatND, IntND, ScalarInt, UserParams
+from lcm.typing import DiscreteState, FloatND, IntND, RegimeName, ScalarInt, UserParams
+from tests.simulation._callback_types import ProducerAdmission
 from tests.simulation.test_compile_requests import _lcm_log_output_held_fixed
 from tests.test_models.processes import next_health
+
+
+class _ProbabilityCheck(TypedDict):
+    transition: checks._StochasticStateTransition
+    regime_name: checks.RegimeName
+    age: float | checks.ScalarInt | checks.ScalarFloat
+    summary: NotRequired[checks._ValidationSummary | None]
+    memory: NotRequired[checks.SimulationMemory | None]
+    source_codes: NotRequired[checks.np.ndarray | None]
+    fixed_of_code: NotRequired[tuple[int, ...] | None]
 
 
 class _Arguments(TypedDict):
     transition: _StochasticStateTransition
     regime_params: FlatRegimeParams
     state_action_space: StateActionSpace
-    regime_name: str
+    regime_name: RegimeName
     age: ScalarInt
     period: int
     logger: logging.Logger
@@ -90,12 +101,14 @@ def _arguments(*, function: Callable[..., FloatND] = _law) -> _Arguments:
 
 
 @pytest.fixture
-def evaluations(*, monkeypatch: pytest.MonkeyPatch) -> list[Callable[..., Any]]:
+def evaluations(*, monkeypatch: pytest.MonkeyPatch) -> list[Callable[..., FloatND]]:
     """Count actual user-law evaluation at the existing vmap callable seam."""
     original = checks._GridPointCall.__call__
-    observed: list[Callable[..., Any]] = []
+    observed: list[Callable[..., FloatND]] = []
 
-    def record(self: checks._GridPointCall, *arguments: FloatND | IntND) -> Any:
+    def record(
+        self: checks._GridPointCall[FloatND], *arguments: FloatND | IntND
+    ) -> FloatND:
         observed.append(self.func)
         return original(self, *arguments)
 
@@ -113,10 +126,12 @@ def test_public_preflight_evaluates_each_identical_state_law_once_per_call(
         execution_config=ExecutionConfig(device_memory_bytes=None)
     )
     solution = model.solve(params=params, log_level="off")
-    original: Callable[..., Any] = checks._GridPointCall.__call__
-    evaluations: list[object] = []
+    original: Callable[..., FloatND] = checks._GridPointCall.__call__
+    evaluations: list[Callable[..., FloatND]] = []
 
-    def observed(self: checks._GridPointCall, *arguments: FloatND | IntND) -> Any:
+    def observed(
+        self: checks._GridPointCall[FloatND], *arguments: FloatND | IntND
+    ) -> FloatND:
         if self.func is next_health:
             evaluations.append(self.func)
         return original(self, *arguments)
@@ -154,7 +169,7 @@ def test_public_preflight_evaluates_each_identical_state_law_once_per_call(
 )
 def test_every_consumed_binding_and_context_is_rechecked(
     *,
-    evaluations: list[Callable[..., Any]],
+    evaluations: list[Callable[..., FloatND]],
     changed: str,
 ) -> None:
     """Repeated inputs reuse flags; each distinct real binding is evaluated again."""
@@ -209,7 +224,7 @@ def test_every_consumed_binding_and_context_is_rechecked(
 
 def test_changed_outcome_count_is_checked_even_for_reused_numerical_inputs(
     *,
-    evaluations: list[Callable[..., Any]],
+    evaluations: list[Callable[..., FloatND]],
 ) -> None:
     """The same probability grid cannot satisfy a different declared outcome size."""
     arguments = _arguments()
@@ -234,7 +249,7 @@ def test_reuse_keeps_reduced_flags_without_retaining_probability_grids(
     original = checks._check_state_probs
     probabilities: list[weakref.ReferenceType[jax.Array]] = []
 
-    def observe(*, probs: FloatND, **kwargs: Any) -> None:
+    def observe(*, probs: FloatND, **kwargs: Unpack[_ProbabilityCheck]) -> None:
         probabilities.append(weakref.ref(probs))
         original(probs=probs, **kwargs)
 
@@ -254,7 +269,7 @@ def test_reuse_keeps_reduced_flags_without_retaining_probability_grids(
 
 def test_mutable_canonical_wrapper_is_evaluated_again(
     *,
-    evaluations: list[Callable[..., Any]],
+    evaluations: list[Callable[..., FloatND]],
 ) -> None:
     """A wrapper can replace its data even though each contained array is immutable."""
     arguments = _arguments(function=_mapping_law)
@@ -274,14 +289,16 @@ def test_mutable_canonical_wrapper_is_evaluated_again(
 
 def test_budgeted_preflight_admits_each_check_and_traces_the_law_once(
     *,
-    evaluations: list[Callable[..., Any]],
+    evaluations: list[Callable[..., FloatND]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every budgeted check is admitted; its executable is traced only once."""
-    admissions: list[Callable[..., Any]] = []
+    admissions: list[Callable[..., PytreeValue]] = []
     admit = ProfiledSimulationOperations.admit_producer
 
-    def admit_and_record(self: ProfiledSimulationOperations, **kwargs: Any) -> Any:
+    def admit_and_record(
+        self: ProfiledSimulationOperations, **kwargs: Unpack[ProducerAdmission]
+    ) -> jax.stages.Compiled:
         admissions.append(kwargs["function"])
         return admit(self, **kwargs)
 
@@ -344,7 +361,7 @@ def test_cached_invalid_flags_preserve_complete_ordered_serial_diagnostics(
     log_level: LogLevel,
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
-    evaluations: list[Callable[..., Any]],
+    evaluations: list[Callable[..., FloatND]],
 ) -> None:
     """An invalid reused flag still runs the original period-by-period retry."""
     model, _, _ = WITNESSES["multi_regime"]()

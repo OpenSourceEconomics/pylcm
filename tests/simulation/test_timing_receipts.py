@@ -17,6 +17,7 @@ from benchmarks.asv._compile_counters import (
     LOWERING_EVENT,
     TRACE_EVENT,
 )
+from lcm.typing import UserInitialConditions, UserParams
 from tests.ci.simulation_timings import TimingMeasurement
 from tests.simulation import test_compile_requests as timing_tests
 
@@ -30,10 +31,10 @@ def test_timed_batch_retains_order_and_excludes_warmup_compilations(
         (0, 100, 100, 300, 300, 301, 301, 305, 305, 308, 308, 310, 310, 312, 312, 318)
     )
 
-    def solve(**_kwargs: object) -> None:
+    def solve[Ignored](**_kwargs: Ignored) -> None:
         pass
 
-    def simulate(*, log_level: str, **_kwargs: object) -> SimpleNamespace:
+    def simulate[Ignored](*, log_level: str, **_kwargs: Ignored) -> SimpleNamespace:
         calls.append(log_level)
         for event, repeats in (
             (TRACE_EVENT, 1),
@@ -44,7 +45,7 @@ def test_timed_batch_retains_order_and_excludes_warmup_compilations(
                 jax.monitoring.record_event_duration_secs(event, 0.001)
         return SimpleNamespace(raw_results=None)
 
-    def witness() -> tuple[SimpleNamespace, dict, dict]:
+    def witness() -> tuple[SimpleNamespace, UserParams, UserInitialConditions]:
         return SimpleNamespace(solve=solve, simulate=simulate), {}, {}
 
     monkeypatch.setattr(timing_tests, "WITNESSES", {"receipt": witness})
@@ -337,7 +338,7 @@ def _run_retry_loop(
     """Return how many batches the retry loop took and the batch it settled on."""
     remaining = list(spreads)
 
-    def batch(**_kwargs: object) -> TimingMeasurement:
+    def batch[Ignored](**_kwargs: Ignored) -> TimingMeasurement:
         """Stand in for one timed batch with a prescribed control-leg spread."""
         return _measurement(
             _spread(level="off", spread=remaining.pop(0))

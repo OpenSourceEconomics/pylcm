@@ -1,7 +1,7 @@
 """Exercise the finite witness on eight actual A40 devices before measurement."""
 
 import json
-from typing import Any
+from collections.abc import Callable
 
 import gpu_admission
 import gpu_assets
@@ -9,7 +9,9 @@ import jax
 import pytest
 
 
-def test_gpu_topology(record_property: Any) -> None:
+def test_gpu_topology(
+    record_property: Callable[[str, str | bool | int | float], None],
+) -> None:
     """Require one process owning eight distinct physical A40 devices."""
     assert jax.default_backend() == "gpu"
     devices = jax.devices()
@@ -23,7 +25,9 @@ def test_gpu_topology(record_property: Any) -> None:
 
 
 def test_gpu_finite_values_decisions_rng_and_shards(
-    *, monkeypatch: pytest.MonkeyPatch, record_property: Any
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    record_property: Callable[[str, str | bool | int | float], None],
 ) -> None:
     """Preserve exact decisions, eight-ULP values, global reads and 17 real rows."""
     gpu_assets.test_eight_assets_shards_use_full_reads_and_match_exact_bellman_reference(
@@ -33,12 +37,15 @@ def test_gpu_finite_values_decisions_rng_and_shards(
 
 @pytest.mark.parametrize("shared", [False, True])
 def test_gpu_pruned_threshold(
-    *, shared: bool, monkeypatch: pytest.MonkeyPatch, record_property: Any
+    *,
+    shared: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    record_property: Callable[[str, str | bool | int | float], None],
 ) -> None:
     """Refuse below native compiler plus retained, destination and scratch storage."""
     original = gpu_admission._case  # noqa: SLF001 - record sealed fixture accounting
 
-    def record_case(*, shared: bool) -> Any:
+    def record_case(*, shared: bool) -> gpu_admission._Case:
         case = original(shared=shared)
         for name in ("compiler_bytes", "owner_bytes", "replica_bytes", "scratch_bytes"):
             record_property(name, getattr(case, name))
@@ -58,7 +65,9 @@ def test_gpu_interrupted_copy_ownership(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_gpu_shared_last_consumer(
-    *, monkeypatch: pytest.MonkeyPatch, record_property: Any
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    record_property: Callable[[str, str | bool | int | float], None],
 ) -> None:
     """Wait for both consumers before releasing the real shared GPU copy."""
     gpu_assets.test_shared_native_all_gather_releases_after_both_consumers_are_ready(

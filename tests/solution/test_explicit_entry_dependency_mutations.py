@@ -22,7 +22,7 @@ from lcm import (
     StochasticTransition,
     categorical,
 )
-from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -86,7 +86,7 @@ def _wealth_utility(*, wealth: ScalarFloat, shock: ScalarFloat) -> FloatND:
     return wealth + 0.0 * shock
 
 
-def _source_value(*, model: Model, params: dict) -> float:
+def _source_value(*, model: Model, params: UserParams) -> float:
     solution = model.solve(params=params, log_level="debug").values
     period = max(p for p in solution if "source" in solution[p])
     return float(np.asarray(solution[period]["source"]).ravel()[0])

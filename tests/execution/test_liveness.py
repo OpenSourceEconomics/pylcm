@@ -159,7 +159,7 @@ def test_successful_solve_rejects_uncommitted_planned_dispatch() -> None:
     ids=["planned", "pinned"],
 )
 def test_logical_artifact_keys_must_be_hashable(
-    build: Callable[[], PlannedInputLiveness[str, object]],
+    build: Callable[[], PlannedInputLiveness[str, Hashable]],
 ) -> None:
     with pytest.raises(BeartypeCallHintParamViolation, match="Hashable"):
         build()

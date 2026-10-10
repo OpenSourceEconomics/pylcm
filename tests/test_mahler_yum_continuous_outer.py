@@ -206,9 +206,9 @@ def _mesh(
     )
 
 
-def _solve_and_capture(mesh: AdaptiveOuterMesh) -> dict:
+def _solve_and_capture(mesh: AdaptiveOuterMesh) -> dict[str, np.ndarray]:
     """Solve periods 37 and 36 once, capturing keeper and collapse at 36."""
-    captured: dict = {}
+    captured: dict[str, np.ndarray] = {}
     original_keeper = _solvers._NNBEGMPeriodKernel._solve_keeper
     original_call = _solvers._NNBEGMPeriodKernel.__call__
     original_collapse = _solvers.collapse_continuous_candidate_bank
@@ -257,14 +257,14 @@ def _solve_and_capture(mesh: AdaptiveOuterMesh) -> dict:
 
 
 @pytest.fixture(scope="module")
-def coarse_capture() -> dict:
+def coarse_capture() -> dict[str, np.ndarray]:
     if not jax.config.read("jax_enable_x64"):
         pytest.skip("x64 run only")
     return _solve_and_capture(_mesh(initial=9, max_nodes=33, rounds=3, tol=1e-3))
 
 
 @pytest.fixture(scope="module")
-def fine_capture() -> dict:
+def fine_capture() -> dict[str, np.ndarray]:
     if not jax.config.read("jax_enable_x64"):
         pytest.skip("x64 run only")
     return _solve_and_capture(_mesh(initial=17, max_nodes=65, rounds=4, tol=1e-4))
@@ -272,7 +272,7 @@ def fine_capture() -> dict:
 
 @pytest.mark.slow
 @pytest.mark.manual
-def test_captured_period_is_fully_finite(coarse_capture: dict) -> None:
+def test_captured_period_is_fully_finite(coarse_capture: dict[str, np.ndarray]) -> None:
     for name in ("keeper_V", "V", "p_adjust"):
         assert np.isfinite(coarse_capture[name]).all(), name
 
@@ -280,7 +280,7 @@ def test_captured_period_is_fully_finite(coarse_capture: dict) -> None:
 @pytest.mark.slow
 @pytest.mark.manual
 def test_exact_keeper_dominance_under_the_fixed_cost_fold(
-    coarse_capture: dict,
+    coarse_capture: dict[str, np.ndarray],
 ) -> None:
     """The closed-form fold can only add option value over the exact keeper.
 
@@ -302,7 +302,7 @@ def test_exact_keeper_dominance_under_the_fixed_cost_fold(
 @pytest.mark.slow
 @pytest.mark.manual
 def test_coarse_fine_outer_convergence(
-    *, coarse_capture: dict, fine_capture: dict
+    *, coarse_capture: dict[str, np.ndarray], fine_capture: dict[str, np.ndarray]
 ) -> None:
     """Refining the outer mesh barely moves the captured value surface.
 
@@ -318,7 +318,9 @@ def test_coarse_fine_outer_convergence(
 
 @pytest.mark.slow
 @pytest.mark.manual
-def test_next_habit_is_continuous_not_grid_snapped(coarse_capture: dict) -> None:
+def test_next_habit_is_continuous_not_grid_snapped(
+    coarse_capture: dict[str, np.ndarray],
+) -> None:
     """A material share of cells selects an off-node continuous next habit.
 
     The safeguarded argmax refines between exact mesh nodes. Distance-to-node

@@ -5,7 +5,7 @@ import inspect
 import logging
 from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any
+from typing import Unpack
 
 import jax
 import jax._src.core
@@ -13,6 +13,7 @@ import jax.core
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import ArrayLike
 
 import _lcm.simulation.simulate as simulation
 import _lcm.solution.validate_V as validation
@@ -23,6 +24,14 @@ from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_b
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.utils.logging import LogLevel, get_logger, log_regime_transition_counts
 from lcm.exceptions import ExecutionPlanningError, InvalidValueFunctionError
+from lcm.result import SimulationResult
+from lcm.typing import BoolND, FloatND
+from tests.simulation._callback_types import (
+    DiagnosticEnrichment,
+    DiagnosticInputs,
+    MemoryCreation,
+    PeriodValidation,
+)
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
@@ -39,7 +48,7 @@ class _AdmissionObservedError(Exception):
 
 
 @pytest.fixture(scope="module")
-def public_simulation() -> Callable[..., object]:
+def public_simulation() -> Callable[..., SimulationResult]:
     model = _stateful_target_model()
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     initial = {
@@ -49,7 +58,7 @@ def public_simulation() -> Callable[..., object]:
     }
     solution = model.solve(params=params, log_level="off")
 
-    def run(*, log_level: LogLevel = "debug") -> object:
+    def run(*, log_level: LogLevel = "debug") -> SimulationResult:
         return model.simulate(
             params=params,
             initial_conditions=initial,
@@ -64,7 +73,7 @@ def public_simulation() -> Callable[..., object]:
 def _capture_memory(monkeypatch: pytest.MonkeyPatch) -> list[SimulationMemory]:
     memories: list[SimulationMemory] = []
 
-    def create(**arguments: Any) -> SimulationMemory:
+    def create(**arguments: Unpack[MemoryCreation]) -> SimulationMemory:
         memory = SimulationMemory(**arguments)
         memories.append(memory)
         return memory
@@ -84,7 +93,7 @@ def _capture_memory(monkeypatch: pytest.MonkeyPatch) -> list[SimulationMemory]:
 def test_public_diagnostic_refuses_before_concrete_allocation(
     *,
     monkeypatch: pytest.MonkeyPatch,
-    public_simulation: Callable[..., object],
+    public_simulation: Callable[..., SimulationResult],
     operation: str,
 ) -> None:
     """A real completed period reaches admission before any diagnostic dispatch."""
@@ -94,7 +103,7 @@ def test_public_diagnostic_refuses_before_concrete_allocation(
     if operation == "_validate_simulated_value":
         period_validation = simulation._validate_period_values
 
-        def inject_nan(**arguments: Any) -> None:
+        def inject_nan(**arguments: Unpack[PeriodValidation]) -> None:
             rows = arguments["period_results"]
             arguments["period_results"] = tuple(
                 (
@@ -107,25 +116,31 @@ def test_public_diagnostic_refuses_before_concrete_allocation(
 
         monkeypatch.setattr(simulation, "_validate_period_values", inject_nan)
 
-    def inspect_admission(**arguments: Any) -> None:
+    def inspect_admission(**arguments: Unpack[DiagnosticInputs]) -> None:
         reached.append(operation)
         memories[-1].budget_bytes = 1
         with monkeypatch.context() as guard:
             flags = simulation.non_finite_by_regime
             where = jnp.where
 
-            def guard_flags(**operands: Any) -> object:
+            def guard_flags(
+                *, values: tuple[FloatND, ...], in_regime: tuple[BoolND, ...]
+            ) -> BoolND:
+                operands = {"values": values, "in_regime": in_regime}
                 if not any(
                     isinstance(leaf, jax.core.Tracer)
                     for leaf in jax.tree.leaves(operands)
                 ):
                     raise _UnadmittedAllocationError("Unprofiled period flag dispatch")
-                return flags(**operands)
+                return flags(values=values, in_regime=in_regime)
 
-            def guard_where(condition: object, *args: Any, **kwargs: Any) -> object:
+            # keyword-only-exempt: library-callback=jax.numpy.where
+            def guard_where(
+                condition: ArrayLike, x: ArrayLike, y: ArrayLike, /
+            ) -> jax.Array:
                 if not isinstance(condition, jax.core.Tracer):
                     raise _UnadmittedAllocationError("Unprofiled owned-value mask")
-                return where(condition, *args, **kwargs)
+                return where(condition, x, y)
 
             guard.setattr(simulation, "non_finite_by_regime", guard_flags)
             guard.setattr(jnp, "where", guard_where)
@@ -146,14 +161,16 @@ def test_public_diagnostic_refuses_before_concrete_allocation(
 
 
 def test_period_diagnostics_charge_new_carry_after_last_unit_closes(
-    *, monkeypatch: pytest.MonkeyPatch, public_simulation: Callable[..., object]
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    public_simulation: Callable[..., SimulationResult],
 ) -> None:
     """Current state, membership, role and RNG arrays survive the unit handoff."""
     memories = _capture_memory(monkeypatch)
     original = simulation._validate_period_values
     inspected: list[bool] = []
 
-    def observe(**arguments: Any) -> None:
+    def observe(**arguments: Unpack[PeriodValidation]) -> None:
         frame = inspect.currentframe()
         assert frame is not None
         assert frame.f_back is not None
@@ -327,7 +344,7 @@ def test_host_nan_report_keeps_exception_payload_and_enrichment_order(
     payload = MappingProxyType({})
     seen: list[InvalidValueFunctionError] = []
 
-    def enrich(**arguments: Any) -> None:
+    def enrich(**arguments: Unpack[DiagnosticEnrichment]) -> None:
         error = arguments["exc"]
         assert error.partial_solution is payload
         seen.append(error)

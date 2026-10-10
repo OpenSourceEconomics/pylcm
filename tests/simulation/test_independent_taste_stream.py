@@ -70,7 +70,11 @@ def test_policy_and_ordinary_seed_changes_preserve_independent_taste_keys(
     for ordinary_seed, kappa in ((11, 0.0), (92, 5.0)):
         model = taste_shocks_toy.get_model()
         params = taste_shocks_toy.get_params(scale=0.2)
-        params["alive"]["utility"]["kappa"] = kappa
+        alive = params["alive"]
+        assert isinstance(alive, dict)
+        utility = alive["utility"]
+        assert isinstance(utility, dict)
+        utility["kappa"] = kappa
         result = model.simulate(
             params=params,
             initial_conditions=_initial_conditions(),

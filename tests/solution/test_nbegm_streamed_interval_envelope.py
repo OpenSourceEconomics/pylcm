@@ -28,12 +28,13 @@ spacing. The normal precision fixture runs this module at float64 and with
 from collections.abc import Callable, Iterator
 from fractions import Fraction
 from functools import cache
-from typing import Any, NamedTuple, TypedDict
+from typing import NamedTuple, NotRequired, Protocol, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from _lcm.egm import nbegm_step
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
@@ -54,6 +55,77 @@ from _lcm.egm.upper_envelope.query import (
 from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._crra_preferences import crra_preferences
+
+type _TraceScalar = np.float32 | np.float64 | np.int32 | np.int64 | np.bool_
+
+
+class _QueryKwargs(TypedDict):
+    endog_grid: envelope_query.Float1D
+    policy: envelope_query.Float1D
+    value: envelope_query.Float1D
+    marginal: envelope_query.Float1D
+    segment_id: envelope_query.Float1D
+    stable_index: NotRequired[envelope_query.IntND | None]
+    x_query: envelope_query.FloatND
+    segment_block_size: NotRequired[int]
+    arithmetic: NotRequired[envelope_query.ComparisonArithmetic]
+    feasibility_partition: NotRequired[envelope_query.ResolvedAxisPartition | None]
+    feasible_interval_mask: NotRequired[envelope_query.BoolND | None]
+    return_owner: NotRequired[bool]
+
+
+class _MergeKwargs(TypedDict):
+    endog_grid: envelope_query.Float1D
+    policy: envelope_query.Float1D
+    value: envelope_query.Float1D
+    marginal: envelope_query.Float1D
+    segment_id: envelope_query.Float1D
+    stable_index: envelope_query.IntND
+    query: envelope_query.FloatND
+    arithmetic: envelope_query.ComparisonArithmetic
+    feasibility_partition: NotRequired[envelope_query.ResolvedAxisPartition | None]
+    feasible_interval_mask: NotRequired[envelope_query.BoolND | None]
+
+
+class _FoldKwargs(TypedDict):
+    held: envelope_query.EnvelopeWinner
+    endog_grid: envelope_query.Float1D
+    policy: envelope_query.Float1D
+    value: envelope_query.Float1D
+    marginal: envelope_query.Float1D
+    segment_id: envelope_query.Float1D
+    stable_index: envelope_query.IntND
+    query: envelope_query.FloatND
+    arithmetic: envelope_query.ComparisonArithmetic
+    feasibility_partition: NotRequired[envelope_query.ResolvedAxisPartition | None]
+    feasible_interval_mask: NotRequired[envelope_query.BoolND | None]
+
+
+class _LinkBlocksKwargs(TypedDict):
+    links: envelope_query._SegmentLinks
+    block_size: int
+
+
+class _BlockTermsKwargs(TypedDict):
+    block: envelope_query.FloatND
+    live: envelope_query.BoolND
+    flat: envelope_query.Float1D
+    arithmetic: NotRequired[envelope_query.ComparisonArithmetic]
+
+
+class _LinkTermsKwargs(TypedDict):
+    left_grid: envelope_query.FloatND
+    right_grid: envelope_query.FloatND
+    left_value: envelope_query.FloatND
+    right_value: envelope_query.FloatND
+    live: envelope_query.BoolND
+    stable_index: envelope_query.IntND
+    query: envelope_query.FloatND
+
+
+class _Fold(Protocol):
+    def __call__(self, **kwargs: Unpack[_FoldKwargs]) -> EnvelopeWinner: ...
+
 
 _N_INTERVALS = 7
 _N_SAVINGS = 36
@@ -160,7 +232,7 @@ def _solver(
 @cache
 def _published(
     *, arithmetic: ComparisonArithmetic, interval_width: int
-) -> tuple[np.ndarray, ...]:
+) -> tuple[NDArray[_TraceScalar], ...]:
     """Publish the three channels and the owner once per (arithmetic, width)."""
     cont_value, cont_marginal = _continuation()
     solve = _solver(arithmetic=arithmetic, interval_width=interval_width)
@@ -198,21 +270,23 @@ class _Trace:
     """What one instrumented execution handed its envelope, in program order."""
 
     def __init__(self) -> None:
-        self.stacks: list[dict[str, np.ndarray]] = []
+        self.stacks: list[dict[str, NDArray[_TraceScalar]]] = []
         """The one-shot candidate stack with its query: one entry."""
-        self.blocks: list[dict[str, np.ndarray]] = []
+        self.blocks: list[dict[str, NDArray[_TraceScalar]]] = []
         """Every streamed block: candidates, identities, query, standing winner."""
-        self.link_blocks: list[dict[str, np.ndarray]] = []
+        self.link_blocks: list[dict[str, NDArray[_TraceScalar]]] = []
         """The one-shot ordinary reduction's link partition: one entry."""
-        self.block_terms: list[dict[str, np.ndarray]] = []
+        self.block_terms: list[dict[str, NDArray[_TraceScalar]]] = []
         """The one-shot ordinary rank fields, one entry per link block."""
-        self.link_terms: list[dict[str, np.ndarray]] = []
+        self.link_terms: list[dict[str, NDArray[_TraceScalar]]] = []
         """The streamed ordinary rank fields, one entry per streamed block."""
 
 
 def _bound(
-    *, sink: list[dict[str, np.ndarray]], arrays: dict[str, Any]
-) -> dict[str, Any]:
+    *,
+    sink: list[dict[str, NDArray[_TraceScalar]]],
+    arrays: dict[str, jax.Array],
+) -> dict[str, jax.Array]:
     """Materialize `arrays` once, report those buffers to `sink`, and return them.
 
     The optimization barrier stops the backend from producing one copy of an
@@ -223,7 +297,7 @@ def _bound(
     values = jax.lax.optimization_barrier(tuple(arrays[name] for name in names))
     bound = dict(zip(names, values, strict=True))
 
-    def store(*reported: Any) -> None:
+    def store(*reported: NDArray[_TraceScalar]) -> None:
         sink.append(
             {name: np.asarray(r) for name, r in zip(names, reported, strict=True)}
         )
@@ -236,7 +310,7 @@ def _instrument(
     *,
     trace: _Trace,
     patch: pytest.MonkeyPatch,
-    fold: Callable[..., EnvelopeWinner] | None,
+    fold: _Fold | None,
 ) -> None:
     """Route the production seams through `trace`, folding with `fold` if given."""
     production_query = nbegm_step.envelope_at_query
@@ -245,36 +319,44 @@ def _instrument(
     production_block_terms = envelope_query._block_query_terms
     production_link_terms = envelope_query._batched_link_terms
 
-    def at_query(**kwargs: Any) -> Any:
+    def at_query(
+        **kwargs: Unpack[_QueryKwargs],
+    ) -> tuple[FloatND, FloatND, FloatND] | tuple[FloatND, FloatND, FloatND, IntND]:
         names = (*_STACK_FIELDS, "x_query")
         bound = _bound(sink=trace.stacks, arrays={n: kwargs[n] for n in names})
-        return production_query(**{**kwargs, **bound})
+        return production_query(**cast("_QueryKwargs", {**kwargs, **bound}))
 
-    def merge(*, held: EnvelopeWinner, **kwargs: Any) -> EnvelopeWinner:
+    def merge(
+        *, held: EnvelopeWinner, **kwargs: Unpack[_MergeKwargs]
+    ) -> EnvelopeWinner:
         names = (*_STACK_FIELDS, "stable_index", "query")
         arrays = {n: kwargs[n] for n in names}
         arrays.update(dict(zip(_HELD_FIELDS, held, strict=True)))
         bound = _bound(sink=trace.blocks, arrays=arrays)
         return production_merge(
             held=EnvelopeWinner(*(bound[n] for n in _HELD_FIELDS)),
-            **{**kwargs, **{n: bound[n] for n in names}},
+            **cast("_MergeKwargs", {**kwargs, **{n: bound[n] for n in names}}),
         )
 
-    def link_blocks(**kwargs: Any) -> tuple[Any, ...]:
+    def link_blocks(
+        **kwargs: Unpack[_LinkBlocksKwargs],
+    ) -> tuple[FloatND, envelope_query.BoolND, IntND]:
         blocks, live, stable_index = production_link_blocks(**kwargs)
         bound = _bound(
             sink=trace.link_blocks, arrays={"live": live, "stable_index": stable_index}
         )
         return blocks, bound["live"], bound["stable_index"]
 
-    def block_terms(**kwargs: Any) -> Any:
+    def block_terms(**kwargs: Unpack[_BlockTermsKwargs]) -> envelope_query._BlockTerms:
         terms = production_block_terms(**kwargs)
         bound = _bound(
             sink=trace.block_terms, arrays=dict(zip(terms._fields, terms, strict=True))
         )
         return type(terms)(*(bound[n] for n in terms._fields))
 
-    def link_terms(**kwargs: Any) -> tuple[Any, Any]:
+    def link_terms(
+        **kwargs: Unpack[_LinkTermsKwargs],
+    ) -> tuple[envelope_query._OrdinaryRank, envelope_query.BoolND]:
         rank, brackets = production_link_terms(**kwargs)
         arrays = dict(zip(rank._fields, rank, strict=True)) | {"brackets": brackets}
         bound = _bound(sink=trace.link_terms, arrays=arrays)
@@ -311,24 +393,24 @@ class _Link(NamedTuple):
 class _Keys(NamedTuple):
     """The ordinary rank fields one link carried against every query, as compared."""
 
-    brackets: np.ndarray
-    value: np.ndarray
-    right_available: np.ndarray
-    slope_high: np.ndarray
-    slope_low: np.ndarray
+    brackets: NDArray[_TraceScalar]
+    value: NDArray[_TraceScalar]
+    right_available: NDArray[_TraceScalar]
+    slope_high: NDArray[_TraceScalar]
+    slope_low: NDArray[_TraceScalar]
 
 
 class _Route(NamedTuple):
     """One instrumented execution: what its envelope folded and what it published."""
 
     arithmetic: ComparisonArithmetic
-    query: np.ndarray
+    query: NDArray[_TraceScalar]
     candidates: dict[int, _Candidate]
     """Position in the one-shot stack → live candidate as the fold consumed it."""
     links: dict[int, _Link]
     """Stable identity → admitted link (both endpoints live, one branch label)."""
     n_candidates: int
-    published: tuple[np.ndarray, ...]
+    published: tuple[NDArray[_TraceScalar], ...]
     """Value, marginal, policy, owner."""
     keys: dict[int, _Keys] | None
     """Ordinary arithmetic: identity → rank fields as compared; else `None`."""
@@ -337,14 +419,14 @@ class _Route(NamedTuple):
     standing winner re-entering with a record that is not its own."""
 
 
-def _candidate(*, arrays: dict[str, np.ndarray], index: int) -> _Candidate:
+def _candidate(*, arrays: dict[str, NDArray[_TraceScalar]], index: int) -> _Candidate:
     return _Candidate(
         *(float(arrays[f][index]) for f in _STACK_FIELDS),
         bits=tuple(np.asarray(arrays[f][index]).tobytes() for f in _RECORD_FIELDS),
     )
 
 
-def _is_live(*, arrays: dict[str, np.ndarray], index: int) -> bool:
+def _is_live(*, arrays: dict[str, NDArray[_TraceScalar]], index: int) -> bool:
     return bool(
         np.isfinite(arrays["endog_grid"][index]) and np.isfinite(arrays["value"][index])
     )
@@ -352,9 +434,9 @@ def _is_live(*, arrays: dict[str, np.ndarray], index: int) -> bool:
 
 def _admit(
     *,
-    arrays: dict[str, np.ndarray],
-    positions: np.ndarray,
-    identities: np.ndarray,
+    arrays: dict[str, NDArray[_TraceScalar]],
+    positions: NDArray[_TraceScalar],
+    identities: NDArray[_TraceScalar],
     candidates: dict[int, _Candidate],
     links: dict[int, _Link],
     notes: list[str],
@@ -395,7 +477,7 @@ def _admit(
             add(_Link(int(identities[j]), int(positions[j]), int(positions[j + 1])))
 
 
-def _empty_keys(*, n_query: int, dtype: np.dtype) -> _Keys:
+def _empty_keys(*, n_query: int, dtype: np.dtype[_TraceScalar]) -> _Keys:
     return _Keys(
         np.zeros(n_query, dtype=bool),
         *(np.full(n_query, np.nan, dtype=dtype) for _ in range(4)),
@@ -406,8 +488,8 @@ def _set_keys(
     *,
     keys: dict[int, _Keys],
     identity: int,
-    rows: np.ndarray,
-    fields: tuple[np.ndarray, ...],
+    rows: NDArray[_TraceScalar],
+    fields: tuple[NDArray[_TraceScalar], ...],
     n_query: int,
     notes: list[str],
 ) -> None:
@@ -431,7 +513,7 @@ def _set_keys(
 def _one_shot_route(
     *,
     trace: _Trace,
-    published: tuple[np.ndarray, ...],
+    published: tuple[NDArray[_TraceScalar], ...],
     arithmetic: ComparisonArithmetic,
 ) -> _Route:
     (stack,) = trace.stacks
@@ -489,7 +571,7 @@ def _one_shot_route(
 
 def _check_re_entry(
     *,
-    block: dict[str, np.ndarray],
+    block: dict[str, NDArray[_TraceScalar]],
     index: int,
     candidates: dict[int, _Candidate],
     links: dict[int, _Link],
@@ -524,7 +606,7 @@ def _check_re_entry(
 def _streamed_route(
     *,
     trace: _Trace,
-    published: tuple[np.ndarray, ...],
+    published: tuple[NDArray[_TraceScalar], ...],
     arithmetic: ComparisonArithmetic,
     n_candidates: int,
 ) -> _Route:
@@ -588,7 +670,7 @@ def _streamed_route(
     )
 
 
-def _relabelled_fold(**kwargs: Any) -> EnvelopeWinner:
+def _relabelled_fold(**kwargs: Unpack[_FoldKwargs]) -> EnvelopeWinner:
     """A fold that names every candidate by its block-local slot.
 
     It compares the same records under the same order, so away from ties it
@@ -601,7 +683,7 @@ def _relabelled_fold(**kwargs: Any) -> EnvelopeWinner:
     return merge_envelope_winner(**kwargs)
 
 
-def _inferior_fold(**kwargs: Any) -> EnvelopeWinner:
+def _inferior_fold(**kwargs: Unpack[_FoldKwargs]) -> EnvelopeWinner:
     """A fold that hands a query to the lowest-reading link that brackets it.
 
     The record it selects is internally consistent — its own endpoints, payloads
@@ -642,7 +724,7 @@ def _inferior_fold(**kwargs: Any) -> EnvelopeWinner:
     )
 
 
-_FOLDS: dict[str, Callable[..., EnvelopeWinner] | None] = {
+_FOLDS: dict[str, _Fold | None] = {
     "production": None,
     "relabelled": _relabelled_fold,
     "inferior": _inferior_fold,
@@ -713,7 +795,7 @@ def _exact_owner(*, route: _Route, node: int) -> int:
 def _ordinary_owner(*, route: _Route, node: int) -> int:
     """The lexicographic maximum of the rank fields the ordinary fold compared."""
     assert route.keys is not None
-    best: tuple[tuple[Any, ...], int] | None = None
+    best: tuple[tuple[_TraceScalar | int, ...], int] | None = None
     for identity, keys in route.keys.items():
         if not keys.brackets[node]:
             continue
@@ -723,7 +805,7 @@ def _ordinary_owner(*, route: _Route, node: int) -> int:
     return NO_OWNER if best is None else best[1]
 
 
-def _expected_owners(route: _Route) -> np.ndarray:
+def _expected_owners(route: _Route) -> NDArray[_TraceScalar]:
     select = _exact_owner if route.arithmetic == "certified" else _ordinary_owner
     return np.asarray(
         [select(route=route, node=node) for node in range(route.query.shape[0])],
@@ -1084,9 +1166,9 @@ def test_the_certificate_rejects_a_fold_that_selects_an_inferior_bracketing_reco
 def _synthetic_route(
     *,
     arithmetic: ComparisonArithmetic,
-    stack: dict[str, np.ndarray],
-    query: np.ndarray,
-    published: tuple[np.ndarray, ...],
+    stack: dict[str, NDArray[_TraceScalar]],
+    query: NDArray[_TraceScalar],
+    published: tuple[NDArray[_TraceScalar], ...],
 ) -> _Route:
     """A route over a hand-built candidate stack, for the certificate's controls.
 
@@ -1146,11 +1228,11 @@ def _synthetic_route(
     )
 
 
-def _dtype() -> np.dtype:
+def _dtype() -> np.dtype[_TraceScalar]:
     return np.asarray(_geometry()["liquid_grid"]).dtype
 
 
-def _step(*, value: float, n_ulp: int) -> np.ndarray:
+def _step(*, value: float, n_ulp: int) -> NDArray[_TraceScalar]:
     """`value` moved `n_ulp` representable steps in the working format."""
     moved = np.asarray(value, dtype=_dtype())
     towards = np.asarray(np.inf if n_ulp > 0 else -np.inf, dtype=moved.dtype)
@@ -1159,7 +1241,9 @@ def _step(*, value: float, n_ulp: int) -> np.ndarray:
     return moved
 
 
-def _two_points(*, field: str, n_ulp: int) -> tuple[dict[str, np.ndarray], int, int]:
+def _two_points(
+    *, field: str, n_ulp: int
+) -> tuple[dict[str, NDArray[_TraceScalar]], int, int]:
     """Two coincident point candidates at the origin, one a unit above the other.
 
     The lower point is the first candidate; its self-bracket is identity 1 and the
@@ -1183,7 +1267,12 @@ def _two_points(*, field: str, n_ulp: int) -> tuple[dict[str, np.ndarray], int, 
     return stack, 1, 2
 
 
-def _publish_point(*, stack: dict[str, np.ndarray], index: int, owner: int) -> tuple:
+def _publish_point(
+    *,
+    stack: dict[str, NDArray[_TraceScalar]],
+    index: int,
+    owner: int,
+) -> tuple[NDArray[_TraceScalar], ...]:
     """Publish one point's own payloads under `owner`, as a one-node route would."""
     return (
         *(np.asarray([stack[f][index]], dtype=_dtype()) for f in _CHANNELS),

@@ -50,11 +50,6 @@ def _scope(
     )
 
 
-def _double(**attributes: object) -> PeriodSimulationReads:
-    """Stand in for a period owner with an explicit live-value inventory."""
-    return cast("PeriodSimulationReads", SimpleNamespace(**attributes))
-
-
 def _resident(*, memory: SimulationMemory) -> int:
     """Charge the current snapshot on the scope's single budgeted device."""
     return residency.resident_bytes_by_device(

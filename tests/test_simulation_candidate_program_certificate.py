@@ -1297,7 +1297,7 @@ _SOLVE_READINESS_MUTATIONS = {
 
 
 @pytest.fixture(scope="module")
-def clean_corridor_sources() -> tuple[str, ...]:
+def clean_corridor_sources() -> tuple[RepositoryRelativePath, ...]:
     """Check the frozen checkout once; each mutant still gets a full fresh verdict."""
     clean = verify_direct_candidate_flow(repo_root=Path(__file__).parents[1])
     assert clean["ok"], clean["errors"]
@@ -1336,7 +1336,9 @@ def program_mutations() -> dict[str, dict[str, str]]:
     ["src/_lcm/solution/continuation_arguments.py", "src/_lcm/solution/nbegm.py"],
 )
 def test_donation_argument_adapter_is_in_the_reviewed_source_inventory(
-    *, source: str, clean_corridor_sources: tuple[str, ...]
+    *,
+    source: RepositoryRelativePath,
+    clean_corridor_sources: tuple[RepositoryRelativePath, ...],
 ):
     """The sole-marginal adapter and its installation are independently sealed."""
     assert source in clean_corridor_sources
@@ -1429,7 +1431,9 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
     ],
 )
 def test_live_simulation_program_sources_are_certified(
-    *, source: str, clean_corridor_sources: tuple[str, ...]
+    *,
+    source: RepositoryRelativePath,
+    clean_corridor_sources: tuple[RepositoryRelativePath, ...],
 ):
     """Declaration, argument binding, resolution, and dispatch are live obligations."""
     assert source in clean_corridor_sources
@@ -1463,7 +1467,7 @@ def test_program_mutation_is_rejected_after_byte_seals_are_refreshed(
     *,
     mutation: str,
     program_mutations: dict[str, dict[str, str]],
-    clean_corridor_sources: tuple[str, ...],
+    clean_corridor_sources: tuple[RepositoryRelativePath, ...],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1485,3 +1489,6 @@ def test_program_mutation_is_rejected_after_byte_seals_are_refreshed(
     result = verify_direct_candidate_flow(repo_root=tmp_path)
 
     assert result["offending_paths"] == [spec["path"]], result["errors"]
+
+
+type RepositoryRelativePath = str

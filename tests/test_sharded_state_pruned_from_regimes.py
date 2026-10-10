@@ -21,8 +21,9 @@ topology and run in the test process itself.
 import json
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Literal, NotRequired, TypedDict, Unpack
 
 import jax.numpy as jnp
 import numpy as np
@@ -30,6 +31,7 @@ import pandas as pd
 import pytest
 
 import tests.conftest
+from _lcm.execution.output_layout import PlannedCore
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -42,7 +44,18 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
-from lcm.typing import FloatND, ScalarInt
+from lcm.regime import ActionEntry, FunctionEntry, StateEntry, StateTransitionEntry
+from lcm.result import SimulationResult
+from lcm.solver_api import SolutionResult
+from lcm.typing import (
+    ActionName,
+    FloatND,
+    FunctionName,
+    RegimeName,
+    ScalarInt,
+    StateName,
+)
+from tests.conftest import AttachResolvedOutputLayoutKwargs
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -103,8 +116,41 @@ def _entry_kind(wealth: FloatND) -> FloatND:
 _EDGES = {"working": {"working": 0, "retired": 1}, "retired": {"dead": 2}}
 
 
-def _working(**overrides: Any) -> Regime:
-    spec: dict[str, Any] = {
+class RegimeSpec(TypedDict, total=False):
+    states: Mapping[StateName, StateEntry]
+    actions: Mapping[ActionName, ActionEntry]
+    functions: Mapping[FunctionName, FunctionEntry]
+    state_transitions: Mapping[StateName, StateTransitionEntry]
+
+
+class ExecutionKwargs(TypedDict):
+    devices: tuple[int, ...]
+    simulation_sharding: NotRequired[Literal["legacy", "subjects"]]
+    axis_widths: NotRequired[Mapping[str, int]]
+
+
+type TransferKindLabel = str
+
+
+class PlacementReport(TypedDict, total=False):
+    pruned_variables: dict[RegimeName, list[StateName]]
+    devices: dict[RegimeName, list[int]]
+    value_shapes: dict[RegimeName, list[int]]
+    reference_shapes: dict[RegimeName, list[int]]
+    solution_matches_reference: bool
+    solution_mismatches: list[str]
+    transfers: dict[RegimeName, str]
+    _solution: SolutionResult
+    _reference_solution: SolutionResult
+    simulation_matches_reference: bool
+    simulation_mismatch: str
+    transfer_from_pruning_regime: TransferKindLabel
+    transfer_from_retaining_regime: TransferKindLabel
+    save_load_round_trips: bool
+
+
+def _working(**overrides: Unpack[RegimeSpec]) -> Regime:
+    spec: RegimeSpec = {
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
         "functions": {"utility": _utility_of_consumption},
@@ -114,8 +160,8 @@ def _working(**overrides: Any) -> Regime:
     return Regime(**spec)
 
 
-def _retired(**overrides: Any) -> Regime:
-    spec: dict[str, Any] = {
+def _retired(**overrides: Unpack[RegimeSpec]) -> Regime:
+    spec: RegimeSpec = {
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
         "functions": {"utility": _utility_of_consumption},
@@ -133,7 +179,10 @@ def _dead() -> Regime:
 
 
 def _build(
-    *, regimes: dict[str, Regime], sharded: tuple[str, ...], **config: Any
+    *,
+    regimes: dict[RegimeName, Regime],
+    sharded: tuple[StateName, ...],
+    **config: Unpack[ExecutionKwargs],
 ) -> Model:
     """Build the three-regime model on a fixed device set and grid vocabulary."""
     return Model(
@@ -147,7 +196,7 @@ def _build(
     )
 
 
-def forward_model(*, devices: tuple[int, ...], sharded: tuple[str, ...]) -> Model:
+def forward_model(*, devices: tuple[int, ...], sharded: tuple[StateName, ...]) -> Model:
     """`kind` read by the working regime and dropped by every later regime."""
     return _build(
         regimes={
@@ -166,7 +215,7 @@ def forward_model(*, devices: tuple[int, ...], sharded: tuple[str, ...]) -> Mode
     )
 
 
-def mirror_model(*, devices: tuple[int, ...], sharded: tuple[str, ...]) -> Model:
+def mirror_model(*, devices: tuple[int, ...], sharded: tuple[StateName, ...]) -> Model:
     """`kind` read only by the retirement regime, which the working regime enters."""
     return Model(
         regimes={
@@ -223,14 +272,14 @@ def build_pruned_continuous_sharded_state() -> Model:
 
 def _solve_and_compare(
     *, model: Model, reference: Model, decimal: int
-) -> dict[str, Any]:
+) -> PlacementReport:
     """Solve both models and report placement, shapes and agreement."""
     from _lcm.solution import backward_induction  # noqa: PLC0415
 
-    captured: list[Any] = []
+    captured: list[PlannedCore] = []
     original = backward_induction._attach_resolved_output_layout
 
-    def capture(**kwargs: Any) -> Any:
+    def capture(**kwargs: Unpack[AttachResolvedOutputLayoutKwargs]) -> PlannedCore:
         core = original(**kwargs)
         captured.append(core)
         return core
@@ -242,9 +291,9 @@ def _solve_and_compare(
         solution = model.solve(params=_PARAMS, log_level="off")
     reference_solution = reference.solve(params=_PARAMS, log_level="off")
 
-    devices: dict[str, list[int]] = {}
-    value_shapes: dict[str, list[int]] = {}
-    reference_shapes: dict[str, list[int]] = {}
+    devices: dict[RegimeName, list[int]] = {}
+    value_shapes: dict[RegimeName, list[int]] = {}
+    reference_shapes: dict[RegimeName, list[int]] = {}
     mismatches: list[str] = []
     for period, values in solution.values.items():
         for regime_name, value in values.items():
@@ -283,11 +332,11 @@ def _solve_and_compare(
 def _simulations_agree(
     *,
     model: Model,
-    solution: Any,
+    solution: SolutionResult,
     reference: Model,
-    reference_solution: Any,
+    reference_solution: SolutionResult,
     decimal: int,
-) -> tuple[str, Any]:
+) -> tuple[str, SimulationResult]:
     """Simulate both models from the same conditions and compare their frames.
 
     Returns:
@@ -322,7 +371,7 @@ def _simulations_agree(
     return "", result
 
 
-def report_forward(*, decimal: int) -> dict[str, Any]:
+def report_forward(*, decimal: int) -> PlacementReport:
     """Report the forward model's placement, values, transfers and persistence."""
     import tempfile  # noqa: PLC0415
 
@@ -351,7 +400,7 @@ def report_forward(*, decimal: int) -> dict[str, Any]:
     return report
 
 
-def report_mirror(*, decimal: int) -> dict[str, Any]:
+def report_mirror(*, decimal: int) -> PlacementReport:
     """Report the mirror model's placement, values and transfers."""
     model = mirror_model(devices=tuple(range(_N_DEVICES)), sharded=("kind",))
     reference = mirror_model(devices=(0,), sharded=())
@@ -369,7 +418,7 @@ def report_mirror(*, decimal: int) -> dict[str, Any]:
     return report
 
 
-def report_subject_sharded(*, decimal: int) -> dict[str, Any]:
+def report_subject_sharded(*, decimal: int) -> PlacementReport:
     """Report the forward model simulated with subjects spread over every device."""
     model = _build(
         regimes={
@@ -402,7 +451,7 @@ def report_subject_sharded(*, decimal: int) -> dict[str, Any]:
     }
 
 
-def _run_in_four_device_process(*, entry_point: str) -> dict[str, Any]:
+def _run_in_four_device_process(*, entry_point: str) -> PlacementReport:
     """Run one module-level report function on four CPU devices and return it.
 
     The child carries this run's float policy — `jax_enable_x64`, the matmul
@@ -443,133 +492,133 @@ def _run_in_four_device_process(*, entry_point: str) -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def forward() -> dict[str, Any]:
+def forward() -> PlacementReport:
     """Return the forward model's report from one four-device child process."""
     return _run_in_four_device_process(entry_point="report_forward")
 
 
 @pytest.fixture(scope="module")
-def mirror() -> dict[str, Any]:
+def mirror() -> PlacementReport:
     """Return the mirror model's report from one four-device child process."""
     return _run_in_four_device_process(entry_point="report_mirror")
 
 
 @pytest.fixture(scope="module")
-def subject_sharded() -> dict[str, Any]:
+def subject_sharded() -> PlacementReport:
     """Return the subject-sharded report from one four-device child process."""
     return _run_in_four_device_process(entry_point="report_subject_sharded")
 
 
 def test_a_non_terminal_regime_may_prune_a_sharded_state(
-    forward: dict[str, Any],
+    forward: PlacementReport,
 ) -> None:
     """The retirement regime drops the sharded state its DAG never reads."""
     assert forward["pruned_variables"]["retired"] == ["kind"]
 
 
-def test_a_reading_regime_keeps_the_sharded_state(forward: dict[str, Any]) -> None:
+def test_a_reading_regime_keeps_the_sharded_state(forward: PlacementReport) -> None:
     """The working regime, which reads the state, retains it."""
     assert forward["pruned_variables"]["working"] == []
 
 
 def test_a_retaining_regime_takes_one_device_per_category(
-    forward: dict[str, Any],
+    forward: PlacementReport,
 ) -> None:
     """The regime carrying the state runs on one device per grid point."""
     assert forward["devices"]["working"] == list(range(_KIND_EXTENT))
 
 
 def test_a_pruning_non_terminal_regime_runs_on_one_device(
-    forward: dict[str, Any],
+    forward: PlacementReport,
 ) -> None:
     """The regime without the axis is placed as a single-device regime."""
     assert len(forward["devices"]["retired"]) == 1
 
 
 def test_a_pruning_regimes_value_has_the_unsharded_shape(
-    forward: dict[str, Any],
+    forward: PlacementReport,
 ) -> None:
     """Dropping the state drops its axis from the value the regime publishes."""
     assert forward["value_shapes"]["retired"] == forward["reference_shapes"]["retired"]
 
 
 def test_a_retaining_regimes_value_leads_with_the_category_axis(
-    forward: dict[str, Any],
+    forward: PlacementReport,
 ) -> None:
     """The sharded axis is the leading axis of the retaining regime's value."""
     assert forward["value_shapes"]["working"][0] == _KIND_EXTENT
 
 
 def test_the_sharded_solution_equals_the_single_device_solution(
-    forward: dict[str, Any],
+    forward: PlacementReport,
 ) -> None:
     """Placement partitions the solve; it never changes the values published."""
     assert forward["solution_matches_reference"] is True
 
 
 def test_the_sharded_simulation_equals_the_single_device_simulation(
-    forward: dict[str, Any],
+    forward: PlacementReport,
 ) -> None:
     """The simulated frames agree with the unsharded reference model's."""
     assert forward["simulation_matches_reference"] is True
 
 
 def test_reading_a_single_device_value_onto_a_mesh_is_a_copy_to_source_layout(
-    forward: dict[str, Any],
+    forward: PlacementReport,
 ) -> None:
     """The pruning regime's value reaches the sharded reader as a device copy."""
     assert forward["transfer_from_pruning_regime"] == "copy_to_source_layout"
 
 
-def test_a_saved_sharded_result_reloads_unchanged(forward: dict[str, Any]) -> None:
+def test_a_saved_sharded_result_reloads_unchanged(forward: PlacementReport) -> None:
     """Persisting and reloading the result reproduces the same frame."""
     assert forward["save_load_round_trips"] is True
 
 
 def test_the_mirror_model_prunes_the_state_from_the_entering_regime(
-    mirror: dict[str, Any],
+    mirror: PlacementReport,
 ) -> None:
     """A state only a later regime reads is dropped from the earlier one."""
     assert mirror["pruned_variables"]["working"] == ["kind"]
 
 
 def test_the_mirror_models_reading_regime_takes_the_sharded_block(
-    mirror: dict[str, Any],
+    mirror: PlacementReport,
 ) -> None:
     """The later regime that reads the state carries the device axis."""
     assert mirror["devices"]["retired"] == list(range(_KIND_EXTENT))
 
 
 def test_the_mirror_models_entering_regime_runs_on_one_device(
-    mirror: dict[str, Any],
+    mirror: PlacementReport,
 ) -> None:
     """The regime that only enters the state needs no axis of its own."""
     assert len(mirror["devices"]["working"]) == 1
 
 
 def test_reading_a_sharded_value_onto_one_device_is_a_copy_to_source_layout(
-    mirror: dict[str, Any],
+    mirror: PlacementReport,
 ) -> None:
     """An unsharded regime reads a sharded target's full value by device copy."""
     assert mirror["transfer_from_retaining_regime"] == "copy_to_source_layout"
 
 
 def test_the_mirror_solution_equals_the_single_device_solution(
-    mirror: dict[str, Any],
+    mirror: PlacementReport,
 ) -> None:
     """The mirror model's values agree with its unsharded reference."""
     assert mirror["solution_matches_reference"] is True
 
 
 def test_the_mirror_simulation_equals_the_single_device_simulation(
-    mirror: dict[str, Any],
+    mirror: PlacementReport,
 ) -> None:
     """The mirror model's simulated frames agree with its unsharded reference."""
     assert mirror["simulation_matches_reference"] is True
 
 
 def test_subject_sharded_simulation_equals_the_single_device_simulation(
-    subject_sharded: dict[str, Any],
+    subject_sharded: PlacementReport,
 ) -> None:
     """Sharding forward subjects over every device leaves the frames unchanged."""
     assert subject_sharded["simulation_matches_reference"] is True

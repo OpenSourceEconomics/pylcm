@@ -1,5 +1,6 @@
 """Tests for process_params function."""
 
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import cast
 
@@ -14,8 +15,10 @@ from _lcm.typing import ParamsTemplate
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 
+type _TemplateNode = str | Mapping[str, _TemplateNode]
 
-def _as_template(plain: dict) -> ParamsTemplate:
+
+def _as_template(plain: Mapping[str, _TemplateNode]) -> ParamsTemplate:
     """Deep-freeze a plain nested dict into a `ParamsTemplate` for tests."""
     return cast("ParamsTemplate", ensure_containers_are_immutable(plain))
 
@@ -186,7 +189,7 @@ class MockRegime(Regime):
 
     """
 
-    def __init__(self, regime_params_template: dict) -> None:
+    def __init__(self, regime_params_template: Mapping[str, _TemplateNode]) -> None:
         object.__setattr__(
             self,
             "regime_params_template",

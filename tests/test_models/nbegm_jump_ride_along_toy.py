@@ -12,16 +12,21 @@ continuation. The brute variant (`GridSearch`) productmaps over
 `(liquid, kind, consumption)` and is the dense agreement oracle.
 """
 
+from collections.abc import Mapping
+from typing import Literal
+
 import jax.numpy as jnp
 from dags import with_signature
 
 import lcm
+from _lcm.grids.base import Grid
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     feasible,
@@ -75,8 +80,8 @@ def build_model(
     liquid_max: float = 30.0,
     n_savings: int = 200,
     savings_max: float = 28.0,
-    extra_actions: dict | None = None,
-    jump_read: str = "one_sided",
+    extra_actions: Mapping[str, Grid] | None = None,
+    jump_read: Literal["one_sided", "bridged"] = "one_sided",
 ) -> Model:
     """Create the (alive, dead) toy whose subsidy cliff lives on derived income.
 
@@ -148,7 +153,7 @@ def build_params(
     subsidy_low: float = 0.0,
     subsidy_high: float = 3.0,
     fpl_cliff: float = 15.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the derived-income subsidy-cliff toy.
 
     `base_income` is a length-2 array indexed by the `kind` code (`lo`, `hi`). The

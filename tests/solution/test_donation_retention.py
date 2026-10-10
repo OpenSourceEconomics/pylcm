@@ -1,13 +1,15 @@
 """Retention, eager execution and the complete live read inventory bound donation."""
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Unpack, cast
 
 import jax
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from _lcm.egm.carry import EGMCarry
-from _lcm.execution.core_program import CoreBuildContext
+from _lcm.execution.core_program import CoreBuildContext, CoreProgramGraphAware
 from _lcm.solution import backward_induction
 from _lcm.solution.continuation_arguments import (
     MARGINAL_ARGUMENT,
@@ -15,9 +17,13 @@ from _lcm.solution.continuation_arguments import (
 )
 from lcm import ExecutionConfig, Model
 from lcm.solver_api import EGM_CONTINUATION, ResultRetention
+from lcm.typing import FloatND, RegimeName
+from tests.solution._callback_types import RunPeriodKernelKwargs, RunPeriodKernelResult
 from tests.test_models import nbegm_ride_along_toy
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.nbegm_common import RegimeId
+
+type _CarryInput = jax.Array | Mapping[str, _CarryInput] | None
 
 
 @pytest.mark.parametrize("mode", ["default", "retained", "eager"])
@@ -45,10 +51,10 @@ def test_retention_and_eager_execution_protect_all_output_owners(
     )
     run = backward_induction._run_period_kernel
     nominations: list[tuple[str, ...]] = []
-    outputs: list[tuple[Any, np.ndarray]] = []
+    outputs: list[tuple[jax.Array, NDArray[np.float32 | np.float64]]] = []
     declarations: list[int] = []
 
-    def observe(**kwargs: Any) -> Any:
+    def observe(**kwargs: Unpack[RunPeriodKernelKwargs]) -> RunPeriodKernelResult:
         if kwargs["regime_name"] == "alive":
             nominations.extend(
                 core.donated_arguments for core in kwargs["compiled_cores"].values()
@@ -79,11 +85,12 @@ def test_retention_and_eager_execution_protect_all_output_owners(
         assert any(ref.key == EGM_CONTINUATION for ref in result.retained_continuations)
 
 
-def _assert_complete_live_reads(*, kwargs: dict[str, Any]) -> list[int]:
+def _assert_complete_live_reads(*, kwargs: RunPeriodKernelKwargs) -> list[int]:
     counts = []
-    programs = (
-        kwargs["regime"].solution.period_kernels[kwargs["period"]].core_programs()
-    )
+    programs = cast(
+        "CoreProgramGraphAware",
+        kwargs["regime"].solution.period_kernels[kwargs["period"]],
+    ).core_programs()
     for program in programs.values():
         if not isinstance(program.argument_builder, MarginalLeafArguments):
             continue
@@ -103,9 +110,12 @@ def _assert_complete_live_reads(*, kwargs: dict[str, Any]) -> list[int]:
         assert {read.target.leaf_path for read in declared} == set(carry.leaves())
         assert len(declared) == len(carry.leaves())
         for read in declared:
-            actual: Any = arguments[read.source.argument or read.source.channel.value]
-            for segment in read.source.path:
-                actual = actual[segment]
+            actual = cast(
+                "_CarryInput",
+                arguments[read.source.argument or read.source.channel.value],
+            )
+            for segment in cast("tuple[str, ...]", read.source.path):
+                actual = cast("Mapping[str, _CarryInput]", actual)[segment]
             assert actual is carry.leaves()[read.target.leaf_path]
             assert read.source.core_key == program.name
         assert arguments[MARGINAL_ARGUMENT] is carry.marginal_utility
@@ -113,7 +123,10 @@ def _assert_complete_live_reads(*, kwargs: dict[str, Any]) -> list[int]:
             sum(leaf is carry.marginal_utility for leaf in jax.tree.leaves(arguments))
             == 1
         )
-        residual: Any = arguments["next_regime_to_continuation"]
+        residual = cast(
+            "Mapping[RegimeName, Mapping[str, FloatND | None]]",
+            arguments["next_regime_to_continuation"],
+        )
         assert "marginal_utility" not in residual["alive"]
         counts.append(len(declared))
     return counts

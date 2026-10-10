@@ -1,7 +1,7 @@
 """A transfer several consumers of one period share is executed once."""
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from types import MappingProxyType
 from typing import NoReturn
 
@@ -74,7 +74,9 @@ def _arguments(*, stored: jax.Array) -> MappingProxyType[str, ArgumentTree]:
     )
 
 
-def _key(*, transfer: ResolvedValueTransfer) -> tuple[object, object]:
+def _key(
+    *, transfer: ResolvedValueTransfer
+) -> tuple[ValueArtifactAddress, jax.sharding.Sharding]:
     return (transfer.target, transfer.source_sharding)
 
 
@@ -357,7 +359,9 @@ def test_a_not_produced_registered_copy_survives_its_consumers_commit() -> None:
     assert not copy.is_deleted()
 
 
-def _sole_blocked_on_argument(*, blocked_on: list[object]) -> object:
+def _sole_blocked_on_argument(
+    *, blocked_on: list[tuple[jax.Array, ...]]
+) -> tuple[jax.Array, ...]:
     """Return the single argument a barrier spy recorded, type-narrowed to a tuple."""
     assert len(blocked_on) == 1
     (recorded,) = blocked_on
@@ -388,7 +392,7 @@ def test_commit_consumer_blocks_on_the_periods_pending_outputs_not_the_copy(
     )
     copy = jax.device_put(np.arange(3.0), source_sharding)
     cache.put(transfer=transfer, array=copy, stored=stored)
-    blocked_on: list[object] = []
+    blocked_on: list[tuple[jax.Array, ...]] = []
     monkeypatch.setattr(
         scheduler.jax, "block_until_ready", blocked_on.append, raising=True
     )
@@ -426,7 +430,9 @@ def test_commit_consumer_logs_a_release_record_for_a_registered_copy() -> None:
     assert records
 
 
-def _released_artifacts(*, records: object) -> tuple[object, ...]:
+def _released_artifacts(
+    *, records: tuple[scheduler.ReleaseRecord, ...]
+) -> tuple[Hashable, ...]:
     """Return the artifacts a `commit_consumer` result named, type-narrowed."""
     assert isinstance(records, tuple)
     return tuple(record.artifact for record in records)
@@ -485,7 +491,7 @@ def _planned_core(*, name: str, transfer: ResolvedValueTransfer) -> PlannedCore:
     )
 
 
-def _unreachable_core(**_kwargs: object) -> NoReturn:
+def _unreachable_core[Ignored](**_kwargs: Ignored) -> NoReturn:
     """Stand in for a compiled core the plan never calls."""
     raise AssertionError
 

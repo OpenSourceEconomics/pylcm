@@ -34,10 +34,11 @@ Three properties are tested:
 
 import dataclasses
 import functools
+import logging
 import re
 import tempfile
+from collections.abc import Hashable, Mapping
 from pathlib import Path
-from typing import Any
 
 import cloudpickle
 import jax
@@ -53,6 +54,7 @@ from _lcm.execution.workspace_planning import (
 )
 from _lcm.solution import backward_induction, grid_search
 from _lcm.solution.period_capture import _PAYLOAD_NAME
+from _lcm.typing import ArrayTree, QAndFArg, QAndFFunction
 from _lcm.utils import dispatchers
 from lcm import (
     AgeGrid,
@@ -67,6 +69,7 @@ from lcm import (
 )
 from lcm.execution import WidthSearch, WidthSearchPolicy
 from lcm.regime import Regime
+from lcm.solver_api import SolutionResult
 from lcm.solvers import CELL_AXIS
 from lcm.typing import (
     BoolND,
@@ -76,6 +79,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    StateName,
     UserParams,
 )
 from tests.solution.test_covered_axis_parity import (
@@ -252,7 +256,7 @@ def _params() -> UserParams:
 @functools.cache
 def _run(
     *, n_habits: int, arm: str, broadcast: bool
-) -> tuple[Any, pd.DataFrame, tuple[tuple[str, ...], ...], tuple[str, ...]]:
+) -> tuple[SolutionResult, pd.DataFrame, tuple[tuple[str, ...], ...], tuple[str, ...]]:
     """Solve and simulate one case, observing the broadcast choice and the lowerings.
 
     Return the solution, the labelled simulated panel, every state tuple the
@@ -265,15 +269,36 @@ def _run(
     select = getattr(grid_search, "_continuation_unread_state_names", None)
     compile_and_log = backward_induction._compile_and_log
 
-    def observed_select(**kwargs: Any) -> tuple[str, ...]:
-        selected = select(**kwargs) if broadcast and select is not None else ()
+    def observed_select(
+        *, Q_and_F: QAndFFunction, inner_state_names: tuple[StateName, ...]
+    ) -> tuple[StateName, ...]:
+        selected = (
+            select(Q_and_F=Q_and_F, inner_state_names=inner_state_names)
+            if broadcast and select is not None
+            else ()
+        )
         selections.append(selected)
         return selected
 
-    def observed_compile(**kwargs: Any) -> Any:
-        if kwargs["label"].startswith("alive "):
-            lowered.append(kwargs["low"].as_text())
-        return compile_and_log(**kwargs)
+    def observed_compile(
+        *,
+        lowering_key: Hashable,
+        low: jax.stages.Lowered,
+        label: str,
+        log_kernel_memory: bool,
+        logger: logging.Logger,
+        phase: str | None,
+    ) -> tuple[Hashable, jax.stages.Compiled]:
+        if label.startswith("alive "):
+            lowered.append(low.as_text())
+        return compile_and_log(
+            lowering_key=lowering_key,
+            low=low,
+            label=label,
+            log_kernel_memory=log_kernel_memory,
+            logger=logger,
+            phase=phase,
+        )
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
@@ -488,7 +513,7 @@ def _execution_config(*, setting: str) -> ExecutionConfig:
 @functools.cache
 def _solve_under(
     *, setting: str, broadcast: bool
-) -> tuple[Any, int, frozenset[tuple[tuple[str, ...], int]]]:
+) -> tuple[SolutionResult, int, frozenset[tuple[tuple[str, ...], int]]]:
     """Solve the three-habit model under one width setting.
 
     Under a `budget-refuses-broadcast-windows-*` setting, every compiled program
@@ -505,11 +530,17 @@ def _solve_under(
     map_window = dispatchers._TiledProductMap.__call__
     reserve = backward_induction.compiler_memory_reservation
 
-    def observed_map_window(self: Any, **kwargs: Any) -> Any:
-        windows.append((self.variables, kwargs.get(self.width_keyword, 1)))
+    def observed_map_window(
+        self: dispatchers._TiledProductMap, **kwargs: QAndFArg
+    ) -> ArrayTree:
+        width = kwargs.get(self.width_keyword, 1)
+        assert isinstance(width, int)
+        windows.append((self.variables, width))
         return map_window(self, **kwargs)
 
-    def refusing_reserve(*, compiled: Any, widths: Any) -> Any:
+    def refusing_reserve(
+        *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
+    ) -> CompilerMemoryReservation:
         memory = reserve(compiled=compiled, widths=widths)
         if widths.get(CELL_AXIS, 0) < _BROADCAST_EXTENT:
             return memory

@@ -8,12 +8,13 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
     import jax
 
+    from _lcm.typing import JSONValue
     from lcm import ExecutionConfig, Model
 
 
@@ -44,8 +45,8 @@ def create_mahler_execution_config(
     """Reserve half the limiting physical or allocator headroom for one GPU."""
     import jax
 
-    observations: list[dict[str, Any]] = []
-    receipt: dict[str, Any] = {
+    observations: list[dict[str, JSONValue]] = []
+    receipt: dict[str, JSONValue] = {
         "status": "collecting",
         "policy": POLICY_LABEL,
         "source_hash": None,
@@ -114,8 +115,8 @@ def _assert_fp64() -> None:
 def _configure_observed_devices(
     *,
     devices: tuple[jax.Device, ...],
-    observations: list[dict[str, Any]],
-    receipt: dict[str, Any],
+    observations: list[dict[str, JSONValue]],
+    receipt: dict[str, JSONValue],
 ) -> ExecutionConfig:
     """Collect selected observations and apply the fixed workload policy."""
     from lcm import ExecutionConfig
@@ -156,7 +157,7 @@ def _configure_observed_devices(
 
 
 def _available_device_bytes(
-    *, observation: dict[str, Any], rows: list[list[str]], driver: ctypes.CDLL
+    *, observation: dict[str, JSONValue], rows: list[list[str]], driver: ctypes.CDLL
 ) -> tuple[int, str, int]:
     device_id = _nonnegative_integer(value=observation["id"], name="JAX id")
     ordinal = _nonnegative_integer(
@@ -190,13 +191,16 @@ def _available_device_bytes(
     return device_id, uuid, min(free, limit - used)
 
 
-def _read_nvidia_metadata(*, receipt: dict[str, Any]) -> list[list[str]]:
+def _read_nvidia_metadata(*, receipt: dict[str, JSONValue]) -> list[list[str]]:
     command = [
         "nvidia-smi",
         "--query-gpu=uuid,name,driver_version,memory.total,memory.free",
         "--format=csv,noheader,nounits",
     ]
-    observation: dict[str, Any] = {"command": command, "observed_at": _timestamp()}
+    observation: dict[str, JSONValue] = {
+        "command": command,
+        "observed_at": _timestamp(),
+    }
     receipt["nvidia_smi"] = observation
     result = subprocess.run(
         command, capture_output=True, text=True, timeout=10, check=False
@@ -258,7 +262,7 @@ def _timestamp() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _nonnegative_integer(*, value: object, name: str) -> int:
+def _nonnegative_integer(*, value: JSONValue, name: str) -> int:
     if type(value) is not int or value < 0:
         raise ValueError(f"{name} must be a nonnegative integer, got {value!r}.")
     return value

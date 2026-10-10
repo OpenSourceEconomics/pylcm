@@ -11,17 +11,19 @@ the preimage machinery) and floored/clipped budgets (which carry a `continuous_k
 and route to the mixed step).
 """
 
+import functools
 import gc
 import itertools
 import weakref
-from types import MappingProxyType, SimpleNamespace
-from typing import Any, Literal
+from types import MappingProxyType
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.continuation import ContinuationPlan
 from _lcm.solution import nbegm
 from _lcm.solution.nbegm import (
     _fail_if_budget_nonaffine_in_liquid,
@@ -29,13 +31,14 @@ from _lcm.solution.nbegm import (
     _ProbeArguments,
 )
 from _lcm.solution.preconditions import check_solver_params
+from _lcm.typing import EconFunctionArg
 from lcm.exceptions import RegimeInitializationError
 from lcm.model import Model
-from lcm.typing import FloatND
+from lcm.typing import FloatND, UserParams
 from tests.test_models import nbegm_jump_schedule_toy as toy
 
 
-def _check_probes(*, model: Model, params: dict) -> None:
+def _check_probes(*, model: Model, params: UserParams) -> None:
     """Run the solver's parameter-dependent preconditions, and nothing else."""
     check_solver_params(
         regimes=model._regimes,
@@ -540,19 +543,28 @@ def test_legal_non_unit_derived_ride_route_matches_scalar_oracle(
     assert production is oracle
 
 
-def _make_reuse_check(
-    *, family: str, traces: list[None]
-) -> Any:  # Inspect model-owned JIT caches in lifetime controls.
+def _make_reuse_check(*, family: str, traces: list[None]) -> nbegm._DeferredProbe:
     """Build a deferred check with a known derivative and observable scalar traces."""
 
-    def func(*, liquid: FloatND, curvature: object) -> FloatND:
+    def func(*, liquid: FloatND, curvature: FloatND) -> FloatND:
         traces.append(None)
         return liquid * (0.0 if family == "continuation" else 1.0) + (
             jnp.asarray(curvature).reshape(()) * liquid**2
         )
 
     grid = jnp.asarray([0.0, 1.0, 3.0])
-    bound: dict[str, Any] = (
+
+    @functools.wraps(func)
+    def transition_probs(
+        *args: EconFunctionArg, **kwargs: EconFunctionArg
+    ) -> MappingProxyType[str, FloatND]:
+        assert not args
+        liquid, curvature = kwargs["liquid"], kwargs["curvature"]
+        assert isinstance(liquid, jax.Array)
+        assert isinstance(curvature, jax.Array)
+        return MappingProxyType({"test": func(liquid=liquid, curvature=curvature)})
+
+    bound: dict[str, nbegm._ProbeBinding] = (
         {
             "coh_dag": func,
             "require_unit_slope": False,
@@ -561,12 +573,16 @@ def _make_reuse_check(
         }
         if family == "budget"
         else {
-            "continuation_plan": SimpleNamespace(
-                stateful_targets=(), compute_regime_transition_probs=func
+            "continuation_plan": ContinuationPlan(
+                stateful_targets=(),
+                scalar_targets=("test",),
+                child_reads=MappingProxyType({}),
+                post_decision_name="liquid",
+                compute_regime_transition_probs=transition_probs,
             )
         }
     )
-    return nbegm._deferred_probe(
+    check = nbegm._deferred_probe(
         probe=(
             nbegm._fail_if_budget_nonaffine_in_liquid
             if family == "budget"
@@ -574,12 +590,15 @@ def _make_reuse_check(
         ),
         regime_name="test",
         probe_arguments=nbegm._ProbeArguments(),
+        probe_schedule="every_solve",
         liquid_name="liquid",
         **bound,
     )
+    assert isinstance(check, nbegm._DeferredProbe)
+    return check
 
 
-def _probe_draw(value: object) -> nbegm.FlatParams:
+def _probe_draw(value: float | FloatND) -> nbegm.FlatParams:
     """Supply the current curvature value to the deferred check."""
     return MappingProxyType(
         {"test": MappingProxyType({"curvature": jnp.asarray(value)})}
@@ -609,12 +628,23 @@ def test_deferred_liquid_probes_release_failed_shapes(family: str) -> None:
     """Invalid parameter shapes do not accumulate retained JIT cache entries."""
     check = _make_reuse_check(family=family, traces=[])
     check(flat_params=_probe_draw(0.0))
-    programs = tuple(check.bound["derivative_programs"].values())
+    program_bank = check.bound["derivative_programs"]
+    assert isinstance(program_bank, MappingProxyType)
+    programs = tuple(program_bank.values())
+    assert all(hasattr(program, "_cache_size") for program in programs)
     sizes = []
     for length in range(2, 10):
         with pytest.raises(RegimeInitializationError):
             check(flat_params=_probe_draw(jnp.zeros(length)))
-        sizes.append(sum(program._cache_size() for program in programs))
+        total = 0
+        for program in programs:
+            assert hasattr(program, "_cache_size")
+            cache_size = program._cache_size
+            assert callable(cache_size)
+            size = cache_size()
+            assert isinstance(size, int)
+            total += size
+        sizes.append(total)
     check(flat_params=_probe_draw(0.0))
     assert sizes == [0] * 8
 
@@ -627,14 +657,20 @@ def test_deferred_liquid_probes_release_programs_and_parameter_draws(
     check = _make_reuse_check(family=family, traces=[])
     current = _probe_draw(0.0)
     parameter = weakref.ref(current["test"]["curvature"])
-    programs = [
-        weakref.ref(program) for program in check.bound["derivative_programs"].values()
-    ]
-    func = weakref.ref(
-        check.bound["coh_dag"]
-        if family == "budget"
-        else check.bound["continuation_plan"].compute_regime_transition_probs
-    )
+    program_bank = check.bound["derivative_programs"]
+    assert isinstance(program_bank, MappingProxyType)
+    programs = [weakref.ref(program) for program in program_bank.values()]
+    del program_bank
+    if family == "budget":
+        target = check.bound["coh_dag"]
+        assert callable(target)
+    else:
+        plan = check.bound["continuation_plan"]
+        assert isinstance(plan, ContinuationPlan)
+        target = plan.compute_regime_transition_probs
+        del plan
+    func = weakref.ref(target)
+    del target
     check(flat_params=current)
     del current
     gc.collect()

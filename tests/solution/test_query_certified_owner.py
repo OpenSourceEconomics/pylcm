@@ -13,6 +13,7 @@ solve actually produces rather than one only algebra can reach.
 """
 
 from fractions import Fraction
+from typing import Literal, TypedDict
 
 import jax.numpy as jnp
 import numpy as np
@@ -39,7 +40,22 @@ _SCALINGS = [
 _SCALING_IDS = ["plain", "raised", "rescaled", "rescaled_and_raised"]
 
 
-def _witness(*, coordinate_scale: float, value_scale: float, common_level: float):
+class _Witness(TypedDict):
+    endog_grid: np.ndarray
+    value: np.ndarray
+    policy: np.ndarray
+    marginal: np.ndarray
+    segment_id: np.ndarray
+    query: np.float32 | np.float64
+    policy_above: float
+
+
+type _RowName = Literal["endog_grid", "value", "policy", "marginal"]
+
+
+def _witness(
+    *, coordinate_scale: float, value_scale: float, common_level: float
+) -> _Witness:
     """Two branches spanning one interval, the flatter one strictly above at the query.
 
     The steeper branch is the one an ordinary tie-break prefers, so it stands in
@@ -99,7 +115,7 @@ def _exact_value_at(*, x_left, x_right, v_left, v_right, query) -> Fraction:
     return low + (at - left) * (high - low) / (right - left)
 
 
-def _stored_as(*, witness: dict, row_order: str) -> dict:
+def _stored_as(*, witness: _Witness, row_order: str) -> _Witness:
     """The same two branches, either as given or with the branch rows swapped.
 
     Which branch is stored first is not information about the geometry, so it
@@ -108,13 +124,14 @@ def _stored_as(*, witness: dict, row_order: str) -> dict:
     if row_order == "stored":
         return witness
     order = np.asarray([2, 3, 0, 1])
-    swapped = dict(witness)
-    for name in ("endog_grid", "value", "policy", "marginal"):
+    swapped = witness.copy()
+    names: tuple[_RowName, ...] = ("endog_grid", "value", "policy", "marginal")
+    for name in names:
         swapped[name] = witness[name][order]
     return swapped
 
 
-def _exact_margin(witness: dict) -> Fraction:
+def _exact_margin(witness: _Witness) -> Fraction:
     """How far the first branch lies above the second at the query, exactly."""
     grid, value, query = witness["endog_grid"], witness["value"], witness["query"]
     return _exact_value_at(
@@ -124,7 +141,7 @@ def _exact_margin(witness: dict) -> Fraction:
     )
 
 
-def _certificate(witness: dict) -> int:
+def _certificate(witness: _Witness) -> int:
     """The engine's certified sign of that same margin."""
     grid, value = witness["endog_grid"], witness["value"]
     return int(
@@ -142,7 +159,7 @@ def _certificate(witness: dict) -> int:
     )
 
 
-def _published_policy(*, witness: dict, row_order: str, block_size: int) -> float:
+def _published_policy(*, witness: _Witness, row_order: str, block_size: int) -> float:
     """The policy the envelope publishes at the witness's query."""
     stored = _stored_as(witness=witness, row_order=row_order)
     _, policy, _ = envelope_at_query(

@@ -12,13 +12,21 @@ Repeated simulation reuses the active runtime executor and must preserve
 every routed subject.
 """
 
+from collections.abc import Mapping
 from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.typing import QualifiedName
 from lcm import Model
 from lcm.ages import AgeGrid
+from lcm.typing import (
+    FloatND,
+    IntND,
+    UserParams,
+)
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     DissolutionRegimeId,
@@ -68,17 +76,27 @@ def _make_model() -> Model:
     )
 
 
-def _leaf_paths(*, node: object, prefix: tuple[str, ...] = ()) -> dict[str, object]:
+type _TemplateNode = str | Mapping[str, _TemplateNode]
+
+
+def _leaf_paths(
+    *,
+    node: _TemplateNode,
+    prefix: tuple[str, ...] = (),
+) -> dict[QualifiedName, str]:
     """Flatten a nested template to `regime__function__parameter` leaf paths."""
-    if isinstance(node, dict):
-        flattened: dict[str, object] = {}
+    if isinstance(node, Mapping):
+        flattened: dict[QualifiedName, str] = {}
         for key, value in node.items():
             flattened |= _leaf_paths(node=value, prefix=(*prefix, key))
         return flattened
     return {"__".join(prefix): node}
 
 
-def _fill_in_place(node: dict) -> None:
+type _FillableTemplate = str | float | dict[str, _FillableTemplate]
+
+
+def _fill_in_place(node: dict[str, _FillableTemplate]) -> None:
     """Set every leaf of a template branch from its own parameter name.
 
     The walk is recursive rather than three nested loops because the template
@@ -94,14 +112,14 @@ def _fill_in_place(node: dict) -> None:
             node[key] = _VALUES[key]
 
 
-def _filled_template(model: Model) -> dict:
+def _filled_template(model: Model) -> UserParams:
     """The model's own template, with each leaf set from its parameter name."""
     template = model.get_params_template()
-    _fill_in_place(template)
-    return template
+    _fill_in_place(cast("dict[str, _FillableTemplate]", template))
+    return cast("UserParams", template)
 
 
-def _initial_conditions(model: Model) -> MappingProxyType:
+def _initial_conditions(model: Model) -> MappingProxyType[str, FloatND | IntND]:
     """A married cohort of `_N_SUBJECTS`, one on each side of the dissolution."""
     return MappingProxyType(
         {

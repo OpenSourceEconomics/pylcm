@@ -32,7 +32,8 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import ByAge, Model
+from lcm import ByAge, Model, StochasticTransition
+from lcm.typing import RegimeName
 from lcm_examples.mahler_yum_2024 import (
     MODEL_EDGES,
     RETIREMENT_REGIME,
@@ -179,13 +180,18 @@ def test_retirement_split_removes_exactly_the_work_only_dimensions():
     assert _targets("retirement") == {"retirement", "dead"}
 
 
-def _targets(source: str) -> set[str]:
+def _targets(source: RegimeName) -> set[str]:
     """Every target any age of the source's transition schedule declares."""
     schedule = cast("ByAge", MODEL_EDGES[source].law)
-    return set().union(*(cast("Mapping[str, object]", law) for law in schedule.laws))
+    return set().union(
+        *(
+            cast("Mapping[RegimeName, StochasticTransition]", law)
+            for law in schedule.laws
+        )
+    )
 
 
-def _covered_periods(source: str) -> set[int]:
+def _covered_periods(source: RegimeName) -> set[int]:
     schedule = cast("ByAge", MODEL_EDGES[source].law)
     return set(schedule.resolve(ages).law_by_period)
 
@@ -284,7 +290,10 @@ def value_function_sums(*, mahler_gpu_model: Model) -> dict[tuple[int, str], flo
 @_gpu_x64
 @pytest.mark.parametrize(("period", "regime"), list(_EXPECTED_V_SUMS))
 def test_value_function_sums(
-    *, value_function_sums: dict[tuple[int, str], float], period: int, regime: str
+    *,
+    value_function_sums: dict[tuple[int, str], float],
+    period: int,
+    regime: RegimeName,
 ) -> None:
     """The solved value function sums to its pinned value in each checked slot."""
     np.testing.assert_allclose(

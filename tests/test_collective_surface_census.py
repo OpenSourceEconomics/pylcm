@@ -57,7 +57,7 @@ _ENGINE_LEVEL_MODULES = frozenset(
 )
 
 
-def _calls(*, source: str, name: str) -> bool:
+def _calls(*, source: PythonSource, name: str) -> bool:
     """Report whether the source calls `name`, plain or as an attribute."""
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Call):
@@ -67,7 +67,7 @@ def _calls(*, source: str, name: str) -> bool:
     return False
 
 
-def _passes_keyword(*, source: str, keyword: str) -> bool:
+def _passes_keyword(*, source: PythonSource, keyword: str) -> bool:
     """Report whether the source passes `keyword=` to any call."""
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Call) and any(
@@ -77,7 +77,7 @@ def _passes_keyword(*, source: str, keyword: str) -> bool:
     return False
 
 
-def _reaches_public_model(*, source: str) -> bool:
+def _reaches_public_model(*, source: PythonSource) -> bool:
     """Recognize a call to `Model`, plain or as an attribute."""
     return _calls(source=source, name="Model")
 
@@ -93,7 +93,10 @@ _DECLARATIONS = (
 )
 
 
-def _exercises_the_surface(source: str) -> bool:
+type PythonSource = str
+
+
+def _exercises_the_surface(source: PythonSource) -> bool:
     """Report whether the source declares a household, a value constraint or an edge."""
     return any(_calls(source=source, name=name) for name in _DECLARATIONS)
 
@@ -134,9 +137,9 @@ def test_sources_are_read_as_utf_8_whatever_the_platform_default_is():
     recorded: list[str | None] = []
     original = Path.read_text
 
-    def recording_read_text(self: Path, *args: object, **kwargs: object) -> str:
-        recorded.append(kwargs.get("encoding"))  # ty: ignore[invalid-argument-type]
-        return original(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+    def recording_read_text(self: Path, *args: str | None, **kwargs: str | None) -> str:
+        recorded.append(kwargs.get("encoding"))
+        return original(self, *args, **kwargs)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(Path, "read_text", recording_read_text)
@@ -186,7 +189,7 @@ def test_most_of_the_surface_is_covered_through_the_public_route():
         ("collective_utility = 1", False),
     ],
 )
-def test_the_census_reads_syntax_not_text(*, source: str, expected: bool):
+def test_the_census_reads_syntax_not_text(*, source: PythonSource, expected: bool):
     """The detector answers both ways, so a negative census means something."""
     assert _exercises_the_surface(source) is expected
 
@@ -200,7 +203,9 @@ def test_the_census_reads_syntax_not_text(*, source: str, expected: bool):
         ('"""Builds no Model, only mentions one."""', False),
     ],
 )
-def test_reaching_model_is_a_call_not_a_mention(*, source: str, expected: bool):
+def test_reaching_model_is_a_call_not_a_mention(
+    *, source: PythonSource, expected: bool
+):
     """A public route calls `Model`."""
     assert _reaches_public_model(source=source) is expected
 
@@ -218,7 +223,7 @@ _DECOMPOSED_NAMES = (
 )
 
 
-def _writes_a_decomposed_name(source: str) -> list[str]:
+def _writes_a_decomposed_name(source: PythonSource) -> list[str]:
     """Return the decomposed names this source writes as a keyword or parameter.
 
     Reading one back off a regime stays legal — that is what they are for — so

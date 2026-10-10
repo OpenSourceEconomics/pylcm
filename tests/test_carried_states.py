@@ -10,7 +10,7 @@ quantity two roles:
 """
 
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -155,7 +155,7 @@ def test_solve_grid_excludes_carried_state() -> None:
 
 
 def _solve_pension_model(model: Model) -> Mapping[int, Mapping[str, FloatND]]:
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = cast("dict[str, dict[str, dict[str, float]]]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     return model.solve(params=params, log_level="debug").values
 
@@ -172,7 +172,7 @@ def test_carried_state_solves_like_plain_function() -> None:
 
 
 def _simulate_pension(*, model: Model, pension_seed: list[float]) -> pd.DataFrame:
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = cast("dict[str, dict[str, dict[str, float]]]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     n = len(pension_seed)
     result = model.simulate(
@@ -225,7 +225,7 @@ def test_simulate_compiled_runtime_carries_carried_state() -> None:
         initial_nodes={60: "working"},
         edges=WORKING_EDGES,
     )
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = cast("dict[str, dict[str, dict[str, float]]]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     result = model.simulate(
         log_level="debug",
@@ -317,7 +317,7 @@ def test_simulate_evolves_carried_state_across_carried_only_handover() -> None:
     of being copied unchanged.
     """
     model = _build_handover_model()
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = cast("dict[str, dict[str, dict[str, float]]]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     params["retired"]["koopmans_aggregator"]["discount_factor"] = 0.95
     result = model.simulate(
@@ -377,7 +377,7 @@ def test_additional_targets_read_carried_value() -> None:
         initial_nodes={60: "working"},
         edges=WORKING_EDGES,
     )
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = cast("dict[str, dict[str, dict[str, float]]]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     result = model.simulate(
         log_level="debug",
@@ -423,7 +423,7 @@ def test_initial_feasibility_checks_seeded_carried_value() -> None:
         initial_nodes={60: "working"},
         edges=WORKING_EDGES,
     )
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = cast("dict[str, dict[str, dict[str, float]]]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     # Imputed pension is aime * 0.1 = 2.0 (feasible); the carried value 5.0
     # violates the cap and must be rejected.
@@ -492,7 +492,7 @@ def test_solved_V_is_accepted_back_by_simulate() -> None:
     axis fewer than the regime declares states.
     """
     model = _build_pension_model(pension_as_pair=True)
-    params = cast("dict[str, Any]", model.get_params_template())
+    params = cast("dict[str, dict[str, dict[str, float]]]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     result = model.simulate(

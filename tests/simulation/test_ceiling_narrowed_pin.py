@@ -1,11 +1,12 @@
 """A fixed width pin narrowed by a width ceiling simulates like the narrow pin."""
 
-from typing import Any
+from typing import Unpack
 
 import jax.numpy as jnp
 import pandas as pd
 import pytest
 
+from _lcm.execution.workspace_planning import WorkspacePlan
 from _lcm.simulation import runtime
 from lcm import (
     AgeGrid,
@@ -17,6 +18,7 @@ from lcm import (
     Transition,
 )
 from lcm.solvers import GridSearch
+from tests.simulation._callback_types import WorkspacePlanning
 from tests.test_models.deterministic.regression import (
     START_AGE,
     LaborSupply,
@@ -64,7 +66,9 @@ def _run(
     widths: list[dict[str, int]] = []
     original = runtime.plan_workspace
 
-    def record(**kwargs: Any) -> Any:
+    def record(
+        **kwargs: Unpack[WorkspacePlanning[runtime.CompiledSimulationProgram]],
+    ) -> WorkspacePlan[runtime.CompiledSimulationProgram]:
         plan = original(**kwargs)
         widths.append(dict(plan.widths))
         return plan
@@ -110,13 +114,17 @@ def arms(
     return control, ceiled
 
 
-def test_simulate_ceiled_pin_plans_the_ceiling_width(arms: Any) -> None:
+def test_simulate_ceiled_pin_plans_the_ceiling_width(
+    arms: tuple[tuple[pd.DataFrame, set[int]], tuple[pd.DataFrame, set[int]]],
+) -> None:
     """A pin of 8 under a ceiling of 2 plans subject width 2, as a pin of 2 does."""
     (_, control_widths), (_, ceiled_widths) = arms
     assert (ceiled_widths, control_widths) == ({2}, {2})
 
 
-def test_simulate_ceiled_pin_matches_explicit_narrow_pin_panel(arms: Any) -> None:
+def test_simulate_ceiled_pin_matches_explicit_narrow_pin_panel(
+    arms: tuple[tuple[pd.DataFrame, set[int]], tuple[pd.DataFrame, set[int]]],
+) -> None:
     """The simulated panel is identical to the one from an explicit pin of 2."""
     (control, _), (ceiled, _) = arms
     pd.testing.assert_frame_equal(ceiled, control, check_exact=True)

@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import NoReturn
 
 import cloudpickle
 import jax
@@ -24,6 +24,7 @@ from _lcm.execution.compiler_memory import (
 from _lcm.solution import period_replay
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from _lcm.time import ModelTime
+from _lcm.typing import ArgumentTree
 from lcm import AgeGrid
 
 
@@ -54,7 +55,7 @@ class _CompileOnlyExecutable:
     def memory_analysis(self) -> SimpleNamespace:
         return self.stats
 
-    def __call__(self, **_kwargs: object) -> None:
+    def __call__(self, **_kwargs: ArgumentTree) -> NoReturn:
         self.executed = True
         raise AssertionError("the memory analyzer executed a compiled core")
 
@@ -156,12 +157,12 @@ def test_compiler_memory_bytes_normalizes_real_and_unsupported_backends() -> Non
     assert compiler_memory_bytes(compiled=UnsupportedExecutable(raises=True)) is None
 
 
-class _ReportingExecutable:
-    def __init__(self, *, report: object) -> None:
+class _ReportingExecutable[Report]:
+    def __init__(self, *, report: Report) -> None:
         self.report = report
 
-    def memory_analysis(self) -> Any:
-        """Return the report as untyped as JAX's own `memory_analysis` does."""
+    def memory_analysis(self) -> Report:
+        """Return the supplied report without normalizing its structure."""
         return self.report
 
 
@@ -174,7 +175,10 @@ class _ReportingExecutable:
     ],
     ids=("missing-counters", "string-keyed-record", "record-sequence"),
 )
-def test_compiler_memory_bytes_gives_no_report_for_a_non_record(report: object) -> None:
+def test_compiler_memory_bytes_gives_no_report_for_a_non_record(
+    report: SimpleNamespace | dict[str, int] | list[SimpleNamespace],
+) -> None:
     """Only a report exposing every counter pylcm reads yields byte counts."""
     executable = _ReportingExecutable(report=report)
-    assert compiler_memory_bytes(compiled=executable) is None
+    # Deliberately supply reports that violate the compiler-memory protocol.
+    assert compiler_memory_bytes(compiled=executable) is None  # ty: ignore[invalid-argument-type]

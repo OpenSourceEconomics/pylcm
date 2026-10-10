@@ -10,6 +10,7 @@ from collections.abc import Mapping
 
 import numpy as np
 
+from lcm.typing import FloatND, RegimeName
 from tests.test_models import nbegm_brute_child_toy as toy
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
@@ -21,7 +22,7 @@ def _solve(
     young_variant: str,
     n_consumption: int = 120,
     old_discrete_action: bool = False,
-) -> Mapping[int, Mapping]:
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the young→old→dead toy on the shared comparison grids."""
     model = toy.build_model(
         young_variant=young_variant,

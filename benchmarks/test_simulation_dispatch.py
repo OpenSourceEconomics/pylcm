@@ -1,8 +1,13 @@
 """Tests for the shared-measurement simulation-dispatch benchmark."""
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from benchmarks.asv import bench_simulation_dispatch as dispatch
+
+if TYPE_CHECKING:
+    from lcm.typing import UserInitialConditions, UserParams
 
 
 class _FakeResult:
@@ -17,10 +22,23 @@ class _FakeModel:
         self.n_iterations = n_iterations
         self.simulate_calls = 0
 
-    def solve(self, **_: object) -> object:
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: str,
+    ) -> object:  # noqa: PAN001 - opaque solution-identity sentinel.
         return object()
 
-    def simulate(self, **_: object) -> _FakeResult:
+    def simulate(
+        self,
+        *,
+        params: UserParams,
+        initial_conditions: UserInitialConditions,
+        solution: object,  # noqa: PAN001 - opaque solution-identity sentinel.
+        log_level: str,
+        seed: int,
+    ) -> _FakeResult:
         self.simulate_calls += 1
         return _FakeResult()
 

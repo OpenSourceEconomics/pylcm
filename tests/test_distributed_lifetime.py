@@ -13,21 +13,28 @@ import dataclasses
 import functools
 import logging
 import operator
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import Literal, TypeGuard
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.continuation import ContinuationPayload
+from _lcm.engine import StateActionSpace
+from _lcm.execution.output_layout import OutputRoleTree
 from _lcm.execution.scheduler import buffer_identity
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.grids import categorical
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.solution import backward_induction
+from _lcm.solution.backward_induction import _CompiledPrograms
 from _lcm.solution.continuation_reads import continuation_leaf_reads
+from _lcm.solution.kernel_output import ConsumedKernelOutput
+from _lcm.time import TimeAxis
+from _lcm.typing import PytreeValue
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -39,6 +46,7 @@ from lcm.solver_api import (
     ArtifactKey,
     ContinuationCapabilities,
     KernelOutput,
+    SolutionResult,
     SolverExecutionCapabilities,
 )
 from lcm.solvers import (
@@ -54,7 +62,14 @@ from lcm.solvers import (
     SolverBuildContext,
     StateAxesLeading,
 )
-from lcm.typing import FloatND, RegimeName, ScalarInt, StateName
+from lcm.typing import (
+    FlatParams,
+    FloatND,
+    ReferenceName,
+    RegimeName,
+    ScalarInt,
+    StateName,
+)
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
 )
@@ -196,25 +211,33 @@ def _value_from_two_counts(
     return _state_sum(states=states) + count + echo
 
 
-def _terminal_arguments(build: Any) -> dict[str, Any]:
+def _terminal_arguments(build: CoreBuildContext) -> dict[ReferenceName, PytreeValue]:
     """Feed the state grids to the terminal program."""
+    assert build.state_action_space is not None
     return {"states": tuple(build.state_action_space.states.values())}
 
 
-def _reading_arguments(build: Any) -> dict[str, Any]:
+def _reading_arguments(build: CoreBuildContext) -> dict[ReferenceName, PytreeValue]:
     """Feed the state grids and the target's published count to the program."""
-    count = build.next_regime_to_continuation["dead"].count
+    payload = build.next_regime_to_continuation["dead"]
+    assert isinstance(payload, _Carry)
+    count = payload.count
     _READ_INPUTS.append(count)
+    assert build.state_action_space is not None
     return {
         "states": tuple(build.state_action_space.states.values()),
         "count": count,
     }
 
 
-def _two_leaf_reading_arguments(build: Any) -> dict[str, Any]:
+def _two_leaf_reading_arguments(
+    build: CoreBuildContext,
+) -> dict[ReferenceName, PytreeValue]:
     """Feed the state grids and both published leaves to the program."""
     payload = build.next_regime_to_continuation["dead"]
+    assert isinstance(payload, _TwoLeafCarry)
     _READ_INPUTS.append(payload.count)
+    assert build.state_action_space is not None
     return {
         "states": tuple(build.state_action_space.states.values()),
         "count": payload.count,
@@ -271,7 +294,9 @@ def _terminal_template(*, context: SolverBuildContext) -> _Carry:
     )
 
 
-def _terminal_program(*, function: Any, output_roles: Any) -> CoreProgram:
+def _terminal_program(
+    *, function: Callable[..., PytreeValue], output_roles: OutputRoleTree
+) -> CoreProgram:
     """One dense program over the publishing regime's state nodes."""
     return CoreProgram(
         name="main",
@@ -338,22 +363,22 @@ class _AliasingKernel:
         """Return the core graph the planner consumes."""
         return self.programs
 
-    def with_fixed_params(self, *, fixed_flat_params: Any) -> _AliasingKernel:  # noqa: ARG002
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _AliasingKernel:  # noqa: ARG002
         """Return this parameter-free kernel unchanged."""
         return self
 
-    def __call__(
+    def __call__[Ignored](
         self,
         *,
-        compiled_cores: Any,
-        state_action_space: Any,
-        next_regime_to_V_arr: Any,
-        next_regime_to_continuation: Any,
-        flat_params: Any,
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
         period: int,
-        ages: Any,
-        logger: Any,  # noqa: ARG002
-        **_unused: Any,
+        ages: TimeAxis,
+        logger: logging.Logger,  # noqa: ARG002
+        **_unused: Ignored,
     ) -> KernelOutput:
         """Dispatch the value program and publish that array on both channels."""
         context = CoreBuildContext(
@@ -367,6 +392,7 @@ class _AliasingKernel:
         value = compiled_cores["main"](
             **self.programs["main"].argument_builder(context)
         )
+        assert isinstance(value, jax.Array)
         return KernelOutput(value=value, continuations={_COUNTER: _Carry(count=value)})
 
 
@@ -409,22 +435,22 @@ class _SharedLeafKernel:
         """Return the core graph the planner consumes."""
         return self.programs
 
-    def with_fixed_params(self, *, fixed_flat_params: Any) -> _SharedLeafKernel:  # noqa: ARG002
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _SharedLeafKernel:  # noqa: ARG002
         """Return this parameter-free kernel unchanged."""
         return self
 
-    def __call__(
+    def __call__[Ignored](
         self,
         *,
-        compiled_cores: Any,
-        state_action_space: Any,
-        next_regime_to_V_arr: Any,
-        next_regime_to_continuation: Any,
-        flat_params: Any,
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
         period: int,
-        ages: Any,
-        logger: Any,  # noqa: ARG002
-        **_unused: Any,
+        ages: TimeAxis,
+        logger: logging.Logger,  # noqa: ARG002
+        **_unused: Ignored,
     ) -> KernelOutput:
         """Dispatch the program and put its second output under both paths."""
         context = CoreBuildContext(
@@ -435,9 +461,14 @@ class _SharedLeafKernel:
             period=period,
             ages=ages,
         )
-        value, leaf = compiled_cores["main"](
+        output = compiled_cores["main"](
             **self.programs["main"].argument_builder(context)
         )
+        assert isinstance(output, tuple)
+        assert len(output) == 2
+        value, leaf = output
+        assert isinstance(value, jax.Array)
+        assert isinstance(leaf, jax.Array)
         return KernelOutput(
             value=value,
             continuations={_COUNTER: _TwoLeafCarry(count=leaf, echo=leaf)},
@@ -484,9 +515,9 @@ class _SharedLeafTerminalSolver(Solver):
 def _reading_kernels(
     *,
     context: SolverBuildContext,
-    function: Any,
-    argument_builder: Any,
-    template: Any,
+    function: Callable[..., PytreeValue],
+    argument_builder: Callable[[CoreBuildContext], Mapping[ReferenceName, PytreeValue]],
+    template: _Carry | _TwoLeafCarry,
     argument_by_leaf: Mapping[tuple[str, ...], str],
     donation_candidates: tuple[str, ...],
 ) -> SolutionKernels:
@@ -619,43 +650,82 @@ def _model(
     )
 
 
+type _Dispatch = tuple[int, RegimeName]
+
+type _Event = (
+    tuple[Literal["release", "donate"], ValueArtifactAddress, _Dispatch]
+    | tuple[Literal["dispatch"], _Dispatch, None]
+)
+
+
+def _is_dispatch[Value](value: Value) -> TypeGuard[_Dispatch]:
+    return (
+        isinstance(value, tuple)
+        and len(value) == 2
+        and isinstance(value[0], int)
+        and isinstance(value[1], str)
+    )
+
+
+def _artifact_address(
+    *, value: ValueArtifactAddress | _Dispatch
+) -> ValueArtifactAddress:
+    """Read the artifact payload of a release or donation event."""
+    assert isinstance(value, ValueArtifactAddress)
+    return value
+
+
+def _dispatch_value(*, value: ValueArtifactAddress | _Dispatch | None) -> _Dispatch:
+    """Read the dispatch payload or final consumer of a lifetime event."""
+    assert _is_dispatch(value=value)
+    return value
+
+
 class _Events(logging.Handler):
     """Collect the release and donation records a solve emits, in order."""
 
     def __init__(self) -> None:
         """Start with no record collected."""
         super().__init__(level=logging.DEBUG)
-        self.events: list[tuple[str, Any, Any]] = []
+        self.events: list[_Event] = []
 
     def emit(self, record: logging.LogRecord) -> None:
         """Keep one donation or release record, tagged by which it is."""
         if hasattr(record, "artifact_key") and hasattr(record, "donating_dispatch"):
+            assert isinstance(record.artifact_key, ValueArtifactAddress)
+            assert _is_dispatch(value=record.donating_dispatch)
             self.events.append(
                 ("donate", record.artifact_key, record.donating_dispatch)
             )
         elif hasattr(record, "artifact_key") and hasattr(record, "closing_dispatch"):
+            assert isinstance(record.artifact_key, ValueArtifactAddress)
+            assert _is_dispatch(value=record.closing_dispatch)
             self.events.append(
                 ("release", record.artifact_key, record.closing_dispatch)
             )
 
 
-class _DispatchRecorder:
+class _DispatchRecorder[**P]:
     """Run one period's kernel, recording the dispatch that ran it."""
 
-    def __init__(self, *, kernel: Any, events: list[tuple[str, Any, Any]]) -> None:
+    def __init__(
+        self, *, kernel: Callable[P, KernelOutput], events: list[_Event]
+    ) -> None:
         """Keep the kernel to delegate to and the log to interleave into."""
         self._kernel = kernel
         self._events = events
 
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> KernelOutput:
         """Record the dispatch, then run it."""
-        self._events.append(
-            ("dispatch", (kwargs["period"], kwargs["regime_name"]), None)
-        )
-        return self._kernel(**kwargs)
+        period = kwargs["period"]
+        regime_name = kwargs["regime_name"]
+        assert isinstance(period, int)
+        assert isinstance(regime_name, str)
+        self._events.append(("dispatch", (period, regime_name), None))
+        return self._kernel(*args, **kwargs)
 
 
-class _ReadObserver:
+class _ReadObserver[**P]:
     """Consume a kernel's output, recording what each dispatch read and published.
 
     A read is recorded at the dispatch that ran it, and the published value and
@@ -666,7 +736,7 @@ class _ReadObserver:
     def __init__(
         self,
         *,
-        consume: Any,
+        consume: Callable[P, ConsumedKernelOutput],
         reads: list[tuple[int, FloatND]],
         deleted_at_dispatch: list[tuple[int, bool]],
         published: dict[int, tuple[FloatND, FloatND]],
@@ -677,30 +747,33 @@ class _ReadObserver:
         self._deleted_at_dispatch = deleted_at_dispatch
         self._published = published
 
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> ConsumedKernelOutput:
         """Consume the output, then record the dispatch's read or publication."""
-        result = self._consume(**kwargs)
+        result = self._consume(*args, **kwargs)
         period = kwargs["period"]
+        assert isinstance(period, int)
         if kwargs["regime_name"] == "alive":
             leaf = _READ_INPUTS[-1]
             self._reads.append((period, leaf))
             self._deleted_at_dispatch.append((period, leaf.is_deleted()))
         elif kwargs["regime_name"] == "dead":
-            self._published[period] = (result.value, result.continuation.count)
+            continuation = result.continuation
+            assert isinstance(continuation, _Carry | _TwoLeafCarry)
+            self._published[period] = (result.value, continuation.count)
         return result
 
 
-class _CompileRecorder:
+class _CompileRecorder[**P]:
     """Compile the solve's programs, keeping the ledger they were lowered against."""
 
-    def __init__(self, *, compile_programs: Any) -> None:
+    def __init__(self, *, compile_programs: Callable[P, _CompiledPrograms]) -> None:
         """Keep the compiler to delegate to; nothing is recorded yet."""
         self._compile_programs = compile_programs
-        self.compiled: list[Any] = []
+        self.compiled: list[_CompiledPrograms] = []
 
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> _CompiledPrograms:
         """Compile, and keep the result the loop will commit to."""
-        result = self._compile_programs(**kwargs)
+        result = self._compile_programs(*args, **kwargs)
         self.compiled.append(result)
         return result
 
@@ -709,10 +782,10 @@ class _CompileRecorder:
 class _Observation:
     """One solve, with the lifetime records it emitted."""
 
-    solution: Any
+    solution: SolutionResult
     """The solve result, whose values the retention keeps."""
 
-    events: list[tuple[str, Any, Any]]
+    events: list[_Event]
     """Dispatches, releases and donations, in the order they happened."""
 
     reads: list[tuple[int, FloatND]]
@@ -725,12 +798,12 @@ class _Observation:
     """Per period, the value and continuation leaf the publishing regime stored."""
 
 
-def _solve_with_events(
+def _solve_with_events[**P](
     *,
     solver: Solver | None = None,
     terminal_solver: Solver | None = None,
     monkeypatch: pytest.MonkeyPatch,
-    compile_recorder: _CompileRecorder | None = None,
+    compile_recorder: _CompileRecorder[P] | None = None,
     seeded_release: ValueArtifactAddress | None = None,
 ) -> _Observation:
     """Solve the sharded model, interleaving its records with its dispatches.
@@ -795,11 +868,12 @@ def _solve_with_events(
 def _released_leaf_periods(*, observed: _Observation, regime: RegimeName) -> list[int]:
     """The periods whose continuation leaf of one regime the solve released."""
     return sorted(
-        artifact.period
+        _artifact_address(value=artifact).period
         for kind, artifact, _ in observed.events
         if kind == "release"
-        and artifact.kind is ValueArtifactKind.CONTINUATION_LEAF
-        and artifact.regime == regime
+        and _artifact_address(value=artifact).kind
+        is ValueArtifactKind.CONTINUATION_LEAF
+        and _artifact_address(value=artifact).regime == regime
     )
 
 
@@ -817,7 +891,8 @@ def test_every_release_follows_the_dispatch_that_closed_it(
     violations = [
         (artifact, closer)
         for index, (kind, artifact, closer) in enumerate(observed.events)
-        if kind == "release" and not dispatched_at[closer] < index
+        if kind == "release"
+        and not dispatched_at[_dispatch_value(value=closer)] < index
     ]
 
     assert not violations
@@ -840,7 +915,7 @@ def test_no_later_dispatch_reads_a_released_artifact(
         if kind == "release"
         for later_kind, dispatch, _ in observed.events[index + 1 :]
         if later_kind == "dispatch"
-        and artifact in ledger.accesses_of(dispatch=dispatch)
+        and artifact in ledger.accesses_of(dispatch=_dispatch_value(value=dispatch))
     ]
 
     assert not later_readers
@@ -859,7 +934,10 @@ def test_every_reading_dispatch_declares_the_leaf_it_reads(
     ledger = programs.input_liveness
 
     assert [
-        [artifact.period for artifact in ledger.accesses_of(dispatch=(period, "alive"))]
+        [
+            _artifact_address(value=artifact).period
+            for artifact in ledger.accesses_of(dispatch=(period, "alive"))
+        ]
         for period, _ in observed.reads
     ] == [[period + 1] for period, _ in observed.reads]
 
@@ -884,7 +962,8 @@ def test_no_regime_value_is_released(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not [
         artifact
         for kind, artifact, _ in observed.events
-        if kind == "release" and artifact.kind is ValueArtifactKind.REGIME_VALUE
+        if kind == "release"
+        and _artifact_address(value=artifact).kind is ValueArtifactKind.REGIME_VALUE
     ]
 
 
@@ -900,7 +979,8 @@ def test_a_released_regime_value_is_reported_by_the_kind_filter(
     assert [
         artifact
         for kind, artifact, _ in observed.events
-        if kind == "release" and artifact.kind is ValueArtifactKind.REGIME_VALUE
+        if kind == "release"
+        and _artifact_address(value=artifact).kind is ValueArtifactKind.REGIME_VALUE
     ] == [_A_REGIME_VALUE]
 
 
@@ -974,9 +1054,14 @@ def test_two_keys_on_one_produced_buffer_are_released_together(
     )
 
     assert sorted(
-        (artifact.period, artifact.leaf_path)
+        (
+            _artifact_address(value=artifact).period,
+            _artifact_address(value=artifact).leaf_path,
+        )
         for kind, artifact, _ in observed.events
-        if kind == "release" and artifact.kind is ValueArtifactKind.CONTINUATION_LEAF
+        if kind == "release"
+        and _artifact_address(value=artifact).kind
+        is ValueArtifactKind.CONTINUATION_LEAF
     ) == [
         (period, path)
         for period in range(1, _N_PERIODS)

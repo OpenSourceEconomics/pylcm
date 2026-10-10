@@ -23,7 +23,7 @@ from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargi
 from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch
-from lcm.typing import FloatND, UserFunction
+from lcm.typing import FloatND, RegimeName, UserFunction, UserParams
 from tests.test_models import nbegm_medicaid_toy as toy
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
@@ -32,8 +32,8 @@ _CONSTRAINED = (_LIQUID > 0.3) & (_LIQUID < 3.0)
 
 
 def _solve(
-    *, variant: str, params: dict, n_consumption: int = 120
-) -> Mapping[int, Mapping[str, object]]:
+    *, variant: str, params: UserParams, n_consumption: int = 120
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the Medicaid toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -46,7 +46,7 @@ def _solve(
     return model.solve(params=params, log_level="debug").values
 
 
-def _last_alive_period(solution: Mapping[int, Mapping[str, object]]) -> int:
+def _last_alive_period(solution: Mapping[int, Mapping[RegimeName, FloatND]]) -> int:
     return max(period for period in solution if "alive" in solution[period])
 
 

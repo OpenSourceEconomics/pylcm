@@ -9,6 +9,7 @@ import secrets
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, NotRequired, TypedDict, Unpack
 
 import pytest
 from asv_runner.benchmarks._base import get_setup_cache_key
@@ -16,6 +17,10 @@ from asv_runner.discovery import disc_benchmarks, update_sys_path
 
 from benchmarks.asv import _gpu_mem, bench_mahler_yum
 from benchmarks.asv._gpu_mem import _PROJECT_ROOT, _subprocess_env
+
+if TYPE_CHECKING:
+    from _lcm.typing import JSONValue
+    from lcm.solver_api import ResultRetention
 
 # Blocks the `resource` module before the harness is imported, so the fresh
 # interpreter sees exactly what a host without that module (Windows) sees.
@@ -169,13 +174,13 @@ def test_cpu_peak_bytes_is_nan_on_a_host_without_resource_module():
 @pytest.mark.parametrize("raw_peak", [True, 1.5, "123", -1])
 def test_gpu_peak_bytes_rejects_non_exact_backend_values(
     *,
-    raw_peak: object,
+    raw_peak: bool | float | str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Backend statistics must already be an exact non-negative byte count."""
 
     class _Device:
-        def memory_stats(self) -> dict[str, object]:
+        def memory_stats(self) -> dict[str, bool | int | float | str]:
             return {"peak_bytes_in_use": raw_peak}
 
     monkeypatch.setattr("jax.effects_barrier", lambda: None)
@@ -286,7 +291,7 @@ def test_gpu_memory_profile_rejects_reused_child_pid(
             archive_path.write_bytes(b"persisted solution")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    def _parse(**_: object) -> tuple[int, int]:
+    def _parse[T](**_: T) -> tuple[int, int]:
         return 1, next(child_pids)
 
     monkeypatch.setattr(_gpu_mem.subprocess, "run", _run)
@@ -315,7 +320,7 @@ def _valid_profile_child_record(
     *,
     env: dict[str, str],
     invocation_token: str,
-) -> dict[str, object]:
+) -> dict[str, JSONValue]:
     return {
         "protocol_version": 1,
         "phase": _gpu_mem.AUTOMATIC_SOLVE_SIMULATE,
@@ -344,7 +349,7 @@ def _valid_profile_child_record(
 def test_gpu_memory_profile_rejects_malformed_child_provenance(
     *,
     field: str,
-    bad_value: object,
+    bad_value: JSONValue,
     tmp_path: Path,
 ) -> None:
     """A successful exit cannot admit a mislabeled or non-GPU measurement."""
@@ -447,7 +452,7 @@ def test_gpu_peak_is_captured_before_warm_calls(
 ) -> None:
     """MahlerYumBudgetedGpu.setup_cache sources its own automatic-solve-simulate
     GPU peak from the combined producer, not a separate isolated process."""
-    calls: list[dict[str, object]] = []
+    calls: list[dict[str, str | int]] = []
 
     def _fake_measure(*, bench_module: str, bench_class: str, warm_samples: int):
         calls.append(
@@ -512,17 +517,31 @@ class _FakeMahlerSolution:
         self.saved_paths.append(path)
 
 
+class _SolveKwargs(TypedDict):
+    params: dict[str, int]
+    log_level: str
+    retention: ResultRetention
+
+
+class _SimulateKwargs(TypedDict):
+    params: dict[str, int]
+    initial_conditions: dict[str, object]  # noqa: PAN001 - opaque state-identity sentinels are only forwarded.
+    seed: int
+    log_level: str
+    solution: NotRequired[_FakeMahlerSolution]
+
+
 class _FakeMahlerModel:
     def __init__(self, solution: _FakeMahlerSolution) -> None:
         self.solution = solution
-        self.solve_calls: list[dict[str, object]] = []
-        self.simulate_calls: list[dict[str, object]] = []
+        self.solve_calls: list[_SolveKwargs] = []
+        self.simulate_calls: list[_SimulateKwargs] = []
 
-    def solve(self, **kwargs: object) -> _FakeMahlerSolution:
+    def solve(self, **kwargs: Unpack[_SolveKwargs]) -> _FakeMahlerSolution:
         self.solve_calls.append(kwargs)
         return self.solution
 
-    def simulate(self, **kwargs: object) -> object:
+    def simulate(self, **kwargs: Unpack[_SimulateKwargs]) -> object:  # noqa: PAN001 - opaque result sentinel, never inspected.
         self.simulate_calls.append(kwargs)
         return object()
 
@@ -639,12 +658,14 @@ def test_budgeted_mahler_build_keeps_production_input_arguments(
 ) -> None:
     model = object()
     receipt = tmp_path / "capacity.json"
-    input_calls: list[dict[str, object]] = []
+    input_calls: list[dict[str, int | dict[str, int]]] = []
 
-    def _configured_model() -> tuple[object, Path]:
+    def _configured_model() -> tuple[object, Path]:  # noqa: PAN001 - model identity sentinel, never executed.
         return model, receipt
 
-    def _create_inputs(**kwargs: object) -> tuple[dict[str, object], dict[str, object]]:
+    def _create_inputs(
+        **kwargs: int | dict[str, int],
+    ) -> tuple[dict[str, int], dict[str, int]]:
         input_calls.append(kwargs)
         return {"params": 1}, {"initial": 2}
 
@@ -749,7 +770,7 @@ def test_helpers_carry_no_asv_benchmark_prefix() -> None:
     ] == []
 
 
-def _discoverable_gpu_profile_classes() -> tuple[type, ...]:
+def _discoverable_gpu_profile_classes() -> tuple[type[_gpu_mem.GpuPeakMemProfile], ...]:
     """Every `GpuPeakMemProfile` subclass ASV discovers in `benchmarks/asv`."""
     for module_info in pkgutil.iter_modules(
         [str(_PROJECT_ROOT / "benchmarks" / "asv")]
@@ -757,7 +778,7 @@ def _discoverable_gpu_profile_classes() -> tuple[type, ...]:
         if module_info.name.startswith("bench_"):
             importlib.import_module(f"benchmarks.asv.{module_info.name}")
     pending = list(_gpu_mem.GpuPeakMemProfile.__subclasses__())
-    found: list[type] = []
+    found: list[type[_gpu_mem.GpuPeakMemProfile]] = []
     while pending:
         cls = pending.pop()
         pending.extend(cls.__subclasses__())
@@ -788,7 +809,7 @@ def test_gpu_profile_setup_cache_keys_are_distinct_per_class() -> None:
     "cls", _discoverable_gpu_profile_classes(), ids=lambda cls: cls.__qualname__
 )
 def test_gpu_profile_setup_cache_measures_its_own_benchmark(
-    *, cls: type, monkeypatch: pytest.MonkeyPatch
+    *, cls: type[_gpu_mem.GpuPeakMemProfile], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Each profile class's `setup_cache` profiles its own module, class and phases."""
     calls: list[tuple[str, str, tuple[str, ...]]] = []

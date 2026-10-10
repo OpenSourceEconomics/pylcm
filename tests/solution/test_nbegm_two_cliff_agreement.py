@@ -10,6 +10,7 @@ from collections.abc import Mapping
 
 import numpy as np
 
+from lcm.typing import FloatND, RegimeName
 from tests.test_models import nbegm_two_cliff_toy as toy
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
@@ -18,7 +19,9 @@ _NEAR_CLIFF = (np.abs(_LIQUID - 6.0) < 0.4) | (np.abs(_LIQUID - 14.0) < 0.4)
 _KEEP = _INTERIOR & ~_NEAR_CLIFF
 
 
-def _solve(*, variant: str, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(
+    *, variant: str, n_consumption: int = 120
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the two-cliff toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,

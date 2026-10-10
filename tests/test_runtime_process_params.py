@@ -1,7 +1,5 @@
 """Tests for runtime-supplied stochastic-process parameters."""
 
-from typing import Any
-
 import jax.numpy as jnp
 import pytest
 
@@ -47,7 +45,7 @@ def _constraint(*, consumption: ContinuousAction, wealth: ContinuousState) -> Fl
     return consumption <= wealth
 
 
-_TAUCHEN_PARAMS: dict[str, Any] = {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}
+_TAUCHEN_PARAMS: dict[str, float] = {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}
 
 
 def _make_model(*, fixed_params=None):

@@ -2,7 +2,6 @@
 
 from dataclasses import FrozenInstanceError
 from inspect import signature
-from typing import Any, cast
 
 import cloudpickle
 import jax
@@ -47,7 +46,7 @@ def test_execution_config_rejects_nonpositive_or_boolean_budgets(
 
 @pytest.mark.parametrize("device_memory_bytes", [1.5, "1024", "devices", "Device"])
 def test_execution_config_rejects_noninteger_budgets(
-    *, device_memory_bytes: object
+    *, device_memory_bytes: float | str
 ) -> None:
     with pytest.raises(BeartypeCallHintViolation):
         ExecutionConfig(device_memory_bytes=device_memory_bytes)  # ty: ignore[invalid-argument-type]
@@ -198,7 +197,7 @@ def test_simulation_sharding_is_an_explicit_legacy_preserving_opt_in() -> None:
 
 
 @pytest.mark.parametrize("mode", ["automatic", "", None, True, 1])
-def test_simulation_sharding_rejects_unknown_modes(mode: object) -> None:
+def test_simulation_sharding_rejects_unknown_modes(mode: str | int | None) -> None:
     with pytest.raises((BeartypeCallHintViolation, TypeError, ValueError)):
         ExecutionConfig(simulation_sharding=mode)  # ty: ignore[invalid-argument-type]
 
@@ -260,7 +259,7 @@ def test_width_search_policy_rejects_a_nonpositive_evaluation_budget(
 def test_width_search_policy_rejects_an_unknown_seed() -> None:
     """Only the two declared seed rules are accepted."""
     with pytest.raises((ValueError, BeartypeCallHintViolation), match="seed"):
-        WidthSearchPolicy(seed=cast("Any", "widest-ish"))
+        WidthSearchPolicy(seed="widest-ish")  # ty: ignore[invalid-argument-type]
 
 
 def test_width_search_policy_freezes_its_hints() -> None:

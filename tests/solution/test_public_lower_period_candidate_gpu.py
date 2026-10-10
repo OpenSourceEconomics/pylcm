@@ -4,15 +4,16 @@ import csv
 import functools
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from importlib.metadata import distribution, distributions
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TypedDict, Unpack
 
 import jax
 import pytest
@@ -22,19 +23,49 @@ import lcm
 from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_directory
 from _lcm.solution import backward_induction as engine
 from _lcm.solution.fingerprint import _semantic_fingerprint
+from _lcm.typing import JSONValue
+from lcm.model import _SolutionPreparation
 from lcm.solver_api import EGM_CONTINUATION, ResultRetention
+from lcm.typing import UserParams
 from tests.solution._native_tool_identity import capture_native_tool_identity
 from tests.solution.test_public_lower_period_candidate import (
+    _Active,
     _assert_immutable_result,
+    _Authority,
+    _candidate_address,
+    _candidate_kwargs,
+    _ContextKwargs,
+    _Contexts,
     _describe,
+    _DispatchAddress,
+    _DispatchCallback,
+    _FallbackKwargs,
     _forbid_candidate_execution,
+    _KernelKwargs,
+    _LowerCallback,
+    _LowerKwargs,
+    _manifest_text,
     _observe_context,
     _observe_dispatch,
     _observe_lower,
     _observe_wave,
+    _Observed,
+    _PrepareKwargs,
     _require_public_member,
+    _ResolvedContexts,
+    _selected_artifact_keys,
 )
 from tests.test_models import nbegm_ride_along_toy
+
+
+class _CompileKwargs(TypedDict):
+    lowering_key: Hashable
+    low: jax.stages.Lowered
+    label: str
+    log_kernel_memory: bool
+    logger: logging.Logger
+    phase: str | None
+
 
 pytestmark = [
     pytest.mark.requires(device="gpu"),
@@ -53,7 +84,7 @@ def test_public_gpu_lower_period_candidate_matches_solve(
     *,
     retention: ResultRetention,
     monkeypatch: pytest.MonkeyPatch,
-    record_property: Callable[[str, object], None],
+    record_property: Callable[[str, str], None],
 ) -> None:
     """A requested primary candidate preserves solve's exact lowering contract."""
     model = nbegm_ride_along_toy.build_model(
@@ -75,35 +106,20 @@ def test_public_gpu_lower_period_candidate_matches_solve(
     matches = [
         (manifest, ir)
         for manifest, ir in observed
-        if (
-            manifest["regime"],
-            manifest["period"],
-            manifest["core"],
-            tuple(sorted(manifest["widths"].items())),
-            manifest["primary_donated"],
-        )
-        in dispatched
-        and dispatched_keys[
-            (
-                manifest["regime"],
-                manifest["period"],
-                manifest["core"],
-                tuple(sorted(manifest["widths"].items())),
-                manifest["primary_donated"],
-            )
-        ]
+        if _candidate_address(manifest=manifest) in dispatched
+        and dispatched_keys[_candidate_address(manifest=manifest)]
         == manifest["primary_key"]
-        and manifest["period"] < model.n_periods - 1
+        and _candidate_address(manifest=manifest)[1] < model.n_periods - 1
         and bool(manifest["primary_donated"])
         == (retention is ResultRetention.VALUES_AND_REPLAY)
     ]
     assert matches, "No genuine primary continuation candidate reached dispatch"
     expected, expected_ir = matches[0]
-    assert wave_fanout[expected["dedup_key"]] > 0
+    assert wave_fanout[_manifest_text(manifest=expected, key="dedup_key")] > 0
     assert expected["dedup_fanout"] is None
     assert expected["continuation"]
     if retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS:
-        assert _describe(EGM_CONTINUATION) in expected["selected_artifact_keys"]
+        assert _describe(EGM_CONTINUATION) in _selected_artifact_keys(manifest=expected)
         assert expected["primary_donated"] == ()
     else:
         assert expected["primary_donated"]
@@ -123,10 +139,7 @@ def test_public_gpu_lower_period_candidate_matches_solve(
 
     # Missing public behavior is reached only after the real reference is qualified.
     candidate = _require_public_member(owner=lcm, name="PeriodCandidate")(
-        regime=expected["regime"],
-        period=expected["period"],
-        core=expected["core"],
-        widths=expected["widths"],
+        **_candidate_kwargs(manifest=expected)
     )
     with monkeypatch.context() as bounded:
         bounded.setattr(engine.CompilationWave, "_submit", _forbid_candidate_execution)
@@ -151,27 +164,31 @@ def test_public_gpu_lower_period_candidate_matches_solve(
 def _run_gpu_reference(
     *,
     model: lcm.Model,
-    params: Any,
+    params: UserParams,
     retention: ResultRetention,
     monkeypatch: pytest.MonkeyPatch,
-    identities: Mapping[str, Any],
-) -> tuple[list[Any], set[Any], dict[Any, str], dict[str, int]]:
+    identities: Mapping[str, JSONValue],
+) -> tuple[
+    _Observed, set[_DispatchAddress], dict[_DispatchAddress, str], dict[str, int]
+]:
     # These containers hold copied descriptors, integer identities and raw bytes only.
-    authority: dict[str, Any] = {}
-    contexts: dict[Any, Any] = {}
-    active: list[Any] = []
-    fallback_contexts: dict[Any, str] = {}
-    observed: list[Any] = []
-    dispatched: set[Any] = set()
+    authority: _Authority = {}
+    contexts: _Contexts = {}
+    active: _Active = []
+    fallback_contexts: dict[engine._CoreCandidate, str] = {}
+    observed: _Observed = []
+    dispatched: set[_DispatchAddress] = set()
     prepare = lcm.Model._prepare_solution
     bind_fallbacks = engine._LazyCandidateFrontier.bind_fallbacks
     wave_fanout: dict[str, int] = {}
     lowered_ids: dict[str, int] = {}
     compiled_keys: dict[int, str] = {}
-    dispatched_keys: dict[Any, str] = {}
+    dispatched_keys: dict[_DispatchAddress, str] = {}
     compile_real = engine._compile_and_log
 
-    def observe_prepare(self: Any, **kwargs: Any) -> Any:
+    def observe_prepare(
+        self: lcm.Model, **kwargs: Unpack[_PrepareKwargs]
+    ) -> _SolutionPreparation:
         result = prepare(self, **kwargs)
         authority.update(
             model_identity=result.model_fingerprint,
@@ -185,13 +202,15 @@ def _run_gpu_reference(
 
     resolve = engine._resolve_output_layouts_and_lowering_keys
 
-    def observe_context(**kwargs: Any) -> Any:
+    def observe_context(**kwargs: Unpack[_ContextKwargs]) -> _ResolvedContexts:
         # Keep ordinary GPU admission enabled. This is a budgeted profile, unlike
         # the unchanged CPU witness whose default device budget resolves to None.
         assert kwargs["execution_widths"].device_memory_bytes is not None
         return _observe_context(resolve=resolve, contexts=contexts, **kwargs)
 
-    def observe_fallbacks(self: Any, **kwargs: Any) -> Any:
+    def observe_fallbacks(
+        self: engine._LazyCandidateFrontier, **kwargs: Unpack[_FallbackKwargs]
+    ) -> None:
         result = bind_fallbacks(self, **kwargs)
         for candidate, key in kwargs["fallback_keys"].items():
             fallback_contexts[candidate] = _semantic_fingerprint(_describe(key))
@@ -223,7 +242,9 @@ def _run_gpu_reference(
         lowered_ids=lowered_ids,
     )
 
-    def observe_compile(**kwargs: Any) -> Any:
+    def observe_compile(
+        **kwargs: Unpack[_CompileKwargs],
+    ) -> tuple[engine.Hashable, jax.stages.Compiled]:
         token = _semantic_fingerprint(_describe(kwargs["lowering_key"]))
         if token in lowered_ids:
             assert id(kwargs["low"]) == lowered_ids[token]
@@ -261,12 +282,12 @@ def _run_gpu_reference(
 
 def _observe_gpu_lower(
     *,
-    copy_lower: Any,
-    observed: list[Any],
+    copy_lower: _LowerCallback,
+    observed: _Observed,
     wave_fanout: dict[str, int],
     lowered_ids: dict[str, int],
-    **kwargs: Any,
-) -> Any:
+    **kwargs: Unpack[_LowerKwargs],
+) -> jax.stages.Lowered:
     count = len(observed)
     result = copy_lower(**kwargs)
     if len(observed) != count:
@@ -274,8 +295,8 @@ def _observe_gpu_lower(
         fanout = manifest["dedup_fanout"]
         assert type(fanout) is int
         assert fanout > 0
-        wave_fanout[manifest["dedup_key"]] = fanout
-        lowered_ids[manifest["dedup_key"]] = id(result)
+        wave_fanout[_manifest_text(manifest=manifest, key="dedup_key")] = fanout
+        lowered_ids[_manifest_text(manifest=manifest, key="dedup_key")] = id(result)
         # Public contract: actual wave count is unavailable precompile under
         # a configured budget. Keep the real observed integer separately.
         observed[-1] = (MappingProxyType({**manifest, "dedup_fanout": None}), ir)
@@ -284,12 +305,12 @@ def _observe_gpu_lower(
 
 def _observe_gpu_dispatch(
     *,
-    dispatch: Any,
-    dispatched: set[Any],
-    dispatched_keys: dict[Any, str],
+    dispatch: _DispatchCallback,
+    dispatched: set[_DispatchAddress],
+    dispatched_keys: dict[_DispatchAddress, str],
     compiled_keys: dict[int, str],
-    **kwargs: Any,
-) -> Any:
+    **kwargs: Unpack[_KernelKwargs],
+) -> engine.KernelOutput:
     for core_name, core in kwargs["compiled_cores"].items():
         assert isinstance(core.compiled, jax.stages.Compiled)
         shardings = jax.tree.leaves(
@@ -317,7 +338,7 @@ def _sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _capture_gpu_source_runtime_identity() -> Mapping[str, Any]:
+def _capture_gpu_source_runtime_identity() -> Mapping[str, JSONValue]:
     """Proposed CUDA12 source-checkout identity, independent of production code."""
     root = Path(hatch_build.__file__).resolve().parent
     sources = tuple(
@@ -406,7 +427,7 @@ def _capture_gpu_source_runtime_identity() -> Mapping[str, Any]:
     )
 
 
-def _capture_cuda_identity() -> Mapping[str, Any]:
+def _capture_cuda_identity() -> Mapping[str, JSONValue]:
     """Bind plugin/CUDA package bytes and actual loaded driver/device identity."""
     packages = {}
     for package in distributions():

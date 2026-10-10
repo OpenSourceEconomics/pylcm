@@ -35,7 +35,13 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import StochasticTransition
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ReferenceName,
+    ScalarInt,
+)
 from tests.conftest import X64_ENABLED
 
 DISCOUNT_FACTOR = 0.9
@@ -128,7 +134,7 @@ def _model(*, fold: bool, alive_reads_xi: bool = False) -> Model:
     )
 
 
-def _params() -> dict:
+def _params() -> dict[ReferenceName, float]:
     return {"discount_factor": DISCOUNT_FACTOR}
 
 
@@ -277,10 +283,9 @@ def test_the_folded_policy_equals_the_unfolded_policy() -> None:
     np.testing.assert_array_equal(consumption[True], consumption[False])
 
 
-@pytest.mark.parametrize("restore_pickle", [False, True])
+@pytest.mark.parametrize("round_trip", [False, True])
 def test_an_initial_value_of_the_transition_only_shock_is_accepted_and_unread(
-    *,
-    restore_pickle: bool,
+    *, round_trip: bool
 ) -> None:
     """A panel that still carries the shock's column simulates as one without it."""
     n = 4
@@ -290,7 +295,7 @@ def test_an_initial_value_of_the_transition_only_shock_is_accepted_and_unread(
         "regime_id": jnp.full(n, _RegimeId.alive),
     }
     model = _model(fold=True)
-    if restore_pickle:
+    if round_trip:
         model = cloudpickle.loads(cloudpickle.dumps(model))
     frames = [
         model.simulate(
