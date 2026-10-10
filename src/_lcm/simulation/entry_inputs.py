@@ -14,7 +14,7 @@ import pandas as pd
 
 from _lcm.engine import placed_devices_for_ids
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.params.mapping_leaf import UserMappingLeaf
+from _lcm.params.mapping_leaf import LeafEntry, UserMappingLeaf
 from _lcm.params.sequence_leaf import UserSequenceLeaf
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -27,7 +27,6 @@ from lcm.typing import (
     StateName,
     UserInitialConditions,
     UserParams,
-    UserParamsLeaf,
     UserParamsNode,
 )
 
@@ -48,11 +47,9 @@ type EntryCallerInputs = (
     | tuple[Mapping[StateName, jax.Array], Mapping[ActionName, jax.Array] | None]
 )
 
-# A value the caller-array walk reaches: a parameter node, an entry input, a
-# sequence leaf's values, or an absent action-grid mapping.
-type _CallerValue = (
-    UserParamsNode | EntryCallerInputs | tuple[UserParamsLeaf, ...] | None
-)
+# A value the caller-array walk reaches: a parameter node, an entry input, the
+# data of a mapping or sequence leaf, or an absent action-grid mapping.
+type _CallerValue = UserParamsNode | EntryCallerInputs | LeafEntry | None
 
 
 @dataclass(frozen=True, kw_only=True)
