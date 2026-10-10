@@ -50,6 +50,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch, Solver
+from lcm.transition import PhaseEdges
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -394,9 +395,7 @@ def get_model(
     )
 
 
-def _edges(
-    *, ages: AgeGrid, retirement_period: int, retired_law: ByAge
-) -> dict[str, object]:
+def _edges(*, ages: AgeGrid, retirement_period: int, retired_law: ByAge) -> PhaseEdges:
     """Work until retiring, stay retired until the last alive age, then die.
 
     Working has one outgoing edge at every age; `retired_law` chooses where a
