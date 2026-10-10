@@ -34,7 +34,7 @@ from lcm.solver_api import (
     ValueArraySchema,
     ValueStore,
 )
-from lcm.typing import FloatND
+from lcm.typing import FloatND, RegimeName
 from tests.solution.test_solution_result import _small_grid_search_inputs
 
 _REGIME = "alive"
@@ -292,7 +292,7 @@ def test_public_value_mapping_survives_save_load_and_replay(tmp_path) -> None:
     assert_frame_equal(replayed, expected)
 
 
-def _ref(*, period: int, regime: str = _REGIME) -> ArtifactRef:
+def _ref(*, period: int, regime: RegimeName = _REGIME) -> ArtifactRef:
     return ArtifactRef(period=period, regime=regime, key=SIMULATION_POLICY)
 
 

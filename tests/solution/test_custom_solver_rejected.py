@@ -38,7 +38,7 @@ from lcm.solvers import (
     OneMarginSolver,
     TwoMarginSolver,
 )
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, StateName
 
 _WEALTH_GRID = LinSpacedGrid(start=0.1, stop=4.0, n_points=8)
 _ACTION_GRID = LinSpacedGrid(start=0.1, stop=4.0, n_points=8)
@@ -81,7 +81,7 @@ class _CustomOneMargin(OneMarginSolver):
             main_tradeoff="Reference implementation for contract tests",
         )
 
-    continuous_state: str = ""
+    continuous_state: StateName = ""
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         raise NotImplementedError

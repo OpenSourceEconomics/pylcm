@@ -9,7 +9,7 @@ import platform
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import make_dataclass
 from types import MappingProxyType
-from typing import NotRequired, cast
+from typing import TYPE_CHECKING, NotRequired, cast
 
 import jax
 import jax.numpy as jnp
@@ -979,3 +979,23 @@ class AttachResolvedOutputLayoutKwargs(TypedDict, closed=True):
     internal_input_templates: NotRequired[Mapping[ReferenceName, ShapeDtypePytree]]
     donated_arguments: NotRequired[tuple[str, ...]]
     name: str
+
+
+if TYPE_CHECKING:
+    from _lcm.execution.value_transfer import ValueArtifactAddress
+    from _lcm.solution.backward_induction import (
+        PlannedInputLiveness,
+        SolveInputMappings,
+        _CoreTriple,
+        _InputDispatch,
+        _ProgramExecutionMetadata,
+    )
+
+
+class ResidentInventoryKwargs(TypedDict, closed=True):
+    regimes: MappingProxyType[RegimeName, Regime]
+    ledger: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]
+    templates: SolveInputMappings
+    program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata]
+    device_ids: tuple[int, ...]
+    fixed_bytes: NotRequired[MappingProxyType[int, int]]

@@ -38,6 +38,7 @@ from _lcm.simulation.gated_routing import (
     substitute_gated_edge_continuations,
 )
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import FlatParams
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
@@ -205,7 +206,7 @@ def _laws() -> RegimeLaws:
     )
 
 
-def _flat_params() -> MappingProxyType:
+def _flat_params() -> FlatParams:
     return MappingProxyType(
         {
             "src": MappingProxyType(

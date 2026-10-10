@@ -38,8 +38,6 @@ no-op unless the env var is set, rather than declaring this as a
 `pytest_plugins` entry that would import and hook it unconditionally.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import platform
@@ -50,11 +48,97 @@ from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Protocol, TypedDict
 from xml.etree import ElementTree as ET
 
 import jax
 import pytest
+
+from _lcm.typing import JSONValue
+
+
+class _RuntimeIdentity(TypedDict):
+    python_version: str
+    python_implementation: str
+    python_executable: str
+    pytest_version: str
+    platform: str
+    precision: int | None
+    backend: str | None
+    device_count: int | None
+
+
+class _PolicyIdentity(TypedDict):
+    ci_policy: str | None
+    hardware_profile: str | None
+    policy_child: bool
+    numprocesses: int | str | None
+    dist: str | None
+    markexpr: str | None
+    keyword: str | None
+
+
+class _SelectedNodes(TypedDict):
+    selected_node_ids: list[str]
+
+
+class _JunitReconciliation(TypedDict):
+    selected_count: int
+    junit_case_count: int
+    selected_without_outcome: list[tuple[str, str]]
+    outcome_without_selection: list[tuple[str, str]]
+    reconciled: bool
+
+
+class Receipt(_SelectedNodes):
+    schema_version: int
+    role: str
+    worker_id: str | None
+    invocation_id: str
+    start_wall_clock: str | None
+    end_wall_clock: str
+    elapsed_monotonic_seconds: float | None
+    exit_status: int
+    environment: dict[str, str | None]
+    runtime: _RuntimeIdentity
+    policy: _PolicyIdentity
+    executed_node_ids: list[str]
+    deselected_node_ids: list[str]
+    skipped_node_ids: list[str]
+    outcomes: dict[str, str]
+    phase_counts: dict[str, int]
+    worker_collections: dict[str, list[str]]
+    own_collection_node_ids: list[str]
+    junit_path: str | None
+    inventory_complete: bool
+    incomplete_reasons: list[str]
+
+
+class _CollectedItem(Protocol):
+    @property
+    def nodeid(self) -> str: ...
+
+
+class _PhaseReport(_CollectedItem, Protocol):
+    @property
+    def failed(self) -> bool: ...
+
+    @property
+    def skipped(self) -> bool: ...
+
+
+class _Gateway(Protocol):
+    @property
+    def id(self) -> str: ...
+
+
+class _WorkerNode(Protocol):
+    @property
+    def workerinput(self) -> dict[str, JSONValue]: ...
+
+    @property
+    def gateway(self) -> _Gateway: ...
+
 
 RECEIPT_ENV_VAR = "PYLCM_CI_RECEIPT"
 
@@ -83,7 +167,7 @@ def _identity_environment() -> dict[str, str | None]:
     }
 
 
-def _runtime_identity() -> dict[str, Any]:
+def _runtime_identity() -> _RuntimeIdentity:
     """Return the interpreter and JAX runtime this invocation actually ran on."""
     # A receipt has to stay writable in an environment where the backend
     # cannot be initialised at all, so a broken runtime is reported in the
@@ -109,7 +193,7 @@ def _runtime_identity() -> dict[str, Any]:
     }
 
 
-def _policy_identity(config: pytest.Config) -> dict[str, Any]:
+def _policy_identity(config: pytest.Config) -> _PolicyIdentity:
     """Return the CI policy and worker/distribution settings this invocation used."""
     option = getattr(config, "option", None)
     return {
@@ -158,8 +242,8 @@ def unique_junit_cases(*, path: Path) -> set[tuple[str, str]]:
 
 
 def reconcile_with_junit(
-    *, receipt: Mapping[str, Any], junit_path: Path
-) -> dict[str, Any]:
+    *, receipt: _SelectedNodes, junit_path: Path
+) -> _JunitReconciliation:
     """Match a receipt's recorded selection against the outcomes actually written.
 
     Returns both asymmetric differences and whether they are empty. Phases are
@@ -181,7 +265,7 @@ def reconcile_with_junit(
     }
 
 
-def _merge_outcome(*, previous: str | None, report: pytest.TestReport) -> str:
+def _merge_outcome(*, previous: str | None, report: _PhaseReport) -> str:
     """Collapse one test's setup/call/teardown reports into a single outcome.
 
     A failure anywhere outranks everything else; a skip outranks a pass,
@@ -314,7 +398,7 @@ class _ReceiptCollector:
         self.start_wall = datetime.now(UTC).isoformat()
         self.start_monotonic = time.monotonic()
 
-    def on_collection_finish(self, *, items: Sequence[pytest.Item]) -> None:
+    def on_collection_finish(self, *, items: Sequence[_CollectedItem]) -> None:
         """Record what this process itself collected after deselection settled.
 
         On a serial run that is the invocation's selection. On an `xdist`
@@ -326,11 +410,11 @@ class _ReceiptCollector:
         """Record one worker's authoritative collection."""
         self.worker_collections[worker_id] = list(ids)
 
-    def on_deselected(self, *, items: Sequence[pytest.Item]) -> None:
+    def on_deselected(self, *, items: Sequence[_CollectedItem]) -> None:
         """Record nodes pytest removed from the selection before running anything."""
         self.deselected.extend(item.nodeid for item in items)
 
-    def on_logreport(self, *, report: pytest.TestReport) -> None:
+    def on_logreport(self, *, report: _PhaseReport) -> None:
         """Fold one phase report into this invocation's executed population."""
         self.phase_counts[report.nodeid] += 1
         if report.skipped and report.nodeid not in self.skipped:
@@ -356,7 +440,7 @@ class _ReceiptCollector:
             ),
         ]
 
-    def payload(self, *, exitstatus: int, junitxml_path: str | None) -> dict[str, Any]:
+    def payload(self, *, exitstatus: int, junitxml_path: str | None) -> Receipt:
         """Assemble this process's record, complete with why it may be partial."""
         selected, reasons = self.selection()
         executed = sorted(self.outcomes)
@@ -443,21 +527,22 @@ class _ReceiptHooks:
         """Take the deselected population, which is not the skipped one."""
         self._collector.on_deselected(items=items)
 
-    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+    def pytest_runtest_logreport(self, report: _PhaseReport) -> None:
         """Take one phase report, controller-side even under `xdist`."""
         self._collector.on_logreport(report=report)
 
-    def pytest_configure_node(self, node: Any) -> None:
+    def pytest_configure_node(self, node: _WorkerNode) -> None:
         """Hand each worker the controller's invocation id before it starts."""
         node.workerinput["pylcm_invocation_id"] = self._collector.invocation_id
 
     # keyword-only-exempt: library-callback=pytest_xdist
     def pytest_xdist_node_collection_finished(
-        self, node: Any, ids: Sequence[str]
+        self, node: _WorkerNode, ids: Sequence[str]
     ) -> None:
         """Record one worker's authoritative collection as the controller sees it."""
         self._collector.on_worker_collection(
-            worker_id=getattr(node, "gateway", node).id, ids=ids
+            worker_id=getattr(node, "gateway", node).id,  # ty: ignore[unresolved-attribute] - xdist gateway IDs and direct-ID doubles share this reflective read.
+            ids=ids,
         )
 
     # keyword-only-exempt: library-callback=pytest

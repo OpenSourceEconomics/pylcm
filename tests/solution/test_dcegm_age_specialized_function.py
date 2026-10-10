@@ -27,7 +27,7 @@ import pytest
 
 from _lcm.execution.core_program import core_program_graph
 from lcm import AgeGrid, AgeSpecializedFunction, Model
-from lcm.typing import BoolND, ContinuousAction, FloatND
+from lcm.typing import BoolND, ContinuousAction, FloatND, RegimeName
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models.dcegm_paper_twin import (
     DCEGM_SOLVER,
@@ -168,7 +168,7 @@ def test_age_specialized_utility_actually_moves_the_dcegm_solution():
     assert moved, "the age-specialized utility left every period unchanged"
 
 
-def _compiled_cores(*, model: Model, regime_name: str) -> list[int]:
+def _compiled_cores(*, model: Model, regime_name: RegimeName) -> list[int]:
     """Identity of each period's compiled core — the object periods actually share."""
     kernels = model._regimes[regime_name].solution.period_kernels
     return [

@@ -13,12 +13,13 @@ from _lcm.solution.action_streaming import (
     build_streaming_ev1_max_Q_over_a,
     build_streaming_max_Q_over_a,
 )
+from lcm.typing import ActionName
 
 
 def _direct_scalar_oracle(
     *,
     Q_and_F: Callable[..., tuple[object, object]],
-    action_names: tuple[str, ...],
+    action_names: tuple[ActionName, ...],
     action_grids: Mapping[str, np.ndarray],
     fixed_kwargs: Mapping[str, object],
 ) -> tuple[float, int, bool]:

@@ -11,7 +11,7 @@ import threading
 from collections.abc import Callable, Hashable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal, TypedDict, Unpack
+from typing import ClassVar, Literal, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -293,13 +293,21 @@ class _RecordingExecutor(ThreadPoolExecutor):
 
     instances: ClassVar[list[_RecordingExecutor]] = []
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self, *, max_workers: int | None = None, thread_name_prefix: str = ""
+    ) -> None:
+        super().__init__(max_workers=max_workers, thread_name_prefix=thread_name_prefix)
         self.futures: list[Future] = []
         _RecordingExecutor.instances.append(self)
 
-    def submit(self, *args: Any, **kwargs: Any) -> Future:
-        future = super().submit(*args, **kwargs)
+    def submit[**Parameters, Result](
+        self,
+        fn: Callable[Parameters, Result],
+        /,
+        *args: Parameters.args,
+        **kwargs: Parameters.kwargs,
+    ) -> Future[Result]:
+        future = super().submit(fn, *args, **kwargs)
         self.futures.append(future)
         return future
 
@@ -440,8 +448,14 @@ def _run_failing_second_compile(
         original_roles(**arguments)
 
     class FailSecondOnFourthSubmit(_RecordingExecutor):
-        def submit(self, *args: Any, **kwargs: Any) -> Future:
-            future = super().submit(*args, **kwargs)
+        def submit[**Parameters, Result](
+            self,
+            fn: Callable[Parameters, Result],
+            /,
+            *args: Parameters.args,
+            **kwargs: Parameters.kwargs,
+        ) -> Future[Result]:
+            future = super().submit(fn, *args, **kwargs)
             if len(self.futures) == 4:
                 release_second.set()
                 wait(self.futures[1:2], timeout=_WAIT_SECONDS)

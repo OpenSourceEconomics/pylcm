@@ -81,7 +81,7 @@ from lcm.solvers import (
 from lcm.solvers import (
     CoreExecutionRequirements as PublicRequirements,
 )
-from lcm.typing import Float1D, FloatND, ReferenceName, StateName
+from lcm.typing import Float1D, FloatND, ReferenceName, RegimeName, StateName
 from tests.test_solver_api_out_of_tree import _N_PERIODS, _two_regime_model
 
 _KEY = ArtifactKey(type_id="tests.donation_read_multiplicity", schema_version=1)
@@ -188,8 +188,8 @@ class _MainKernel:
         *,
         compiled_cores: Mapping[str, Callable[..., object]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[str, FloatND],
-        next_regime_to_continuation: Mapping[str, ContinuationArtifact],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationArtifact],
         flat_params: FlatParams,
         period: int,
         ages: TimeAxis,

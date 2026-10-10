@@ -1,7 +1,8 @@
 """Labeled input conversion must use the admitted numeric entry writer."""
 
 from dataclasses import dataclass
-from typing import Any
+from types import ModuleType
+from typing import Never
 
 import numpy as np
 import pandas as pd
@@ -13,7 +14,7 @@ from lcm.exceptions import ExecutionPlanningError
 from tests.solution.test_solution_result import _small_grid_search_inputs
 
 
-def _refuse_unadmitted_upload(*args: Any, **kwargs: Any) -> object:
+def _refuse_unadmitted_upload[Ignored](*args: Ignored, **kwargs: Ignored) -> Never:
     del args, kwargs
     raise AssertionError("Pandas conversion uploaded outside numeric admission")
 
@@ -22,12 +23,14 @@ def _refuse_unadmitted_upload(*args: Any, **kwargs: Any) -> object:
 class _NoDirectPandasUploads:
     """Leave dtype metadata available while exposing direct device allocation."""
 
-    original: Any
+    original: ModuleType
+    array = staticmethod(_refuse_unadmitted_upload)
+    asarray = staticmethod(_refuse_unadmitted_upload)
+    full = staticmethod(_refuse_unadmitted_upload)
 
-    def __getattr__(self, name: str) -> object:
-        if name in {"array", "asarray", "full"}:
-            return _refuse_unadmitted_upload
-        return getattr(self.original, name)
+    @property
+    def int32(self) -> type[np.int32]:
+        return self.original.int32
 
 
 @pytest.mark.parametrize("fits", [True, False])

@@ -42,6 +42,7 @@ from _lcm.execution.workspace_planning import (
 from _lcm.solution import backward_induction as bi
 from lcm import ExecutionConfig
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import RegimeName
 from tests.solution.test_invariant_blocking import _independent_types_model
 from tests.test_models import independent_types
 
@@ -94,7 +95,7 @@ def test_public_blocked_solve_never_credits_a_selected_input_as_its_owner(
     assert checked, "The public witness must reach a compiler-live selected read."
 
 
-def _shape_only(*, next_regime_to_V_arr: dict[str, jax.Array]) -> jax.Array:
+def _shape_only(*, next_regime_to_V_arr: dict[RegimeName, jax.Array]) -> jax.Array:
     value = next_regime_to_V_arr["terminal"]
     return jnp.arange(value.size, dtype=value.dtype).reshape(value.shape)
 

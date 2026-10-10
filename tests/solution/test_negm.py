@@ -45,7 +45,7 @@ from lcm.solvers import (
     NEGM,
     GridSearch,
 )
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ActionName, ContinuousState, FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy
 
@@ -66,7 +66,7 @@ def _negm(
 
 def _nested_regime(
     *,
-    outer_action: str = "illiquid_investment",
+    outer_action: ActionName = "illiquid_investment",
     outer_post_decision: str = "new_illiquid",
     outer_no_adjustment_candidate: str = outer_unchanged,
 ) -> NestedConsumptionSavingsRegime:

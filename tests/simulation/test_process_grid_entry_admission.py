@@ -7,7 +7,7 @@ import weakref
 from collections.abc import Callable
 from functools import partial, partialmethod
 from pathlib import Path
-from typing import Any
+from typing import Never, NotRequired, TypedDict, Unpack
 
 import jax
 import jax.core
@@ -15,12 +15,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import lcm.model as model_module
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.simulation import host_operations, process_grids
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
+from _lcm.typing import PytreeValue
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -41,6 +43,52 @@ from lcm.persistence import load_solution
 from lcm.typing import FloatND, UserInitialConditions, UserParams
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
+
+
+class _ProcessStage(TypedDict):
+    parameters: process_grids.Mapping[
+        process_grids.ParameterName, process_grids.ProcessValue
+    ]
+    n_points: int
+    required: process_grids.jax.sharding.Sharding
+    stage: NotRequired[process_grids._GridStage]
+    exponent: NotRequired[int]
+    dtype: NotRequired[str]
+    weak_type: NotRequired[bool]
+    process_stage: NotRequired[bool]
+
+
+class _FlatSolveInputs(TypedDict):
+    flat_params: model_module.FlatParams
+    params: model_module.UserParams
+    log: model_module.logging.Logger
+    retention: model_module.ResultRetention
+    max_compilation_workers: int | None
+    log_path: str | model_module.Path | None
+    log_keep_n_latest: int
+    retained_input_arrays: NotRequired[model_module._RetainedInputArrays]
+    process_grid_resolver: NotRequired[model_module.ProcessGridResolver | None]
+    call_id: NotRequired[model_module.CallId | None]
+    period_capture: NotRequired[model_module.CaptureContext | None]
+
+
+class _CompiledSolveInputs(TypedDict):
+    flat_params: model_module.FlatParams
+    program_fingerprint: str
+    params: model_module.UserParams
+    log: model_module.logging.Logger
+    log_path: str | model_module.Path | None
+    log_keep_n_latest: int
+    max_compilation_workers: int | None
+    retain_dissolution_flags: NotRequired[bool]
+    retain_replay: NotRequired[bool]
+    retain_all_artifacts: NotRequired[bool]
+    persistable_artifact_refs: NotRequired[frozenset[model_module.ArtifactRef]]
+    collect_solver_diagnostics: NotRequired[bool]
+    retained_input_arrays: NotRequired[model_module._RetainedInputArrays]
+    process_grid_resolver: NotRequired[model_module.ProcessGridResolver | None]
+    call_id: NotRequired[model_module.CallId | None]
+    period_capture: NotRequired[model_module.CaptureContext | None]
 
 
 @pytest.fixture(autouse=True)
@@ -174,7 +222,7 @@ def test_mixed_processes_preserve_saved_support_with_a_uniform_admission_profile
     monkeypatch.setattr(
         jnp,
         "linspace",
-        partial(_guard_process_grid, original=jnp.linspace, observations=observations),
+        _guard_process_grid(original=jnp.linspace, observations=observations),
     )
     result = consumer.simulate(
         params=params, initial_conditions=initial, solution=restored, log_level="debug"
@@ -186,22 +234,28 @@ def test_mixed_processes_preserve_saved_support_with_a_uniform_admission_profile
     assert observations == [True]
 
 
-def _guard_process_grid(
-    *args: Any, original: Callable[..., Any], observations: list[bool], **kwargs: Any
-) -> Any:
-    if (
-        sys._getframe(1).f_code
-        is inspect.unwrap(UniformIIDProcess.compute_gridpoints).__code__
-    ):
-        traced = isinstance(kwargs["start"], jax.core.Tracer)
-        observations.append(traced)
-        if not traced:
-            raise AssertionError("Process grid allocated before compiler admission")
-    return original(*args, **kwargs)
+def _guard_process_grid[**P, Result](
+    *, original: Callable[P, Result], observations: list[bool]
+) -> Callable[P, Result]:
+    def call(*args: P.args, **kwargs: P.kwargs) -> Result:
+        if (
+            sys._getframe(1).f_code
+            is inspect.unwrap(UniformIIDProcess.compute_gridpoints).__code__
+        ):
+            traced = isinstance(kwargs["start"], jax.core.Tracer)
+            observations.append(traced)
+            if not traced:
+                raise AssertionError("Process grid allocated before compiler admission")
+        return original(*args, **kwargs)
+
+    return call
 
 
-def _over_budget_peak(
-    *, compiled: jax.stages.Compiled, profiled: list[jax.stages.Compiled], **kwargs: Any
+def _over_budget_peak[Ignored](
+    *,
+    compiled: jax.stages.Compiled,
+    profiled: list[jax.stages.Compiled],
+    **kwargs: Ignored,
 ) -> CompilerMemoryReservation:
     del kwargs
     profiled.append(compiled)
@@ -209,13 +263,13 @@ def _over_budget_peak(
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _forbid_profiled_dispatch(
+def _forbid_profiled_dispatch[Result](
     self: jax.stages.Compiled,
-    *args: Any,
+    *args: PytreeValue,
     profiled: list[jax.stages.Compiled],
-    original: Callable[..., Any],
-    **kwargs: Any,
-) -> Any:
+    original: Callable[..., Result],
+    **kwargs: PytreeValue,
+) -> Result:
     if any(self is executable for executable in profiled):
         raise AssertionError("An over-budget process executable was dispatched")
     return original(self, *args, **kwargs)
@@ -237,7 +291,7 @@ def test_automatic_simulation_refuses_process_grid_before_allocation(
     monkeypatch.setattr(
         jnp,
         "linspace",
-        partial(_guard_process_grid, original=jnp.linspace, observations=observations),
+        _guard_process_grid(original=jnp.linspace, observations=observations),
     )
     monkeypatch.setattr(
         host_operations,
@@ -323,7 +377,7 @@ def test_saved_unbudgeted_solution_preserves_support_under_simulation_budget(
     )
 
 
-def _forbid_fixed_parameter_upload(spec: UniformIIDProcess) -> object:
+def _forbid_fixed_parameter_upload(spec: UniformIIDProcess) -> Never:
     del spec
     raise AssertionError("Fixed process parameters allocated outside admission")
 
@@ -354,8 +408,10 @@ def _record_entry_owner(
     references.append(weakref.ref(self))
 
 
-def _refuse_automatic_solve(*args: Any, **kwargs: Any) -> Any:
-    del args
+def _refuse_automatic_solve(_model: Model, **kwargs: Unpack[_FlatSolveInputs]) -> Never:
+    assert isinstance(
+        kwargs["process_grid_resolver"], process_grids.SimulationProcessGrids
+    )
     grids = kwargs["process_grid_resolver"].grids
     assert len(grids) == 1
     np.testing.assert_array_equal(next(iter(grids.values())), [1.0, 1.5, 2.0, 2.5, 3.0])
@@ -405,7 +461,7 @@ def _observe_cumulative_grid_ownership(
     *,
     original: Callable[..., FloatND],
     produced: list[FloatND],
-    **kwargs: Any,
+    **kwargs: Unpack[_ProcessStage],
 ) -> FloatND:
     for grid in produced:
         missing = resident_bytes_by_device(
@@ -422,13 +478,13 @@ def _observe_cumulative_grid_ownership(
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _observe_solve_grid_ownership(
+def _observe_solve_grid_ownership[Result](
     self: Model,
     *,
-    original: Callable[..., Any],
+    original: Callable[..., Result],
     produced: list[FloatND],
-    **kwargs: Any,
-) -> Any:
+    **kwargs: Unpack[_CompiledSolveInputs],
+) -> Result:
     assert len(produced) == 2
     held = measure_buffer_footprint(tree=kwargs["retained_input_arrays"])
     for grid in produced:
@@ -482,10 +538,13 @@ def test_uniform_grids_remain_owned_during_later_production_and_automatic_solve(
     )
 
 
-def _read_parameter_once(
-    *args: object, original: Callable[..., object], reads: dict[int, object]
-) -> Any:
-    (value,) = args
+# keyword-only-exempt: library-callback=_lcm.simulation.process_grids._parameter_bytes
+def _read_parameter_once[Result](
+    value: process_grids.ProcessValue,
+    *,
+    original: Callable[..., Result],
+    reads: dict[int, jax.Array],
+) -> Result:
     if isinstance(value, jax.Array):
         assert id(value) not in reads, (
             "A repeated parameter binding caused another host read"
@@ -499,7 +558,7 @@ def test_uniform_binding_reuse_avoids_repeated_host_reads_and_warm_grid_compilat
 ) -> None:
     """Repeated consumers reuse exact bindings and later calls reuse only code."""
     model, params, initial = _inputs(budget=2**28)
-    reads: dict[int, object] = {}
+    reads: dict[int, jax.Array] = {}
     observations: list[bool] = []
     monkeypatch.setattr(
         process_grids,
@@ -511,7 +570,7 @@ def test_uniform_binding_reuse_avoids_repeated_host_reads_and_warm_grid_compilat
     monkeypatch.setattr(
         jnp,
         "linspace",
-        partial(_guard_process_grid, original=jnp.linspace, observations=observations),
+        _guard_process_grid(original=jnp.linspace, observations=observations),
     )
     for _ in range(2):
         result = model.simulate(

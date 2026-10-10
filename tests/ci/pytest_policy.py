@@ -3,6 +3,7 @@
 import argparse
 import json
 from pathlib import Path
+from typing import TypedDict
 
 import jax
 import pytest
@@ -19,7 +20,20 @@ from tests.ci.execution_policy import (
 )
 
 _POLICY_MARKERS = ("requires", "coverage", "isolation", "ci")
-_REPORT_KEY: pytest.StashKey[list[dict[str, object]]] = pytest.StashKey()
+
+
+class _SelectionRecord(TypedDict):
+    nodeid: str
+    disposition: str
+    reason: str
+    profile: str
+    precision: int
+    policy: str
+
+
+type MarkerArgument = object  # noqa: PAN001 - Pytest accepts arbitrary user Python marker values; the policy classifier validates them.
+
+_REPORT_KEY: pytest.StashKey[list[_SelectionRecord]] = pytest.StashKey()
 _PROFILE_KEY: pytest.StashKey[Profile | None] = pytest.StashKey()
 _POLICY_KEY: pytest.StashKey[Policy | None] = pytest.StashKey()
 
@@ -156,7 +170,7 @@ def write_report(config: pytest.Config) -> None:
 
 
 def _contract_from_item(item: pytest.Item) -> ExecutionContract:
-    marker_kwargs: dict[str, dict[str, object]] = {}
+    marker_kwargs: dict[str, dict[str, MarkerArgument]] = {}
     for name in _POLICY_MARKERS:
         markers = list(item.iter_markers(name=name))
         if len(markers) > 1:

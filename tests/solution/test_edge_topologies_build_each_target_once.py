@@ -23,6 +23,7 @@ from _lcm.regime_building.gated_edges import EdgeChannels
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import _iter_edge_topologies
 from _lcm.typing import FlatRegimeParams
+from lcm.typing import StateName
 
 
 @dataclasses.dataclass(frozen=True)
@@ -38,7 +39,7 @@ class _MockSolutionPhase:
     submesh_device_ids: tuple[int, ...] = ()
     """No placement, so the mock target's nodes run on every visible device."""
 
-    sharded_state_names: frozenset[str] = frozenset()
+    sharded_state_names: frozenset[StateName] = frozenset()
     """No state is assigned a device axis in this topology-reuse fixture."""
     action_partitions: int = 1
     """No regime's actions are shared over devices."""

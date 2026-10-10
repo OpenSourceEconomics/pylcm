@@ -62,6 +62,7 @@ from lcm.typing import (
     Float1D,
     FloatND,
     ReferenceName,
+    RegimeName,
     ScalarFloat,
     ScalarInt,
     StateName,
@@ -132,7 +133,7 @@ def _counting_value(
 
 # keyword-only-exempt: library-callback=lcm.solvers.CoreProgram.argument_builder
 def _counting_arguments(
-    build: CoreBuildContext, /, *, regime_name: str
+    build: CoreBuildContext, /, *, regime_name: RegimeName
 ) -> Mapping[ReferenceName, PytreeValue]:
     """Feed the state grid and the regime's own published count to the program."""
     return {
@@ -146,7 +147,7 @@ class _GraphKernel:
     """A period kernel dispatching its single declared program."""
 
     program: CoreProgram
-    regime_name: str
+    regime_name: RegimeName
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
         """Expose the one program the engine compiles and dispatches."""
@@ -161,8 +162,8 @@ class _GraphKernel:
         *,
         compiled_cores: Mapping[str, object],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[str, FloatND],
-        next_regime_to_continuation: Mapping[str, ContinuationArtifact],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationArtifact],
         flat_params: FlatParams,
         period: int,
         ages: TimeAxis,
@@ -315,7 +316,7 @@ def published_values() -> tuple[
 def test_donation_by_the_first_of_two_acting_regimes_changes_no_value(
     *,
     period: int,
-    regime: str,
+    regime: RegimeName,
     published_values: tuple[
         dict[tuple[int, str], np.ndarray], dict[tuple[int, str], np.ndarray]
     ],

@@ -37,7 +37,7 @@ from lcm import (
     Transition,
 )
 from lcm.solvers import GridSearch
-from lcm.typing import FloatND, UserParams
+from lcm.typing import FloatND, RegimeName, UserParams
 from tests.solution.test_compilation_identity import _capture_lowering_keys, _model
 from tests.test_models import nbegm_ride_along_toy
 from tests.test_models.deterministic.regression import (
@@ -161,7 +161,11 @@ def _nbegm_model(*, donate_buffers: bool) -> Model:
 
 
 def _keys_of(
-    *, model: Model, params: UserParams, regime: str, monkeypatch: pytest.MonkeyPatch
+    *,
+    model: Model,
+    params: UserParams,
+    regime: RegimeName,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> set[Hashable]:
     """The keys the solve publishes for the cores of one regime."""
     captured = _capture_lowering_keys(monkeypatch=monkeypatch)
@@ -217,7 +221,7 @@ def test_a_program_changing_fact_shares_no_lowering_key(
     build_baseline: Any,
     build_mutant: Any,
     params: UserParams,
-    regime: str,
+    regime: RegimeName,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A mutant whose traced program differs is lowered under its own keys."""

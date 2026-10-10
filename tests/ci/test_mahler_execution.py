@@ -7,16 +7,31 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, NotRequired, Unpack
 from uuid import UUID
 
 import jax
 import pytest
+from typing_extensions import TypedDict
 
+from _lcm.typing import JSONValue
 from tests.ci.mahler_execution import (
+    _CapacityReceipt,
     create_mahler_execution_config,
     create_mahler_gpu_model,
 )
+
+
+class _NvidiaRunArguments(TypedDict, closed=True):
+    args: NotRequired[list[str]]
+    capture_output: NotRequired[bool]
+    text: NotRequired[bool]
+    timeout: NotRequired[int]
+    check: NotRequired[bool]
+
+
+if TYPE_CHECKING:
+    from _ctypes import _CArgObject
 
 _MIB = 2**20
 _UUID_A = "GPU-11111111-1111-1111-1111-111111111111"
@@ -63,14 +78,14 @@ class _Device:
     """Public JAX device identity used in the resulting configuration."""
     local_hardware_id: int
     """CUDA ordinal after the process's visibility mapping."""
-    stats: dict[str, object] | None
+    stats: dict[str, JSONValue] | None
     """Raw allocator counts, including deliberately invalid refusal inputs."""
     device_kind: str = "fake selected NVIDIA device"
     """Device description retained in the observation receipt."""
     platform: str = "gpu"
     """JAX backend platform metadata."""
 
-    def memory_stats(self) -> dict[str, object] | None:
+    def memory_stats(self) -> dict[str, JSONValue] | None:
         """Return the raw allocator observation supplied by the test."""
         return self.stats
 
@@ -104,14 +119,17 @@ def _install_external_observers(
         return 0
 
     # keyword-only-exempt: library-callback=ctypes
-    def cu_device_get(out: Any, ordinal: int) -> int:
+    def cu_device_get(out: _CArgObject, ordinal: int) -> int:
         """Write a CUDA handle distinct from both the JAX id and ordinal."""
         ordinals.append(ordinal)
         ctypes.cast(out, ctypes.POINTER(ctypes.c_int))[0] = {0: 17, 1: 71}[ordinal]
         return 0
 
     # keyword-only-exempt: library-callback=ctypes
-    def cu_device_get_uuid(out: Any, device: int | ctypes.c_int) -> int:
+    def cu_device_get_uuid(
+        out: _CArgObject,
+        device: int | ctypes.c_int,
+    ) -> int:
         """Write a real 16-byte UUID through CUDA's output-pointer interface."""
         handle = device.value if isinstance(device, ctypes.c_int) else device
         uuid = {17: _UUID_B, 71: _UUID_A}[handle]
@@ -124,11 +142,13 @@ def _install_external_observers(
         cuDeviceGetUuid_v2=cu_device_get_uuid,
     )
 
-    def load_driver(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
+    def load_driver[Arg, Kwarg](*_args: Arg, **_kwargs: Kwarg) -> SimpleNamespace:
         """Return the driver boundary without loading a native library."""
         return driver
 
-    def run_nvidia_smi(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def run_nvidia_smi(
+        *args: list[str], **kwargs: Unpack[_NvidiaRunArguments]
+    ) -> subprocess.CompletedProcess[str]:
         """Return raw physical metadata in the requested field and unit format."""
         command = args[0] if args else kwargs["args"]
         assert Path(command[0]).name == "nvidia-smi"
@@ -155,7 +175,7 @@ def _install_external_observers(
     return ordinals
 
 
-def _read_receipt(*, path: Path, status: str) -> dict[str, Any]:
+def _read_receipt(*, path: Path, status: str) -> _CapacityReceipt:
     """Check durable status, the budget rule, and timezone-aware observation times."""
     receipt = json.loads(path.read_text())
     assert receipt["status"] == status
@@ -186,9 +206,7 @@ def test_selected_devices_use_uuid_matched_physical_and_allocator_headroom(
     ordinals = _install_external_observers(monkeypatch=monkeypatch)
     report_path = tmp_path / "capacity.json"
 
-    config = create_mahler_execution_config(
-        devices=cast("tuple[jax.Device, ...]", devices), report_path=report_path
-    )
+    config = create_mahler_execution_config(devices=devices, report_path=report_path)
 
     assert config.devices == (42, 3)
     assert dict(config.axis_widths) == {"action_product": 64, "cell": 4096}
@@ -217,7 +235,7 @@ def test_unselected_allocator_and_physical_capacity_do_not_constrain_budget(
     ordinals = _install_external_observers(monkeypatch=monkeypatch)
     report_path = tmp_path / "capacity.json"
     config = create_mahler_execution_config(
-        devices=cast("tuple[jax.Device, ...]", (devices[1],)), report_path=report_path
+        devices=(devices[1],), report_path=report_path
     )
     assert config.devices == (3,)
     assert config.device_memory_bytes == 3 * _MIB
@@ -245,7 +263,7 @@ def test_unselected_allocator_and_physical_capacity_do_not_constrain_budget(
 )
 def test_invalid_selected_allocator_observation_is_recorded_and_refused(
     *,
-    stats: dict[str, object] | None,
+    stats: dict[str, JSONValue] | None,
     devices: tuple[_Device, ...],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -255,7 +273,7 @@ def test_invalid_selected_allocator_observation_is_recorded_and_refused(
     report_path = tmp_path / "capacity.json"
     with pytest.raises(ValueError, match="Cannot configure the Mahler GPU workload"):
         create_mahler_execution_config(
-            devices=cast("tuple[jax.Device, ...]", (replace(devices[0], stats=stats),)),
+            devices=(replace(devices[0], stats=stats),),
             report_path=report_path,
         )
     receipt = _read_receipt(path=report_path, status="refused")
@@ -289,7 +307,7 @@ def test_ambiguous_or_invalid_selected_physical_observation_is_recorded_and_refu
     report_path = tmp_path / "capacity.json"
     with pytest.raises(ValueError, match="Cannot configure the Mahler GPU workload"):
         create_mahler_execution_config(
-            devices=cast("tuple[jax.Device, ...]", (devices[0],)),
+            devices=(devices[0],),
             report_path=report_path,
         )
     receipt = _read_receipt(path=report_path, status="refused")

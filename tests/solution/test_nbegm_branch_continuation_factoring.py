@@ -28,8 +28,11 @@ import pytest
 
 from _lcm.solution import nbegm as nbegm_module
 from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
+from lcm import Model
+from lcm.typing import UserParams
 from tests.solution._nbegm_direct_oracle import (
     ChildPeriodContext,
+    OracleContext,
     child_period_context,
     ride_along_kernel,
     run_production_kernel,
@@ -42,7 +45,7 @@ from tests.test_models import nbegm_multi_discrete_toy, nbegm_ride_discrete_toy
 _SMALL: dict[str, Any] = {"n_liquid": 12, "n_savings": 16, "n_consumption": 24}
 _PERIOD = 0
 
-_Route = tuple[Callable[[], Any], Callable[[], Any]]
+type _Route = tuple[Callable[[], Model], Callable[[], UserParams]]
 
 _PARAMS_FLAGS = frozenset(
     {
@@ -90,7 +93,9 @@ _CONTINUATION_FEEDING: dict[str, _Route] = {
 }
 
 
-def _kernel(route: _Route) -> tuple[Any, Any, ChildPeriodContext | None]:
+def _kernel(
+    route: _Route,
+) -> tuple[_RideAlongNBEGMPeriodKernel, OracleContext, ChildPeriodContext | None]:
     build_model, build_params = route
     model = build_model()
     kernel, context = ride_along_kernel(

@@ -47,6 +47,7 @@ from _lcm.typing import FlatRegimeParams, MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import RegimeName
 
 
 @dataclasses.dataclass(frozen=True)
@@ -125,7 +126,7 @@ def _single_regime_reachability(*, n_periods: int) -> PhaseReachability:
 
 
 def _grid_search_period_kernels(
-    *, max_Q_over_a: dict[int, MaxQOverAFunction], regime_name: str
+    *, max_Q_over_a: dict[int, MaxQOverAFunction], regime_name: RegimeName
 ) -> dict[int, PeriodKernel]:
     """Wrap hand-written dense cores in native GridSearch program graphs."""
     argument_builder = _GridSearchArgumentBuilder(regime_name=regime_name)

@@ -35,6 +35,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TypedDict
 
+type SourcePath = str
+
 
 class _InvocationEnvironment(TypedDict, total=False):
     runner_os: str
@@ -80,7 +82,7 @@ class _FileWeight(TypedDict):
 
 
 class _LegWeight(TypedDict):
-    junit_source: str
+    junit_source: SourcePath
     measurement: str
     seconds: dict[str, float]
     counts: dict[str, int]

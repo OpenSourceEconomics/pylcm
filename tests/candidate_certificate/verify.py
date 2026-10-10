@@ -7,21 +7,20 @@ and the JAX-backed certificate matrix. It also owns the independent scalar
 masked-argmax oracle and the mutation controls used by the bounded repair.
 """
 
-from __future__ import annotations
-
 import argparse
 import ast
 import json
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import NotRequired, TypedDict, cast
 
 try:
     from generate_sources import (
         CERTIFICATE_PATH,
         INVENTORY_PATH,
         REQUIRED_PROFILES,
+        Inventory,
         build_inventory,
         derive_source_paths,
         inventory_digest,
@@ -33,6 +32,7 @@ except ModuleNotFoundError:  # Imported as tests.candidate_certificate.verify.
         CERTIFICATE_PATH,
         INVENTORY_PATH,
         REQUIRED_PROFILES,
+        Inventory,
         build_inventory,
         derive_source_paths,
         inventory_digest,
@@ -42,25 +42,139 @@ except ModuleNotFoundError:  # Imported as tests.candidate_certificate.verify.
 
 try:
     from direct_flow import (
+        DirectFlowReport,
+        DirectMutationControls,
         run_direct_flow_mutation_controls,
         verify_direct_candidate_flow,
     )
 except ModuleNotFoundError:  # Imported as tests.candidate_certificate.verify.
     from tests.candidate_certificate.direct_flow import (
+        DirectFlowReport,
+        DirectMutationControls,
         run_direct_flow_mutation_controls,
         verify_direct_candidate_flow,
     )
 
 DIRECT_FLOW_PATH = "tests/candidate_certificate/direct_flow.py"
 
-SourceRecord = dict[str, str]
-# Anchor plus source set as declared by one contract or policy profile.
-ProfileDeclaration = dict[str, Any]
-Mask = tuple[bool, ...]
+type SourceRecord = dict[str, str]
+type ProfileName = str
+type Mask = tuple[bool, ...]
+type JsonValue = (
+    bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
+)
+
+
+class ProfileDeclaration(TypedDict, total=False):
+    anchor: SourceRecord | None
+    sources: list[SourceRecord]
+
+
+class _RankOutcome(TypedDict):
+    values: list[float]
+    reference_index: int
+    reference_value: float
+    mutated_index: int
+    mutated_value: float
+    value_gap: float
+    detected: bool
+
+
+class _RankCoverage(TypedDict):
+    winners: list[int]
+    covers_every_candidate: bool
+
+
+class _RankControls(TypedDict):
+    fixed_ascending_ordering: _RankOutcome
+    ordering_won_by_candidate_zero: _RankOutcome
+    every_candidate_wins_exactly_one_ordering: _RankCoverage
+
+
+class _Witness(TypedDict):
+    q_values_flat: list[float]
+    all_feasible_before_mutation: list[bool]
+    all_feasible_after_mutation: list[bool]
+    solve_winner_flat_index: int
+    mutated_simulate_winner_flat_index: int
+    value_gap: float
+    policy_disagreement_mass_for_affected_row: float
+
+
+class _MaskOutcome(TypedDict):
+    mask: list[bool]
+    reference_index: int
+    reference_value: float
+    mutated_index: int
+    mutated_value: float
+    value_gap: float
+    detected: bool
+    witness: NotRequired[_Witness]
+    neither_one_hot_nor_all_feasible: NotRequired[bool]
+    detected_mask_count: NotRequired[int]
+
+
+class _SourceMutation(TypedDict):
+    rejected: bool
+    offending_paths: list[str]
+    errors: list[str]
+
+
+class _Coverage(TypedDict):
+    ok: bool
+    errors: list[str]
+    offending_paths: list[str]
+    nonempty_mask_count: int
+
+
+class _VerificationDetails(TypedDict, total=False):
+    ast_source_paths: list[str]
+    direct_flow_source_paths: list[str]
+    committed_sources: list[SourceRecord]
+    source_inventory_sha256: str
+    inventory_anchor: SourceRecord
+    source_bytes: list[SourceRecord]
+    internal_derived_policy_profiles: dict[str, list[SourceRecord]]
+    contract_profiles: dict[str, ProfileDeclaration]
+    explicit_policy_profiles: dict[str, ProfileDeclaration]
+    direct_candidate_flow: DirectFlowReport
+
+
+class _VerificationReport(TypedDict):
+    ok: bool
+    result: str
+    errors: list[str]
+    offending_paths: list[str]
+    details: _VerificationDetails
+
+
+class _LegacyMasks(TypedDict):
+    all_feasible: _MaskOutcome
+    intermediate: _MaskOutcome
+    one_hot_masks_unchanged_by_mt6: bool
+    generated_intermediate_masks_detected: int
+    nonempty_mask_count: int
+
+
+class _Mt6Witness(TypedDict):
+    detected: bool
+    witness: _Witness
+
+
+class _SelfTests(TypedDict):
+    source_set_perturbations: dict[str, _SourceMutation]
+    direct_flow_perturbations: DirectMutationControls
+    mask_neighborhood_perturbations: _LegacyMasks
+    mt6_all_feasible: _Mt6Witness
+    generated_intermediate: _MaskOutcome
+    certificate_neighborhood_coverage: _Coverage
+    all_controls_sensitive: bool
+
+
 _Q_VALUES = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
 
 
-def canonical_json(payload: dict[str, Any]) -> str:
+def canonical_json[PayloadValue](payload: Mapping[str, PayloadValue]) -> str:
     """Render deterministic UTF-8 JSON text."""
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
@@ -126,7 +240,7 @@ def rank_vectors(n_candidates: int) -> tuple[tuple[float, ...], ...]:
     )
 
 
-def run_rank_neighborhood_controls() -> dict[str, dict[str, Any]]:
+def run_rank_neighborhood_controls() -> _RankControls:
     """Show that a fixed ordering cannot see an omission of a non-winning candidate.
 
     The control omits flat cell 0 whenever every candidate is feasible. Under the
@@ -141,7 +255,7 @@ def run_rank_neighborhood_controls() -> dict[str, dict[str, Any]]:
     def omit_first(mask: Mask) -> Mask:
         return (False, *mask[1:]) if all(mask) else mask
 
-    def outcome(values: Sequence[float]) -> dict[str, Any]:
+    def outcome(values: Sequence[float]) -> _RankOutcome:
         reference_index, reference_value = reference_masked_argmax(
             values=values, mask=all_feasible
         )
@@ -184,7 +298,7 @@ def _winner_after(
     return reference_masked_argmax(values=values, mask=transform(mask))
 
 
-def _pinned_witness() -> dict[str, Any]:
+def _pinned_witness() -> _Witness:
     before = (True,) * len(_Q_VALUES)
     after = (*before[:-1], False)
     solve_index, solve_value = reference_masked_argmax(values=_Q_VALUES, mask=before)
@@ -204,7 +318,7 @@ def _pinned_witness() -> dict[str, Any]:
     }
 
 
-def run_mask_mutation_controls() -> dict[str, dict[str, Any]]:
+def run_mask_mutation_controls() -> dict[str, _MaskOutcome]:
     """Exercise MT6 and a distinct generated intermediate-mask omission."""
     masks = nonempty_feasibility_masks(len(_Q_VALUES))
     all_feasible = next(mask for mask in masks if all(mask))
@@ -222,7 +336,7 @@ def run_mask_mutation_controls() -> dict[str, dict[str, Any]]:
             else mask
         )
 
-    def outcome(*, mask: Mask, transform: Callable[[Mask], Mask]) -> dict[str, Any]:
+    def outcome(*, mask: Mask, transform: Callable[[Mask], Mask]) -> _MaskOutcome:
         reference_index, reference_value = reference_masked_argmax(
             values=_Q_VALUES, mask=mask
         )
@@ -258,11 +372,11 @@ def run_mask_mutation_controls() -> dict[str, dict[str, Any]]:
     }
 
 
-def _load_json(path: Path) -> Any:
+def _load_json(path: Path) -> JsonValue:
     """Read JSON while rejecting duplicate object keys."""
 
-    def no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
+    def no_duplicates(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
+        result: dict[str, JsonValue] = {}
         for key, value in pairs:
             if key in result:
                 raise ValueError(f"duplicate JSON key {key!r} in {path}")
@@ -272,7 +386,7 @@ def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=no_duplicates)
 
 
-def _records(*, raw: Any, label: str) -> list[SourceRecord]:
+def _records(*, raw: JsonValue | list[SourceRecord], label: str) -> list[SourceRecord]:
     if not isinstance(raw, list):
         raise ValueError(f"{label} must be a list")
     records: list[SourceRecord] = []
@@ -292,7 +406,9 @@ def _records(*, raw: Any, label: str) -> list[SourceRecord]:
     return records
 
 
-def _records_from_inventory(payload: dict[str, Any]) -> list[SourceRecord]:
+def _records_from_inventory(
+    payload: Inventory | Mapping[str, JsonValue],
+) -> list[SourceRecord]:
     return _records(raw=payload.get("sources"), label="sources.json sources")
 
 
@@ -341,7 +457,7 @@ def _contract_profiles(path: Path) -> dict[str, ProfileDeclaration]:
     because the inventory's bytes change whenever any certified source's digest does.
     """
     lines = path.read_text(encoding="utf-8").splitlines()
-    sources: dict[str, list[SourceRecord]] = {}
+    sources: dict[ProfileName, list[SourceRecord]] = {}
     anchors: dict[str, SourceRecord | None] = {}
     current_profile: str | None = None
     candidate_indent: int | None = None
@@ -618,7 +734,7 @@ def verify_repository(
     inventory_path: Path | None = None,
     contract: Path | None = None,
     policy: Path | None = None,
-) -> dict[str, Any]:
+) -> _VerificationReport:
     """Verify every supplied representation against one generated inventory."""
     root = repo_root.resolve()
     inventory = (
@@ -628,7 +744,7 @@ def verify_repository(
     )
     errors: list[str] = []
     offending: set[str] = set()
-    details: dict[str, Any] = {}
+    details: _VerificationDetails = {}
     try:
         committed_payload = _load_json(inventory)
         if not isinstance(committed_payload, dict):
@@ -680,7 +796,9 @@ def verify_repository(
             profile: _records(
                 raw=records, label=f"derived policy {profile} candidate sources"
             )
-            for profile, records in profile_sources(committed_payload).items()
+            for profile, records in profile_sources(
+                cast("Inventory", committed_payload)
+            ).items()
         }
     except (KeyError, TypeError, ValueError) as error:
         errors.append(f"derived policy: {error}")
@@ -824,7 +942,7 @@ def verify_repository(
     }
 
 
-def run_source_set_mutation_controls(*, repo_root: Path) -> dict[str, dict[str, Any]]:
+def run_source_set_mutation_controls(*, repo_root: Path) -> dict[str, _SourceMutation]:
     """Check the exact set-comparator against the required perturbation family."""
     clean = _records_from_inventory(build_inventory(repo_root.resolve()))
     if len(clean) < 2:
@@ -859,7 +977,7 @@ def run_source_set_mutation_controls(*, repo_root: Path) -> dict[str, dict[str, 
             secondary["path"],
         ),
     }
-    result: dict[str, dict[str, Any]] = {}
+    result: dict[str, _SourceMutation] = {}
     for name, (records, expected_path) in mutants.items():
         errors, paths = _compare_records(
             label=f"self-test {name}", expected=clean, observed=records
@@ -872,7 +990,7 @@ def run_source_set_mutation_controls(*, repo_root: Path) -> dict[str, dict[str, 
     return result
 
 
-def certificate_neighborhood_coverage(*, repo_root: Path) -> dict[str, Any]:
+def certificate_neighborhood_coverage(*, repo_root: Path) -> _Coverage:
     errors, paths = _certificate_matrix_errors(repo_root.resolve() / CERTIFICATE_PATH)
     return {
         "ok": not errors,
@@ -882,7 +1000,7 @@ def certificate_neighborhood_coverage(*, repo_root: Path) -> dict[str, Any]:
     }
 
 
-def _self_tests(repo_root: Path) -> tuple[dict[str, Any], bool]:
+def _self_tests(repo_root: Path) -> tuple[_SelfTests, bool]:
     source_controls = run_source_set_mutation_controls(repo_root=repo_root)
     mask_controls = run_mask_mutation_controls()
     direct_flow_controls = run_direct_flow_mutation_controls(repo_root=repo_root)
@@ -895,7 +1013,7 @@ def _self_tests(repo_root: Path) -> tuple[dict[str, Any], bool]:
     mask_green &= (
         mask_controls["all_feasible_last_cell"]["witness"] == _pinned_witness()
     )
-    all_feasible = dict(mask_controls["all_feasible_last_cell"])
+    all_feasible = mask_controls["all_feasible_last_cell"].copy()
     all_feasible.pop("witness", None)
     intermediate = mask_controls["intermediate_three_cell"]
     one_hot_unchanged = all(
@@ -911,7 +1029,7 @@ def _self_tests(repo_root: Path) -> tuple[dict[str, Any], bool]:
         if sum(mask) == 1
     )
     mask_green &= one_hot_unchanged
-    legacy_masks = {
+    legacy_masks: _LegacyMasks = {
         "all_feasible": all_feasible,
         "intermediate": intermediate,
         "one_hot_masks_unchanged_by_mt6": one_hot_unchanged,
@@ -919,7 +1037,7 @@ def _self_tests(repo_root: Path) -> tuple[dict[str, Any], bool]:
         "nonempty_mask_count": len(nonempty_feasibility_masks(len(_Q_VALUES))),
     }
     direct_flow_green = bool(direct_flow_controls["all_rejected"])
-    payload = {
+    payload: _SelfTests = {
         "source_set_perturbations": source_controls,
         "direct_flow_perturbations": direct_flow_controls,
         "mask_neighborhood_perturbations": legacy_masks,
@@ -953,7 +1071,7 @@ def main() -> int:
         policy=args.policy,
     )
     errors = list(verification["errors"])
-    self_tests: dict[str, Any] | None = None
+    self_tests: _SelfTests | None = None
     if args.self_test:
         self_tests, controls_green = _self_tests(root)
         if not controls_green:

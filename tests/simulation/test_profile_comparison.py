@@ -137,8 +137,8 @@ def test_axis_width_gate_never_borrows_another_elements_magnitude(
     """
 
     def supply_solution(
-        *, config: object, solutions: Iterator[SimpleNamespace]
-    ) -> tuple[dict[object, object], SimpleNamespace]:
+        *, config: ExecutionConfig, solutions: Iterator[SimpleNamespace]
+    ) -> tuple[dict[tuple[str, int, str], dict[str, int]], SimpleNamespace]:
         del config
         return {}, next(solutions)
 

@@ -14,12 +14,13 @@ from _lcm.solution.action_streaming import (
     _evaluate_ev1_branch_block,
     build_streaming_ev1_max_Q_over_a,
 )
+from lcm.typing import ActionName
 
 
 def _numpy_ev1_oracle(
     *,
     Q_and_F: Callable[..., tuple[object, object]],
-    action_names: tuple[str, ...],
+    action_names: tuple[ActionName, ...],
     n_discrete_action_axes: int,
     action_grids: Mapping[str, np.ndarray],
     fixed_kwargs: Mapping[str, object],

@@ -46,7 +46,7 @@ from lcm import (
     categorical,
 )
 from lcm.solvers import DCEGM, GridSearch
-from lcm.typing import ContinuousState, FloatND, ScalarInt
+from lcm.typing import ContinuousState, FloatND, RegimeName, ScalarInt
 from tests.test_models.nbegm_common import make_alive_dead_model, savings, utility
 
 
@@ -153,7 +153,7 @@ def resources_case(request: pytest.FixtureRequest) -> tuple[Model, float, float]
     )
 
 
-def _continuation_plan(*, model: Model, regime: str, period: int) -> Any:
+def _continuation_plan(*, model: Model, regime: RegimeName, period: int) -> Any:
     """The continuation plan of `regime` at `period`, from the replay step."""
     kernel = model._regimes[regime].solution.period_kernels[period]
     step: Any = core_program_graph(kernel=kernel)["replay"].function

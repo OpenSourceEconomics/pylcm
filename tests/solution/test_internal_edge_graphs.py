@@ -61,7 +61,7 @@ from lcm.solver_api import (
     SolverIdentity,
 )
 from lcm.solvers import GridSearch, ReducedAxis, StateActionSpace
-from lcm.typing import ReferenceName
+from lcm.typing import ReferenceName, RegimeName
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -219,8 +219,8 @@ class _GraphKernel:
         *,
         compiled_cores: Mapping[str, Any],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[str, FloatND],
-        next_regime_to_continuation: Mapping[str, ContinuationArtifact],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationArtifact],
         flat_params: FlatParams,
         period: int,
         ages: TimeAxis,

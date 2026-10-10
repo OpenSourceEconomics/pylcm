@@ -1860,7 +1860,7 @@ class DirectFlowReport(TypedDict):
     errors: list[str]
     offending_paths: list[str]
     routes: dict[str, str]
-    certified_corridor_sources: list[str]
+    certified_corridor_sources: list[SourcePath]
     source_seals: dict[str, str]
 
 
