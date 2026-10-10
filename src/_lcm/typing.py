@@ -167,13 +167,43 @@ type PytreeValue = (
     | None
 )
 
-# A value tree keyed by period at its top levels, as the solve and the simulation
-# hold their per-period inputs, outputs and intermediates. Period levels sit only at
-# the top or under other period levels; a site whose period levels sit below a name
-# level or inside a tuple spells that outer level, as in
-# `Mapping[RegimeName, PytreeByPeriod]`. One self-reference keeps the alias
-# checkable by the beartype claw.
-type PytreeByPeriod = PytreeValue | Mapping[int, PytreeByPeriod]
+if TYPE_CHECKING:
+    # ty does not prove that every `PytreeValue` matches `PytreeByPeriod`'s members,
+    # so the alias names it as a member of its own.
+    type _PytreeValueForTy = PytreeValue
+else:
+    # beartype cannot build a check for a recursive alias that names `PytreeValue`
+    # beside further self-references; every `PytreeValue` already matches
+    # `PytreeByPeriod`'s other members, so the claw checks the same trees.
+    type _PytreeValueForTy = None
+
+# A value tree whose mapping levels may be keyed by name or by period, at any depth,
+# as the solve and the simulation hold their per-period inputs, outputs and
+# intermediates: inside tuples of roots, below a regime name, or in a list of chunk
+# results. It names `PytreeValue`'s members itself rather than `PytreeValue`: beartype
+# cannot build a check for an alias over `PytreeValue` with further
+# self-references, and this self-contained form stays checkable in any union. The
+# beartype claw checks only the outer levels of a recursive alias; ty checks every
+# level.
+type PytreeByPeriod = (
+    _PytreeValueForTy
+    | ArrayTree
+    | ValueND
+    | HostArray
+    | np.generic
+    | bool
+    | int
+    | float
+    | MappingLeaf
+    | SequenceLeaf
+    | DataclassInstance
+    | _PluginPytree
+    | tuple[PytreeByPeriod, ...]
+    | list[PytreeByPeriod]
+    | Mapping[str, PytreeByPeriod]
+    | Mapping[int, PytreeByPeriod]
+    | None
+)
 
 # The abstract counterpart of a `PytreeValue`, for lowering and memory profiling.
 type ShapeDtypePytree = (
