@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "57848655d3ea57a24b18ab9d414a6dbb2737374b8f764554ca221dfc7732ef47",
+  "source_inventory_sha256": "dfede69697c8711cc94b07d2bfab888d916d516ececb94cdd6ac641f6d68d130",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -374,7 +374,7 @@
     },
     {
       "path": "src/_lcm/solution/fingerprint.py",
-      "sha256": "07b27b4ac78a578cf9431c71bc384bb91bedb4e203c8ddca52a2a5b441b8b022"
+      "sha256": "072c93e7613b1edf806dd5f5cff2db979c3ef9b96063feeb1766ee931981383b"
     },
     {
       "path": "src/_lcm/solution/grid_search.py",

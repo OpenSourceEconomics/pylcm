@@ -272,32 +272,37 @@ continuation sums over them. A law may not read the draw toward a target that fo
 shock and does read it within its period; model construction refuses that combination,
 because the target's averaged value and the source's draw would be correlated.
 
-When such a bill is subtracted from a continuous state, declare the law as
-`lcm.SubtractedBill(resources=..., bill=..., conditioners=...)` instead of a function
-computing `resources - bill`:
+When such a shock is added to a continuous state, declare the law as
+`lcm.AdditiveShockTransition(base=..., shock=..., conditioners=...)` instead of a
+function computing `base + shock`. The law is `next_<state> = base + shock`, so a bill
+enters as its negative:
 
 ```python
+def negative_medical_bill(medical_bill):
+    return -medical_bill
+
+
 state_transitions = {
-    "wealth": lcm.SubtractedBill(
-        resources="wealth_before_bill",
-        bill="medical_bill",
+    "wealth": lcm.AdditiveShockTransition(
+        base="wealth_before_bill",
+        shock="negative_medical_bill",
         conditioners={"is_insured": (False, True)},
     ),
 }
 ```
 
-The continuation then averages each target's value over the transitory draws the bill
-reads once per period, `W(z) = sum_k w_k V(z - bill_k)`, and reads it at
+The continuation then averages each target's value over the transitory draws the shock
+reads once per period, `W(z) = sum_k w_k V(z + shock_k)`, and reads it at
 `z = wealth_before_bill`, instead of interpolating the value at every node of every such
 draw at every source point. The averaged draws are those the transition alone makes with
 probabilities that read only parameters and time. A draw the target stores, or one whose
 probabilities depend on the source point, keeps its node axis. With linear interpolation
 the value is linear between its grid points `a_j`, so `W` is linear between the merged
-points `{a_j + bill_k}` and is stored there: the result is exact up to rounding, not an
-approximation on the target's grid. The resources may not read a draw, and the bill may
-read nothing but its conditioners, the draws, the period or age, and parameters. Each
+points `{a_j - shock_k}` and is stored there: the result is exact up to rounding, not an
+approximation on the target's grid. The base may not read a draw, and the shock may read
+nothing but its conditioners, the draws, the period or age, and parameters. Each
 conditioner is a function or discrete variable of the source with the finite support
-given; declared conditioners the bill does not read are ignored.
+given; declared conditioners the shock does not read are ignored.
 
 Those rules characterize a shock that is drawn, used for the within-period decision, and
 discarded before the value is stored. If its realization changes a later state, selects

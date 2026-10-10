@@ -31,13 +31,13 @@ from _lcm.probability import (
     regime_mass_is_a_distribution,
 )
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.regime_building.averaged_bill import (
-    get_averaged_bill_reader,
-    plan_averaged_bill,
-)
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
+)
+from _lcm.regime_building.shock_average import (
+    get_shock_average_reader,
+    plan_shock_average,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
@@ -2263,8 +2263,8 @@ def _get_compute_CE(
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation spec that target's leaf is read under. A target absent
             from it is read as an ordinary value function.
-        flat_param_names: The regime's flat parameter names, which a subtracted
-            bill may read besides its conditioners and the draws. `None` skips
+        flat_param_names: The regime's flat parameter names, which an additive
+            shock may read besides its conditioners and the draws. `None` skips
             that check.
 
     Returns:
@@ -2288,7 +2288,7 @@ def _get_compute_CE(
                 certainty_equivalent is None
                 or type(certainty_equivalent) is LinearExpectation
             ),
-            allowed_bill_inputs=flat_param_names,
+            allowed_shock_inputs=flat_param_names,
         )
         for target_regime_name in period_targets
     }
@@ -2776,7 +2776,7 @@ class _TargetContinuation:
     )
     """Weights of draws averaged into the value `next_V` reads, not mapped over.
 
-    A subtracted bill's transition-local draws carry no node axis: `next_V`
+    An additive shock's transition-local draws carry no node axis: `next_V`
     takes their marginal weights and averages over them itself.
     """
 
@@ -3118,7 +3118,7 @@ def _build_target_continuation(
     n_stakeholders: int | None,
     gated_continuation: GatedContinuationSpec | None = None,
     restore_original_layout: bool = False,
-    allowed_bill_inputs: frozenset[str] | None = None,
+    allowed_shock_inputs: frozenset[str] | None = None,
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
@@ -3146,7 +3146,7 @@ def _build_target_continuation(
         gated_continuation: How to turn this target's stacked operand channels
             into one value per leg at the landing point, or `None` when the
             target's leaf is an ordinary value function.
-        allowed_bill_inputs: Names a subtracted bill may read besides its
+        allowed_shock_inputs: Names an additive shock may read besides its
             conditioners, the draws and the time coordinates: the source's
             parameters. `None` skips that check.
 
@@ -3292,10 +3292,10 @@ def _build_target_continuation(
             dependencies_by_law=dependencies_by_law,
             v_interpolation_info=v_interpolation_info,
         )
-    # A law declared as a subtracted bill is read through the value averaged
-    # over the transition-local draws its bill reads: those draws leave the
-    # node axes, and the law leaves the laws resolved at a node.
-    averaged_bill = plan_averaged_bill(
+    # A law declared as an additive shock transition is read through the value
+    # averaged over the transition-local draws its shock reads: those draws leave
+    # the node axes, and the law leaves the laws resolved at a node.
+    shock_average = plan_shock_average(
         target_regime_name=target_regime_name,
         bundle=bundle,
         functions=functions,
@@ -3303,12 +3303,12 @@ def _build_target_continuation(
         v_interpolation_info=v_interpolation_info,
         lottery_variables=lottery_variables,
         dependencies_by_law=dependencies_by_law,
-        allowed_inputs=allowed_bill_inputs,
+        allowed_inputs=allowed_shock_inputs,
         co_map_state_names=co_map_state_names,
     )
     averaged_inputs: tuple[str, ...] = ()
     integrated_weight_names: tuple[str, ...] = ()
-    if averaged_bill is not None:
+    if shock_average is not None:
         if (
             gated_continuation is not None
             or n_stakeholders is not None
@@ -3316,13 +3316,13 @@ def _build_target_continuation(
             or original_layouts
         ):
             msg = (
-                f"The subtracted bill toward regime '{target_regime_name}' cannot "
-                "be averaged on a gated, collective, entered or factored "
+                f"The additive shock transition toward regime '{target_regime_name}' "
+                "cannot be averaged on a gated, collective, entered or factored "
                 "continuation; declare the law as a plain function instead."
             )
             raise ModelInitializationError(msg)
-        next_V_interpolator = get_averaged_bill_reader(
-            plan=averaged_bill,
+        next_V_interpolator = get_shock_average_reader(
+            plan=shock_average,
             functions=functions,
             target_regime_name=target_regime_name,
             transition_plans=transition_plans,
@@ -3333,18 +3333,18 @@ def _build_target_continuation(
         node_variables = tuple(
             name
             for name in lottery_variables
-            if name not in averaged_bill.integrated_draws
+            if name not in shock_average.integrated_draws
         )
         dependent_coordinate_names = tuple(
-            name for name in dependencies_by_law if name != averaged_bill.law_name
+            name for name in dependencies_by_law if name != shock_average.law_name
         )
         averaged_inputs = (
-            averaged_bill.law.resources,
-            *averaged_bill.function_conditioners,
+            shock_average.law.base,
+            *shock_average.function_conditioners,
         )
         integrated_weight_names = tuple(
             transition_plans[target_regime_name].lotteries[name].weight_name
-            for name in averaged_bill.integrated_draws
+            for name in shock_average.integrated_draws
         )
     draw_resolution: _NodeDrawResolution | None = None
     if dependent_coordinate_names:
@@ -3398,8 +3398,8 @@ def _build_target_continuation(
                     for key in bundle
                     if key not in dependencies_by_law
                     and (
-                        averaged_bill is None
-                        or key not in averaged_bill.integrated_draws
+                        shock_average is None
+                        or key not in shock_average.integrated_draws
                     )
                 ),
                 *averaged_inputs,
