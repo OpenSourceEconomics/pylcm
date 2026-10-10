@@ -3,16 +3,28 @@
 import inspect
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 from functools import wraps
 from typing import Any, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from beartype import beartype
 
+from _lcm.beartype_conf import PARAMS_CONF
 from lcm.typing import ValueND
 
+# A computational period label. A boolean passes here and is refused when the
+# labels are validated.
+type _PeriodLabel = int | np.integer
+# A numeric age label. Finiteness is checked when the labels are validated.
+type _AgeLabel = int | float | Fraction | np.integer | np.floating
+# The static labels of a `TimeVarying`: its periods and its ages, one of them set.
+type _Labels = tuple[tuple[_PeriodLabel, ...] | None, tuple[_AgeLabel, ...] | None]
 
+
+@beartype(conf=PARAMS_CONF)
 @dataclass(frozen=True, kw_only=True)
 class TimeVarying:
     """Values with a leading time axis and exactly one set of static labels.
@@ -26,11 +38,11 @@ class TimeVarying:
     """Numeric values whose leading dimension matches the supplied coordinates."""
 
     # Coordinates are validated deterministically in preflight, including rows
-    # outside the model grid; probabilistic container type checks are insufficient.
-    periods: tuple[object, ...] | None = None
+    # outside the model grid; the type check samples one entry of each tuple.
+    periods: tuple[_PeriodLabel, ...] | None = None
     """Integer computational coordinates, mutually exclusive with ages."""
 
-    ages: tuple[object, ...] | None = None
+    ages: tuple[_AgeLabel, ...] | None = None
     """Finite numeric age coordinates, mutually exclusive with periods."""
 
     def __post_init__(self) -> None:
@@ -38,7 +50,11 @@ class TimeVarying:
             raise ValueError(
                 "TimeVarying requires exactly one of periods and ages coordinates."
             )
-        labels = self.periods if self.periods is not None else cast("tuple", self.ages)
+        labels = (
+            self.periods
+            if self.periods is not None
+            else cast("tuple[_AgeLabel, ...]", self.ages)
+        )
         if self.values.ndim == 0 or self.values.shape[0] != len(labels):
             raise ValueError(
                 "TimeVarying leading axis length must match its coordinate labels."
@@ -89,12 +105,12 @@ class UnlabelledTimeParameterWarning(UserWarning):
     """A manually indexed array has no labels with which to check its mapping."""
 
 
-def _flatten(value: TimeVarying) -> tuple[tuple[ValueND | np.ndarray], tuple]:
+def _flatten(value: TimeVarying) -> tuple[tuple[ValueND | np.ndarray], _Labels]:
     return (value.values,), (value.periods, value.ages)
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-def _unflatten(labels: tuple, values: Sequence[Any]) -> TimeVarying:
+def _unflatten(labels: _Labels, values: Sequence[ValueND | np.ndarray]) -> TimeVarying:
     return TimeVarying(values=values[0], periods=labels[0], ages=labels[1])
 
 

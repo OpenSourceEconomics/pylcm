@@ -40,6 +40,7 @@ from lcm.exceptions import (
     InvalidParamsError,
     ModelInitializationError,
 )
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -629,7 +630,7 @@ _LATE_LAW = {
 def _mortal_model(
     *,
     ages: AgeGrid = _AGES,
-    law: object = None,
+    law: TransitionLaw | None = None,
     fixed_params: UserParams | None = None,
 ) -> Model:
     """Working regime that survives a year at a time, then dies at the last age.

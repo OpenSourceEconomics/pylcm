@@ -6,7 +6,7 @@ the engine-side params machinery live in `_lcm.params`.
 """
 
 from collections.abc import Mapping, Sequence
-from typing import Any, overload
+from typing import TYPE_CHECKING, overload
 
 from beartype import beartype
 
@@ -19,18 +19,26 @@ from lcm.temporal import (
     time_varying_params,
 )
 
+if TYPE_CHECKING:
+    from lcm.typing import UserParamsLeaf
+else:
+    # `lcm.typing` imports this module before it defines `UserParamsLeaf`, and
+    # `as_leaf` is decorated at import; the canonical dtype cast refuses an
+    # unsupported entry.
+    type UserParamsLeaf = object
+
 
 @overload
-def as_leaf(data: Mapping[str, Any]) -> UserMappingLeaf: ...
+def as_leaf(data: Mapping[str, UserParamsLeaf]) -> UserMappingLeaf: ...
 
 
 @overload
-def as_leaf(data: Sequence[Any]) -> UserSequenceLeaf: ...
+def as_leaf(data: Sequence[UserParamsLeaf]) -> UserSequenceLeaf: ...
 
 
 @beartype(conf=PARAMS_CONF)
 def as_leaf(
-    data: Mapping[str, Any] | Sequence[Any],
+    data: Mapping[str, UserParamsLeaf] | Sequence[UserParamsLeaf],
 ) -> UserMappingLeaf | UserSequenceLeaf:
     """Wrap a Mapping or Sequence as a JAX-pytree leaf.
 

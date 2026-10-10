@@ -638,7 +638,7 @@ def _validated_per_regime_widths(
     return validated
 
 
-def _fail_if_width_invalid(*, label: str, width: object) -> None:
+def _fail_if_width_invalid(*, label: str, width: int) -> None:
     """Require a positive exact integer, naming the declaration that carries it."""
     if type(width) is not int:
         raise TypeError(f"ExecutionConfig.{label} must be an exact int.")
