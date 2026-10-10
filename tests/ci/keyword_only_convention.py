@@ -10,6 +10,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+type SourceText = str
+type QualifiedName = str
+
+
 _EXEMPTION_PREFIX = "# keyword-only-exempt:"
 _LIBRARY_CALLBACK_EXEMPTION = re.compile(
     rf"{_EXEMPTION_PREFIX} library-callback=[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
@@ -58,7 +62,7 @@ class KeywordOnlyViolation:
 
     path: Path
     line: int
-    qualified_name: str
+    qualified_name: QualifiedName
     code: str
     positional_parameters: tuple[str, ...]
     cell: int | None = None
@@ -67,13 +71,13 @@ class KeywordOnlyViolation:
 @dataclass(frozen=True, kw_only=True)
 class _Definition:
     node: ast.FunctionDef | ast.AsyncFunctionDef
-    qualified_name: str
+    qualified_name: QualifiedName
     is_method: bool
 
 
 @dataclass(frozen=True, kw_only=True)
 class _SourceUnit:
-    source: str
+    source: SourceText
     line_offset: int = 0
     cell: int | None = None
 
@@ -128,7 +132,7 @@ def _parameter_info(
     return tuple(positional_parameters), parameter_count
 
 
-def _standalone_comments(*, source: str) -> dict[int, str]:
+def _standalone_comments(*, source: SourceText) -> dict[int, str]:
     source_lines = source.splitlines()
     comments: dict[int, str] = {}
     tokens = tokenize.generate_tokens(io.StringIO(source).readline)
@@ -327,7 +331,7 @@ def _violations_for_source(
     ]
 
 
-def _markdown_source_units(*, source: str) -> tuple[_SourceUnit, ...]:
+def _markdown_source_units(*, source: SourceText) -> tuple[_SourceUnit, ...]:
     lines = source.splitlines()
     source_units: list[_SourceUnit] = []
     line_index = 0
@@ -361,7 +365,7 @@ def _markdown_source_units(*, source: str) -> tuple[_SourceUnit, ...]:
     return tuple(source_units)
 
 
-def _notebook_source_units(*, source: str) -> tuple[_SourceUnit, ...]:
+def _notebook_source_units(*, source: SourceText) -> tuple[_SourceUnit, ...]:
     notebook = json.loads(source)
     source_units: list[_SourceUnit] = []
     for cell_number, cell in enumerate(notebook["cells"], start=1):

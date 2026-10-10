@@ -8,7 +8,8 @@ and actions are pruned per regime by DAG reachability; regime-level
 declarations are never pruned.
 """
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Unpack
 
 import jax.numpy as jnp
 import pytest
@@ -31,8 +32,9 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.regime import RegimeReplacement
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import FloatND, RegimeName, ScalarInt
 
 
 @categorical(ordered=False)
@@ -90,8 +92,8 @@ def _retired_transition() -> ByAge:
     )
 
 
-def _work_regime(**overrides: Any) -> UserRegime:
-    spec: dict[str, Any] = {
+def _work_regime(**overrides: Unpack[RegimeReplacement]) -> UserRegime:
+    spec: RegimeReplacement = {
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -101,8 +103,8 @@ def _work_regime(**overrides: Any) -> UserRegime:
     return UserRegime(**spec)
 
 
-def _retired_regime(**overrides: Any) -> UserRegime:
-    spec: dict[str, Any] = {
+def _retired_regime(**overrides: Unpack[RegimeReplacement]) -> UserRegime:
+    spec: RegimeReplacement = {
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -112,7 +114,7 @@ def _retired_regime(**overrides: Any) -> UserRegime:
     return UserRegime(**spec)
 
 
-def _build_model(**model_slots: Any) -> Model:
+def _build_model(**model_slots: Unpack[_BroadcastModelKwargs]) -> Model:
     regimes = model_slots.pop(
         "regimes",
         {
@@ -134,7 +136,8 @@ def _build_model(**model_slots: Any) -> Model:
                 targets={"retired": 0, "dead": (0, 1)}, law=_retired_transition()
             ),
         },
-        **model_slots,
+        # The regimes entry was popped above.
+        **model_slots,  # ty: ignore[parameter-already-assigned]
     )
 
 
@@ -505,3 +508,8 @@ def test_model_broadcast_solves_and_simulates() -> None:
     )
     values = work_rows.loc[work_rows["period"] == 0, "skill"]
     assert values.tolist() == [0, 1, 0, 1]
+
+
+class _BroadcastModelKwargs(ModelSlots, total=False):
+    regimes: Mapping[RegimeName, UserRegime]
+    execution_config: ExecutionConfig

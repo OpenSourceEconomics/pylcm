@@ -9,9 +9,9 @@ unsupported request is refused before anything is dispatched.
 
 import collections
 import logging
-from collections.abc import Mapping
+from collections.abc import Collection, Hashable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import NotRequired, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -20,10 +20,13 @@ import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.engine import SolutionPhase
-from _lcm.execution.core_program import core_program_graph
+from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis, core_program_graph
 from _lcm.execution.execution_plan import CorePlanRecord
-from _lcm.execution.scheduler import PeriodTransferCache
+from _lcm.execution.scheduler import PeriodTransferCache, ReleaseRecord
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution import backward_induction
+from _lcm.state_action_space import StateActionSpace
+from _lcm.typing import FlatRegimeParams
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -41,11 +44,37 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
+    StateName,
+    UserParams,
+    UserParamsNode,
 )
 from tests.conftest import assert_general_values_agree
 from tests.simulation import test_type_grouped_simulation as grouped_simulation
 from tests.test_models import independent_types
+
+
+class _CompileKwargs(TypedDict):
+    lowering_key: Hashable
+    low: jax.stages.Lowered
+    label: str
+    log_kernel_memory: bool
+    logger: logging.Logger
+    phase: str | None
+
+
+class _SpaceKwargs(TypedDict):
+    regime_params: FlatRegimeParams
+    process_grid_resolver: NotRequired[ProcessGridResolver | None]
+
+
+class _WidthKwargs(TypedDict):
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...]
+    fixed_widths: NotRequired[Mapping[str, int]]
+    budget_bytes: NotRequired[int | None]
+    width_ceilings: NotRequired[Mapping[str, int]]
+    covered_axes: NotRequired[Collection[str]]
 
 
 def _blocked() -> ExecutionConfig:
@@ -171,7 +200,9 @@ def _sector_model(
     )
 
 
-def _sector_params(*, typed_terminal: bool, scale: float = 1.0) -> dict:
+def _sector_params(
+    *, typed_terminal: bool, scale: float = 1.0
+) -> dict[str, UserParamsNode]:
     weight = jnp.asarray(independent_types.TYPE_PARAMS["weight"]) * scale
     exponent = jnp.asarray(independent_types.TYPE_PARAMS["exponent"])
     terminal = (
@@ -206,7 +237,9 @@ def _independent_types_model(*, execution_config: ExecutionConfig) -> Model:
     )
 
 
-def _workload(*, name: str, execution_config: ExecutionConfig) -> tuple[Model, dict]:
+def _workload(
+    *, name: str, execution_config: ExecutionConfig
+) -> tuple[Model, dict[str, UserParamsNode]]:
     if name == "independent_types":
         return (
             _independent_types_model(execution_config=execution_config),
@@ -222,7 +255,9 @@ def _workload(*, name: str, execution_config: ExecutionConfig) -> tuple[Model, d
 _WORKLOADS = ("independent_types", "sector_typed_terminal", "sector_type_free_terminal")
 
 
-def _values(*, model: Model, params: dict) -> Mapping:
+def _values(
+    *, model: Model, params: UserParams
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     return model.solve(params=params, log_level="off").values
 
 
@@ -249,11 +284,11 @@ def test_execution_config_invariant_block_widths_are_frozen() -> None:
     ],
 )
 def test_execution_config_refuses_an_unusable_block_width(
-    *, widths: dict, error: type[Exception]
+    *, widths: dict[StateName, int | float], error: type[Exception]
 ) -> None:
     """A width is a positive exact integer keyed by a non-empty state name."""
     with pytest.raises(error):
-        ExecutionConfig(invariant_block_widths=widths)
+        ExecutionConfig(invariant_block_widths=widths)  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize("workload", _WORKLOADS)
@@ -444,12 +479,14 @@ def test_an_unblocked_carrier_keeps_one_main_program() -> None:
 
 
 def _count_compiles(
-    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: dict
+    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: UserParams
 ) -> int:
-    calls: list[object] = []
+    calls: list[Hashable] = []
     compile_and_log = backward_induction._compile_and_log
 
-    def counted(**kwargs: Any) -> object:
+    def counted(
+        **kwargs: Unpack[_CompileKwargs],
+    ) -> tuple[Hashable, jax.stages.Compiled]:
         calls.append(kwargs["lowering_key"])
         return compile_and_log(**kwargs)
 
@@ -485,7 +522,9 @@ class _CompileRequests(logging.Handler):
             self.names.append(message.removeprefix("Compiling ").split(" with ")[0])
 
 
-def _cold_compile_requests(*, model: Model, params: dict) -> collections.Counter:
+def _cold_compile_requests(
+    *, model: Model, params: UserParams
+) -> collections.Counter[str]:
     """Count every compile request of a solve that starts with empty JAX caches.
 
     Clearing the caches first means a helper another test already compiled is
@@ -505,7 +544,7 @@ def _cold_compile_requests(*, model: Model, params: dict) -> collections.Counter
 
 def _blocked_and_unblocked_compile_requests(
     *, workload: str
-) -> tuple[collections.Counter, collections.Counter]:
+) -> tuple[collections.Counter[str], collections.Counter[str]]:
     if workload == "two_carriers":
         params = _two_carrier_params()
         models = tuple(
@@ -557,19 +596,21 @@ def test_a_blocked_cold_solve_adds_only_view_selection_and_block_writes(
 
 
 def _planning_calls(
-    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: dict
+    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: UserParams
 ) -> tuple[int, int]:
     """Count the state spaces built and the width frontiers ranked in one solve."""
-    spaces: list[object] = []
-    frontiers: list[object] = []
+    spaces: list[SolutionPhase] = []
+    frontiers: list[tuple[ReducedAxis | TiledOutputAxis, ...]] = []
     state_action_space = SolutionPhase.state_action_space
     width_candidates = backward_induction.workspace_width_candidates
 
-    def counted_space(self: SolutionPhase, **kwargs: Any) -> Any:
+    def counted_space(
+        self: SolutionPhase, **kwargs: Unpack[_SpaceKwargs]
+    ) -> StateActionSpace:
         spaces.append(self)
         return state_action_space(self, **kwargs)
 
-    def counted_widths(**kwargs: Any) -> Any:
+    def counted_widths(**kwargs: Unpack[_WidthKwargs]) -> tuple[Mapping[str, int], ...]:
         frontiers.append(kwargs["axes"])
         return width_candidates(**kwargs)
 
@@ -617,7 +658,7 @@ class _PlanRecords(logging.Handler):
             self.records.append(plan_record)
 
 
-def _plan_records(*, model: Model, params: dict) -> list[CorePlanRecord]:
+def _plan_records(*, model: Model, params: UserParams) -> list[CorePlanRecord]:
     handler = _PlanRecords()
     logger = logging.getLogger("lcm")
     logger.addHandler(handler)
@@ -668,7 +709,7 @@ def test_a_block_moves_one_type_of_each_continuation() -> None:
     ],
 )
 def test_an_unsafe_or_unsupported_request_is_refused_at_construction(
-    *, widths: dict, sharded: tuple[str, ...], match: str
+    *, widths: dict[StateName, int], sharded: tuple[str, ...], match: str
 ) -> None:
     """An invalid request raises before any program is lowered or dispatched."""
     with pytest.raises(ExecutionPlanningError, match=match):
@@ -745,7 +786,7 @@ def _two_carrier_model(*, execution_config: ExecutionConfig) -> Model:
     )
 
 
-def _two_carrier_params() -> dict:
+def _two_carrier_params() -> dict[str, UserParamsNode]:
     sector = _sector_params(typed_terminal=True)
     return {
         "discount_factor": 0.9,
@@ -774,11 +815,13 @@ def test_a_type_view_two_carriers_share_is_released_after_the_second_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Each type's shared terminal view is freed once, by its last reader."""
-    commits: list[tuple[object, int]] = []
+    commits: list[tuple[tuple[Hashable, Hashable], int]] = []
     commit = PeriodTransferCache.commit_consumer
 
     # keyword-only-exempt: primary-argument=self
-    def observed(self: PeriodTransferCache, *, key: Any) -> Any:
+    def observed(
+        self: PeriodTransferCache, *, key: tuple[Hashable, Hashable]
+    ) -> tuple[ReleaseRecord, ...]:
         released = commit(self, key=key)
         commits.append((key, len(released)))
         return released
@@ -788,7 +831,7 @@ def test_a_type_view_two_carriers_share_is_released_after_the_second_commit(
         params=_two_carrier_params(), log_level="off"
     )
 
-    by_view: dict[object, list[int]] = {}
+    by_view: dict[tuple[Hashable, Hashable], list[int]] = {}
     for key, n_released in commits:
         by_view.setdefault(key, []).append(n_released)
     assert sorted(by_view.values()) == [[0, 1]] * _N_TYPES

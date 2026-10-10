@@ -4,7 +4,7 @@ import dataclasses
 import weakref
 from collections.abc import Callable, Mapping
 from functools import partialmethod
-from typing import Any
+from typing import Never, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -19,6 +19,7 @@ from _lcm.simulation.program_types import DECISION_PROGRAM, ROUTE_PROGRAM
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
 from _lcm.solution.retained_buffers import retained_solution_buffers
+from _lcm.typing import PytreeByPeriod, PytreeValue, ShapeDtypePytree
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -28,7 +29,14 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ReferenceName,
+    ScalarInt,
+)
+from tests.simulation._callback_types import HostDispatch, RuntimeDispatch
 from tests.solution.test_solution_result import _small_grid_search_inputs
 
 
@@ -77,20 +85,20 @@ def _stateful_target_model() -> Model:
 class _ObservedStateMerge:
     """Weak observations do not extend either raw or merged array ownership."""
 
-    original: Callable[..., object]
+    original: Callable[..., PytreeValue]
     raw_outputs: list[weakref.ReferenceType[jax.Array]]
     merged_carrier: list[weakref.ReferenceType[jax.Array]]
     reached: list[str]
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _observe_profiled_merge(
+def _observe_profiled_merge[Result: PytreeValue](
     self: ProfiledSimulationOperations,
     *,
-    original: Callable[..., object],
+    original: Callable[..., Result],
     observed: _ObservedStateMerge,
-    **kwargs: Any,
-) -> object:
+    **kwargs: Unpack[HostDispatch],
+) -> Result:
     is_merge = kwargs["function"] is observed.original
     if is_merge:
         observed.raw_outputs[:] = [
@@ -109,18 +117,18 @@ def _observe_profiled_merge(
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _inspect_route_inventory(
+def _inspect_route_inventory[Result](
     self: SimulationRuntime,
     *,
-    original: Callable[..., object],
+    original: Callable[..., Result],
     observed: _ObservedStateMerge,
     channel: str,
     program: CoreProgram,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
     n_subjects: int,
     residency: SimulationDispatchContext | None = None,
-) -> object:
+) -> Result:
     if program.name == ROUTE_PROGRAM and observed.raw_outputs:
         assert residency is not None
         observed.reached.append(channel)
@@ -202,7 +210,7 @@ def test_transition_owners_survive_and_are_counted_before_route(
 
 
 # keyword-only-exempt: library-callback=SimulationMemory.hold
-def _drop_host_roots(self: SimulationMemory, tree: object) -> None:
+def _drop_host_roots(self: SimulationMemory, tree: PytreeByPeriod) -> None:
     del self, tree
 
 
@@ -214,13 +222,13 @@ def test_missing_host_root_handoff_is_detected(monkeypatch: pytest.MonkeyPatch) 
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _remember_decision_values(
+def _remember_decision_values[Result: PytreeValue](
     self: SimulationRuntime,
     *,
-    original: Callable[..., object],
+    original: Callable[..., Result],
     values: list[weakref.ReferenceType[jax.Array]],
-    **kwargs: Any,
-) -> object:
+    **kwargs: Unpack[RuntimeDispatch],
+) -> Result:
     result = original(self, **kwargs)
     if kwargs["program"].name == DECISION_PROGRAM:
         assert isinstance(result, tuple)
@@ -229,15 +237,18 @@ def _remember_decision_values(
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _inspect_lookup_inventory(
+def _inspect_lookup_inventory[Result: PytreeValue](
     self: ProfiledSimulationOperations,
     *,
-    original: Callable[..., object],
+    original: Callable[..., Result],
     values: list[weakref.ReferenceType[jax.Array]],
     reached: list[bool],
-    **kwargs: Any,
-) -> object:
-    if kwargs["function"].__name__ == "_lookup_values_from_indices" and values:
+    **kwargs: Unpack[HostDispatch],
+) -> Result:
+    if (
+        getattr(kwargs["function"], "__name__", None) == "_lookup_values_from_indices"
+        and values
+    ):
         arrays = tuple(reference() for reference in values)
         assert all(array is not None for array in arrays)
         missing = resident_bytes_by_device(
@@ -291,7 +302,7 @@ def test_raw_decision_values_are_counted_during_action_lookup(
     assert reached
 
 
-def _reject_private_copy(*, value: object, label: str) -> object:
+def _reject_private_copy[Ignored](*, value: Ignored, label: str) -> Never:
     del value, label
     raise AssertionError("Foreign solution payload copied before the one-byte refusal")
 

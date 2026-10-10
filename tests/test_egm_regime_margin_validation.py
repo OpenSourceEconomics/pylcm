@@ -14,9 +14,10 @@ whatever the guard actually checks; each rejection is therefore paired with a
 control showing the same guard accepts the valid object.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import get_type_hints
+from typing import TypedDict, get_type_hints
 
 import pytest
 
@@ -33,6 +34,7 @@ from lcm.consumption_savings_regime import (
     OuterContinuousMargin,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.regime import ActionEntry, FunctionEntry, StateEntry, StateTransitionEntry
 from lcm.solvers import (
     DCEGM,
     NEGM,
@@ -84,7 +86,17 @@ def _next_assets(savings):
     return savings
 
 
-def _regime_kwargs() -> dict[str, object]:
+class _ConsumptionRegimeKwargs(TypedDict):
+    """Regime declaration plus its liquid margin."""
+
+    states: Mapping[str, StateEntry]
+    actions: Mapping[str, ActionEntry]
+    functions: Mapping[str, FunctionEntry]
+    state_transitions: Mapping[str, StateTransitionEntry]
+    liquid: LiquidMargin
+
+
+def _regime_kwargs() -> _ConsumptionRegimeKwargs:
     return {
         "states": {"assets": _GRID},
         "actions": {"consumption": _GRID},
@@ -136,7 +148,7 @@ def test_an_out_of_package_subclass_accepts_the_right_solver_family() -> None:
     class _Subclassed(ConsumptionSavingsRegime):
         pass
 
-    regime = _Subclassed(solver=_one_margin_solver(), **_regime_kwargs())  # ty: ignore[invalid-argument-type]
+    regime = _Subclassed(solver=_one_margin_solver(), **_regime_kwargs())
 
     assert isinstance(regime, ConsumptionSavingsRegime)
 

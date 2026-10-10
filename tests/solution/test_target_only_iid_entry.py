@@ -43,7 +43,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -126,7 +126,7 @@ def _build_model(
     )
 
 
-def _source_value(*, model: Model, params: dict) -> float:
+def _source_value(*, model: Model, params: UserParams) -> float:
     solution = model.solve(params=params, log_level="debug").values
     last_living = max(period for period in solution if "source" in solution[period])
     return float(np.asarray(solution[last_living]["source"]).ravel()[0])

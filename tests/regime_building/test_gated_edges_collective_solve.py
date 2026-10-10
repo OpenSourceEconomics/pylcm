@@ -58,6 +58,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 from tests.conftest import bind_laws, build_prepared_structure
@@ -826,7 +827,7 @@ def _full_topology_transitions() -> dict[str, Transition]:
     """
 
     def _consent_leg(
-        *, fallback_regime: str, stakeholder: str
+        *, fallback_regime: RegimeName, stakeholder: str
     ) -> dict[str, StakeholderRoute]:
         return {
             stakeholder: StakeholderRoute(
@@ -846,7 +847,9 @@ def _full_topology_transitions() -> dict[str, Transition]:
         ),
     }
 
-    def _consent_transition(*, fallback_regime: str, stakeholder: str) -> Transition:
+    def _consent_transition(
+        *, fallback_regime: RegimeName, stakeholder: str
+    ) -> Transition:
         return Transition(
             law=ByAge(
                 cases={
@@ -1015,7 +1018,9 @@ def _always_open_gate(V_target_f: FloatND) -> BoolND:
     return jnp.ones_like(V_target_f, dtype=bool)
 
 
-def _edge_with_refs(*, fallback_regime: str, gate_ref_regime: str) -> GatedEdge:
+def _edge_with_refs(
+    *, fallback_regime: RegimeName, gate_ref_regime: RegimeName
+) -> GatedEdge:
     """A one-leg gated edge whose fallback and gate reference name given regimes.
 
     The co-activity guard reads only `.legs[*].fallback.regime` and

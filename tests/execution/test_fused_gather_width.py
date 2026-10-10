@@ -11,8 +11,8 @@ import inspect
 import itertools
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -20,8 +20,11 @@ import pytest
 from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.execution.hlo_fusions import UnrecognisedHloError
+from _lcm.execution.output_layout import PlannedCore
 from _lcm.solution import backward_induction
 from lcm import ExecutionConfig, Model
+from lcm.solver_api import SolutionResult
+from lcm.typing import RegimeName
 from tests.conftest import X64_ENABLED
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
@@ -32,6 +35,10 @@ from tests.test_models.processes import (
     get_multi_regime_model,
     get_multi_regime_params,
 )
+
+type GroupedCores = MappingProxyType[
+    tuple[RegimeName, int], MappingProxyType[str, PlannedCore]
+]
 
 _N_PERIODS = 3
 _CELL_AXIS = "cell"
@@ -52,17 +59,21 @@ def _model_with(config: ExecutionConfig) -> Model:
 
 # keyword-only-exempt: library-callback=_group_cores_by_regime_period
 def _capture_grouping(
-    cores_by_triple: Any,
+    cores_by_triple: Mapping[backward_induction._CoreTriple, PlannedCore],
     *,
-    original: Any,
+    original: Callable[
+        [Mapping[backward_induction._CoreTriple, PlannedCore]], GroupedCores
+    ],
     sink: dict[tuple[str, int, str], dict[str, int]],
-) -> Any:
+) -> GroupedCores:
     for triple, core in cores_by_triple.items():
         sink[triple] = dict(core.tile_widths)
     return original(cores_by_triple)
 
 
-def _materialised_above(*, compiled: object, widths: Any, limit: int) -> str | None:
+def _materialised_above(
+    *, compiled: jax.stages.Compiled, widths: Mapping[str, int], limit: int
+) -> str | None:
     """Report a materialised fusion whenever the cell width exceeds `limit`."""
     del compiled
     return "loop_reduce_fusion" if widths.get(_CELL_AXIS, 0) > limit else None
@@ -74,7 +85,7 @@ def _solve(
     limit: int | None,
     check: Callable[..., str | None] | None = None,
     model: Model | None = None,
-) -> tuple[dict[str, set[int]], Any]:
+) -> tuple[dict[str, set[int]], SolutionResult]:
     """Solve under a fake check and return each regime's cell widths and the result.
 
     `check`, when given, replaces the width-limit fake as the compiled-program check;
@@ -102,7 +113,7 @@ def _solve(
         solution = (model or _model_with(config)).solve(
             params=get_multi_regime_params("normal"), log_level="off"
         )
-    by_regime: dict[str, set[int]] = {}
+    by_regime: dict[RegimeName, set[int]] = {}
     for (regime_name, _period, _core), widths in observed.items():
         if _CELL_AXIS in widths:
             by_regime.setdefault(regime_name, set()).add(widths[_CELL_AXIS])
@@ -147,6 +158,8 @@ def test_halving_the_cell_width_preserves_the_solved_values() -> None:
         config=ExecutionConfig(halve_on_materialised_gather=True), limit=planned // 2
     )
 
+    assert expected_solution._engine_view is not None
+    assert halved_solution._engine_view is not None
     expected_values = expected_solution._engine_view.values
     halved_values = halved_solution._engine_view.values
     assert set(halved_values) == set(expected_values)
@@ -179,7 +192,7 @@ def test_a_program_materialising_at_every_width_keeps_the_planned_width() -> Non
 
 
 def _materialised_then_unreadable(
-    *, compiled: object, widths: Any, limit: int
+    *, compiled: jax.stages.Compiled, widths: Mapping[str, int], limit: int
 ) -> str | None:
     """Materialise above `limit`, and fail to read the program at or below it."""
     if widths.get(_CELL_AXIS, 0) > limit:
@@ -312,7 +325,9 @@ def test_halving_the_cell_width_replays_the_same_choices(*, column: str) -> None
     )
 
 
-def _unreadable(*, compiled: object, widths: Any) -> str | None:
+def _unreadable(
+    *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
+) -> str | None:
     del compiled, widths
     msg = "reduce fusions ['loop_reduce_fusion'] were not read completely"
     raise UnrecognisedHloError(msg)
@@ -329,7 +344,11 @@ def test_a_program_the_check_cannot_read_keeps_the_planned_width() -> None:
 
 
 def _counting(
-    *, compiled: object, widths: Any, counts: collections.Counter[int], limit: int
+    *,
+    compiled: jax.stages.Compiled,
+    widths: Mapping[str, int],
+    counts: collections.Counter[int],
+    limit: int,
 ) -> str | None:
     counts[id(compiled)] += 1
     return _materialised_above(compiled=compiled, widths=widths, limit=limit)
@@ -368,7 +387,7 @@ def test_a_second_solve_of_the_same_model_classifies_no_program() -> None:
     assert (first.total() > 0, second.total()) == (True, 0)
 
 
-def _forbid_implicit_halving(**kwargs: Any) -> None:
+def _forbid_implicit_halving[Ignored](**kwargs: Ignored) -> None:
     """Fail the test on any entry to the disabled halving walk."""
     del kwargs
     pytest.fail("The default/off configuration entered the gather-halving walk.")

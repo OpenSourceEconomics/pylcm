@@ -1,16 +1,15 @@
 """Native acceptance for planned, budgeted gated simulation."""
 
-from typing import Any
-
 import jax
 import numpy as np
 
 from benchmarks.asv._simulation_witnesses import dissolution
 from lcm.execution import ExecutionConfig
 from lcm.persistence import load_solution
+from lcm.result import SimulationResult
 
 
-def _assert_raw_equal(*, actual: Any, expected: Any) -> None:
+def _assert_raw_equal(*, actual: SimulationResult, expected: SimulationResult) -> None:
     assert jax.tree.structure(actual.raw_results) == jax.tree.structure(
         expected.raw_results
     )

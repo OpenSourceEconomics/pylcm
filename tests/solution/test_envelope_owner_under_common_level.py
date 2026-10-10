@@ -22,6 +22,7 @@ intended.
 """
 
 from fractions import Fraction
+from typing import TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -29,6 +30,7 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.query import envelope_at_query
+from lcm.typing import Float1D
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -84,7 +86,15 @@ def _exact_owner_policy(*, level: float, query: float) -> float:
     return _FLAT_POLICY if flat > steep else _STEEP_POLICY
 
 
-def _rows(level: float) -> dict:
+class _Rows(TypedDict):
+    endog_grid: Float1D
+    policy: Float1D
+    value: Float1D
+    marginal: Float1D
+    segment_id: Float1D
+
+
+def _rows(level: float) -> _Rows:
     """The two branches as the envelope's own row arrays."""
     return {
         "endog_grid": jnp.asarray([_X0, _X1, _X0, _X1]),

@@ -32,7 +32,8 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
-from lcm.typing import FloatND, ScalarInt, UserParams
+from lcm.regime import FunctionEntry
+from lcm.typing import FloatND, FunctionName, ScalarInt, UserParams
 
 
 @categorical(ordered=False)
@@ -176,11 +177,11 @@ def _utility_from_bad_helper(bad_helper: FloatND) -> FloatND:
     ids=["direct", "through-helper"],
 )
 def test_nontransition_consumers_cannot_read_a_joint_node(
-    functions: dict[str, object],
+    functions: dict[FunctionName, FunctionEntry],
 ) -> None:
     """A transition-local node cannot be rebound to a user parameter in utility."""
     source = Regime(
-        functions=functions,  # ty: ignore[invalid-argument-type]
+        functions=functions,
         joint_transitions={
             "target": {
                 "match": JointTransition(
@@ -316,11 +317,11 @@ def test_joint_node_is_scoped_to_its_declared_target() -> None:
         )
 
 
-def _phase_kernel(probabilities: object) -> JointTransition:
+def _phase_kernel(probabilities: Callable[..., FloatND]) -> JointTransition:
     return JointTransition(
         support_size=1,
         support=jnp.asarray([1.0]),
-        probabilities=probabilities,  # ty: ignore[invalid-argument-type]
+        probabilities=probabilities,
         outputs={"value": _next_value},
     )
 

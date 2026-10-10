@@ -25,7 +25,7 @@ requirement still refuses, and that the simulated results are unchanged.
 
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -53,6 +53,7 @@ from _lcm.typing import FootprintTree, PytreeValue
 from benchmarks.asv._simulation_witnesses import dissolution
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
+from tests.simulation._callback_types import HostDispatch, WorkspacePlanning
 
 # The dissolution witness runs this many pure helper operations in one warm
 # forward call. The count is a property of the fixture's regimes and periods,
@@ -67,6 +68,13 @@ _WITNESS_HELPER_OPERATIONS = 54
 _WITNESS_PRODUCER_ADMISSIONS = 2
 
 _WITNESS_SEED = 6606
+
+
+class _AxisFreePlanning[Compiled](TypedDict):
+    compile_candidate: Callable[[], Compiled]
+    memory_for: Callable[[Compiled], CompilerMemoryReservation]
+    budget_bytes: int
+    resident_bytes: int
 
 
 def _budget() -> ExecutionConfig:
@@ -89,9 +97,9 @@ def _reservation(*, peak: int, allocation: int) -> CompilerMemoryReservation:
     )
 
 
-def _outcome(
-    plan: Callable[[], WorkspacePlan[object]],
-) -> tuple[object, ...] | str:
+def _outcome[Compiled](
+    plan: Callable[[], WorkspacePlan[Compiled]],
+) -> tuple[Compiled, int | None, int | None, dict[str, int]] | str:
     """Reduce a planner call to its comparable verdict: selection or refusal text."""
     try:
         result = plan()
@@ -105,14 +113,14 @@ def _outcome(
     )
 
 
-class _CountingCompiler:
+class _CountingCompiler[Compiled]:
     """Return one candidate while counting how often the planner compiled it."""
 
-    def __init__(self, *, result: object) -> None:
+    def __init__(self, *, result: Compiled) -> None:
         self.result = result
         self.calls = 0
 
-    def __call__(self, *_widths: object) -> object:
+    def __call__(self, *_widths: Mapping[str, int]) -> Compiled:
         """Serve both planner protocols: axis-free takes no width mapping."""
         self.calls += 1
         return self.result
@@ -132,18 +140,23 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
     original_axis_free = host_operations.plan_axis_free_workspace
 
     def counted_dispatch(
-        self: host_operations.ProfiledSimulationOperations, **kwargs: Any
-    ) -> object:
+        self: host_operations.ProfiledSimulationOperations,
+        **kwargs: Unpack[HostDispatch],
+    ) -> PytreeValue:
         if recording["on"]:
             counts["dispatch"] += 1
         return original_dispatch(self, **kwargs)
 
-    def counted_axis_free(**kwargs: Any) -> object:
+    def counted_axis_free[Compiled](
+        **kwargs: Unpack[_AxisFreePlanning[Compiled]],
+    ) -> WorkspacePlan[Compiled]:
         if recording["on"]:
             counts["axis_free"] += 1
         return original_axis_free(**kwargs)
 
-    def counted_frontier(**kwargs: Any) -> object:
+    def counted_frontier[Compiled](
+        **kwargs: Unpack[WorkspacePlanning[Compiled]],
+    ) -> WorkspacePlan[Compiled]:
         if recording["on"]:
             counts["frontier"] += 1
         return plan_workspace(**kwargs)

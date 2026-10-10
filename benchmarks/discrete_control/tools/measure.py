@@ -15,13 +15,37 @@ import resource
 import sys
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, TypedDict
 from unittest.mock import patch
 
+if TYPE_CHECKING:
+    from _lcm.typing import JSONValue
+    from lcm import Model, SolutionResult
+    from lcm.typing import UserParams
 
-def leaves(value: Any) -> Iterator[Any]:
+
+class _EventCount(TypedDict):
+    count: int
+    duration_seconds: float
+
+
+class _Measurement(TypedDict):
+    event: str
+    label: str
+    wall_seconds: float
+    process_seconds: float
+    compiler_events: dict[str, _EventCount]
+    compile_orchestration_inclusive_seconds: list[float]
+    listener_bookkeeping_seconds: float
+    allocator_before: list[dict[str, int] | None]
+    allocator_after: list[dict[str, int] | None]
+    host_process_peak_rss_kib: int
+    peak_scope: str
+
+
+def leaves[T](value: T) -> Iterator[jax.Array]:
     if isinstance(value, jax.Array):
         yield value
     elif isinstance(value, Mapping):
@@ -35,26 +59,28 @@ def leaves(value: Any) -> Iterator[Any]:
             yield from leaves(getattr(value, field.name))
 
 
-def synchronize(value: Any) -> None:
+def synchronize[T](value: T) -> None:
     for array in leaves(value):
         array.block_until_ready()
 
 
-def emit(record: dict[str, Any]) -> None:
+def emit(record: Mapping[str, JSONValue] | _Measurement) -> None:
     with (args.output / "events.jsonl").open("a") as stream:
         stream.write(json.dumps(record, default=str) + "\n")
 
 
 def measure_call(
-    *, model: Any, params: dict[str, float], label: str
-) -> tuple[Any, dict]:
+    *, model: Model, params: UserParams, label: str
+) -> tuple[SolutionResult, _Measurement]:
     gc.collect()
-    counts = {event: {"count": 0, "duration_seconds": 0.0} for event in EVENTS}
+    counts: dict[str, _EventCount] = {
+        event: {"count": 0, "duration_seconds": 0.0} for event in EVENTS
+    }
     lock = threading.Lock()
     listener_seconds = 0.0
 
     # keyword-only-exempt: library-callback=jax.monitoring.duration_listener
-    def listener(event: str, duration_secs: float, **_kwargs: Any) -> None:
+    def listener(event: str, duration_secs: float, **_kwargs: str | int) -> None:
         nonlocal listener_seconds
         start = time.perf_counter()
         if event in EVENTS:
@@ -68,24 +94,29 @@ def measure_call(
     orchestration = []
     original_compile = backward._compile_all_functions
 
-    def observe_compile(*arguments: Any, **keywords: Any) -> Any:
-        start = time.perf_counter()
-        try:
-            return original_compile(*arguments, **keywords)
-        finally:
-            orchestration.append(time.perf_counter() - start)
+    def observe_compile[**P, R](original: Callable[P, R]) -> Callable[P, R]:
+        def observed(*arguments: P.args, **keywords: P.kwargs) -> R:
+            start = time.perf_counter()
+            try:
+                return original(*arguments, **keywords)
+            finally:
+                orchestration.append(time.perf_counter() - start)
+
+        return observed
 
     jax.monitoring.register_event_duration_secs_listener(listener)
     try:
         start, cpu = time.perf_counter(), time.process_time()
-        with patch.object(backward, "_compile_all_functions", observe_compile):
+        with patch.object(
+            backward, "_compile_all_functions", observe_compile(original_compile)
+        ):
             solution = model.solve(params=params, log_level="off")
         synchronize(solution)
         wall, cpu = time.perf_counter() - start, time.process_time() - cpu
     finally:
         jax.monitoring.unregister_event_duration_listener(listener)
     after = [device.memory_stats() for device in selected]
-    record = {
+    record: _Measurement = {
         "event": "complete",
         "label": label,
         "wall_seconds": wall,
@@ -108,7 +139,7 @@ def measure_call(
     return solution, record
 
 
-def validate_solution(solution: Any) -> dict[str, Any]:
+def validate_solution(solution: SolutionResult) -> dict[str, JSONValue]:
     """Check the original roster, real device coverage and finite published values."""
     roster = {t: ({"working", "retired"} if t < 4 else {"retired"}) for t in range(5)}
     assert {t: set(regimes) for t, regimes in solution.values.items()} == roster

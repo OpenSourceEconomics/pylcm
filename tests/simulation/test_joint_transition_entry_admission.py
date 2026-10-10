@@ -8,7 +8,7 @@ import textwrap
 import weakref
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Never, NotRequired, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -17,6 +17,8 @@ import pytest
 
 from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.execution.compiler_memory import CompilerMemoryReport
+from _lcm.simulation import memory as operation_module
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import (
     measure_buffer_footprint,
@@ -44,6 +46,56 @@ from lcm.typing import (
     UserInitialConditions,
     UserParams,
 )
+
+
+class JointWeightsInputs(TypedDict):
+    func: transition_checks.Callable[
+        ...,
+        transition_checks.Mapping[
+            str, transition_checks.FloatND | transition_checks.IntND
+        ],
+    ]
+    state_action_space: transition_checks.StateActionSpace
+    extra_grids: transition_checks.Mapping[
+        transition_checks.StateOrActionName,
+        transition_checks.FloatND | transition_checks.IntND,
+    ]
+    regime_params: transition_checks.FlatRegimeParams
+    period: transition_checks.ScalarInt
+    age: transition_checks.ScalarInt | transition_checks.ScalarFloat
+    regime_name: transition_checks.RegimeName
+    phase_name: str
+    logger: transition_checks.logging.Logger
+    summary: NotRequired[transition_checks._ValidationSummary | None]
+    memory: NotRequired[transition_checks.SimulationMemory | None]
+
+
+class JointSupportInputs(TypedDict):
+    func: transition_checks.Callable[..., transition_checks.PytreeValue]
+    regime_params: transition_checks.FlatRegimeParams
+    period: transition_checks.ScalarInt
+    age: transition_checks.ScalarInt | transition_checks.ScalarFloat
+    kernel_name: str
+    regime_name: transition_checks.RegimeName
+    phase_name: str
+    target: transition_checks.RegimeName
+    logger: transition_checks.logging.Logger
+    summary: NotRequired[transition_checks._ValidationSummary | None]
+    memory: NotRequired[transition_checks.SimulationMemory | None]
+
+
+class JointOperationInputs[T: PytreeValue](TypedDict):
+    memory: operation_module.SimulationMemory | None
+    function: operation_module.Callable[..., T]
+    arguments: operation_module.Mapping[
+        operation_module.ReferenceName, operation_module.PytreeValue
+    ]
+    subject_arg_names: NotRequired[tuple[operation_module.ReferenceName, ...]]
+    static_arguments: NotRequired[
+        operation_module.Mapping[str, operation_module.StaticArgument]
+    ]
+    subject_outputs: NotRequired[bool]
+
 
 _FLOAT_DTYPE = canonical_float_dtype()
 
@@ -290,12 +342,16 @@ def compiler_boundary(monkeypatch: pytest.MonkeyPatch) -> _CompilerBoundary:
     analyze_program = jax.stages.Compiled.memory_analysis
     dispatch_program = jax.stages.Compiled.__call__
 
-    def analyze_and_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def analyze_and_record(
+        self: jax.stages.Compiled, *args: Never, **kwargs: Never
+    ) -> CompilerMemoryReport | None:
         stats = analyze_program(self, *args, **kwargs)
         observed.profiled.append((self, len(observed.dispatched)))
         return stats
 
-    def dispatch_and_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def dispatch_and_record(
+        self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         observed.dispatched.append(self)
         return dispatch_program(self, *args, **kwargs)
 
@@ -304,7 +360,9 @@ def compiler_boundary(monkeypatch: pytest.MonkeyPatch) -> _CompilerBoundary:
     return observed
 
 
-def _controlled_post_validation_refusal(*args: Any, **kwargs: Any) -> Any:
+def _controlled_post_validation_refusal[Ignored](
+    *args: Ignored, **kwargs: Ignored
+) -> Never:
     del args, kwargs
     raise ExecutionPlanningError("controlled refusal after transition validation")
 
@@ -319,10 +377,20 @@ def test_joint_weight_workspace_refuses_before_completed_user_output(
         support=_joint_support,
         budget=16 * 1024,
     )
-    completed: list[object] = []
+    completed: list[PytreeValue] = []
     original_evaluate = transition_checks._evaluate_joint_weights
 
-    def observe_completed_weights(**kwargs: Any) -> Any:
+    def observe_completed_weights(
+        **kwargs: Unpack[JointWeightsInputs],
+    ) -> (
+        tuple[
+            transition_checks.Mapping[
+                str, transition_checks.FloatND | transition_checks.IntND
+            ],
+            int | None,
+        ]
+        | None
+    ):
         evaluated = original_evaluate(**kwargs)
         if evaluated is not None:
             jax.block_until_ready(evaluated[0])
@@ -357,10 +425,12 @@ def test_joint_support_workspace_refuses_before_completed_user_output(
         support=_costly_joint_support,
         budget=16 * 1024,
     )
-    completed: list[object] = []
+    completed: list[PytreeValue] = []
     original_evaluate = transition_checks._evaluate_joint_support
 
-    def observe_completed_support(**kwargs: Any) -> Any:
+    def observe_completed_support(
+        **kwargs: Unpack[JointSupportInputs],
+    ) -> transition_checks.PytreeValue | None:
         support = original_evaluate(**kwargs)
         if support is not None:
             jax.block_until_ready(support)
@@ -495,7 +565,9 @@ def test_joint_support_is_charged_through_probability_admission(
     original_support = transition_checks._evaluate_joint_support
     original_operation = transition_checks.run_simulation_operation
 
-    def support_and_record(**kwargs: Any) -> Any:
+    def support_and_record(
+        **kwargs: Unpack[JointSupportInputs],
+    ) -> transition_checks.PytreeValue | None:
         support = original_support(**kwargs)
         if support is not None:
             # This file's support providers return a mapping of arrays.
@@ -503,8 +575,11 @@ def test_joint_support_is_charged_through_probability_admission(
             references[:] = [weakref.ref(leaf) for leaf in arrays.values()]
         return support
 
-    def operation_and_check(**kwargs: Any) -> Any:
+    def operation_and_check[T: PytreeValue](
+        **kwargs: Unpack[JointOperationInputs[T]],
+    ) -> T:
         if kwargs["function"] is transition_checks._joint_probability_flags:
+            assert kwargs["memory"] is not None
             observations.append(
                 _released_or_charged(
                     references=references,
@@ -544,7 +619,17 @@ def test_previous_joint_weights_are_released_before_next_weight_producer(
     observations: list[bool] = []
     original_weights = transition_checks._evaluate_joint_weights
 
-    def weights_and_check(**kwargs: Any) -> Any:
+    def weights_and_check(
+        **kwargs: Unpack[JointWeightsInputs],
+    ) -> (
+        tuple[
+            transition_checks.Mapping[
+                str, transition_checks.FloatND | transition_checks.IntND
+            ],
+            int | None,
+        ]
+        | None
+    ):
         if references:
             observations.append(all(reference() is None for reference in references))
         evaluated = original_weights(**kwargs)
@@ -578,7 +663,9 @@ def test_previous_joint_support_is_released_before_next_support_producer(
     observations: list[bool] = []
     original_support = transition_checks._evaluate_joint_support
 
-    def support_and_check(**kwargs: Any) -> Any:
+    def support_and_check(
+        **kwargs: Unpack[JointSupportInputs],
+    ) -> transition_checks.PytreeValue | None:
         if references:
             observations.append(all(reference() is None for reference in references))
         support = original_support(**kwargs)
@@ -619,7 +706,7 @@ def test_joint_owner_contexts_restore_memory_after_probability_error(
             memories.append(self)
         original_set_derived(self, tree)
 
-    def raise_controlled_probability_error(**kwargs: Any) -> None:
+    def raise_controlled_probability_error[Ignored](**kwargs: Ignored) -> None:
         del kwargs
         raise RuntimeError("controlled joint probability failure")
 

@@ -48,7 +48,8 @@ def test_pytree_by_period_admits_period_levels_at_any_depth(
     ids=["string", "period-over-string", "name-over-string", "object"],
 )
 def test_pytree_by_period_rejects_what_is_not_a_value_tree(
-    *, tree: str | Mapping[int, str] | Mapping[str, str] | object
+    *,
+    tree: str | Mapping[int, str] | Mapping[str, str] | object,  # noqa: PAN001 - includes a literal object to test rejection
 ) -> None:
     """A string leaf or an arbitrary object fails the check."""
     with pytest.raises(BeartypeCallHintParamViolation):

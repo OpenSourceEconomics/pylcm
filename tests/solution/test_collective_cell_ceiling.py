@@ -8,15 +8,35 @@ through `CensusRecorder`; the numerical arms compare every published array
 byte for byte.
 """
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Literal, TypedDict, Unpack
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from lcm import ExecutionConfig, LinSpacedGrid, Model
 from lcm.exceptions import ExecutionPlanningError
+from lcm.solver_api import ArtifactRef, SolutionResult
+from lcm.typing import RegimeName, UserParams
 from tests.collective_fixtures import AGES, CoupleRegimeId, make_two_stakeholder_model
 from tests.solution._candidate_census import Census, CensusRecorder, Triple
+
+
+class _AxisExecutionOptions(TypedDict, total=False):
+    axis_widths: Mapping[str, int | Mapping[RegimeName, int]]
+    axis_width_ceilings: Mapping[str, int]
+
+
+class _ModelExecutionOptions(_AxisExecutionOptions, total=False):
+    device_memory_bytes: int | None
+
+
+type _PublishedArrayKey = (
+    tuple[Literal["value"], int, RegimeName]
+    | tuple[Literal["replay", "auxiliary"], ArtifactRef]
+)
+
 
 _N_WAGE = 64
 _CELL_CEILING = 8
@@ -25,7 +45,9 @@ _COUPLE: Triple = ("couple", 0, "main")
 _TERMINAL: Triple = ("couple_terminal", 1, "main")
 
 
-def _model(*, n_wage: int = _N_WAGE, **execution: Any) -> tuple[Model, Any]:
+def _model(
+    *, n_wage: int = _N_WAGE, **execution: Unpack[_ModelExecutionOptions]
+) -> tuple[Model, UserParams]:
     """Build the two-stakeholder couple over an `n_wage`-point wage grid."""
     base, params = make_two_stakeholder_model()
     grid = LinSpacedGrid(start=8.0, stop=40.0, n_points=n_wage)
@@ -49,8 +71,8 @@ def _solve(
     monkeypatch: pytest.MonkeyPatch,
     n_wage: int = _N_WAGE,
     budget: int | None = _BUDGET,
-    **execution: Any,
-):
+    **execution: Unpack[_AxisExecutionOptions],
+) -> tuple[SolutionResult, Census]:
     """Solve under one execution config; return the result and the planner census."""
     recorder = CensusRecorder()
     recorder.install(monkeypatch=monkeypatch)
@@ -74,9 +96,11 @@ def _admitted_reservation(*, census: Census, triple: Triple) -> int:
     return row.reservation
 
 
-def _published_arrays(result) -> dict[object, np.ndarray]:
+def _published_arrays(
+    result: SolutionResult,
+) -> dict[_PublishedArrayKey, NDArray[np.generic]]:
     """Collect every array the solve publishes, keyed by where it is published."""
-    arrays: dict[object, np.ndarray] = {}
+    arrays: dict[_PublishedArrayKey, NDArray[np.generic]] = {}
     for period, by_regime in result.values.items():
         for regime, value in by_regime.items():
             arrays[("value", period, regime)] = np.asarray(value)
@@ -111,7 +135,9 @@ def test_ceiling_binds_the_collective_cell_width_on_every_core(
     )
 
 
-def _bytes(result) -> dict[object, tuple[tuple[int, ...], np.dtype, bytes]]:
+def _bytes(
+    result: SolutionResult,
+) -> dict[_PublishedArrayKey, tuple[tuple[int, ...], np.dtype[np.generic], bytes]]:
     """Shape, dtype and raw bytes of every published array, for bitwise comparison."""
     return {
         key: (array.shape, array.dtype, array.tobytes())
@@ -137,9 +163,13 @@ def test_ceiling_leaves_every_published_collective_array_bitwise_unchanged(
     assert _bytes(bounded) == _bytes(unbounded)
 
 
-def _non_float_bytes_and_float_masks(result) -> dict[object, tuple]:
+def _non_float_bytes_and_float_masks(
+    result: SolutionResult,
+) -> dict[_PublishedArrayKey, tuple[tuple[int, ...], np.dtype[np.generic], bytes]]:
     """Shape, dtype and finite mask of float arrays; raw bytes of every other array."""
-    out: dict[object, tuple] = {}
+    out: dict[
+        _PublishedArrayKey, tuple[tuple[int, ...], np.dtype[np.generic], bytes]
+    ] = {}
     for key, array in _published_arrays(result).items():
         if np.issubdtype(array.dtype, np.floating):
             out[key] = (array.shape, array.dtype, np.isfinite(array).tobytes())

@@ -25,6 +25,7 @@ period-0 values are $(3, 0)$ and $(6, 1)$.
 from collections.abc import Mapping
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -62,8 +63,8 @@ class _AlwaysWorkReplayReader:
     def __call__(
         self,
         *,
-        states: Mapping[str, object],
-        fallback_actions: Mapping[str, object],  # noqa: ARG002
+        states: Mapping[str, jax.Array],
+        fallback_actions: Mapping[str, jax.Array],  # noqa: ARG002
     ) -> ActionOutput:
         """Return one categorical work code per simulated subject."""
         education = jnp.asarray(states["education"])

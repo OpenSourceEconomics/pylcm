@@ -8,7 +8,7 @@ its source reaches the gated target. Parameters are collected over the required
 cases, including value-only problems, and one parameter name has one schema.
 """
 
-from typing import Any
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -33,8 +33,17 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.initial_nodes import UserInitialNodes
 from lcm.phased import Phased
-from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from lcm.transition import AgeSelector, PhaseEdges, TransitionLaw
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    FloatND,
+    RegimeName,
+    ScalarInt,
+    UserFunction,
+)
 from tests.regime_building.test_same_period_ref_period_axes import (
     COUPLE_GRID,
     Work,
@@ -55,7 +64,7 @@ def _utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _nonterminal(*, utility: Any = _utility) -> Regime:
+def _nonterminal(*, utility: UserFunction = _utility) -> Regime:
     return Regime(
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -94,15 +103,21 @@ def _identity(wealth: ContinuousState) -> ContinuousState:
     return wealth
 
 
-def _projected(regime: str) -> ProjectedRegimeValue:
+def _projected(regime: RegimeName) -> ProjectedRegimeValue:
     return ProjectedRegimeValue(regime=regime, projection={"wealth": _identity})
 
 
-def _gated_law() -> dict:
+def _gated_law() -> dict[RegimeName, StochasticTransition]:
     return {"target": StochasticTransition(func=_prob_one)}
 
 
-def _target_gate(*, fallback: Any = None) -> dict:
+type Fallback = (
+    ProjectedRegimeValue | Phased[ProjectedRegimeValue, ProjectedRegimeValue]
+)
+type GatedStructure = Mapping[RegimeName, Mapping[RegimeName, AgeSelector]]
+
+
+def _target_gate(*, fallback: Fallback | None = None) -> dict[RegimeName, Gate]:
     return {
         "target": Gate(
             predicate=_gate,
@@ -114,7 +129,9 @@ def _target_gate(*, fallback: Any = None) -> dict:
     }
 
 
-def _with_source_law(*, phase: Any, law: Any, gates: Any) -> dict:
+def _with_source_law(
+    *, phase: GatedStructure, law: TransitionLaw, gates: Mapping[RegimeName, Gate]
+) -> PhaseEdges:
     return {
         **phase,
         "source": Transition(targets=phase["source"], law=law, gates=gates),
@@ -123,12 +140,12 @@ def _with_source_law(*, phase: Any, law: Any, gates: Any) -> dict:
 
 def _gated_model(
     *,
-    initial_nodes: Any = None,
-    source: Any = None,
+    initial_nodes: UserInitialNodes | None = None,
+    source: TransitionLaw | None = None,
     reference: Regime | None = None,
     priced: Regime | None = None,
-    fallback: Any = None,
-    edges: Any = None,
+    fallback: Fallback | None = None,
+    edges: GatedStructure | Phased[GatedStructure, GatedStructure] | None = None,
 ) -> Model:
     law = source or ByAge(cases={40: _gated_law()})
     gates = _target_gate(fallback=fallback)
@@ -157,7 +174,7 @@ def _gated_model(
     )
 
 
-def _gate_reference_without_law(initial_nodes: Any) -> Model:
+def _gate_reference_without_law(initial_nodes: UserInitialNodes) -> Model:
     return _gated_model(
         initial_nodes=initial_nodes,
         reference=_nonterminal(),
@@ -168,7 +185,7 @@ def _gate_reference_without_law(initial_nodes: Any) -> Model:
     )
 
 
-def _solve_fallback_without_law(initial_nodes: Any) -> Model:
+def _solve_fallback_without_law(initial_nodes: UserInitialNodes) -> Model:
     return _gated_model(
         initial_nodes=initial_nodes,
         priced=_nonterminal(),
@@ -194,7 +211,7 @@ class _CoupleId:
     couple_terminal: ScalarInt
 
 
-def _same_period_reference_without_law(initial_nodes: Any) -> Model:
+def _same_period_reference_without_law(initial_nodes: UserInitialNodes) -> Model:
     """The couple reads the single value at age 0, where single has no law."""
     single_grid = LinSpacedGrid(start=0.0, stop=100.0, n_points=2)
     return Model(
@@ -272,7 +289,7 @@ def _same_period_reference_without_law(initial_nodes: Any) -> Model:
     ids=["gate-reference", "solve-fallback"],
 )
 def test_a_required_value_read_without_a_law_names_its_kind(
-    *, build: Any, match: str
+    *, build: Callable[[UserInitialNodes], Model], match: str
 ) -> None:
     """A gate reference or valuation fallback lacking a law is named as such."""
     with pytest.raises(ModelInitializationError, match=match):
@@ -297,7 +314,9 @@ def test_a_same_period_reference_without_a_law_names_its_kind() -> None:
     ids=["gate-reference", "solve-fallback"],
 )
 def test_an_added_root_does_not_repair_a_missing_prerequisite(
-    *, build: Any, initial_nodes: Any
+    *,
+    build: Callable[[UserInitialNodes], Model],
+    initial_nodes: Mapping[AgeSelector, RegimeName],
 ) -> None:
     """Declaring the missing pair as a start still fails on its missing law."""
     missing = next(name for age, name in initial_nodes.items() if age == 45)
@@ -368,7 +387,7 @@ _LIFE_EDGES = {
 }
 
 
-def _life_model(initial_nodes: Any) -> Model:
+def _life_model(initial_nodes: UserInitialNodes) -> Model:
     return Model(
         regimes={
             "working": _nonterminal(),
@@ -390,7 +409,9 @@ _ROOTS = pytest.mark.parametrize(
 
 
 @_ROOTS
-def test_regime_codes_do_not_depend_on_the_starts(initial_nodes: Any) -> None:
+def test_regime_codes_do_not_depend_on_the_starts(
+    initial_nodes: UserInitialNodes,
+) -> None:
     """Every registered regime keeps its code, reached or not."""
     assert _life_model(initial_nodes).regime_names_to_ids == {
         "working": 0,
@@ -401,7 +422,7 @@ def test_regime_codes_do_not_depend_on_the_starts(initial_nodes: Any) -> None:
 
 @_ROOTS
 def test_retirement_solves_to_the_dead_value_under_any_start(
-    initial_nodes: Any,
+    initial_nodes: UserInitialNodes,
 ) -> None:
     """Retirement moving along its only edge solves to the dead value."""
     values = _life_model(initial_nodes).solve(params=_PARAMS, log_level="off")
@@ -462,7 +483,7 @@ class _MaritalId:
     dead: ScalarInt
 
 
-def _gated_move(*, target: str, stay: str) -> Transition:
+def _gated_move(*, target: RegimeName, stay: RegimeName) -> Transition:
     return Transition(
         targets={target: 0, stay: 0, "dead": 1},
         law=ByAge.until(
@@ -525,7 +546,7 @@ def _rest_as_int(rate: ScalarInt) -> FloatND:
     return 1 - jnp.asarray(rate) * 0.5
 
 
-def _two_schema_model(initial_nodes: Any) -> Model:
+def _two_schema_model(initial_nodes: UserInitialNodes) -> Model:
     return Model(
         regimes={
             "working": _nonterminal(),
@@ -620,7 +641,7 @@ def _grown(*, wealth: ContinuousState, growth: float) -> ContinuousState:
     return wealth * growth
 
 
-def _producer_model(initial_nodes: Any) -> Model:
+def _producer_model(initial_nodes: UserInitialNodes) -> Model:
     return Model(
         regimes={
             "working": Regime(

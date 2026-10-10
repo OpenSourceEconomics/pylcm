@@ -11,6 +11,8 @@ The fix is to drop the redundant `[g]` in the consumer (or refactor `f` not
 to take `g`).
 """
 
+from typing import Unpack
+
 import jax.numpy as jnp
 import pytest
 
@@ -31,6 +33,7 @@ from lcm import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.regime import RegimeReplacement
 from lcm.typing import (
     ContinuousAction,
     DiscreteAction,
@@ -91,9 +94,9 @@ _EDGES = {
 }
 
 
-def _finalized_regime(**kwargs: object) -> UserRegime:
+def _finalized_regime(**kwargs: Unpack[RegimeReplacement]) -> UserRegime:
     """Finalize a single regime, running the model's completeness validation."""
-    regime = UserRegime(**kwargs)  # ty: ignore[invalid-argument-type]
+    regime = UserRegime(**kwargs)
     return finalize_regimes(
         user_regimes={"regime": regime},
         laws={"regime": _NON_TERMINAL_LAW},

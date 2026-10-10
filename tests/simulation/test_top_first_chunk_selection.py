@@ -6,14 +6,15 @@ The real candidate validation, byte summation and scalar receipts remain in use.
 
 from collections.abc import Callable, Mapping
 from types import MappingProxyType, SimpleNamespace
-from typing import Any
 
 import jax
 import pytest
 
 import _lcm.simulation.chunk_admission as admission
-from _lcm.execution.core_program import TiledOutputAxis
+from _lcm.engine import Regime
+from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from _lcm.simulation.chunk_planning import (
+    SimulationChunkPlan,
     SimulationChunkProfile,
     SimulationStageProfile,
 )
@@ -62,7 +63,7 @@ class _Profiler:
                 device_memory_cap_note=lambda: "",
             )
         )
-        self.regimes: MappingProxyType[str, object] = MappingProxyType({})
+        self.regimes: MappingProxyType[str, Regime] = MappingProxyType({})
         self.resident = dict.fromkeys(self.devices, 5)
         self.cost = cost or (lambda _n, _a: 30)
         self.malformed = malformed
@@ -83,11 +84,14 @@ class _Profiler:
             actual_widths["action_product"] += 1
         stage_devices = self.devices
         if self.malformed == "stage_device":
+            assert self.foreign is not None
             stage_devices = (self.foreign,)
         if self.malformed == "reservation_device":
+            assert self.foreign is not None
             costs[self.foreign] = 1
         host_stages: tuple[SimulationStageProfile, ...] = ()
         if self.malformed == "host_device":
+            assert self.foreign is not None
             host_stages = (_stage(devices=(self.foreign,)),)
         return SimulationChunkProfile(
             n_subjects=n_subjects + int(self.malformed == "extent"),
@@ -119,7 +123,9 @@ def _axis(*, name: str, extent: int) -> TiledOutputAxis:
     )
 
 
-def _axes(*, regimes: object, n_subjects: int) -> tuple[TiledOutputAxis, ...]:
+def _axes(
+    *, regimes: Mapping[str, Regime], n_subjects: int
+) -> tuple[TiledOutputAxis, ...]:
     del regimes
     return (
         _axis(name="subject", extent=n_subjects),
@@ -129,7 +135,7 @@ def _axes(*, regimes: object, n_subjects: int) -> tuple[TiledOutputAxis, ...]:
 
 def _width_choices(
     *,
-    axes: tuple[Any, ...],
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
     fixed_widths: Mapping[str, int],
     budget_bytes: int | None,
     width_ceilings: Mapping[str, int],
@@ -147,7 +153,7 @@ def _synthetic_axis_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(admission, "workspace_width_candidates", _width_choices)
 
 
-def _select(*, profiler: _Profiler) -> Any:
+def _select(*, profiler: _Profiler) -> SimulationChunkPlan:
     """Run the planner on a typed profiler shell that delegates to the stand-in.
 
     The shell is rebuilt on every call so the stand-in's current residency and
@@ -169,8 +175,9 @@ def _select(*, profiler: _Profiler) -> Any:
     )
 
 
-def _check_receipt(*, plan: Any, profiler: _Profiler) -> None:
+def _check_receipt(*, plan: SimulationChunkPlan, profiler: _Profiler) -> None:
     receipt = plan.receipt
+    assert receipt is not None
     assert receipt.frontier_version == 3
     assert receipt.profile_count == len(profiler.calls)
     assert len(profiler.calls) == len(set(profiler.calls))
@@ -292,6 +299,7 @@ def test_exact_budget_boundary_is_checked_on_every_device(*, fixed: int) -> None
     )
     plan = _select(profiler=profiler)
     # The two-subject pin aligns to three devices before the frontier doubles.
+    assert plan.receipt is not None
     assert plan.receipt.candidates == (3, 6, 12)
     assert plan.profile.n_subjects == (12 if fixed == 80 else 6)
     receipt = plan.receipt.attempts[0].devices[1]
@@ -345,7 +353,9 @@ def test_admission_is_rechecked_when_current_residency_changes() -> None:
 def test_pin_is_retained_when_scalar_anchor_omits_the_subject_axis(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def scalar_axes(*, regimes: object, n_subjects: int) -> tuple[TiledOutputAxis, ...]:
+    def scalar_axes(
+        *, regimes: Mapping[str, Regime], n_subjects: int
+    ) -> tuple[TiledOutputAxis, ...]:
         del regimes
         assert n_subjects == 1
         return (_axis(name="action_product", extent=8),)

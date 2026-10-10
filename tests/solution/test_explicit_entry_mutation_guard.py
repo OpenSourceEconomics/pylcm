@@ -17,7 +17,7 @@ source, so it stays valid as the surrounding code changes.
 
 import dataclasses
 from types import MappingProxyType
-from typing import Any
+from typing import NotRequired, TypedDict, Unpack
 
 import jax.numpy as jnp
 import numpy as np
@@ -59,6 +59,33 @@ def _squared_shock_utility(shock: ScalarFloat) -> FloatND:
 
 def _enter_between_nodes() -> ScalarFloat:
     return jnp.asarray(1.5)
+
+
+class _TransitionPlanKwargs(TypedDict):
+    source_regime_name: processing.RegimeName
+    transitions: processing.TransitionFunctionsMapping
+    processed_functions: processing.Mapping[str, processing.UserFunction]
+    all_grids: processing.MappingProxyType[
+        processing.RegimeName,
+        processing.MappingProxyType[processing.StateOrActionName, processing.Grid],
+    ]
+    entered_processes: frozenset[tuple[processing.RegimeName, processing.ProcessName]]
+    explicit_entry_processes: frozenset[
+        tuple[processing.RegimeName, processing.ProcessName]
+    ]
+    support_index_processes: frozenset[
+        tuple[processing.RegimeName, processing.ProcessName]
+    ]
+    joint_transitions: processing.Mapping[
+        processing.RegimeName, processing.Mapping[str, processing.JointTransition]
+    ]
+    phase_name: processing.PhaseName
+    original_lottery_layouts: NotRequired[
+        processing.Mapping[str, processing.OriginalLotteryLayout]
+    ]
+    source_draws: NotRequired[
+        frozenset[tuple[processing.RegimeName, processing.ProcessName]]
+    ]
 
 
 def _build_model() -> Model:
@@ -132,7 +159,9 @@ def test_relabelling_the_declared_entry_as_a_draw_is_rejected(
     """
     original = processing._build_transition_plans
 
-    def _as_all_stochastic(**kwargs: Any) -> Any:
+    def _as_all_stochastic(
+        **kwargs: Unpack[_TransitionPlanKwargs],
+    ) -> processing.TargetTransitionPlans:
         plans = original(**kwargs)
         return type(plans)(
             {

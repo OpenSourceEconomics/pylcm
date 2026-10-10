@@ -15,6 +15,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 import cloudpickle
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -205,7 +206,7 @@ def synthetic_peaks(monkeypatch: pytest.MonkeyPatch) -> None:
     """Report a peak of `_BYTES_PER_CELL` per unit of width product."""
 
     def peak(
-        *, compiled: object, widths: Mapping[str, int]
+        *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
     ) -> CompilerMemoryReservation:
         del compiled
         return synthetic_memory(_BYTES_PER_CELL * math.prod(widths.values()))

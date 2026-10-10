@@ -49,6 +49,7 @@ from lcm.exceptions import (
 )
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
+from lcm.typing import RegimeName
 
 _LIST_UNDECORATED_FUNCTIONS = """
 import warnings
@@ -157,7 +158,7 @@ def test_claw_allows_with_signature_wrapper_over_named_param_function() -> None:
 
     def Q_and_F(
         *,
-        next_regime_to_V_arr: MappingProxyType[str, jnp.ndarray],  # noqa: ARG001
+        next_regime_to_V_arr: MappingProxyType[RegimeName, jnp.ndarray],  # noqa: ARG001
         action: jnp.ndarray,
         state: jnp.ndarray,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:

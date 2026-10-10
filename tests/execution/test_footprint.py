@@ -29,6 +29,7 @@ from _lcm.execution.footprint import (
 )
 from _lcm.execution.liveness import PlannedInputLiveness
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import RegimeName
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -147,7 +148,7 @@ def mesh_script_output() -> str:
 def _unit(
     *,
     period: int,
-    regime: str,
+    regime: RegimeName,
     devices: tuple[int, ...] = (0,),
     produces: tuple[Hashable, ...] = (),
     consumes: tuple[Hashable, ...] = (),

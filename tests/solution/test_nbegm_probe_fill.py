@@ -20,7 +20,7 @@ only ever appears in a state-transition law is classified from that law.
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import cast
+from typing import NotRequired, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -38,11 +38,13 @@ from _lcm.solution.nbegm import (
     _indexed_arg_ranks,
     _probe_fill,
 )
+from _lcm.typing import ParamsLeaf, QualifiedName
 from lcm.typing import (
     ContinuousState,
     Float1D,
     FloatND,
     IntND,
+    ReferenceName,
     ScalarBool,
     ScalarFloat,
     ScalarInt,
@@ -50,16 +52,30 @@ from lcm.typing import (
 )
 
 
-def _array_fill(**kwargs: object) -> FloatND:
+class _ProbeFillKwargs(TypedDict):
+    name: str
+    fill: float
+    int_arg_names: frozenset[ReferenceName]
+    array_float_arg_names: NotRequired[frozenset[ReferenceName]]
+    array_arg_ranks: NotRequired[Mapping[str, int]]
+    bool_arg_names: NotRequired[frozenset[ReferenceName]]
+    mapping_leaf_arg_names: NotRequired[frozenset[ReferenceName]]
+    param_values: NotRequired[Mapping[QualifiedName, ParamsLeaf]]
+    array_floats: NotRequired[bool]
+    array_rank: NotRequired[int]
+    leaf_rank: NotRequired[int]
+
+
+def _array_fill(**kwargs: Unpack[_ProbeFillKwargs]) -> FloatND:
     """`_probe_fill`'s result where an array is what the classification asks for."""
-    fill = _probe_fill(**kwargs)  # ty: ignore[invalid-argument-type]
+    fill = _probe_fill(**kwargs)
     assert isinstance(fill, jax.Array)
     return fill
 
 
-def _schedule_fill(**kwargs: object) -> MappingLeaf:
+def _schedule_fill(**kwargs: Unpack[_ProbeFillKwargs]) -> MappingLeaf:
     """`_probe_fill`'s result where a grouped param is what it asks for."""
-    fill = _probe_fill(**kwargs)  # ty: ignore[invalid-argument-type]
+    fill = _probe_fill(**kwargs)
     assert isinstance(fill, MappingLeaf)
     return fill
 
@@ -235,7 +251,7 @@ def test_annotated_mapping_leaf_arg_names_reads_a_stringified_annotation() -> No
     those parameters are exactly the leaves the probe fills.
     """
 
-    def _composed(tax_schedule: object) -> FloatND:  # noqa: ARG001
+    def _composed(tax_schedule: MappingLeaf) -> FloatND:  # noqa: ARG001
         return jnp.asarray(0.0)
 
     _composed.__annotations__ = {"tax_schedule": "MappingLeaf"}
@@ -250,7 +266,7 @@ def test_annotated_mapping_leaf_arg_names_ignores_an_unresolvable_annotation() -
     classification every other consumer of that parameter agrees on.
     """
 
-    def _composed(tax_schedule: object) -> FloatND:  # noqa: ARG001
+    def _composed(tax_schedule: MappingLeaf) -> FloatND:  # noqa: ARG001
         return jnp.asarray(0.0)
 
     _composed.__annotations__ = {"tax_schedule": "SomeTypeThePr obeCannotResolve"}

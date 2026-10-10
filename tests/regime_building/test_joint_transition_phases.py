@@ -1,5 +1,7 @@
 """Phase and edge-scope grammar for joint transitions."""
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import pytest
 
@@ -18,7 +20,7 @@ from lcm import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import FloatND, RegimeName, ScalarInt
 
 
 def _probabilities() -> FloatND:
@@ -48,19 +50,23 @@ def _next_regime() -> FloatND:
 
 
 def _regime(
-    *, joint_transitions: object, law: RegimeLawDeclaration = _next_regime
+    *,
+    joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition | Phased]],
+    law: RegimeLawDeclaration = _next_regime,
 ) -> tuple[Regime, RegimeLaw]:
     """A regime validated under `law`, returned with the bound law."""
     regime = Regime(
         functions={"utility": lambda: jnp.asarray(0.0)},
-        joint_transitions=joint_transitions,  # ty: ignore[invalid-argument-type]
+        joint_transitions=joint_transitions,
     )
     bound = bind_regime_law(law)
     validate_regime_law(regime, law=bound)
     return regime, bound
 
 
-def _phases(*, joint_transitions: object) -> PhasedRegimeSpec:
+def _phases(
+    *, joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition | Phased]]
+) -> PhasedRegimeSpec:
     regime, law = _regime(joint_transitions=joint_transitions)
     return normalize_regime_phases(regime, law=law)
 

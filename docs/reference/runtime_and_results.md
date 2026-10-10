@@ -396,7 +396,21 @@ solution = model.solve(
 )
 
 V_working = solution.value(period=0, regime="working")
+frame = solution.value_frame(period=0, regime="working")
+codes = solution.value_frame(period=0, regime="working", use_labels=False)
 ```
+
+`value_frame` returns a long pandas DataFrame: state columns in
+`metadata.value_schemas[(period, regime)].axis_names` order, followed by `V`. Axis names
+must be unique and cannot be `V`, which is reserved for the value column. Discrete
+states use categorical labels and ordering matching simulation; `use_labels=False` keeps
+integer codes. Collective regimes also have a `stakeholder` column. Coordinates are the
+resolved grid nodes used by the solve, including parameter-dependent process grids and
+period-specialized grids, and remain available after saving and loading. The call
+materializes every grid point, so the frame can be large. For values between nodes, use
+`Model.lookup_policy`, which uses the same interpolation as simulation. The
+coordinate-bearing value schema uses solution schema version 3; archives from a
+different schema version are refused by the existing compatibility gate.
 
 The result and its supporting types live in the lightweight `lcm.solver_api` submodule;
 they are not re-exported from the top-level `lcm` namespace. The retention modes are:

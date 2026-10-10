@@ -18,18 +18,20 @@ not during function compilation.
 """
 
 from collections.abc import Mapping
-from typing import Any
+from types import MappingProxyType
+from typing import Unpack
 
 import jax.numpy as jnp
 
 from _lcm.reachability import build_phase_reachability
 from _lcm.regime_building.canonicalize import (
+    _CoarseTransitionCell,
     canonicalize_phased_regimes,
     canonicalize_regimes,
 )
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_building.phases import normalize_all_regime_phases
-from _lcm.regime_law import RegimeLaws
+from _lcm.regime_building.phases import PhasedRegimeSpec, normalize_all_regime_phases
+from _lcm.regime_law import RegimeLawDeclaration, RegimeLaws
 from lcm import (
     DiscreteGrid,
     LinearAggregator,
@@ -41,8 +43,13 @@ from lcm import (
     fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.typing import FloatND, ScalarInt
+from lcm.regime import RegimeReplacement
+from lcm.typing import FloatND, RegimeName, ScalarInt
 from tests.conftest import bind_laws
+
+
+class _RegimeOverrides(RegimeReplacement, total=False):
+    law: RegimeLawDeclaration
 
 
 @categorical(ordered=True)
@@ -71,7 +78,7 @@ def _wealth_grid() -> LinSpacedGrid:
     return LinSpacedGrid(start=1.0, stop=100.0, n_points=10)
 
 
-def _base_regime_kwargs() -> dict[str, Any]:
+def _base_regime_kwargs() -> RegimeReplacement:
     return {
         "states": {"wealth": _wealth_grid()},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -80,11 +87,13 @@ def _base_regime_kwargs() -> dict[str, Any]:
 
 
 # A regime together with the law `Model(edges=...)` would bind for it.
-type _Declared = tuple[UserRegime, object]
+type _Declared = tuple[UserRegime, RegimeLawDeclaration]
 
 
-def _regime(*, law: object = _next_regime, **overrides: Any) -> _Declared:
-    spec: dict[str, Any] = _base_regime_kwargs()
+def _regime(
+    *, law: RegimeLawDeclaration = _next_regime, **overrides: Unpack[RegimeReplacement]
+) -> _Declared:
+    spec: RegimeReplacement = _base_regime_kwargs()
     spec.update(overrides)
     return UserRegime(**spec), law
 
@@ -102,7 +111,9 @@ def _split(
     return regimes, laws
 
 
-def _canonicalize(declared: dict[str, _Declared]) -> Mapping:
+def _canonicalize(
+    declared: dict[str, _Declared],
+) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
     regimes, laws = _split(declared)
     return canonicalize_regimes(
         user_regimes=finalize_regimes(
@@ -116,7 +127,9 @@ def _canonicalize(declared: dict[str, _Declared]) -> Mapping:
     )
 
 
-def _two_regime_model_specs(work_overrides: dict[str, Any]) -> Mapping:
+def _two_regime_model_specs(
+    work_overrides: _RegimeOverrides,
+) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
     retire = _regime(state_transitions={"wealth": _next_wealth})
     dead = _dead()
     return _canonicalize(
@@ -128,6 +141,7 @@ def test_bare_law_broadcasts_over_carrying_targets() -> None:
     """A bare law expands to one entry per reachable target carrying the state."""
     specs = _two_regime_model_specs({"state_transitions": {"wealth": _next_wealth}})
     canonical = specs["work"].solution.state_transitions["wealth"]
+    assert isinstance(canonical, Mapping)
     assert isinstance(canonical, Mapping)
     assert set(canonical) == {"work", "retire"}
     assert all(law is _next_wealth for law in canonical.values())
@@ -150,13 +164,14 @@ def test_per_target_dict_is_restricted_to_named_targets() -> None:
         }
     )
     canonical = specs["work"].solution.state_transitions["wealth"]
+    assert isinstance(canonical, Mapping)
     assert set(canonical) == {"retire"}
     assert canonical["retire"] is _next_wealth
 
 
 def test_fixed_transition_desugars_to_per_target_identities() -> None:
     """A `fixed_transition` entry becomes identity laws toward each carrier."""
-    overrides: dict[str, Any] = {
+    overrides: RegimeReplacement = {
         "states": {
             "wealth": _wealth_grid(),
             "health": DiscreteGrid(category_class=_Health),
@@ -174,6 +189,7 @@ def test_fixed_transition_desugars_to_per_target_identities() -> None:
         {"work": _regime(**overrides), "retire": _regime(**overrides), "dead": dead}
     )
     canonical = specs["work"].solution.state_transitions["health"]
+    assert isinstance(canonical, Mapping)
     assert set(canonical) == {"work", "retire"}
     for law in canonical.values():
         assert law(health=jnp.asarray(1, dtype=jnp.int32)) == 1
@@ -181,7 +197,7 @@ def test_fixed_transition_desugars_to_per_target_identities() -> None:
 
 def test_markov_law_broadcasts_as_markov() -> None:
     """A stochastic law stays `StochasticTransition`-wrapped in every cell."""
-    overrides: dict[str, Any] = {
+    overrides: RegimeReplacement = {
         "states": {
             "wealth": _wealth_grid(),
             "health": DiscreteGrid(category_class=_Health),
@@ -199,6 +215,7 @@ def test_markov_law_broadcasts_as_markov() -> None:
         {"work": _regime(**overrides), "retire": _regime(**overrides), "dead": dead}
     )
     canonical = specs["work"].solution.state_transitions["health"]
+    assert isinstance(canonical, Mapping)
     assert all(isinstance(law, StochasticTransition) for law in canonical.values())
 
 
@@ -211,7 +228,7 @@ def test_carried_state_law_lives_only_in_the_simulation_slice() -> None:
     def _evolve(pension_wealth: float) -> float:
         return pension_wealth * 1.03
 
-    overrides: dict[str, Any] = {
+    overrides: RegimeReplacement = {
         "states": {
             "wealth": _wealth_grid(),
             "pension_wealth": Phased(
@@ -227,6 +244,7 @@ def test_carried_state_law_lives_only_in_the_simulation_slice() -> None:
     )
     assert "pension_wealth" not in specs["work"].solution.state_transitions
     simulate_canonical = specs["work"].simulation.state_transitions["pension_wealth"]
+    assert isinstance(simulate_canonical, Mapping)
     assert set(simulate_canonical) == {"work", "retire"}
     assert all(law is _evolve for law in simulate_canonical.values())
 
@@ -249,7 +267,10 @@ def test_coarse_markov_regime_transition_canonicalizes_to_shared_cells() -> None
     canonical = specs["work"].solution.regime_transition
     assert isinstance(canonical, Mapping)
     assert set(canonical) == {"work", "retire", "dead"}
-    assert all(cell.underlying is transition for cell in canonical.values())
+    assert all(
+        isinstance(cell, _CoarseTransitionCell) and cell.underlying is transition
+        for cell in canonical.values()
+    )
 
 
 def test_coarse_deterministic_regime_transition_canonicalizes_to_shared_cells() -> None:
@@ -262,7 +283,10 @@ def test_coarse_deterministic_regime_transition_canonicalizes_to_shared_cells() 
     canonical = specs["work"].solution.regime_transition
     assert isinstance(canonical, Mapping)
     assert set(canonical) == {"work", "retire", "dead"}
-    assert all(cell.underlying is _next_regime for cell in canonical.values())
+    assert all(
+        isinstance(cell, _CoarseTransitionCell) and cell.underlying is _next_regime
+        for cell in canonical.values()
+    )
 
 
 def test_temporal_graph_limits_canonical_transition_bundles() -> None:

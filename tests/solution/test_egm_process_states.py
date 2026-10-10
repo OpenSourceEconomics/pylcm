@@ -45,7 +45,9 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    ScalarFloat,
     ScalarInt,
+    UserParams,
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -261,7 +263,7 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
     )
 
 
-def _get_params(shock_type: str) -> dict:
+def _get_params(shock_type: str) -> UserParams:
     final_age_alive = 40 + (N_PERIODS - 2) * 10
     if shock_type == "rouwenhorst":
         income_params = {"mu": 0.0, "sigma": 0.25, "rho": 0.6}
@@ -363,7 +365,7 @@ def test_nan_process_transition_weights_surface_as_error(
     params = _get_params("rouwenhorst")
 
     def nan_transition_weights(
-        self: RouwenhorstAR1Process, **_kwargs: object
+        self: RouwenhorstAR1Process, **_kwargs: ScalarFloat | ScalarInt
     ) -> FloatND:
         return jnp.full((self.n_points, self.n_points), jnp.nan)
 

@@ -13,13 +13,132 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 from types import ModuleType
-from typing import Any, cast
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    Protocol,
+    TypedDict,
+    TypeGuard,
+    runtime_checkable,
+)
 
 from benchmarks.grid_search_pair_scenarios import EXTERNAL_HARNESS_SOURCES
+
+if TYPE_CHECKING:
+    import logging
+    from importlib.machinery import ModuleSpec
+
+    from jax import Array
+    from jax.stages import Compiled
+    from numpy import generic
+    from numpy.typing import NDArray
+
+    from _lcm.execution.core_program import ResolvedCoreProgram
+    from _lcm.solution.contract import PeriodKernel
+    from _lcm.typing import JSONValue
+    from benchmarks.grid_search_pair import (
+        _ArrayManifest,
+        _AsyncCommunicationCounts,
+        _CompiledCore,
+        _DeviceMemory,
+        _Dimensions,
+        _HloCensus,
+        _KernelExecution,
+        _KernelRow,
+        _ProcMemory,
+        _RouteMetadata,
+        _VersionShim,
+        _VersionShimSeed,
+        _WorkerMetrics,
+    )
+    from benchmarks.grid_search_pair_scenarios import ScenarioSpec
+    from lcm import Model
+    from lcm.solver_api import SolutionResult
+    from lcm.typing import RegimeName, UserParams
+
+
+class _SolveKwargs(TypedDict):
+    params: UserParams
+    log_level: Literal["off"]
+
+
+class _GridExtent(Protocol):
+    @property
+    def n_points(self) -> int: ...
+
+
+class _GridArray(Protocol):
+    def to_jax(self) -> Array: ...
+
+
+def _has_grid_array[GridValue](grid: GridValue) -> TypeGuard[_GridArray]:
+    return callable(getattr(grid, "to_jax", None))
+
+
+class _JaxConfig(Protocol):
+    def read(self, name: str) -> bool: ...
+
+
+class _JaxPrecision(Protocol):
+    @property
+    def config(self) -> _JaxConfig: ...
+
+
+@runtime_checkable
+class _ReadyLeaf(Protocol):
+    def block_until_ready(self) -> _ReadyLeaf | None: ...
+
+
+class _ReplayKey(Protocol):
+    @property
+    def type_id(self) -> str: ...
+
+
+class _ReplayRef(Protocol):
+    @property
+    def key(self) -> _ReplayKey: ...
+    @property
+    def period(self) -> int: ...
+    @property
+    def regime(self) -> str: ...
+
+
+type _GitArg = str
+
+
+type _SolutionTree = Mapping[int, Mapping[RegimeName, _ReadyLeaf]]
+
+
+class _LegacyBenchmarkModel(Protocol):
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: Literal["off"],
+        return_dissolution_flags: bool,
+    ) -> tuple[_SolutionTree, _SolutionTree]: ...
+
+
+def _has_legacy_solve(model: Model) -> TypeGuard[_LegacyBenchmarkModel]:
+    return "return_dissolution_flags" in inspect.signature(model.solve).parameters
+
+
+class _ProjectedResult[Ref: _ReplayRef](Protocol):
+    @property
+    def values(self) -> _SolutionTree: ...
+    @property
+    def replay_artifacts(self) -> Mapping[Ref, _ReadyLeaf]: ...
+
+
+type _WorkerResult[Ref: _ReplayRef] = (
+    SolutionResult | _ProjectedResult[Ref] | tuple[_SolutionTree, _SolutionTree]
+)
+
 
 _MEMORY_FIELDS = (
     "generated_code_size_in_bytes",
@@ -71,8 +190,8 @@ _VERSION_SHIM_EXPORTS = (
 )
 
 
-def _version_shim_identity() -> dict[str, Any]:
-    identity = {
+def _version_shim_identity() -> _VersionShim:
+    identity: _VersionShimSeed = {
         "module": _VERSION_SHIM_MODULE,
         "origin": _VERSION_SHIM_ORIGIN,
         "exports": list(_VERSION_SHIM_EXPORTS),
@@ -80,10 +199,10 @@ def _version_shim_identity() -> dict[str, Any]:
         "version_tuple": [0, "gridsearchpair"],
         "commit_id": None,
     }
-    identity["sha256"] = hashlib.sha256(
+    digest = hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    return identity
+    return {**identity, "sha256": digest}
 
 
 class _VersionShimFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
@@ -95,7 +214,7 @@ class _VersionShimFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         fullname: str,
         path: Sequence[str] | None,
         target: ModuleType | None = None,
-    ) -> Any:
+    ) -> ModuleSpec | None:
         del path, target
         if fullname != _VERSION_SHIM_MODULE:
             return None
@@ -105,24 +224,26 @@ class _VersionShimFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
             origin=_VERSION_SHIM_ORIGIN,
         )
 
-    def create_module(self, spec: Any) -> None:
+    def create_module(self, spec: ModuleSpec) -> None:
         del spec
 
     def exec_module(self, module: ModuleType) -> None:
         version_tuple = (0, "gridsearchpair")
         module.__file__ = _VERSION_SHIM_ORIGIN
-        module.__all__ = list(_VERSION_SHIM_EXPORTS)
-        module.__version__ = _VERSION_SHIM_VERSION
-        module.version = _VERSION_SHIM_VERSION
-        module.__version_tuple__ = version_tuple
-        module.version_tuple = version_tuple
-        module.__commit_id__ = None
-        module.commit_id = None
+        module.__dict__.update(
+            __all__=list(_VERSION_SHIM_EXPORTS),
+            __version__=_VERSION_SHIM_VERSION,
+            version=_VERSION_SHIM_VERSION,
+            __version_tuple__=version_tuple,
+            version_tuple=version_tuple,
+            __commit_id__=None,
+            commit_id=None,
+        )
 
 
 def _import_lcm_with_version_shim(
     *, target_src: Path
-) -> tuple[ModuleType, dict[str, Any]]:
+) -> tuple[ModuleType, _VersionShim]:
     """Import target ``lcm`` with identical build metadata for both revisions.
 
     Hatch's VCS hook generates ``src/_lcm/version.py`` while building the package,
@@ -199,7 +320,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _git(*, checkout: Path, args: Iterable[str]) -> str:
+def _git(*, checkout: Path, args: Iterable[_GitArg]) -> str:
     result = subprocess.run(
         ["git", "-C", str(checkout), *args],
         capture_output=True,
@@ -233,7 +354,7 @@ def _sha256_files(*, root: Path, relative_paths: Iterable[str]) -> str:
     return digest.hexdigest()
 
 
-def _read_proc_memory() -> dict[str, int | None]:
+def _read_proc_memory() -> _ProcMemory:
     fields = {"VmRSS": None, "VmHWM": None}
     try:
         lines = Path("/proc/self/status").read_text().splitlines()
@@ -250,7 +371,7 @@ def _read_proc_memory() -> dict[str, int | None]:
     return {"rss_bytes": fields["VmRSS"], "hwm_bytes": fields["VmHWM"]}
 
 
-def _memory_analysis(compiled: Any) -> dict[str, int | None] | None:
+def _memory_analysis(compiled: Compiled) -> dict[str, int | None] | None:
     try:
         stats = compiled.memory_analysis()
     except Exception:
@@ -265,7 +386,7 @@ def _memory_analysis(compiled: Any) -> dict[str, int | None] | None:
     }
 
 
-def _hlo_census(text: str) -> dict[str, Any]:
+def _hlo_census(text: str) -> _HloCensus:
     lowered = text.lower()
     instruction_count = sum(
         1
@@ -277,7 +398,7 @@ def _hlo_census(text: str) -> dict[str, Any]:
         return len(re.findall(rf"(?<![a-z0-9_-]){re.escape(op)}\s*\(", lowered))
 
     op_counts = {}
-    async_communication_counts = {}
+    async_communication_counts: dict[str, _AsyncCommunicationCounts] = {}
     for op in _HLO_OPS:
         if op not in _COLLECTIVE_OPS:
             op_counts[op] = count_form(op)
@@ -309,15 +430,16 @@ def _safe_stem(label: str) -> str:
     return stem[:100] or "core"
 
 
-def _grid_extent(grid: Any) -> int:
+def _grid_extent(grid: _GridExtent | _GridArray) -> int:
     """Return a grid width without requiring runtime-supplied points."""
     n_points = getattr(grid, "n_points", None)
     if n_points is not None:
         return int(n_points)
+    assert _has_grid_array(grid=grid)
     return int(grid.to_jax().shape[0])
 
 
-def _kernel_execution_metadata(kernel: Any) -> dict[str, Any]:
+def _kernel_execution_metadata(kernel: PeriodKernel) -> _KernelExecution:
     """Describe one kernel through its native graph or the historical declaration."""
     graph_provider = getattr(kernel, "core_programs", None)
     if callable(graph_provider):
@@ -351,8 +473,8 @@ def _kernel_execution_metadata(kernel: Any) -> dict[str, Any]:
     }
 
 
-def _route_metadata(model: Any) -> dict[str, Any]:
-    rows: list[dict[str, Any]] = []
+def _route_metadata(model: Model) -> _RouteMetadata:
+    rows: list[_KernelRow] = []
     folded_regimes: list[str] = []
     distributed_regimes: list[str] = []
     collective_regimes: list[str] = []
@@ -409,7 +531,7 @@ def _route_metadata(model: Any) -> dict[str, Any]:
     }
 
 
-def _scenario_dimensions(model: Any) -> dict[str, Any]:
+def _scenario_dimensions(model: Model) -> _Dimensions:
     return {
         "n_periods": int(model.n_periods),
         "regimes": {
@@ -425,7 +547,7 @@ def _scenario_dimensions(model: Any) -> dict[str, Any]:
     }
 
 
-def _assert_scenario_identity(*, spec: Any, routes: Mapping[str, Any]) -> None:
+def _assert_scenario_identity(*, spec: ScenarioSpec, routes: _RouteMetadata) -> None:
     observed = {
         "folded": bool(routes["folded_regimes"]),
         "collective": bool(routes["collective_regimes"]),
@@ -448,7 +570,10 @@ def _assert_scenario_identity(*, spec: Any, routes: Mapping[str, Any]) -> None:
 
 
 def _executed_float_dtype(
-    *, precision: str, jax: Any, arrays: Mapping[str, Any]
+    *,
+    precision: str,
+    jax: _JaxPrecision,
+    arrays: Mapping[str, Array | NDArray[generic]],
 ) -> str:
     """Return the float dtype the run executed at, failing on precision drift.
 
@@ -494,16 +619,19 @@ def _executed_float_dtype(
     return expected
 
 
-def _flatten_arrays(*, result: Any) -> dict[str, Any]:
+def _flatten_arrays[Ref: _ReplayRef](
+    *, result: _WorkerResult[Ref]
+) -> dict[str, _ReadyLeaf]:
     if isinstance(result, tuple):
         values, dissolution_flags = result
     else:
         values = result.values
-        dissolution_flags: dict[int, dict[str, Any]] = {}
+        dissolution_flags: dict[int, dict[RegimeName, _ReadyLeaf]] = {}
         for ref, payload in result.replay_artifacts.items():
             if ref.key.type_id == "pylcm.collective.dissolution_flag":
+                assert isinstance(payload, _ReadyLeaf)
                 dissolution_flags.setdefault(ref.period, {})[ref.regime] = payload
-    flattened: dict[str, Any] = {}
+    flattened: dict[str, _ReadyLeaf] = {}
     for prefix, tree in (("value", values), ("dissolution", dissolution_flags)):
         for period, by_regime in sorted(tree.items()):
             for regime, array in sorted(by_regime.items()):
@@ -512,13 +640,13 @@ def _flatten_arrays(*, result: Any) -> dict[str, Any]:
     return flattened
 
 
-def _block_result(result: Any) -> None:
+def _block_result[Ref: _ReplayRef](result: _WorkerResult[Ref]) -> None:
     """Wait for every published result leaf, including MappingProxyType trees."""
     for array in _flatten_arrays(result=result).values():
         array.block_until_ready()
 
 
-def _partition_entry(value: Any) -> str | list[str] | None:
+def _partition_entry[PartitionEntry](value: PartitionEntry) -> str | list[str] | None:
     if value is None or isinstance(value, str):
         return value
     if isinstance(value, tuple) and all(isinstance(item, str) for item in value):
@@ -527,7 +655,7 @@ def _partition_entry(value: Any) -> str | list[str] | None:
     raise TypeError(msg)
 
 
-def _sharding_descriptor(*, array: Any, jax: Any) -> dict[str, Any]:
+def _sharding_descriptor(*, array: Array, jax: ModuleType) -> dict[str, JSONValue]:
     sharding = getattr(array, "sharding", None)
     if isinstance(sharding, jax.sharding.NamedSharding):
         axis_names = [str(name) for name in sharding.mesh.axis_names]
@@ -558,8 +686,8 @@ def _sharding_descriptor(*, array: Any, jax: Any) -> dict[str, Any]:
 
 
 def _write_arrays(
-    *, path: Path, arrays: Mapping[str, Any], jax: Any
-) -> list[dict[str, Any]]:
+    *, path: Path, arrays: Mapping[str, Array], jax: ModuleType
+) -> list[_ArrayManifest]:
     import numpy as np
 
     descriptors = {
@@ -568,7 +696,7 @@ def _write_arrays(
     converted = {
         key: np.asarray(jax.device_get(value)) for key, value in arrays.items()
     }
-    np.savez_compressed(path, **converted)
+    np.savez_compressed(path, allow_pickle=True, **converted)
     return [
         {
             "key": key,
@@ -581,8 +709,8 @@ def _write_arrays(
     ]
 
 
-def _device_memory(jax: Any) -> list[dict[str, Any]]:
-    result = []
+def _device_memory(jax: ModuleType) -> list[_DeviceMemory]:
+    result: list[_DeviceMemory] = []
     for device in jax.devices():
         try:
             stats = device.memory_stats()
@@ -724,7 +852,10 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     lcm, version_shim = _import_lcm_with_version_shim(target_src=target_src)
     from _lcm.solution import backward_induction
 
-    imported_lcm = Path(lcm.__file__).resolve()
+    lcm_path = lcm.__file__
+    if lcm_path is None:
+        raise RuntimeError("Imported lcm has no source-file identity.")
+    imported_lcm = Path(lcm_path).resolve()
     if not imported_lcm.is_relative_to(target_src):
         raise RuntimeError(
             f"Imported lcm from {imported_lcm}, outside target source {target_src}."
@@ -741,15 +872,15 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         raise RuntimeError(f"Requested backend {args.backend!r}, got {devices}.")
 
     build_started = time.perf_counter_ns()
-    model, params = build_scenario(name=cast("Any", spec.name))
+    model, params = build_scenario(name=spec.name)
     build_wall_ns = time.perf_counter_ns() - build_started
     _executed_float_dtype(precision=args.precision, jax=jax, arrays={})
     routes = _route_metadata(model)
     _assert_scenario_identity(spec=spec, routes=routes)
     dimensions = _scenario_dimensions(model)
 
-    compiled_refs: list[tuple[str, Any]] = []
-    resolved_plans: list[Any] = []
+    compiled_refs: list[tuple[str, Compiled]] = []
+    resolved_plans: list[ResolvedCoreProgram] = []
     compile_phase_ns: list[int] = []
     capture_cold = True
     capture_lock = threading.Lock()
@@ -758,40 +889,70 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     original_log_memory = backward_induction._log_kernel_memory  # noqa: SLF001
     original_resolve_program = getattr(backward_induction, "resolve_core_program", None)
 
-    def timed_compile_all(*call_args: Any, **call_kwargs: Any) -> Any:
-        started = time.perf_counter_ns()
-        try:
-            return original_compile_all(*call_args, **call_kwargs)
-        finally:
-            compile_phase_ns.append(time.perf_counter_ns() - started)
+    def observe_compile[**P, R](original: Callable[P, R]) -> Callable[P, R]:
+        def timed_compile_all(*call_args: P.args, **call_kwargs: P.kwargs) -> R:
+            started = time.perf_counter_ns()
+            try:
+                return original(*call_args, **call_kwargs)
+            finally:
+                compile_phase_ns.append(time.perf_counter_ns() - started)
 
-    def retain_compiled(*, compiled: Any, label: str, logger: Any) -> None:  # noqa: ARG001
+        return timed_compile_all
+
+    timed_compile_all = observe_compile(original_compile_all)
+
+    def retain_compiled(
+        *,
+        compiled: Compiled,
+        label: str,
+        logger: logging.Logger,
+        precomputed_peak_bytes: int | None = None,
+    ) -> None:
+        del logger, precomputed_peak_bytes
         if capture_cold:
             with capture_lock:
                 compiled_refs.append((label, compiled))
 
-    def retain_plan(*call_args: Any, **call_kwargs: Any) -> Any:
-        result = original_resolve_program(*call_args, **call_kwargs)
-        if capture_cold:
-            resolved_plans.append(result)
-        return result
+    def observe_plan[**P](
+        original: Callable[P, ResolvedCoreProgram],
+    ) -> Callable[P, ResolvedCoreProgram]:
+        def retain_plan(
+            *call_args: P.args, **call_kwargs: P.kwargs
+        ) -> ResolvedCoreProgram:
+            result = original(*call_args, **call_kwargs)
+            if capture_cold:
+                resolved_plans.append(result)
+            return result
 
-    solve_kwargs = {
+        return retain_plan
+
+    retain_plan = (
+        None
+        if original_resolve_program is None
+        else observe_plan(original_resolve_program)
+    )
+
+    solve_kwargs: _SolveKwargs = {
         "params": params,
         "log_level": "off",
     }
-    if "return_dissolution_flags" in inspect.signature(model.solve).parameters:
-        solve_kwargs["return_dissolution_flags"] = True
+
+    solve: Callable[[], SolutionResult | tuple[_SolutionTree, _SolutionTree]]
+    if _has_legacy_solve(model=model):
+        solve = partial(model.solve, **solve_kwargs, return_dissolution_flags=True)
+    else:
+        solve = partial(model.solve, **solve_kwargs)
+
     memory_before_solve = _read_proc_memory()
     with ExitStack() as stack:
-        backward_induction._compile_all_functions = timed_compile_all  # noqa: SLF001
+        backward_induction.__dict__["_compile_all_functions"] = timed_compile_all
         stack.callback(
             setattr,
             backward_induction,
             "_compile_all_functions",
             original_compile_all,
         )
-        backward_induction._log_kernel_memory = retain_compiled  # noqa: SLF001
+        backward_induction.__dict__["_log_kernel_memory"] = retain_compiled
         stack.callback(
             setattr,
             backward_induction,
@@ -799,7 +960,8 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
             original_log_memory,
         )
         if original_resolve_program is not None:
-            backward_induction.resolve_core_program = retain_plan
+            assert retain_plan is not None
+            backward_induction.__dict__["resolve_core_program"] = retain_plan
             stack.callback(
                 setattr,
                 backward_induction,
@@ -808,7 +970,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
             )
 
         cold_started = time.perf_counter_ns()
-        cold_result = model.solve(**solve_kwargs)
+        cold_result = solve()
         _block_result(cold_result)
         cold_wall_ns = time.perf_counter_ns() - cold_started
         del cold_result
@@ -818,7 +980,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         final_warm_result = None
         for sample in range(args.warm_samples):
             warm_started = time.perf_counter_ns()
-            candidate = model.solve(**solve_kwargs)
+            candidate = solve()
             _block_result(candidate)
             warm_wall_ns.append(time.perf_counter_ns() - warm_started)
             if sample == args.warm_samples - 1:
@@ -829,7 +991,13 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     device_memory = _device_memory(jax)
     if final_warm_result is None:
         raise RuntimeError("The worker produced no final warm result.")
-    arrays = _flatten_arrays(result=final_warm_result)
+    published = _flatten_arrays(result=final_warm_result)
+    arrays: dict[str, Array] = {}
+    for name, leaf in published.items():
+        if not isinstance(leaf, jax.Array):
+            raise TypeError(f"Published paired value {name!r} is not a JAX array.")
+        arrays[name] = leaf
+    del published
     executed_float_dtype = _executed_float_dtype(
         precision=args.precision, jax=jax, arrays=arrays
     )
@@ -839,7 +1007,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     )
     del arrays, final_warm_result
 
-    tile_plans = [
+    tile_plans: list[dict[str, JSONValue]] = [
         {
             "tile_widths": dict(result.tile_widths),
             "static_kwargs": dict(result.static_kwargs),
@@ -850,10 +1018,12 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
 
     hlo_dir = args.output / "hlo"
     hlo_dir.mkdir()
-    core_records: list[dict[str, Any]] = []
+    core_records: list[_CompiledCore] = []
     ordered_compiled = sorted(compiled_refs, key=lambda item: item[0])
     for ordinal, (label, compiled) in enumerate(ordered_compiled):
         text = compiled.as_text()
+        if text is None:
+            raise RuntimeError(f"Compiled core {label!r} supplied no HLO text.")
         census = _hlo_census(text)
         compiler_memory = _memory_analysis(compiled)
         filename = f"{ordinal:03d}-{_safe_stem(label)}-{census['sha256'][:12]}.hlo.txt"
@@ -876,7 +1046,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         )
 
     final_memory = _read_proc_memory()
-    metrics = {
+    metrics: _WorkerMetrics = {
         "schema_version": "1.0",
         "scenario": spec.name,
         "revision": args.expected_revision,

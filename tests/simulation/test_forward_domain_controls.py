@@ -7,14 +7,15 @@ available to the decisions that read them, and budgeted results must equal the
 unbudgeted ones.
 """
 
-from collections.abc import Callable, Mapping
-from typing import Any
+from collections.abc import Mapping
+from typing import NotRequired, Protocol, TypedDict, Unpack
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.simulation import chunk_profiles, simulate
+from _lcm.simulation import forward_program_profiles as forward_profiles
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -25,7 +26,13 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.typing import ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+    UserInitialConditions,
+    UserParams,
+)
 from tests.test_demand_worklists import GatedId, _gated_model
 
 _DISCOUNT = 0.5
@@ -159,7 +166,9 @@ def _gated_value_only_model(*, budgeted: bool) -> Model:
     )
 
 
-def _initial(*, model: Model, starts: tuple[tuple[float, str], ...]) -> dict[str, Any]:
+def _initial(
+    *, model: Model, starts: tuple[tuple[float, str], ...]
+) -> UserInitialConditions:
     wealth = jnp.linspace(0.0, 1.0, 3)
     return {
         "wealth": jnp.concatenate([wealth] * len(starts)),
@@ -170,7 +179,95 @@ def _initial(*, model: Model, starts: tuple[tuple[float, str], ...]) -> dict[str
     }
 
 
-_CASES: Mapping[str, dict[str, Any]] = {
+class _ModelFactory(Protocol):
+    def __call__(self, *, budgeted: bool) -> Model: ...
+
+
+class _ForwardCase(TypedDict):
+    build: _ModelFactory
+    starts: tuple[tuple[float, str], ...]
+    params: UserParams
+    forward: set[tuple[int, str]]
+    value_only: set[tuple[int, str]]
+    value_only_values: dict[tuple[int, str], tuple[float, float]]
+    source_values: tuple[float, float] | None
+    paths: dict[str, int]
+
+
+class _ForwardProfileInputs(TypedDict):
+    runtime: forward_profiles.SimulationRuntime
+    regimes: forward_profiles.Mapping[str, forward_profiles.Regime]
+    regime: forward_profiles.Regime
+    name: str
+    period: int
+    flat_params: forward_profiles.FlatParams
+    base: forward_profiles.StateActionSpace
+    base_spaces: forward_profiles.Mapping[str, forward_profiles.StateActionSpace]
+    values: forward_profiles.Mapping[
+        int, forward_profiles.Mapping[str, forward_profiles.jax.Array]
+    ]
+    flags: forward_profiles.Mapping[
+        int, forward_profiles.Mapping[str, forward_profiles.jax.Array]
+    ]
+    ages: forward_profiles.TimeAxis
+    n_subjects: int
+    widths: forward_profiles.Mapping[str, int]
+    columns: forward_profiles.Mapping[str, forward_profiles.jax.ShapeDtypeStruct]
+    ordinary_key: forward_profiles.jax.ShapeDtypeStruct
+    taste_key: forward_profiles.jax.ShapeDtypeStruct | None
+    policy: NotRequired[forward_profiles.SimulationPolicy | None]
+    wave: NotRequired[forward_profiles.CompilationWave | None]
+
+
+class _RegimeSimulationInputs(TypedDict):
+    regime_name: simulate.RegimeName
+    regime: simulate.Regime
+    regimes: simulate.Mapping[simulate.RegimeName, simulate.Regime]
+    value_owner: simulate.PeriodSimulationReads
+    subject_devices: tuple[simulate.jax.Device, ...]
+    memory: simulate.SimulationMemory | None
+    base_state_action_space: simulate.StateActionSpace
+    base_state_action_spaces: simulate.Mapping[
+        simulate.RegimeName, simulate.StateActionSpace
+    ]
+    period: int
+    age: simulate.ScalarInt | simulate.ScalarFloat
+    states: simulate.StatesPerRegime
+    subject_regime_ids: simulate.Int1D
+    new_subject_regime_ids: simulate.Int1D
+    period_to_regime_to_V_arr: simulate.MappingProxyType[
+        int, simulate.MappingProxyType[simulate.RegimeName, simulate.FloatND]
+    ]
+    period_to_regime_to_dissolution_flags: simulate.MappingProxyType[
+        int, simulate.MappingProxyType[simulate.RegimeName, simulate.BoolND]
+    ]
+    flat_params: simulate.FlatParams
+    regime_names_to_ids: simulate.RegimeNamesToIds
+    decision_targets_next_period: tuple[simulate.RegimeName, ...]
+    realization_targets_next_period: tuple[simulate.RegimeName, ...]
+    key: simulate.PRNGKeyND
+    logger: simulate.logging.Logger
+    n_subjects: int
+    subject_slice: slice | simulate.SubjectRows
+    original_n_subjects: NotRequired[int | None]
+    own_stakeholder: simulate.Int1D
+    new_own_stakeholder: simulate.Int1D
+    gated_edge_fold_age: NotRequired[float | None]
+    sim_policy: NotRequired[
+        simulate.EGMSimPolicy
+        | simulate.NBEGMGridPolicy
+        | simulate.NNBEGMSimPolicy
+        | simulate.NestedEGMSimPolicy
+        | None
+    ]
+    replay_reader: NotRequired[
+        simulate.PreparedReplayReader | simulate.ReplayReader | None
+    ]
+    taste_key: NotRequired[simulate.PRNGKeyND | None]
+    taste_address: NotRequired[tuple[int, ...] | None]
+
+
+_CASES: Mapping[str, _ForwardCase] = {
     "mixed_value_only_and_visited_periods": {
         "build": _mixed_model,
         "starts": ((0.0, "source"),),
@@ -228,7 +325,7 @@ def test_budgeted_forward_units_are_exactly_the_visited_pairs(
 ) -> None:
     """Profiled and dispatched units equal the visited pairs; values stay solved."""
     spec = _CASES[case]
-    build: Callable[..., Model] = spec["build"]
+    build = spec["build"]
     baseline = build(budgeted=False)
     budgeted = build(budgeted=True)
     solution = budgeted.solve(
@@ -263,11 +360,20 @@ def test_budgeted_forward_units_are_exactly_the_visited_pairs(
     profile_unit = chunk_profiles.profile_forward_unit
     simulate_unit = simulate._simulate_regime_in_period
 
-    def _record_profile(**kwargs: Any) -> Any:
+    def _record_profile(
+        **kwargs: Unpack[_ForwardProfileInputs],
+    ) -> forward_profiles.Mapping[str, forward_profiles.ForwardProgramProfile]:
         profiled.append((kwargs["period"], kwargs["name"]))
         return profile_unit(**kwargs)
 
-    def _record_dispatch(**kwargs: Any) -> Any:
+    def _record_dispatch(
+        **kwargs: Unpack[_RegimeSimulationInputs],
+    ) -> tuple[
+        simulate.PeriodRegimeSimulationData,
+        simulate.StatesPerRegime,
+        simulate.Int1D,
+        simulate.Int1D,
+    ]:
         dispatched.append((kwargs["period"], kwargs["regime_name"]))
         return simulate_unit(**kwargs)
 

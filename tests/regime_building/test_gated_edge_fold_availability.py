@@ -33,7 +33,7 @@ from _lcm.typing import ConstraintFunction
 from lcm import Model, Transition, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import BoolND, FloatND, ScalarInt
+from lcm.typing import BoolND, FloatND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.regime_building.test_collective_regime_simulate import (
     _make_repeating_self_loop_regimes,
@@ -56,7 +56,7 @@ def _gate(V_target: FloatND) -> BoolND:
 
 def _edge(
     *,
-    target: str,
+    target: RegimeName,
     fallback: str,
     gate_ref: str | None = None,
     fold_periods: tuple[int, ...] = (0, 1, 2),

@@ -1,14 +1,17 @@
 """Finite preparation, its bank and canonical ranking enter real chunk admission."""
 
-from typing import Any
+from typing import Unpack
 
 import jax
 import numpy as np
 import pytest
 from pandas.testing import assert_frame_equal
 
-from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.simulation.runtime import CompiledSimulationProgram, SimulationRuntime
+from _lcm.typing import PytreeValue
 from lcm import ExecutionConfig, Model
+from lcm.typing import UserInitialConditions
+from tests.simulation._callback_types import RuntimeDispatch, RuntimePreparation
 from tests.test_models import n_nbegm_discrete_toy as discrete_toy
 from tests.test_models import n_nbegm_toy as smooth_toy
 from tests.test_models.initial_nodes import initial_nodes_of
@@ -16,7 +19,7 @@ from tests.test_models.initial_nodes import initial_nodes_of
 
 def _inputs(
     *, discrete: bool, budget: int | None, width: int = 1
-) -> tuple[Model, dict, dict]:
+) -> tuple[Model, dict[str, float], UserInitialConditions]:
     """Keep every result owned by its configured public model instance."""
     factory = discrete_toy if discrete else smooth_toy
     base = factory.build_model(variant="n_nbegm", n_periods=2)
@@ -55,7 +58,9 @@ def test_budgeted_finite_policy_profiles_actual_prepare_and_rank(
     prepare = SimulationRuntime.prepare_abstract
     dispatch = SimulationRuntime.dispatch
 
-    def observe_prepare(self: SimulationRuntime, **call: Any) -> object:
+    def observe_prepare(
+        self: SimulationRuntime, **call: Unpack[RuntimePreparation]
+    ) -> CompiledSimulationProgram:
         assert all(
             isinstance(leaf, jax.ShapeDtypeStruct)
             for leaf in jax.tree.leaves(call["arguments"])
@@ -63,7 +68,9 @@ def test_budgeted_finite_policy_profiles_actual_prepare_and_rank(
         prepared.append(call["program"].name)
         return prepare(self, **call)
 
-    def observe_dispatch(self: SimulationRuntime, **call: Any) -> object:
+    def observe_dispatch(
+        self: SimulationRuntime, **call: Unpack[RuntimeDispatch]
+    ) -> PytreeValue:
         name = call["program"].name
         assert name in prepared, "A finite stage ran before its abstract admission"
         dispatched.append(name)

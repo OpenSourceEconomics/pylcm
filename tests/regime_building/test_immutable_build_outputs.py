@@ -4,9 +4,9 @@ Each helper returns a `MappingProxyType`, a `tuple` or a `frozenset`, never the
 mutable `dict`, `list` or `set` it assembles internally.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sized
 from types import MappingProxyType
-from typing import Any
+from typing import TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -53,9 +53,24 @@ from _lcm.regime_building.invariant_components import (
     _channel_refusals,
     _identity_law_states,
 )
-from _lcm.regime_building.phases import normalize_regime_phases
-from lcm import AgeGrid, Model, Transition
+from _lcm.regime_building.phases import PhasedRegimeSpec, normalize_regime_phases
+from _lcm.regime_law import RegimeLaws
+from lcm import AgeGrid, Model, Regime, Transition
+from lcm.typing import BoolND, FloatND, RegimeName, StateOrActionName, UserFunction
 from lcm_examples.tiny import get_model
+
+
+class _ClosureKwargs(TypedDict):
+    specs: Mapping[RegimeName, PhasedRegimeSpec]
+    user_regimes: Mapping[RegimeName, Regime]
+    laws: RegimeLaws
+    broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]]
+    koopmans_aggregator: UserFunction
+    kept: Mapping[RegimeName, frozenset[StateOrActionName]]
+    all_regime_names: frozenset[RegimeName]
+    ages: None
+    active_periods_by_regime: None
+
 
 _IMMUTABLE = (MappingProxyType, tuple, frozenset)
 
@@ -65,7 +80,7 @@ def model() -> Model:
     return get_model()
 
 
-def _regime_cases(model: Model) -> dict[str, Callable[[], object]]:
+def _regime_cases(model: Model) -> dict[str, Callable[[], Sized]]:
     name = "working_life"
     regime = model.user_regimes[name]
     laws = model.graph.laws
@@ -75,7 +90,7 @@ def _regime_cases(model: Model) -> dict[str, Callable[[], object]]:
         for regime_name, user_regime in model.user_regimes.items()
     }
     unkept = dict.fromkeys(model.user_regimes, frozenset())
-    shared: dict[str, Any] = {
+    shared: _ClosureKwargs = {
         "specs": specs,
         "user_regimes": model.user_regimes,
         "laws": laws,
@@ -167,7 +182,7 @@ _AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 _RESOLVED = {"b": frozenset({0, 1})}
 _TEMPLATE = MappingProxyType({"utility": MappingProxyType({"beta": "float"})})
 
-_PLAIN_CASES: dict[str, Callable[[], object]] = {
+_PLAIN_CASES: dict[str, Callable[[], Sized | None]] = {
     "merge_one_slot": lambda: _merge_one_slot(
         slot_name="functions",
         regime_name="a",
@@ -231,7 +246,9 @@ def test_create_splits_returns_immutable_splits_and_parts() -> None:
     assert (type(splits), type(parts)) == (MappingProxyType, MappingProxyType)
 
 
-def _intermediates() -> tuple:
+def _intermediates() -> tuple[
+    FloatND, BoolND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
+]:
     values = jnp.array([[1.0, jnp.nan], [2.0, 3.0]])
     feasible = jnp.array([[True, True], [False, True]])
     return (

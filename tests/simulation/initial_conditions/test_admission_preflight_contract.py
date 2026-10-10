@@ -12,7 +12,7 @@ import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Concatenate, Unpack
 
 import jax
 import numpy as np
@@ -22,9 +22,11 @@ from jax._src.array import ArrayImpl
 import _lcm
 import _lcm.simulation.initial_conditions as initial_module
 import lcm.model
+from _lcm.typing import JSONValue
 from benchmarks.asv._compile_counters import count_compile_requests
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm.exceptions import InvalidInitialConditionsError
+from tests.simulation._callback_types import WholeInputValidation
 from tests.simulation.test_compile_requests import (
     HOST_TIME_BAR,
     HOST_TIME_REPEATS,
@@ -80,8 +82,10 @@ def requests(monkeypatch: pytest.MonkeyPatch) -> _Requests:
 
     monkeypatch.setattr(ArrayImpl, "_value", property(read))
 
-    def wrap_converter(converter: Callable[..., Any]) -> Callable[..., Any]:
-        def convert(value: Any, *args: Any, **kwargs: Any) -> Any:
+    def wrap_converter[Value, **P, Result](
+        converter: Callable[Concatenate[Value, P], Result],
+    ) -> Callable[Concatenate[Value, P], Result]:
+        def convert(value: Value, /, *args: P.args, **kwargs: P.kwargs) -> Result:
             if not isinstance(value, jax.Array):
                 return converter(value, *args, **kwargs)
             if capture.conversion_depth == 0:
@@ -100,7 +104,10 @@ def requests(monkeypatch: pytest.MonkeyPatch) -> _Requests:
         original_validator = getattr(lcm.model, name)
 
         def observe(
-            *, name: str, validator: Callable[..., None], **kwargs: Any
+            *,
+            name: str,
+            validator: Callable[..., None],
+            **kwargs: Unpack[WholeInputValidation],
         ) -> None:
             previous = capture.active
             capture.active = name
@@ -148,7 +155,7 @@ def test_valid_whole_call_preflight_has_two_host_summaries(
     witness: str,
     requests: _Requests,
     monkeypatch: pytest.MonkeyPatch,
-    record_property: Callable[[str, object], None],
+    record_property: Callable[[str, JSONValue], None],
 ) -> None:
     """Preserving early semantic guards permits two summaries per valid call."""
     for name in (
@@ -158,21 +165,23 @@ def test_valid_whole_call_preflight_has_two_host_summaries(
     ):
         operation = getattr(initial_module, name)
 
-        def require_valid_fast_path(
-            *, operation: Callable[..., Any], **kwargs: Any
-        ) -> Any:
-            try:
-                return operation(**kwargs)
-            except Exception as error:  # noqa: BLE001 - expose every fallback cause
-                pytest.fail(
-                    f"Valid preflight unexpectedly requested fallback: {error!r}"
-                )
+        def require_valid_fast_path[**P, Result](
+            *, operation: Callable[P, Result]
+        ) -> Callable[P, Result]:
+            def call(*args: P.args, **kwargs: P.kwargs) -> Result:
+                try:
+                    return operation(*args, **kwargs)
+                except Exception as error:  # noqa: BLE001 - expose every fallback cause
+                    pytest.fail(
+                        f"Valid preflight unexpectedly requested fallback: {error!r}"
+                    )
+
+            return call
 
         monkeypatch.setattr(
-            initial_module,
-            name,
-            functools.partial(require_valid_fast_path, operation=operation),
+            initial_module, name, require_valid_fast_path(operation=operation)
         )
+
     model, params, initial = WITNESSES[witness]()
     with _lcm_log_output_held_fixed():
         solution = model.solve(params=params, log_level="off")
@@ -232,7 +241,7 @@ def test_valid_whole_call_preflight_has_two_host_summaries(
 
 @pytest.mark.parametrize("witness", sorted(WITNESSES))
 def test_unstubbed_warm_full_call_progress_meets_existing_time_bar(
-    *, witness: str, record_property: Callable[[str, object], None]
+    *, witness: str, record_property: Callable[[str, JSONValue], None]
 ) -> None:
     """Keep the original paired nine-repeat whole-call 1.5x acceptance bar."""
     start = time.perf_counter()

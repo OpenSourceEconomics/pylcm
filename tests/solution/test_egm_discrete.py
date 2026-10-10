@@ -36,6 +36,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParams,
 )
 from lcm_examples.iskhakov_et_al_2017 import (
     RETIREMENT_LAW,
@@ -126,7 +127,7 @@ def must_retire(labor_supply: DiscreteAction) -> BoolND:
     return labor_supply == base.LaborSupply.retire
 
 
-def _get_skill_model_params(*, wage: float = 20.0) -> dict:
+def _get_skill_model_params(*, wage: float = 20.0) -> UserParams:
     """Params for the models whose retirement regime names its target."""
     params = get_full_params(n_periods=N_PERIODS, discount_factor=0.98, wage=wage)
     params["retirement"] = {"next_wealth": {"labor_income": 0.0}}

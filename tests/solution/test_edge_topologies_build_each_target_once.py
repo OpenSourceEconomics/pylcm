@@ -18,11 +18,13 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.engine import Regime, StateActionSpace, placed_devices_for_ids
+from _lcm.grids import Grid
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import EdgeChannels
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import _iter_edge_topologies
 from _lcm.typing import FlatRegimeParams
+from lcm.typing import StateName, StateOrActionName
 
 
 @dataclasses.dataclass(frozen=True)
@@ -32,13 +34,13 @@ class _MockSolutionPhase:
     states: MappingProxyType[str, jnp.ndarray]
     """State grids, sized to give the target's `Wbar` its axes."""
 
-    grids: MappingProxyType[str, object] = MappingProxyType({})
+    grids: MappingProxyType[StateOrActionName, Grid] = MappingProxyType({})
     """Grid objects the sharding plan is built from; empty means unsharded."""
 
     submesh_device_ids: tuple[int, ...] = ()
     """No placement, so the mock target's nodes run on every visible device."""
 
-    sharded_state_names: frozenset[str] = frozenset()
+    sharded_state_names: frozenset[StateName] = frozenset()
     """No state is assigned a device axis in this topology-reuse fixture."""
     action_partitions: int = 1
     """No regime's actions are shared over devices."""
@@ -112,7 +114,7 @@ def _two_sources_one_target() -> MappingProxyType[str, Regime]:
 @pytest.fixture
 def sharding_plan_calls(monkeypatch):
     """Record the target names `_iter_edge_topologies` builds a plan for."""
-    calls: list[object] = []
+    calls: list[MappingProxyType[StateOrActionName, Grid]] = []
     original = backward_induction._build_regime_sharding
 
     def counting(*, grids, sharded_state_names, devices, action_partitions=1):

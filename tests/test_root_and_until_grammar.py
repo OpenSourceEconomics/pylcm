@@ -6,14 +6,14 @@ named keyword bounds, with a start strictly before an on-grid stop.
 """
 
 from fractions import Fraction
-from typing import Any
 
 import pytest
 
 from lcm import AgeGrid, AgeRange, ByAge, LinSpacedGrid, Model, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.initial_nodes import UserInitialNodes
 from lcm.regime import Regime
-from lcm.typing import ContinuousState, FloatND, ScalarInt
+from lcm.typing import AgeLabel, ContinuousState, FloatND, ScalarInt
 
 
 @categorical(ordered=False)
@@ -26,7 +26,7 @@ def _utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _model(*, ages: AgeGrid, initial_nodes: Any) -> Model:
+def _model(*, ages: AgeGrid, initial_nodes: UserInitialNodes) -> Model:
     wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
     exit_age = ages.exact_values[-2]
     return Model(
@@ -92,7 +92,7 @@ _IRREGULAR = AgeGrid(exact_values=(58, 60, Fraction(123, 2), 62, 64))
     ],
 )
 def test_initial_nodes_are_exact_on_fractional_clocks(
-    *, ages: AgeGrid, initial_nodes: Any, expected: set
+    *, ages: AgeGrid, initial_nodes: UserInitialNodes, expected: set[AgeLabel]
 ) -> None:
     """Starts land on the exact grid coordinates the selector names."""
     model = _model(ages=ages, initial_nodes=initial_nodes)
@@ -111,7 +111,7 @@ def test_initial_nodes_are_exact_on_fractional_clocks(
     ids=["age-range-between-grid-points", "fraction-off-an-annual-grid"],
 )
 def test_a_root_selector_without_a_grid_age_fails(
-    *, initial_nodes: Any, match: str
+    *, initial_nodes: UserInitialNodes, match: str
 ) -> None:
     """A root rule whose selector picks no grid age is refused by name."""
     with pytest.raises(ModelInitializationError, match=match):
@@ -162,10 +162,12 @@ def test_until_rejects_a_start_not_before_an_on_grid_stop(
     ],
     ids=["boundary-keyword", "start-keyword"],
 )
-def test_until_rejects_obsolete_keywords(*, kwargs: dict, match: str) -> None:
+def test_until_rejects_obsolete_keywords(
+    *, kwargs: dict[str, int | str], match: str
+) -> None:
     """Only `start_age_inclusive` and `stop_age_exclusive` name the bounds."""
     with pytest.raises(TypeError, match=match):
-        ByAge.until(**kwargs)
+        ByAge.until(**kwargs)  # ty: ignore[invalid-argument-type]
 
 
 def test_until_rejects_a_positional_stop() -> None:

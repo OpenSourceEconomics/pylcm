@@ -22,7 +22,8 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.regime import FunctionEntry
+from lcm.typing import ContinuousState, DiscreteAction, FloatND, FunctionName, ScalarInt
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
 
@@ -55,13 +56,13 @@ def _resources(wealth: ContinuousState) -> FloatND:
     return 1.05 * wealth
 
 
-def _couple(*, functions: Mapping[str, object]) -> Regime:
+def _couple(*, functions: Mapping[FunctionName, FunctionEntry]) -> Regime:
     """The collective regime of the miniature."""
     return Regime(
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
-        functions=functions,  # ty: ignore[invalid-argument-type]
+        functions=functions,
     )
 
 

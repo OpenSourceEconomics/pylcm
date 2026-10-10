@@ -7,7 +7,7 @@ whether the age dependence enters through a specialized helper or through the
 constraint itself, and whatever earlier root sets a representative age.
 """
 
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -28,6 +28,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.phased import Phased
+from lcm.regime import ConstraintEntry, FunctionEntry
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt, UserFunction
 
 
@@ -106,12 +107,12 @@ def _feasibility_model(
     law_phase: Literal["both", "solve", "simulate"] = "both",
 ) -> Model:
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_points)
-    functions: dict[str, Any] = {"utility": _consumption}
+    functions: dict[str, FunctionEntry] = {"utility": _consumption}
     if representation == "helper":
         functions["spending_limit"] = AgeSpecializedFunction(
             build=_limit_factory, signature=_age_signature
         )
-        constraints: dict[str, Any] = {"budget": _uses_limit}
+        constraints: dict[str, ConstraintEntry] = {"budget": _uses_limit}
     else:
         constraints = {
             "budget": AgeSpecializedFunction(

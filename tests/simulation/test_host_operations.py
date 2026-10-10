@@ -9,7 +9,7 @@ import weakref
 from collections.abc import Callable, Mapping
 from functools import partialmethod
 from types import MappingProxyType
-from typing import Any, TypedDict
+from typing import TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -51,7 +51,7 @@ pytestmark = pytest.mark.skipif(
 class _DispatchArguments(TypedDict):
     function: Callable[..., PytreeValue]
     arguments: Mapping[ReferenceName, PytreeValue]
-    subject_arg_names: tuple[str, ...]
+    subject_arg_names: tuple[ReferenceName, ...]
     devices: tuple[jax.Device, ...]
     live_footprint: Callable[[], DeviceBufferFootprint]
     budget_devices: tuple[jax.Device, ...]
@@ -336,13 +336,13 @@ def test_constant_membership_outputs_keep_the_actual_ordered_subject_layout() ->
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _record_compiled_output(
+def _record_compiled_output[Result: PytreeValue](
     self: jax.stages.Compiled,
     *,
-    original: Callable[..., object],
-    calls: list[tuple[jax.stages.Compiled, object]],
-    **kwargs: Any,
-) -> object:
+    original: Callable[..., Result],
+    calls: list[tuple[jax.stages.Compiled, PytreeValue]],
+    **kwargs: PytreeValue,
+) -> Result:
     result = original(self, **kwargs)
     calls.append((self, result))
     return result
@@ -360,7 +360,7 @@ def test_subject_output_contract_selects_its_own_profile_and_executable(
     )
     owner = _OwnedInputs(arrays=[state])
     operations = ProfiledSimulationOperations()
-    calls: list[tuple[jax.stages.Compiled, object]] = []
+    calls: list[tuple[jax.stages.Compiled, PytreeValue]] = []
     monkeypatch.setattr(
         jax.stages.Compiled,
         "__call__",

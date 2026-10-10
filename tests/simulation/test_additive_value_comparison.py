@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from functools import partial
 from types import MappingProxyType
-from typing import Any
+from typing import TypeGuard
 
 import jax
 import jax.numpy as jnp
@@ -23,10 +23,18 @@ import pytest
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.regime_building.Q_and_F import _QAndF
 from _lcm.simulation.programs import _StreamedArgmaxQOverA, _SubjectTiled
-from _lcm.typing import FlatParams
+from _lcm.typing import (
+    FlatParams,
+    FlatRegimeParams,
+    MappingLeaf,
+    PytreeValue,
+    QAndFArg,
+    SequenceLeaf,
+)
 from benchmarks.asv._simulation_witnesses import multi_regime
 from lcm import CESAggregator, LinearAggregator, Model
 from lcm.result import SimulationResult
+from lcm.typing import FloatND, RegimeName
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import MultiRegimeId
 
@@ -77,7 +85,16 @@ def assert_additive_value_parity(
     )
 
 
-def _unwrap(function: Callable[..., Any]) -> tuple[Callable[..., Any], dict[str, Any]]:
+def _is_regime_params[Params](params: Params) -> TypeGuard[FlatRegimeParams]:
+    return isinstance(params, MappingProxyType) and all(
+        isinstance(value, (jax.Array, MappingLeaf, SequenceLeaf))
+        for value in params.values()
+    )
+
+
+def _unwrap(
+    function: Callable[..., PytreeValue],
+) -> tuple[Callable[..., PytreeValue], dict[str, QAndFArg]]:
     """Identify the canonical functor and preserve partialled fixed parameters."""
     bound = {}
     while True:
@@ -87,7 +104,9 @@ def _unwrap(function: Callable[..., Any]) -> tuple[Callable[..., Any], dict[str,
             function = function.func
         elif inspect.ismethod(function):
             owner = function.__self__
-            assert callable(owner)
+            assert isinstance(
+                owner, (_SubjectTiled, _StreamedArgmaxQOverA, _QAndF, LinearAggregator)
+            )
             function = owner
         else:
             unwrapped = inspect.unwrap(function)
@@ -96,7 +115,9 @@ def _unwrap(function: Callable[..., Any]) -> tuple[Callable[..., Any], dict[str,
             function = unwrapped
 
 
-def _decision_q(function: Callable[..., Any]) -> tuple[_QAndF, dict[str, Any]]:
+def _decision_q(
+    function: Callable[..., PytreeValue],
+) -> tuple[_QAndF, dict[str, QAndFArg]]:
     """Reach the declared streamed decision's original canonical Q functor."""
     subject, bound = _unwrap(function)
     assert isinstance(subject, _SubjectTiled)
@@ -109,12 +130,16 @@ def _decision_q(function: Callable[..., Any]) -> tuple[_QAndF, dict[str, Any]]:
     return q, q_bound | reducer_bound | bound
 
 
-def _evaluate_operands(q: _QAndF) -> Callable[..., Any]:
+def _evaluate_operands(
+    q: _QAndF,
+) -> Callable[..., tuple[jax.Array | bool, jax.Array, jax.Array, jax.Array | bool]]:
     """Evaluate actual canonical U and CE; never infer CE from a reported value."""
 
     @jax.jit
     def evaluate(
-        *, cell: dict[str, Any], values: MappingProxyType
+        *,
+        cell: dict[str, QAndFArg],
+        values: MappingProxyType[RegimeName, FloatND],
     ) -> tuple[jax.Array | bool, jax.Array, jax.Array, jax.Array | bool]:
         utility, feasible = q.U_and_F(**cell)
         continuation, _ = q.compute_CE(
@@ -170,7 +195,9 @@ def reference_additive_norms(
         period, subject = int(row["period"]), int(row["subject_id"])
         q, bound = _decision_q(regime.simulation.programs.decision[period].function)
         raw = result.raw_results[name][period]
-        cell = dict(flat_params[name]) | {
+        regime_params = flat_params[name]
+        assert _is_regime_params(regime_params)
+        cell: dict[str, QAndFArg] = dict(regime_params) | {
             key: value[subject]
             for key, value in (dict(raw.states) | dict(raw.actions)).items()
         }

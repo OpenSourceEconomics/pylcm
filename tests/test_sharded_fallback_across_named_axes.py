@@ -35,14 +35,16 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Literal, TypedDict, Unpack, overload
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
 
 import tests.conftest
+from _lcm.execution.output_layout import PlannedCore
 from lcm import (
     AgeGrid,
     ByAge,
@@ -65,8 +67,11 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
+    StateName,
 )
+from tests.conftest import AttachResolvedOutputLayoutKwargs
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -175,8 +180,8 @@ def _projected_x(wealth: ContinuousState) -> DiscreteState:
 def build_model(
     *,
     devices: tuple[int, ...],
-    sharded: tuple[str, ...],
-    pair_reads: str = "y",
+    sharded: tuple[StateName, ...],
+    pair_reads: Literal["x", "y"] = "y",
 ) -> Model:
     """Build the solo/pair/dead topology whose gated edge falls back into `solo`.
 
@@ -278,19 +283,49 @@ def build_model(
     )
 
 
+class PlacementVariant(TypedDict):
+    sharded: tuple[StateName, ...]
+    pair_reads: Literal["x", "y"]
+
+
+class TransferRead(TypedDict):
+    source_regime: RegimeName
+    target_regime: RegimeName
+    channel: str
+    kind: str
+
+
+class FallbackReport(TypedDict):
+    pruned_variables: dict[RegimeName, list[StateName]]
+    devices: dict[RegimeName, list[int]]
+    value_shapes: dict[RegimeName, list[int]]
+    solution_matches_reference: bool
+    solution_mismatches: list[str]
+    reads: list[TransferRead]
+    fallback_kinds: list[str]
+    fallback_channels: list[str]
+    simulation_matches_reference: bool
+    simulation_mismatch: str
+
+
+class OverlapReport(TypedDict):
+    refused: bool
+    message: str
+
+
 def _report(
-    *, decimal: int, devices: tuple[int, ...], **variant: Any
-) -> dict[str, Any]:
+    *, decimal: int, devices: tuple[int, ...], **variant: Unpack[PlacementVariant]
+) -> FallbackReport:
     """Solve and simulate one placement against its single-device reference."""
     from _lcm.solution import backward_induction  # noqa: PLC0415
 
     model = build_model(devices=devices, **variant)
     reference = build_model(devices=(0,), sharded=(), pair_reads=variant["pair_reads"])
 
-    captured: list[Any] = []
+    captured: list[PlannedCore] = []
     original = backward_induction._attach_resolved_output_layout
 
-    def capture(**kwargs: Any) -> Any:
+    def capture(**kwargs: Unpack[AttachResolvedOutputLayoutKwargs]) -> PlannedCore:
         core = original(**kwargs)
         captured.append(core)
         return core
@@ -302,8 +337,8 @@ def _report(
         solution = model.solve(params=_PARAMS, log_level="off")
     reference_solution = reference.solve(params=_PARAMS, log_level="off")
 
-    devices_by_regime: dict[str, list[int]] = {}
-    value_shapes: dict[str, list[int]] = {}
+    devices_by_regime: dict[RegimeName, list[int]] = {}
+    value_shapes: dict[RegimeName, list[int]] = {}
     mismatches: list[str] = []
     for period, values in solution.values.items():
         for regime_name, value in values.items():
@@ -319,7 +354,7 @@ def _report(
             except AssertionError as mismatch:
                 mismatches.append(f"period {period}, {regime_name}: {mismatch}")
 
-    reads = [
+    reads: list[TransferRead] = [
         {
             "source_regime": transfer.source.source_regime,
             "target_regime": transfer.target.regime,
@@ -379,7 +414,7 @@ def _report(
     }
 
 
-def report_cross_axis(*, decimal: int) -> dict[str, Any]:
+def report_cross_axis(*, decimal: int) -> FallbackReport:
     """Report the placement where the two regimes hold different mesh axes."""
     return _report(
         decimal=decimal,
@@ -389,7 +424,7 @@ def report_cross_axis(*, decimal: int) -> dict[str, Any]:
     )
 
 
-def report_only_source_sharded(*, decimal: int) -> dict[str, Any]:
+def report_only_source_sharded(*, decimal: int) -> FallbackReport:
     """Report the placement where only the fallback regime carries a mesh axis."""
     return _report(
         decimal=decimal,
@@ -399,7 +434,7 @@ def report_only_source_sharded(*, decimal: int) -> dict[str, Any]:
     )
 
 
-def report_same_axis(*, decimal: int) -> dict[str, Any]:
+def report_same_axis(*, decimal: int) -> FallbackReport:
     """Report the placement where both regimes are sharded on the same state."""
     return _report(
         decimal=decimal,
@@ -414,7 +449,7 @@ def _tolerance_argument() -> str:
     return f"decimal={tests.conftest.DECIMAL_PRECISION!r}"
 
 
-def report_overlapping_meshes() -> dict[str, Any]:
+def report_overlapping_meshes() -> OverlapReport:
     """Report how a read between partially overlapping device meshes is refused."""
     import jax  # noqa: PLC0415
 
@@ -442,9 +477,29 @@ def report_overlapping_meshes() -> dict[str, Any]:
     return {"refused": False, "message": ""}
 
 
+@overload
+def _run_in_child_process(
+    *,
+    entry_point: Literal[
+        "report_cross_axis", "report_only_source_sharded", "report_same_axis"
+    ],
+    n_devices: int,
+    arguments: str = "",
+) -> FallbackReport: ...
+
+
+@overload
+def _run_in_child_process(
+    *,
+    entry_point: Literal["report_overlapping_meshes"],
+    n_devices: int,
+    arguments: str = "",
+) -> OverlapReport: ...
+
+
 def _run_in_child_process(
     *, entry_point: str, n_devices: int, arguments: str = ""
-) -> dict[str, Any]:
+) -> FallbackReport | OverlapReport:
     """Run one module-level report function on `n_devices` and return its report.
 
     The child carries this run's float policy — `jax_enable_x64`, the matmul
@@ -486,7 +541,7 @@ def _run_in_child_process(
 
 
 @pytest.fixture(scope="module")
-def cross_axis() -> dict[str, Any]:
+def cross_axis() -> FallbackReport:
     """Return the different-mesh-axis report from one four-device child process."""
     return _run_in_child_process(
         entry_point="report_cross_axis",
@@ -496,7 +551,7 @@ def cross_axis() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def only_source_sharded() -> dict[str, Any]:
+def only_source_sharded() -> FallbackReport:
     """Return the single-mesh report from one four-device child process."""
     return _run_in_child_process(
         entry_point="report_only_source_sharded",
@@ -506,7 +561,7 @@ def only_source_sharded() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def same_axis() -> dict[str, Any]:
+def same_axis() -> FallbackReport:
     """Return the shared-mesh report from one two-device child process."""
     return _run_in_child_process(
         entry_point="report_same_axis",
@@ -516,7 +571,7 @@ def same_axis() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def overlapping_meshes() -> dict[str, Any]:
+def overlapping_meshes() -> OverlapReport:
     """Return the refusal report from one six-device child process."""
     return _run_in_child_process(
         entry_point="report_overlapping_meshes", n_devices=_OVERLAP_DEVICES
@@ -524,21 +579,21 @@ def overlapping_meshes() -> dict[str, Any]:
 
 
 def test_each_regime_retains_only_the_state_its_dag_reads(
-    cross_axis: dict[str, Any],
+    cross_axis: FallbackReport,
 ) -> None:
     """The reading regime keeps `y` and drops `x`; the fallback regime the reverse."""
     assert cross_axis["pruned_variables"]["pair"] == ["x"]
 
 
 def test_the_fallback_regime_drops_the_readers_sharded_state(
-    cross_axis: dict[str, Any],
+    cross_axis: FallbackReport,
 ) -> None:
     """The fallback regime never reads `y`, so it carries no `y` axis."""
     assert cross_axis["pruned_variables"]["solo"] == ["health", "y"]
 
 
 def test_the_two_sharded_regimes_take_disjoint_device_blocks(
-    cross_axis: dict[str, Any],
+    cross_axis: FallbackReport,
 ) -> None:
     """Each regime's own mesh spans one device per category of its own state."""
     assert (cross_axis["devices"]["solo"], cross_axis["devices"]["pair"]) == (
@@ -548,84 +603,84 @@ def test_the_two_sharded_regimes_take_disjoint_device_blocks(
 
 
 def test_the_read_under_test_is_the_gated_edges_reference_channel(
-    cross_axis: dict[str, Any],
+    cross_axis: FallbackReport,
 ) -> None:
     """`pair` reads `solo` only through the gated edge's reference channel."""
     assert cross_axis["fallback_channels"] == ["edge_reference_regime_to_V_arr"]
 
 
 def test_a_fallback_read_across_named_axes_is_a_cross_mesh_copy(
-    cross_axis: dict[str, Any],
+    cross_axis: FallbackReport,
 ) -> None:
     """A value stored on another regime's mesh reaches the reader as a mesh copy."""
     assert cross_axis["fallback_kinds"] == ["cross_mesh_copy"]
 
 
 def test_the_cross_axis_solution_equals_the_single_device_solution(
-    cross_axis: dict[str, Any],
+    cross_axis: FallbackReport,
 ) -> None:
     """Placement partitions the solve; it never changes the values published."""
     assert cross_axis["solution_matches_reference"] is True
 
 
 def test_the_cross_axis_simulation_equals_the_single_device_simulation(
-    cross_axis: dict[str, Any],
+    cross_axis: FallbackReport,
 ) -> None:
     """The simulated frames agree with the unsharded reference model's."""
     assert cross_axis["simulation_matches_reference"] is True
 
 
 def test_a_fallback_read_onto_one_device_is_a_copy_to_source_layout(
-    only_source_sharded: dict[str, Any],
+    only_source_sharded: FallbackReport,
 ) -> None:
     """An unsharded reader collects the sharded fallback value by device copy."""
     assert only_source_sharded["fallback_kinds"] == ["copy_to_source_layout"]
 
 
 def test_the_single_mesh_solution_equals_the_single_device_solution(
-    only_source_sharded: dict[str, Any],
+    only_source_sharded: FallbackReport,
 ) -> None:
     """Sharding only the fallback regime leaves the published values unchanged."""
     assert only_source_sharded["solution_matches_reference"] is True
 
 
 def test_the_single_mesh_simulation_equals_the_single_device_simulation(
-    only_source_sharded: dict[str, Any],
+    only_source_sharded: FallbackReport,
 ) -> None:
     """Sharding only the fallback regime leaves the simulated frames unchanged."""
     assert only_source_sharded["simulation_matches_reference"] is True
 
 
 def test_a_fallback_read_within_one_mesh_stays_aligned(
-    same_axis: dict[str, Any],
+    same_axis: FallbackReport,
 ) -> None:
     """Two regimes sharded on the same state share a mesh, so no transfer is made."""
     assert same_axis["fallback_kinds"] == ["aligned_local"]
 
 
 def test_the_shared_mesh_solution_equals_the_single_device_solution(
-    same_axis: dict[str, Any],
+    same_axis: FallbackReport,
 ) -> None:
     """The same-state control publishes the unsharded reference's values."""
     assert same_axis["solution_matches_reference"] is True
 
 
 def test_the_shared_mesh_simulation_equals_the_single_device_simulation(
-    same_axis: dict[str, Any],
+    same_axis: FallbackReport,
 ) -> None:
     """The same-state control simulates the unsharded reference's frames."""
     assert same_axis["simulation_matches_reference"] is True
 
 
 def test_an_unservable_route_is_refused_while_planning(
-    overlapping_meshes: dict[str, Any],
+    overlapping_meshes: OverlapReport,
 ) -> None:
     """Meshes that overlap without containment admit no operator, so planning stops."""
     assert overlapping_meshes["refused"] is True
 
 
 def test_a_refused_route_names_both_regimes(
-    overlapping_meshes: dict[str, Any],
+    overlapping_meshes: OverlapReport,
 ) -> None:
     """The refusal says which regime reads which, not only which shapes disagree."""
     message = overlapping_meshes["message"]
@@ -634,7 +689,7 @@ def test_a_refused_route_names_both_regimes(
 
 
 def test_a_refused_route_names_both_device_axes(
-    overlapping_meshes: dict[str, Any],
+    overlapping_meshes: OverlapReport,
 ) -> None:
     """The refusal names each side's mesh axis, which is what has to be changed."""
     message = overlapping_meshes["message"]
@@ -642,7 +697,7 @@ def test_a_refused_route_names_both_device_axes(
     assert "y=4" in message
 
 
-def _initial_conditions_read_by(model: Model) -> dict[str, Any]:
+def _initial_conditions_read_by(model: Model) -> dict[str, jax.Array]:
     """Return the initial conditions restricted to the states `model` simulates."""
     read = {"age", "regime_id"}.union(
         *(regime.simulation.state_names for regime in model._regimes.values())

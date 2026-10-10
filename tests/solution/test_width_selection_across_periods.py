@@ -2,11 +2,13 @@
 
 import math
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import TypedDict, Unpack
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
@@ -27,6 +29,12 @@ from lcm import (
 )
 from lcm.typing import ScalarInt
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
+from tests.solution._callback_types import (
+    CompileFunctionsKwargs,
+    LowerWaveKwargs,
+    MeasureVariantKwargs,
+    filled_toy_params,
+)
 from tests.solution.test_footprint_width_selection import (
     RegimeId,
     Work,
@@ -49,7 +57,7 @@ def _value_bytes() -> int:
 
 
 def _fake_peak(
-    *, compiled: object, widths: Mapping[str, int]
+    *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
 ) -> CompilerMemoryReservation:
     """Report a compiler peak proportional to the streamed width product."""
     del compiled
@@ -90,21 +98,29 @@ def _model(*, budget_bytes: int) -> Model:
     )
 
 
+class WidthSelectionReport(TypedDict):
+    compiled: int
+    selected: dict[tuple[str, int], tuple[tuple[str, int], ...]]
+    values: dict[int, NDArray[np.generic]]
+
+
 def _solve(
     *,
     monkeypatch: pytest.MonkeyPatch,
     budget_bytes: int,
-) -> dict:
-    compiled_candidates: list[tuple] = []
-    selected: dict = {}
+) -> WidthSelectionReport:
+    compiled_candidates: list[backward_induction._CoreCandidate] = []
+    selected: dict[tuple[str, int], tuple[tuple[str, int], ...]] = {}
     original_wave = backward_induction._lower_and_compile_wave
     original_compile = backward_induction._compile_all_functions
 
-    def count_wave(**kwargs: Any) -> Any:
+    def count_wave(**kwargs: Unpack[LowerWaveKwargs]) -> None:
         compiled_candidates.extend(kwargs["new_lowerings"].values())
         return original_wave(**kwargs)
 
-    def capture(**kwargs: Any) -> Any:
+    def capture(
+        **kwargs: Unpack[CompileFunctionsKwargs],
+    ) -> backward_induction._CompiledPrograms:
         result = original_compile(**kwargs)
         selected.update(
             {
@@ -118,8 +134,18 @@ def _solve(
     monkeypatch.setattr(backward_induction, "_lower_and_compile_wave", count_wave)
     monkeypatch.setattr(backward_induction, "_compile_all_functions", capture)
     model = _model(budget_bytes=budget_bytes)
-    params = cast("dict[str, Any]", model.get_params_template())
-    params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
+    template = model.get_params_template()
+    params = {
+        **template,
+        "acting": {
+            **template["acting"],
+            "koopmans_aggregator": {
+                **template["acting"]["koopmans_aggregator"],
+                "discount_factor": 0.5,
+            },
+        },
+    }
+    assert filled_toy_params(params)
     solution = model.solve(params=params, log_level="off")
     monkeypatch.undo()
     acting = [c for c in compiled_candidates if c[0][0] == "acting"]
@@ -159,7 +185,7 @@ def test_each_period_selects_its_first_admitted_rank(
     leader = []
     original_measure = backward_induction._measure_variant
 
-    def measure(**kwargs: Any) -> int:
+    def measure(**kwargs: Unpack[MeasureVariantKwargs]) -> int:
         triple = kwargs["triple"]
         if triple[0] != "acting":
             return original_measure(**kwargs)

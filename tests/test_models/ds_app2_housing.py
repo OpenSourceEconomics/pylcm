@@ -73,6 +73,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 
 # Lifecycle anchors (years). Working life starts at 20, retirement at 60, and
@@ -495,7 +496,7 @@ def build_params(
     rho_w: float = 0.82,
     sigma_w: float = 0.11,
     mu_w: float = 0.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Calibration parameters for the DS App.2 housing model.
 
     Args:

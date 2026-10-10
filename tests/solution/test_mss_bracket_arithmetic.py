@@ -12,6 +12,7 @@ settles a comparison in the working format.
 import functools
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
+from typing import Never
 from unittest.mock import patch
 
 import jax
@@ -35,7 +36,15 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch, MSSEnvelope
-from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    IntND,
+    ScalarInt,
+    UserParams,
+)
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
@@ -149,13 +158,13 @@ class _PayloadRequestedError(RuntimeError):
     """Raised in place of every exact-affine entry point the envelope could reach."""
 
 
-def _refuse_payload(*args: object, **kwargs: object) -> None:
-    del args, kwargs
+def _refuse_payload(**kwargs: FloatND | IntND | BoolND | bool | None) -> Never:
+    del kwargs
     msg = "the exact-affine payload was requested"
     raise _PayloadRequestedError(msg)
 
 
-def _without_the_exact_payload() -> AbstractContextManager[object]:
+def _without_the_exact_payload() -> AbstractContextManager[dict[str, Never]]:
     return patch.multiple(
         mss,
         certified_margin_sign=_refuse_payload,
@@ -266,7 +275,7 @@ def death_prob(*, wealth: ContinuousState, age: int, final_age_alive: float) -> 
     return 1.0 - stay_prob(wealth=wealth, age=age, final_age_alive=final_age_alive)
 
 
-def _params() -> dict:
+def _params() -> UserParams:
     return {
         "discount_factor": 0.95,
         "final_age_alive": 40 + (N_PERIODS - 2) * 10,

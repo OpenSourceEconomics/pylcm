@@ -1,7 +1,5 @@
 """Weak eager inputs bind on their actual ordered, restricted device layouts."""
 
-from typing import cast
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -43,7 +41,7 @@ def test_strong_binding_preserves_actual_ordered_physical_layout(
         tuple(device.id for device in source.sharding.mesh.devices.flat) == device_ids
     )
     assert 0 not in {device.id for device in source.devices()}
-    returned: list[object] = []
+    returned: list[dict[str, tuple[ValueND, None]]] = []
 
     def body(*, value: ValueND) -> PytreeValue:
         assert not value.weak_type
@@ -72,7 +70,7 @@ def test_strong_binding_preserves_actual_ordered_physical_layout(
     )
     output = adapter(value=source)
     assert output is returned.pop()
-    value = cast("dict[str, tuple[ValueND, None]]", output)["value"][0]
+    value = output["value"][0]
     np.testing.assert_array_equal(value, np.full(shape, 2.0))
     np.testing.assert_array_equal(source, np.full(shape, 2.0))
     before = {

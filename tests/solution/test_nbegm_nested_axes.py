@@ -22,6 +22,7 @@ from _lcm.execution.core_program import (
     materialize_core_program,
 )
 from _lcm.solution.negm import _with_outer_post_decision
+from _lcm.solution.nnbegm import _NNBEGMPeriodKernel
 from lcm import ExecutionConfig, LinSpacedGrid
 from lcm.solver_api import SolutionResult
 from lcm.solvers import CELL_AXIS, OUTER_CANDIDATE_AXIS
@@ -157,6 +158,7 @@ def test_inner_core_records_are_cell_width_invariant_at_a_fixed_node() -> None:
     kernel, context = ride_along_kernel(
         model=model, params={"discount_factor": 0.95}, period=0
     )
+    assert isinstance(kernel, _NNBEGMPeriodKernel)
     node_context = CoreBuildContext(
         state_action_space=context["state_action_space"],
         next_regime_to_V_arr=context["next_regime_to_V_arr"],

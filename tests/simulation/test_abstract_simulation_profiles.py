@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import Never, Unpack
 
 import jax
 import jax._src.core
@@ -15,8 +15,10 @@ from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.simulate import _lookup_values_from_indices
+from _lcm.typing import PytreeValue
 from lcm import ExecutionConfig, LinSpacedGrid
 from lcm.exceptions import ExecutionPlanningError
+from tests.simulation._callback_types import RuntimeDispatch
 from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
 
 
@@ -24,11 +26,11 @@ class _ConcreteAllocationError(AssertionError):
     """Identify an allocating dispatch while only abstract operands are allowed."""
 
 
-def _forbid_allocation(*_args: object, **_kwargs: object) -> object:
+def _forbid_allocation[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
     raise _ConcreteAllocationError("An abstract profile tried to allocate an operand")
 
 
-def _abstract(leaf: object) -> object:
+def _abstract[Leaf](leaf: Leaf) -> Leaf | jax.ShapeDtypeStruct:
     if isinstance(leaf, jax.Array):
         assert not leaf.is_deleted()
         return jax.ShapeDtypeStruct(
@@ -52,10 +54,12 @@ def test_an_actual_decision_compiles_from_abstract_arguments_without_allocation(
     )
     params = get_params(n_periods=2)
     solution = model.solve(params=params, log_level="off")
-    recorded: list[tuple[SimulationRuntime, dict[str, Any], object]] = []
+    recorded: list[tuple[SimulationRuntime, RuntimeDispatch, PytreeValue]] = []
     dispatch = SimulationRuntime.dispatch
 
-    def observe(self: SimulationRuntime, **kwargs: Any) -> object:
+    def observe(
+        self: SimulationRuntime, **kwargs: Unpack[RuntimeDispatch]
+    ) -> PytreeValue:
         result = dispatch(self, **kwargs)
         if not recorded and kwargs["program"].requirements.value_reads:
             recorded.append((self, kwargs, result))

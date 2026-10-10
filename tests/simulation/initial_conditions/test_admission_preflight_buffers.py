@@ -3,7 +3,6 @@
 import dataclasses
 from fractions import Fraction
 from types import MappingProxyType
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -28,7 +27,7 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
 )
 from _lcm.transition_checks import _SerialValidationRequired
-from _lcm.typing import FlatParams, InitialConditions
+from _lcm.typing import FlatParams, InitialConditions, PytreeValue
 from _lcm.utils.logging import get_logger
 from lcm import AgeGrid, Model
 from lcm.exceptions import ExecutionPlanningError, InvalidInitialConditionsError
@@ -64,8 +63,29 @@ def test_runtime_checks_disabled_release_preflight_unit_on_structural_failure(
     captured: list[SimulationMemory] = []
     original = initial_module._preflight_memory
 
-    def capture(**arguments: Any) -> SimulationMemory | None:
-        memory = original(**arguments)
+    def capture(
+        *,
+        execution: ResolvedExecution | None,
+        retained_footprint: DeviceBufferFootprint | None,
+        initial_conditions: InitialConditions,
+        flat_params: FlatParams,
+        regimes: initial_module.MappingProxyType[
+            initial_module.RegimeName, initial_module.Regime
+        ],
+        regime_names_to_ids: initial_module.RegimeNamesToIds,
+        ages: initial_module.TimeAxis,
+        producers: initial_module.ProfiledSimulationOperations | None = None,
+    ) -> SimulationMemory | None:
+        memory = original(
+            execution=execution,
+            retained_footprint=retained_footprint,
+            initial_conditions=initial_conditions,
+            flat_params=flat_params,
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            ages=ages,
+            producers=producers,
+        )
         assert memory is not None
         captured.append(memory)
         return memory
@@ -162,10 +182,10 @@ def test_resource_failures_never_select_serial_diagnostics(
     model, params, initial = _case()
     expected = error_type("resource sentinel")
 
-    def denied(**_kwargs: object) -> None:
+    def denied[Ignored](**_kwargs: Ignored) -> None:
         raise expected
 
-    def forbidden(**_kwargs: object) -> None:
+    def forbidden[Ignored](**_kwargs: Ignored) -> None:
         pytest.fail("Resource failure selected serial validation.")
 
     monkeypatch.setattr(initial_module, "_pack_initial_summary", denied)
@@ -215,11 +235,13 @@ def test_summary_allocation_is_refused_before_dispatch_and_inputs_survive(
     dispatched = []
     original = jax.stages.Compiled.__call__
 
-    def observe(self: jax.stages.Compiled, *args: object, **kwargs: object) -> object:
+    def observe(
+        self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         dispatched.append(self)
         return original(self, *args, **kwargs)
 
-    def forbidden(**_kwargs: object) -> None:
+    def forbidden[Ignored](**_kwargs: Ignored) -> None:
         pytest.fail("A valid budget witness selected unprofiled serial diagnostics.")
 
     monkeypatch.setattr(jax.stages.Compiled, "__call__", observe)

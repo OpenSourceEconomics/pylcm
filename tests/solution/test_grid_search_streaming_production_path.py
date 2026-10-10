@@ -1,7 +1,7 @@
 """Production-path control for ordinary singleton action streaming."""
 
-from collections.abc import Callable
-from typing import Any, cast
+from collections.abc import Callable, Mapping
+from typing import Never
 
 import jax
 import jax.numpy as jnp
@@ -14,6 +14,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.regime_building import max_Q_over_a
 from _lcm.solution import action_streaming
+from _lcm.typing import MaxQOverAFunction, QAndFArg
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -25,11 +26,13 @@ from lcm import (
 )
 from lcm.regime import Regime
 from lcm.typing import (
+    ActionName,
     BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteAction,
     FloatND,
+    ReferenceName,
     ScalarInt,
 )
 from tests.regime_building.test_collective_feasibility_is_shared import (
@@ -102,13 +105,39 @@ def _build_model(*, enable_jit: bool = True) -> Model:
     )
 
 
+type _MutableParam = str | float | dict[str, _MutableParam]
+type _TemplateNode = str | Mapping[str, _TemplateNode]
+type _FilledParam = float | dict[str, _FilledParam]
+
+
+def _copy_template(node: _TemplateNode) -> _MutableParam:
+    if isinstance(node, str):
+        return node
+    return {key: _copy_template(value) for key, value in node.items()}
+
+
+def _require_filled(node: _MutableParam) -> _FilledParam:
+    assert not isinstance(node, str)
+    if isinstance(node, (int, float)):
+        return node
+    return {key: _require_filled(value) for key, value in node.items()}
+
+
 def _solve_target(*, model: Model, work: float, consumption: float) -> FloatND:
     """Solve with exactly one feasible target action cell."""
-    params = cast("dict[str, Any]", model.get_params_template())
-    params["acting"]["only_target"]["target_work"] = work
-    params["acting"]["only_target"]["target_consumption"] = consumption
-    params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
-    return model.solve(params=params, log_level="debug").values[0]["acting"]
+    params = _copy_template(model.get_params_template())
+    assert isinstance(params, dict)
+    acting = params["acting"]
+    assert isinstance(acting, dict)
+    target = acting["only_target"]
+    assert isinstance(target, dict)
+    target["target_work"] = work
+    target["target_consumption"] = consumption
+    aggregator = acting["koopmans_aggregator"]
+    assert isinstance(aggregator, dict)
+    aggregator["discount_factor"] = 0.5
+    filled = {key: _require_filled(value) for key, value in params.items()}
+    return model.solve(params=filled, log_level="debug").values[0]["acting"]
 
 
 def test_public_singleton_solve_uses_streamed_action_blocks(
@@ -121,15 +150,31 @@ def test_public_singleton_solve_uses_streamed_action_blocks(
     only global identity five. A production solve targeting identity zero must remain
     unchanged, while a solve for identity five must publish an empty feasible set.
     """
-    real_evaluate_block = cast(
-        "Callable[..., tuple[jax.Array, jax.Array, jax.Array]]",
-        action_streaming._evaluate_block,
-    )
+    real_evaluate_block = action_streaming._evaluate_block
 
     def omit_global_action_five(
-        **kwargs: Any,
+        *,
+        block_index: jax.Array,
+        Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+        action_names: tuple[ActionName, ...],
+        action_grids: tuple[jax.Array, ...],
+        action_sizes: tuple[int, ...],
+        fixed_kwargs: dict[ReferenceName, QAndFArg],
+        n_actions: int,
+        block_width: int,
+        block_offsets: jax.Array,
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        values, feasible, global_ids = real_evaluate_block(**kwargs)
+        values, feasible, global_ids = real_evaluate_block(
+            block_index=block_index,
+            Q_and_F=Q_and_F,
+            action_names=action_names,
+            action_grids=action_grids,
+            action_sizes=action_sizes,
+            fixed_kwargs=fixed_kwargs,
+            n_actions=n_actions,
+            block_width=block_width,
+            block_offsets=block_offsets,
+        )
         return values, feasible & (global_ids != 5), global_ids
 
     monkeypatch.setattr(
@@ -152,12 +197,23 @@ def test_eager_singleton_hard_max_never_builds_the_dense_oracle(
     """JIT-disabled production resolves the same streamed native program."""
     real_get_max_Q_over_a = max_Q_over_a.get_max_Q_over_a
 
-    def fail_dense_construction(**kwargs: Any) -> Callable[..., Any]:
-        if kwargs["action_names"]:
-            raise AssertionError("eligible eager GridSearch reached its dense oracle")
-        return real_get_max_Q_over_a(**kwargs)
+    def guard_dense[**P](
+        func: Callable[P, MaxQOverAFunction],
+    ) -> Callable[P, MaxQOverAFunction]:
+        def fail_dense_construction(
+            *args: P.args, **kwargs: P.kwargs
+        ) -> MaxQOverAFunction:
+            if kwargs.get("action_names"):
+                raise AssertionError(
+                    "eligible eager GridSearch reached its dense oracle"
+                )
+            return func(*args, **kwargs)
 
-    monkeypatch.setattr(max_Q_over_a, "get_max_Q_over_a", fail_dense_construction)
+        return fail_dense_construction
+
+    monkeypatch.setattr(
+        max_Q_over_a, "get_max_Q_over_a", guard_dense(real_get_max_Q_over_a)
+    )
     model = _build_model(enable_jit=False)
     actual = _solve_target(model=model, work=1.0, consumption=3.0)
 
@@ -174,7 +230,7 @@ def test_public_collective_solve_does_not_call_streamed_household_reduction(
 ) -> None:
     """State tiling keeps the household's canonical dense action reduction."""
 
-    def fail_streamed_collective(**_kwargs: Any) -> None:
+    def fail_streamed_collective[UnusedArgument](**_kwargs: UnusedArgument) -> Never:
         raise AssertionError("dense collective route called streamed reduction")
 
     monkeypatch.setattr(
@@ -201,7 +257,7 @@ def test_public_ev1_solve_does_not_call_streamed_branch_reduction(
 ) -> None:
     """The noncanonical streamed reduction is excluded from production."""
 
-    def fail_streamed_ev1(**_kwargs: Any) -> None:
+    def fail_streamed_ev1[UnusedArgument](**_kwargs: UnusedArgument) -> Never:
         raise AssertionError("dense EV1 route called streamed reduction")
 
     monkeypatch.setattr(

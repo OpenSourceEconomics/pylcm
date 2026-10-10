@@ -3,7 +3,6 @@
 import inspect
 from fractions import Fraction
 from types import MappingProxyType
-from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -23,7 +22,7 @@ from lcm import (
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
 from lcm.transition import AgeCaseLaw, _period_by_age
-from lcm.typing import AgeSelector
+from lcm.typing import AgeSelector, UserAge
 
 
 def _probs() -> jnp.ndarray:
@@ -418,7 +417,7 @@ def test_with_mapped_laws_returns_self_when_no_law_changes() -> None:
     [(ANNUAL, 61.0, "a"), (QUARTERLY, 61.25, "a"), (QUARTERLY, Fraction(5, 4), None)],
 )
 def test_resolved_schedule_at_matches_exact_ages(
-    *, grid: AgeGrid, age: Any, expected: str | None
+    *, grid: AgeGrid, age: UserAge | float, expected: str | None
 ) -> None:
     """`at` finds a law at an age equal to a grid age and raises for any other."""
     schedule = ByAge(cases={AgeRange(start=61, exclusive_stop=62): "a"}).resolve(grid)

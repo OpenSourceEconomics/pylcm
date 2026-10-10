@@ -1,6 +1,7 @@
 """Public declarations for correlated target-state transitions."""
 
 from types import MappingProxyType
+from typing import TypedDict
 
 import jax.numpy as jnp
 import pytest
@@ -8,7 +9,14 @@ import pytest
 from lcm import JointTransition, LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
-from lcm.typing import FloatND
+from lcm.typing import FloatND, UserFunction
+
+
+class _JointKwargs(TypedDict):
+    support_size: int
+    support: dict[str, FloatND]
+    probabilities: UserFunction
+    outputs: dict[str, UserFunction]
 
 
 def _probabilities() -> FloatND:
@@ -70,7 +78,7 @@ def test_joint_transition_is_an_edge_owned_public_declaration() -> None:
     ],
 )
 def test_joint_transition_rejects_locally_invalid_declarations(
-    *, kwargs: dict[str, object], match: str
+    *, kwargs: _JointKwargs, match: str
 ) -> None:
     """A joint kernel requires a nonempty finite support and output mapping."""
     with pytest.raises(RegimeInitializationError, match=match):

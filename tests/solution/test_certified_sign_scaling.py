@@ -169,7 +169,9 @@ def test_a_value_range_no_scaling_can_hold_is_still_decided(*, swap: bool) -> No
     first, second = (flat, falling) if swap else (falling, flat)
     query = dtype(0.75)
 
-    def value_at(endpoints: tuple) -> Fraction:
+    def value_at(
+        endpoints: tuple[np.float32 | np.float64, np.float32 | np.float64],
+    ) -> Fraction:
         low, high = (Fraction(float(term)) for term in endpoints)
         return low + (high - low) * Fraction(float(query))
 

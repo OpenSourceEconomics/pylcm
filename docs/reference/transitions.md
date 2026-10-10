@@ -27,6 +27,23 @@ Per-target state-transition mappings must cover exactly the reachable targets th
 the state. Reachability comes from `Model.edges`; extra or missing target handoffs are
 errors.
 
+(api-additive-shock-transitions)=
+
+## Additive shock transitions
+
+`AdditiveShockTransition(base="base", shock="shock", conditioners={...})` declares a
+continuous-state law `next_<state> = base + shock` in `state_transitions`. Both names
+refer to functions of the source regime. The shock may read next period's stochastic
+draws; the base must not read them. `conditioners` declares the finite integer or
+Boolean support of every source function or discrete variable that the shock reads. Its
+other inputs must be draws, time coordinates, or parameters.
+
+The solve averages the target's value over the shock on the merged points
+`{a_j - shock_k}`, where `a_j` are the target's continuous-state nodes, and reads that
+average at the base. This preserves the piecewise-linear interpolation of the target's
+value while avoiding a separate interpolation at every shock draw for each source
+state-action point.
+
 (api-regime-transitions)=
 
 ## Regime transitions and graph support

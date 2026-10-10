@@ -11,10 +11,10 @@ topology, so its eight-device witnesses skip in an ordinary battery.
 """
 
 from bisect import bisect_right
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from itertools import product
 from types import MappingProxyType
-from typing import Any
+from typing import Never, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -23,11 +23,18 @@ import pytest
 
 from _lcm.execution import output_layout, value_transfer
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
+from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import FloatND, IntND, RegimeName, StateName
+from tests.conftest import ApplyValueTransferKwargs, ExecuteWithPendingWorkKwargs
 from tests.test_continuous_assets_aca_vocabulary import _model
 
+type _OracleTable = dict[tuple[int | float, ...], float]
 
-def _reference(coordinates: Mapping[str, Any]) -> dict:
+
+def _reference(
+    coordinates: Mapping[StateName, FloatND | IntND | np.ndarray],
+) -> dict[tuple[int, RegimeName], _OracleTable]:
     """Enumerate the finite Bellman equations using explicit scalar interpolation."""
     assets, aime, shocks, persistent = (
         tuple(float(point) for point in np.asarray(coordinates[name]))
@@ -39,14 +46,14 @@ def _reference(coordinates: Mapping[str, Any]) -> dict:
         (3 / 16, 10 / 16, 3 / 16),
         (1 / 16, 6 / 16, 9 / 16),
     )
-    tables: dict = {
+    tables: dict[tuple[int, RegimeName], _OracleTable] = {
         (2, "dead"): {
             (pref, asset): -40 - (asset - 5) ** 2 / 8 + pref
             for pref, asset in product(range(2), assets)
         }
     }
     for period in (1, 0):
-        table = {}
+        table: _OracleTable = {}
         for pref, shock_index, persistent_index, asset, income in product(
             range(2), range(3), range(3), assets, aime
         ):
@@ -108,7 +115,7 @@ def _reference(coordinates: Mapping[str, Any]) -> dict:
     return tables
 
 
-def _assert_shards(value: Any) -> None:
+def _assert_shards(value: FloatND) -> None:
     """Assert disjoint middle-axis assets shards, including the terminal rank."""
     expected_shape = (2, 3, 3, 24, 4) if value.ndim == 5 else (2, 24)
     assert value.shape == expected_shape
@@ -118,6 +125,7 @@ def _assert_shards(value: Any) -> None:
         if value.ndim == 5
         else jax.P(None, "assets")
     )
+    assert isinstance(value.sharding, jax.sharding.NamedSharding)
     assert value.sharding.spec == expected_spec
     assert len(value.addressable_shards) == 8
     intervals = []
@@ -138,7 +146,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
     *,
     widths: tuple[int, int],
     monkeypatch: pytest.MonkeyPatch,
-    record_property: Any,
+    record_property: Callable[[str, int], None],
 ) -> None:
     """Eight assets shards preserve two-coordinate values and carried subject paths."""
     _require_eight()
@@ -152,7 +160,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
     birth_shapes = []
     original = output_layout.execute_with_pending_work
 
-    def observe_birth(**kwargs: Any) -> Any:
+    def observe_birth(**kwargs: Unpack[ExecuteWithPendingWorkKwargs]) -> PytreeValue:
         result = original(**kwargs)
         for value in jax.tree.leaves(result):
             if isinstance(value, jax.Array) and value.shape in (
@@ -278,7 +286,7 @@ def test_multidimensional_replica_budget_refuses_before_transfer(
 
     model = _model(budget=1)
 
-    def forbidden(**kwargs: Any) -> Any:
+    def forbidden(**kwargs: Unpack[ApplyValueTransferKwargs]) -> Never:
         del kwargs
         pytest.fail("Budget refusal must precede materializing a continuation copy")
 
@@ -290,7 +298,10 @@ def test_multidimensional_replica_budget_refuses_before_transfer(
 
 
 def _labelled_values(
-    *, value: np.ndarray, state_names: tuple[str, ...], coordinates: Mapping[str, Any]
+    *,
+    value: np.ndarray,
+    state_names: tuple[StateName, ...],
+    coordinates: Mapping[StateName, FloatND | IntND | np.ndarray],
 ) -> dict[tuple[tuple[str, float], ...], float]:
     """Join values to named physical coordinates independently of array axis order."""
     coordinates = {name: np.asarray(points) for name, points in coordinates.items()}
@@ -307,7 +318,10 @@ def _labelled_values(
 
 
 def _labelled_reference(
-    *, table: dict, regime_name: str, coordinates: Mapping[str, Any]
+    *,
+    table: _OracleTable,
+    regime_name: RegimeName,
+    coordinates: Mapping[StateName, FloatND | IntND | np.ndarray],
 ) -> dict[tuple[tuple[str, float], ...], float]:
     """Label the independent oracle, translating its process-node indices only."""
     coordinates = {name: np.asarray(points) for name, points in coordinates.items()}

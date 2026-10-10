@@ -4,6 +4,7 @@
 
 import sys
 from collections.abc import Iterator
+from typing import Never
 
 import pytest
 
@@ -58,7 +59,7 @@ def test_aca_timing_asv_surface_contains_only_the_combined_trackers(
         combined_calls.append(bench_class)
         return measured
 
-    def _refuse_profile(**_: object) -> dict[str, int]:
+    def _refuse_profile[T](**_: T) -> dict[str, int]:
         pytest.fail("selecting the timing class must not run the GPU-memory profile")
 
     monkeypatch.setattr(_gpu_mem, "measure_combined", _measure)
@@ -119,9 +120,9 @@ def test_aca_build_uses_the_default_execution_config(
     import lcm
     from _lcm.execution import execution_plan
 
-    captured: dict[str, object] = {}
+    captured: dict[str, str] = {}
 
-    def _create_benchmark_model(**kwargs: object) -> object:
+    def _create_benchmark_model(**kwargs: str) -> Never:
         captured.update(kwargs)
         raise _BuildStoppedError
 

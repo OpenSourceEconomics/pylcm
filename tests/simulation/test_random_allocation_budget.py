@@ -1,8 +1,6 @@
 """Random setup must reach compiler admission before creating device payloads."""
 
-import functools
 from collections.abc import Callable
-from typing import Any
 
 import jax
 import jax.core
@@ -22,15 +20,20 @@ from tests.simulation.test_budget_lifecycle import (
 )
 
 
-def _guard_random_allocation(
-    *, original: Callable[..., Any], operation: str, **kwargs: Any
-) -> Any:
-    """Permit tracing, but reject the old eager device-array construction."""
-    argument = kwargs["seed"] if operation == "seed" else kwargs["key"]
-    is_period_split = operation == "seed" or kwargs.get("num") == 3
-    if is_period_split and not isinstance(argument, jax.core.Tracer):
-        raise AssertionError(f"Unprofiled simulation random allocation: {operation}")
-    return original(**kwargs)
+def _guard_random_allocation[**P, Result](
+    *, original: Callable[P, Result], operation: str
+) -> Callable[P, Result]:
+    def call(*args: P.args, **kwargs: P.kwargs) -> Result:
+        """Permit tracing, but reject the old eager device-array construction."""
+        argument = kwargs["seed"] if operation == "seed" else kwargs["key"]
+        is_period_split = operation == "seed" or kwargs.get("num") == 3
+        if is_period_split and not isinstance(argument, jax.core.Tracer):
+            raise AssertionError(
+                f"Unprofiled simulation random allocation: {operation}"
+            )
+        return original(*args, **kwargs)
+
+    return call
 
 
 @pytest.mark.parametrize("operation", ["seed", "period_split"])
@@ -51,9 +54,7 @@ def test_budgeted_random_setup_allocates_only_inside_profiled_code(
     monkeypatch.setattr(
         jax.random,
         name,
-        functools.partial(
-            _guard_random_allocation, original=original, operation=operation
-        ),
+        _guard_random_allocation(original=original, operation=operation),
     )
     result = model.simulate(
         params=params,
@@ -182,16 +183,19 @@ def test_cached_key_splitting_follows_the_current_partition_mode(
                 )
 
 
-def _change_seed_offset_before_tracing(
-    *, original: Callable[..., Any], **kwargs: Any
-) -> Any:
-    """Represent an external config change after the wrapper snapshots metadata."""
-    initial_offset = jax.config.jax_random_seed_offset
-    try:
-        jax.config.update("jax_random_seed_offset", initial_offset + 1)
-        return original(**kwargs)
-    finally:
-        jax.config.update("jax_random_seed_offset", initial_offset)
+def _change_seed_offset_before_tracing[**P, Result](
+    *, original: Callable[P, Result]
+) -> Callable[P, Result]:
+    def call(*args: P.args, **kwargs: P.kwargs) -> Result:
+        """Represent an external config change after the wrapper snapshots metadata."""
+        initial_offset = jax.config.jax_random_seed_offset
+        try:
+            jax.config.update("jax_random_seed_offset", initial_offset + 1)
+            return original(*args, **kwargs)
+        finally:
+            jax.config.update("jax_random_seed_offset", initial_offset)
+
+    return call
 
 
 def test_key_creation_refuses_seed_offset_changed_before_tracing(
@@ -209,8 +213,7 @@ def test_key_creation_refuses_seed_offset_changed_before_tracing(
     monkeypatch.setattr(
         simulation_random,
         "run_simulation_operation",
-        functools.partial(
-            _change_seed_offset_before_tracing,
+        _change_seed_offset_before_tracing(
             original=simulation_random.run_simulation_operation,
         ),
     )

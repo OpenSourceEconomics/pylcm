@@ -23,8 +23,9 @@ import pathlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Literal
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -40,7 +41,11 @@ from _lcm.execution.core_program import (
     InternalOutputSpec,
 )
 from _lcm.execution.internal_outputs import topological_program_order
-from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
+from _lcm.execution.output_layout import (
+    VALUE,
+    OutputRoleTree,
+    StateAxesLeading,
+)
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.solution.period_replay import replay_period
 from _lcm.time import TimeAxis
@@ -61,7 +66,7 @@ from lcm.solver_api import (
     SolverIdentity,
 )
 from lcm.solvers import GridSearch, ReducedAxis, StateActionSpace
-from lcm.typing import ReferenceName
+from lcm.typing import ReferenceName, RegimeName
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -157,7 +162,9 @@ class _StateArguments:
         self, context: CoreBuildContext
     ) -> Mapping[ReferenceName, PytreeValue]:
         """Return the wealth row, plus the candidate row for a planned root."""
-        x = cast("Any", context.state_action_space).states["wealth"]
+        state_action_space = context.state_action_space
+        assert isinstance(state_action_space, StateActionSpace)
+        x = state_action_space.states["wealth"]
         if not self.planned:
             return {"x": x}
         return {"x": x, "candidate": jnp.arange(_CANDIDATES, dtype=x.dtype)}
@@ -186,9 +193,14 @@ def _spec(*, producer: CoreProgram, label: str) -> InternalOutputSpec:
 
 def _select(*, tree: PytreeValue, path: tuple[int | str, ...]) -> PytreeValue:
     """Index a producer's real output down to the subtree one label publishes."""
-    node: Any = tree
+    node: PytreeValue = tree
     for step in path:
-        node = node[step]
+        if isinstance(step, str):
+            assert isinstance(node, Mapping)
+            node = node[step]
+        else:
+            assert isinstance(node, (tuple, list))
+            node = node[step]
     return node
 
 
@@ -214,17 +226,17 @@ class _GraphKernel:
         del fixed_flat_params
         return self
 
-    def __call__(
+    def __call__[UnusedArgument](
         self,
         *,
-        compiled_cores: Mapping[str, Any],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[str, FloatND],
-        next_regime_to_continuation: Mapping[str, ContinuationArtifact],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationArtifact],
         flat_params: FlatParams,
         period: int,
         ages: TimeAxis,
-        **unused: object,
+        **unused: UnusedArgument,
     ) -> KernelOutput:
         """Run every program once, handing each producer's labelled subtree on."""
         del unused
@@ -236,10 +248,13 @@ class _GraphKernel:
             period=period,
             ages=ages,
         )
-        produced: dict[str, Any] = {}
+        produced: dict[str, PytreeValue] = {}
         for name in self.order:
             program = self.programs[name]
-            arguments = dict(program.argument_builder(context))
+            arguments: dict[ReferenceName, PytreeValue] = {}
+            for key, argument_value in program.argument_builder(context).items():
+                assert isinstance(argument_value, jax.Array)
+                arguments[key] = argument_value
             for argument, ref in program.requirements.internal_inputs.items():
                 arguments[argument] = _select(
                     tree=produced[ref.producer],
@@ -248,7 +263,9 @@ class _GraphKernel:
                     ).path,
                 )
             produced[name] = compiled_cores[name](**arguments)
-        return KernelOutput(value=produced[self.value_from])
+        value = produced[self.value_from]
+        assert isinstance(value, jax.Array)
+        return KernelOutput(value=value)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -536,12 +553,14 @@ def _model(
     )
 
 
-def _wealth(*, n_wealth: int) -> np.ndarray:
+def _wealth(*, n_wealth: int) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
     """Return the wealth grid the graph programs read."""
     return np.linspace(1.0, float(n_wealth), n_wealth)
 
 
-def _chain_expectation(*, depth: int, planned: bool, n_wealth: int) -> np.ndarray:
+def _chain_expectation(
+    *, depth: int, planned: bool, n_wealth: int
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
     """Return the chain's published row, computed independently of the engine."""
     expected = _wealth(n_wealth=n_wealth) + (_CANDIDATES - 1 if planned else 1)
     for _ in range(depth - 1):

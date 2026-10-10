@@ -24,6 +24,7 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
     resolve_value_transfer,
 )
+from _lcm.typing import PytreeValue
 
 
 def _nested(*, inputs: Mapping[str, tuple[jax.Array]]) -> jax.Array:
@@ -74,9 +75,9 @@ def test_nested_immutable_copy_is_matched_in_keyword_relative_compiler_paths(
         pending_work=owner,
     )
     wait = jax.block_until_ready
-    waits: list[object] = []
+    waits: list[PytreeValue] = []
 
-    def observe_wait(tree: object) -> object:
+    def observe_wait(tree: PytreeValue) -> PytreeValue:
         waits.append(tree)
         return wait(tree)
 
@@ -124,8 +125,8 @@ def test_full_output_tree_is_owned_before_layout_failure(
     returned: list[jax.Array] = []
 
     def observe(
-        executable: jax.stages.Compiled, *args: object, **kwargs: object
-    ) -> object:
+        executable: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         output = call(executable, *args, **kwargs)
         if executable is compiled:
             returned.extend(jax.tree.leaves(output))
@@ -203,7 +204,9 @@ def test_failed_call_keeps_the_returned_copy_until_owner_close(
     pointers: list[int] = []
 
     # keyword-only-exempt: library-callback=jax.device_put
-    def observe_copy(value: object, device: object) -> object:
+    def observe_copy(
+        value: jax.Array, device: jax.Device | jax.sharding.Sharding | None
+    ) -> PytreeValue:
         placed = put(value, device)
         if value is original:
             fresh = jnp.array(placed, copy=True)
@@ -213,8 +216,8 @@ def test_failed_call_keeps_the_returned_copy_until_owner_close(
         return placed
 
     def fail_compiled_call(
-        executable: jax.stages.Compiled, *args: object, **kwargs: object
-    ) -> object:
+        executable: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         if executable is compiled:
             assert len(references) == 1
             assert references[0]() is not None

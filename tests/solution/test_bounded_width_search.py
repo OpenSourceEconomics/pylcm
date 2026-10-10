@@ -9,7 +9,7 @@ below the extent, and every other width in between is off-frontier.
 
 import logging
 from collections.abc import Mapping
-from typing import Any, Literal, cast
+from typing import Literal, TypedDict, Unpack, cast
 
 import numpy as np
 import pytest
@@ -18,10 +18,12 @@ from _lcm.solution import backward_induction
 from lcm import ExecutionConfig
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import WidthSearch, WidthSearchPolicy
-from lcm.solver_api import ResultRetention
+from lcm.solver_api import ResultRetention, SolutionResult
+from tests.solution._callback_types import PlanningKwargs, PlanningResult
 from tests.solution._candidate_census import (
     CensusRecorder,
     Triple,
+    WidthKey,
     donor_pair_model,
     solve_donor_pair,
 )
@@ -36,12 +38,16 @@ ALIVE_0 = ("alive", 0, "main")
 DEAD_3 = ("dead", 3, "main")
 
 
-def _captured_frontier(*, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+class _Captured(TypedDict, total=False):
+    frontier: backward_induction._LazyCandidateFrontier
+
+
+def _captured_frontier(*, monkeypatch: pytest.MonkeyPatch) -> _Captured:
     """Solve the donor-pair fixture and hand back the frontier it resolved."""
-    captured: dict[str, Any] = {}
+    captured: _Captured = {}
     resolve = backward_induction._resolve_output_layouts_and_lowering_keys
 
-    def observe(**kwargs: Any) -> Any:
+    def observe(**kwargs: Unpack[PlanningKwargs]) -> PlanningResult:
         result = resolve(**kwargs)
         captured.setdefault("frontier", result[-1])
         return result
@@ -103,7 +109,11 @@ def _bounded(
     )
 
 
-def _solve_with(*, execution_config: ExecutionConfig, log_level: str = "off") -> Any:
+def _solve_with(
+    *,
+    execution_config: ExecutionConfig,
+    log_level: Literal["off", "warning", "progress", "debug"] = "off",
+) -> SolutionResult:
     """Solve the donor-pair fixture under one execution config."""
     model = nbegm_ride_along_toy.build_model(
         variant="nbegm",
@@ -115,13 +125,13 @@ def _solve_with(*, execution_config: ExecutionConfig, log_level: str = "off") ->
     return model.solve(
         params=nbegm_ride_along_toy.build_params(),
         retention=ResultRetention.VALUES,
-        log_level=cast("Any", log_level),
+        log_level=log_level,
     )
 
 
 def _selected_widths(
     *, monkeypatch: pytest.MonkeyPatch, execution_config: ExecutionConfig
-) -> Mapping[Triple, Any]:
+) -> Mapping[Triple, WidthKey]:
     """Return the widths a solve under one execution config dispatched."""
     recorder = CensusRecorder()
     recorder.install(monkeypatch=monkeypatch)

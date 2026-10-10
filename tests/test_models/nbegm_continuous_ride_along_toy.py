@@ -17,7 +17,7 @@ import jax.numpy as jnp
 import lcm
 from _lcm.grids.base import Grid
 from lcm import AgeSpecializedGrid, LinSpacedGrid, Model
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND, UserParamsNode
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
@@ -130,7 +130,7 @@ def build_params(
     subsidy_low: float = 0.0,
     subsidy_high: float = 3.0,
     fpl_cliff: float = 15.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the derived-income subsidy-cliff toy.
 
     The cliff at `gross_income == fpl_cliff` maps to the asset preimage `liquid =

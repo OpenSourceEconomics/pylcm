@@ -1,16 +1,26 @@
 """Actual physical ownership chooses an admitted ordinary NB-EGM executable."""
 
-from typing import Any
+from typing import Never, TypedDict, Unpack
 
 import jax
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from _lcm.execution.scheduler import buffer_identity
 from _lcm.solution import backward_induction
 from _lcm.solution.solve_inputs import locate_artifact
 from lcm.solver_api import ResultRetention
 from tests.test_models import nbegm_ride_along_toy
+
+
+class _SelectKwargs(TypedDict):
+    compiled_programs: backward_induction._CompiledPrograms
+    unit: backward_induction.DispatchUnit
+    inputs: backward_induction.SolveInputMappings
+    templates: backward_induction.SolveInputMappings
+    registry: backward_induction.BufferRegistry
+    logger: backward_induction.logging.Logger
 
 
 @pytest.mark.parametrize("conflict", ["shared", "unproduced"])
@@ -21,13 +31,21 @@ def test_runtime_ownership_falls_back_without_compiling_or_consuming_the_source(
         variant="nbegm", n_liquid=8, n_savings=10, n_consumption=12
     )
     select = backward_induction._select_runtime_donation_cores
-    held: list[tuple[Any, np.ndarray]] = []
+    held: list[tuple[jax.Array, NDArray[np.float32 | np.float64]]] = []
     observed: list[tuple[int, tuple[str, ...]]] = []
 
-    def forbid_compilation(*_args: object, **_kwargs: object) -> object:
+    def forbid_compilation[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
         raise AssertionError("Runtime donation fallback compiled a new executable.")
 
-    def with_physical_conflict(**kwargs: Any) -> Any:
+    def with_physical_conflict(
+        **kwargs: Unpack[_SelectKwargs],
+    ) -> tuple[
+        backward_induction.MappingProxyType[str, backward_induction.PlannedCore],
+        backward_induction.MappingProxyType[
+            backward_induction._CoreTriple,
+            tuple[backward_induction.ResolvedDonation, ...],
+        ],
+    ]:
         unit = kwargs["unit"]
         programs = kwargs["compiled_programs"]
         registry = kwargs["registry"]

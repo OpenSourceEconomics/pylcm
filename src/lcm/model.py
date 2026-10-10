@@ -85,7 +85,7 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
-from _lcm.processes.ar1 import RouwenhorstAR1Process, TauchenAR1Process
+from _lcm.processes.ar1 import RouwenhorstAR1Process, TauchenAR1Process, _AR1Process
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
@@ -424,6 +424,7 @@ class _PickledModel(TypedDict):
     _solution_model_instance_id: NotRequired[str]
     _declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     _cells_without_edges: MappingProxyType[tuple[RegimeName, int], DroppedCells]
+    _transition_only_shock_names: NotRequired[frozenset[str]]
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     regime_names_to_ids: RegimeNamesToIds
@@ -1285,6 +1286,7 @@ class Model:
             _fixed_component_splits=self._fixed_component_splits,
             _declared_edge_vocabulary=self._declared_edge_vocabulary,
             _cells_without_edges=self._cells_without_edges,
+            _transition_only_shock_names=self._transition_only_shock_names,
             pruned_variables=self.pruned_variables,
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
@@ -1316,6 +1318,9 @@ class Model:
         Resealing records the bindings read by this process's copies of the callables.
         """
         self.__dict__.update(state)
+        self._transition_only_shock_names = state.get(
+            "_transition_only_shock_names", frozenset()
+        )
         self._fixed_component_splits = MappingProxyType(
             dict(state["_fixed_component_splits"])
         )
@@ -1864,6 +1869,7 @@ class Model:
                 durable_identity=self.durable_identity,
                 authority=authority,
                 component_values=component_values,
+                flat_params=flat_params,
             )
 
     def _component_schedule(
@@ -4538,6 +4544,19 @@ class Model:
         )
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
+        for regime_name, regime in self._regimes.items():
+            for phase in (regime.solution, regime.simulation):
+                for state_name, grid in phase.grids.items():
+                    if (
+                        isinstance(grid, _AR1Process)
+                        and "rho" in grid.params_to_pass_at_runtime
+                    ):
+                        grid.fail_if_nonstationary_rho(
+                            rho=cast(
+                                "FloatND | IntND",
+                                flat_params[regime_name][f"{state_name}__rho"],
+                            )
+                        )
         if array_writer is None:
             # Under entry admission the caller validates after the process
             # grids are admitted; see `simulate`.

@@ -12,7 +12,7 @@ written the long way solves to.
 
 import dataclasses
 from collections.abc import Mapping
-from typing import cast
+from typing import Literal, TypedDict, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -31,6 +31,7 @@ from lcm import (
     DiscreteGrid,
     Gate,
     Model,
+    ParetoObjective,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -43,7 +44,7 @@ from lcm import (
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import RegimeReplacement
 from lcm.transition import PhaseTransitionLaw, StochasticTransition
-from lcm.typing import FloatND, ScalarInt, UserFunction
+from lcm.typing import FloatND, FunctionName, RegimeName, ScalarInt, UserFunction
 from tests.conftest import DECIMAL_PRECISION, bind_laws
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
@@ -62,6 +63,23 @@ from tests.regime_building.test_collective_regime_simulate import (
     _u_zero,
     _u_zero_collective,
 )
+
+
+class _Snapshot(TypedDict):
+    stakeholders: tuple[str, ...] | None
+    pareto_objective: ParetoObjective | None
+    value_constraints: dict[FunctionName, UserFunction]
+    same_period_refs: dict[str, ProjectedRegimeValue]
+    gated_edges: dict[
+        RegimeName,
+        tuple[
+            UserFunction,
+            dict[str, tuple[str | None, ProjectedRegimeValue]],
+            dict[str, ProjectedRegimeValue],
+            Literal["pointwise", "reject"],
+        ],
+    ]
+
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
@@ -406,7 +424,7 @@ def test_a_gate_beside_a_phased_law_is_one_edge():
     assert transition.simulate["married_ir"].func is _prob_half
 
 
-def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> dict[str, object]:
+def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
     """The five engine-facing facts a regime's declarations and law determine.
 
     Flattened into plain data so that two regimes built by different code paths
@@ -433,7 +451,7 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> dict[str, object]:
     }
 
 
-def _expected_snapshots() -> dict[str, dict[str, object]]:
+def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
     """What each shape of the dissolution miniature must derive, spelled out."""
     fallback_f = ProjectedRegimeValue(
         regime="single_f", projection={"wage": _identity_wage}

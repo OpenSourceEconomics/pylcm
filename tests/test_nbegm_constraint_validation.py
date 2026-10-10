@@ -104,7 +104,7 @@ def _savings_from_liquid(
 def _build_smooth_model(
     *,
     constraints: Mapping[str, UserFunction],
-    jump_read: str = "one_sided",
+    jump_read: Literal["one_sided", "bridged"] = "one_sided",
     variant: str = "nbegm",
     n_periods: int = 3,
     n_consumption: int = 40,
@@ -162,7 +162,9 @@ def _build_scheduled_model(
     )
 
 
-def _smooth_params(*, asset_limit: float | None = 4.0) -> dict:
+def _smooth_params(
+    *, asset_limit: float | None = 4.0
+) -> dict[str, dict[str, dict[str, float] | dict[str, dict[str, float]]]]:
     """Return the complete parameter tree for the smooth feasibility toy."""
     transition = {"return_liquid": 0.03, "income": 1.0}
     constraint_params = {} if asset_limit is None else {"asset_limit": asset_limit}

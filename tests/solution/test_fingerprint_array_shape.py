@@ -16,6 +16,7 @@ from typing import cast
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 from pandas.testing import assert_frame_equal
 
 from _lcm.solution import artifacts as private_artifacts
@@ -42,7 +43,9 @@ from tests.test_models.deterministic.regression import (
 _DTYPES = [np.float32, np.float64]
 
 
-def _scalar_and_vector(dtype: type[np.generic]) -> list[tuple[object, object]]:
+def _scalar_and_vector[Scalar: np.float32 | np.float64](
+    dtype: type[Scalar],
+) -> list[tuple[Scalar | NDArray[Scalar], NDArray[Scalar]]]:
     return [
         (np.array(0.0, dtype=dtype), np.array([0.0], dtype=dtype)),
         (dtype(0.0), np.array([0.0], dtype=dtype)),
@@ -55,7 +58,7 @@ def _scalar_and_vector(dtype: type[np.generic]) -> list[tuple[object, object]]:
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["float32", "float64"])
 @pytest.mark.parametrize("case", range(5))
 def test_semantic_fingerprint_distinguishes_arrays_that_differ_only_in_shape(
-    *, dtype: type[np.generic], case: int
+    *, dtype: type[np.float32 | np.float64], case: int
 ) -> None:
     """Equal dtype and bytes with different original shapes are different values."""
     lower, higher = _scalar_and_vector(dtype)[case]
@@ -77,7 +80,7 @@ def test_semantic_fingerprint_distinguishes_jax_scalar_and_length_one_arrays() -
 
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["float32", "float64"])
 def test_semantic_fingerprint_ignores_memory_order_of_the_same_array(
-    *, dtype: type[np.generic]
+    *, dtype: type[np.float32 | np.float64]
 ) -> None:
     """A Fortran-ordered or strided view of the same values is the same value."""
     base = np.arange(12, dtype=dtype).reshape(3, 4)
@@ -94,7 +97,7 @@ def test_semantic_fingerprint_ignores_memory_order_of_the_same_array(
 
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["float32", "float64"])
 def test_semantic_fingerprint_distinguishes_equal_shapes_with_different_contents(
-    *, dtype: type[np.generic]
+    *, dtype: type[np.float32 | np.float64]
 ) -> None:
     assert fingerprints._semantic_fingerprint(np.array([0.0], dtype=dtype)) != (
         fingerprints._semantic_fingerprint(np.array([1.0], dtype=dtype))
@@ -114,7 +117,7 @@ def _rank_signed_terminal_utility(
 
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["float32", "float64"])
 def test_closures_over_scalar_and_vector_arrays_fingerprint_differently(
-    *, dtype: type[np.generic]
+    *, dtype: type[np.float32 | np.float64]
 ) -> None:
     scalar_closure = _rank_signed_terminal_utility(np.array(0.0, dtype=dtype))
     vector_closure = _rank_signed_terminal_utility(np.array([0.0], dtype=dtype))
@@ -126,7 +129,7 @@ def test_closures_over_scalar_and_vector_arrays_fingerprint_differently(
 
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["float32", "float64"])
 def test_flat_params_fingerprint_distinguishes_scalar_and_length_one_arrays(
-    *, dtype: type[np.generic]
+    *, dtype: type[np.float32 | np.float64]
 ) -> None:
     scalar = private_artifacts.fingerprint_flat_params(
         cast(

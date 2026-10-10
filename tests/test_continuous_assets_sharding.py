@@ -9,26 +9,40 @@ CPU tests establish semantics and ownership only, never GPU performance.
 
 import dataclasses
 import logging
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from fractions import Fraction
 from functools import cache
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Literal, Never, NotRequired, Unpack
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from dags.signature import rename_arguments
+from numpy.typing import NDArray
+from typing_extensions import TypedDict
 
 import _lcm.simulation.runtime as simulation_runtime
 import _lcm.simulation.simulate as simulation
 from _lcm.execution import output_layout, scheduler, value_transfer
-from _lcm.execution.value_transfer import ValueInputChannel, ValueTransferKind
+from _lcm.execution.core_program import CoreProgram, ValueRead
+from _lcm.execution.liveness import PlannedInputLiveness
+from _lcm.execution.pending_work import BeforeArrayDelete
+from _lcm.execution.value_transfer import (
+    ValueArtifactAddress,
+    ValueInputChannel,
+    ValueTransferKind,
+)
 from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
 from _lcm.simulation import chunk_admission
+from _lcm.simulation.chunk_planning import SimulationChunkProfile
+from _lcm.simulation.operand_placement import _OperandValue
+from _lcm.simulation.residency import DeviceBufferFootprint
+from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from _lcm.variables import from_regime
 from lcm import (
     AgeGrid,
@@ -48,15 +62,118 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.grids import GridBreakpoint
-from lcm.typing import DiscreteState, ScalarInt
-from tests.conftest import assert_agrees_to_ulp, assert_general_values_agree
+from lcm.grids import ContinuousGrid, GridBreakpoint
+from lcm.solver_api import SolutionResult
+from lcm.typing import (
+    ActionName,
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    FunctionName,
+    ReferenceName,
+    RegimeName,
+    ScalarInt,
+    StateName,
+    UserFunction,
+)
+from tests.conftest import (
+    ApplyValueTransferKwargs,
+    ExecuteWithPendingWorkKwargs,
+    SubjectChunkKwargs,
+    SubjectChunkResults,
+    assert_agrees_to_ulp,
+    assert_general_values_agree,
+)
 from tests.simulation import test_type_grouped_simulation as grouped_simulation
 from tests.test_continuous_assets_aca_vocabulary import (
     TAUCHEN_AND_LOG_NORMAL,
 )
 from tests.test_continuous_assets_aca_vocabulary import _model as _process_model
 from tests.test_models.initial_nodes import initial_nodes_of
+
+type _OutputProfiles = dict[
+    int, tuple[tuple[tuple[int, ...], np.dtype, jax.sharding.Sharding | None], ...]
+]
+type _RecordProperty = Callable[[str, bool | int | float], None]
+
+
+class _MaxQArguments(TypedDict, closed=True):
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    batch_sizes: dict[StateName, int]
+    action_names: tuple[ActionName, ...]
+    state_names: tuple[StateName, ...]
+    cell_width_keyword: str
+    untiled_state_names: tuple[StateName, ...]
+
+
+class _DispatchArguments(TypedDict, closed=True):
+    program: CoreProgram
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
+    period: int
+    n_subjects: int
+    residency: NotRequired[simulation_runtime.SimulationDispatchContext | None]
+
+
+class _PrepareArguments(TypedDict, closed=True):
+    program: CoreProgram
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
+    period: int
+    n_subjects: int
+    widths: Mapping[str, int]
+
+
+class _ProfileArguments(TypedDict, closed=True):
+    n_subjects: int
+    widths: Mapping[str, int]
+
+
+class _PlacementArguments(TypedDict, closed=True):
+    arguments: Mapping[str, _OperandValue]
+    subject_arg_names: tuple[ReferenceName, ...]
+    value_reads: tuple[ValueRead, ...]
+    devices: tuple[jax.Device, ...]
+    budget_bytes: NotRequired[int | None]
+    live_footprint: NotRequired[DeviceBufferFootprint | None]
+    argument_footprint: NotRequired[DeviceBufferFootprint | None]
+    budget_devices: NotRequired[tuple[jax.Device, ...]]
+
+
+class _CacheGetArguments(TypedDict, closed=True):
+    transfer: value_transfer.ResolvedValueTransfer
+
+
+class _CachePutArguments(TypedDict, closed=True):
+    transfer: value_transfer.ResolvedValueTransfer
+    array: jax.Array
+    stored: jax.Array
+
+
+class _CacheCommitArguments(TypedDict, closed=True):
+    key: tuple[Hashable, Hashable]
+
+
+class _ReleaseArguments(TypedDict, closed=True):
+    ledger: PlannedInputLiveness[Hashable, Hashable]
+    registry: scheduler.BufferRegistry
+    artifacts: Iterable[Hashable]
+    arrays_by_artifact: Mapping[Hashable, jax.Array]
+    pending_outputs: Sequence[jax.Array]
+    closing_dispatch: Hashable
+    logger: logging.Logger
+    before_delete: NotRequired[BeforeArrayDelete | None]
+
+
+class _TrackedCopy(TypedDict, total=False, closed=True):
+    cache: scheduler.PeriodTransferCache
+    key: tuple[ValueArtifactAddress, jax.sharding.Sharding]
+    cache_key: tuple[Hashable, Hashable]
+    copy: jax.Array
+    source: jax.Array
+    expected: NDArray[np.float32 | np.float64]
+    pending_ids: tuple[int, ...]
+    releasing: bool
 
 
 @categorical(ordered=False)
@@ -175,7 +292,7 @@ def _model(
     sharded: bool = True,
     budget: int | Literal["device"] | None = 2**30,
     identity: bool = False,
-    grid: Any = None,
+    grid: ContinuousGrid | None = None,
     bounds: tuple[float, float] = (-4, 19),
     extra_shard: bool = False,
     fixed_type: bool = False,
@@ -235,8 +352,14 @@ _UNIT_GRIDS = {
 }
 
 
+type _Coordinate = tuple[int, int, int]
+type _ExactTable = dict[_Coordinate, Fraction]
+type _ExactValues = dict[tuple[int, RegimeName], _ExactTable]
+type _ExactPolicies = dict[tuple[int, RegimeName], dict[_Coordinate, int]]
+
+
 @cache
-def _reference() -> tuple[dict, dict]:
+def _reference() -> tuple[_ExactValues, _ExactPolicies]:
     """Exact independent finite-grid Bellman values and first maximizing actions."""
     coords = [(p, s, i) for p in range(3) for s in range(3) for i in range(24)]
     values = {
@@ -247,7 +370,7 @@ def _reference() -> tuple[dict, dict]:
     }
     policies = {}
 
-    def read(*, table: dict, p: int, s: int, landing: Fraction) -> Fraction:
+    def read(*, table: _ExactTable, p: int, s: int, landing: Fraction) -> Fraction:
         coordinate = landing + 4
         lower = min(coordinate.numerator // coordinate.denominator, 22)
         weight = coordinate - lower
@@ -321,18 +444,18 @@ def _assert_assets_shards(value: jax.Array) -> None:
 def test_trailing_untiled_axis_is_restored_inside_max_q(*, streamed: bool) -> None:
     def q(
         *,
-        next_regime_to_V_arr: Any,
-        pref_type: Any,
-        spousal_income: Any,
-        assets: Any,
-        decision: Any,
-    ) -> Any:
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        pref_type: DiscreteState,
+        spousal_income: DiscreteState,
+        assets: ContinuousState,
+        decision: ContinuousAction,
+    ) -> tuple[FloatND, BoolND]:
         del next_regime_to_V_arr
         return -2000.0 + 100 * pref_type + 10 * spousal_income + assets - (
             decision - 1
         ) ** 2, jnp.asarray(pref_type >= 0)
 
-    kwargs: dict[str, Any] = {
+    kwargs: _MaxQArguments = {
         "Q_and_F": q,
         "batch_sizes": dict.fromkeys(("pref_type", "spousal_income", "assets"), 0),
         "action_names": ("decision",),
@@ -378,7 +501,7 @@ def test_eight_assets_shards_use_full_reads_and_match_exact_bellman_reference(  
     grid: str,
     widths: tuple[int, int],
     monkeypatch: pytest.MonkeyPatch,
-    record_property: Any,
+    record_property: _RecordProperty,
 ) -> None:
     """Both grid types with nodes at the integers -4..19 solve the same exact Bellman
     equations, so each must match the same Fraction reference.
@@ -393,19 +516,21 @@ def test_eight_assets_shards_use_full_reads_and_match_exact_bellman_reference(  
     apply = value_transfer.apply_value_transfer
     execute = output_layout.execute_with_pending_work
 
-    def observe_transfer(**call: Any) -> Any:
+    def observe_transfer(**call: Unpack[ApplyValueTransferKwargs]) -> ArgumentTree:
         transfer = call["transfer"]
         copied = apply(**call)
         if transfer.source.channel is ValueInputChannel.NEXT_REGIME_VALUE:
             assert transfer.kind is ValueTransferKind.ALL_GATHER
+            assert isinstance(copied, jax.Array)
             assert copied.is_fully_replicated
             assert len(copied.sharding.device_set) == 8
+            assert isinstance(call["value"], jax.Array)
             _assert_assets_shards(call["value"])
             np.testing.assert_array_equal(copied, call["value"])
             materialized.append((transfer.target, transfer.source_sharding))
         return copied
 
-    def observe_birth(**call: Any) -> Any:
+    def observe_birth(**call: Unpack[ExecuteWithPendingWorkKwargs]) -> PytreeValue:
         output = execute(**call)
         for leaf in jax.tree.leaves(output):
             if isinstance(leaf, jax.Array) and leaf.shape == (3, 3, 24):
@@ -512,7 +637,7 @@ def test_eight_assets_shards_use_full_reads_and_match_exact_bellman_reference(  
 
 
 def _record_profiled_executables(
-    *, monkeypatch: pytest.MonkeyPatch, profiles: dict
+    *, monkeypatch: pytest.MonkeyPatch, profiles: _OutputProfiles
 ) -> None:
     """Record the declared output layout of every chunk-profiled executable.
 
@@ -527,21 +652,25 @@ def _record_profiled_executables(
     runtime_class = simulation_runtime.SimulationRuntime
     prepare = runtime_class.prepare_abstract
     profile_chunk = chunk_admission._ChunkProfiler.profile_widths
-    selected_profiles: list[Any] = []
+    selected_profiles: list[SimulationChunkProfile] = []
 
-    def record_executable(executable: Any) -> None:
+    def record_executable(executable: Callable[..., PytreeValue]) -> None:
         assert isinstance(executable, jax.stages.Compiled)
         profiles[id(executable)] = tuple(
             (leaf.shape, leaf.dtype, leaf.sharding)
             for leaf in jax.tree.leaves(executable.out_info)
         )
 
-    def observe_prepare(self: Any, **call: Any) -> Any:
+    def observe_prepare(
+        self: simulation_runtime.SimulationRuntime, **call: Unpack[_PrepareArguments]
+    ) -> simulation_runtime.CompiledSimulationProgram:
         prepared = prepare(self, **call)
         record_executable(prepared.executable)
         return prepared
 
-    def observe_chunk_profile(self: Any, **call: Any) -> Any:
+    def observe_chunk_profile(
+        self: chunk_admission._ChunkProfiler, **call: Unpack[_ProfileArguments]
+    ) -> SimulationChunkProfile:
         profile = profile_chunk(self, **call)
         # Keep the profile alive, so no stage executable it declares can be
         # collected and have its identity recycled while `profiles` is read.
@@ -562,12 +691,14 @@ def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
     place = simulation_runtime.place_simulation_arguments
     dispatch = runtime_class.dispatch
     compiled_call = simulation_runtime.CompiledSimulationProgram.__call__
-    profiles = {}
+    profiles: _OutputProfiles = {}
     placed_counts = []
     profiled_runs: list[int] = []
     _record_profiled_executables(monkeypatch=monkeypatch, profiles=profiles)
 
-    def observe_place(**call: Any) -> Any:
+    def observe_place(
+        **call: Unpack[_PlacementArguments],
+    ) -> MappingProxyType[str, _OperandValue]:
         placed = place(**call)
         for name in call["subject_arg_names"]:
             for value in jax.tree.leaves(placed.get(name, ())):
@@ -584,7 +715,9 @@ def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
                 placed_counts.append(24)
         return placed
 
-    def observe_dispatch(self: Any, **call: Any) -> Any:
+    def observe_dispatch(
+        self: simulation_runtime.SimulationRuntime, **call: Unpack[_DispatchArguments]
+    ) -> PytreeValue:
         # Every dispatch must run a body the selected chunk profile declared.
         # Observe that through the executable it actually runs, rather than
         # through a compile that a warm profile legitimately skips.
@@ -596,8 +729,9 @@ def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
         return result
 
     def observe_compiled(
-        self: simulation_runtime.CompiledSimulationProgram, **call: Any
-    ) -> Any:
+        self: simulation_runtime.CompiledSimulationProgram,
+        **call: PytreeValue | ShapeDtypePytree,
+    ) -> PytreeValue:
         assert id(self.executable) in profiles, (
             "Dispatch selected an unprofiled executable"
         )
@@ -607,6 +741,7 @@ def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
         for value, (shape, dtype, sharding) in zip(
             jax.tree.leaves(result), expected, strict=True
         ):
+            assert isinstance(value, jax.Array)
             assert value.shape == shape
             assert value.dtype == dtype
             assert sharding is not None
@@ -625,8 +760,8 @@ def _assert_seventeen_rows(
     *,
     model: Model,
     reference_model: Model,
-    solution: Any,
-    reference_solution: Any,
+    solution: SolutionResult,
+    reference_solution: SolutionResult,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Inspect actual 24-row subject shards, then compare the 17 returned rows."""
@@ -634,7 +769,7 @@ def _assert_seventeen_rows(
     run_chunk = simulation._simulate_subject_chunk
     padded_calls = []
 
-    def observe_chunk(**call: Any) -> Any:
+    def observe_chunk(**call: Unpack[SubjectChunkKwargs]) -> SubjectChunkResults:
         result = run_chunk(**call)
         assert call["original_n_subjects"] == 17
         assert call["n_subjects"] == 24
@@ -692,10 +827,11 @@ def test_continuous_identity_still_materializes_full_continuation(
     transfers = []
     apply = value_transfer.apply_value_transfer
 
-    def observe(**call: Any) -> Any:
+    def observe(**call: Unpack[ApplyValueTransferKwargs]) -> ArgumentTree:
         copied = apply(**call)
         if call["transfer"].source.channel is ValueInputChannel.NEXT_REGIME_VALUE:
             assert call["transfer"].kind is ValueTransferKind.ALL_GATHER
+            assert isinstance(copied, jax.Array)
             assert copied.is_fully_replicated
             transfers.append(call["transfer"])
         return copied
@@ -824,7 +960,7 @@ def test_budget_below_full_replica_refuses_without_transfer_and_preserves_owner(
     itemsize = originals[0][1].dtype.itemsize
     constrained = _model(devices=tuple(range(8)), budget=216 * itemsize // 2)
 
-    def forbidden(**call: Any) -> Any:
+    def forbidden(**call: Unpack[ApplyValueTransferKwargs]) -> Never:
         del call
         pytest.fail(
             "A budget below one full continuation replica must refuse before copying"
@@ -876,7 +1012,7 @@ def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
         )
 
 
-def _renamed_functions(*, regime: Regime) -> dict[str, Any]:
+def _renamed_functions(*, regime: Regime) -> dict[FunctionName, UserFunction]:
     """Rename arguments of the fixture's ordinary callable economic nodes."""
     result = {}
     for key, function in regime.functions.items():
@@ -923,7 +1059,9 @@ def _renamed_public_model(*, original: Model) -> Model:
     )
 
 
-def _assert_renamed_values(*, original: Any, renamed: Any) -> None:
+def _assert_renamed_values(
+    *, original: SolutionResult, renamed: SolutionResult
+) -> None:
     exact, _ = _reference()
     assert set(renamed.values) == set(original.values)
     for period, values in original.values.items():
@@ -1030,12 +1168,12 @@ def test_public_state_rename_and_reversed_device_selection_preserve_solve_and_rn
 
 
 def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # noqa: C901, PLR0915
-    *, monkeypatch: pytest.MonkeyPatch, record_property: Any
+    *, monkeypatch: pytest.MonkeyPatch, record_property: _RecordProperty
 ) -> None:
     """Observe the real solve cache; wider-replica aliases have separate tests."""
     _require_eight()
     model = _model(devices=tuple(range(8)), widths=(3, 9))
-    tracked: dict[str, Any] = {}
+    tracked: _TrackedCopy = {}
     materializations = []
     commits = []
     hits = []
@@ -1047,13 +1185,15 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
     release = scheduler.release_closed_artifacts
     wait = jax.block_until_ready
 
-    def observe_apply(**kwargs: Any) -> Any:
+    def observe_apply(**kwargs: Unpack[ApplyValueTransferKwargs]) -> ArgumentTree:
         result = apply(**kwargs)
         transfer = kwargs["transfer"]
         materializations.append((transfer.target, transfer.source_sharding))
         return result
 
-    def observe_put(self: Any, **kwargs: Any) -> None:
+    def observe_put(
+        self: scheduler.PeriodTransferCache, **kwargs: Unpack[_CachePutArguments]
+    ) -> None:
         transfer, copied, stored = (
             kwargs["transfer"],
             kwargs["array"],
@@ -1061,6 +1201,7 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
         )
         if not tracked and transfer.kind is ValueTransferKind.ALL_GATHER:
             _assert_assets_shards(stored)
+            assert isinstance(copied, jax.Array)
             assert copied.is_fully_replicated
             assert len(copied.addressable_shards) == 8
             assert all(
@@ -1084,7 +1225,9 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
             np.testing.assert_array_equal(copied, stored)
         put(self, **kwargs)
 
-    def observe_get(self: Any, **kwargs: Any) -> Any:
+    def observe_get(
+        self: scheduler.PeriodTransferCache, **kwargs: Unpack[_CacheGetArguments]
+    ) -> jax.Array | None:
         result = get(self, **kwargs)
         if tracked and self is tracked["cache"] and result is not None:
             transfer = kwargs["transfer"]
@@ -1094,7 +1237,9 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
                 hits.append(result)
         return result
 
-    def observe_commit(self: Any, **kwargs: Any) -> Any:
+    def observe_commit(
+        self: scheduler.PeriodTransferCache, **kwargs: Unpack[_CacheCommitArguments]
+    ) -> tuple[scheduler.ReleaseRecord, ...]:
         selected = (
             tracked
             and self is tracked["cache"]
@@ -1109,7 +1254,7 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
             np.testing.assert_array_equal(tracked["source"], tracked["expected"])
         return result
 
-    def observe_wait(tree: Any) -> Any:
+    def observe_wait[Tree](tree: Tree) -> Tree:
         result = wait(tree)
         if tracked.get("releasing", False):
             ids = tuple(id(leaf) for leaf in jax.tree.leaves(tree))
@@ -1118,7 +1263,9 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
                 barriers.append(ids)
         return result
 
-    def observe_release(**kwargs: Any) -> Any:
+    def observe_release(
+        **kwargs: Unpack[_ReleaseArguments],
+    ) -> tuple[scheduler.ReleaseRecord, ...]:
         selected = (
             tracked
             and any(
@@ -1136,9 +1283,9 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
             id(leaf) for leaf in jax.tree.leaves(tuple(pending))
         )
         tracked["releasing"] = True
-        before = kwargs["before_delete"]
+        before = kwargs.get("before_delete")
 
-        def observe_before_delete(*, arrays: Any) -> None:
+        def observe_before_delete(*, arrays: tuple[jax.Array, ...]) -> None:
             assert len(barriers) == 1
             assert any(array is tracked["copy"] for array in arrays)
             assert not tracked["copy"].is_deleted()
@@ -1173,7 +1320,7 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
 
 @pytest.mark.parametrize("widths", [(1, 1), (3, 24)])
 def test_tauchen_and_log_normal_nodes_solve_like_the_unsharded_model(
-    *, widths: tuple[int, int], record_property: Any
+    *, widths: tuple[int, int], record_property: _RecordProperty
 ) -> None:
     """Eight assets shards reproduce one-device values to 8 ULP with these nodes."""
     _require_eight()

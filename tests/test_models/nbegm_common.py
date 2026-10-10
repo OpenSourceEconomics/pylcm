@@ -19,7 +19,7 @@ regime structure keep their own assembly.
 """
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Literal, TypedDict, Unpack
 
 import jax.numpy as jnp
 
@@ -38,16 +38,31 @@ from lcm import (
     liquid_law_from_savings,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
-from lcm.regime import Regime
+from lcm.regime import Regime, StateTransitionEntry
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
+from lcm.transition import TargetLawCell
 from lcm.typing import (
+    ActionName,
     BoolND,
     ContinuousAction,
     ContinuousState,
     FloatND,
+    FunctionName,
+    RegimeName,
     ScalarInt,
+    StateName,
     UserFunction,
+    UserParams,
 )
+
+
+class NBEGMKwargs(TypedDict, total=False):
+    """Numerical solver options forwarded by the NBEGM toy builders."""
+
+    jump_read: Literal["one_sided", "bridged"]
+    envelope_arithmetic: Literal["certified", "ordinary"]
+    probe_failure: Literal["reject", "assume_declared"]
+    probe_schedule: Literal["first_solve", "every_solve", "never"]
 
 
 @categorical(ordered=False)
@@ -109,7 +124,7 @@ def prob_die(*, age: int, final_age_alive: float) -> FloatND:
 
 
 def resolve_solver(
-    *, variant: str, savings_grid: ContinuousGrid, **nbegm_kwargs: object
+    *, variant: str, savings_grid: ContinuousGrid, **nbegm_kwargs: Unpack[NBEGMKwargs]
 ) -> OneMarginSolver | GridSearch:
     """Dispatch the toy's alive-regime solver from the variant name.
 
@@ -139,9 +154,7 @@ def resolve_solver(
             raise TypeError(msg)
         return NBEGM(
             savings_grid=savings_grid,
-            # Forwards whatever numerical configuration the caller names, so the
-            # values arrive as `object` rather than each parameter's own type.
-            **nbegm_kwargs,  # ty: ignore[invalid-argument-type]
+            **nbegm_kwargs,
         )
     msg = f"unknown variant {variant!r}; use 'brute' or 'nbegm'."
     raise ValueError(msg)
@@ -153,23 +166,23 @@ def make_alive_dead_model(
     n_liquid: int,
     liquid_max: float,
     n_consumption: int,
-    alive_functions: Mapping[str, UserFunction],
+    alive_functions: Mapping[FunctionName, UserFunction],
     liquid_law: UserFunction,
     alive_solver: OneMarginSolver | GridSearch,
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
-    constraints: Mapping[str, UserFunction],
-    extra_actions: Mapping[str, Grid] | None = None,
-    extra_states: Mapping[str, Grid | AgeSpecializedGrid] | None = None,
-    extra_state_transitions: Mapping[str, Any] | None = None,
-    survival_transition: Mapping[str, Any] | None = None,
-    model_states: Mapping[str, Grid] | None = None,
+    constraints: Mapping[FunctionName, UserFunction],
+    extra_actions: Mapping[ActionName, Grid] | None = None,
+    extra_states: Mapping[StateName, Grid | AgeSpecializedGrid] | None = None,
+    extra_state_transitions: Mapping[StateName, StateTransitionEntry] | None = None,
+    survival_transition: Mapping[RegimeName, TargetLawCell] | None = None,
+    model_states: Mapping[StateName, Grid] | None = None,
     liquid_grid: Grid | None = None,
-    dead_functions: Mapping[str, UserFunction] | None = None,
-    fixed_params: Mapping[str, Any] | None = None,
-    liquid_state: str = "liquid",
-    liquid_action: str = "consumption",
-    liquid_resources: str = "resources",
-    liquid_post_decision: str = "savings",
+    dead_functions: Mapping[FunctionName, UserFunction] | None = None,
+    fixed_params: UserParams | None = None,
+    liquid_state: StateName = "liquid",
+    liquid_action: ActionName = "consumption",
+    liquid_resources: FunctionName = "resources",
+    liquid_post_decision: FunctionName = "savings",
 ) -> Model:
     """Assemble the two-regime (alive, dead) toy around a toy-specific budget DAG.
 

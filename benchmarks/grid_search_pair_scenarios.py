@@ -7,11 +7,22 @@ precision, and (for the distributed row) CPU topology first.
 
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from benchmarks.asv import _gpu_mem
 
-ScenarioName = Literal[
+if TYPE_CHECKING:
+    from _lcm.typing import DataclassInstance
+    from lcm import Model
+    from lcm.typing import UserParams
+
+
+class _TypeGridKwargs(TypedDict):
+    category_class: type[DataclassInstance]
+    distributed: NotRequired[bool]
+
+
+type ScenarioName = Literal[
     "singleton-hard-max",
     "singleton-ev1",
     "collective-gs-vd",
@@ -125,7 +136,7 @@ EXTERNAL_HARNESS_SOURCES = (
 )
 
 
-def build_scenario(*, name: ScenarioName) -> tuple[Any, dict[str, Any]]:
+def build_scenario(*, name: ScenarioName) -> tuple[Model, UserParams]:
     """Build one workload after the worker has configured JAX."""
     spec = SCENARIOS[name]
     if spec.aca_assets_n_points is not None:
@@ -148,7 +159,7 @@ def build_scenario(*, name: ScenarioName) -> tuple[Any, dict[str, Any]]:
 
 def _build_aca_baseline(
     *, assets_n_points: int, consumption_n_points: int
-) -> tuple[Any, dict[str, Any]]:
+) -> tuple[Model, UserParams]:
     from dataclasses import replace
 
     import aca_model.benchmark as aca_benchmark
@@ -174,13 +185,13 @@ def _build_aca_baseline(
     return model, params
 
 
-def _build_singleton_hard_max() -> tuple[Any, dict[str, Any]]:
+def _build_singleton_hard_max() -> tuple[Model, UserParams]:
     from benchmarks.asv.bench_precautionary_savings import _make_model
 
     return _make_model(wealth_n_points=500, consumption_n_points=500)
 
 
-def _build_singleton_ev1() -> tuple[Any, dict[str, Any]]:
+def _build_singleton_ev1() -> tuple[Model, UserParams]:
     from benchmarks.asv.bench_iskhakov_et_al_2017 import _make_model_and_params
 
     return _make_model_and_params(
@@ -190,13 +201,13 @@ def _build_singleton_ev1() -> tuple[Any, dict[str, Any]]:
     )
 
 
-def _build_collective_gs_vd() -> tuple[Any, dict[str, Any]]:
+def _build_collective_gs_vd() -> tuple[Model, UserParams]:
     from benchmarks.asv.bench_collective_household import _make_model
 
     return _make_model()
 
 
-def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
+def _build_distributed_co_map() -> tuple[Model, UserParams]:
     import jax.numpy as jnp
 
     import lcm
@@ -242,8 +253,8 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
 
     wealth = LinSpacedGrid(start=1.0, stop=100.0, n_points=500)
     consumption = LinSpacedGrid(start=0.1, stop=100.0, n_points=500)
-    execution_kwargs: dict[str, Any] = {}
-    type_grid_kwargs: dict[str, Any] = {"category_class": PermanentType}
+    execution_kwargs: _gpu_mem.BudgetExecutionKwargs = {}
+    type_grid_kwargs: _TypeGridKwargs = {"category_class": PermanentType}
     if hasattr(lcm, "ExecutionConfig"):
         budgeted = _gpu_mem.default_budget_execution_kwargs()
         execution_kwargs["execution_config"] = replace(
@@ -289,7 +300,7 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
     return model, {"discount_factor": 0.95}
 
 
-def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
+def _build_folded_hard_max() -> tuple[Model, UserParams]:
     import jax.numpy as jnp
 
     from lcm import (

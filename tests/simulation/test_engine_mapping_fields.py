@@ -6,7 +6,7 @@ runtime type check rejects rather than a value the class copies.
 
 from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any
+from typing import TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +14,10 @@ import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
-from _lcm.execution.workspace_planning import compiler_memory_reservation
+from _lcm.execution.workspace_planning import (
+    CompilerMemoryReservation,
+    compiler_memory_reservation,
+)
 from _lcm.simulation.chunk_planning import (
     SimulationChunkPlan,
     SimulationChunkProfile,
@@ -31,6 +34,53 @@ from _lcm.simulation.program_types import SimulationBuildContext
 from _lcm.simulation.residency import DeviceBufferFootprint
 from _lcm.simulation.runtime import SimulationDispatchContext
 from _lcm.simulation.subject_groups import SubjectGroupingRoute
+from _lcm.typing import PytreeValue, ShapeDtypePytree
+from lcm.typing import RegimeName
+
+
+class _ProfileFields(TypedDict, total=False):
+    n_subjects: int
+    padded_population: int
+    stages: tuple[SimulationStageProfile, ...]
+    fixed_reservation: MappingProxyType[jax.Device, int] | dict[jax.Device, int]
+    output_reservation: MappingProxyType[jax.Device, int] | dict[jax.Device, int]
+    setup_reservation: MappingProxyType[jax.Device, int] | dict[jax.Device, int]
+    axis_widths: MappingProxyType[str, int] | dict[str, int]
+
+
+class _AbstractFields(TypedDict, total=False):
+    executable: jax.stages.Compiled
+    arguments: MappingProxyType[str, ShapeDtypePytree] | dict[str, ShapeDtypePytree]
+    memory: CompilerMemoryReservation
+
+
+class _BuildFields(TypedDict, total=False):
+    state_action_space: None
+    next_regime_to_V_arr: MappingProxyType[RegimeName, jax.Array]
+    next_regime_to_continuation: MappingProxyType[
+        RegimeName, Callable[..., PytreeValue]
+    ]
+    flat_params: MappingProxyType[str, jax.Array]
+    period: int
+    ages: None
+    call_arguments: (
+        MappingProxyType[str, PytreeValue | ShapeDtypePytree]
+        | dict[str, PytreeValue | ShapeDtypePytree]
+    )
+
+
+type _EngineRecord = (
+    DeviceBufferFootprint
+    | SimulationMemory
+    | SimulationDispatchContext
+    | SimulationChunkProfile
+    | SimulationChunkPlan
+    | DiagnosticBinding
+    | AbstractSimulationProfile
+    | SimulationBuildContext
+    | SubjectGroupingRoute
+)
+type _EngineTree = MappingProxyType[str, PytreeValue | ShapeDtypePytree]
 
 
 def _increment(*, source: jax.Array) -> jax.Array:
@@ -42,7 +92,7 @@ def _compiled() -> jax.stages.Compiled:
     return jax.jit(_increment).lower(source=source).compile()
 
 
-def _profile(**overrides: Any) -> SimulationChunkProfile:
+def _profile(**overrides: Unpack[_ProfileFields]) -> SimulationChunkProfile:
     device = jax.devices()[0]
     compiled = _compiled()
     stage = SimulationStageProfile(
@@ -53,7 +103,7 @@ def _profile(**overrides: Any) -> SimulationChunkProfile:
             compiled=compiled, widths=MappingProxyType({})
         ),
     )
-    fields: dict[str, Any] = {
+    fields: _ProfileFields = {
         "n_subjects": 4,
         "padded_population": 4,
         "stages": (stage,),
@@ -62,14 +112,14 @@ def _profile(**overrides: Any) -> SimulationChunkProfile:
         "setup_reservation": MappingProxyType({}),
         "axis_widths": MappingProxyType({}),
     }
-    return SimulationChunkProfile(**fields | overrides)
+    return SimulationChunkProfile(**fields | overrides)  # ty: ignore[invalid-argument-type]
 
 
 def _abstract_profile(
-    cls: type[AbstractSimulationProfile], **overrides: Any
+    cls: type[AbstractSimulationProfile], **overrides: Unpack[_AbstractFields]
 ) -> AbstractSimulationProfile:
     compiled = _compiled()
-    fields: dict[str, Any] = {
+    fields: _AbstractFields = {
         "executable": compiled,
         "arguments": MappingProxyType(
             {"source": jax.ShapeDtypeStruct((4,), jnp.int32)}
@@ -78,15 +128,15 @@ def _abstract_profile(
             compiled=compiled, widths=MappingProxyType({})
         ),
     }
-    return cls(**fields | overrides)
+    return cls(**fields | overrides)  # ty: ignore[invalid-argument-type]
 
 
 def _footprint() -> DeviceBufferFootprint:
     return DeviceBufferFootprint(spans=MappingProxyType({}))
 
 
-def _build_context(**overrides: Any) -> SimulationBuildContext:
-    fields: dict[str, Any] = {
+def _build_context(**overrides: Unpack[_BuildFields]) -> SimulationBuildContext:
+    fields: _BuildFields = {
         "state_action_space": None,
         "next_regime_to_V_arr": MappingProxyType({}),
         "next_regime_to_continuation": MappingProxyType({}),
@@ -95,10 +145,10 @@ def _build_context(**overrides: Any) -> SimulationBuildContext:
         "ages": None,
         "call_arguments": MappingProxyType({"state": jnp.zeros(4)}),
     }
-    return SimulationBuildContext(**fields | overrides)
+    return SimulationBuildContext(**fields | overrides)  # ty: ignore[invalid-argument-type]
 
 
-_PLAIN_DICT_CONSTRUCTIONS: dict[str, Callable[[], object]] = {
+_PLAIN_DICT_CONSTRUCTIONS: dict[str, Callable[[], _EngineRecord]] = {
     "footprint.spans": lambda: DeviceBufferFootprint(spans={}),  # ty: ignore[invalid-argument-type]
     "memory.axis_widths": lambda: SimulationMemory(
         budget_bytes=1,
@@ -155,14 +205,14 @@ _PLAIN_DICT_CONSTRUCTIONS: dict[str, Callable[[], object]] = {
     ids=list(_PLAIN_DICT_CONSTRUCTIONS),
 )
 def test_engine_mapping_field_rejects_a_plain_dict(
-    construct: Callable[[], object],
+    construct: Callable[[], _EngineRecord],
 ) -> None:
     """Constructing an engine dataclass with a plain dict mapping field fails."""
     with pytest.raises(BeartypeCallHintParamViolation):
         construct()
 
 
-_TREE_FIELDS: dict[str, Callable[[], MappingProxyType]] = {
+_TREE_FIELDS: dict[str, Callable[[], _EngineTree]] = {
     "diagnostic.arguments": lambda: (
         DiagnosticBinding(
             function=_increment,
@@ -181,7 +231,7 @@ _TREE_FIELDS: dict[str, Callable[[], MappingProxyType]] = {
 
 @pytest.mark.parametrize("read", list(_TREE_FIELDS.values()), ids=list(_TREE_FIELDS))
 def test_engine_tree_field_round_trips_through_jax_tree_utilities(
-    read: Callable[[], MappingProxyType],
+    read: Callable[[], _EngineTree],
 ) -> None:
     """A mapping field that reaches JAX tree utilities rebuilds as the same view."""
     field = read()

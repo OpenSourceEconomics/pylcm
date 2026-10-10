@@ -49,6 +49,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.envelope_configs import envelope_config
 from tests.test_models.ds2024_housing import (
@@ -354,7 +355,7 @@ def build_params(
     return_housing: float = 0.10,
     theta: float = 2.0,
     bequest_shift: float = 200.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Calibration parameters for the DS-2024 discrete-housing model.
 
     Args:

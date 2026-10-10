@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Hashable, Mapping
 from types import SimpleNamespace
-from typing import Literal, cast
+from typing import Literal, Never, cast
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +19,19 @@ from _lcm.execution.workspace_planning import (
     workspace_width_candidates,
 )
 from lcm.exceptions import ExecutionPlanningError
-from tests.execution.test_compiler_allocation_reservation import memory_stats
+from tests.execution.test_compiler_allocation_reservation import (
+    AllocationCounter,
+    memory_stats,
+)
+
+type InvalidAnalysis = (
+    int
+    | SimpleNamespace
+    | list[int]
+    | list[SimpleNamespace]
+    | Mapping[str, int | SimpleNamespace | Mapping[str, int]]
+    | None
+)
 
 
 class _Reduction:
@@ -37,16 +49,16 @@ class _IntSubclass(int):
     pass
 
 
-class _Executable:
+class _Executable[Analysis]:
     def __init__(
-        self, *, analysis: object, analysis_error: Exception | None = None
+        self, *, analysis: Analysis, analysis_error: Exception | None = None
     ) -> None:
         self.analysis = analysis
         self.analysis_error = analysis_error
         self.memory_analysis_calls = 0
         self.executed = False
 
-    def memory_analysis(self) -> object:
+    def memory_analysis(self) -> Analysis:
         self.memory_analysis_calls += 1
         if self.analysis_error is not None:
             raise self.analysis_error
@@ -57,12 +69,12 @@ class _Executable:
         raise AssertionError("workspace planning must never execute a candidate")
 
 
-class _Compiler:
-    def __init__(self, analysis_for: Callable[[dict[str, int]], object]) -> None:
+class _Compiler[Analysis]:
+    def __init__(self, analysis_for: Callable[[dict[str, int]], Analysis]) -> None:
         self.analysis_for = analysis_for
-        self.calls: list[tuple[dict[str, int], _Executable]] = []
+        self.calls: list[tuple[dict[str, int], _Executable[Analysis]]] = []
 
-    def __call__(self, widths: Mapping[str, int]) -> _Executable:
+    def __call__(self, widths: Mapping[str, int]) -> _Executable[Analysis]:
         snapshot = dict(widths)
         executable = _Executable(analysis=self.analysis_for(snapshot))
         self.calls.append((snapshot, executable))
@@ -113,7 +125,7 @@ def _tiled(
     )
 
 
-def _stats(peak: object) -> SimpleNamespace:
+def _stats(peak: AllocationCounter) -> SimpleNamespace:
     return memory_stats(peak=peak)
 
 
@@ -321,7 +333,7 @@ def test_peak_equal_to_budget_is_feasible() -> None:
 
 
 def test_width_product_then_declaration_order_lexicographic_widths_rank_plans() -> None:
-    def analysis_for(widths: dict[str, int]) -> object:
+    def analysis_for(widths: dict[str, int]) -> SimpleNamespace:
         return _stats(0 if widths["outer"] * widths["inner"] <= 8 else 2)
 
     compiler = _Compiler(analysis_for)
@@ -389,7 +401,7 @@ def test_real_compiled_report_is_a_compiler_memory_report() -> None:
     ),
 )
 def test_report_that_is_not_an_allocation_record_fails_closed(
-    analysis: object,
+    analysis: InvalidAnalysis,
 ) -> None:
     """Only the attribute record JAX returns on every backend is read."""
     compiler = _Compiler(lambda _widths: analysis)
@@ -422,7 +434,7 @@ def test_report_that_is_not_an_allocation_record_fails_closed(
         "per-device-peak-collection",
     ),
 )
-def test_malformed_memory_analysis_fails_closed(analysis: object) -> None:
+def test_malformed_memory_analysis_fails_closed(analysis: SimpleNamespace) -> None:
     compiler = _Compiler(lambda _widths: analysis)
 
     with pytest.raises(ExecutionPlanningError, match="no valid per-device reservation"):
@@ -439,7 +451,7 @@ def test_malformed_memory_analysis_fails_closed(analysis: object) -> None:
     [object(), SimpleNamespace(memory_analysis=7)],
     ids=("missing-method", "non-callable-method"),
 )
-def test_missing_memory_analysis_fails_closed(compiled: object) -> None:
+def test_missing_memory_analysis_fails_closed(compiled: object) -> None:  # noqa: PAN001 - Includes arbitrary missing-method rejection witness.
     with pytest.raises(ExecutionPlanningError, match="analysis is unavailable"):
         plan_workspace(
             axes=(_axis(),),
@@ -468,7 +480,7 @@ def test_failing_memory_analysis_is_wrapped_with_its_cause() -> None:
 def test_compile_exceptions_propagate_unchanged(budget_bytes: int | None) -> None:
     failure = RuntimeError("compiler refused the candidate")
 
-    def fail_compile(_widths: Mapping[str, int]) -> object:
+    def fail_compile(_widths: Mapping[str, int]) -> Never:
         raise failure
 
     with pytest.raises(RuntimeError) as caught:
@@ -552,7 +564,7 @@ def test_workspace_plan_refuses_a_plain_dict_of_widths() -> None:
 def test_duplicate_axis_names_are_rejected_before_compilation() -> None:
     compile_calls = 0
 
-    def compile_candidate(_widths: Mapping[str, int]) -> object:
+    def compile_candidate(_widths: Mapping[str, int]) -> object:  # noqa: PAN001 - Returns a fresh opaque witness; compilation must not be reached.
         nonlocal compile_calls
         compile_calls += 1
         return object()
@@ -638,7 +650,7 @@ def test_invalid_axis_extent_assumptions_are_rejected_at_the_planner_seam(
     ids=("bool", "float", "int-subclass", "zero", "negative"),
 )
 def test_invalid_fixed_width_is_rejected_before_compilation(
-    *, fixed_width: object, error: type[Exception], match: str
+    *, fixed_width: float, error: type[Exception], match: str
 ) -> None:
     with pytest.raises(error, match=match):
         plan_workspace(
@@ -685,11 +697,11 @@ def test_an_axis_whose_name_was_emptied_is_rejected_at_the_planner_seam() -> Non
     ids=("bool", "float", "int-subclass", "zero", "negative"),
 )
 def test_invalid_budget_is_rejected_before_compilation(
-    *, budget: object, error: type[Exception], match: str
+    *, budget: float, error: type[Exception], match: str
 ) -> None:
     compile_calls = 0
 
-    def compile_candidate(_widths: Mapping[str, int]) -> object:
+    def compile_candidate(_widths: Mapping[str, int]) -> object:  # noqa: PAN001 - Returns a fresh opaque witness; compilation must not be reached.
         nonlocal compile_calls
         compile_calls += 1
         return object()
@@ -708,7 +720,7 @@ def test_non_callable_compiler_is_rejected() -> None:
     with pytest.raises(BeartypeCallHintViolation):
         plan_workspace(
             axes=(_axis(),),
-            compile_candidate=cast("Callable[[Mapping[str, int]], object]", object()),
+            compile_candidate=object(),  # ty: ignore[invalid-argument-type]
         )
 
 

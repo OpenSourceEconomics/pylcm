@@ -28,6 +28,9 @@ import shlex
 from collections.abc import Sequence
 from pathlib import Path
 
+type CommandArgument = str
+
+
 FOUR_DEVICE_TEST_FILES = (
     "tests/test_distributed.py",
     "tests/execution/test_transfer_catalogue.py",
@@ -62,7 +65,7 @@ EIGHT_DEVICE_TEST_FILES = (
 
 
 def ignore_implicit_eight_device_collection(
-    *, collection_path: Path, root: Path, invocation_args: Sequence[str]
+    *, collection_path: Path, root: Path, invocation_args: Sequence[CommandArgument]
 ) -> bool:
     """Exclude registered native witnesses unless their file is explicitly named."""
     registered = {root / name for name in EIGHT_DEVICE_TEST_FILES}

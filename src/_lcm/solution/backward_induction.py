@@ -6967,7 +6967,7 @@ def _lowering_key(
     *,
     program_identity: Hashable,
     layout_key: Hashable,
-    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree] | None = None,
+    arguments: Mapping[ReferenceName, ArgumentTree] | None = None,
     specialization_key: Hashable | None = None,
     output_roles: OutputRoleTree = None,
     donated_arguments: tuple[str, ...] = (),

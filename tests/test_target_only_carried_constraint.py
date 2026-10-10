@@ -161,7 +161,7 @@ def _working() -> UserRegime:
 
 
 def _solve_working_V(model: Model) -> list[FloatND]:
-    params = cast("dict", model.get_params_template())
+    params = cast("dict[str, dict[str, dict[str, float]]]", model.get_params_template())
     for regime_params in params.values():
         aggregator = regime_params.get("koopmans_aggregator")
         if aggregator is not None and "discount_factor" in aggregator:

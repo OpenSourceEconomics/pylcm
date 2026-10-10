@@ -73,6 +73,7 @@ from _lcm.regime_building.gated_edges import (
     TARGET_PARAMS,
 )
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
+from _lcm.regime_law import RegimeLawDeclaration
 from _lcm.simulation.gated_routing import (
     _call_vmapped_with_accepted_kwargs,
     bind_provenance_params,
@@ -81,6 +82,7 @@ from _lcm.simulation.gated_routing import (
 )
 from _lcm.simulation.simulate import _initial_own_stakeholder
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import QualifiedName
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -98,7 +100,14 @@ from lcm import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.transition import StochasticTransition
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    RegimeName,
+    ScalarInt,
+)
 from tests.regime_building.test_collective_regime_simulate import (
     _solve_and_process,
     _solve_dissolution,
@@ -195,7 +204,7 @@ def _make_f2_regimes() -> dict[str, Regime]:
     return {"src": src, "target": target, "fallback": fallback}
 
 
-def _make_f2_laws() -> dict[str, object]:
+def _make_f2_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """`src` routes into `target` through a gated edge falling back to `fallback`."""
     return {
         "src": Transition(
@@ -286,7 +295,7 @@ def _f2_same_period_mappings(*, regimes, flat_params, solution):
     return same_period_mappings
 
 
-def exposed_param_name(*, evaluator, qname: str, namespace: str) -> str:
+def exposed_param_name(*, evaluator, qname: QualifiedName, namespace: str) -> str:
     """The signature leaf under which `evaluator` exposes `namespace`'s `qname`.
 
     Shared with `test_gated_edge_simulate_operand_recompute.py`: a test that
@@ -539,7 +548,7 @@ def _make_f3_regimes() -> dict[str, Regime]:
     }
 
 
-def _make_f3_laws() -> dict[str, object]:
+def _make_f3_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """`src` routes into the stateless target, falling back to a stateless regime."""
     return {
         "src": Transition(

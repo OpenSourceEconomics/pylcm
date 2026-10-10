@@ -16,8 +16,25 @@ or silently re-flagging a route in either place is a census failure.
 import ast
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
-from typing import cast
+from types import EllipsisType, MappingProxyType
+
+from lcm.typing import FunctionName, RegimeName
+
+type PythonSource = str
+type LiteralValue = (
+    bool
+    | int
+    | float
+    | complex
+    | str
+    | bytes
+    | EllipsisType
+    | tuple[LiteralValue, ...]
+    | list[LiteralValue]
+    | dict[LiteralValue, LiteralValue]
+    | set[LiteralValue]
+    | None
+)
 
 # A plain ride-along NB-EGM kernel reached through `ride_along_kernel`.
 RIDE_ALONG = "ride_along"
@@ -45,11 +62,11 @@ class RouteIdentity:
 
     module: str
     """The test-model module the route builds its model from."""
-    model_kwargs: tuple[tuple[str, object], ...]
+    model_kwargs: tuple[tuple[str, LiteralValue], ...]
     """Sorted semantic keywords of the model builder call."""
-    params_kwargs: tuple[tuple[str, object], ...]
+    params_kwargs: tuple[tuple[str, LiteralValue], ...]
     """Sorted semantic keywords of the parameter builder call, or its literal."""
-    regime_name: str = "alive"
+    regime_name: RegimeName = "alive"
     """The regime whose kernel is checked."""
     period: int | None = None
     """The period whose kernel is checked, `None` for the route's default."""
@@ -57,17 +74,17 @@ class RouteIdentity:
     """How the kernel is reached."""
 
 
-def _kw(**kwargs: object) -> tuple[tuple[str, object], ...]:
+def _kw(**kwargs: LiteralValue) -> tuple[tuple[str, LiteralValue], ...]:
     return tuple(sorted(kwargs.items()))
 
 
 def _ride(
     *,
     module: str,
-    params: tuple[tuple[str, object], ...] = (),
-    regime_name: str = "alive",
+    params: tuple[tuple[str, LiteralValue], ...] = (),
+    regime_name: RegimeName = "alive",
     period: int | None = None,
-    **model_kwargs: object,
+    **model_kwargs: LiteralValue,
 ) -> RouteIdentity:
     return RouteIdentity(
         module=module,
@@ -256,7 +273,7 @@ SUPPORTED_ROUTES: Mapping[str, RouteIdentity] = MappingProxyType(
 # the test module, the function in it that builds the model, and the semantic
 # flags that function passes. The census requires a supported ride-discrete route
 # with exactly those flags.
-POSITIVE_WITNESSES: tuple[tuple[str, str, Mapping[str, object]], ...] = (
+POSITIVE_WITNESSES: tuple[tuple[str, FunctionName, Mapping[str, bool]], ...] = (
     (
         "tests/solution/test_nbegm_action_in_liquid_law_agreement.py",
         "_solve",
@@ -319,7 +336,7 @@ POSITIVE_WITNESSES: tuple[tuple[str, str, Mapping[str, object]], ...] = (
 
 
 def declared_route_identities(
-    *, source: str, table_name: str, context: str
+    *, source: PythonSource, table_name: str, context: str
 ) -> dict[str, RouteIdentity]:
     """Derive the route identities a route table in `source` declares.
 
@@ -358,20 +375,18 @@ def declared_route_identities(
                 f"not from {module!r}."
             )
             raise ValueError(msg)
+        regime_name = (
+            _literal(keywords["regime_name"]) if "regime_name" in keywords else "alive"
+        )
+        period = _literal(keywords["period"]) if "period" in keywords else None
+        assert isinstance(regime_name, str)
+        assert period is None or isinstance(period, int)
         identities[name] = RouteIdentity(
             module=module,
             model_kwargs=model_kwargs,
             params_kwargs=params_kwargs,
-            regime_name=cast(
-                "str",
-                _literal(keywords["regime_name"])
-                if "regime_name" in keywords
-                else "alive",
-            ),
-            period=cast(
-                "int | None",
-                _literal(keywords["period"]) if "period" in keywords else None,
-            ),
+            regime_name=regime_name,
+            period=period,
             context=context,
         )
     return identities
@@ -409,7 +424,9 @@ def census_discrepancies(
     return tuple(discrepancies)
 
 
-def witness_flags(*, source: str, function: str) -> dict[str, object]:
+def witness_flags(
+    *, source: PythonSource, function: FunctionName
+) -> dict[str, LiteralValue]:
     """Return the semantic flags the model-builder call in `function` passes.
 
     The function must contain exactly one `<module>.build_model(...)` call.
@@ -446,7 +463,7 @@ def _module_level_tuple(*, tree: ast.Module, name: str) -> ast.Tuple:
 
 def _builder_call(
     *, expression: ast.expr, attributes: set[str]
-) -> tuple[str, tuple[tuple[str, object], ...]]:
+) -> tuple[str, tuple[tuple[str, LiteralValue], ...]]:
     body = expression.body if isinstance(expression, ast.Lambda) else expression
     if not (
         isinstance(body, ast.Call)
@@ -461,7 +478,7 @@ def _builder_call(
 
 def _params_declaration(
     expression: ast.expr,
-) -> tuple[str | None, tuple[tuple[str, object], ...]]:
+) -> tuple[str | None, tuple[tuple[str, LiteralValue], ...]]:
     body = expression.body if isinstance(expression, ast.Lambda) else expression
     if isinstance(body, ast.Attribute) and body.attr == "build_params":
         owner = body.value
@@ -476,7 +493,7 @@ def _params_declaration(
     return None, (("value", ast.unparse(body)),)
 
 
-def _semantic_keywords(call: ast.Call) -> tuple[tuple[str, object], ...]:
+def _semantic_keywords(call: ast.Call) -> tuple[tuple[str, LiteralValue], ...]:
     keywords = {}
     for keyword in call.keywords:
         if keyword.arg is None or keyword.arg in GRID_SIZE_KEYWORDS:
@@ -485,7 +502,7 @@ def _semantic_keywords(call: ast.Call) -> tuple[tuple[str, object], ...]:
     return tuple(sorted(keywords.items()))
 
 
-def _literal(node: ast.expr) -> object:
+def _literal(node: ast.expr) -> LiteralValue:
     try:
         return ast.literal_eval(node)
     except ValueError:

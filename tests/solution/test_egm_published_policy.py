@@ -10,7 +10,7 @@ action-grid nodes (where a grid argmax cannot land).
 """
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Unpack
 
 import jax.numpy as jnp
 import numpy as np
@@ -19,6 +19,7 @@ import pytest
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.solution import backward_induction
+from _lcm.typing import ArtifactPayload
 from _lcm.utils.logging import get_logger
 from lcm import AgeGrid, LogSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
@@ -26,6 +27,7 @@ from lcm.solver_api import SIMULATION_POLICY, ArtifactRef
 from lcm.typing import ContinuousState, FloatND, RegimeName, UserParams
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.solution._callback_types import RunPeriodKernelKwargs, RunPeriodKernelResult
 from tests.test_models import n_nbegm_toy
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
@@ -60,17 +62,17 @@ def _two_period_bequest_model() -> Model:
 
 def _kernel_published_policies(
     *, model: Model, params: UserParams, monkeypatch: pytest.MonkeyPatch
-) -> Mapping[int, Mapping[RegimeName, object]]:
+) -> Mapping[int, Mapping[RegimeName, ArtifactPayload]]:
     """Return every simulation policy the model's kernels publish, by period.
 
     No shipped DCEGM envelope currently opens the simulation read route. Request
     this one exact artifact address so the internal solve dispatches the replay
     specialization, then read the kernel's own publication off its output.
     """
-    published: dict[int, dict[RegimeName, object]] = {}
+    published: dict[int, dict[RegimeName, ArtifactPayload]] = {}
     original = backward_induction._run_period_kernel
 
-    def recording(**kwargs: Any) -> Any:
+    def recording(**kwargs: Unpack[RunPeriodKernelKwargs]) -> RunPeriodKernelResult:
         output = original(**kwargs)
         if SIMULATION_POLICY in output.replay:
             published.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = (

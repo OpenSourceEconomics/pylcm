@@ -15,6 +15,8 @@ reproduce the dense `GridSearch` value across the asset interior in both `kind`
 slices — the value oracle for the per-interval continuation.
 """
 
+from typing import Unpack
+
 import jax.numpy as jnp
 
 import lcm
@@ -33,8 +35,10 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
     UserFunction,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
+    NBEGMKwargs,
     feasible,
     make_alive_dead_model,
     resolve_solver,
@@ -108,7 +112,7 @@ def build_model(
     savings_floor: float = 0.0,
     savings_max: float = 28.0,
     execution_config: lcm.ExecutionConfig = lcm.ExecutionConfig(),  # noqa: B008
-    **solver_kwargs: object,
+    **solver_kwargs: Unpack[NBEGMKwargs],
 ) -> Model:
     """Create the (alive, dead) toy whose next-asset law jumps at a liquid cliff."""
     alive_functions = {
@@ -164,7 +168,7 @@ def build_params(
     base_income_hi: float = 4.0,
     medicaid_limit: float = 12.0,
     transfer_amount: float = 2.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the next-asset-cliff toy."""
     base_income = jnp.array([base_income_lo, base_income_hi])
     alive_budget = {"return_liquid": return_liquid, "income": income}

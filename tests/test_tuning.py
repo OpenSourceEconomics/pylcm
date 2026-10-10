@@ -367,7 +367,10 @@ def _x64_precision() -> str:
     ],
 )
 def test_tuned_settings_key_carries_the_identity_field(
-    *, faster_record: TunedSettings, field: str, expected: Callable[[], object]
+    *,
+    faster_record: TunedSettings,
+    field: str,
+    expected: Callable[[], int | str | tuple[()] | None],
 ) -> None:
     assert getattr(faster_record.key, field) == expected()
 
@@ -411,7 +414,9 @@ def test_solve_values_returns_a_read_only_mapping() -> None:
     assert isinstance(values, MappingProxyType)
 
 
-def _steps(*, start: float, n_steps: int, toward: float, dtype: type) -> np.ndarray:
+def _steps(
+    *, start: float, n_steps: int, toward: float, dtype: type[np.float32 | np.float64]
+) -> np.ndarray:
     """Walk `n_steps` representable neighbours from `start` with `np.nextafter`."""
     value = dtype(start)
     for _ in range(n_steps):
@@ -430,7 +435,7 @@ def _steps(*, start: float, n_steps: int, toward: float, dtype: type) -> np.ndar
     ],
 )
 def test_array_ulp_gap_counts_representable_neighbours(
-    *, dtype: type, start: float, n_steps: int, toward: float
+    *, dtype: type[np.float32 | np.float64], start: float, n_steps: int, toward: float
 ) -> None:
     got = _array_ulp_gap(
         expected=np.array([start], dtype=dtype),

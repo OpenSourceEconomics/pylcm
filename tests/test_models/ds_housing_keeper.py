@@ -63,6 +63,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 
@@ -337,7 +338,9 @@ def build_model(variant: Literal["dcegm", "brute"] = "dcegm") -> Model:
     )
 
 
-def build_params(variant: Literal["dcegm", "brute"] = "dcegm") -> dict:
+def build_params(
+    variant: Literal["dcegm", "brute"] = "dcegm",
+) -> dict[str, UserParamsNode]:
     """Calibration parameters for the keeper model.
 
     Mirrors the InverseDCDP `housing.py` defaults for the preference and

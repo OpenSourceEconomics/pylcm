@@ -28,6 +28,7 @@ from _lcm.execution.scheduler import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
+from lcm.typing import RegimeName
 
 
 def _logger() -> logging.Logger:
@@ -508,7 +509,7 @@ def test_a_registration_stays_live_while_its_array_lives() -> None:
     assert registry.artifacts_sharing(array=alias) == frozenset({"x"})
 
 
-def _node(*, regime: str, program: str = "main") -> ScheduledNode:
+def _node(*, regime: RegimeName, program: str = "main") -> ScheduledNode:
     return ScheduledNode(period=3, regime=regime, program=program)
 
 

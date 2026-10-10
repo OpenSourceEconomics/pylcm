@@ -7,10 +7,11 @@ at dispatch that the arrays handed over match that declaration.
 import dataclasses
 from collections.abc import Hashable, Mapping
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Literal, TypedDict, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
@@ -21,6 +22,7 @@ from _lcm.execution.core_program import (
     CoreProgram,
     InternalInputRef,
     InternalOutputSpec,
+    MaterializedCoreProgram,
     ProgramScope,
     core_program_graph,
     materialize_core_program,
@@ -44,6 +46,11 @@ from _lcm.typing import FloatND
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 from lcm.solvers import ReducedAxis
+
+
+class _ConsumerTemplates(TypedDict):
+    upstream_value: jax.ShapeDtypeStruct
+    upstream_carry: dict[str, jax.ShapeDtypeStruct]
 
 
 def _producer_function(*, x):
@@ -142,7 +149,7 @@ class _MaxReduction:
 
 
 def _records(
-    *, materialized: Mapping[str, Any], names: tuple[str, ...]
+    *, materialized: Mapping[str, MaterializedCoreProgram], names: tuple[str, ...]
 ) -> dict[str, MappingProxyType[Hashable, ResolvedProducer]]:
     """Trace the named producers once each and key them by one width candidate.
 
@@ -155,7 +162,9 @@ def _records(
     }
 
 
-def _one_record(*, program: Any) -> dict[Hashable, ResolvedProducer]:
+def _one_record(
+    *, program: MaterializedCoreProgram
+) -> dict[Hashable, ResolvedProducer]:
     """Trace one producer that reads nothing and streams nothing."""
     return {
         (): resolve_producer(
@@ -280,7 +289,7 @@ def test_consumers_are_ordered_after_their_producers() -> None:
     assert topological_program_order(graph=graph) == ("producer", "consumer")
 
 
-def _consumer_templates() -> Mapping[str, Any]:
+def _consumer_templates() -> _ConsumerTemplates:
     """Trace the two-producer fixture graph and return the consumer's templates."""
     graph = core_program_graph(kernel=_Kernel(programs=_graph()))
     materialized = {
@@ -288,7 +297,7 @@ def _consumer_templates() -> Mapping[str, Any]:
         for name, program in graph.items()
     }
     return cast(
-        "Mapping[str, Any]",
+        "_ConsumerTemplates",
         internal_input_templates(
             program=materialized["consumer"],
             producers=_records(materialized=materialized, names=("producer",)),
@@ -317,7 +326,7 @@ def _consumer_templates() -> Mapping[str, Any]:
     ],
 )
 def test_templates_take_the_producers_abstract_output_shapes(
-    *, actual: object, expected: object
+    *, actual: tuple[int, ...] | np.dtype, expected: tuple[int, ...] | np.dtype
 ) -> None:
     """Each internal-input template carries the shape and dtype it will receive."""
     assert actual == expected
@@ -415,7 +424,9 @@ def test_an_internal_input_may_not_collide_with_a_built_argument() -> None:
         )
 
 
-def _materialized_graph(programs: Mapping[str, CoreProgram]) -> dict[str, Any]:
+def _materialized_graph(
+    programs: Mapping[str, CoreProgram],
+) -> dict[str, MaterializedCoreProgram]:
     """Materialize every program of a graph against the shared build context."""
     graph = core_program_graph(kernel=_Kernel(programs=programs))
     return {
@@ -561,7 +572,7 @@ def test_a_producer_is_traced_with_its_own_internal_input_template() -> None:
     }
 
     templates = cast(
-        "Mapping[str, Any]",
+        "Mapping[str, jax.ShapeDtypeStruct]",
         internal_input_templates(
             program=materialized["leaf"],
             producers={"middle": MappingProxyType(middle_record)},
@@ -611,7 +622,9 @@ def test_a_planned_producers_static_width_reaches_its_abstract_output() -> None:
 
     narrow = next(iter(candidates.values()))
 
-    assert cast("Any", narrow.abstract_output)[1].shape == (3,)
+    assert cast(
+        "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]", narrow.abstract_output
+    )[1].shape == (3,)
 
 
 def test_a_width_dependent_published_output_is_refused() -> None:
@@ -710,8 +723,12 @@ def _width_dependent_scalar_leaves() -> tuple[
     """Return the scalar published at the narrow and at the wide width."""
     narrow, wide = _scalar_candidates(weak_widths=frozenset({2})).values()
     return (
-        cast("Any", narrow.abstract_output)[1],
-        cast("Any", wide.abstract_output)[1],
+        cast(
+            "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]", narrow.abstract_output
+        )[1],
+        cast("tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]", wide.abstract_output)[
+            1
+        ],
     )
 
 

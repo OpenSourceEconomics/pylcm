@@ -3,12 +3,12 @@
 import gc
 import threading
 import weakref
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from functools import partialmethod
 from pathlib import Path
-from typing import Any, cast
+from typing import Concatenate, Never, TypedDict, Unpack, cast
 
 import h5py
 import jax
@@ -22,7 +22,9 @@ from _lcm.persistence import solution as archive
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import SimulationEntryInputs
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
+from _lcm.solution import native_values as native_module
 from _lcm.solution.native_values import NativeValueMaterializer
+from _lcm.typing import ArtifactPayload, PytreeValue
 from lcm import ExecutionConfig
 from lcm.exceptions import (
     ExecutionPlanningError,
@@ -32,9 +34,25 @@ from lcm.exceptions import (
 )
 from lcm.persistence import load_solution
 from lcm.solver_api import LoadState, SolutionResult, ValueStore
-from tests.simulation.test_foreign_result_allocation import _capture_owner
+from tests.simulation.test_foreign_result_allocation import (
+    _capture_owner,
+    _EntryOwnerInputs,
+)
 from tests.solution.test_solution_persistence import _make_values_only_solution
 from tests.solution.test_solution_result import _small_grid_search_inputs
+
+
+class _NativeReadInputs(TypedDict):
+    path: archive.Path
+    label: str
+    address: str
+    identity: archive.MappingProxyType[str, archive.JSONValue]
+    leaves: tuple[archive.MappingProxyType[str, archive.JSONValue], ...]
+
+
+class _NativeLoaderInputs(TypedDict):
+    array_writer: native_module.CanonicalArrayWriter
+    array_copier: native_module._ArrayCopier
 
 
 @pytest.mark.parametrize("preloaded", [False, True])
@@ -113,15 +131,20 @@ def test_native_upload_is_admitted_after_verification_before_device_put(
     original_read = archive._read_and_verify_leaves
     original_put = jax.device_put
 
-    def guard(value: object, *args: Any, **kwargs: Any) -> object:
-        if any(value is array for array in verified):
-            detections.append(True)
-            raise _UnadmittedAllocationError(
-                "Verified archive leaf uploaded without headroom"
-            )
-        return original_put(value, *args, **kwargs)
+    def wrap_put[Value, **P, Result](
+        original: Callable[Concatenate[Value, P], Result],
+    ) -> Callable[Concatenate[Value, P], Result]:
+        def guard(value: Value, /, *args: P.args, **kwargs: P.kwargs) -> Result:
+            if any(value is array for array in verified):
+                detections.append(True)
+                raise _UnadmittedAllocationError(
+                    "Verified archive leaf uploaded without headroom"
+                )
+            return original(value, *args, **kwargs)
 
-    def read(**kwargs: Any) -> tuple[np.ndarray, ...]:
+        return guard
+
+    def read(**kwargs: Unpack[_NativeReadInputs]) -> tuple[np.ndarray, ...]:
         arrays = original_read(**kwargs)
         verified.extend(arrays)
         live = owners[-1].snapshot()
@@ -136,7 +159,7 @@ def test_native_upload_is_admitted_after_verification_before_device_put(
         return arrays
 
     monkeypatch.setattr(archive, "_read_and_verify_leaves", read)
-    monkeypatch.setattr(jax, "device_put", guard)
+    monkeypatch.setattr(jax, "device_put", wrap_put(original_put))
     with pytest.raises(
         _UnadmittedAllocationError if failed_upload else ExecutionPlanningError
     ):
@@ -161,7 +184,7 @@ def _limit_after_first_copy(
     *,
     leaf: jax.Array,
     label: str,
-    original: Any,
+    original: Callable[..., jax.Array],
     completed: list[weakref.ReferenceType[jax.Array]],
     requested: list[bool],
     snapshots: list[bool],
@@ -201,7 +224,9 @@ def test_native_detached_copy_bank_is_charged_before_the_next_dispatch(
     snapshots: list[bool] = []
     original_dispatch = jax.stages.Compiled.__call__
 
-    def dispatch(self: jax.stages.Compiled, *args: Any, **kwargs: Any) -> object:
+    def dispatch(
+        self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         if completed:
             raise _UnadmittedAllocationError(
                 "Second detached copy dispatched without headroom"
@@ -266,7 +291,7 @@ def test_invalid_native_envelope_is_rejected_before_archive_read(
             loaded, metadata=replace(loaded.metadata, value_schemas=schemas)
         )
 
-    def forbidden(**kwargs: Any) -> object:
+    def forbidden[Ignored](**kwargs: Ignored) -> Never:
         del kwargs
         raise AssertionError("Invalid envelope reached a native payload read")
 
@@ -299,12 +324,16 @@ def test_native_checksum_failure_leaves_no_uploaded_cache(
 
     # keyword-only-exempt: library-callback=SimulationEntryAllocations.__call__
     def guard(
-        self: SimulationEntryAllocations, *, name: str, **kwargs: Any
+        self: SimulationEntryAllocations,
+        *,
+        name: str,
+        value: np.ndarray | jax.Array,
+        dtype: np.dtype,
     ) -> jax.Array:
         assert not name.startswith("native_value:"), (
             "Corrupt native value reached upload"
         )
-        return original_write(self, name=name, **kwargs)
+        return original_write(self, name=name, value=value, dtype=dtype)
 
     monkeypatch.setattr(SimulationEntryAllocations, "__call__", guard)
     with pytest.raises(SolutionIntegrityError, match="checksum"):
@@ -342,7 +371,7 @@ def test_concurrent_native_materialization_observes_unlocked_cache_bank(
         for _ in selected
     )
 
-    def run(index: int) -> object:
+    def run(index: int) -> ArtifactPayload:
         owner = owners[index]
 
         def write(
@@ -394,12 +423,12 @@ def test_native_dependencies_and_temporary_copies_do_not_escape_the_call(
     loaders: list[weakref.ReferenceType[NativeValueMaterializer]] = []
     temporaries: list[weakref.ReferenceType[jax.Array]] = []
 
-    def create_owner(**kwargs: Any) -> SimulationEntryAllocations:
+    def create_owner(**kwargs: Unpack[_EntryOwnerInputs]) -> SimulationEntryAllocations:
         owner = SimulationEntryAllocations(**kwargs)
         owners.append(weakref.ref(owner))
         return owner
 
-    def create_loader(**kwargs: Any) -> NativeValueMaterializer:
+    def create_loader(**kwargs: Unpack[_NativeLoaderInputs]) -> NativeValueMaterializer:
         loader = NativeValueMaterializer(**kwargs)
         loaders.append(weakref.ref(loader))
         return loader

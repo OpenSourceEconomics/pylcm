@@ -5,11 +5,15 @@
 import json
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import asv
 import asv.results
 
 from benchmarks import asv_machine, publish
+
+if TYPE_CHECKING:
+    from _lcm.typing import JSONValue
 
 _ASV_WWW = Path(asv.__file__).parent / "www"
 
@@ -60,7 +64,7 @@ _PYTHON = "/runner/.pixi/envs/benchmarks-cuda12/bin/python"
 
 
 def _write_result(
-    *, machine_dir: Path, commit: str, ram: str, results: dict[str, list]
+    *, machine_dir: Path, commit: str, ram: str, results: dict[str, list[JSONValue]]
 ) -> Path:
     params = {key: val for key, val in _MACHINE.items() if key != "version"}
     params.update(ram=ram, python=_PYTHON)

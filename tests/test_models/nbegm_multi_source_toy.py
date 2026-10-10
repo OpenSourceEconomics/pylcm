@@ -24,6 +24,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     feasible,
@@ -151,7 +152,7 @@ def build_params(
     kink_a: float = 15.0,
     rate_b: float = 0.2,
     kink_b: float = 14.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the two-derived-variable budget toy.
 
     The two kinks map to per-`kind` asset preimages `liquid = kink_a - base_a[kind]`

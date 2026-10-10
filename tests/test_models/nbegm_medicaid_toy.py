@@ -15,6 +15,7 @@ uses the `NBEGM` solver over the decorated case pieces.
 
 import functools
 from collections.abc import Mapping
+from typing import Literal
 
 import jax.numpy as jnp
 
@@ -22,7 +23,7 @@ import lcm
 from _lcm.grids.base import Grid
 from lcm import LinSpacedGrid, Model, cash_on_hand_with_subsidy
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import BoolND, FloatND, UserFunction
+from lcm.typing import BoolND, FloatND, UserFunction, UserParamsNode
 
 # RegimeId, bequest, and the survival probabilities are re-exported: the
 # medicaid agreement test assembles its own validation models from these
@@ -83,7 +84,7 @@ def build_model(
     constraints: Mapping[str, UserFunction] | None = None,
     utility_function: UserFunction | AgeSpecializedFunction = utility,
     include_split_output: bool = True,
-    envelope_arithmetic: str = "certified",
+    envelope_arithmetic: Literal["certified", "ordinary"] = "certified",
 ) -> Model:
     """Create the two-regime (alive, dead) Medicaid one-asset toy.
 
@@ -142,7 +143,7 @@ def build_params(
     subsidy_high: float = 3.0,
     subsidy_low: float = 0.5,
     medicaid_asset_limit: float = 8.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the Medicaid one-asset toy.
 
     The Medicaid-eligible subsidy (`subsidy_high`) exceeds the private subsidy

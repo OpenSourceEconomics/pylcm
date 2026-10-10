@@ -153,7 +153,7 @@ def _synthetic_replay(
     q_and_f,
     state: jnp.ndarray | None = None,
     discrete_codes: list[list[int]] | None = None,
-) -> tuple[MappingProxyType, jnp.ndarray]:
+) -> tuple[MappingProxyType[str, jnp.ndarray], jnp.ndarray]:
     """Run the real replay reduction on constant synthetic candidate surfaces."""
     if state is None:
         state = jnp.array([0.37])

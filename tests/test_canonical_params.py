@@ -6,7 +6,7 @@ name, not a mangled `to_<target>_…` prefix — mirroring the canonical
 transition bundles, so param qnames parallel engine function qnames.
 """
 
-from typing import Any
+from typing import Unpack
 
 import jax.numpy as jnp
 import pytest
@@ -24,8 +24,9 @@ from lcm import (
 )
 from lcm.exceptions import InvalidParamsError
 from lcm.regime import Regime as UserRegime
+from lcm.regime import RegimeReplacement
 from lcm.transition import TransitionLaw
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import FloatND, RegimeName, ScalarInt
 
 
 @categorical(ordered=False)
@@ -63,15 +64,17 @@ _WORK_LAW = ByAge(
 )
 
 
-def _edges(*, work_law: TransitionLaw = _WORK_LAW) -> dict:
+def _edges(
+    *, work_law: TransitionLaw = _WORK_LAW
+) -> dict[RegimeName, Transition | dict[RegimeName, tuple[int, ...]]]:
     return {
         "work": Transition(targets={"retired": (0, 1), "dead": (0, 1)}, law=work_law),
         "retired": {"dead": (0, 1, 2)},
     }
 
 
-def _work_regime(**overrides: Any) -> UserRegime:
-    spec: dict[str, Any] = {
+def _work_regime(**overrides: Unpack[RegimeReplacement]) -> UserRegime:
+    spec: RegimeReplacement = {
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {
             "wealth": {

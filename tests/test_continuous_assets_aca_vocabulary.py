@@ -4,7 +4,7 @@ The synthetic model isolates phase and coordinate contracts; it is not an ACA
 production solve. Run topology witnesses in a fresh eight-device process.
 """
 
-from typing import Any
+from collections.abc import Mapping
 
 import jax
 import jax.numpy as jnp
@@ -33,7 +33,8 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import FloatND, ScalarInt
+from lcm.regime import StateEntry
+from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
 
 
 @categorical(ordered=False)
@@ -101,7 +102,7 @@ def _model(
     sharded: bool = True,
     fold: bool = False,
     widths: tuple[int, int] = (1, 1),
-    state_overrides: dict[str, Any] | None = None,
+    state_overrides: Mapping[str, StateEntry] | None = None,
     extra_shard: bool = False,
     budget: int = 2**30,
 ) -> Model:
@@ -221,7 +222,7 @@ TAUCHEN_AND_LOG_NORMAL = {
     ids=["tauchen_binned", "tauchen_gauss_hermite", "log_normal", "both"],
 )
 def test_fixed_tauchen_and_log_normal_processes_admit_continuous_sharding(
-    *, overrides: dict[str, Any]
+    *, overrides: dict[str, StateEntry]
 ) -> None:
     """Fixed Tauchen and unfolded Gauss-Hermite log-normal nodes stay unsharded."""
     model = _model(state_overrides=overrides)
@@ -277,12 +278,12 @@ def test_middle_assets_axis_retains_named_coordinates(
 
     def q(
         *,
-        next_regime_to_V_arr: Any,
-        pref_type: Any,
-        assets: Any,
-        aime: Any,
-        decision: Any,
-    ) -> tuple:
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        pref_type: IntND,
+        assets: FloatND,
+        aime: FloatND,
+        decision: IntND,
+    ) -> tuple[FloatND, BoolND]:
         del next_regime_to_V_arr
         return -4000.0 + 100 * pref_type + 10 * assets + aime - (
             decision - 1

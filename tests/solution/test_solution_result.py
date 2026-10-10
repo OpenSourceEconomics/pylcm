@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType, ModuleType
-from typing import cast
+from typing import NoReturn, NotRequired, TypedDict, Unpack, cast
 
 import cloudpickle
 import jax
@@ -21,6 +21,7 @@ import lcm.solver_api as solver_api_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.regime_building import processing as regime_processing
+from _lcm.simulation import simulate as simulation_module
 from _lcm.solution import artifacts as private_artifacts
 from _lcm.solution import backward_induction
 from _lcm.solution.contract import GENERATED_REPLAY_AUTHORITY
@@ -29,13 +30,23 @@ from _lcm.typing import (
     ArtifactPayload,
     FlatParams,
 )
-from lcm import ExecutionConfig, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    CollectiveUtility,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.exceptions import (
     ExecutionPlanningError,
     IncompatibleSolutionError,
     InvalidSimulationInputError,
     SolutionIntegrityError,
 )
+from lcm.persistence import load_solution
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -44,6 +55,7 @@ from lcm.solver_api import (
     ArtifactKey,
     ArtifactRef,
     ArtifactStore,
+    AxisDescriptor,
     AxisRole,
     LoadState,
     OmissionReason,
@@ -55,7 +67,7 @@ from lcm.solver_api import (
     ValueStore,
 )
 from lcm.solvers import MSSEnvelope
-from lcm.typing import FloatND, UserInitialConditions, UserParams
+from lcm.typing import FloatND, IntND, ScalarInt, UserInitialConditions, UserParams
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
     _make_dissolution_model,
@@ -79,6 +91,68 @@ from tests.test_models.deterministic.regression import (
 )
 
 
+class _ArtifactKeyKwargs(TypedDict):
+    type_id: str
+    schema_version: int
+
+
+class _KernelKwargs(TypedDict):
+    regime: backward_induction.Regime
+    regime_name: backward_induction.RegimeName
+    period: int
+    compiled_cores: MappingProxyType[str, backward_induction.PlannedCore]
+    capture_target: backward_induction.PeriodCaptureTarget | None
+    state_action_space: backward_induction.StateActionSpace
+    flat_params: FlatParams
+    ages: backward_induction.TimeAxis
+    next_regime_to_V_arr: MappingProxyType[backward_induction.RegimeName, FloatND]
+    next_regime_to_continuation: MappingProxyType[
+        backward_induction.RegimeName, backward_induction.ContinuationPayload
+    ]
+    logger: backward_induction.logging.Logger
+    next_edge_to_V_arr: MappingProxyType[backward_induction._EdgeKey, FloatND]
+    period_solution: Mapping[backward_induction.RegimeName, FloatND]
+    retain_replay: bool
+    selected_artifact_keys: frozenset[ArtifactKey]
+    period_capture: NotRequired[backward_induction.CaptureContext | None]
+    captured_admission: NotRequired[Mapping[str, Mapping[str, int | None]]]
+
+
+class _SimulationKwargs(TypedDict):
+    flat_params: FlatParams
+    initial_conditions: simulation_module.InitialConditions
+    regimes: MappingProxyType[simulation_module.RegimeName, simulation_module.Regime]
+    regime_names_to_ids: simulation_module.RegimeNamesToIds
+    logger: simulation_module.logging.Logger
+    period_to_regime_to_V_arr: MappingProxyType[
+        int, MappingProxyType[simulation_module.RegimeName, FloatND]
+    ]
+    ages: simulation_module.TimeAxis
+    simulation_output_dtypes: Mapping[str, simulation_module.pd.CategoricalDtype]
+    period_to_regime_to_sim_policy: NotRequired[
+        simulation_module.PeriodToRegimeToSimulationPolicy | None
+    ]
+    period_to_regime_to_replay_reader: NotRequired[
+        simulation_module._PeriodToRegimeToReplayReader
+    ]
+    seed: NotRequired[int | None]
+    taste_shock_seed: NotRequired[int | None]
+    subject_batch_size: NotRequired[int]
+    original_n_subjects: NotRequired[int | None]
+    period_to_regime_to_dissolution_flags: NotRequired[
+        MappingProxyType[
+            int,
+            MappingProxyType[simulation_module.RegimeName, simulation_module.BoolND],
+        ]
+    ]
+    device_ids: NotRequired[tuple[int, ...]]
+    retained_footprint: NotRequired[simulation_module.DeviceBufferFootprint | None]
+    prepared_chunks: NotRequired[simulation_module.PreparedSimulationChunks | None]
+    process_grid_resolver: NotRequired[simulation_module.ProcessGridResolver | None]
+    call_id: NotRequired[simulation_module.CallId | None]
+    component_values: NotRequired[simulation_module.ComponentValueSource | None]
+
+
 class _RaisingLazyValueEntry(solver_api_module._LazyEntry):
     """Raise one chosen decoder exception when the value is materialized."""
 
@@ -90,12 +164,19 @@ class _RaisingLazyValueEntry(solver_api_module._LazyEntry):
         """Report that the adversarial entry has not materialized."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
+    def materialize(
+        self,
+        *,
+        template: ArtifactPayload | None = None,  # noqa: ARG002
+    ) -> ArtifactPayload:
         """Raise the configured decoder exception."""
         raise self._error
 
 
-def _imported_module_names(source: str) -> set[str]:
+type PythonSource = str
+
+
+def _imported_module_names(source: PythonSource) -> set[str]:
     """Return every module name `source` imports when it runs.
 
     Imports under `if TYPE_CHECKING:` exist only for type checkers and are skipped.
@@ -173,10 +254,10 @@ def test_artifact_identity_includes_schema_version() -> None:
     ],
 )
 def test_invalid_artifact_key_is_rejected(
-    *, kwargs: dict[str, object], match: str
+    *, kwargs: _ArtifactKeyKwargs, match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
-        ArtifactKey(**kwargs)  # ty: ignore[invalid-argument-type]
+        ArtifactKey(**kwargs)
 
 
 def test_artifact_store_is_immutable_and_projects_one_artifact_type() -> None:
@@ -412,8 +493,10 @@ def test_solve_does_not_host_copy_policy_without_replay_route(
     original_device_put = backward_induction.jax.device_put
 
     def _reject_policy_host_copy(
-        value: object, *args: object, **kwargs: object
-    ) -> object:
+        value: object,  # noqa: PAN001 - JAX device_put accepts arbitrary registered PyTrees.
+        *args: object,  # noqa: PAN001 - JAX device_put accepts arbitrary placement prefix trees.
+        **kwargs: object,  # noqa: PAN001 - JAX device_put accepts arbitrary option prefix trees.
+    ) -> object:  # noqa: PAN001 - JAX device_put preserves arbitrary registered PyTrees.
         if isinstance(value, EGMSimPolicy):
             raise TypeError("policy without a replay route was copied to host")
         return original_device_put(value, *args, **kwargs)
@@ -474,8 +557,10 @@ def test_solve_retains_kernel_diagnostics_only_when_log_level_enables_them(
 ) -> None:
     original = backward_induction._run_period_kernel
 
-    def _with_diagnostics(**kwargs: object):
-        output = original(**kwargs)  # ty: ignore[invalid-argument-type]
+    def _with_diagnostics(
+        **kwargs: Unpack[_KernelKwargs],
+    ) -> backward_induction.KernelOutput:
+        output = original(**kwargs)
         scalar = jnp.asarray(0.0)
         flag = jnp.zeros((), dtype=jnp.bool_)
         diagnostics = SolverDiagnostics(
@@ -757,7 +842,10 @@ def test_obsolete_solve_and_simulate_interfaces_are_absent() -> None:
     assert "period_to_regime_to_dissolution_flags" not in simulate_parameters
 
 
-def _refuse_unadmitted_compiled_dispatch(*_args: object, **_kwargs: object) -> None:
+def _refuse_unadmitted_compiled_dispatch(
+    *_args: object,  # noqa: PAN001 - Rejects arbitrary compiled-core argument trees.
+    **_kwargs: object,  # noqa: PAN001 - Rejects arbitrary compiled-core argument trees.
+) -> NoReturn:
     raise AssertionError("A one-byte budget reached compiled core dispatch")
 
 
@@ -912,7 +1000,7 @@ def test_solution_result_from_another_model_instance_is_refused_at_log_off(
     target, _, initial_conditions = _small_grid_search_inputs()
     solution = source.solve(params=params, log_level="off")
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before identity preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -932,7 +1020,7 @@ def test_solution_result_with_changed_canonical_params_is_refused_before_forward
     solution = model.solve(params=params, log_level="off")
     changed_params = get_params(n_periods=2, discount_factor=0.9)
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before params preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -964,7 +1052,15 @@ def test_solution_result_value_schema_is_checked_before_forward(
         schema = solution.metadata.value_schemas[coordinate]
         schemas = dict(solution.metadata.value_schemas)
         schemas[coordinate] = replace(
-            schema, axis_names=tuple(f"wrong_{name}" for name in schema.axis_names)
+            schema,
+            axis_names=tuple(f"wrong_{name}" for name in schema.axis_names),
+            named_axes=tuple(
+                replace(axis, name=f"wrong_{axis.name}") for axis in schema.named_axes
+            ),
+            categorical_domains={
+                f"wrong_{name}": domain
+                for name, domain in schema.categorical_domains.items()
+            },
         )
         malformed = replace(
             solution,
@@ -983,7 +1079,7 @@ def test_solution_result_value_schema_is_checked_before_forward(
         values[period][regime_name] = replacement
         malformed = replace(solution, values=values)
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before value-schema preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1048,7 +1144,7 @@ def test_solution_result_rejects_unexpected_artifact_coordinates_before_forward(
             ref=unexpected_ref,
         )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before artifact preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1087,7 +1183,7 @@ def test_solution_result_rejects_present_and_omitted_artifacts_before_forward(
         omissions=dict(with_artifact.omissions) | {ref: OmissionReason.NOT_REQUESTED},
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before artifact preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1121,7 +1217,7 @@ def test_solution_result_rejects_one_ref_in_multiple_artifact_stores_before_forw
         ref=ref,
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before artifact preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1144,7 +1240,7 @@ def test_values_only_finite_nnbegm_result_is_refused_before_forward_simulation(
         retention=ResultRetention.VALUES,
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before replay preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1222,7 +1318,7 @@ def test_malformed_finite_nnbegm_payload_is_refused_before_forward(
     entries[policy_ref] = malformed_policy
     malformed = replace(solution, replay_artifacts=ArtifactStore(entries))
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before replay-payload preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1276,7 +1372,7 @@ def test_declared_egm_policy_read_requires_a_valid_egm_payload_before_forward(
         )
     solution = replace(solution, replay_artifacts=ArtifactStore(entries))
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before EGM replay preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1311,8 +1407,10 @@ def test_adaptive_policy_omission_is_derived_from_model_authority(
 
     original = backward_induction._run_period_kernel
 
-    def _without_policy(**kwargs: object):
-        output = original(**kwargs)  # ty: ignore[invalid-argument-type]
+    def _without_policy(
+        **kwargs: Unpack[_KernelKwargs],
+    ) -> backward_induction.KernelOutput:
+        output = original(**kwargs)
         return replace(
             output,
             replay={
@@ -1357,7 +1455,7 @@ def test_nested_egm_payload_is_validated_recursively_before_forward(
     entries[policy_ref] = malformed_policy
     malformed = replace(solution, replay_artifacts=ArtifactStore(entries))
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before nested replay preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1399,7 +1497,7 @@ def test_policy_at_an_undeclared_coordinate_is_refused_before_forward(
         ),
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before replay-route preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1425,7 +1523,7 @@ def test_values_only_dissolution_result_is_refused_before_forward_simulation(
         retention=ResultRetention.VALUES,
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before dissolution preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1461,7 +1559,7 @@ def test_malformed_dissolution_flag_is_refused_before_forward(
     entries[flag_ref] = malformed_flag
     malformed = replace(solution, replay_artifacts=ArtifactStore(entries))
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before dissolution preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1495,7 +1593,7 @@ def test_dissolution_flag_is_refused_from_the_wrong_artifact_channel(
         ),
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before dissolution preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1594,3 +1692,252 @@ def test_values_and_replay_retains_the_adaptive_nnbegm_policy() -> None:
     assert all(
         isinstance(solution.replay_artifacts[ref], NestedEGMSimPolicy) for ref in refs
     )
+
+
+@pytest.mark.parametrize("width", [1, 3])
+@pytest.mark.parametrize("use_labels", [True, False])
+def test_value_frame_labels_grid_nodes(
+    *, width: int, use_labels: bool, tmp_path: Path
+) -> None:
+    """Each labelled row retains its value through blocking and persistence."""
+
+    @categorical(ordered=True)
+    class Kind:
+        low: ScalarInt
+        high: ScalarInt
+
+    @categorical(ordered=False)
+    class Alive:
+        alive: ScalarInt
+
+    def utility(*, wealth: FloatND, kind: ScalarInt) -> FloatND:
+        return wealth + 10 * kind
+
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={
+                    "wealth": LinSpacedGrid(start=1, stop=3, n_points=3),
+                    "kind": DiscreteGrid(Kind),
+                },
+                functions={"utility": utility},
+            )
+        },
+        ages=AgeGrid(exact_values=(18,)),
+        edges={},
+        initial_nodes=((18, "alive"),),
+        execution_config=ExecutionConfig(axis_widths={"cell": width}),
+        regime_id_class=Alive,
+    )
+    result = model.solve(params={}, log_level="off")
+    frame = result.value_frame(period=0, regime="alive", use_labels=use_labels)
+    assert tuple(frame.columns) == (
+        *result.metadata.value_schemas[0, "alive"].axis_names,
+        "V",
+    )
+    np.testing.assert_array_equal(frame["wealth"], [1, 2, 3, 1, 2, 3])
+    np.testing.assert_array_equal(frame["V"], [1, 2, 3, 11, 12, 13])
+    np.testing.assert_array_equal(
+        frame["V"], np.asarray(result.value(period=0, regime="alive")).ravel()
+    )
+    if use_labels:
+        assert frame["kind"].tolist() == ["low"] * 3 + ["high"] * 3
+        assert frame["kind"].cat.ordered
+    else:
+        np.testing.assert_array_equal(frame["kind"], [0, 0, 0, 1, 1, 1])
+    restored = load_solution(path=result.save(path=tmp_path / "labelled"))
+    assert_frame_equal(
+        frame, restored.value_frame(period=0, regime="alive", use_labels=use_labels)
+    )
+    frame["V"] = -99.0
+    np.testing.assert_array_equal(
+        result.value_frame(period=0, regime="alive")["V"], [1, 2, 3, 11, 12, 13]
+    )
+
+
+@pytest.mark.parametrize("axis_names", [("V",), ("wealth", "wealth")])
+def test_value_frame_rejects_colliding_column_names(
+    axis_names: tuple[str, ...],
+) -> None:
+    """A frame must not silently overwrite coordinates with another column."""
+    shape = (2,) * len(axis_names)
+    result = SolutionResult(
+        values=ValueStore({(0, "alive"): jnp.ones(shape, dtype=jnp.float32)}),
+        metadata=SolutionMetadata(
+            retention=ResultRetention.VALUES,
+            n_periods=1,
+            regime_names=("alive",),
+            solver_types={"alive": "example.Grid"},
+            model_instance_id="model-1",
+            params_fingerprint="0" * 64,
+            value_schemas={
+                (0, "alive"): ValueArraySchema(
+                    shape=shape,
+                    dtype="float32",
+                    axis_names=axis_names,
+                    named_axes=tuple(
+                        AxisDescriptor(
+                            name=name,
+                            length=2,
+                            role=AxisRole.STATE,
+                            coordinates=(1.0, 2.0),
+                        )
+                        for name in axis_names
+                    ),
+                )
+            },
+        ),
+    )
+    np.testing.assert_array_equal(
+        result.value(period=0, regime="alive"), np.ones(shape)
+    )
+    with pytest.raises(ValueError, match=r"unique.*'V'"):
+        result.value_frame(period=0, regime="alive")
+
+
+def test_value_frame_scalar_and_collective() -> None:
+    """Scalar values have one row and collective values identify stakeholders."""
+
+    @categorical(ordered=False)
+    class Household:
+        alone: ScalarInt
+        couple: ScalarInt
+
+    model = Model(
+        regimes={
+            "alone": Regime(functions={"utility": lambda: 7.0}),
+            "couple": Regime(
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": lambda: 3.0, "m": lambda: 5.0}
+                    )
+                }
+            ),
+        },
+        ages=AgeGrid(exact_values=(18,)),
+        edges={},
+        initial_nodes=((18, "alone"), (18, "couple")),
+        regime_id_class=Household,
+    )
+    result = model.solve(params={}, log_level="off")
+    assert result.value_frame(period=0, regime="alone").to_dict("list") == {"V": [7.0]}
+    assert result.value_frame(period=0, regime="couple").to_dict("list") == {
+        "stakeholder": ["f", "m"],
+        "V": [3.0, 5.0],
+    }
+    with pytest.raises(KeyError):
+        result.value_frame(period=2, regime="alone")
+
+
+@pytest.mark.parametrize("collective", [False, True])
+@pytest.mark.parametrize("categorical_state", [False, True])
+def test_value_frame_preserves_state_named_stakeholder(
+    *, collective: bool, categorical_state: bool
+) -> None:
+    """The collective axis is appended after the ordinary state axes."""
+
+    @categorical(ordered=False)
+    class Alive:
+        alive: ScalarInt
+
+    @categorical(ordered=False)
+    class Kind:
+        low: ScalarInt
+        high: ScalarInt
+
+    def utility(*, stakeholder: FloatND | IntND) -> FloatND:
+        return stakeholder.astype(float)
+
+    grid = (
+        DiscreteGrid(Kind)
+        if categorical_state
+        else LinSpacedGrid(start=1, stop=3, n_points=3)
+    )
+    coordinates = [0, 1] if categorical_state else [1, 2, 3]
+
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"stakeholder": grid},
+                functions={
+                    "utility": (
+                        CollectiveUtility(utilities={"f": utility, "m": utility})
+                        if collective
+                        else utility
+                    )
+                },
+            )
+        },
+        ages=AgeGrid(exact_values=(18,)),
+        regime_id_class=Alive,
+        edges={},
+        initial_nodes=((18, "alive"),),
+    )
+    result = model.solve(params={}, log_level="off")
+    axes = result.metadata.value_schemas[0, "alive"].named_axes
+    assert axes[0].role is AxisRole.STATE
+    if collective:
+        assert axes[-1].role is AxisRole.STAKEHOLDER
+        np.testing.assert_array_equal(
+            result.value(period=0, regime="alive"),
+            np.repeat(np.asarray(coordinates)[:, None], 2, axis=1),
+        )
+        with pytest.raises(ValueError, match="unique"):
+            result.value_frame(period=0, regime="alive")
+    else:
+        frame = result.value_frame(period=0, regime="alive", use_labels=False)
+        np.testing.assert_array_equal(frame["stakeholder"], coordinates)
+        np.testing.assert_array_equal(frame["V"], coordinates)
+
+
+@pytest.mark.parametrize("grid_kind", ["process", "age"])
+def test_value_frame_uses_resolved_grid_coordinates(*, grid_kind: str) -> None:
+    """Coordinates follow runtime parameters and the requested period's grid."""
+    from lcm import AgeSpecializedGrid, NormalIIDProcess  # noqa: PLC0415
+
+    @categorical(ordered=False)
+    class Alive:
+        alive: ScalarInt
+
+    grid = (
+        NormalIIDProcess(n_points=3, gauss_hermite=False)
+        if grid_kind == "process"
+        else AgeSpecializedGrid(
+            build=lambda age: LinSpacedGrid(
+                start=float(age), stop=float(age) + 2, n_points=3
+            ),
+            signature=lambda age: age,
+        )
+    )
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"wealth": grid}, functions={"utility": lambda wealth: wealth}
+            )
+        },
+        ages=AgeGrid(exact_values=(18, 19)),
+        regime_id_class=Alive,
+        edges={},
+        initial_nodes=((18, "alive"), (19, "alive")),
+    )
+    params = (
+        {"alive": {"wealth": {"mu": 1.0, "sigma": 0.5, "n_std": 2.0}}}
+        if grid_kind == "process"
+        else {}
+    )
+    result = model.solve(params=params, log_level="off")
+    for period in (0, 1):
+        frame = result.value_frame(period=period, regime="alive")
+        expected = (
+            [0.0, 1.0, 2.0]
+            if grid_kind == "process"
+            else [18 + period, 19 + period, 20 + period]
+        )
+        np.testing.assert_array_equal(frame["wealth"], expected)
+        np.testing.assert_array_equal(frame["V"], expected)
+        np.testing.assert_array_equal(
+            frame["wealth"],
+            model.state_grid(
+                params=params, regime_name="alive", state_name="wealth", period=period
+            ),
+        )

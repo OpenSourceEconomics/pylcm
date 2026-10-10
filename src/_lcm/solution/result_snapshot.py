@@ -571,6 +571,15 @@ def _snapshot_value_array_schema(schema: ValueArraySchema) -> ValueArraySchema:
         shape=tuple(schema.shape),
         dtype=schema.dtype,
         axis_names=tuple(schema.axis_names),
+        named_axes=tuple(_snapshot_axis_descriptor(axis) for axis in schema.named_axes),
+        categorical_domains=capture_exact_mapping(
+            schema.categorical_domains,
+            label="value categorical_domains",
+            snapshot_key=partial(
+                _snapshot_nonempty_exact_str, label="value category name"
+            ),
+            snapshot_value=_snapshot_category_domain,
+        ),
     )
 
 

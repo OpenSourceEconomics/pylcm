@@ -29,6 +29,7 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 
@@ -75,7 +76,7 @@ def p_far(age: int) -> FloatND:
     return jnp.where(age >= 1, 1.0, 0.0)
 
 
-def _gate(*, fallback_regime: str) -> Gate:
+def _gate(*, fallback_regime: RegimeName) -> Gate:
     return Gate(
         predicate=always_open,
         routes={

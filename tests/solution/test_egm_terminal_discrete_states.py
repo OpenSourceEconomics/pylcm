@@ -42,6 +42,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParams,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
@@ -230,7 +231,7 @@ def _get_brute_model() -> Model:
     )
 
 
-def _get_params() -> dict:
+def _get_params() -> UserParams:
     final_age_alive = 40 + (N_PERIODS - 2) * 10
     return {
         "discount_factor": 0.98,

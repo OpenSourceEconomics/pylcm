@@ -4,7 +4,7 @@ import logging
 import threading
 from collections.abc import Hashable
 from types import MappingProxyType
-from typing import Any
+from typing import TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -17,11 +17,29 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import (
     VALUE,
+    OutputRoleTree,
     ResolvedOutputLayout,
     resolve_output_layout,
 )
 from _lcm.solution import backward_induction
 from lcm import AgeGrid
+
+
+class _CompileKwargs(TypedDict):
+    lowering_key: Hashable
+    low: jax.stages.Lowered
+    label: str
+    log_kernel_memory: bool
+    logger: logging.Logger
+    phase: str | None
+
+
+class _RolesKwargs(TypedDict):
+    lowered: jax.stages.Lowered
+    output_roles: OutputRoleTree
+    layout: ResolvedOutputLayout
+    label: str
+
 
 _KEYS = ("first", "second", "third")
 
@@ -97,12 +115,14 @@ def test_lower_and_compile_wave_compiles_a_program_before_the_next_is_lowered(
     compile_and_log = backward_induction._compile_and_log
     assert_roles = backward_induction._assert_lowered_output_roles
 
-    def observed_compile(**kwargs: Any) -> Any:
+    def observed_compile(
+        **kwargs: Unpack[_CompileKwargs],
+    ) -> tuple[Hashable, jax.stages.Compiled]:
         events.append(f"compile {kwargs['lowering_key']}")
         first_compile_started.set()
         return compile_and_log(**kwargs)
 
-    def observed_roles(**kwargs: Any) -> None:
+    def observed_roles(**kwargs: Unpack[_RolesKwargs]) -> None:
         assert_roles(**kwargs)
         n_lowered = sum(event.startswith("lowered") for event in events)
         if n_lowered == 1:
@@ -142,7 +162,7 @@ def test_lower_and_compile_wave_raises_a_lowering_error_after_earlier_compiles(
     assert_roles = backward_induction._assert_lowered_output_roles
     n_calls = 0
 
-    def failing_roles(**kwargs: Any) -> None:
+    def failing_roles(**kwargs: Unpack[_RolesKwargs]) -> None:
         nonlocal n_calls
         n_calls += 1
         if n_calls == 3:

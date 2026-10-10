@@ -30,7 +30,13 @@ from lcm import (
     fixed_transition,
 )
 from lcm.solver_api import DISSOLUTION_FLAG
-from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+    UserParamsNode,
+)
 
 _WAGE = IrregSpacedGrid(points=(1.0, 2.0, 3.0))
 
@@ -115,7 +121,9 @@ def _make_model(*, participation: bool) -> Model:
     )
 
 
-def _params(*, outside_option: float = 3.0, participation: bool = True) -> dict:
+def _params(
+    *, outside_option: float = 3.0, participation: bool = True
+) -> dict[str, UserParamsNode]:
     params = {
         "couple": {"koopmans_aggregator": {"discount_factor": 1.0}},
         "couple_terminal": {},

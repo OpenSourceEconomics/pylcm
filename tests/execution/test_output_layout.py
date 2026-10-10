@@ -242,7 +242,7 @@ def test_lowering_key_reads_the_program_identity_not_the_bound_callable() -> Non
     claim, so equal identities give one key and distinct identities give two.
     """
 
-    def core(_static_policy: object, /) -> object:
+    def core[Policy](_static_policy: Policy, /) -> Policy:
         return _static_policy
 
     identity = ("program", "fingerprint", "regime", "main", ("signature",), None)
@@ -487,7 +487,9 @@ def test_a_registered_pytree_of_roles_with_none_leaves_resolves_lowers_and_runs(
         output_roles=_carry_roles(),
     )
 
-    _, carry_shardings = cast("tuple[object, EGMCarry]", resolved.out_shardings)
+    _, carry_shardings = cast(
+        "tuple[jax.sharding.Sharding | None, EGMCarry]", resolved.out_shardings
+    )
     assert isinstance(carry_shardings, EGMCarry)
     assert carry_shardings.breakpoints is None
     assert carry_shardings.policy is None

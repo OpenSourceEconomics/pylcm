@@ -7,7 +7,10 @@ import subprocess
 from pathlib import Path
 from typing import Literal
 
-PrecisionChoice = Literal["auto", "32", "64"]
+type CommandArgument = str
+
+
+type PrecisionChoice = Literal["auto", "32", "64"]
 
 
 def default_environment(current: str | None) -> str:
@@ -37,7 +40,7 @@ def child_command(
     precision: str,
     isolation: str,
     report_dir: Path,
-    pytest_args: tuple[str, ...],
+    pytest_args: tuple[CommandArgument, ...],
 ) -> tuple[str, ...]:
     """Return one concrete, report-producing pytest child command."""
     suffix = f"{profile}-fp{precision}-{isolation}"

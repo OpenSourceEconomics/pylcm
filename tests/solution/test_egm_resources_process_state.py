@@ -40,6 +40,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParams,
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -196,7 +197,7 @@ def _get_model(solver: str) -> Model:
     )
 
 
-def _get_params(solver: str) -> dict:
+def _get_params(solver: str) -> UserParams:
     final_age_alive = 40 + (N_PERIODS - 2) * 10
     wage_params = {"mu": 0.0, "sigma": 0.25, "rho": 0.6}
     if solver == "dcegm":

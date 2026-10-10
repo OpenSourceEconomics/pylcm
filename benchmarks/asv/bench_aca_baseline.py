@@ -49,6 +49,11 @@ import pathlib
 import shutil
 import tempfile
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lcm import Model
+    from lcm.typing import UserInitialConditions, UserParams
 
 from . import _gpu_mem
 
@@ -89,7 +94,7 @@ def _make_log_dir() -> str:
     return path
 
 
-def _build() -> tuple[object, object, object]:
+def _build() -> tuple[Model, UserParams, UserInitialConditions]:
     """Build the aca-baseline model, params, and initial conditions.
 
     aca_model and lcm imports are deferred to the function body — ASV's

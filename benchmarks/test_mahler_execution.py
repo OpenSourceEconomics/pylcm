@@ -9,7 +9,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import NotRequired, TypedDict, Unpack, cast
 from uuid import UUID
 
 import jax
@@ -40,13 +40,19 @@ def _install_capacity_boundaries(
     ordinals: list[int] = []
 
     # keyword-only-exempt: library-callback=ctypes
-    def _device_get(out: Any, ordinal: int) -> int:
+    def _device_get(
+        out: object,  # noqa: PAN001 - ctypes.byref returns an opaque foreign-pointer argument.
+        ordinal: int,
+    ) -> int:
         ordinals.append(ordinal)
         ctypes.cast(out, ctypes.POINTER(ctypes.c_int))[0] = {0: 10, 1: 11}[ordinal]
         return 0
 
     # keyword-only-exempt: library-callback=ctypes
-    def _device_uuid(out: Any, handle: int) -> int:
+    def _device_uuid(
+        out: object,  # noqa: PAN001 - ctypes.byref returns an opaque foreign-pointer argument.
+        handle: int,
+    ) -> int:
         uuid = {10: _UUID_B, 11: _UUID_A}[handle]
         ctypes.memmove(out, UUID(uuid.removeprefix("GPU-")).bytes, 16)
         return 0
@@ -160,11 +166,19 @@ def test_receipt_paths_are_unique_and_retained_under_asv_directory(
     ) == _mahler_execution._RECEIPT_DIRECTORY
 
 
+class _SimulateKwargs(TypedDict):
+    params: dict[str, int]
+    initial_conditions: dict[str, object]  # noqa: PAN001 - opaque state-identity sentinels are only forwarded.
+    seed: int
+    log_level: str
+    solution: NotRequired[object]  # noqa: PAN001 - opaque supplied-solution identity sentinel.
+
+
 class _SimulationRecorder:
     def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
+        self.calls: list[_SimulateKwargs] = []
 
-    def simulate(self, **kwargs: object) -> object:
+    def simulate(self, **kwargs: Unpack[_SimulateKwargs]) -> object:  # noqa: PAN001 - opaque result sentinel, never inspected.
         self.calls.append(kwargs)
         return object()
 
@@ -192,7 +206,7 @@ def test_active_mahler_routes_use_fixed_forward_simulation_seed(
 
     loaded_solution = object()
 
-    def _load_solution(*, path: Path) -> object:
+    def _load_solution(*, path: Path) -> object:  # noqa: PAN001 - opaque supplied-solution identity sentinel.
         del path
         return loaded_solution
 

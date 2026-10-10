@@ -10,7 +10,7 @@ of them per solve, chosen by the result retention.
 import functools
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TypedDict, Unpack, cast
 
 import jax
 import numpy as np
@@ -24,49 +24,79 @@ from _lcm.execution.core_program import (
     core_program_graph,
     materialize_core_program,
 )
-from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
+from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
+from _lcm.typing import PytreeValue
+from lcm import ExecutionConfig
 from lcm.solver_api import SIMULATION_POLICY
 from lcm.solvers import CELL_AXIS
-from tests.solution._nbegm_direct_oracle import ride_along_kernel
+from lcm.typing import StateName
+from tests.solution._nbegm_direct_oracle import OracleContext, ride_along_kernel
 from tests.test_models import (
     nbegm_jump_ride_along_toy,
     nbegm_ride_along_toy,
     nbegm_ride_discrete_toy,
 )
+from tests.test_models.nbegm_common import NBEGMKwargs
 
-_SMALL: dict[str, Any] = {"n_liquid": 12, "n_savings": 16}
+
+class _SmallSizes(TypedDict):
+    n_liquid: int
+    n_savings: int
 
 
-def _smooth_kernel(**overrides: Any) -> tuple[Any, dict[str, Any]]:
+class _SmoothOverrides(TypedDict, total=False):
+    per_kind_discount: bool
+    per_kind_crra: bool
+    n_consumption: int
+    liquid_max: float
+    savings_max: float
+    nbegm_overrides: NBEGMKwargs | None
+    distributed_kind: bool
+    execution_config: ExecutionConfig
+
+
+_SMALL: _SmallSizes = {"n_liquid": 12, "n_savings": 16}
+
+
+def _smooth_kernel(
+    **overrides: Unpack[_SmoothOverrides],
+) -> tuple[_RideAlongNBEGMPeriodKernel, OracleContext]:
     model = nbegm_ride_along_toy.build_model(
         variant="nbegm", n_periods=3, **_SMALL, **overrides
     )
-    return ride_along_kernel(
+    kernel, context = ride_along_kernel(
         model=model,
         params=nbegm_ride_along_toy.build_params(),
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
+    return kernel, context
 
 
-def _discrete_kernel() -> tuple[Any, dict[str, Any]]:
+def _discrete_kernel() -> tuple[_RideAlongNBEGMPeriodKernel, OracleContext]:
     model = nbegm_ride_discrete_toy.build_model(
         variant="nbegm", n_periods=3, n_liquid=12, n_savings=16, n_consumption=24
     )
-    return ride_along_kernel(
+    kernel, context = ride_along_kernel(
         model=model,
         params=nbegm_ride_discrete_toy.build_params(),
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
+    return kernel, context
 
 
-def _jump_kernel() -> tuple[Any, dict[str, Any]]:
+def _jump_kernel() -> tuple[_RideAlongNBEGMPeriodKernel, OracleContext]:
     model = nbegm_jump_ride_along_toy.build_model(
         variant="nbegm", n_periods=4, **_SMALL
     )
-    return ride_along_kernel(
+    kernel, context = ride_along_kernel(
         model=model, params=nbegm_jump_ride_along_toy.build_params()
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
+    return kernel, context
 
 
-def _value_state_order(kernel: Any) -> tuple[str, ...]:
+def _value_state_order(kernel: _RideAlongNBEGMPeriodKernel) -> tuple[StateName, ...]:
     """The published value array's state order: ride axes with liquid at its slot."""
     spec = kernel.schedule_spec
     order = list(spec.ride_along_state_names)
@@ -74,12 +104,16 @@ def _value_state_order(kernel: Any) -> tuple[str, ...]:
     return tuple(order)
 
 
-def _roles(*, kernel: Any, name: str) -> tuple[Any, ...]:
+def _roles(
+    *, kernel: _RideAlongNBEGMPeriodKernel, name: str
+) -> tuple[OutputRoleTree, ...]:
     """The named program's output-role tuple."""
-    return cast("tuple[Any, ...]", core_program_graph(kernel=kernel)[name].output_roles)
+    roles = core_program_graph(kernel=kernel)[name].output_roles
+    assert isinstance(roles, tuple)
+    return roles
 
 
-def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
+def _build_context(context: OracleContext) -> CoreBuildContext:
     return CoreBuildContext(
         state_action_space=context["state_action_space"],
         next_regime_to_V_arr=context["next_regime_to_V_arr"],
@@ -90,7 +124,9 @@ def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
     )
 
 
-def _run(*, kernel: Any, context: Mapping[str, Any], name: str) -> tuple:
+def _run(
+    *, kernel: _RideAlongNBEGMPeriodKernel, context: OracleContext, name: str
+) -> tuple[PytreeValue, ...]:
     program = core_program_graph(kernel=kernel)[name]
     materialized = materialize_core_program(
         program=program, context=_build_context(context)
@@ -121,8 +157,8 @@ def test_the_graph_publishes_exactly_a_values_only_main_and_a_replay_program():
         assert program.requirements.value_reads == ()
 
 
-def _carry_role_leaves(roles: EGMCarry) -> dict[str, object]:
-    return {
+def _carry_role_leaves(roles: EGMCarry) -> dict[str, StateAxesLeading | None]:
+    fields = {
         "endog_grid": roles.endog_grid,
         "value": roles.value,
         "marginal_utility": roles.marginal_utility,
@@ -130,6 +166,11 @@ def _carry_role_leaves(roles: EGMCarry) -> dict[str, object]:
         "breakpoints": roles.breakpoints,
         "policy": roles.policy,
     }
+    leaves: dict[str, StateAxesLeading | None] = {}
+    for name, value in fields.items():
+        assert value is None or isinstance(value, StateAxesLeading)
+        leaves[name] = value
+    return leaves
 
 
 def test_main_publishes_the_value_and_a_ride_axes_leading_carry():
@@ -152,6 +193,7 @@ def test_main_publishes_the_value_and_a_ride_axes_leading_carry():
 def test_a_jump_schedule_carries_breakpoints_and_no_policy_rows():
     kernel, _ = _jump_kernel()
     _, carry_roles = _roles(kernel=kernel, name="main")
+    assert isinstance(carry_roles, EGMCarry)
 
     ride = StateAxesLeading(state_names=("kind",))
     assert carry_roles.breakpoints == ride
@@ -190,9 +232,8 @@ def test_the_builder_omits_target_values_and_filters_the_carry():
     )
 
     assert "next_regime_to_V_arr" not in materialized.arguments
-    carry = cast(
-        "Mapping[str, Any]", materialized.arguments["next_regime_to_continuation"]
-    )
+    carry = materialized.arguments["next_regime_to_continuation"]
+    assert isinstance(carry, Mapping)
     assert set(carry) == set(kernel.stateful_targets)
 
 

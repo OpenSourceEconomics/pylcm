@@ -4,22 +4,24 @@ import dataclasses
 import os
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Hashable, Mapping
 from functools import partialmethod
 from pathlib import Path
-from typing import Any
+from typing import Never, NotRequired, TypedDict, Unpack
 
 import jax
 import jax.core
 import numpy as np
 import pytest
+from jax.extend.core import Jaxpr
 
+from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.simulation import host_operations, process_grids
 from _lcm.simulation.residency import (
     measure_buffer_footprint,
     resident_bytes_by_device,
 )
-from _lcm.typing import FootprintTree
+from _lcm.typing import FootprintTree, PytreeValue, ShapeDtypePytree
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -29,13 +31,49 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    Float1D,
+    FloatND,
+    ParameterName,
+    ReferenceName,
+    ScalarFloat,
+    ScalarInt,
+    ValueND,
+)
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 from tests.simulation.test_process_grid_entry_admission import (
     _COMPOSITE_CASES,
     _inputs,
 )
+
+
+class _ProduceArguments(TypedDict):
+    parameters: Mapping[ParameterName, process_grids.ProcessValue]
+    n_points: int
+    required: jax.sharding.Sharding
+    stage: NotRequired[process_grids._GridStage]
+    exponent: NotRequired[int]
+    dtype: NotRequired[str]
+    weak_type: NotRequired[bool]
+    process_stage: NotRequired[bool]
+
+
+class _TraceArguments(TypedDict):
+    spec: _ContinuousStochasticProcess
+    parameter_names: tuple[ParameterName, ...]
+    parameter_values: tuple[process_grids.ProcessValue, ...]
+
+
+class _CompileCandidateArguments(TypedDict):
+    key: Hashable
+    function: Callable[..., PytreeValue]
+    arguments: Mapping[ReferenceName, ShapeDtypePytree]
+    static_arguments: Mapping[ReferenceName, host_operations.StaticArgument]
+    output_sharding: NotRequired[jax.sharding.Sharding | None]
+
 
 _RUNTIME_CASES = _COMPOSITE_CASES[1:]
 
@@ -70,7 +108,9 @@ print("RUNTIME-PROCESS-PLACEMENT-OK")
 """
 
 
-def _controlled_post_validation_refusal(*args: Any, **kwargs: Any) -> Any:
+def _controlled_post_validation_refusal[Ignored](
+    *args: Ignored, **kwargs: Ignored
+) -> Never:
     del args, kwargs
     raise ExecutionPlanningError("controlled refusal after process validation")
 
@@ -112,7 +152,7 @@ def test_runtime_process_outputs_use_selected_nondefault_device() -> None:
 @pytest.mark.parametrize("strong_runtime", [False, True])
 def test_runtime_process_support_matches_eager_bytes_with_fixed_or_runtime_params(
     *,
-    spec: Any,
+    spec: _ContinuousStochasticProcess,
     parameters: dict[str, float],
     fixed: bool,
     strong_runtime: bool,
@@ -173,7 +213,7 @@ _INTEGER_CASES = (
 
 @pytest.mark.parametrize(("spec", "runtime"), _INTEGER_CASES)
 def test_integer_capable_process_support_preserves_eager_bytes(
-    *, spec: Any, runtime: dict[str, int]
+    *, spec: _ContinuousStochasticProcess, runtime: dict[str, int]
 ) -> None:
     """Valid strong integer bindings keep eager promotion and support bytes."""
     placed_runtime = {
@@ -194,7 +234,7 @@ def test_integer_capable_process_support_preserves_eager_bytes(
 
 @pytest.mark.parametrize(("spec", "parameters"), _RUNTIME_CASES)
 def test_automatic_simulation_consumes_each_admitted_runtime_process(
-    *, spec: Any, parameters: dict[str, float]
+    *, spec: _ContinuousStochasticProcess, parameters: dict[str, float]
 ) -> None:
     """Automatic solve and forward consumers reuse every admitted support."""
     model, params, initial = _inputs(
@@ -286,12 +326,12 @@ def _support_terminal_payoff(
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _inject_process_refusal(
+def _inject_process_refusal[Result: host_operations._ProfiledOperation](
     self: host_operations.ProfiledSimulationOperations,
     *,
-    original: Callable[..., Any],
-    **kwargs: Any,
-) -> Any:
+    original: Callable[..., Result],
+    **kwargs: Unpack[_CompileCandidateArguments],
+) -> Result:
     result = original(self, **kwargs)
     if getattr(kwargs["function"], "__name__", "") == "_compute_process_stage":
         return dataclasses.replace(result, memory=synthetic_memory(2**30))
@@ -301,16 +341,18 @@ def _inject_process_refusal(
 @pytest.mark.parametrize(("spec", "parameters"), _RUNTIME_CASES)
 def test_runtime_process_refuses_before_completed_fallback_support(
     *,
-    spec: Any,
+    spec: _ContinuousStochasticProcess,
     parameters: dict[str, float],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A declined first stage prevents the formerly eager fallback producer."""
-    completed: list[object] = []
+    completed: list[Float1D] = []
     process_type = type(spec)
     original_gridpoints = process_type.compute_gridpoints
 
-    def observe_gridpoints(self: Any, **kwargs: Any) -> Any:
+    def observe_gridpoints(
+        self: _ContinuousStochasticProcess, **kwargs: ScalarFloat | ScalarInt
+    ) -> Float1D:
         result = original_gridpoints(self, **kwargs)
         if not any(
             isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(result)
@@ -355,7 +397,9 @@ def test_staged_process_graph_is_preflighted_before_dispatch(
     dispatched: list[str] = []
     original = process_grids.SimulationProcessGrids._produce
 
-    def produce_and_record(self: Any, **kwargs: Any) -> Any:
+    def produce_and_record(
+        self: process_grids.SimulationProcessGrids, **kwargs: Unpack[_ProduceArguments]
+    ) -> ValueND:
         dispatched.append(kwargs["stage"])
         return original(self, **kwargs)
 
@@ -370,7 +414,7 @@ def test_staged_process_graph_is_preflighted_before_dispatch(
         .primitive
     )
 
-    def inject_late_unknown(**kwargs: Any) -> Any:
+    def inject_late_unknown(**kwargs: Unpack[_TraceArguments]) -> Jaxpr:
         closed = original_trace(**kwargs)
         equations = list(closed.eqns)
         equations[-1] = equations[-1].replace(primitive=unsupported)
@@ -403,11 +447,13 @@ def test_nested_process_graph_rewiring_is_refused_before_dispatch(
     original = process_grids.SimulationProcessGrids._produce
     original_trace = process_grids._trace_process_jaxpr
 
-    def produce_and_record(self: Any, **kwargs: Any) -> Any:
+    def produce_and_record(
+        self: process_grids.SimulationProcessGrids, **kwargs: Unpack[_ProduceArguments]
+    ) -> ValueND:
         dispatched.append(kwargs["stage"])
         return original(self, **kwargs)
 
-    def rewire_nested_operand(**kwargs: Any) -> Any:
+    def rewire_nested_operand(**kwargs: Unpack[_TraceArguments]) -> Jaxpr:
         closed = original_trace(**kwargs)
         outer_equations = list(closed.eqns)
         outer_index = next(
@@ -461,14 +507,14 @@ def test_nested_process_graph_rewiring_is_refused_before_dispatch(
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _observe_process_stages(
+def _observe_process_stages[Result: ValueND](
     self: process_grids.SimulationProcessGrids,
     *,
-    original: Callable[..., Any],
+    original: Callable[..., Result],
     produced: list[jax.Array],
     host_constants: list[np.ndarray],
-    **kwargs: Any,
-) -> Any:
+    **kwargs: Unpack[_ProduceArguments],
+) -> Result:
     for previous in produced:
         missing = resident_bytes_by_device(
             live=measure_buffer_footprint(tree=previous),
@@ -534,7 +580,9 @@ def test_refused_process_stage_releases_all_intermediate_roots(
     attempts = 0
     observed_prior_ownership: list[bool] = []
 
-    def produce_then_refuse(self: Any, **kwargs: Any) -> Any:
+    def produce_then_refuse(
+        self: process_grids.SimulationProcessGrids, **kwargs: Unpack[_ProduceArguments]
+    ) -> ValueND:
         nonlocal attempts
         attempts += 1
         if attempts == 5:

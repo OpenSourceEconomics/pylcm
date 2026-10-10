@@ -6,7 +6,7 @@ draws at a given age and regime depend on the seed, the age, the regime and the
 subject alone, not on which other pairs the declared starts make visitable.
 """
 
-from typing import Any
+from collections.abc import Callable
 
 import cloudpickle
 import jax.numpy as jnp
@@ -30,8 +30,17 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
 )
+from lcm.initial_nodes import UserInitialNodes
 from lcm.phased import Phased
-from lcm.typing import ContinuousState, FloatND, ScalarInt
+from lcm.transition import _DeclaredCaseLaw
+from lcm.typing import (
+    AgeLabel,
+    ContinuousState,
+    FloatND,
+    RegimeName,
+    ScalarInt,
+    UserParams,
+)
 from tests.test_demand_worklists import _phased_model
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
@@ -59,7 +68,7 @@ def _die() -> FloatND:
     return jnp.asarray(0.5)
 
 
-def _edges(*, working_law: Any) -> dict:
+def _edges(*, working_law: _DeclaredCaseLaw) -> dict[RegimeName, Transition]:
     """Survive-or-die edges for "island" and "working"; `working_law` is per age."""
     return {
         "island": Transition(
@@ -96,7 +105,7 @@ def _island() -> Regime:
     )
 
 
-def _model(initial_nodes: Any) -> Model:
+def _model(initial_nodes: UserInitialNodes) -> Model:
     return Model(
         regimes={
             "island": _island(),
@@ -118,7 +127,7 @@ def _model(initial_nodes: Any) -> Model:
     )
 
 
-def _panel(*, model: Model, age: float, regime: str) -> Any:
+def _panel(*, model: Model, age: float, regime: RegimeName) -> pd.DataFrame:
     solution = model.solve(params=_PARAMS, log_level="off")
     result = model.simulate(
         params=_PARAMS,
@@ -140,7 +149,7 @@ def _panel(*, model: Model, age: float, regime: str) -> Any:
     ids=["solved-living", "solved-terminal", "unsolved-regime", "unsolved-age"],
 )
 def test_simulate_refuses_starts_outside_initial_nodes(
-    *, age: float, regime: str
+    *, age: float, regime: RegimeName
 ) -> None:
     """A start outside the declared set is refused by name, solved or not."""
     model = _model({25: "working"})
@@ -183,7 +192,11 @@ def test_the_extra_start_adds_visited_pairs() -> None:
     ).reachability.visited_nodes
 
 
-def _identity(model: Model) -> tuple[frozenset, frozenset, str]:
+def _identity(
+    model: Model,
+) -> tuple[
+    frozenset[tuple[AgeLabel, RegimeName]], frozenset[tuple[AgeLabel, RegimeName]], str
+]:
     reachability = model.reachability
     return (
         reachability.nodes,
@@ -213,14 +226,14 @@ def _overweight_death() -> FloatND:
     return jnp.asarray(0.9)
 
 
-def _laws(*, die: Any) -> dict:
+def _laws(*, die: Callable[..., FloatND]) -> dict[RegimeName, StochasticTransition]:
     return {
         "working": StochasticTransition(func=_stay),
         "dead": StochasticTransition(func=die),
     }
 
 
-def _law_model(*, law: Any, n_wealth: int = 2) -> Model:
+def _law_model(*, law: _DeclaredCaseLaw, n_wealth: int = 2) -> Model:
     wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_wealth)
     return Model(
         regimes={
@@ -304,7 +317,7 @@ def test_a_changed_law_changes_the_structure_identity() -> None:
     assert base._model_structure_fingerprint != changed._model_structure_fingerprint
 
 
-def _durable_digest(*, model: Model, params: dict) -> str:
+def _durable_digest(*, model: Model, params: UserParams) -> str:
     return model._model_fingerprint(flat_params=model._process_params(params))
 
 
@@ -370,7 +383,7 @@ def test_refused_start_raises_before_any_regime_law_is_evaluated(
     # Construction may evaluate this fixed scalar law to prove support. A refused
     # simulation must not evaluate it again, including while tracing user code.
     calls_before_simulation = tuple(calls)
-    initial_conditions: Any = {
+    initial_conditions: dict[str, np.ndarray] | pd.DataFrame = {
         "wealth": np.zeros(2),
         "age": np.full(2, 35.0),
         "regime_id": np.full(2, model.regime_names_to_ids["working"]),

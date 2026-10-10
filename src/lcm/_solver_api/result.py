@@ -8,6 +8,8 @@ from typing import (
     TYPE_CHECKING,
 )
 
+import numpy as np
+import pandas as pd
 from beartype import beartype
 
 from lcm._solver_api.authority import (
@@ -143,3 +145,47 @@ class SolutionResult:
         from lcm.persistence import save_solution  # noqa: PLC0415
 
         return save_solution(solution=self, path=path)
+
+    def value_frame(
+        self, *, period: int, regime: RegimeName, use_labels: bool = True
+    ) -> pd.DataFrame:
+        """Return grid values in long form, with state columns followed by `V`.
+
+        Columns follow the stored value schema's axis order, including a
+        `stakeholder` column for collective values. With `use_labels=True`,
+        discrete states use pandas categoricals matching simulation labels;
+        otherwise they retain integer codes. Resolved process and period-specific
+        grid nodes are those used by this solve.
+        Axis names must be unique and must not use the value column name `V`.
+
+        This explicit call materializes one row per grid point and stakeholder,
+        so large grids produce large frames. For values between nodes, use
+        `Model.lookup_policy`, which uses simulation's interpolation.
+        """
+        value = np.asarray(self.value(period=period, regime=regime))
+        schema = self.metadata.value_schemas[period, regime]
+        if "V" in schema.axis_names or len(set(schema.axis_names)) != len(
+            schema.axis_names
+        ):
+            raise ValueError(
+                "Value-frame axes must be unique and must not be named 'V'."
+            )
+        if len(schema.named_axes) != value.ndim:
+            raise ValueError("This value schema does not retain grid coordinates.")
+        if value.shape != schema.shape:
+            raise ValueError("Value shape differs from its stored schema.")
+        frame = pd.DataFrame(index=pd.RangeIndex(value.size))
+        for index, axis in enumerate(schema.named_axes):
+            repeats = int(np.prod(value.shape[index + 1 :], dtype=np.int64))
+            tiles = int(np.prod(value.shape[:index], dtype=np.int64))
+            coordinates = np.tile(np.repeat(axis.coordinates, repeats), tiles)
+            frame[axis.name] = coordinates
+            domain = schema.categorical_domains.get(axis.name)
+            if use_labels and domain is not None:
+                frame[axis.name] = pd.Categorical.from_codes(
+                    pd.Index(domain.codes).get_indexer(pd.Index(coordinates)),
+                    categories=pd.Index(domain.labels),
+                    ordered=domain.ordered,
+                )
+        frame["V"] = value.reshape(-1).copy()
+        return frame

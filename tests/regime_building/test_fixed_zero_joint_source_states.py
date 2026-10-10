@@ -27,7 +27,7 @@ as it can up front:
 import contextlib
 from collections.abc import Callable, Generator, Mapping
 from fractions import Fraction
-from typing import Any
+from typing import TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -47,7 +47,23 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
-from lcm.typing import ContinuousState, DiscreteState, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    RegimeName,
+    ScalarFloat,
+    ScalarInt,
+    StateName,
+    StateOrActionName,
+    UserFunction,
+)
+
+
+class _ConflictOptions(TypedDict, total=False):
+    wealth_law: Mapping[RegimeName, UserFunction]
+    second_joint: bool
+    joint_output: StateName
 
 
 @categorical(ordered=False)
@@ -125,7 +141,7 @@ def _model(
     enable_jit: bool,
     omit_joint: bool = False,
     omit_driver_read: bool = False,
-    wealth_law: Mapping[str, Callable] | None = None,
+    wealth_law: Mapping[RegimeName, UserFunction] | None = None,
     second_joint: bool = False,
     joint_output: str = "wealth",
     with_mid: bool = False,
@@ -349,7 +365,14 @@ def _edge_free_wealth_model(*, enable_jit: bool = False) -> Model:
     )
 
 
-def _outcome(*, model: Model) -> tuple[object, ...]:
+def _outcome(
+    *, model: Model
+) -> tuple[
+    tuple[StateName, ...],
+    dict[RegimeName, frozenset[StateOrActionName]],
+    tuple[RegimeName, ...],
+    list[float],
+]:
     """The source's states, pruned variables, effective targets and values."""
     values = model.solve(params={"discount_factor": 1.0}, log_level="off").values
     return (
@@ -393,7 +416,7 @@ def _precision(bits: int) -> Generator[None]:
 
 # Declarations toward `high` that conflict over its wealth cell, each with the
 # error a live `high` edge raises for them.
-_CONFLICTS: dict[str, tuple[dict[str, Any], str]] = {
+_CONFLICTS: dict[str, tuple[_ConflictOptions, str]] = {
     "ordinary_law_and_joint": (
         {"wealth_law": {"high": _wealth_utility}},
         "multiple producers claim target-state cell",
@@ -485,7 +508,7 @@ def _edge_free_driver_model() -> Model:
     )
 
 
-def _initialization_error(build: Callable[[], object]) -> str:
+def _initialization_error(build: Callable[[], Model]) -> str:
     """Return the message of the `ModelInitializationError` building raises."""
     with pytest.raises(ModelInitializationError) as raised:
         build()

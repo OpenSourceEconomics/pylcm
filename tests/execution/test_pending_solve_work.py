@@ -24,6 +24,7 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
     resolve_value_transfer,
 )
+from _lcm.typing import PytreeValue
 
 
 def _is_ready(*, array: jax.Array) -> bool:
@@ -234,7 +235,9 @@ def _exercise_copy(  # noqa: PLR0915 -- one real transfer/dispatch/lifetime witn
     call = jax.stages.Compiled.__call__
 
     # keyword-only-exempt: library-callback=jax.device_put
-    def copy(value: object, device: object) -> object:
+    def copy(
+        value: jax.Array, device: jax.Device | jax.sharding.Sharding | None
+    ) -> PytreeValue:
         placed = put(value, device)
         if value is original:
             # A one-device placement change may reuse the source. Force a real
@@ -245,15 +248,15 @@ def _exercise_copy(  # noqa: PLR0915 -- one real transfer/dispatch/lifetime witn
             return fresh
         return placed
 
-    def observe_wait(tree: object) -> object:
+    def observe_wait(tree: PytreeValue) -> PytreeValue:
         waited_ids.update(
             id(leaf) for leaf in jax.tree.leaves(tree) if isinstance(leaf, jax.Array)
         )
         return wait(tree)
 
     def observe_call(
-        executable: jax.stages.Compiled, *args: object, **kwargs: object
-    ) -> object:
+        executable: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         if executable is compiled:
             assert len(copies) == 1
             dispatch_waits.append(id(copies[0]) in waited_ids)

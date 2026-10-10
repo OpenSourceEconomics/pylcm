@@ -25,7 +25,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_artifact_template_declaration,
     snapshot_solution_metadata,
 )
-from _lcm.typing import ArtifactPayload, JSONValue
+from _lcm.typing import ArtifactPayload, JSONValue, PytreeChild
 from lcm import ExecutionConfig, LinSpacedGrid, Model
 from lcm._solver_api import authority as authority_module
 from lcm.exceptions import (
@@ -58,17 +58,17 @@ from tests.test_models.deterministic.regression import (
 )
 
 
-class _OneShotMapping(Mapping[object, object]):
+class _OneShotMapping[Key, Value](Mapping[Key, Value]):
     """Expose one item stream while refusing independent size/value observations."""
 
-    def __init__(self, entries: Mapping[object, object]) -> None:
+    def __init__(self, entries: Mapping[Key, Value]) -> None:
         self._entries = dict(entries)
         self.traversals = 0
 
-    def __getitem__(self, key: object) -> object:
+    def __getitem__(self, key: Key) -> Value:
         return self._entries[key]
 
-    def __iter__(self) -> Iterator[object]:
+    def __iter__(self) -> Iterator[Key]:
         self.traversals += 1
         if self.traversals > 1:
             raise RuntimeError("mapping was traversed more than once")
@@ -81,19 +81,19 @@ class _OneShotMapping(Mapping[object, object]):
         raise RuntimeError("mapping values were traversed independently")
 
 
-class _SingleItemMapping(Mapping[object, object]):
+class _SingleItemMapping[Key, Value](Mapping[Key, Value]):
     """Yield one raw pair without hashing its caller-owned key."""
 
-    def __init__(self, *, key: object, value: object) -> None:
+    def __init__(self, *, key: Key, value: Value) -> None:
         self._key = key
         self._value = value
 
-    def __getitem__(self, key: object) -> object:
+    def __getitem__(self, key: Key) -> Value:
         if key is not self._key:
             raise KeyError(key)
         return self._value
 
-    def __iter__(self) -> Iterator[object]:
+    def __iter__(self) -> Iterator[Key]:
         return iter((self._key,))
 
     def __len__(self) -> Never:
@@ -110,10 +110,10 @@ class _RaisingPathComponent:
         raise RuntimeError("invalid TreePath component was compared")
 
 
-class _RaisingMapping(_OneShotMapping):
+class _RaisingMapping[Key, Value](_OneShotMapping[Key, Value]):
     """Fail while the sole item stream is being advanced."""
 
-    def __iter__(self) -> Iterator[object]:
+    def __iter__(self) -> Iterator[Key]:
         self.traversals += 1
         raise RuntimeError("mapping item traversal failed")
 
@@ -129,7 +129,10 @@ class _CountingLazyEntry(solver_api_module._LazyEntry):
     def load_state(self) -> LoadState:
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> ArtifactPayload:  # noqa: ARG002
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
+        del template
         self.materialization_count += 1
         return self.value
 
@@ -146,7 +149,9 @@ class _DeletingLazyEntry(solver_api_module._LazyEntry):
     def load_state(self) -> LoadState:
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> ArtifactPayload:
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
         del template
         self.materialization_count += 1
         for target in self.targets:
@@ -156,14 +161,14 @@ class _DeletingLazyEntry(solver_api_module._LazyEntry):
 
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
-class _CountingTree:
+class _CountingTree[Value]:
     """Frozen test PyTree whose flatten callback records every invocation."""
 
-    value: object
+    value: Value
     flatten_count: ClassVar[int] = 0
     unflatten_count: ClassVar[int] = 0
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[Value], None]:
         """Expose one numerical leaf and count this callback."""
         type(self).flatten_count += 1
         return (self.value,), None
@@ -173,8 +178,8 @@ class _CountingTree:
     def tree_unflatten(
         cls,
         _metadata: None,
-        children: tuple[object, ...],
-    ) -> _CountingTree:
+        children: tuple[Value],
+    ) -> _CountingTree[Value]:
         """Rebuild the test tree from its sole numerical leaf."""
         cls.unflatten_count += 1
         return cls(children[0])
@@ -189,7 +194,7 @@ class _ZeroLeafCustomTree:
     unflatten_count: ClassVar[int] = 0
     singleton: ClassVar[_ZeroLeafCustomTree | None] = None
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[()], None]:
         """Expose a custom zero-leaf node and count the sole observation."""
         type(self).flatten_count += 1
         return (), None
@@ -199,7 +204,7 @@ class _ZeroLeafCustomTree:
     def tree_unflatten(
         cls,
         _metadata: None,
-        _children: tuple[object, ...],
+        _children: tuple[()],
     ) -> _ZeroLeafCustomTree:
         """Expose whether rejection happened before a shared object escaped."""
         cls.unflatten_count += 1
@@ -212,7 +217,7 @@ class _EmptyTupleSubclass(NamedTuple):
     """Exact tuple subclass excluded from the safe zero-node allowlist."""
 
 
-class _TupleSpoofMeta(type):
+class _TupleSpoofMeta(type):  # noqa: PAN006 - Runtime metaclass base for deliberate builtin identity spoof.
     """Metaclass whose equality and hash impersonate the built-in tuple class."""
 
     def __hash__(cls) -> int:
@@ -230,7 +235,7 @@ class _TupleSpoofZeroLeaf(metaclass=_TupleSpoofMeta):
     flatten_count: ClassVar[int] = 0
     unflatten_count: ClassVar[int] = 0
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[()], None]:
         type(self).flatten_count += 1
         return (), None
 
@@ -239,13 +244,13 @@ class _TupleSpoofZeroLeaf(metaclass=_TupleSpoofMeta):
     def tree_unflatten(
         cls,
         _metadata: None,
-        _children: tuple[object, ...],
+        _children: tuple[()],
     ) -> _TupleSpoofZeroLeaf:
         cls.unflatten_count += 1
         return cls()
 
 
-class _IntegerSpoofMeta(type):
+class _IntegerSpoofMeta(type):  # noqa: PAN006 - Runtime metaclass base for deliberate builtin identity spoof.
     """Metaclass whose equality and hash impersonate the built-in int class."""
 
     def __hash__(cls) -> int:
@@ -259,7 +264,7 @@ class _IntegerSpoof(metaclass=_IntegerSpoofMeta):
     """Non-scalar instance weak exact-type set membership would accept."""
 
 
-class _StringSpoofMeta(type):
+class _StringSpoofMeta(type):  # noqa: PAN006 - Runtime metaclass base for deliberate builtin identity spoof.
     """Metaclass whose equality and hash impersonate the built-in str class."""
 
     def __hash__(cls) -> int:
@@ -269,7 +274,7 @@ class _StringSpoofMeta(type):
         return other is str
 
 
-def _repr_as_exact_string(_value: object) -> str:
+def _repr_as_exact_string(_value: object) -> str:  # noqa: PAN001 - Method installed on an arbitrary dynamically forged class.
     """Collide with the representation of the exact string ``"x"``."""
     return repr("x")
 
@@ -281,7 +286,7 @@ _StringSpoof = _StringSpoofMeta(
 )
 
 
-class _FloatSpoofMeta(type):
+class _FloatSpoofMeta(type):  # noqa: PAN006 - Runtime metaclass base for deliberate builtin identity spoof.
     """Metaclass whose equality and hash impersonate the built-in float class."""
 
     def __hash__(cls) -> int:
@@ -324,17 +329,17 @@ class _DictKeySubclass(jax.tree_util.DictKey):
 
 
 @dataclass(frozen=True)
-class _PlanBox:
+class _PlanBox[Value]:
     """Nested callback result used to witness repeated-container aliasing."""
 
-    value: object
+    value: Value
 
 
 @dataclass(frozen=True)
-class _TrustedStaticPlanBox:
+class _TrustedStaticPlanBox[Value]:
     """Identity-registered test record for inert callback metadata."""
 
-    value: object
+    value: Value
 
 
 solver_api_module._register_artifact_static_metadata_dataclass(
@@ -345,16 +350,16 @@ solver_api_module._register_artifact_static_metadata_dataclass(
 
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
-class _SharedInertTupleTree:
+class _SharedInertTupleTree[Value]:
     """Custom tree whose callback reuses one immutable metadata tuple."""
 
-    value: object
+    value: Value
     left_names: tuple[str, ...]
     right_names: tuple[str, ...]
     flatten_count: ClassVar[int] = 0
     unflatten_count: ClassVar[int] = 0
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[Value], None]:
         type(self).flatten_count += 1
         return (self.value,), None
 
@@ -363,8 +368,8 @@ class _SharedInertTupleTree:
     def tree_unflatten(
         cls,
         _metadata: None,
-        children: tuple[object, ...],
-    ) -> _SharedInertTupleTree:
+        children: tuple[Value],
+    ) -> _SharedInertTupleTree[Value]:
         cls.unflatten_count += 1
         shared = ("illiquid",)
         return cls(children[0], shared, shared)
@@ -372,16 +377,16 @@ class _SharedInertTupleTree:
 
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
-class _SharedTrustedStaticTree:
+class _SharedTrustedStaticTree[Value]:
     """Custom tree whose callback reuses one trusted static record."""
 
-    value: object
-    left: _TrustedStaticPlanBox
-    right: _TrustedStaticPlanBox
+    value: Value
+    left: _TrustedStaticPlanBox[tuple[str]]
+    right: _TrustedStaticPlanBox[tuple[str]]
     flatten_count: ClassVar[int] = 0
     unflatten_count: ClassVar[int] = 0
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[Value], None]:
         type(self).flatten_count += 1
         return (self.value,), None
 
@@ -390,11 +395,19 @@ class _SharedTrustedStaticTree:
     def tree_unflatten(
         cls,
         _metadata: None,
-        children: tuple[object, ...],
-    ) -> _SharedTrustedStaticTree:
+        children: tuple[Value],
+    ) -> _SharedTrustedStaticTree[Value]:
         cls.unflatten_count += 1
         shared = _TrustedStaticPlanBox(("illiquid",))
         return cls(children[0], shared, shared)
+
+
+type _PlanChild = (
+    PytreeChild
+    | _PlanBox[_PlanChild]
+    | _TrustedStaticPlanBox[_PlanChild]
+    | tuple[_PlanChild]
+)
 
 
 @jax.tree_util.register_pytree_node_class
@@ -402,14 +415,14 @@ class _SharedTrustedStaticTree:
 class _AdversarialPlanTree:
     """Two-leaf PyTree whose unflatten behavior selects an attack class."""
 
-    left: object
-    right: object
+    left: _PlanChild
+    right: _PlanChild
     mode: ClassVar[str] = "normal"
     flatten_count: ClassVar[int] = 0
     unflatten_count: ClassVar[int] = 0
     singleton: ClassVar[_AdversarialPlanTree | None] = None
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[_PlanChild, _PlanChild], None]:
         type(self).flatten_count += 1
         return (self.left, self.right), None
 
@@ -418,7 +431,7 @@ class _AdversarialPlanTree:
     def tree_unflatten(
         cls,
         _metadata: None,
-        children: tuple[object, ...],
+        children: tuple[_PlanChild, _PlanChild],
     ) -> _AdversarialPlanTree:
         cls.unflatten_count += 1
         if cls.mode == "singleton":
@@ -443,7 +456,7 @@ class _AdversarialPlanTree:
 
 
 @jax.tree_util.register_pytree_node_class
-class _NonEmptyTupleSubclass(tuple):
+class _NonEmptyTupleSubclass[Value](tuple[Value]):
     """A tuple subclass remains unsupported even when it has numerical leaves."""
 
     __slots__ = ()
@@ -451,10 +464,10 @@ class _NonEmptyTupleSubclass(tuple):
     flatten_count: ClassVar[int] = 0
     unflatten_count: ClassVar[int] = 0
 
-    def __new__(cls, value: object) -> Self:
+    def __new__(cls, value: Value) -> Self:
         return cast("Self", tuple.__new__(cls, (value,)))
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[Value], None]:
         type(self).flatten_count += 1
         return (self[0],), None
 
@@ -463,21 +476,21 @@ class _NonEmptyTupleSubclass(tuple):
     def tree_unflatten(
         cls,
         _metadata: None,
-        children: tuple[object, ...],
-    ) -> _NonEmptyTupleSubclass:
+        children: tuple[Value],
+    ) -> _NonEmptyTupleSubclass[Value]:
         cls.unflatten_count += 1
         return cls(children[0])
 
 
 @dataclass(frozen=True)
-class _FakeMarkerDonor:
+class _FakeMarkerDonor[Value]:
     """Source of genuine dataclass marker objects for a forged class."""
 
-    value: object
+    value: Value
 
 
 @jax.tree_util.register_pytree_node_class
-class _FakeMarkerTree:
+class _FakeMarkerTree[Value]:
     """Mutable marker copy with hidden storage outside its declared field set."""
 
     __dataclass_fields__ = _FakeMarkerDonor.__dataclass_fields__
@@ -485,11 +498,11 @@ class _FakeMarkerTree:
     flatten_count: ClassVar[int] = 0
     unflatten_count: ClassVar[int] = 0
 
-    def __init__(self, value: object) -> None:
+    def __init__(self, value: Value) -> None:
         self.value = value
         self.hidden = []
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[Value], None]:
         type(self).flatten_count += 1
         return (self.value,), None
 
@@ -498,23 +511,23 @@ class _FakeMarkerTree:
     def tree_unflatten(
         cls,
         _metadata: None,
-        children: tuple[object, ...],
-    ) -> _FakeMarkerTree:
+        children: tuple[Value],
+    ) -> _FakeMarkerTree[Value]:
         cls.unflatten_count += 1
         return cls(children[0])
 
 
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
-class _ReentrantTree:
+class _ReentrantTree[Value]:
     """Template whose sole flatten attempts nested authority initialization."""
 
-    value: object
+    value: Value
     target: ClassVar[ArtifactAuthority | None] = None
     flatten_count: ClassVar[int] = 0
     reentry_error: ClassVar[BaseException | None] = None
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[Value], None]:
         cls = type(self)
         cls.flatten_count += 1
         if cls.target is not None:
@@ -529,8 +542,8 @@ class _ReentrantTree:
     def tree_unflatten(
         cls,
         _metadata: None,
-        children: tuple[object, ...],
-    ) -> _ReentrantTree:
+        children: tuple[Value],
+    ) -> _ReentrantTree[Value]:
         return cls(children[0])
 
 
@@ -820,7 +833,7 @@ def test_authority_tree_paths_are_validated_before_hashing(
         axis_names=(),
     )
     invalid_component = _RaisingPathComponent()
-    mapping_path: object = leaf_path
+    mapping_path: tuple[str, ...] | tuple[_RaisingPathComponent] = leaf_path
     if spoof_location == "mapping_key":
         mapping_path = (invalid_component,)
     else:
@@ -1130,7 +1143,13 @@ def test_template_leaf_scalar_grammar_uses_runtime_type_identity() -> None:
         _DictKeySubclass("key"),
     ],
 )
-def test_jax_tree_path_key_subclasses_are_rejected(*, component: object) -> None:
+def test_jax_tree_path_key_subclasses_are_rejected(
+    *,
+    component: _GetAttrKeySubclass
+    | _SequenceKeySubclass
+    | _FlattenedIndexKeySubclass
+    | _DictKeySubclass,
+) -> None:
     """Only exact JAX path-entry classes participate in stable normalization."""
     with pytest.raises(TypeError, match="Unsupported artifact TreePath component"):
         solver_api_module._normalize_jax_tree_path((component,))

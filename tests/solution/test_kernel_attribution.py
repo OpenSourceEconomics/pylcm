@@ -17,6 +17,7 @@ import re
 
 import pytest
 
+from lcm.typing import RegimeName
 from tests.test_models.deterministic.discrete import (
     get_model,
     get_params,
@@ -40,7 +41,7 @@ def _attribution_lines(caplog) -> list[re.Match[str]]:
 
 
 def _declared_discrete_action_cardinalities(
-    *, model, regime_name: str
+    *, model, regime_name: RegimeName
 ) -> dict[str, int]:
     """Return `{action name: cardinality}` as the user declared them."""
     regime = model.user_regimes[regime_name]

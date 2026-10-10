@@ -5,6 +5,7 @@ import inspect
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from typing_extensions import TypedDict
 
 import lcm
 import lcm.grids as public_grids
@@ -174,6 +175,12 @@ def test_breakpoint_coordinate_follows_ownership(
     assert float(coordinate) == pytest.approx(expected_coordinate)
 
 
+class _GridBounds(TypedDict):
+    start: float
+    stop: float
+    breakpoints: tuple[float, ...]
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
@@ -187,17 +194,14 @@ def test_breakpoint_coordinate_follows_ownership(
     ],
 )
 def test_piecewise_grid_rejects_invalid_bounds(
-    *, kwargs: dict[str, object], message: str
+    *, kwargs: _GridBounds, message: str
 ) -> None:
     """Endpoints and breakpoints define a finite strictly ordered domain."""
-    breakpoints = tuple(
-        GridBreakpoint(value=value)
-        for value in kwargs["breakpoints"]  # ty: ignore[not-iterable]
-    )
+    breakpoints = tuple(GridBreakpoint(value=value) for value in kwargs["breakpoints"])
     with pytest.raises(GridInitializationError, match=message):
         PiecewiseLinSpacedGrid(
-            start=kwargs["start"],  # ty: ignore[invalid-argument-type]
-            stop=kwargs["stop"],  # ty: ignore[invalid-argument-type]
+            start=kwargs["start"],
+            stop=kwargs["stop"],
             breakpoints=breakpoints,
             points_per_segment=(2,) * (len(breakpoints) + 1),
         )
@@ -219,7 +223,7 @@ def test_piecewise_grid_rejects_bounds_collapsed_by_canonical_precision(
 
 @pytest.mark.parametrize("points_per_segment", [(2,), (2, 2, 2), (1, 2), (2.5, 2)])
 def test_piecewise_grid_rejects_invalid_point_counts(
-    points_per_segment: tuple[object, ...],
+    points_per_segment: tuple[int | float, ...],
 ) -> None:
     """There is one integer count of at least two per nominal segment."""
     with pytest.raises(GridInitializationError):

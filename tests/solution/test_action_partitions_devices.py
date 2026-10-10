@@ -19,13 +19,131 @@ import shutil
 import subprocess
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import numpy as np
 import pytest
 
 from tests import conftest
 from tests.solution._action_partition_report import _bitwise_mismatches
+
+
+class _Layout(TypedDict):
+    n_devices: int
+    mesh: dict[str, int] | None
+    spec: list[str] | None
+
+
+class _FixedPartition(TypedDict):
+    mismatches: list[str]
+    working_layout: _Layout
+    dead_layout: _Layout
+
+
+class _PlannedPartition(TypedDict):
+    max_ulp: float
+
+
+class _StatePartition(TypedDict):
+    mismatches_to_same_state_mesh: list[str]
+    max_ulp_to_one_device: float
+    working_layout: _Layout
+
+
+class _InvariantPartition(TypedDict):
+    mismatches: list[str]
+    max_ulp: float
+    working_layout: _Layout
+
+
+class _Simulation(TypedDict):
+    decisions_and_states_equal: bool
+    value_max_ulp: float
+
+
+class _ChangedParams(TypedDict):
+    mismatches: list[str]
+    differs_from_first: bool
+
+
+class _Program(TypedDict):
+    all_gather_shapes: list[list[int]]
+    temp_bytes: int
+
+
+class _Budget(TypedDict):
+    module_file: str | None
+    ceiling_bytes: int
+    gathered_bytes: int
+    refused_below_ceiling: bool
+    mismatches_at_ceiling: list[str]
+    terminal_values: list[float]
+
+
+class _Release(TypedDict):
+    codes: list[int]
+    live_blocks: list[int]
+
+
+class _BlockMajor(TypedDict):
+    value_mismatches: list[str]
+    panel_mismatches: dict[str, list[str]]
+    release: _Release
+
+
+class _Report(TypedDict):
+    device_count: int
+    backend: str
+    x64: bool
+    n_actions: int
+    action_only_fixed_2: _FixedPartition
+    action_only_fixed_3: _FixedPartition
+    action_only_fixed_4: _FixedPartition
+    action_only_fixed_8: _FixedPartition
+    action_only_planned_2: _PlannedPartition
+    action_only_planned_4: _PlannedPartition
+    state_by_action_2: _StatePartition
+    state_by_action_4: _StatePartition
+    state_by_action_8: _StatePartition
+    invariant_blocks_action_only: _InvariantPartition
+    invariant_blocks_state_by_action: _InvariantPartition
+    simulation: dict[str, _Simulation]
+    changed_params: _ChangedParams
+    programs: dict[str, _Program]
+    budget: _Budget
+    block_major: dict[str, _BlockMajor]
+
+
+def _action_only_fixed(*, report: _Report, partitions: int) -> _FixedPartition:
+    return {
+        2: report["action_only_fixed_2"],
+        3: report["action_only_fixed_3"],
+        4: report["action_only_fixed_4"],
+        8: report["action_only_fixed_8"],
+    }[partitions]
+
+
+def _action_only_planned(*, report: _Report, partitions: int) -> _PlannedPartition:
+    return {
+        2: report["action_only_planned_2"],
+        4: report["action_only_planned_4"],
+    }[partitions]
+
+
+def _state_by_action(*, report: _Report, partitions: int) -> _StatePartition:
+    return {
+        2: report["state_by_action_2"],
+        4: report["state_by_action_4"],
+        8: report["state_by_action_8"],
+    }[partitions]
+
+
+def _invariant_blocks(*, report: _Report, layout: str) -> _InvariantPartition:
+    return {
+        "action_only": report["invariant_blocks_action_only"],
+        "state_by_action": report["invariant_blocks_state_by_action"],
+    }[layout]
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PARTITION_AXIS = "_lcm_action_partition"
@@ -52,7 +170,7 @@ def test_complete_value_comparison_distinguishes_shapes_with_the_same_bytes(
 
 
 @cache
-def _report_for(*, x64: bool, directory: Path) -> dict[str, Any]:
+def _report_for(*, x64: bool, directory: Path) -> _Report:
     out = directory / f"report_x64_{int(x64)}.json"
     env = {
         **os.environ,
@@ -89,7 +207,7 @@ def _report_for(*, x64: bool, directory: Path) -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def report(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+def report(tmp_path_factory: pytest.TempPathFactory) -> _Report:
     return _report_for(
         x64=conftest.X64_ENABLED,
         directory=tmp_path_factory.mktemp("action_partitions"),
@@ -97,7 +215,7 @@ def report(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
 
 
 def test_the_report_ran_on_eight_host_devices_at_the_suite_precision(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     assert (report["device_count"], report["backend"], report["x64"]) == (
         8,
@@ -108,17 +226,19 @@ def test_the_report_ran_on_eight_host_devices_at_the_suite_precision(
 
 @pytest.mark.parametrize("partitions", [2, 3, 4, 8])
 def test_action_only_partitions_equal_the_ordinary_route_bitwise(
-    *, report: dict[str, Any], partitions: int
+    *, report: _Report, partitions: int
 ) -> None:
     """Every period and regime, at the same fixed action width."""
-    assert report[f"action_only_fixed_{partitions}"]["mismatches"] == []
+    assert _action_only_fixed(report=report, partitions=partitions)["mismatches"] == []
 
 
 @pytest.mark.parametrize("partitions", [2, 3, 4, 8])
 def test_an_action_only_regime_is_replicated_over_its_action_group(
-    *, report: dict[str, Any], partitions: int
+    *, report: _Report, partitions: int
 ) -> None:
-    assert report[f"action_only_fixed_{partitions}"]["working_layout"] == {
+    assert _action_only_fixed(report=report, partitions=partitions)[
+        "working_layout"
+    ] == {
         "n_devices": partitions,
         "mesh": {_PARTITION_AXIS: partitions},
         "spec": ["None"],
@@ -126,7 +246,7 @@ def test_an_action_only_regime_is_replicated_over_its_action_group(
 
 
 def test_a_regime_without_a_request_stays_on_one_device(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     assert report["action_only_fixed_4"]["dead_layout"] == {
         "n_devices": 1,
@@ -137,31 +257,31 @@ def test_a_regime_without_a_request_stays_on_one_device(
 
 @pytest.mark.parametrize("partitions", [2, 4])
 def test_independently_planned_widths_agree_to_the_last_units_in_the_last_place(
-    *, report: dict[str, Any], partitions: int
+    *, report: _Report, partitions: int
 ) -> None:
     """The planner narrows the action block for more devices, which changes
     the compiled vectorization of `Q`, not the reduction."""
-    assert report[f"action_only_planned_{partitions}"]["max_ulp"] <= (
+    assert _action_only_planned(report=report, partitions=partitions)["max_ulp"] <= (
         conftest.INVARIANCE_EPS_MULTIPLE
     )
 
 
 @pytest.mark.parametrize("widths", ["planned", "fixed"])
 def test_simulation_from_a_partitioned_solve_takes_the_ordinary_decisions(
-    *, report: dict[str, Any], widths: str
+    *, report: _Report, widths: str
 ) -> None:
     """Every simulated action, state and regime equals the ordinary panel."""
     assert report["simulation"][widths]["decisions_and_states_equal"] is True
 
 
 def test_simulated_values_at_the_same_width_equal_the_ordinary_panel(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     assert report["simulation"]["fixed"]["value_max_ulp"] == 0.0
 
 
 def test_simulated_values_at_planned_widths_agree_to_the_last_units_in_the_last_place(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     assert (
         report["simulation"]["planned"]["value_max_ulp"]
@@ -171,32 +291,35 @@ def test_simulated_values_at_planned_widths_agree_to_the_last_units_in_the_last_
 
 @pytest.mark.parametrize("partitions", [2, 4, 8])
 def test_state_by_action_partitions_equal_the_same_state_mesh_bitwise(
-    *, report: dict[str, Any], partitions: int
+    *, report: _Report, partitions: int
 ) -> None:
     """Against the ordinary route sharding wealth over the same number of
     devices, so each device evaluates the same state cells."""
     assert (
-        report[f"state_by_action_{partitions}"]["mismatches_to_same_state_mesh"] == []
+        _state_by_action(report=report, partitions=partitions)[
+            "mismatches_to_same_state_mesh"
+        ]
+        == []
     )
 
 
 @pytest.mark.parametrize("partitions", [2, 4, 8])
 def test_state_by_action_partitions_agree_with_one_device_to_the_last_units(
-    *, report: dict[str, Any], partitions: int
+    *, report: _Report, partitions: int
 ) -> None:
     """A different count of state cells per device compiles a differently
     vectorized `Q`, as it does for the ordinary sharded route."""
     assert (
-        report[f"state_by_action_{partitions}"]["max_ulp_to_one_device"]
+        _state_by_action(report=report, partitions=partitions)["max_ulp_to_one_device"]
         <= conftest.INVARIANCE_EPS_MULTIPLE
     )
 
 
 @pytest.mark.parametrize("partitions", [2, 4, 8])
 def test_a_state_by_action_regime_shards_states_and_replicates_over_actions(
-    *, report: dict[str, Any], partitions: int
+    *, report: _Report, partitions: int
 ) -> None:
-    assert report[f"state_by_action_{partitions}"]["working_layout"] == {
+    assert _state_by_action(report=report, partitions=partitions)["working_layout"] == {
         "n_devices": 8,
         "mesh": {"wealth": 8 // partitions, _PARTITION_AXIS: partitions},
         "spec": ["wealth"],
@@ -204,14 +327,14 @@ def test_a_state_by_action_regime_shards_states_and_replicates_over_actions(
 
 
 def test_partitions_compose_with_type_local_invariant_blocks_bitwise(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     """Against the same blocked solve on the ordinary route."""
     assert report["invariant_blocks_action_only"]["mismatches"] == []
 
 
 def test_state_by_action_partitions_compose_with_invariant_blocks_to_the_last_units(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     """Against the same blocked solve on the ordinary route and state mesh.
 
@@ -228,9 +351,9 @@ def test_state_by_action_partitions_compose_with_invariant_blocks_to_the_last_un
 
 @pytest.mark.parametrize("layout", ["action_only", "state_by_action"])
 def test_partitioned_type_blocks_keep_the_block_layout(
-    *, report: dict[str, Any], layout: str
+    *, report: _Report, layout: str
 ) -> None:
-    assert report[f"invariant_blocks_{layout}"]["working_layout"] == (
+    assert _invariant_blocks(report=report, layout=layout)["working_layout"] == (
         {"n_devices": 4, "mesh": {_PARTITION_AXIS: 4}, "spec": ["None", "None"]}
         if layout == "action_only"
         else {
@@ -242,24 +365,24 @@ def test_partitioned_type_blocks_keep_the_block_layout(
 
 
 def test_a_second_solve_with_changed_params_reuses_nothing_stale(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     assert report["changed_params"] == {"mismatches": [], "differs_from_first": True}
 
 
 def test_the_partitioned_program_gathers_one_accumulator_per_cell_and_device(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     """Value, winning identity and feasibility of 8 wealth cells from 4 devices."""
     assert report["programs"]["partitioned"]["all_gather_shapes"] == [[8, 4]] * 3
 
 
-def test_the_ordinary_program_exchanges_nothing(report: dict[str, Any]) -> None:
+def test_the_ordinary_program_exchanges_nothing(report: _Report) -> None:
     assert report["programs"]["ordinary"]["all_gather_shapes"] == []
 
 
 def test_the_gathered_accumulators_are_reserved_as_compiled_workspace(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     """The exchange buffers are temporaries of the compiled program, so the
     compiler reservation admission charges covers them."""
@@ -270,21 +393,21 @@ def test_the_gathered_accumulators_are_reserved_as_compiled_workspace(
 
 
 def test_a_partitioned_solve_refuses_one_byte_below_its_workspace_budget(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     """The exchanged accumulators fit at the reported ceiling, never below it."""
     assert report["budget"]["refused_below_ceiling"] is True
 
 
 def test_a_partitioned_solve_at_its_exact_workspace_budget_preserves_values(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     """The admitted solve publishes every ordinary fixed-width value bitwise."""
     assert report["budget"]["mismatches_at_ceiling"] == []
 
 
 def test_a_partitioned_solve_at_its_exact_budget_publishes_terminal_bequests(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     """Terminal wealth nodes receive their square-root bequests."""
     np.testing.assert_allclose(
@@ -296,7 +419,7 @@ def test_a_partitioned_solve_at_its_exact_budget_publishes_terminal_bequests(
 
 
 def test_block_major_action_partitions_publish_complete_period_major_values(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     """Every labelled value keeps its dtype, shape and bytes at fixed widths."""
     assert {
@@ -307,7 +430,7 @@ def test_block_major_action_partitions_publish_complete_period_major_values(
 
 @pytest.mark.parametrize("route", ["split", "combined"])
 def test_block_major_action_partitions_preserve_the_complete_simulated_panel(
-    *, report: dict[str, Any], route: str
+    *, report: _Report, route: str
 ) -> None:
     """Same-subject panels keep their metadata and raw bytes, including signed zero."""
     assert {
@@ -317,7 +440,7 @@ def test_block_major_action_partitions_preserve_the_complete_simulated_panel(
 
 
 def test_block_major_action_partitions_release_every_retained_component(
-    report: dict[str, Any],
+    report: _Report,
 ) -> None:
     """All three preference codes release their device values after host retention."""
     assert {

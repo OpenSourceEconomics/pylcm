@@ -6,8 +6,6 @@ inventory rejects deletion, addition, duplication, rename, and byte change.
 Exit 2 means the control itself failed.
 """
 
-from __future__ import annotations
-
 import argparse
 import ast
 import hashlib
@@ -16,8 +14,27 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, NotRequired, TypedDict
+
+if TYPE_CHECKING:
+    from tests.candidate_certificate.verify import _VerificationReport
+
+
+class _ControlCase(TypedDict):
+    exit: int
+    payload: _VerifierPayload
+    path: str
+
+
+class _ProcessOutput(TypedDict):
+    raw_stdout: str
+    raw_stderr: str
+    errors: NotRequired[list[str]]
+
+
+type _VerifierPayload = _VerificationReport | _ProcessOutput
 
 CERTIFICATE = Path("tests/test_grid_search_candidate_certificate.py")
 INVENTORY = Path("tests/candidate_certificate/sources.json")
@@ -25,7 +42,7 @@ VERIFIER = Path("tests/candidate_certificate/verify.py")
 PROFILES = ("fast", "certified")
 
 
-def _emit(payload: dict[str, Any]) -> None:
+def _emit[PayloadValue](payload: Mapping[str, PayloadValue]) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
@@ -136,7 +153,7 @@ def _policy(entries: list[dict[str, str]]) -> str:
 
 def _run_verifier(
     *, verifier: Path, repo_root: Path, contract: Path
-) -> tuple[int, dict[str, Any]]:
+) -> tuple[int, _VerifierPayload]:
     process = subprocess.run(
         [
             sys.executable,
@@ -151,7 +168,7 @@ def _run_verifier(
         check=False,
     )
     try:
-        payload = json.loads(process.stdout)
+        payload: _VerifierPayload = json.loads(process.stdout)
     except json.JSONDecodeError:
         payload = {"raw_stdout": process.stdout, "raw_stderr": process.stderr}
     return process.returncode, payload
@@ -223,7 +240,7 @@ def main() -> int:
                 contract=clean_contract,
             )
 
-            cases: dict[str, dict[str, Any]] = {}
+            cases: dict[str, _ControlCase] = {}
 
             deleted = entries[:-1]
             path = tmp / "delete.yaml"

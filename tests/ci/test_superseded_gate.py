@@ -12,10 +12,12 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import pytest
 import yaml
+
+from tests.ci._workflow_types import WorkflowStep
 
 _REPO_ROOT = Path(__file__).parents[2]
 _BASH = shutil.which("bash") or "/bin/bash"
@@ -31,7 +33,22 @@ _GATE_CONDITION = (
     "steps.superseded.outputs.superseded != 'true' || "
     "contains(needs.*.result, 'failure')"
 )
-_CURRENT = {
+
+
+class _RunRepository(TypedDict):
+    full_name: str
+
+
+class _WorkflowRun(TypedDict, total=False):
+    id: int
+    workflow_id: int
+    event: str
+    head_branch: str
+    head_sha: str
+    head_repository: _RunRepository
+
+
+_CURRENT: _WorkflowRun = {
     "id": 100,
     "workflow_id": 7,
     "event": "pull_request",
@@ -95,9 +112,9 @@ else:
 def _run_action(
     *,
     tmp_path: Path,
-    runs: list[dict[str, Any]],
+    runs: list[_WorkflowRun],
     event: str = "pull_request",
-    current: dict[str, Any] | None = None,
+    current: _WorkflowRun | None = None,
 ) -> str:
     current = _CURRENT if current is None else current
     assert shutil.which("jq") is not None
@@ -144,21 +161,21 @@ def _run_action(
     ],
 )
 def test_superseded_action_counts_only_newer_runs_of_the_same_head(
-    *, tmp_path: Path, newer: dict[str, Any], event: str, expected: str
+    *, tmp_path: Path, newer: _WorkflowRun, event: str, expected: str
 ) -> None:
     """Only a newer pull-request run from the same head repository supersedes."""
-    run = {**_CURRENT, "id": 101, **newer}
+    run: _WorkflowRun = {**_CURRENT, "id": 101, **newer}
     assert _run_action(tmp_path=tmp_path, runs=[run], event=event) == expected
 
 
-def _gate_step(*, workflow: str, job: str) -> dict[str, Any]:
+def _gate_step(*, workflow: str, job: str) -> WorkflowStep:
     jobs = yaml.safe_load((_REPO_ROOT / ".github/workflows" / workflow).read_text())
     (step,) = [s for s in jobs["jobs"][job]["steps"] if "test " in s.get("run", "")]
     return step
 
 
 def _gate_passes(
-    *, step: dict[str, Any], needs: dict[str, str], superseded: bool
+    *, step: WorkflowStep, needs: dict[str, str], superseded: bool
 ) -> bool:
     if superseded and "failure" not in needs.values():
         return True
@@ -224,8 +241,8 @@ def test_supersession_preserves_literal_branch_identity(
     same_branch: bool,
 ) -> None:
     """A query metacharacter must neither alias nor lose the PR's branch."""
-    current = {**_CURRENT, "head_branch": branch}
-    newer = {
+    current: _WorkflowRun = {**_CURRENT, "head_branch": branch}
+    newer: _WorkflowRun = {
         **current,
         "id": 101,
         "head_branch": branch if same_branch else other_branch,

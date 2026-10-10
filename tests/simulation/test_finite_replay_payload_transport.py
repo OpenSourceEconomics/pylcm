@@ -367,8 +367,8 @@ def test_replacement_discrete_codes_remain_dynamic_in_cached_rank(
     assert int(ranked[0][name][0]) != int(original[0][name][0])
 
 
-def _tied_q_and_f(
-    *, consumption: jax.Array, **arguments: object
+def _tied_q_and_f[Ignored](
+    *, consumption: jax.Array, **arguments: Ignored
 ) -> tuple[jax.Array, jax.Array]:
     del arguments
     return jnp.ones_like(consumption), jnp.ones_like(consumption, dtype=bool)

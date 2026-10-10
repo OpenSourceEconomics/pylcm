@@ -88,7 +88,7 @@ def _structural_phase_variations(model) -> tuple[str, ...]:
             )
         )
 
-    alive_edges = cast("Mapping[str, object]", model.edges).get("alive")
+    alive_edges = model.edges.get("alive")
     law = alive_edges.law if isinstance(alive_edges, Transition) else None
     if isinstance(law, Phased) and law.solve is not law.simulate:
         varied.append("transition")

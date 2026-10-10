@@ -39,6 +39,8 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParams,
+    UserParamsNode,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
@@ -189,8 +191,8 @@ DCEGM_SOLVER = DCEGM(
 )
 
 
-def _params(*, factor_is_fixed: bool) -> dict:
-    params: dict = {"discount_factor": 0.95}
+def _params(*, factor_is_fixed: bool) -> UserParams:
+    params: dict[str, UserParamsNode] = {"discount_factor": 0.95}
     if not factor_is_fixed:
         # Free param: supplied at solve time under the target regime's
         # pension function.

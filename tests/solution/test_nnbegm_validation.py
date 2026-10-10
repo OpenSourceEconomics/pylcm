@@ -9,8 +9,7 @@ the inner liquid post-decision margin, directly or through a sibling law.
 
 import contextlib
 import logging
-from collections.abc import Generator
-from typing import cast
+from collections.abc import Callable, Generator
 
 import jax.numpy as jnp
 import pytest
@@ -24,6 +23,7 @@ from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.solution.nnbegm import (
     _fail_if_the_solve_grid_cannot_reconstruct_a_candidate,
 )
+from _lcm.typing import ArtifactPayload
 from lcm import AgeGrid, LinSpacedGrid, Model
 from lcm.consumption_savings_regime import (
     LiquidMargin,
@@ -543,9 +543,10 @@ def _new_illiquid_reading_consumption(
     return illiquid + illiquid_investment + 0.01 * consumption
 
 
-def _published_capability(policy: object) -> OuterReplayCapability:
+def _published_capability(policy: ArtifactPayload) -> OuterReplayCapability:
     """The replay capability the published NNBEGM policy carries."""
-    return cast("NNBEGMSimPolicy | NestedEGMSimPolicy", policy).replay_capability
+    assert isinstance(policy, NNBEGMSimPolicy | NestedEGMSimPolicy)
+    return policy.replay_capability
 
 
 def test_the_continuous_outer_mesh_refuses_an_outer_map_replay_cannot_bind() -> None:
@@ -609,18 +610,26 @@ def test_the_published_capability_records_the_outer_state_domain() -> None:
 @contextlib.contextmanager
 def _recorded_published_policies(
     monkeypatch: pytest.MonkeyPatch,
-) -> Generator[list[object]]:
+) -> Generator[list[NNBEGMSimPolicy | NestedEGMSimPolicy]]:
     """Record every replay policy object either outer search constructs."""
-    constructed: list[object] = []
-    for name in ("NNBEGMSimPolicy", "NestedEGMSimPolicy"):
-        original = getattr(nnbegm_module, name)
+    constructed: list[NNBEGMSimPolicy | NestedEGMSimPolicy] = []
 
-        def record(*, _original=original, **kwargs: object) -> object:
-            policy = _original(**kwargs)
+    def recorder[**P, R: NNBEGMSimPolicy | NestedEGMSimPolicy](
+        original: Callable[P, R],
+    ) -> Callable[P, R]:
+        def record(*args: P.args, **kwargs: P.kwargs) -> R:
+            policy = original(*args, **kwargs)
             constructed.append(policy)
             return policy
 
-        monkeypatch.setattr(nnbegm_module, name, record)
+        return record
+
+    monkeypatch.setattr(
+        nnbegm_module, "NNBEGMSimPolicy", recorder(nnbegm_module.NNBEGMSimPolicy)
+    )
+    monkeypatch.setattr(
+        nnbegm_module, "NestedEGMSimPolicy", recorder(nnbegm_module.NestedEGMSimPolicy)
+    )
     yield constructed
 
 

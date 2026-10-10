@@ -157,7 +157,7 @@ def test_capability_axes_are_frozen_at_construction() -> None:
     ],
 )
 def test_capabilities_refuse_ambiguous_or_empty_names(
-    changes: dict[str, object],
+    changes: dict[str, str | tuple[str, ...]],
 ) -> None:
     """Published metadata has nonempty names and unambiguous axis roles."""
     cap = _SOLVERS["GridSearch"].capabilities

@@ -5,7 +5,6 @@ Run this module alone in a fresh four-CPU-device process.
 
 from collections.abc import Callable
 from functools import partialmethod
-from typing import Any
 
 import jax
 import numpy as np
@@ -18,6 +17,7 @@ from _lcm.simulation.taste_stream import (
     create_taste_shock_key,
     generate_taste_shock_keys,
 )
+from _lcm.typing import PytreeValue
 
 try:
     jax.config.update("jax_num_cpu_devices", 4)
@@ -48,10 +48,10 @@ def _oracle(*, start: int, count: int, population: int) -> np.ndarray:
 def _record_output(
     self: jax.stages.Compiled,
     *,
-    original: Callable[..., object],
-    calls: list[tuple[jax.stages.Compiled, object]],
-    **arguments: Any,
-) -> object:
+    original: Callable[..., PytreeValue],
+    calls: list[tuple[jax.stages.Compiled, PytreeValue]],
+    **arguments: PytreeValue,
+) -> PytreeValue:
     result = original(self, **arguments)
     calls.append((self, result))
     return result
@@ -71,7 +71,7 @@ def test_addressed_key_profile_dispatches_directly_on_ordered_subject_devices(
         operations=ProfiledSimulationOperations(),
         inputs=measure_buffer_footprint(tree=()),
     )
-    calls: list[tuple[jax.stages.Compiled, object]] = []
+    calls: list[tuple[jax.stages.Compiled, PytreeValue]] = []
     monkeypatch.setattr(
         jax.stages.Compiled,
         "__call__",

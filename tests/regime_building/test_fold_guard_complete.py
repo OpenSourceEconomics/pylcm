@@ -28,14 +28,16 @@ negative controls that bound the prohibition:
 
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import TypedDict
 
 import jax.numpy as jnp
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_building.processing import process_regimes
-from _lcm.regime_law import bind_regime_law
+from _lcm.regime_building.processing import PreparedModelStructure, process_regimes
+from _lcm.regime_law import RegimeLawDeclaration, bind_regime_law
+from _lcm.typing import RegimeNamesToIds
 from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeRange,
@@ -56,8 +58,16 @@ from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import StochasticTransition
-from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import BoolND, DiscreteAction, FloatND, RegimeName, ScalarInt
 from tests.conftest import bind_laws, build_prepared_structure
+
+
+class _ProcessKwargs(TypedDict):
+    user_regimes: Mapping[RegimeName, Regime]
+    ages: AgeGrid
+    regime_names_to_ids: RegimeNamesToIds
+    enable_jit: bool
+    prepared_structure: PreparedModelStructure
 
 
 @categorical(ordered=True)
@@ -101,8 +111,10 @@ def _true_gate() -> BoolND:
 
 
 def _solve_kwargs(
-    *, regimes: Mapping[str, tuple[Regime, object]], ages: AgeGrid
-) -> dict:
+    *,
+    regimes: Mapping[str, tuple[Regime, RegimeLawDeclaration | Transition]],
+    ages: AgeGrid,
+) -> _ProcessKwargs:
     """Process keywords for regimes paired with their laws between regimes."""
     names = list(regimes)
     laws = bind_laws({name: law for name, (_, law) in regimes.items()})
@@ -131,7 +143,7 @@ _AGES_2P = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 def _make_singleton_gated_target_regimes(
     *, fold: bool
-) -> dict[str, tuple[Regime, object]]:
+) -> dict[str, tuple[Regime, RegimeLawDeclaration | Transition]]:
     """`source` --gated_edges--> `target` (SINGLETON, folds `wage_shock`)."""
     source = (
         Regime(
@@ -203,7 +215,7 @@ def _dummy_constraint(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
 
 def _make_singleton_same_period_ref_regimes(
     *, fold: bool
-) -> dict[str, tuple[Regime, object]]:
+) -> dict[str, tuple[Regime, RegimeLawDeclaration | Transition]]:
     """`reader` (collective) --same_period_refs--> `ref_target` (SINGLETON, folded)."""
     ref_target = (
         Regime(
@@ -275,7 +287,9 @@ def test_unfolded_singleton_same_period_reference_still_constructs():
     )
 
 
-def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, tuple[Regime, object]]:
+def _make_edge_fallback_regimes(
+    *, fold: bool
+) -> dict[str, tuple[Regime, RegimeLawDeclaration | Transition]]:
     """`source` --gated_edges--> `target` (plain, unfolded, collective).
 
     The edge's leg `fallback` names `fallback_regime` (singleton, folds

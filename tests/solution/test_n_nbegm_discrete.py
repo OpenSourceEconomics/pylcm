@@ -6,13 +6,13 @@ and the inner discrete upper envelope. The dense three-way grid search is the
 agreement oracle.
 """
 
-from collections.abc import Callable, Mapping
-from typing import Any
+from collections.abc import Callable
 
 import numpy as np
 import pytest
 
 from lcm import Model
+from lcm.typing import UserParams
 from tests.test_models import n_nbegm_discrete_toy as toy
 from tests.test_models import n_nbegm_toy as smooth
 
@@ -24,7 +24,7 @@ _SMOOTH_PARAMS = {"discount_factor": 0.95}
 def _interior_gaps(
     *,
     build: Callable[..., Model],
-    params: Mapping[str, Any],
+    params: UserParams,
     n_periods: int,
 ) -> dict[int, float]:
     """Largest relative nested-vs-brute gap per alive period, off the boundary.
