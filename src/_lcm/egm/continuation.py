@@ -17,7 +17,7 @@ import functools
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -76,6 +76,7 @@ from _lcm.typing import (
     EconFunctionKwargs,
     EconFunctionsMapping,
     FunctionName,
+    NextStateSolutionFunction,
     QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
@@ -156,7 +157,7 @@ class _ChildRead:
     kernel's per-savings-node read is pure array work.
     """
 
-    next_state_func: Callable[..., Any]
+    next_state_func: NextStateSolutionFunction
     """The target's next-state function (post-decision function removed).
 
     Computes every law that reads no draw. A law reading a draw has one value
@@ -166,7 +167,7 @@ class _ChildRead:
     next_state_key: TransitionFunctionName
     """`next_<state>` key of the child's continuous (Euler) state."""
 
-    euler_state_func: Callable[..., Any]
+    euler_state_func: NextStateSolutionFunction
     """The child's Euler-state law alone, with the draws it reads as inputs."""
 
     euler_draw_names: frozenset[TransitionFunctionName] = frozenset()
@@ -837,15 +838,14 @@ class _ChildCarryReader:
         combo_pool = self.combo_pool
         risk_aversion = self.risk_aversion
         # The solution-phase next-state function returns a flat mapping of
-        # `next_<state>` names to scalars; the shared protocol's nested
-        # return type is the simulation form. Everything but the child's
-        # Euler state is savings-independent (validated), so these values
-        # ride as constants through the composed gradients below.
+        # `next_<state>` names to scalars. Everything but the child's Euler
+        # state is savings-independent (validated), so these values ride as
+        # constants through the composed gradients below.
         next_states = read.next_state_func(
             **combo_pool, **{self.post_decision_name: savings_value}
         )
         deterministic_index = tuple(
-            cast("ScalarInt", next_states[f"next_{name}"])
+            next_states[f"next_{name}"]
             for name, is_stochastic in zip(
                 read.discrete_state_names, read.stochastic_flags, strict=True
             )
@@ -941,7 +941,7 @@ class _ChildCarryReader:
 class _ChildEulerState:
     """The child's Euler state as a function of the savings node, combo bound."""
 
-    next_state_func: Callable[..., Any]
+    next_state_func: NextStateSolutionFunction
     """The solution-phase next-state DAG of the target."""
 
     combo_pool: EconFunctionKwargs
@@ -960,7 +960,7 @@ class _ChildEulerState:
         inner = self.next_state_func(
             **self.combo_pool, **self.draws, **{self.post_decision_name: savings}
         )
-        return cast("ScalarFloat", inner[self.next_state_key])
+        return inner[self.next_state_key]
 
     def at_node(
         self, *, draws: Mapping[str, ScalarFloat | ScalarInt]
