@@ -419,7 +419,8 @@ class _PickledModel(TypedDict):
     fixed_params: UserParams
     _edges: ModelEdges
     _declared_transitions: MappingProxyType[RegimeName, tuple[Transition, ...]]
-    _fixed_component_splits: Mapping[str, FixedComponentSplit]
+    # An archive may hold the splits as a dict; restoration freezes them.
+    _fixed_component_splits: Mapping[StateName, FixedComponentSplit]
     _solution_model_instance_id: NotRequired[str]
     _declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     _cells_without_edges: MappingProxyType[tuple[RegimeName, int], DroppedCells]
@@ -1297,6 +1298,9 @@ class Model:
         Resealing records the bindings read by this process's copies of the callables.
         """
         self.__dict__.update(state)
+        self._fixed_component_splits = MappingProxyType(
+            dict(state["_fixed_component_splits"])
+        )
         if "durable_identity" not in state:
             self.durable_identity = True
         if "_time" not in state:

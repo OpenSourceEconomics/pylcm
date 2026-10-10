@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from fractions import Fraction
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, Self, cast, overload
+from typing import TYPE_CHECKING, Literal, NoReturn, Self, cast, overload
 
 import jax
 import numpy as np
@@ -31,7 +31,13 @@ from _lcm.typing import EconFunctionArg, PytreeValue, StateName
 from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.typing import FloatND, RegimeName, UserAge, UserFunction
+from lcm.typing import (
+    FloatND,
+    RegimeName,
+    UserAge,
+    UserFunction,
+    UserFunctionResult,
+)
 
 
 def fixed_transition(state_name: StateName) -> UserFunction:
@@ -144,7 +150,11 @@ if TYPE_CHECKING:
     type _DeclaredCaseLaw = AgeCaseLaw
     type _DeclaredTransitionLaw = TransitionLaw
     type DeclaredModelEdges = ModelEdges
+    type _DeclaredSelector = AgeSelector | PeriodSelector
 else:
+    # A malformed selector reaches the selector validators, which refuse it with a
+    # regime error naming it rather than with a type violation.
+    type _DeclaredSelector = object
     # The runtime check also admits a `Phased` pair of transitions for one source,
     # so that the graph refuses it naming the supported form rather than with a
     # type violation.
@@ -388,7 +398,9 @@ class DeterministicTransition:
             self, "__annotations__", getattr(self.func, "__annotations__", {})
         )
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(
+        self, *args: EconFunctionArg, **kwargs: EconFunctionArg
+    ) -> UserFunctionResult:
         return self.func(*args, **kwargs)
 
 
@@ -987,7 +999,7 @@ class ByPeriod(ByAge):
         return super().resolve(ages=axis)
 
 
-def _fail_if_invalid_period_selector(selector: object) -> None:
+def _fail_if_invalid_period_selector(selector: _DeclaredSelector) -> None:
     """Require genuinely integer period coordinates, without numeric coercion."""
     if isinstance(selector, PeriodRange | Periods):
         return
@@ -1097,7 +1109,7 @@ def _fail_if_not_a_nonterminal_law(law: _DeclaredCaseLaw) -> None:
             )
 
 
-def _fail_if_invalid_age_selector(selector: object) -> None:
+def _fail_if_invalid_age_selector(selector: _DeclaredSelector) -> None:
     """Reject selectors whose values can never be grid ages."""
     values = selector if isinstance(selector, tuple | range) else (selector,)
     if isinstance(selector, AgeRange | PeriodRange):
