@@ -69,7 +69,7 @@ from _lcm.solution.backward_induction import (
     _trace_settings_key,
 )
 from _lcm.solution.solve_phase_records import nested_phase
-from _lcm.typing import HostArray, PytreeValue, ShapeDtypePytree
+from _lcm.typing import ArgumentTree, HostArray, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 
@@ -93,7 +93,7 @@ _UNBUDGETED_SUBJECT_BLOCK_BYTES = 16 * 1024 * 1024
 _MIN_SUBJECT_ARGUMENT_BYTES = 64
 
 
-def _empty_widths() -> Mapping[str, int]:
+def _empty_widths() -> MappingProxyType[str, int]:
     """Supply an immutable empty specialization for an unbound compiler result."""
     return MappingProxyType({})
 
@@ -105,10 +105,12 @@ class CompiledSimulationProgram:
     executable: Callable[..., PytreeValue]
     """The exact executable selected by workspace planning."""
 
-    static_kwargs: Mapping[str, int]
+    static_kwargs: MappingProxyType[str, int]
     """Bindings used only by eager execution; compiled programs already bind them."""
 
-    widths: Mapping[str, int] = dataclasses.field(default_factory=_empty_widths)
+    widths: MappingProxyType[str, int] = dataclasses.field(
+        default_factory=_empty_widths
+    )
     """Concrete compiler specialization, never a cached budget admission."""
 
     memory: CompilerMemoryReservation | None = None
@@ -680,7 +682,7 @@ class _PreparedRoute:
     requirements: CoreExecutionRequirements
     """Subject-extent descriptor: planner axes and addressed value reads."""
 
-    widths: Mapping[str, int]
+    widths: MappingProxyType[str, int]
     """The selected candidate's width map, reused instead of re-derived.
 
     Pinned from the compiled candidate itself, so an explicit `ExecutionConfig`
@@ -871,7 +873,7 @@ def _dispatch_widths(
     configured: Mapping[str, int],
     residency: SimulationDispatchContext | None,
     width_ceilings: Mapping[str, int] = MappingProxyType({}),
-) -> Mapping[str, int]:
+) -> MappingProxyType[str, int]:
     """Resolve explicit, budgeted, or derived inner simulation widths.
 
     An unbudgeted simulation keeps the complete population in one outer chunk.
@@ -1086,7 +1088,7 @@ class _SimulationCandidateCompiler:
 
     def _bound(
         self, widths: Mapping[str, int]
-    ) -> tuple[Callable[..., PytreeValue], Mapping[str, object], dict[str, int]]:
+    ) -> tuple[Callable[..., PytreeValue], Mapping[str, ArgumentTree], dict[str, int]]:
         """Return the callable, its dynamic arguments and its static keywords."""
         if (
             self.shard_subjects
@@ -1115,7 +1117,7 @@ class _SimulationCandidateCompiler:
                             program=self.program, read=read
                         )
                     ),
-                    source_sharding=cast("jax.sharding.Sharding", leaf.sharding),
+                    source_sharding=leaf.sharding,
                 )
                 for read in self.program.requirements.value_reads
             )

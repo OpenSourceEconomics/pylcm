@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import replace
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -96,7 +97,7 @@ def test_abstract_copy_uses_destination_layout_and_keeps_source_cost(
         target=aligned.target,
         source=aligned.source,
         kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
-        stored_template=program.arguments["extra"],
+        stored_template=cast("jax.ShapeDtypeStruct", program.arguments["extra"]),
         source_sharding=required,
     )
     descriptor = jax.ShapeDtypeStruct(

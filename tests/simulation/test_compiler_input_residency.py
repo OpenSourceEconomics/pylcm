@@ -19,6 +19,7 @@ from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
+from _lcm.typing import FootprintTree
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -75,7 +76,7 @@ def _dispatch(
     return result.block_until_ready()
 
 
-def _payload_bytes(*, tree: object, device: jax.Device) -> int:
+def _payload_bytes(*, tree: FootprintTree, device: jax.Device) -> int:
     return sum(
         stop - start
         for start, stop in measure_buffer_footprint(tree=tree).spans.get(device, ())

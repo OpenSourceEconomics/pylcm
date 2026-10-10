@@ -49,6 +49,7 @@ from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
 )
+from _lcm.typing import ArgumentTree
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
 from lcm import (
     AgeRange,
@@ -1615,7 +1616,7 @@ def shared_transfer_executions() -> list[tuple[int, object]]:
 
     def count(
         *,
-        value: object,
+        value: ArgumentTree,
         transfer: value_transfer.ResolvedValueTransfer,
         on_materialized: MaterializedTransferObserver | None = None,
     ) -> jax.Array:
