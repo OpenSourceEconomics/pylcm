@@ -1020,7 +1020,10 @@ class ResolvedProjectedRegimeValue:
     """Name of the reference regime whose same-period V is read."""
 
     projection: Mapping[StateName, UserFunction]
-    """Per-reference-state projection functions (user vocabulary, DAG-resolved)."""
+    """Per-reference-state projection functions (user vocabulary, DAG-resolved).
+
+    This is the mapping the author declared on the reference.
+    """
 
     stakeholder_index: int | None
     """Index into the reference V's trailing stakeholder axis, or `None`."""
@@ -1176,8 +1179,8 @@ def _build_same_period_ref_reader(
     return _SamePeriodReferenceReader(
         ref=ref,
         v_interpolation_info=v_interpolation_info,
-        projection_funcs=projection_funcs,
-        projection_args=projection_args,
+        projection_funcs=MappingProxyType(projection_funcs),
+        projection_args=MappingProxyType(projection_args),
         interpolator=interpolator,
         interpolator_extra_qnames=interpolator_extra_qnames,
         v_mapping_arg=v_mapping_arg,
@@ -1194,13 +1197,13 @@ class _SamePeriodReferenceReader:
     """The resolved reference declaration."""
     v_interpolation_info: VInterpolationInfo
     """V-interpolation info of the reference regime."""
-    projection_funcs: Mapping[StateName, Callable[..., FloatND]]
+    projection_funcs: MappingProxyType[StateName, Callable[..., FloatND]]
     """Per reference state, its projection concatenated with the DAG."""
-    projection_args: Mapping[StateName, tuple[str, ...]]
+    projection_args: MappingProxyType[StateName, tuple[str, ...]]
     """Per reference state, the arguments its projection reads."""
     interpolator: Callable[..., FloatND]
     """Interpolates the reference regime's V at the projected coordinates."""
-    interpolator_extra_qnames: Mapping[str, str]
+    interpolator_extra_qnames: MappingProxyType[str, str]
     """Mapping of the interpolator's runtime grid helpers to their reference qnames."""
     v_mapping_arg: ReferenceName
     """Keyword carrying the mapping of reference regimes to V arrays."""
@@ -1289,7 +1292,7 @@ def _lookup_reference_params(
     qnames: Mapping[str, str],
     regime_to_params: Mapping[RegimeName, Mapping[str, ParamsLeaf]],
     ref_regime: RegimeName,
-) -> dict[str, ParamsLeaf]:
+) -> MappingProxyType[str, ParamsLeaf]:
     """Resolve a reader's interpolation helpers in the REFERENCE regime's params.
 
     See `SAME_PERIOD_PARAMS_ARG`.
@@ -1299,7 +1302,7 @@ def _lookup_reference_params(
             do not carry a helper the reference regime's own grid needs.
     """
     if not qnames:
-        return {}
+        return MappingProxyType({})
     if ref_regime not in regime_to_params:
         msg = (
             f"Reading regime '{ref_regime}''s same-period V requires that "
@@ -1319,7 +1322,7 @@ def _lookup_reference_params(
             )
             raise KeyError(msg)
         resolved[arg] = ref_params[qname]
-    return resolved
+    return MappingProxyType(resolved)
 
 
 def get_Q_and_F_collective(
@@ -1622,19 +1625,19 @@ class _CollectiveQAndF:
 class _ValueConstraintMachinery:
     """Prebuilt value-constraint machinery closed over by a collective `Q_and_F`."""
 
-    reference_readers: Mapping[str, Callable[..., FloatND]]
+    reference_readers: MappingProxyType[str, Callable[..., FloatND]]
     """Per reference-value name, the same-period reference reader."""
 
-    reference_reader_args: Mapping[ReferenceName, tuple[str, ...]]
+    reference_reader_args: MappingProxyType[ReferenceName, tuple[str, ...]]
     """Each reader's argument names (fetched off the cell kwargs)."""
 
-    evaluators: Mapping[str, Callable[..., BoolND]]
+    evaluators: MappingProxyType[str, Callable[..., BoolND]]
     """Per value-constraint name, the DAG-concatenated predicate."""
 
-    evaluator_args: Mapping[ReferenceName, tuple[str, ...]]
+    evaluator_args: MappingProxyType[ReferenceName, tuple[str, ...]]
     """Each evaluator's argument names (split engine-supplied vs cell kwargs)."""
 
-    q_value_index: Mapping[str, int]
+    q_value_index: MappingProxyType[str, int]
     """`Q_<s>` argument name -> index on the trailing stakeholder axis."""
 
     engine_supplied_names: frozenset[str]
@@ -1833,7 +1836,7 @@ def evaluate_projected_readers(
     readers: tuple[ProjectedLandingReader, ...],
     landing_states: Mapping[StateName, ContinuousState | DiscreteState],
     other_values: QAndFKwargs,
-) -> dict[str, FloatND]:
+) -> MappingProxyType[str, FloatND]:
     """Read each projected reference at one landing point.
 
     A gate reference and a leg fallback name another regime's value at
@@ -1855,13 +1858,15 @@ def evaluate_projected_readers(
         Dict of reader name to the value read at the landing.
 
     """
-    return {
-        reader.name: reader.reader(
-            **{arg: landing_states[arg] for arg in reader.state_args},
-            **{arg: other_values[arg] for arg in reader.other_args},
-        )
-        for reader in readers
-    }
+    return MappingProxyType(
+        {
+            reader.name: reader.reader(
+                **{arg: landing_states[arg] for arg in reader.state_args},
+                **{arg: other_values[arg] for arg in reader.other_args},
+            )
+            for reader in readers
+        }
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -2019,7 +2024,7 @@ def _get_pointwise_gated_interpolator(
         interpolator_args=interpolator_args,
         context_args=frozenset(context_args),
         reader_names=frozenset(reader_names),
-        landing_names=landing_names,
+        landing_names=MappingProxyType(landing_names),
         last_period=last_period,
         target_ages=target_ages,
         resolve_at_node=resolve_at_node,
@@ -2050,7 +2055,7 @@ class _PointwiseGatedInterpolator:
     """Engine context the gate or a reader names, bound to the target's period."""
     reader_names: frozenset[str]
     """Names of the projected readers."""
-    landing_names: Mapping[str, str]
+    landing_names: MappingProxyType[str, str]
     """Per state read at the landing, its `next_<state>` coordinate name."""
     last_period: int
     """The last model period, clipping the target period."""
@@ -2366,17 +2371,17 @@ class _ComputeCE:
     """Reachable targets carrying state, in graph order."""
     scalar_targets: tuple[RegimeName, ...]
     """Reachable targets carrying no state."""
-    continuations: Mapping[RegimeName, _TargetContinuation]
+    continuations: MappingProxyType[RegimeName, _TargetContinuation]
     """Per stateful target, everything built once for its continuation."""
-    gated_scalar_readers: Mapping[RegimeName, Callable[..., FloatND]]
+    gated_scalar_readers: MappingProxyType[RegimeName, Callable[..., FloatND]]
     """Per gated stateless target, the reader applying its gate to the channel stack."""
-    gated_scalar_arg_names: Mapping[RegimeName, tuple[str, ...]]
+    gated_scalar_arg_names: MappingProxyType[RegimeName, tuple[str, ...]]
     """Per gated stateless target, the reader's arguments besides the value array."""
     reduces_per_target: bool
     """Whether each target is reduced on its own (the plain expectation)."""
     certainty_equivalent: CertaintyEquivalent | None
     """The certainty equivalent, or `None` for the plain expectation."""
-    ce_flat_param_names: Mapping[str, str]
+    ce_flat_param_names: MappingProxyType[str, str]
     """The certainty equivalent's flat parameter names."""
     co_map_next_names: frozenset[str]
     """`next_`-prefixed names of the co-mapped states, which carry no coordinate."""
@@ -2992,9 +2997,9 @@ class _ResolveAtNode:
 
     read_as_a_draw: tuple[TransitionFunctionName, ...]
     """Stochastic laws whose node value a dependent law reads."""
-    support_provider_names: Mapping[TransitionFunctionName, str]
+    support_provider_names: MappingProxyType[TransitionFunctionName, str]
     """Per joint lottery, the DAG node supplying its support."""
-    node_values: Mapping[TransitionFunctionName, Int1D | Float1D]
+    node_values: MappingProxyType[TransitionFunctionName, Int1D | Float1D]
     """Per stochastic law, its nodes indexed by the draw's value."""
     resolve: Callable[..., Mapping[str, FloatND]]
     """The dependent laws, concatenated with the DAG."""

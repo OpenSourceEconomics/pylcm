@@ -176,7 +176,7 @@ def _prune_regime_transition(
     regime: UserRegime,
     law: RegimeLaw,
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
-) -> tuple[RegimeTransitionLaw, dict[Side, frozenset[str]], frozenset[str]]:
+) -> tuple[RegimeTransitionLaw, MappingProxyType[Side, frozenset[str]], frozenset[str]]:
     """Remove zero cells, keeping a joint-lottery edge in both phases or neither.
 
     A joint kernel is declared once for both phases, so its edge can leave the
@@ -198,11 +198,13 @@ def _prune_regime_transition(
             consumed=consumed,
             protected=protected,
         )
-        removed: dict[Side, frozenset[str]] = {
-            side: _targets(law=law.transition, side=side)
-            - _targets(law=transition, side=side)
-            for side in ("solve", "simulate")
-        }
+        removed: MappingProxyType[Side, frozenset[str]] = MappingProxyType(
+            {
+                side: _targets(law=law.transition, side=side)
+                - _targets(law=transition, side=side)
+                for side in ("solve", "simulate")
+            }
+        )
         one_phase_joint = frozenset(regime.joint_transitions) & (
             removed["solve"] ^ removed["simulate"]
         )
@@ -241,15 +243,15 @@ def _states_covered_only_by_removed_joints(
     )
 
 
-def _joint_outputs(joints: _JointDeclarations) -> set[str]:
+def _joint_outputs(joints: _JointDeclarations) -> frozenset[str]:
     """Every state any kernel of `joints` produces, in either phase."""
-    return {
+    return frozenset(
         output
         for kernels in joints.values()
         for raw in kernels.values()
         for _, kernel in _joint_kernels(raw)
         for output in kernel.outputs
-    }
+    )
 
 
 def _trim_joint_transitions(

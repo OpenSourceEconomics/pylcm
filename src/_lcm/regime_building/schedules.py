@@ -153,7 +153,7 @@ class RegimeSchedules:
     """Per nonterminal regime, the declared law at each available period."""
 
     gated_edges_by_regime: MappingProxyType[
-        RegimeName, Mapping[RegimeName, GatedEdge]
+        RegimeName, MappingProxyType[RegimeName, GatedEdge]
     ] = MappingProxyType({})
     """Per source regime, its gated edges by gated target."""
 
@@ -742,7 +742,7 @@ _INITIAL_NODE_ARITY = 2
 
 def _initial_node_entries(
     *, initial_nodes: UserInitialNodes, kind: str = "age"
-) -> Sequence[tuple[_InitialSelector, RegimeName | Sequence[RegimeName]]]:
+) -> tuple[tuple[_InitialSelector, RegimeName | Sequence[RegimeName]], ...]:
     """Normalize exact-pair or selector-mapping entries before grid selection."""
     if isinstance(initial_nodes, InitialNodes):
         selected = initial_nodes.by_age if kind == "age" else initial_nodes.by_period
@@ -750,7 +750,7 @@ def _initial_node_entries(
             raise ModelInitializationError(
                 f"This model requires InitialNodes(by_{kind}=...)."
             )
-        return list(selected.items())
+        return tuple(selected.items())
     if kind == "period":
         raise ModelInitializationError(
             "Period models require InitialNodes(by_period=...)."
@@ -762,9 +762,9 @@ def _initial_node_entries(
             raise ModelInitializationError(
                 "`initial_nodes` must name at least one starting pair."
             )
-        entries = [_initial_node_pair(pair) for pair in initial_nodes]
+        entries = tuple(_initial_node_pair(pair) for pair in initial_nodes)
     elif isinstance(initial_nodes, Mapping) and initial_nodes:
-        entries = list(initial_nodes.items())
+        entries = tuple(initial_nodes.items())
         if any(isinstance(selector, PeriodRange | Periods) for selector, _ in entries):
             raise ModelInitializationError(
                 "Age initial-node mappings cannot use period selectors."
@@ -1363,26 +1363,29 @@ def _masked_cell(
 def _law_cells(
     *, law: PhaseLaw, code_by_name: Mapping[str, int] | None
 ) -> Mapping[RegimeName, ProbabilityCell]:
+    # A per-target law arrives as the author declared it.
     if isinstance(law, Mapping):
         return law
     if isinstance(law, str):
-        return {law: StochasticTransition(func=_Constant(value=1.0))}
+        return MappingProxyType({law: StochasticTransition(func=_Constant(value=1.0))})
     if isinstance(law, DeterministicTransition):
         names = _argument_names(law.func)
-        return {
-            target: StochasticTransition(
-                func=_indicator(
-                    selector=law.func,
-                    code=(
-                        None
-                        if code_by_name is None
-                        else _code(name=target, code_by_name=code_by_name)
-                    ),
-                    names=names,
+        return MappingProxyType(
+            {
+                target: StochasticTransition(
+                    func=_indicator(
+                        selector=law.func,
+                        code=(
+                            None
+                            if code_by_name is None
+                            else _code(name=target, code_by_name=code_by_name)
+                        ),
+                        names=names,
+                    )
                 )
-            )
-            for target in _law_targets(law)
-        }
+                for target in _law_targets(law)
+            }
+        )
     raise ModelInitializationError(
         f"A schedule case {law!r} is not a nonterminal regime law. Use a regime "
         "name, a `DeterministicTransition` or a per-target mapping, and declare "

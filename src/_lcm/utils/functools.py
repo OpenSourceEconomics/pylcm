@@ -86,7 +86,7 @@ def _split_bound_arguments[T](
     n_positional: int,
     original_signature: inspect.Signature,
     adapted_signature: inspect.Signature,
-) -> tuple[list[T], dict[ReferenceName, T]]:
+) -> tuple[tuple[T, ...], MappingProxyType[ReferenceName, T]]:
     """Preserve how positional-or-keyword values reached the adapter."""
     positional_origins: set[str] = set()
     remaining_positional = n_positional
@@ -119,7 +119,7 @@ def _split_bound_arguments[T](
         else:
             forwarded_kwargs[name] = value
 
-    return forwarded_args, forwarded_kwargs
+    return tuple(forwarded_args), MappingProxyType(forwarded_kwargs)
 
 
 def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
