@@ -6,7 +6,6 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
-    TypeAlias,
     cast,
 )
 
@@ -31,19 +30,15 @@ from lcm._solver_api.stores import (
 from lcm.typing import FloatND, RegimeName
 
 if TYPE_CHECKING:
-    _SolutionValuesInput: TypeAlias = (  # noqa: UP040
-        Mapping[int, Mapping[RegimeName, FloatND]] | ValueStore
-    )
-    _SolutionOmissionsInput: TypeAlias = Mapping[  # noqa: UP040
-        ArtifactRef, OmissionReason
-    ]
+    type _SolutionValuesInput = Mapping[int, Mapping[RegimeName, FloatND]] | ValueStore
+    type _SolutionOmissionsInput = Mapping[ArtifactRef, OmissionReason]
 else:
     # The public static contract stays precise above. At runtime the package-wide
     # beartype claw must not traverse these mappings: a ValueStore can contain lazy
     # archive entries whose checksum and payload validation belong to explicit
     # materialization, while omission validation belongs to result/save preflight.
-    _SolutionValuesInput = object
-    _SolutionOmissionsInput = object
+    type _SolutionValuesInput = object
+    type _SolutionOmissionsInput = object
 
 
 @dataclass(frozen=True, kw_only=True)

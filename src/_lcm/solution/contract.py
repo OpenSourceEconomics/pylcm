@@ -34,7 +34,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, cast, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.processed import ProcessedConstraintsMapping
@@ -125,14 +125,10 @@ if TYPE_CHECKING:
     from _lcm.regime_building.V import VInterpolationInfo
     from _lcm.regime_law import RegimeLaw
 
-    RegimeLawsMapping: TypeAlias = Mapping[RegimeName, RegimeLaw]  # noqa: UP040
+    type RegimeLawsMapping = Mapping[RegimeName, RegimeLaw]
 
-    UserRegimesMapping: TypeAlias = Mapping[  # noqa: UP040
-        RegimeName, FinalizedUserRegime
-    ]
-    RegimeToVInterpolationInfo: TypeAlias = MappingProxyType[  # noqa: UP040
-        RegimeName, VInterpolationInfo
-    ]
+    type UserRegimesMapping = Mapping[RegimeName, FinalizedUserRegime]
+    type RegimeToVInterpolationInfo = MappingProxyType[RegimeName, VInterpolationInfo]
 else:
     # Resolving the element types closes a cycle via the `lcm.solvers` façade,
     # which re-exports `Solver` from this module. ty reads the precise types

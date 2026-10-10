@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal
 
 import cloudpickle
 import jax
@@ -35,11 +35,11 @@ from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
 from lcm.typing import BoolND, FloatND, FunctionName
 
 if TYPE_CHECKING:
-    _PeriodValuesBoundary: TypeAlias = Mapping[int, Mapping[RegimeName, FloatND]]  # noqa: UP040
+    type _PeriodValuesBoundary = Mapping[int, Mapping[RegimeName, FloatND]]
 else:
     # A block-major simulation holds a `ValueStore` whose values are assembled
     # only when read; the runtime annotation check must not read them all.
-    _PeriodValuesBoundary = object
+    type _PeriodValuesBoundary = object
 
 
 @dataclass(frozen=True, kw_only=True)

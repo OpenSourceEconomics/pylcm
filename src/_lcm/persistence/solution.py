@@ -21,7 +21,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Final, Literal, cast
 
 import h5py
 import jax
@@ -81,27 +81,23 @@ from lcm.solver_api import (
 )
 
 if TYPE_CHECKING:
-    _SolutionResultBoundary: TypeAlias = SolutionResult  # noqa: UP040
-    _ValueStoreBoundary: TypeAlias = ValueStore  # noqa: UP040
-    _ArtifactStoreBoundary: TypeAlias = ArtifactStore  # noqa: UP040
-    _OmissionsBoundary: TypeAlias = MappingProxyType[  # noqa: UP040
-        ArtifactRef, OmissionReason
-    ]
-    _AuthoritiesBoundary: TypeAlias = MappingProxyType[  # noqa: UP040
-        ArtifactRef, ArtifactAuthority
-    ]
-    _StoreTupleBoundary: TypeAlias = tuple[  # noqa: UP040
+    type _SolutionResultBoundary = SolutionResult
+    type _ValueStoreBoundary = ValueStore
+    type _ArtifactStoreBoundary = ArtifactStore
+    type _OmissionsBoundary = MappingProxyType[ArtifactRef, OmissionReason]
+    type _AuthoritiesBoundary = MappingProxyType[ArtifactRef, ArtifactAuthority]
+    type _StoreTupleBoundary = tuple[
         tuple[ArtifactChannel, _ArtifactStoreBoundary], ...
     ]
 else:
     # Persistence bodies own exact-type and lazy-materialization checks. Runtime
     # annotation traversal must not inspect caller or decoder-controlled stores first.
-    _SolutionResultBoundary = object
-    _ValueStoreBoundary = object
-    _ArtifactStoreBoundary = object
-    _OmissionsBoundary = object
-    _AuthoritiesBoundary = object
-    _StoreTupleBoundary = object
+    type _SolutionResultBoundary = object
+    type _ValueStoreBoundary = object
+    type _ArtifactStoreBoundary = object
+    type _OmissionsBoundary = object
+    type _AuthoritiesBoundary = object
+    type _StoreTupleBoundary = object
 
 
 class _Unloaded(Enum):

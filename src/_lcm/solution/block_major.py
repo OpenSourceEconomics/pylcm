@@ -38,7 +38,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING
 
 import jax
 import numpy as np
@@ -59,11 +59,11 @@ from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
 from lcm.exceptions import ExecutionPlanningError
 
 if TYPE_CHECKING:
-    _ComponentBlocks: TypeAlias = Mapping[int, Mapping[RegimeName, jax.Array]]  # noqa: UP040
+    type _ComponentBlocks = Mapping[int, Mapping[RegimeName, jax.Array]]
 else:
     # A component's blocks are read and deleted by the schedule itself; the
     # runtime annotation check must not walk them while they are being retired.
-    _ComponentBlocks = object
+    type _ComponentBlocks = object
 
 _REMEDY = (
     "Keep the default InvariantBlockSchedule.PERIOD_MAJOR, or remove the state "

@@ -38,12 +38,12 @@ __all__ = [
     "tauchen_row",
 ]
 
-_Scalar = float | int | ScalarFloat
+type _Scalar = float | int | ScalarFloat
 
 # Process families whose transition CDF carries `sigma`. Rouwenhorst is absent: its
 # transition is `rho`-only, so a fixed node grid leaves no channel for a
 # state-conditioned `sigma`.
-Family = Literal["iid_normal", "tauchen"]
+type Family = Literal["iid_normal", "tauchen"]
 
 
 def sigma_array_by_code(*, cond_grid: DiscreteGrid, by: Mapping[str, float]) -> Float1D:
