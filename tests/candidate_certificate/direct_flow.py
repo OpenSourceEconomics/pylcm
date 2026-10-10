@@ -371,7 +371,7 @@ _SOURCE_SEALS = {
     COMBINED_LOGGING_SOURCE: "45973ef4d846e5202a2b7d370cce323bf56613824d97762cce1db01d004b5302",
     COMBINED_AUTHORITY_SOURCE: "786359d7fa643e23f8bff199d9f7f7620630ade1b12eba338478127335bbfbb9",
     COMBINED_ENTRIES_SOURCE: "647ae0656148fe6702ef12ce6c9e72bffa6ba09b9a4f618c8f9fffca3176719d",
-    COMBINED_STORES_SOURCE: "6a1404b24c983f379249a152f01fa55ea3b93b94fc3931a8ab844ad59ec447cf",
+    COMBINED_STORES_SOURCE: "b9903c735fa81deee4c17a8553b4c4c8837a0fd02d0932b96596f699bd845283",
     SIMULATION_POLICY_PROGRAMS_SOURCE: "56485738142c5ad3f8f19fa512457405e3e30d799cf457cd4c8792bb7930f4f5",
     PUBLISHED_POLICY_SOURCE: "2ca9d45b68e762ab612b99c7d096454dccc4785c2f853c4c5a6b8da1db6396d0",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "e1c178d00701633caaa37f61a66de70f145d29571335e1f0e33655aa95c44b16",
@@ -1344,12 +1344,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_STORES_SOURCE: (
-        "ec2c926d7583a44ec872df4069e8478b40b4aaf35fac33be462b5e82f591bf64",
+        "f01a72923484ba2d30fc413da05464d77371d6e462234ab4120e23ca3f1ef463",
         {
             "_admit_value_entry": "60bd7786314e7a5aeff8f8f74115860d308f41eb449b8e7132029a393d0c5e8f",
             "ValueStore.__post_init__": "4f81b32757d589ced2e605619de79013a2d9450f319e7adf77094e898b8fe7bb",
             "ValueStore._initialize": "077c0761c319e9c45a36723cbdf0c870c7d3d0e41ebd8a1f471bcb0a7967c28b",
-            "ValueStore._from_entries_with_copy": "eb389069075becdfbfd100077f286fe56ca7280ee38904df068c735ab1d5248e",
+            "ValueStore._from_entries_with_copy": "64e97f327f4e6ea84e6201c6819ecf39ebfe06436493de540afc39bb00162436",
             "ValueStore._load": "f84ba1dcf88a3e5ec494fbec8b14cf9154f4fc9c74e8acd83a303ce4149bef9c",
             "ValueStore.materialize": "3e32297e221c4bb51cd25687ff756f6c02180bb204978d4ac169c9d0a3b08802",
             "ValueStore._materialize_with_copy": "8577e39aaca402c4b60d400482cd7354fd7c89c6b3b9714adc054edd62973de1",
