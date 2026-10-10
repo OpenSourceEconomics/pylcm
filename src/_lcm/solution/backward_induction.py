@@ -235,7 +235,6 @@ from _lcm.typing import (
     ArgumentTree,
     ArtifactPayload,
     FlatParams,
-    FootprintTree,
     HostArray,
     ParamsLeaf,
     PRNGKeyND,
