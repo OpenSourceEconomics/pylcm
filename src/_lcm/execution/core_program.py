@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 import jax
 
+from _lcm.continuation import ContinuationPayload
 from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
@@ -29,6 +30,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.typing import (
     ActionName,
+    ArgumentTree,
     ArtifactPayload,
     PytreeValue,
     ShapeDtypePytree,
@@ -409,7 +411,7 @@ class CoreBuildContext:
 
     state_action_space: StateActionSpace | None
     next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]
-    next_regime_to_continuation: Mapping[RegimeName, object]
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
     flat_params: Mapping[str, object]
     period: int
     ages: object
@@ -1039,7 +1041,7 @@ class ResolvedCoreProgram:
 
     name: str
     function: Callable[..., PytreeValue]
-    arguments: Mapping[str, object]
+    arguments: Mapping[str, ArgumentTree]
     static_kwargs: Mapping[str, int]
     requirements: CoreExecutionRequirements
     output_roles: OutputRoleTree

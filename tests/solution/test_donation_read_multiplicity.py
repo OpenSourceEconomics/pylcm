@@ -59,6 +59,7 @@ from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
     ArtifactKey,
+    ContinuationArtifact,
     ContinuationCapabilities,
     SolverExecutionCapabilities,
 )
@@ -187,7 +188,7 @@ class _MainKernel:
         compiled_cores: Mapping[str, Callable[..., object]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[str, FloatND],
-        next_regime_to_continuation: Mapping[str, object],
+        next_regime_to_continuation: Mapping[str, ContinuationArtifact],
         flat_params: Mapping[str, object],
         period: int,
         ages: object,

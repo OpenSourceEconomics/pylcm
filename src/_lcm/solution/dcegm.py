@@ -935,10 +935,7 @@ class _DCEGMArgumentBuilder:
             {
                 **dict(state_action_space.states),
                 "next_regime_to_continuation": _carry_subset(
-                    next_regime_to_continuation=cast(
-                        "Mapping[RegimeName, ContinuationPayload]",
-                        context.next_regime_to_continuation,
-                    ),
+                    next_regime_to_continuation=context.next_regime_to_continuation,
                     stateful_targets=self.stateful_targets,
                 ),
                 **union_free_params(

@@ -12,7 +12,7 @@ import pytest
 
 from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.solution import backward_induction
-from _lcm.typing import FlatRegimeParams, PytreeValue
+from _lcm.typing import ArgumentTree, FlatRegimeParams, PytreeValue
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -21,7 +21,12 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.solver_api import KernelOutput, ResultRetention, SolverExecutionCapabilities
+from lcm.solver_api import (
+    ContinuationArtifact,
+    KernelOutput,
+    ResultRetention,
+    SolverExecutionCapabilities,
+)
 from lcm.solvers import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -100,7 +105,7 @@ class _TwoProgramKernel:
         compiled_cores: Mapping[str, Callable[..., object]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[str, FloatND],
-        next_regime_to_continuation: Mapping[str, object],
+        next_regime_to_continuation: Mapping[str, ContinuationArtifact],
         flat_params: Mapping[str, object],
         period: int,
         ages: object,
@@ -329,7 +334,7 @@ def test_budgeted_real_donor_and_template_fallback_leave_no_stale_witness(
         return cores
 
     def observe_call(
-        executable: jax.stages.Compiled, *args: object, **kwargs: object
+        executable: jax.stages.Compiled, *args: object, **kwargs: ArgumentTree
     ) -> object:
         count = kwargs.get("count")
         if isinstance(count, jax.Array):

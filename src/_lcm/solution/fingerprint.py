@@ -2247,7 +2247,7 @@ def _is_solver_instance(value: _Reachable) -> TypeIs[_SolverInstance]:
     return isinstance(value, Solver)
 
 
-def _slot_state(value: _Reachable) -> dict[str, _Reachable]:
+def _slot_state(value: _Reachable) -> MappingProxyType[str, _Reachable]:
     """Read inherited slot state without invoking arbitrary properties."""
     result: dict[str, _Reachable] = {}
     for owner in type(value).__mro__:
@@ -2265,7 +2265,7 @@ def _slot_state(value: _Reachable) -> dict[str, _Reachable]:
                 result[raw_name] = object.__getattribute__(value, name)
             except AttributeError:
                 continue
-    return result
+    return MappingProxyType(result)
 
 
 def _contains_identity[Candidate](
@@ -2779,7 +2779,7 @@ def _referenced_closure_attribute_paths(  # noqa: C901
     *,
     code: types.CodeType,
     ignore_beartype_guards: bool = False,
-) -> dict[str, frozenset[tuple[str, ...]]]:
+) -> MappingProxyType[str, frozenset[tuple[str, ...]]]:
     """Collect static attribute chains rooted at closure-cell loads."""
     collected: dict[str, set[tuple[str, ...]]] = {}
     instructions = tuple(dis.get_instructions(code))
@@ -2818,7 +2818,9 @@ def _referenced_closure_attribute_paths(  # noqa: C901
         )
         for name, paths in nested.items():
             collected.setdefault(name, set()).update(paths)
-    return {name: frozenset(paths) for name, paths in collected.items()}
+    return MappingProxyType(
+        {name: frozenset(paths) for name, paths in collected.items()}
+    )
 
 
 def _receiver_paths_from_instructions(
@@ -2881,7 +2883,7 @@ def _referenced_global_attribute_paths(  # noqa: C901
     *,
     code: types.CodeType,
     ignore_beartype_guards: bool = False,
-) -> dict[str, frozenset[tuple[str, ...]]]:
+) -> MappingProxyType[str, frozenset[tuple[str, ...]]]:
     """Collect each global plus consecutive module attribute chains it reads."""
     collected: dict[str, set[tuple[str, ...]]] = {}
     instructions = tuple(dis.get_instructions(code))
@@ -2917,7 +2919,9 @@ def _referenced_global_attribute_paths(  # noqa: C901
         for name, paths in nested.items():
             collected.setdefault(name, set()).update(paths)
 
-    return {name: frozenset(paths) for name, paths in collected.items()}
+    return MappingProxyType(
+        {name: frozenset(paths) for name, paths in collected.items()}
+    )
 
 
 def _semantic_sort_key(value: _Reachable) -> tuple[str, str]:

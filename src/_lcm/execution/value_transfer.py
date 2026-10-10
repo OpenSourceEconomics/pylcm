@@ -27,6 +27,7 @@ from _lcm.execution.footprint import (
 )
 from _lcm.execution.runtime_sharding import runtime_shardings_match
 from _lcm.typing import (
+    ArgumentTree,
     DataclassInstance,
     HostArray,
     RegimeName,
@@ -777,7 +778,7 @@ class MaterializedTransferObserver(Protocol):
 
 def apply_value_transfer(
     *,
-    value: object,
+    value: ArgumentTree,
     transfer: ResolvedValueTransfer,
     on_materialized: MaterializedTransferObserver | None = None,
 ) -> jax.Array:
@@ -821,12 +822,15 @@ def apply_value_transfer(
 
 def apply_value_transfer_plan(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, ArgumentTree],
     plan: Iterable[ResolvedValueTransfer],
     cache: TransferCache | None = None,
     on_materialized: MaterializedTransferObserver | None = None,
-) -> Mapping[str, object]:
+) -> MappingProxyType[str, ArgumentTree]:
     """Apply a transfer plan to an immutable copy of a core-argument tree.
+
+    `arguments` may be the plain keyword dict an executable call receives; the
+    returned copy is frozen.
 
     With a `cache`, a transfer marked as reused by several consumers is
     executed once per cache lifetime and served from the cache afterwards.
@@ -847,7 +851,7 @@ def apply_value_transfer_plan(
         raise TypeError(msg)
     transfers = tuple(plan)
     seen: set[tuple[str, tuple[str | int, ...]]] = set()
-    result: Mapping[str, object] = MappingProxyType(dict(arguments))
+    result = MappingProxyType(dict(arguments))
     for transfer in transfers:
         if not isinstance(transfer, ResolvedValueTransfer):
             msg = "A value-transfer plan may contain only ResolvedValueTransfer items."
@@ -963,13 +967,13 @@ def _named_axes(*, spec: jax.sharding.PartitionSpec) -> tuple[str, ...]:
 
 def _replace_transfer_leaf(
     *,
-    node: object,
+    node: ArgumentTree,
     path: tuple[str | int, ...],
     transfer: ResolvedValueTransfer,
     traversed: tuple[str | int, ...],
     cache: TransferCache | None,
     on_materialized: MaterializedTransferObserver | None,
-) -> object:
+) -> ArgumentTree:
     """Rebuild one supported argument branch and replace its selected leaf."""
     if not path:
         return _transferred_leaf(
@@ -978,10 +982,10 @@ def _replace_transfer_leaf(
     segment, *remaining = path
     rest = tuple(remaining)
     if isinstance(node, Mapping):
-        if segment not in node:
+        if not isinstance(segment, str) or segment not in node:
             msg = f"Value-transfer mapping path {(*traversed, segment)!r} is missing."
             raise KeyError(msg)
-        updated = dict(node)
+        updated: dict[str, ArgumentTree] = dict(node)
         updated[segment] = _replace_transfer_leaf(
             node=node[segment],
             path=rest,
@@ -1034,7 +1038,7 @@ def _replace_transfer_leaf(
 
 def _transferred_leaf(
     *,
-    node: object,
+    node: ArgumentTree,
     transfer: ResolvedValueTransfer,
     cache: TransferCache | None,
     on_materialized: MaterializedTransferObserver | None,
@@ -1202,7 +1206,7 @@ def _validate_continuation_leaf_identity(
 
 def _assert_value_metadata(
     *,
-    value: object,
+    value: ArgumentTree,
     expected_shape: tuple[int, ...],
     expected_dtype: DTypeLike,
     expected_sharding: jax.sharding.Sharding,

@@ -232,11 +232,14 @@ from _lcm.solution.v_topology import (
 )
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import (
+    ArgumentTree,
     ArtifactPayload,
     FlatParams,
+    FootprintTree,
     HostArray,
     ParamsLeaf,
     PRNGKeyND,
+    PytreeByPeriod,
     PytreeValue,
     QAndFArg,
     QualifiedName,
@@ -379,7 +382,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retain_replay: bool = True,
     retain_all_artifacts: bool = False,
     persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
-    retained_input_arrays: object = (),
+    retained_input_arrays: tuple[tuple[PytreeByPeriod, ...], ...] = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     call_id: CallId | None = None,
     gather_checks: GatherChecks | None = None,
@@ -3713,7 +3716,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     max_compilation_workers: int | None,
     logger: logging.Logger,
     call_id: CallId | None = None,
-    fixed_input_arrays: object = (),
+    fixed_input_arrays: FootprintTree = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     gather_checks: GatherChecks | None = None,
     executable_cache: ExecutableCache | None = None,
@@ -7011,7 +7014,7 @@ def _spelled_trace_value(value: Hashable) -> Hashable:
 
 def _abstract_arguments_key(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, ArgumentTree],
 ) -> Hashable:
     """Describe dynamic kwargs by pytree and abstract leaf metadata."""
     return tuple(

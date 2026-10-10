@@ -54,6 +54,7 @@ from lcm import (
 )
 from lcm.execution import ExecutionConfig
 from lcm.solver_api import (
+    ContinuationArtifact,
     KernelOutput,
     ResultRetention,
     SolverIdentity,
@@ -218,7 +219,7 @@ class _GraphKernel:
         compiled_cores: Mapping[str, Any],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[str, FloatND],
-        next_regime_to_continuation: Mapping[str, object],
+        next_regime_to_continuation: Mapping[str, ContinuationArtifact],
         flat_params: FlatParams,
         period: int,
         ages: object,

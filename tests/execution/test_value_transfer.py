@@ -22,6 +22,7 @@ from _lcm.execution.value_transfer import (
     apply_value_transfer_plan,
     resolve_value_transfer,
 )
+from _lcm.typing import ArgumentTree
 from lcm.solver_api import EGM_CONTINUATION
 
 
@@ -300,7 +301,7 @@ def test_resolver_rejects_misclassified_or_incompatible_layouts() -> None:
     [
         (jnp.zeros((5,), dtype=jnp.float32), ValueError, "shape"),
         (jnp.zeros((4,), dtype=jnp.int32), TypeError, "dtype"),
-        (object(), TypeError, "concrete JAX array"),
+        (jax.ShapeDtypeStruct((4,), jnp.float32), TypeError, "concrete JAX array"),
     ],
 )
 def test_apply_rejects_wrong_stored_metadata(*, value, error, message) -> None:
@@ -420,12 +421,12 @@ def test_plan_rebuilds_nested_mappings_and_tuples_without_mutation() -> None:
     stored = _stored_value()
     destination = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     working = (stored,)
-    inner = MappingProxyType({"unused": object(), "working": working})
+    inner = MappingProxyType({"unused": jnp.zeros(()), "working": working})
     arguments = MappingProxyType(
         {
-            "before": object(),
+            "before": jnp.zeros(()),
             ValueInputChannel.NEXT_REGIME_VALUE.value: inner,
-            "after": object(),
+            "after": 1.0,
         }
     )
     transfer = resolve_value_transfer(
@@ -444,8 +445,11 @@ def test_plan_rebuilds_nested_mappings_and_tuples_without_mutation() -> None:
     assert isinstance(rebuilt_inner, MappingProxyType)
     assert tuple(rebuilt_inner) == tuple(inner)
     assert rebuilt_inner is not inner
-    assert isinstance(rebuilt_inner["working"], tuple)
-    assert rebuilt_inner["working"][0].sharding == destination
+    rebuilt_working = rebuilt_inner["working"]
+    assert isinstance(rebuilt_working, tuple)
+    rebuilt_leaf = rebuilt_working[0]
+    assert isinstance(rebuilt_leaf, jax.Array)
+    assert rebuilt_leaf.sharding == destination
     assert working[0] is stored
 
 
@@ -579,15 +583,15 @@ def test_plan_rejects_missing_channel_or_mapping_path() -> None:
 @pytest.mark.parametrize(
     ("path", "branch", "error", "message"),
     [
-        (("working", 0), [object()], TypeError, "would rebuild a list"),
-        (("working", "leaf"), (object(),), TypeError, "requires an integer index"),
-        (("working", 1), (object(),), IndexError, "out of range"),
+        (("working", 0), [jnp.zeros(())], TypeError, "would rebuild a list"),
+        (("working", "leaf"), (jnp.zeros(()),), TypeError, "requires an integer index"),
+        (("working", 1), (jnp.zeros(()),), IndexError, "out of range"),
     ],
 )
 def test_plan_rejects_unsupported_or_invalid_tree_traversal(
     *,
     path: tuple[str | int, ...],
-    branch: object,
+    branch: ArgumentTree,
     error: type[Exception],
     message: str,
 ) -> None:

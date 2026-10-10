@@ -53,7 +53,7 @@ from _lcm.execution.value_views import (
     fail_if_value_transfer_exceeds_budget,
     plan_value_transfer_footprint,
 )
-from _lcm.typing import PytreeValue, ShapeDtypePytree
+from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 
 _STATES = ("pref_type", "assets", "health")
@@ -596,14 +596,16 @@ def _cache(
     )
 
 
-def _arguments(*, stored: jax.Array) -> MappingProxyType[str, object]:
+def _arguments(*, stored: jax.Array) -> MappingProxyType[str, ArgumentTree]:
     return MappingProxyType(
         {"next_regime_to_V_arr": MappingProxyType({"retired": stored})}
     )
 
 
-def _delivered(*, arguments: Mapping[str, object]) -> np.ndarray:
-    return np.asarray(arguments["next_regime_to_V_arr"]["retired"])  # ty: ignore[not-subscriptable]
+def _delivered(*, arguments: Mapping[str, ArgumentTree]) -> np.ndarray:
+    branch = arguments["next_regime_to_V_arr"]
+    assert isinstance(branch, Mapping)
+    return np.asarray(branch["retired"])
 
 
 def test_a_shared_cache_serves_each_type_its_own_block() -> None:
@@ -700,7 +702,9 @@ def _single_copy(
     arguments = apply_value_transfer_plan(
         arguments=_arguments(stored=stored), plan=(transfer,), cache=cache
     )
-    copied = arguments["next_regime_to_V_arr"]["retired"]  # ty: ignore[not-subscriptable]
+    branch = arguments["next_regime_to_V_arr"]
+    assert isinstance(branch, Mapping)
+    copied = branch["retired"]
     assert isinstance(copied, jax.Array)
     assert copied is not stored
     return copied
@@ -895,10 +899,9 @@ def test_a_resolved_program_receives_the_selected_block() -> None:
         input_transfer_plan=(transfer,),
     )
 
-    assert (
-        np.asarray(resolved.arguments["next_regime_to_V_arr"]["retired"]).tobytes()  # ty: ignore[not-subscriptable]
-        == values[2].tobytes()
-    )
+    branch = resolved.arguments["next_regime_to_V_arr"]
+    assert isinstance(branch, Mapping)
+    assert np.asarray(branch["retired"]).tobytes() == values[2].tobytes()
 
 
 def test_a_read_and_its_transfer_must_declare_the_same_view() -> None:
