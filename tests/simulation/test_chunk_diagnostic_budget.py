@@ -270,9 +270,10 @@ def test_profiled_transition_counts_keep_exact_sorted_messages(
     )
 
 
-@pytest.mark.parametrize("level", ["off", "warning", "debug"])
+@pytest.mark.parametrize("level", ["off", "warning", "progress", "debug"])
+@pytest.mark.parametrize("runtime_checks", [False, True])
 def test_period_diagnostic_levels_and_error_order_are_preserved(
-    *, caplog: pytest.LogCaptureFixture, level: LogLevel
+    *, caplog: pytest.LogCaptureFixture, level: LogLevel, runtime_checks: bool
 ) -> None:
     mask = jnp.asarray([True, True, False])
     first = jnp.asarray([jnp.nan, 1.0, jnp.nan])
@@ -292,11 +293,11 @@ def test_period_diagnostic_levels_and_error_order_are_preserved(
         for name, value in (("first", first), ("second", second))
     )
     memory = _memory(
-        inputs=(first, second, mask), budget=1 if level == "off" else 1_000_000
+        inputs=(first, second, mask), budget=1_000_000 if runtime_checks else 1
     )
-    logger = get_logger(log_level=level)
+    logger = get_logger(log_level=level, runtime_checks=runtime_checks)
     age = jnp.asarray(0, dtype=jnp.int32)
-    if level == "debug":
+    if runtime_checks:
         with pytest.raises(InvalidValueFunctionError, match="1 of 3 values are NaN"):
             simulation._validate_period_values(
                 logger=logger, age=age, period_results=records, memory=memory
@@ -312,13 +313,13 @@ def test_period_diagnostic_levels_and_error_order_are_preserved(
     ]
     assert warnings == (
         []
-        if level == "off"
+        if not runtime_checks or level == "off"
         else [
             "NaN/Inf in V_arr for regime 'first' at age 0",
             "NaN/Inf in V_arr for regime 'second' at age 0",
         ]
     )
-    assert len(memory.operations.cache) == (0 if level == "off" else 2)
+    assert len(memory.operations.cache) == (2 if runtime_checks else 0)
 
 
 def test_host_nan_report_keeps_exception_payload_and_enrichment_order(
@@ -366,9 +367,10 @@ def test_host_nan_report_keeps_exception_payload_and_enrichment_order(
     assert caught.value.__notes__ == ["enrichment ran after exception construction"]
 
 
-@pytest.mark.parametrize("level", ["off", "warning", "debug"])
+@pytest.mark.parametrize("level", ["off", "warning", "progress", "debug"])
+@pytest.mark.parametrize("runtime_checks", [False, True])
 def test_diagnostic_bindings_lower_actual_operations_without_allocating(
-    *, monkeypatch: pytest.MonkeyPatch, level: LogLevel
+    *, monkeypatch: pytest.MonkeyPatch, level: LogLevel, runtime_checks: bool
 ) -> None:
     value = jnp.asarray([1.0, jnp.nan, 3.0])
     mask = jnp.asarray([True, False, True])
@@ -392,6 +394,7 @@ def test_diagnostic_bindings_lower_actual_operations_without_allocating(
             new_regime_ids=abstract[2],
             sorted_ids=(2, 5),
             log_level=level,
+            runtime_checks=runtime_checks,
         )
         profiles = tuple(
             memory.operations.prepare_abstract(
@@ -404,17 +407,18 @@ def test_diagnostic_bindings_lower_actual_operations_without_allocating(
             )
             for binding in bindings
         )
-    assert tuple(binding.function for binding in bindings) == (
-        ()
-        if level == "off"
-        else (
-            diagnostics.period_value_flags,
-            diagnostics.owned_value_nan_count,
-            *((diagnostics.transition_counts,) if level == "debug" else ()),
-        )
+    expected_functions = (
+        (diagnostics.period_value_flags, diagnostics.owned_value_nan_count)
+        if runtime_checks
+        else ()
+    ) + ((diagnostics.transition_counts,) if level == "debug" else ())
+    assert tuple(binding.function for binding in bindings) == expected_functions
+    expected_shapes = (((2, 1), ()) if runtime_checks else ()) + (
+        ((2, 2),) if level == "debug" else ()
     )
-    assert tuple(profile.executable.out_info.shape for profile in profiles) == (
-        () if level == "off" else ((2, 1), (), *(((2, 2),) if level == "debug" else ()))
+    assert (
+        tuple(profile.executable.out_info.shape for profile in profiles)
+        == expected_shapes
     )
     assert all(profile.peak_bytes > 0 for profile in profiles)
     with pytest.raises(ExecutionPlanningError, match="abstract"):

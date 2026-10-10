@@ -5,7 +5,6 @@ future implementation helper serves as the expected-result oracle.
 """
 
 import dataclasses
-import logging
 from collections.abc import Callable
 from types import MappingProxyType
 
@@ -354,8 +353,9 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
 
 
 @pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+@pytest.mark.parametrize("runtime_checks", [False, True])
 def test_earlier_transition_failure_precedes_a_later_python_exception(
-    *, log_level: LogLevel, caplog: pytest.LogCaptureFixture
+    *, log_level: LogLevel, caplog: pytest.LogCaptureFixture, runtime_checks: bool
 ) -> None:
     """Transition errors publish per item, unlike initial feasibility aggregation."""
     armed = False
@@ -391,29 +391,18 @@ def test_earlier_transition_failure_precedes_a_later_python_exception(
         params={"discount_factor": 0.95}, params_template=model._params_template
     )
     armed = True
-    logger = get_logger(log_level=log_level)
+    logger = get_logger(log_level=log_level, runtime_checks=runtime_checks)
     caplog.clear()
     assert model.ages is not None
-    if log_level == "off":
+    if not runtime_checks:
         validate_transitions(
             regimes=regimes, flat_params=flat_params, ages=model.ages, logger=logger
         )
         assert not caplog.records
         return
-    expected = (
-        InvalidRegimeTransitionProbabilitiesError if log_level == "debug" else TypeError
-    )
-    with pytest.raises(expected) as caught:
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as caught:
         validate_transitions(
             regimes=regimes, flat_params=flat_params, ages=model.ages, logger=logger
         )
-    if log_level == "debug":
-        assert "contain values outside [0, 1]" in str(caught.value)
-        assert not caplog.records
-    else:
-        assert str(caught.value) == "later transition sentinel"
-        warnings = [
-            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
-        ]
-        assert len(warnings) == 1
-        assert "contain values outside [0, 1]" in warnings[0]
+    assert "contain values outside [0, 1]" in str(caught.value)
+    assert not caplog.records

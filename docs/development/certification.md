@@ -313,7 +313,8 @@ its measurement is meaningless.
 Linux fp64, Linux fp32 and Windows fp64. macOS is deliberately absent: its hosted
 runners never satisfy the steadiness precondition, and since a declined row counts as a
 failure the lane could only ever be red. Each witness compares a host-time ratio between
-two log levels, which is a statement about pylcm's runtime validation and carries that
+`off` output with `runtime_checks=False` and `progress` output with
+`runtime_checks=True`. This measures the checked progress path overhead and carries that
 meaning only when the machine served both legs comparably.
 
 When it did not, the row **declines to measure**: it skips with a reason prefixed

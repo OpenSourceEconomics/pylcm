@@ -169,7 +169,7 @@ def _budgeted_runtime(*, model: Model) -> SimulationRuntime:
 
 
 def _key_for_initial_conditions(
-    *, model: Model, initial: dict[str, jax.Array]
+    *, model: Model, initial: dict[str, jax.Array], runtime_checks: bool = True
 ) -> tuple:
     regimes = model._runtime_regimes_for_shape(compile_batch_size=3)
     runtime = _budgeted_runtime(model=model)
@@ -194,6 +194,7 @@ def _key_for_initial_conditions(
         widths={"subject": 3},
         independent_taste=False,
         log_level="off",
+        runtime_checks=runtime_checks,
     )
 
 
@@ -244,6 +245,51 @@ def test_log_level_change_misses(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls[0] > after_first, "a changed diagnostic log level must miss"
 
 
+def test_runtime_checks_change_profile_key() -> None:
+    """Checked and unchecked runs reserve different diagnostic operations."""
+    model = _budgeted_model()
+    initial = _initial(n=3)
+    checked = _key_for_initial_conditions(
+        model=model, initial=initial, runtime_checks=True
+    )
+    unchecked = _key_for_initial_conditions(
+        model=model, initial=initial, runtime_checks=False
+    )
+    assert checked != unchecked
+
+
+def test_runtime_checks_change_misses_and_repeat_hits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Changing checks rebuilds profiles; repeating that policy reuses them."""
+    model = _budgeted_model()
+    params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
+    solution = model.solve(params=params, log_level="off")
+    calls = _count_builds(monkeypatch)
+    initial = _initial(n=3)
+    model.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=solution,
+        log_level="off",
+        runtime_checks=True,
+    )
+    checked_builds = calls[0]
+    for iteration in range(2):
+        model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            log_level="off",
+            runtime_checks=False,
+        )
+        if iteration == 0:
+            unchecked_builds = calls[0]
+            assert unchecked_builds > checked_builds
+        else:
+            assert calls[0] == unchecked_builds
+
+
 def test_key_is_stable_and_versioned() -> None:
     """The canonical key is a plain hashable tuple carrying an explicit version."""
     model = _budgeted_model()
@@ -264,6 +310,7 @@ def test_key_is_stable_and_versioned() -> None:
         "widths": {"subject": 3},
         "independent_taste": False,
         "log_level": "off",
+        "runtime_checks": True,
     }
 
     key_kwargs["call_inputs"] = SimulationCallInputs(

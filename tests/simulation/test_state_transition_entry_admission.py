@@ -16,6 +16,7 @@ import pytest
 
 from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -126,6 +127,41 @@ def _inputs(
     )
 
 
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("supplied_solution", [False, True])
+def test_runtime_checks_control_invalid_state_probabilities(
+    *, log_level: LogLevel, runtime_checks: bool, supplied_solution: bool
+) -> None:
+    """Runtime checks reject non-unit state-transition mass at every verbosity."""
+    model, params, initial = _inputs(budget=None, valid=False)
+    solution = (
+        model.solve(params=params, log_level="off", runtime_checks=False)
+        if supplied_solution
+        else None
+    )
+    if runtime_checks:
+        with pytest.raises(InvalidStateTransitionProbabilitiesError):
+            model.simulate(
+                params=params,
+                initial_conditions=initial,
+                solution=solution,
+                log_level=log_level,
+                runtime_checks=runtime_checks,
+                seed=0,
+            )
+    else:
+        result = model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            log_level=log_level,
+            runtime_checks=runtime_checks,
+            seed=0,
+        )
+        assert result.n_subjects == len(initial["health"])
+
+
 _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
     """
     import jax
@@ -143,7 +179,7 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
         operand_free=True,
         devices=(selected_id,),
     )
-    solution = model.solve(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off", runtime_checks=False)
 
     compiled = []
     completed_on = []

@@ -1455,11 +1455,11 @@ def _validate_period_values(
     the period's value arrays, so a period costs a single device-to-host
     transfer whatever the number of regimes. Only a regime the NaN row accuses
     pays for the enriched value-function report, which reads the device again
-    to describe what it found. At `log_level="off"` no reduction is issued at
-    all.
+    to describe what it found. With ``runtime_checks=False`` no reduction is
+    issued.
 
     Every offending regime of the period is named first, then the enriched
-    reports run. At `log_level="debug"` the first enriched report raises, so
+    reports run. With runtime checks enabled the first enriched report raises, so
     naming the period's regimes first is what keeps the other offenders --- an
     Inf-only regime among them, which the enriched report never speaks about
     --- in the record of the aborted run.
@@ -1548,6 +1548,7 @@ def _validate_simulated_value(
             + (1,) * (value.ndim - subject_ids_in_regime.ndim)
         )
         validate_V(
+            logger=logger,
             V_arr=jnp.where(in_regime_mask, value, 0.0),
             age=age,
             regime_name=regime_name,
@@ -1964,6 +1965,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
             memory=memory,
+            runtime_checks=validation_enabled(logger),
         )
         # The value router's routing half. A gated
         # edge's target is always ALSO an ordinary declared transition
@@ -3687,7 +3689,7 @@ def _replay_nnbegm_candidates(
             age=age,
         )
     )
-    # Keep this diagnostic before canonical scoring: debug refuses an
+    # Keep this diagnostic before canonical scoring: runtime checks refuse an
     # unrepresentable solve candidate before evaluating the remaining bank.
     _announce_dropped_outer_candidates(
         logger=logger,
@@ -3848,13 +3850,8 @@ def _announce_dropped_outer_candidates(
 
     The count is aggregated on device and read back as two scalars, so the
     report costs one transfer per regime-period rather than one per candidate.
-    The gate is the public log level:
-
-    - `"off"` -- silent, and the candidates are still dropped;
-    - `"warning"` / `"progress"` -- one warning carrying the counts;
-    - `"debug"` -- raised, because a candidate the solve ranked and replay
-      cannot reconstruct is a defect worth stopping on while a model is being
-      developed.
+    Runtime checks raise when replay cannot reconstruct a candidate ranked by
+    the solve. With checks disabled, candidates are still dropped.
     """
     if not validation_enabled(logger):
         return

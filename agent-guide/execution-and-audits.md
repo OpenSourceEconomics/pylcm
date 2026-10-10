@@ -2,10 +2,10 @@
 
 The authoritative planning repository for this checkout is
 `/home/hmg/sciebo/pro-audits/pylcm-architecture-performance-plan`.
-Read its `19-CURRENT-STATUS.md` to resolve current decisions and evidence before working
-on the active architecture effort. Preserve all full documents 01–19 and the review
-folders in place. If unavailable, recover the authoritative source or record the blocker;
-do not reconstruct a contract from an old summary.
+Read its `T6-INTEGRATION-LEDGER.md` to resolve current decisions and evidence before working
+on the active architecture effort. Preserve the full numbered documents, integration
+ledger and review folders in place. If unavailable, recover the authoritative source or
+record the blocker; do not reconstruct a contract from an old summary.
 
 ## Required contracts by surface
 
@@ -31,10 +31,11 @@ Read the relevant full contracts, not only the checkpoint's success narrative:
   or `05-NBEGM-IMPROVEMENTS.md`, plus the adopted implementation contract and math/JAX
   routes. Other solver work starts from `06-OTHER-SOLVERS.md`.
 - Sequencing and next implementation choice: `07-IMPLEMENTATION-ORDER.md` and the
-  current decisions in `19-CURRENT-STATUS.md`.
+  current decisions in `T6-INTEGRATION-LEDGER.md`.
 
 A route is an entry point, not permission to ignore dependent consumers or a protocol's
-required reading. An audit requiring all 01–19 still reads all of them.
+required reading. An audit requiring the full numbered plan reads it alongside the
+integration ledger.
 
 ## Audit intake and packaging
 

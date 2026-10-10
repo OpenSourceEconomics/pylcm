@@ -338,7 +338,7 @@ def test_close_releases_every_identity_keyed_input_owner() -> None:
     assert all(reference() is None for reference in references)
 
 
-@pytest.mark.parametrize("log_level", ["warning", "progress", "debug"])
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
 def test_cached_invalid_flags_preserve_complete_ordered_serial_diagnostics(
     *,
     log_level: LogLevel,
@@ -400,13 +400,6 @@ def test_cached_invalid_flags_preserve_complete_ordered_serial_diagnostics(
     assert actual_error == expected_error
     assert actual_messages == expected_messages
     assert actual_count == serial_count + 2
-    if log_level == "debug":
-        assert actual_error is not None
-        assert "in regime 'work' at age 0" in actual_error
-        assert not actual_messages
-    else:
-        assert actual_error is None
-        assert len(actual_messages) == 5
-        assert all(
-            "returned values outside [0, 1]" in message for message in actual_messages
-        )
+    assert actual_error is not None
+    assert "in regime 'work' at age 0" in actual_error
+    assert not actual_messages

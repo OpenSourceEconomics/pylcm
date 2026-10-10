@@ -381,7 +381,7 @@ The numerical checks fired at solve / simulate time live outside `regime_buildin
 - `_lcm/transition_checks.py` runs from `Model.solve()` / `Model.simulate()` before
   backward induction starts. It evaluates the regime and state transition functions on
   the regime's grid Cartesian product and verifies output shape, [0, 1] range, and
-  sum-to-1. State checks are gated by `log_level != "off"` because the Cartesian product
+  sum-to-1. Numerical checks are gated by `runtime_checks` because the Cartesian product
   can blow up on models with many continuous-grid-dependent stochastic states.
 - `_lcm/solution/validate_V.py` runs *during* backward induction (after each period in
   `backward_induction.py`, and once on the V handed to `simulate.py`). On NaN it invokes

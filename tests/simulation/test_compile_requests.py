@@ -3,8 +3,8 @@
 The compile-request pins say that repeating a simulate call at a subject width
 the process has already seen asks JAX for no further compilation, at any log
 level. The host-time rows say what runtime validation costs once nothing
-compiles any more: the `progress` path must stay within half again the host
-time of the validation-free `off` path.
+compiles any more: checked `progress` must stay within half again the host
+time of `off` with `runtime_checks=False`.
 
 The bar applies to both the forward-simulation loop and the whole
 `Model.simulate` call, including its `validate_simulation_inputs` preflight.
@@ -465,8 +465,8 @@ def _preflight_validation_stubbed() -> Generator[list[str]]:
 def _lcm_log_output_held_fixed() -> Generator[None]:
     """Send every `lcm` record to a null handler for the duration of the block.
 
-    A host-time ratio across two log levels is a statement about runtime
-    validation, so the one other thing the level changes — how many records
+    The timing legs explicitly enable and disable runtime checks. Console
+    output also varies with verbosity, so how many records
     reach a handler — is held fixed rather than measured. The handler list is
     replaced (not merely extended) because `get_logger` installs a stdout
     handler only on a logger that has none, and propagation is turned off so no
@@ -493,6 +493,7 @@ def _host_time(
     initial_conditions: UserInitialConditions,
     solution: object,
     log_level: LogLevel,
+    runtime_checks: bool,
 ) -> float:
     """Return the wall time of one simulate call, device work included."""
     start = time.perf_counter()
@@ -501,6 +502,7 @@ def _host_time(
         initial_conditions=initial_conditions,
         solution=solution,  # ty: ignore[invalid-argument-type]
         log_level=log_level,
+        runtime_checks=runtime_checks,
         seed=0,
     )
     jax.block_until_ready(result.raw_results)
@@ -536,6 +538,7 @@ def _median_host_times(
                 initial_conditions=initial_conditions,
                 solution=solution,
                 log_level=warm_level,
+                runtime_checks=warm_level != "off",
             )
         with count_compile_requests() as counts:
             for _ in range(repeats):
@@ -546,6 +549,7 @@ def _median_host_times(
                         initial_conditions=initial_conditions,
                         solution=solution,
                         log_level=measured_level,
+                        runtime_checks=measured_level != "off",
                     )
                     samples.append((measured_level, seconds))
         missing = _PREFLIGHT_VALIDATORS - set(absorbed)

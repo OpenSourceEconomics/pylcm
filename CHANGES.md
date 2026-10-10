@@ -5,6 +5,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Independent runtime checks
+
+- `Model.solve()` and `Model.simulate()` accept `runtime_checks=True` independently
+  of `log_level`. Enabled numerical checks raise on the first failure at every
+  verbosity, including `off`; disable them explicitly with `runtime_checks=False`.
+  Construction, parameter schema, initial-condition structure and solution identity
+  validation remain active. Infinity-only value warnings retain their existing meaning.
+
 ### Explicit initial nodes and owned declarations
 
 - Declare admissible starts with `InitialNodes(by_age={25: "working"})` or

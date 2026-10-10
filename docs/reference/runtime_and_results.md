@@ -464,15 +464,15 @@ rebuilds immutable authority from the canonical model, canonical parameters, and
 installed consuming route, then checks values, repeated metadata, and materialized
 artifacts independently.
 
-Solver diagnostics follow `log_level`, independently of retention. Each retained
-diagnostics payload is described by a model-verifiable descriptor the solve generates
-from the payload itself, so it is saved with the result and reads back from an archive
-without a model; a consuming model admits the descriptor after checking that it names
-only the published fields with the dtypes they carry. A continuation is always available
-to the backward graph that requires it, regardless of result retention. It remains in
-the returned result only under `ALL_PERSISTABLE_ARTIFACTS` and only when its model-built
-authority declares `MODEL_VERIFIABLE`; otherwise the result records `NOT_REQUESTED` or
-`NOT_PERSISTED`.
+Solver numerical diagnostics follow `runtime_checks`, independently of retention. Each
+retained diagnostics payload is described by a model-verifiable descriptor the solve
+generates from the payload itself, so it is saved with the result and reads back from an
+archive without a model; a consuming model admits the descriptor after checking that it
+names only the published fields with the dtypes they carry. A continuation is always
+available to the backward graph that requires it, regardless of result retention. It
+remains in the returned result only under `ALL_PERSISTABLE_ARTIFACTS` and only when its
+model-built authority declares `MODEL_VERIFIABLE`; otherwise the result records
+`NOT_REQUESTED` or `NOT_PERSISTED`.
 
 A retention also selects what a solve computes. Every built-in kernel publishes its
 programs with a scope and, for replay or additive artifact programs, exact
@@ -540,9 +540,9 @@ compatibility.
 ## Simulation
 
 `model.simulate(...)` accepts parameters, initial conditions, an optional complete
-`SolutionResult` as `solution=...`, and a required `log_level`. Omitting `solution`
-solves first. Bare value mappings and separate policy or dissolution-flag inputs are not
-accepted.
+`SolutionResult` as `solution=...`, a required `log_level`, and `runtime_checks=True`.
+Omitting `solution` solves first. Bare value mappings and separate policy or
+dissolution-flag inputs are not accepted.
 
 How a `SolutionResult` is consumed follows its provenance. A result the same model
 instance solved in this process, for the same canonical parameters, is consumed by
@@ -614,17 +614,14 @@ or a DataFrame with a `regime_name` column.
 
 ## Validation and logging
 
-`log_level` controls both output and runtime validation:
-
-| Level        | Behavior                                                      |
-| ------------ | ------------------------------------------------------------- |
-| `"off"`      | Silent; runtime probability and non-finite checks skipped     |
-| `"warning"`  | Validate, warn, continue                                      |
-| `"progress"` | Warning behavior plus timings                                 |
-| `"debug"`    | Validate and raise at first failure; include value statistics |
-
-Start model development at `"debug"`. Reduce validation only after the model is trusted
-and the cost matters.
+`log_level` controls console output: `off` is silent, `warning` prints warnings,
+`progress` adds timing, and `debug` adds value statistics. `runtime_checks=True`
+independently enables numerical probability, NaN and existing feasibility/replay checks
+and raises on failure at every verbosity. `runtime_checks=False` explicitly skips those
+checks, including during automatic solving. Construction, parameter schema,
+initial-condition structure and solution-identity validation always run. Infinity-only
+value diagnostics remain warnings; an application requiring all stored values finite
+must retain that stronger invariant.
 
 `model.simulate(...)` also reports the resolved execution plan it dispatched: the
 forward route (`"legacy"` or `"subjects"`), the ordered subject devices and their

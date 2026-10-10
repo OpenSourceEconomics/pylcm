@@ -112,56 +112,35 @@ HDF5 format, which cannot be passed to `simulate` as a complete solution.
 
 ### Log levels and runtime validation
 
-`log_level` is a required argument: it controls both console verbosity *and* the
-runtime-validation policy — how `solve()` / `simulate()` react to an invalid
-transition-probability ensemble or a NaN value function. Start every project at
-`"debug"` (validation runs and raises); ease to `"warning"` / `"off"` once the model is
-trusted.
-
-```{warning}
-**Run every model at `log_level="debug"` at least once, with the parameters you
-intend to use, before trusting any output.**
-
-Regime-transition probabilities are checked at every log level: each regime-law row a
-solve reads on the grid and each row a simulation draws from must be finite, in
-$[0, 1]$, of unit mass and zero outside the law's declared targets, and a violation
-raises. `"off"` skips the remaining runtime validation — state-transition
-probabilities and the value-function diagnostics — and some of what it skips cannot be
-reconstructed from the result. A NaN value function names no regime, no state and no
-age; only the validation that `"off"` skips tells you what is wrong. See
-[Debugging](debugging.md#run-every-production-model-at-debug-at-least-once).
-```
+`log_level` is required and controls console output. `runtime_checks=True` is the
+independent default on both `solve()` and `simulate()`: computed transition
+probabilities, NaN values and existing feasibility/replay checks are validated, and the
+first validation failure raises even with silent logging. Construction, parameter schema
+and solution-identity validation always run.
 
 ```python
-# Debug — validation runs and raises on the first failure
-solution = model.solve(params=params, log_level="debug")
+# Silent output with numerical checks enabled.
+solution = model.solve(params=params, log_level="off", runtime_checks=True)
 
-# Silent — no logging; only the regime-transition checks run
-solution = model.solve(params=params, log_level="off")
+# Disable numerical checks explicitly for a trusted fast path.
+solution = model.solve(params=params, log_level="warning", runtime_checks=False)
 
-# Validation runs but only warns; the run continues
-solution = model.solve(params=params, log_level="warning")
-
-# Diagnostics + disk snapshots
+# Detailed output and optional disk snapshots.
 solution = model.solve(params=params, log_level="debug", log_path="./debug/")
 ```
 
-The full behaviour of every `log_level` × `log_path` combination:
+| `log_level`  | Console output                        |
+| ------------ | ------------------------------------- |
+| `"off"`      | silent                                |
+| `"warning"`  | warnings                              |
+| `"progress"` | warnings and timing                   |
+| `"debug"`    | warnings, timing and value statistics |
 
-| `log_level`  | `log_path` | Runtime validation        | Console output                  | Snapshots to disk                                         |
-| ------------ | ---------- | ------------------------- | ------------------------------- | --------------------------------------------------------- |
-| `"off"`      | (ignored)  | not run                   | silent                          | none                                                      |
-| `"warning"`  | `None`     | runs → failures **warn**  | warnings                        | none                                                      |
-| `"warning"`  | set        | runs → failures **warn**  | warnings                        | one per warned failure, capped at `log_keep_n_latest`     |
-| `"progress"` | `None`     | runs → failures **warn**  | warnings + timing               | none                                                      |
-| `"progress"` | set        | runs → failures **warn**  | warnings + timing               | one per warned failure, capped at `log_keep_n_latest`     |
-| `"debug"`    | `None`     | runs → failures **raise** | warnings + timing + V_arr stats | none                                                      |
-| `"debug"`    | set        | runs → failures **raise** | warnings + timing + V_arr stats | one per solve and on raise, capped at `log_keep_n_latest` |
-
-`log_path` is optional at every level — snapshots are written only when it is set. In
-`"warning"` / `"progress"` mode, an invalid model produces warnings and a numerically
-meaningless result rather than an exception; use this to keep an estimation loop
-running, but read the warnings.
+`log_path` is optional. A checked NaN failure saves a partial solve snapshot at any log
+level when a path is supplied. Debug logging additionally saves completed solves.
+`runtime_checks=False` skips numerical validation; it does not make an invalid result
+valid. Infinity-only value entries retain the existing diagnostic warning semantics:
+applications requiring every stored value finite must retain that stronger invariant.
 
 Input schema and temporal alignment checks run at every log level. `"off"` does not
 permit missing required time labels, selected duplicate keys or a wrong coordinate kind.
@@ -348,9 +327,10 @@ function while subjects start at different ages cannot be evaluated and raises
 
 ### Further arguments
 
-- `log_level`: Required. Console verbosity and runtime-validation policy (same options
-  and table as `solve()`); start at `"debug"`. Initial-condition validation (states
-  on-grid, regimes valid) follows this policy too — `"off"` skips it.
+- `runtime_checks`: Numerical validation, enabled by default; failures raise.
+- `log_level`: Required. Console verbosity (same options and table as `solve()`).
+  Initial-condition schema and regime validity are always checked; numerical feasibility
+  follows `runtime_checks`.
 - `seed=None`: Random seed for stochastic simulations (int). Collective dissolution
   gates consume their addressed replay artifacts from `solution`; the automatic-solve
   path retains and threads them itself.

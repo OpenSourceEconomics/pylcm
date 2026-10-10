@@ -289,16 +289,13 @@ def test_preflight_action_grid_preserves_order_dtypes_and_public_decisions(
         ].to_numpy(),
         [[2, 1, 1, 6]],
     )
-    if log_level == "off":
-        assert products == []
-    else:
-        assert len(products) == 1
-        np.testing.assert_array_equal(products[0]["choice"], [0, 0, 0, 1, 1, 1])
-        np.testing.assert_array_equal(products[0]["saving"], [0, 1, 2, 0, 1, 2])
-        assert products[0]["choice"].dtype == np.dtype("int32")
-        assert products[0]["saving"].dtype == np.dtype(
-            "float64" if jax.config.jax_enable_x64 else "float32"
-        )
+    assert len(products) == 1
+    np.testing.assert_array_equal(products[0]["choice"], [0, 0, 0, 1, 1, 1])
+    np.testing.assert_array_equal(products[0]["saving"], [0, 1, 2, 0, 1, 2])
+    assert products[0]["choice"].dtype == np.dtype("int32")
+    assert products[0]["saving"].dtype == np.dtype(
+        "float64" if jax.config.jax_enable_x64 else "float32"
+    )
 
 
 def test_invalid_initial_conditions_reuse_admitted_products_during_diagnostics(

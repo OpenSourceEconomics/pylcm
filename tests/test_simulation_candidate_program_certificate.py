@@ -262,13 +262,11 @@ _PROFILED_HELPER_MUTATIONS = {
         "src/lcm/model.py",
         (
             "entry_allocations.snapshot()\n"
-            "                        if entry_allocations is not None and "
-            "validation_enabled(log)"
+            "                        if entry_allocations is not None"
         ),
         (
             "entry_inputs.footprint(solution=solution)\n"
-            "                        if entry_allocations is not None and "
-            "validation_enabled(log)"
+            "                        if entry_allocations is not None"
         ),
     ),
     "simulation_entry:completed_output_owner_omitted": (
@@ -341,14 +339,12 @@ _PROFILED_HELPER_MUTATIONS = {
         (
             "retained_footprint=(\n"
             "                        entry_allocations.snapshot()\n"
-            "                        if entry_allocations is not None and "
-            "validation_enabled(log)"
+            "                        if entry_allocations is not None"
         ),
         (
             "retained_footprint=(\n"
             "                        None\n"
-            "                        if entry_allocations is not None and "
-            "validation_enabled(log)"
+            "                        if entry_allocations is not None"
         ),
     ),
     "simulation_preflight:invalid_discrete_cohort_accepted": (

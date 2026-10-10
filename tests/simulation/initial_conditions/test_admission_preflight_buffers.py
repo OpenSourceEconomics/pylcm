@@ -3,6 +3,7 @@
 import dataclasses
 from fractions import Fraction
 from types import MappingProxyType
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -20,12 +21,17 @@ from _lcm.simulation.initial_conditions import (
     _read_initial_cohorts,
     validate_simulation_inputs,
 )
-from _lcm.simulation.residency import DeviceBufferFootprint, resident_bytes_by_device
+from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    resident_bytes_by_device,
+)
 from _lcm.transition_checks import _SerialValidationRequired
 from _lcm.typing import FlatParams, InitialConditions
 from _lcm.utils.logging import get_logger
 from lcm import AgeGrid, Model
-from lcm.exceptions import ExecutionPlanningError
+from lcm.exceptions import ExecutionPlanningError, InvalidInitialConditionsError
 from tests.simulation.initial_conditions._models import make_asymmetric_state_model
 
 
@@ -44,6 +50,42 @@ def _case(*, n_subjects: int = 1) -> tuple[Model, FlatParams, InitialConditions]
         }
     )
     return model, params, initial
+
+
+def test_runtime_checks_disabled_release_preflight_unit_on_structural_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid initial structure still raises and releases its admitted buffers."""
+    model, params, initial = _case()
+    invalid = MappingProxyType(
+        {**initial, "regime_id": jnp.full_like(initial["regime_id"], 999)}
+    )
+    np.testing.assert_array_equal(invalid["regime_id"], [999])
+    captured: list[SimulationMemory] = []
+    original = initial_module._preflight_memory
+
+    def capture(**arguments: Any) -> SimulationMemory | None:
+        memory = original(**arguments)
+        assert memory is not None
+        captured.append(memory)
+        return memory
+
+    monkeypatch.setattr(initial_module, "_preflight_memory", capture)
+    assert model.ages is not None
+    with pytest.raises(InvalidInitialConditionsError, match="regime"):
+        validate_simulation_inputs(
+            initial_conditions=invalid,
+            regimes=model._regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+            flat_params=params,
+            ages=model.ages,
+            logger=get_logger(log_level="off", runtime_checks=False),
+            execution=dataclasses.replace(model._execution, device_memory_bytes=2**25),
+            retained_footprint=measure_buffer_footprint(tree=(invalid, params)),
+        )
+    assert len(captured) == 1
+    assert captured[0].unit_inputs == ()
+    assert captured[0].derived == ()
 
 
 @pytest.mark.parametrize("relevant_bad_code", [False, True])

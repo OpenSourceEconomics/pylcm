@@ -416,11 +416,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             solve-time parameter values; enters every executable's compilation
             key, so equivalent programs of equivalent models share one
             executable and two models never do.
-        logger: Logger that logs to stdout, and carries the runtime-validation
-            policy. `log_level="debug"` stops backward induction at the first
-            NaN period and raises; `"warning"` / `"progress"` let induction run
-            to completion and log a warning, so `solve` returns a complete
-            (NaN-bearing) solution; `"off"` skips the NaN check.
+        logger: Logger carrying independent output and runtime-check policies.
+            Enabled runtime checks stop at the first NaN period and raise.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
         execution: The hardware-local facts the model resolved — its devices,
             the optional per-device workspace budget, and fixed planner axis
@@ -428,7 +425,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             visible device.
         collect_solver_diagnostics: Whether to retain a kernel's numerical
             self-report. Public ``Model.solve()`` and automatic simulation request
-            it; ``log_level`` still decides whether diagnostics are calculated and
+            it; runtime checks decide whether diagnostics are calculated and
             retained. Internal callers may disable collection.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
@@ -648,12 +645,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # localisation. On a healthy solve no per-row materialisation
     # happens.
     #
-    # Two gates, both falling out of the public log level:
-    # - NaN/Inf tracking feeds runtime validation, so it runs whenever
-    #   validation is not `"off"` (log levels `"warning"`/`"progress"`/
-    #   `"debug"`). It skips even the NaN fail-fast when validation is off.
-    # - The min/max/mean trio is a pure logging extra, gated on the
-    #   logger's debug level.
+    # Runtime checks gate NaN/Inf tracking; debug output independently gates stats.
     diagnostics_enabled = validation_enabled(logger)
     stats_enabled = logger.isEnabledFor(logging.DEBUG)
     (
@@ -1297,16 +1289,13 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 # we don't break on it; the post-loop emitter still raises a
                 # warning if any period flagged Inf.
                 #
-                # Only raise mode fails fast. Raise mode is the loudest level, so
-                # diagnostics are on and `running_any_nan` has been tracked. In warn
-                # mode induction runs to completion so `solve` returns a complete
-                # (NaN-bearing) solution rather than a truncated one.
+                # Runtime checks fail fast independently of output verbosity.
                 if validation_raises(logger) and running_any_nan.item():
                     break
 
                 _release_rolled_continuations(period_continuations=period_continuations)
 
-            if diagnostics_enabled:
+            if diagnostics_enabled or stats_enabled:
                 try:
                     _emit_post_loop_diagnostics(
                         logger=logger,
@@ -7218,7 +7207,7 @@ def _log_kernel_memory(
     Gated on the `LCM_LOG_KERNEL_MEMORY` env var (off by default, zero cost),
     independently of the solve `log_level`: the env var is the opt-in, so the
     `[mem]` lines are emitted at a level that always clears the logger's
-    threshold — even at `log_level="off"`, where the debug NaN/Inf diagnostic
+    threshold — even at `log_level="off"`, where debug statistics
     (its own per-period full-V transient) would otherwise have to be enabled to
     see them, masking the real kernel peak.
 

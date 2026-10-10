@@ -11,7 +11,7 @@ from pathlib import Path
 import jax
 
 # Prefix a timing row puts in its skip reason when the host was not steady. A
-# ratio between two log levels is a statement about pylcm's runtime validation,
+# ratio between the unchecked off leg and checked progress leg measures validation,
 # and it carries that meaning only when the machine served both legs
 # comparably. When it did not, the row declines to report a verdict and says so
 # with this marker, which the report checker reads as a measurement that was
@@ -64,6 +64,7 @@ class TimingMeasurement:
                 "nodeid": nodeid,
                 "witness": witness,
                 "stub_preflight": stub_preflight,
+                "runtime_checks": {"off": False, "progress": True},
                 "worker_id": worker,
                 "pid": pid,
                 "platform": platform.system(),

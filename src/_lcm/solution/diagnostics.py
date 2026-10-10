@@ -95,16 +95,9 @@ def _fold_period_diagnostics(
 ) -> tuple[BoolND, BoolND]:
     """Fold one regime-period's V array into the diagnostics accumulators.
 
-    Async reductions: gated on the public log level.
-
-    - validation `"off"` (`diagnostics_enabled=False`) ⇒ nothing; the flags pass
-      through unchanged
-    - `"warning"` / `"progress"` ⇒ folds two cheap isnan/isinf reductions into
-      the running scalars
-    - `"debug"` (`stats_enabled`) ⇒ adds the min/max/mean trio
-
-    Each extra full-V read is a memory-bandwidth tax on the larger models, so
-    the default keeps it to two reductions per (regime, period).
+    Runtime checks fold NaN/Inf reductions into the running scalars. Debug
+    output independently adds the min/max/mean reductions. Each extra full-V
+    read is a memory-bandwidth tax on larger models.
 
     The row's age is read from the grid's exact host-side values: a read off
     the device array here would be a blocking device-to-host copy queued
@@ -114,7 +107,7 @@ def _fold_period_diagnostics(
         Tuple of the updated running NaN and Inf flag scalars.
 
     """
-    if not diagnostics_enabled:
+    if not diagnostics_enabled and not stats_enabled:
         return running_any_nan, running_any_inf
     if stats_enabled:
         diagnostic_min.append(
@@ -134,6 +127,8 @@ def _fold_period_diagnostics(
             time_kind=coordinate_kind(ages),
         )
     )
+    if not diagnostics_enabled:
+        return running_any_nan, running_any_inf
     return (
         _fold_flag(running=running_any_nan, observed=v_array_has_nan(V_arr)),
         _fold_flag(running=running_any_inf, observed=v_array_has_inf(V_arr)),
@@ -186,6 +181,7 @@ def _emit_post_loop_diagnostics(
     """
     if running_any_nan.item():
         _raise_first_nan_row(
+            logger=logger,
             diagnostic_rows=diagnostic_rows,
             solution=solution,
             regimes=regimes,
@@ -210,6 +206,7 @@ def _emit_post_loop_diagnostics(
 
 def _raise_first_nan_row(
     *,
+    logger: logging.Logger,
     diagnostic_rows: list[_DiagnosticRow],
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     regimes: MappingProxyType[RegimeName, Regime],
@@ -224,6 +221,7 @@ def _raise_first_nan_row(
         V_arr = solution[row.period][row.regime_name]
         if jnp.any(jnp.isnan(V_arr)).item():
             _raise_at(
+                logger=logger,
                 row=row,
                 solution=solution,
                 regimes=regimes,
@@ -234,6 +232,7 @@ def _raise_first_nan_row(
 
 def _raise_at(
     *,
+    logger: logging.Logger,
     row: _DiagnosticRow,
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     regimes: MappingProxyType[RegimeName, Regime],
@@ -288,6 +287,7 @@ def _raise_at(
     )
     V_arr = solution[row.period][row.regime_name]
     validate_V(
+        logger=logger,
         V_arr=V_arr,
         age=row.age,
         regime_name=row.regime_name,

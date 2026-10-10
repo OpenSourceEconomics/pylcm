@@ -140,14 +140,9 @@ def validate_simulation_inputs(
     passes so they are reused across its calls and freed with it; without one,
     they live for this call only.
 
-    With validation off, an unknown state name is still rejected: a misnamed state
-    would otherwise simulate from values that were never supplied.
+    Structural initial-condition validation always runs. Numerical feasibility
+    and transition checks follow the explicit call policy.
     """
-    if not validation_enabled(logger):
-        _fail_if_state_names_are_wrong(
-            initial_conditions=initial_conditions, regimes=regimes
-        )
-        return
     memory = _preflight_memory(
         execution=execution,
         retained_footprint=retained_footprint,
@@ -158,6 +153,33 @@ def validate_simulation_inputs(
         regime_names_to_ids=regime_names_to_ids,
         ages=ages,
     )
+    if not validation_enabled(logger):
+        try:
+            try:
+                _read_initial_cohorts(
+                    initial_conditions=initial_conditions,
+                    regimes=regimes,
+                    regime_names_to_ids=regime_names_to_ids,
+                    ages=ages,
+                    memory=memory,
+                )
+            except _SerialValidationRequired:
+                _admitted_initial_states(
+                    initial_conditions=initial_conditions,
+                    regimes=regimes,
+                    regime_names_to_ids=regime_names_to_ids,
+                    ages=ages,
+                )
+            _initial_own_stakeholder(
+                initial_conditions=initial_conditions,
+                regimes=regimes,
+                regime_names_to_ids=regime_names_to_ids,
+                memory=memory,
+            )
+        finally:
+            if memory is not None:
+                memory.close_unit()
+        return
     with contextlib.closing(
         PreflightActionGrids(memory=memory, build=_build_flat_action_grid)
     ) as action_grid_resolver:

@@ -150,6 +150,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     widths: Mapping[str, int],
     independent_taste: bool,
     log_level: LogLevel,
+    runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
@@ -239,7 +240,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         n_workers=_resolve_compilation_workers(
             max_compilation_workers=max_compilation_workers
         ),
-        logger=get_logger(log_level=log_level),
+        logger=get_logger(log_level=log_level, runtime_checks=runtime_checks),
         log_kernel_memory=False,
         compiled={},
         compile_phase="simulation_compilation",
@@ -363,7 +364,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                         family="policy_prepare",
                     ),
                 )
-                if log_level != "off":
+                if runtime_checks:
                     inventory.operation(
                         function=dropped_candidate_counts,
                         arguments={"live": bank[2], "represented": bank[3]},
@@ -450,6 +451,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     original_population=original_population,
                     width=n_subjects,
                     subject_rows=rows,
+                    runtime_checks=runtime_checks,
                 )
             # The real period owner retains every committed carry until finish.
             add_bytes(
@@ -466,6 +468,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 sorted(int(code) for code in regime_names_to_ids.values())
             ),
             log_level=log_level,
+            runtime_checks=runtime_checks,
         ):
             inventory.operation(
                 function=binding.function,
@@ -543,6 +546,7 @@ def _profile_next_subjects(
     original_population: int,
     width: int,
     subject_rows: jax.ShapeDtypeStruct | None = None,
+    runtime_checks: bool = True,
 ) -> tuple[
     Mapping[str, Mapping[str, jax.ShapeDtypeStruct]],
     jax.ShapeDtypeStruct,
@@ -612,15 +616,16 @@ def _profile_next_subjects(
         _record_core(inventory=inventory, profile=cores["route"], family="route"),
     )
     targets = regime.simulation.reachability.targets(period=period, source=name)
-    inventory.operation(
-        function=regime_probability_flags,
-        arguments={"probabilities": tuple(route.values()), "rows": mask},
-        static_arguments={
-            "inactive_indices": regime_probability_inactive_indices(
-                names=tuple(route), active_regimes_next_period=targets
-            )
-        },
-    )
+    if runtime_checks:
+        inventory.operation(
+            function=regime_probability_flags,
+            arguments={"probabilities": tuple(route.values()), "rows": mask},
+            static_arguments={
+                "inactive_indices": regime_probability_inactive_indices(
+                    names=tuple(route), active_regimes_next_period=targets
+                )
+            },
+        )
     names = sorted(
         (target for target in targets if target in route),
         key=lambda target: int(regime_names_to_ids[target]),

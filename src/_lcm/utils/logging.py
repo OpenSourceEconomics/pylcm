@@ -1,10 +1,4 @@
-"""The logger, the log-level gate, and the records solve and simulate emit.
-
-`get_logger` and `format_duration` build the logger and its time strings.
-`validation_enabled`, `validation_raises` and `raise_or_warn` derive from the
-public `log_level` what a non-finite value does, and the `log_*` helpers write
-the period header, timing, transition and non-finite-value records.
-"""
+"""Call-local output and runtime-validation policies, plus numerical log records."""
 
 import logging
 from collections.abc import Callable
@@ -103,63 +97,51 @@ _LOG_LEVEL_MAP: dict[str, int] = {
 }
 
 
-def validation_enabled(logger: logging.Logger) -> bool:
-    """Return whether runtime validation runs at all.
+class _RunLogger(logging.Logger):
+    """Call-local output level and independent numerical-validation policy.
 
-    Runtime validation runs unless `log_level="off"`. The logger's level is
-    the single source of truth for the runtime policy: `"off"` raises the
-    logger to `CRITICAL`, every other level keeps it at `WARNING` or lower.
+    Keeping the policy on the existing logger seam preserves the solver ABI;
+    separate instances prevent one call from changing another call's policy.
     """
-    return logger.isEnabledFor(logging.WARNING)
+
+    def __init__(self, *, log_level: LogLevel, runtime_checks: bool) -> None:
+        super().__init__(name="lcm", level=_LOG_LEVEL_MAP[log_level])
+        self.runtime_checks = runtime_checks
+        self.parent = logging.getLogger("lcm")
+
+
+def validation_enabled(logger: logging.Logger) -> bool:
+    """Return the call's explicit numerical-validation policy."""
+    return logger.runtime_checks if isinstance(logger, _RunLogger) else True
 
 
 def validation_raises(logger: logging.Logger) -> bool:
-    """Return whether a validation failure raises (vs. logs a warning).
-
-    A failure raises at `log_level="debug"` and only warns at `"warning"` /
-    `"progress"`. `"debug"` is the one level that lowers the logger to
-    `DEBUG`, so `isEnabledFor(DEBUG)` is exactly the raise predicate.
-    """
-    return logger.isEnabledFor(logging.DEBUG)
+    """Enabled numerical validation raises independently of output verbosity."""
+    return validation_enabled(logger)
 
 
 def raise_or_warn(*, logger: logging.Logger, error: Exception) -> None:
-    """Surface a validation failure according to the logger's policy.
-
-    Raises the error when the logger implies raise mode (`log_level="debug"`);
-    otherwise logs it as a warning and returns so the run continues. Must not
-    be called when validation is disabled (`log_level="off"`).
-
-    Args:
-        logger: Logger carrying the runtime-validation policy.
-        error: The validation error to raise or describe.
-
-    Raises:
-        Exception: The passed `error`, in raise mode.
-
-    """
-    if validation_raises(logger):
+    """Raise an enabled validation failure; disabled checks publish nothing."""
+    if validation_enabled(logger):
         raise error
-    logger.warning("%s", error)
 
 
-def get_logger(*, log_level: LogLevel) -> logging.Logger:
-    """Get a logger that logs to stdout.
+def get_logger(*, log_level: LogLevel, runtime_checks: bool = True) -> logging.Logger:
+    """Build a call-local logger sharing the application's output handlers.
 
     Args:
-        log_level: Verbosity level. `"off"` suppresses all output, `"warning"` shows
-            only warnings (e.g. NaN/Inf), `"progress"` adds timing per period,
-            `"debug"` adds V_arr stats and feasibility info.
+        log_level: Console verbosity only.
+        runtime_checks: Whether numerical validation runs and raises on failure.
 
     Returns:
-        Logger that logs to stdout.
-
+        Logger carrying independent output and numerical-validation controls.
     """
-    logger = logging.getLogger("lcm")
-    if not logger.handlers:
-        logger.addHandler(logging.StreamHandler())
-    logger.setLevel(_LOG_LEVEL_MAP[log_level])
-    return logger
+    parent = logging.getLogger("lcm")
+    if not parent.handlers:
+        parent.addHandler(logging.StreamHandler())
+    # Planner emitters share this output logger; numerical policy stays call-local.
+    parent.setLevel(_LOG_LEVEL_MAP[log_level])
+    return _RunLogger(log_level=log_level, runtime_checks=runtime_checks)
 
 
 def format_duration(*, seconds: float) -> str:

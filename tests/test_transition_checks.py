@@ -2,7 +2,7 @@
 
 Exercises the pre-solve numerical sweep over `StochasticTransition` state
 transitions, the process-time AST subscript-order check, and the way the
-`log_level` validation policy turns failures into warnings or raises.
+Enabled runtime checks raise independently of console verbosity.
 """
 
 import logging
@@ -36,7 +36,10 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidStateTransitionProbabilitiesError
+from lcm.exceptions import (
+    InvalidStateTransitionProbabilitiesError,
+    InvalidValueFunctionError,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -185,31 +188,36 @@ def test_runtime_check_raises_on_rows_not_summing_to_one() -> None:
         model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
-def test_log_level_off_skips_runtime_check() -> None:
-    """A model whose state probs violate sum-to-1 still solves at log_level='off'."""
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_runtime_checks_disabled_skip_probability_check(log_level: LogLevel) -> None:
+    """Disabled runtime checks permit non-unit state probabilities at every level."""
 
     def bad_sum_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
         return jnp.array([0.5, 0.2])
 
     model = _model_with_state_probs(bad_sum_probs)
-    # With log_level='off' the runtime numerical check is skipped — solve
-    # returns a (numerically dubious) V_arr rather than raising.
-    model.solve(params={"discount_factor": 0.95}, log_level="off")
+    model.solve(
+        params={"discount_factor": 0.95},
+        log_level=log_level,
+        runtime_checks=False,
+    )
 
 
-@pytest.mark.parametrize("log_level", ["warning", "progress"])
-def test_warn_levels_log_invalid_probs_and_continue(
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_runtime_checks_reject_invalid_probs_at_every_level(
     *, log_level: LogLevel, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """At 'warning'/'progress', invalid state probs log a warning; solve continues."""
+    """Enabled checks reject non-unit state probabilities at every verbosity."""
 
     def bad_sum_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
         return jnp.array([0.5, 0.2])
 
     model = _model_with_state_probs(bad_sum_probs)
-    with caplog.at_level(logging.WARNING, logger="lcm"):
+    with (
+        caplog.at_level(logging.WARNING, logger="lcm"),
+        pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"),
+    ):
         model.solve(params={"discount_factor": 0.95}, log_level=log_level)
-    assert "sum to 1" in caplog.text
 
 
 def test_subscript_order_swap_raises_at_process_time() -> None:
@@ -369,18 +377,18 @@ def test_snapshot_written_only_at_debug_on_valid_solve(
     assert bool(snapshots) is expect_snapshot
 
 
-def test_warn_mode_writes_snapshot_on_nan_failure(tmp_path: Path) -> None:
-    """At `"warning"` with `log_path` set, a NaN solve writes a snapshot.
-
-    Pins the "one per warned failure" snapshot-table cell: warn mode does not
-    raise, so the snapshot is the only on-disk record of the failed solve.
-    """
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_runtime_checks_write_snapshot_on_nan_failure(
+    *, tmp_path: Path, log_level: LogLevel
+) -> None:
+    """Enabled NaN checks save the failure snapshot even with silent logging."""
     model = _model_with_state_probs(_good_health_probs)
-    model.solve(
-        params={"discount_factor": float("nan")},
-        log_level="warning",
-        log_path=tmp_path,
-    )
+    with pytest.raises(InvalidValueFunctionError):
+        model.solve(
+            params={"discount_factor": float("nan")},
+            log_level=log_level,
+            log_path=tmp_path,
+        )
     assert list(tmp_path.glob("solve_snapshot_*"))
 
 

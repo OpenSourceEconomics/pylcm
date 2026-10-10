@@ -218,6 +218,7 @@ def calculate_next_regime_membership(
     subject_slice: slice | SubjectRows,
     original_n_subjects: int | None = None,
     memory: SimulationMemory | None = None,
+    runtime_checks: bool = True,
 ) -> Int1D:
     """Calculate next period regime membership for subjects in a regime.
 
@@ -282,16 +283,17 @@ def calculate_next_regime_membership(
     )
     # The realized rows are checked on the law's full output, before the
     # projection below could hide mass outside the targets and before the draw,
-    # regardless of the log level.
-    validate_realized_regime_transition_probs(
-        regime_transition_probs=regime_transition_probs,
-        rows=subjects_in_regime,
-        active_regimes_next_period=active_regimes_next_period,
-        regime_name=regime.name,
-        age=age,
-        period=period,
-        memory=memory,
-    )
+    # when numerical validation is enabled, independently of output verbosity.
+    if runtime_checks:
+        validate_realized_regime_transition_probs(
+            regime_transition_probs=regime_transition_probs,
+            rows=subjects_in_regime,
+            active_regimes_next_period=active_regimes_next_period,
+            regime_name=regime.name,
+            age=age,
+            period=period,
+            memory=memory,
+        )
     # A per-target regime transition's probs dict covers only its declared
     # targets — anything else is structurally unreachable (zero probability).
     active_regime_probs = MappingProxyType(

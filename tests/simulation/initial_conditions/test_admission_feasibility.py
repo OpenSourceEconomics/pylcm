@@ -1,7 +1,6 @@
 """Public simulation feasibility producers respect the declared memory budget."""
 
 import dataclasses
-import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -313,9 +312,9 @@ def test_generous_budget_preserves_values_actions_and_caller_arrays(
 
 
 @pytest.mark.parametrize("constant", [False, True])
-@pytest.mark.parametrize("log_level", ["warning", "progress", "debug"])
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
 def test_generous_budget_preserves_natural_invalid_diagnostics(
-    *, constant: bool, log_level: LogLevel, caplog: pytest.LogCaptureFixture
+    *, constant: bool, log_level: LogLevel
 ) -> None:
     legacy, legacy_params, legacy_initial = _inputs(budget=None, constant=constant)
     with pytest.raises(InvalidInitialConditionsError) as oracle:
@@ -323,21 +322,9 @@ def test_generous_budget_preserves_natural_invalid_diagnostics(
             params=legacy_params, initial_conditions=legacy_initial, log_level="debug"
         )
     model, params, initial = _inputs(budget=2**24, constant=constant)
-    if log_level == "debug":
-        with pytest.raises(InvalidInitialConditionsError) as actual:
-            model.simulate(
-                params=params, initial_conditions=initial, log_level=log_level
-            )
-        assert str(actual.value) == str(oracle.value)
-    else:
-        with caplog.at_level(logging.WARNING, logger="lcm"):
-            model.simulate(
-                params=params, initial_conditions=initial, log_level=log_level
-            )
-        messages = [
-            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
-        ]
-        assert messages[0] == str(oracle.value)
+    with pytest.raises(InvalidInitialConditionsError) as actual:
+        model.simulate(params=params, initial_conditions=initial, log_level=log_level)
+    assert str(actual.value) == str(oracle.value)
 
 
 @pytest.mark.parametrize(

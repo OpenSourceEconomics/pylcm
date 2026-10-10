@@ -18,9 +18,8 @@ runs. Two families:
   [0, 1] range, and sum-to-1. A simulate-phase law reads each carried state on
   its simulate grid.
 
-Both checks read their policy off the `logger`: `log_level="off"` skips the
-check, `"warning"` / `"progress"` log each failure and let the run continue,
-`"debug"` raises on the first failure.
+Both checks read the explicit runtime policy carried by the logger. Enabled
+checks raise on the first failure, independently of console output.
 
 These are runtime checks: they need a fully-built `Regime` plus user
 `flat_params` and evaluate the transition functions numerically. The
@@ -333,8 +332,7 @@ def validate_transitions(
     """Validate regime and state transition probabilities before solve / simulate.
 
     Runs the regime-transition check then the state-transition check. Both
-    self-gate on the logger's runtime-validation policy (`log_level="off"`
-    skips, `"warning"` / `"progress"` warn, `"debug"` raises).
+    self-gate on the logger's explicit runtime policy, independently of output.
 
     Args:
         regimes: Immutable mapping of regime names to regimes.
@@ -540,9 +538,8 @@ def validate_regime_transition_probs_all_periods(
         regimes: Immutable mapping of regime names to regimes.
         flat_params: Immutable mapping of regime names to flat parameter mappings.
         ages: Age grid for the model.
-        logger: Logger carrying the runtime-validation policy. `log_level="off"`
-            returns immediately; `"warning"` / `"progress"` log each failure and
-            continue; `"debug"` raises on the first failure. `None` validates
+        logger: Logger carrying the explicit runtime-check policy. Disabled
+            checks return immediately; enabled checks raise. `None` validates
             regardless of the log level and raises on the first failure.
 
     Raises:
@@ -550,7 +547,7 @@ def validate_regime_transition_probs_all_periods(
             invalid probabilities and `logger` is `None` or implies raise mode.
 
     """
-    # Skipped entirely at `log_level="off"`. What that costs is the diagnosis
+    # Skipped when runtime checks are disabled. What that costs is the diagnosis
     # rather than the answer: the continuation aggregator measures the mass its
     # retained targets represent and returns NaN unless it is one and no weight
     # is negative, so a misspecification survives as a NaN rather than as a
@@ -1171,9 +1168,8 @@ def validate_state_transitions_all_periods(  # noqa: C901
         flat_params: Immutable mapping of regime names to flat parameter
             mappings.
         ages: Age grid for the model.
-        logger: Logger carrying the runtime-validation policy. `log_level="off"`
-            returns immediately; `"warning"` / `"progress"` log each failure and
-            continue; `"debug"` raises on the first failure.
+        logger: Logger carrying the explicit runtime-check policy. Disabled
+            checks return immediately; enabled checks raise.
 
     Raises:
         InvalidStateTransitionProbabilitiesError: If a `StochasticTransition`
@@ -1622,7 +1618,7 @@ def _validate_joint_support(
             ),
         )
         # The caller compares static schemas only for structurally valid
-        # supports. In warning mode validation continues, so returning the invalid
+        # supports. With checks disabled validation continues, so returning the invalid
         # pytree here would make the comparison itself dereference missing shapes.
         return False
 
@@ -1738,7 +1734,7 @@ def _evaluate_joint_weights(
     `extra_grids` carries grid axes the solution state-action space does not
     hold — the simulate-phase domain of each carried-only state. An argument
     that resolves to none of the grids or the regime's parameters leaves the
-    lottery unvalidated, which `log_level="debug"` refuses rather than sampling
+    lottery unvalidated, which enabled runtime checks refuse rather than sampling
     from an unexamined law.
 
     Returns:

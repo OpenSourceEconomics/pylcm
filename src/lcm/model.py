@@ -235,7 +235,6 @@ from _lcm.solution.result_snapshot import (
 )
 from _lcm.solution.solve_phase_records import CallId, new_call_id, solve_phase
 from _lcm.solution.structural_blueprints import StructuralBlueprintCache
-from _lcm.solution.validate_V import contains_nan
 from _lcm.time import ModelTime
 from _lcm.time_validation import validate_time_declarations
 from _lcm.transition_checks import validate_regime_selection, validate_transitions
@@ -268,8 +267,6 @@ from _lcm.utils.error_messages import format_messages
 from _lcm.utils.logging import (
     LogLevel,
     get_logger,
-    validation_enabled,
-    validation_raises,
 )
 from _lcm.variables import carried_state_grids, from_regime, get_grids
 from lcm._solver_api.authority import _ArrayCopier
@@ -1501,6 +1498,7 @@ class Model:
         *,
         params: UserParams,
         log_level: LogLevel,
+        runtime_checks: bool = True,
         retention: ResultRetention = ResultRetention.VALUES_AND_REPLAY,
         max_compilation_workers: int | None = None,
         log_path: str | Path | None = None,
@@ -1512,8 +1510,8 @@ class Model:
         The default keeps replay artifacts so every built-in solver decision can be
         replayed by ``simulate(solution=result)``. ``retention`` affects only
         artifacts kept after the solve; continuations required during backward
-        induction are always produced and consumed. Solver diagnostics remain
-        governed solely by ``log_level``.
+        induction are always produced and consumed. Numerical validation is controlled
+        by ``runtime_checks`` independently of output verbosity.
 
         An in-memory result is bound to this model instance and the exact canonical
         parameter values used here. Metadata also carries a durable model fingerprint;
@@ -1529,7 +1527,9 @@ class Model:
 
         Args:
             params: Model parameters compatible with ``get_params_template()``.
-            log_level: Verbosity and runtime-validation policy.
+            log_level: Console verbosity.
+            runtime_checks: Validate computed numbers and raise on failure. Model
+                construction and parameter schema validation always run.
             retention: Post-solve artifacts to retain.
             max_compilation_workers: Maximum threads for parallel XLA compilation.
             log_path: Optional directory for diagnostic snapshots.
@@ -1552,11 +1552,13 @@ class Model:
                 "InvariantBlockSchedule.PERIOD_MAJOR."
             )
             raise ExecutionPlanningError(msg)
-        log = get_logger(log_level=log_level)
+        log = get_logger(log_level=log_level, runtime_checks=runtime_checks)
         call_id = new_call_id()
         with solve_phase(name="public_solve", logger=log, call_id=call_id):
             with solve_phase(name="params_validation", logger=log, call_id=call_id):
-                flat_params = self._process_params(params)
+                flat_params = self._process_params(
+                    params, runtime_checks=runtime_checks
+                )
                 with naming_cells_without_edges(self._cells_without_edges):
                     validate_transitions(
                         regimes=self._regimes,
@@ -1654,7 +1656,7 @@ class Model:
 
         Args:
             params: Parameters accepted by `solve`.
-            log_level: The same validation policy used by `solve`.
+            log_level: Console verbosity; runtime checks remain enabled.
             candidate: Exact regime, period, core and ranked axis widths.
             retention: The ordinary solve's artifact retention policy.
 
@@ -1960,10 +1962,9 @@ class Model:
         The dissolution flags are empty for models without collective regimes,
         and for a collective model whose gates never read `D_target` unless
         `retain_dissolution_flags` asks for them. With `log_path` set, a
-        snapshot is written at `log_level="debug"` (every solve) and at
-        `"warning"` / `"progress"` whenever the returned solution contains
-        NaN. `_enforce_retention` caps the snapshot count at
-        `log_keep_n_latest`.
+        snapshot is written at `log_level="debug"` for every completed solve.
+        Checked NaN failures save a partial snapshot at any output level.
+        `_enforce_retention` caps snapshots at `log_keep_n_latest`.
         """
         with solve_phase(name="solver_param_checks", logger=log, call_id=call_id):
             check_solver_params(regimes=self._regimes, flat_params=flat_params)
@@ -2006,13 +2007,7 @@ class Model:
                 )
                 exc.add_note(f"Snapshot saved to {snap_dir}")
             raise
-        if (
-            log_path is not None
-            and validation_enabled(log)
-            and (
-                validation_raises(log) or contains_nan(internal_result.value_functions)
-            )
-        ):
+        if log_path is not None and log.isEnabledFor(logging.DEBUG):
             with solve_phase(name="solve_snapshot", logger=log, call_id=call_id):
                 _save_solve_snapshot(
                     model=self,
@@ -3247,6 +3242,7 @@ class Model:
         initial_conditions: UserInitialConditions | pd.DataFrame,
         solution: _SolutionResultBoundary | None = None,
         log_level: LogLevel,
+        runtime_checks: bool = True,
         seed: int | None = None,
         taste_shock_seed: int | None = None,
         log_path: str | Path | None = None,
@@ -3304,19 +3300,11 @@ class Model:
                 resizing that discrete domain changes the stream. Uses Threefry;
                 comparisons require matching precision/backend and JAX random
                 configuration. `None` preserves the ordinary seeded stream.
-            log_level: Verbosity, and the runtime-validation policy it implies.
-                Required — pick deliberately for the situation:
-                - `"off"` — silent; initial-condition, transition-probability,
-                  and NaN checks skipped.
-                - `"warning"` — validation runs, failures logged as warnings,
-                  the run continues.
-                - `"progress"` — as `"warning"`, plus timing.
-                - `"debug"` — validation runs and **raises** on the first
-                  failure; adds value-function stats.
-                Start every project at `"debug"`: fail early and gather maximum
-                diagnostics. Ease to `"warning"` / `"off"` only once the model
-                is trusted and you need the speed or the non-raising behaviour
-                for an estimation loop.
+            log_level: Console verbosity: off, warning, progress or debug.
+            runtime_checks: Validate computed transition probabilities, NaN values
+                and numerical feasibility/replay checks; raise on the first failure.
+                Also applies to an automatic solve. Construction, parameter schema
+                and solution-identity validation always run.
             log_path: Directory for persisting diagnostic snapshots. Optional at
                 every level; snapshots are written only when it is set.
             log_keep_n_latest: Maximum number of snapshots to retain on disk.
@@ -3336,7 +3324,7 @@ class Model:
         initial_conditions = lower_initial_time(
             initial_conditions=initial_conditions, ages=self._time
         )
-        log = get_logger(log_level=log_level)
+        log = get_logger(log_level=log_level, runtime_checks=runtime_checks)
         call_id = new_call_id()
         with solve_phase(name="public_simulate", logger=log, call_id=call_id):
             with solve_phase(name="params_validation", logger=log, call_id=call_id):
@@ -3359,9 +3347,13 @@ class Model:
                 # and an automatic solve. Process them once and keep one
                 # model-authoritative seam.
                 flat_params = (
-                    self._process_params(params)
+                    self._process_params(params, runtime_checks=runtime_checks)
                     if entry_allocations is None
-                    else self._process_params(params, array_writer=entry_allocations)
+                    else self._process_params(
+                        params,
+                        array_writer=entry_allocations,
+                        runtime_checks=runtime_checks,
+                    )
                 )
                 process_grid_resolver = (
                     None
@@ -3388,13 +3380,14 @@ class Model:
                     )
                     selection_memory.check_resident()
                     with naming_cells_without_edges(self._cells_without_edges):
-                        validate_regime_selection(
-                            regimes=self._regimes,
-                            flat_params=flat_params,
-                            ages=self._time,
-                            process_grid_resolver=process_grid_resolver,
-                            memory=selection_memory,
-                        )
+                        if runtime_checks:
+                            validate_regime_selection(
+                                regimes=self._regimes,
+                                flat_params=flat_params,
+                                ages=self._time,
+                                process_grid_resolver=process_grid_resolver,
+                                memory=selection_memory,
+                            )
             if solution is not None:
                 with solve_phase(
                     name="solution_resolution", logger=log, call_id=call_id
@@ -3498,7 +3491,7 @@ class Model:
                     execution=self._execution,
                     retained_footprint=(
                         entry_allocations.snapshot()
-                        if entry_allocations is not None and validation_enabled(log)
+                        if entry_allocations is not None
                         else None
                     ),
                     process_grid_resolver=process_grid_resolver,
@@ -3641,6 +3634,7 @@ class Model:
                         retained_footprint=entry_allocations.snapshot(),
                         independent_taste=taste_shock_seed is not None,
                         log_level=log_level,
+                        runtime_checks=runtime_checks,
                         process_grid_resolver=process_grid_resolver,
                         max_compilation_workers=max_compilation_workers,
                         group_sizes=sizes,
@@ -3720,7 +3714,7 @@ class Model:
                     result._regimes = self._regimes  # noqa: SLF001
                 result._solution = solution  # noqa: SLF001
                 result._durable_identity = self.durable_identity  # noqa: SLF001
-                if log_path is not None and validation_raises(log):
+                if log_path is not None and log.isEnabledFor(logging.DEBUG):
                     _save_simulate_snapshot(
                         model=self,
                         params=params,
@@ -4485,6 +4479,7 @@ class Model:
         params: UserParams,
         *,
         array_writer: SimulationEntryAllocations | None = None,
+        runtime_checks: bool = True,
     ) -> FlatParams:
         """Broadcast, convert Series, dtype-cast, and validate user params.
 
@@ -4546,7 +4541,8 @@ class Model:
         if array_writer is None:
             # Under entry admission the caller validates after the process
             # grids are admitted; see `simulate`.
-            self._validate_regime_selection(flat_params=flat_params)
+            if runtime_checks:
+                self._validate_regime_selection(flat_params=flat_params)
         else:
             array_writer.publish(stage="params", tree=flat_params)
 

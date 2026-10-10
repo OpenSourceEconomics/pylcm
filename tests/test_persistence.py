@@ -448,9 +448,18 @@ def test_simulate_debug_persists_snapshot_with_compiled_runtime(tmp_path):
     assert snapshot.result is not None
 
 
-def test_solve_no_persistence_when_not_debug(*, tmp_path, model_and_params):
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress"])
+@pytest.mark.parametrize("runtime_checks", [False, True])
+def test_solve_no_persistence_when_not_debug(
+    *, tmp_path, model_and_params, log_level, runtime_checks
+):
     model, params = model_and_params
-    model.solve(params=params, log_level="progress", log_path=tmp_path)
+    model.solve(
+        params=params,
+        log_level=log_level,
+        log_path=tmp_path,
+        runtime_checks=runtime_checks,
+    )
 
     assert len(list(tmp_path.iterdir())) == 0
 
