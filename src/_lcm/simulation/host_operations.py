@@ -61,8 +61,11 @@ from lcm.typing import ReferenceName, RegimeName, ValueND
 
 type StaticArgument = bool | int | float | str | tuple[StaticArgument, ...] | None
 
-# One leaf of a placed operand: an array, or a host array or scalar.
-type _OperandLeaf = ValueND | HostArray | np.generic | bool | int | float
+# One leaf of a placed operand: an array, a host array or scalar, or the shape and
+# dtype of a leaf that is already abstract.
+type _OperandLeaf = (
+    ValueND | HostArray | np.generic | jax.ShapeDtypeStruct | bool | int | float
+)
 
 # A model-owned input a `built` composer reads: a regime name, or one of the
 # regime's function, constraint, transition or transition-plan mappings.
