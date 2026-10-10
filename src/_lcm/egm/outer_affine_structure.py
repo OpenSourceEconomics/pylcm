@@ -24,6 +24,8 @@ from fractions import Fraction
 
 import jax
 
+from lcm.typing import ActionName, FunctionName, ReferenceName
+
 __all__ = ["OuterAffineCertificate", "certify_outer_coefficient"]
 
 # Sub-jaxprs hang off different param keys per primitive: `closed_call` and
@@ -69,9 +71,9 @@ class OuterAffineCertificate:
 def certify_outer_coefficient(
     *,
     func: Callable[..., object],
-    outer_action_name: str,
+    outer_action_name: ActionName,
     abstract_args: Iterable[object],
-    arg_names: tuple[str, ...],
+    arg_names: tuple[ReferenceName, ...],
 ) -> OuterAffineCertificate:
     """Return the exact coefficient of `outer_action_name` in `func`.
 
@@ -158,7 +160,7 @@ class _RefusedError(Exception):
 
 
 def _walk(
-    *, jaxpr: object, tainted: Mapping[object, Fraction], func_name: str
+    *, jaxpr: object, tainted: Mapping[object, Fraction], func_name: FunctionName
 ) -> dict[object, Fraction]:
     """Propagate exact coefficients forward through one jaxpr's equations."""
     carried: dict[object, Fraction] = dict(tainted)
@@ -190,7 +192,7 @@ def _apply(
     prim: str,
     eqn: object,
     operands: list[Fraction | None],
-    func_name: str,
+    func_name: FunctionName,
 ) -> Fraction | None:
     """Return the outgoing coefficient for one equation, or `None` to refuse."""
     if prim in _ADD_PRIMS:
@@ -217,7 +219,7 @@ def _apply_structural(
     prim: str,
     eqn: object,
     operands: list[Fraction | None],
-    func_name: str,
+    func_name: FunctionName,
 ) -> Fraction | None:
     """Handle the primitives whose rule needs the equation's own structure."""
     if prim in {"mul", "div"}:
@@ -276,7 +278,7 @@ def _literal_value(var: object) -> float | int | None:
 
 
 def _descend(
-    *, eqn: object, operands: list[Fraction | None], func_name: str
+    *, eqn: object, operands: list[Fraction | None], func_name: FunctionName
 ) -> Fraction | None:
     """Walk a nested call's body, threading coefficients across its inputs."""
     body = None

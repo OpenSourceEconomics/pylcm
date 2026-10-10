@@ -876,7 +876,7 @@ class _DeclaredExit:
     target's name rather than a code, and evaluating it is an error.
     """
 
-    target: str
+    target: RegimeName
     """The regime the exit names."""
 
     def __post_init__(self) -> None:
@@ -1057,7 +1057,7 @@ def _declared_support(
 
 
 def _fail_if_unknown_targets(
-    *, targets: tuple[str, ...], regime_names: tuple[RegimeName, ...]
+    *, targets: tuple[RegimeName, ...], regime_names: tuple[RegimeName, ...]
 ) -> None:
     unknown = sorted(set(targets) - set(regime_names))
     if unknown:
@@ -1216,7 +1216,7 @@ def _mapping_union(
     mask: Mapping[int, tuple[int, ...]] | None,
 ) -> MappingProxyType[str, object]:
     """Per-target mappings and exits merged; each target keeps one cell."""
-    cells_by_target: dict[str, list[tuple[object, object]]] = {}
+    cells_by_target: dict[RegimeName, list[tuple[object, object]]] = {}
     for law in laws:
         for target, cell in _law_cells(law=law, code_by_name=code_by_name).items():
             cells_by_target.setdefault(target, []).append((law, cell))

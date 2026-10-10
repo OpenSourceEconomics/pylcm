@@ -28,7 +28,7 @@ from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.typing import FlatRegimeParams, RegimeName
 from lcm.solver_api import SIMULATION_POLICY
-from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt, StateName
 
 POLICY_PREPARE = "simulate_policy_prepare"
 POLICY_RANK = "simulate_policy_rank"
@@ -154,7 +154,7 @@ def _program(
     name: str,
     body: Callable[..., object],
     subject_names: tuple[str, ...],
-    state_names: tuple[str, ...],
+    state_names: tuple[StateName, ...],
     reads: tuple[ValueRead, ...],
     roles: object,
 ) -> CoreProgram:
@@ -174,7 +174,7 @@ def _program(
 
 
 def _policy_reads(
-    *, regime: str, period: int, n_arrays: int, core: str
+    *, regime: RegimeName, period: int, n_arrays: int, core: str
 ) -> tuple[ValueRead, ...]:
     """Match NNBEGMSimPolicy's registered four mandatory and optional fifth leaf."""
     return tuple(

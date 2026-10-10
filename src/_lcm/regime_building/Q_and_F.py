@@ -56,6 +56,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     NextStateSimulationFunction,
     QAndFFunction,
+    QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
@@ -72,12 +73,14 @@ from _lcm.zero_safe import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
+    ActionName,
     BoolND,
     ContinuousState,
     DiscreteState,
     Float1D,
     FloatND,
     IntND,
+    ReferenceName,
 )
 
 
@@ -262,7 +265,7 @@ def _normalized_regime_mixture(
 
 def get_Q_and_F(
     *,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
@@ -397,7 +400,7 @@ def get_Q_and_F(
 
 
 def _continuation_reads(
-    *, deps: tuple[Callable[..., Any], ...], arg_names: frozenset[str]
+    *, deps: tuple[Callable[..., Any], ...], arg_names: frozenset[ReferenceName]
 ) -> frozenset[str] | None:
     """Every argument `compute_CE` reads from the cell, or `None` if unknowable.
 
@@ -432,7 +435,7 @@ class _QAndF:
     """The regime's Bellman aggregator `W`."""
     build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
     """Assembles `W`'s further arguments from the cell."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
     continuation_reads: frozenset[str] | None
     """Every argument the continuation reads from the cell, or `None` if unknown.
@@ -494,7 +497,7 @@ class _QAndF:
 
 def get_compute_intermediates(
     *,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
@@ -601,7 +604,7 @@ class _ComputeIntermediates:
     """The regime's Bellman aggregator `W`."""
     build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
     """Assembles `W`'s further arguments from the cell."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -642,7 +645,7 @@ class _ComputeIntermediates:
 
 def get_Q_and_F_terminal(
     *,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
 ) -> QAndFFunction:
@@ -680,7 +683,7 @@ class _TerminalQAndF:
 
     U_and_F: Callable[..., tuple[Any, ...]]
     """Utility and feasibility at the cell."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -716,7 +719,7 @@ class _TerminalQAndF:
 
 def get_Q_and_F_terminal_collective(
     *,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     stakeholders: tuple[str, ...],
@@ -810,7 +813,7 @@ class _TerminalCollectiveQAndF:
     """Every stakeholder's utility and the shared feasibility at the cell."""
     value_constraint_machinery: _ValueConstraintMachinery
     """The value-constraint readers and evaluators."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -936,7 +939,7 @@ class ProjectedLandingReader:
     state_args: tuple[StateName, ...]
     """Target states the projection reads, supplied at the landing point."""
 
-    other_args: tuple[str, ...]
+    other_args: tuple[ReferenceName, ...]
     """The reader's remaining arguments — params and the same-period mappings."""
 
 
@@ -1056,8 +1059,8 @@ def _build_same_period_ref_reader(
     deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction] = (
         MappingProxyType({})
     ),
-    v_mapping_arg: str = SAME_PERIOD_V_ARG,
-    params_mapping_arg: str = SAME_PERIOD_PARAMS_ARG,
+    v_mapping_arg: ReferenceName = SAME_PERIOD_V_ARG,
+    params_mapping_arg: ReferenceName = SAME_PERIOD_PARAMS_ARG,
 ) -> Callable[..., FloatND]:
     """Build the reader of one same-period reference value at a (state, action) cell.
 
@@ -1184,11 +1187,11 @@ class _SamePeriodReferenceReader:
     """Interpolates the reference regime's V at the projected coordinates."""
     interpolator_extra_qnames: Mapping[str, str]
     """Mapping of the interpolator's runtime grid helpers to their reference qnames."""
-    v_mapping_arg: str
+    v_mapping_arg: ReferenceName
     """Keyword carrying the mapping of reference regimes to V arrays."""
-    params_mapping_arg: str
+    params_mapping_arg: ReferenceName
     """Keyword carrying the mapping of reference regimes to their params."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -1226,7 +1229,7 @@ class _SamePeriodReferenceReader:
 
 def _reference_interpolator_param_qnames(
     *,
-    extra_args: set[str],
+    extra_args: set[ReferenceName],
     ref: ResolvedProjectedRegimeValue,
 ) -> MappingProxyType[str, str]:
     """Map each extra interpolator input to its qname in the REFERENCE namespace.
@@ -1309,7 +1312,7 @@ def _lookup_reference_params(
 
 def get_Q_and_F_collective(
     *,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
@@ -1526,7 +1529,7 @@ class _CollectiveQAndF:
     """Assembles `W`'s further arguments from the cell."""
     value_constraint_machinery: _ValueConstraintMachinery
     """The value-constraint readers and evaluators."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -1610,13 +1613,13 @@ class _ValueConstraintMachinery:
     reference_readers: Mapping[str, Callable[..., FloatND]]
     """Per reference-value name, the same-period reference reader."""
 
-    reference_reader_args: Mapping[str, tuple[str, ...]]
+    reference_reader_args: Mapping[ReferenceName, tuple[str, ...]]
     """Each reader's argument names (fetched off the cell kwargs)."""
 
     evaluators: Mapping[str, Callable[..., BoolND]]
     """Per value-constraint name, the DAG-concatenated predicate."""
 
-    evaluator_args: Mapping[str, tuple[str, ...]]
+    evaluator_args: Mapping[ReferenceName, tuple[str, ...]]
     """Each evaluator's argument names (split engine-supplied vs cell kwargs)."""
 
     q_value_index: Mapping[str, int]
@@ -1666,7 +1669,7 @@ def _build_value_constraint_machinery(
 
     """
     reference_readers: dict[str, Callable[..., FloatND]] = {}
-    reference_reader_args: dict[str, tuple[str, ...]] = {}
+    reference_reader_args: dict[ReferenceName, tuple[str, ...]] = {}
     for ref_name, ref in same_period_refs.items():
         reader = _build_same_period_ref_reader(
             ref=ref,
@@ -1678,7 +1681,7 @@ def _build_value_constraint_machinery(
 
     dag_pool = {k: v for k, v in functions.items() if k != "H"}
     evaluators: dict[str, Callable[..., BoolND]] = {}
-    evaluator_args: dict[str, tuple[str, ...]] = {}
+    evaluator_args: dict[ReferenceName, tuple[str, ...]] = {}
     for constraint_name, predicate in value_constraints.items():
         combined = {**dag_pool, constraint_name: predicate}
         evaluator = concatenate_functions(
@@ -1790,7 +1793,7 @@ class _StakeholderSlicedInterpolator:
     """Name of the interpolator's value-array argument."""
     n_stakeholders: int
     """Number of stakeholder slices on the trailing axis."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -1870,7 +1873,7 @@ class _NodeDrawResolution:
     resolved_names: frozenset[TransitionFunctionName]
     """The `next_<state>` names `resolve_at_node` returns."""
 
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """Arguments `resolve_at_node` must be called with."""
 
 
@@ -2029,11 +2032,11 @@ class _PointwiseGatedInterpolator:
     """Length of the stacked leaf's trailing axis."""
     combine: Callable[..., FloatND]
     """The edge's gate, applied to the interpolated channels."""
-    combine_args: tuple[str, ...]
+    combine_args: tuple[ReferenceName, ...]
     """Every argument `combine` reads."""
-    interpolator_args: tuple[str, ...]
+    interpolator_args: tuple[ReferenceName, ...]
     """Every argument the base interpolator reads."""
-    context_args: frozenset[str]
+    context_args: frozenset[ReferenceName]
     """Engine context the gate or a reader names, bound to the target's period."""
     reader_names: frozenset[str]
     """Names of the projected readers."""
@@ -2045,13 +2048,13 @@ class _PointwiseGatedInterpolator:
     """Age at each model period."""
     resolve_at_node: Callable[..., Mapping[str, FloatND]] | None
     """Resolves draw-dependent laws at the node, or `None`."""
-    resolver_arg_names: tuple[str, ...]
+    resolver_arg_names: tuple[ReferenceName, ...]
     """Arguments `resolve_at_node` is called with."""
     resolved_landing: frozenset[str]
     """Landing coordinates the node resolution produces."""
     projected_readers: tuple[ProjectedLandingReader, ...]
     """Gate references and leg fallbacks, evaluated at the landing."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -2699,7 +2702,7 @@ class _TargetContinuation:
     nodes inside the interpolator, so the surface carries genuine draws only.
     """
 
-    extra_param_names: frozenset[str]
+    extra_param_names: frozenset[QualifiedName | ActionName]
     """Arguments `next_V` needs beyond the next states and the value array.
 
     Examples are a grid whose points arrive at runtime (`wealth__points` for an
@@ -2985,9 +2988,9 @@ class _ResolveAtNode:
     """Per stochastic law, its nodes indexed by the draw's value."""
     resolve: Callable[..., Mapping[str, FloatND]]
     """The dependent laws, concatenated with the DAG."""
-    resolver_args: frozenset[str]
+    resolver_args: frozenset[ReferenceName]
     """Every argument `resolve` reads."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -3026,13 +3029,13 @@ class _InterpolateAtNode:
 
     resolve_at_this_node: _ResolveAtNode
     """The node resolution of the draw-dependent laws."""
-    resolver_arg_names: frozenset[str]
+    resolver_arg_names: frozenset[ReferenceName]
     """Arguments the node resolution is called with."""
     next_V_interpolator: Callable[..., FloatND]
     """The target's value-function interpolator."""
-    interpolator_args: frozenset[str]
+    interpolator_args: frozenset[ReferenceName]
     """Every argument the interpolator reads."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -3613,7 +3616,7 @@ def _get_joint_weights_function(
 class _OuterJointWeights:
     """The outer product of one target's lottery marginals at one node."""
 
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The `weight_<target>__next_<state>` names, one per lottery axis."""
 
     def __post_init__(self) -> None:
@@ -3836,7 +3839,7 @@ def _unit_regime_mass_or_nan(
 def _publish_signature(
     *,
     target: object,
-    arg_names: tuple[str, ...],
+    arg_names: tuple[ReferenceName, ...],
     return_annotation: str | type[inspect.Signature.empty],
     name: str,
 ) -> None:

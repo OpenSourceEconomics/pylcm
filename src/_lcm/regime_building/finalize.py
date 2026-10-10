@@ -43,7 +43,7 @@ from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import _AgeSpecialized
-from lcm.typing import FloatND, UserFunction
+from lcm.typing import FloatND, ReferenceName, UserFunction
 
 # A user `Regime` after model-build finalization. Runtime-equivalent to
 # `lcm.regime.Regime`; internal signatures use this alias to mark values
@@ -554,7 +554,7 @@ def _fail_if_continuation_slot_is_mixed(
 def _publish_signature(
     *,
     target: object,
-    args: Mapping[str, str],
+    args: Mapping[ReferenceName, str],
     return_annotation: str,
     name: str,
 ) -> None:

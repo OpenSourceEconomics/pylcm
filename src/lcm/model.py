@@ -1301,7 +1301,7 @@ class Model:
         self,
         *,
         params: UserParams,
-        regime_name: str,
+        regime_name: RegimeName,
         period: int,
         axis_widths: Mapping[str, int],
     ) -> tuple[DeclaredCoreCompilation, ...]:

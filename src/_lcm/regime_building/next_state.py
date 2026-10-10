@@ -28,6 +28,7 @@ from _lcm.transition_plans import (
 from _lcm.typing import (
     EconFunctionsMapping,
     NextStateSimulationFunction,
+    QualifiedName,
     RegimeName,
     StateName,
     StateOrActionName,
@@ -37,7 +38,14 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import ContinuousState, DiscreteState, Float1D, FloatND, IntND
+from lcm.typing import (
+    ContinuousState,
+    DiscreteState,
+    Float1D,
+    FloatND,
+    IntND,
+    ReferenceName,
+)
 
 
 def get_next_state_function_for_solution(
@@ -375,7 +383,7 @@ def _create_joint_stochastic_next_func(
 class _RealizedJointNode:
     """Draw one support node of a joint lottery and publish its whole pytree."""
 
-    qname: str
+    qname: QualifiedName
     """Qualified `<target>__<lottery>` name of the lottery."""
     support_provider_name: str
     """Name of the DAG node supplying the lottery's support."""
@@ -446,7 +454,7 @@ def _create_discrete_stochastic_next_func(
 class _DiscreteStochasticNextState:
     """Draw a discrete state's next value from its weight vector."""
 
-    qname: str
+    qname: QualifiedName
     """Qualified `<target>__next_<state>` name of the transition."""
     labels: DiscreteState
     """Category codes the drawn value is one of."""
@@ -540,7 +548,7 @@ def _resolve_conditioned_sigma(
 
 def _create_ar1_next_func(
     *,
-    qname: str,
+    qname: QualifiedName,
     state_name: StateName,
     grid: _AR1Process,
     conditioned: tuple[StateConditioned, Float1D] | None = None,
@@ -549,7 +557,7 @@ def _create_ar1_next_func(
     runtime_param_names = {
         qname_from_tree_path((state_name, p)): p for p in grid.params_to_pass_at_runtime
     }
-    args: dict[str, str] = {
+    args: dict[ReferenceName, str] = {
         f"key_{qname}": "PRNGKeyND",
         state_name: "ContinuousState",
         **dict.fromkeys(runtime_param_names, "FloatND"),
@@ -571,11 +579,11 @@ def _create_ar1_next_func(
 class _AR1NextState:
     """Draw an AR(1) process's next value from its current value and a key."""
 
-    qname: str
+    qname: QualifiedName
     """Qualified `<target>__next_<state>` name of the transition."""
     state_name: StateName
     """Name of the process state whose current value the draw conditions on."""
-    args: dict[str, str]
+    args: dict[ReferenceName, str]
     """Argument names and annotations, in signature order."""
     fixed_params: dict[str, Any]
     """Process parameters fixed at construction."""
@@ -612,7 +620,7 @@ class _AR1NextState:
 
 def _create_iid_next_func(
     *,
-    qname: str,
+    qname: QualifiedName,
     state_name: StateName,
     grid: _IIDProcess,
     conditioned: tuple[StateConditioned, Float1D] | None = None,
@@ -621,7 +629,7 @@ def _create_iid_next_func(
     runtime_param_names = {
         qname_from_tree_path((state_name, p)): p for p in grid.params_to_pass_at_runtime
     }
-    args: dict[str, str] = {
+    args: dict[ReferenceName, str] = {
         f"key_{qname}": "PRNGKeyND",
         **dict.fromkeys(runtime_param_names, "FloatND"),
     }
@@ -641,9 +649,9 @@ def _create_iid_next_func(
 class _IIDNextState:
     """Draw an IID process's next value from a key."""
 
-    qname: str
+    qname: QualifiedName
     """Qualified `<target>__next_<state>` name of the transition."""
-    args: dict[str, str]
+    args: dict[ReferenceName, str]
     """Argument names and annotations, in signature order."""
     fixed_params: dict[str, Any]
     """Process parameters fixed at construction."""
@@ -694,7 +702,7 @@ def _conditioned_sigma(
 def _publish_signature(
     *,
     target: object,
-    args: Mapping[str, str],
+    args: Mapping[ReferenceName, str],
     return_annotation: str,
     name: str,
 ) -> None:

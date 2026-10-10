@@ -27,7 +27,7 @@ from _lcm.typing import StateName
 from _lcm.utils.functools import all_as_kwargs
 from _lcm.variables import from_regime, get_grids
 from lcm.regime import Regime as UserRegime
-from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat
+from lcm.typing import BoolND, Float1D, FloatND, IntND, ReferenceName, ScalarFloat
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -885,7 +885,7 @@ class _Interpolator:
 def _publish_signature(
     *,
     target: object,
-    args: Mapping[str, str],
+    args: Mapping[ReferenceName, str],
     return_annotation: str,
     name: str,
 ) -> None:

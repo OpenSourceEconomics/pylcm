@@ -5722,7 +5722,7 @@ def _resolve_output_layouts_and_lowering_keys(
     budget_bytes: int | None,
     execution_widths: ResolvedExecution,
     enable_jit: bool,
-    continuous_sharded_state: str | None = None,
+    continuous_sharded_state: StateName | None = None,
     donate_buffers: bool = True,
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
@@ -5890,7 +5890,7 @@ def _build_structural_blueprint(
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     budget_bytes: int | None,
     execution_widths: ResolvedExecution,
-    continuous_sharded_state: str | None,
+    continuous_sharded_state: StateName | None,
     process_grid_resolver: ProcessGridResolver | None,
 ) -> _StructuralBlueprint:
     """Materialize every program once and bind its top-ranked width candidate.
@@ -6490,7 +6490,7 @@ def _width_key(*, widths: Mapping[str, int]) -> _WidthKey:
 
 
 def _continuous_value_replica_required(
-    *, regime: Regime, state_name: str | None
+    *, regime: Regime, state_name: StateName | None
 ) -> bool:
     """Read the construction-validated capability, never infer it from a grid."""
     if state_name is None:

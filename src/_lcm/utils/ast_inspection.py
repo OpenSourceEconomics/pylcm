@@ -5,8 +5,12 @@ import inspect
 import textwrap
 from collections.abc import Callable
 
+from lcm.typing import ParameterName, ReferenceName
 
-def time_index_names(*, func: Callable, array_param_name: str) -> frozenset[str]:
+
+def time_index_names(
+    *, func: Callable, array_param_name: ParameterName
+) -> frozenset[str]:
     """Find visible age/period reads even in computed or multiple subscripts."""
     sources = getattr(inspect.unwrap(func), "__lcm_sources__", None)
     if sources is not None:
@@ -32,7 +36,7 @@ def time_index_names(*, func: Callable, array_param_name: str) -> frozenset[str]
 def _get_func_indexing_params(
     *,
     func: Callable,
-    array_param_name: str,
+    array_param_name: ParameterName,
 ) -> list[str]:
     """Return indexing parameter names by inspecting array subscripts.
 
@@ -158,7 +162,7 @@ def _display_name(func: Callable) -> str:
 def _slice_references_params(
     *,
     slice_node: ast.expr,
-    param_names: set[str],
+    param_names: set[ReferenceName],
 ) -> bool:
     """Check if any `ast.Name` in the slice is a function parameter.
 
@@ -179,7 +183,7 @@ def _slice_references_params(
 def _collect_subscripts(
     *,
     tree: ast.Module,
-    param_name: str,
+    param_name: ParameterName,
 ) -> list[ast.expr]:
     """Find all `param_name[...]` subscript slice nodes in an AST.
 
@@ -221,7 +225,7 @@ def _extract_bare_names(slice_node: ast.expr) -> list[str] | None:
 
 
 def _indexing_params_of_sources(
-    *, sources: tuple[Callable, ...], array_param_name: str
+    *, sources: tuple[Callable, ...], array_param_name: ParameterName
 ) -> list[str]:
     """Return the indexing shared by every wrapped law that reads the array."""
     found = {

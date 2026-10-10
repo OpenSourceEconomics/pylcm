@@ -17,8 +17,8 @@ from enum import Enum, auto
 from types import MappingProxyType
 from typing import no_type_check
 
-from _lcm.typing import RegimeName, TransitionFunctionName
-from lcm.typing import DiscreteState, FloatND
+from _lcm.typing import QualifiedName, RegimeName, TransitionFunctionName
+from lcm.typing import DiscreteState, FloatND, ReferenceName, StateName
 
 
 class SupportOrigin(Enum):
@@ -50,7 +50,7 @@ class ParameterBinding:
     """Public parameter provenance and compiled engine arguments."""
 
     public_path: tuple[str, ...] = ()
-    engine_args: frozenset[str] = frozenset()
+    engine_args: frozenset[ReferenceName] = frozenset()
     user_params: frozenset[str] = frozenset()
 
 
@@ -104,7 +104,7 @@ class OriginalLotteryLayout:
     recover either the law or the verified code bijection.
     """
 
-    state_name: str
+    state_name: StateName
     rest_of_code: tuple[int, ...]
     fixed_of_code: tuple[int, ...]
     probabilities: Callable[..., FloatND]
@@ -142,7 +142,7 @@ def declared_law_over_codes(
 
 
 def signature_with_state(
-    *, func: Callable[..., FloatND], state_name: str
+    *, func: Callable[..., FloatND], state_name: StateName
 ) -> tuple[inspect.Signature, bool]:
     """Return `func`'s signature declaring `state_name`, and whether `func` reads it."""
     signature = inspect.signature(func)
@@ -171,13 +171,13 @@ class TransitionLotteryInfo:
     """One finite stochastic realization mechanism on a target edge."""
 
     name: str
-    qualified_name: str
+    qualified_name: QualifiedName
     support_provider: object | None
     support_signature: SupportSignature
     probabilities: object
     support_origin: SupportOrigin
     lifetime: LotteryLifetime
-    persisted_state: str | None
+    persisted_state: StateName | None
     support_params: ParameterBinding
     probability_params: ParameterBinding
     weight_name: str
@@ -193,9 +193,9 @@ class TransitionLotteryInfo:
 class TransitionOutputInfo:
     """How one genuine target state obtains its next-period value."""
 
-    state: str
+    state: StateName
     next_state_name: TransitionFunctionName
-    qualified_name: str
+    qualified_name: QualifiedName
     producer: OutputProducerRef
     physical_resolver: object | LotteryValue
     continuation_coordinate: (

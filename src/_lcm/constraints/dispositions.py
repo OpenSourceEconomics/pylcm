@@ -20,6 +20,7 @@ from _lcm.constraints.ir import Compare
 from _lcm.constraints.processed import ProcessedConstraint
 from _lcm.grids import Grid
 from _lcm.typing import FunctionName, RegimeName, StateOrActionName
+from lcm.typing import ParameterName
 
 # What kind of candidate a route site has in hand. The stages differ in what is in
 # scope, which is what decides whether a constraint can be evaluated at all:
@@ -61,7 +62,7 @@ class ConstraintContext:
     function_names: frozenset[FunctionName]
     """Names the regime's own functions produce."""
 
-    param_names: frozenset[str]
+    param_names: frozenset[ParameterName]
     """Names supplied as parameters rather than computed."""
 
 

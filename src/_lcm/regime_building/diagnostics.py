@@ -40,6 +40,7 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
+    QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
@@ -52,7 +53,7 @@ from lcm.typing import BoolND, FloatND, IntND
 def _build_compute_intermediates_per_period(
     *,
     active_periods: tuple[int, ...],
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     phase_reachability: PhaseReachability,
     source_regime_name: RegimeName,
     functions: EconFunctionsMapping,

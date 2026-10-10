@@ -13,6 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 
+from lcm.typing import ReferenceName
+
 ReturnType = TypeVar("ReturnType")
 
 # Names `functools.wraps` copies, minus the deferred annotations (PEP 649):
@@ -60,7 +62,7 @@ def allow_only_kwargs(
         "Callable[..., ReturnType]",
         _KeywordOnlyAdapter(
             func=func,
-            parameter_names=tuple(parameters),
+            signature_parameter_names=tuple(parameters),
             keyword_only_names=tuple(
                 p.name
                 for p in parameters.values()
@@ -195,7 +197,7 @@ def all_as_kwargs(
     *,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
-    arg_names: list[str],
+    arg_names: list[ReferenceName],
 ) -> dict[str, Any]:
     """Return kwargs dictionary containing all arguments.
 
@@ -215,7 +217,7 @@ def all_as_args(
     *,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
-    arg_names: list[str],
+    arg_names: list[ReferenceName],
 ) -> tuple[Any, ...]:
     """Return args tuple containing all arguments.
 
@@ -232,7 +234,7 @@ def all_as_args(
 
 
 def convert_kwargs_to_args(
-    *, kwargs: dict[str, Any], arg_names: list[str]
+    *, kwargs: dict[str, Any], arg_names: list[ReferenceName]
 ) -> list[Any]:
     """Convert kwargs to args in the order of arg_names.
 
@@ -284,7 +286,7 @@ class _WrappedCallable:
 class _KeywordOnlyAdapter(_WrappedCallable):
     """Forward keyword arguments to `func`, refusing positional ones."""
 
-    parameter_names: tuple[str, ...]
+    signature_parameter_names: tuple[str, ...]
     """Every parameter of `func`, in declaration order."""
     keyword_only_names: tuple[str, ...]
     """The parameters `func` itself takes keyword-only."""
@@ -301,17 +303,18 @@ class _KeywordOnlyAdapter(_WrappedCallable):
             )
 
         if self.enforce:
-            extra = set(kwargs).difference(self.parameter_names)
+            extra = set(kwargs).difference(self.signature_parameter_names)
             if extra:
                 raise ValueError(
-                    f"Expected arguments: {list(self.parameter_names)}, "
+                    f"Expected arguments: {list(self.signature_parameter_names)}, "
                     f"got extra: {extra}",
                 )
 
-        missing = set(self.parameter_names).difference(kwargs)
+        missing = set(self.signature_parameter_names).difference(kwargs)
         if missing:
             raise ValueError(
-                f"Expected arguments: {list(self.parameter_names)}, missing: {missing}",
+                f"Expected arguments: {list(self.signature_parameter_names)}, "
+                f"missing: {missing}",
             )
 
         # Retrieve keyword-only arguments
@@ -321,12 +324,13 @@ class _KeywordOnlyAdapter(_WrappedCallable):
         positional_kwargs = {
             k: v
             for k, v in kwargs.items()
-            if (k not in self.keyword_only_names) and (k in self.parameter_names)
+            if (k not in self.keyword_only_names)
+            and (k in self.signature_parameter_names)
         }
 
         # Collect all positional arguments in correct order
         positional = convert_kwargs_to_args(
-            kwargs=positional_kwargs, arg_names=list(self.parameter_names)
+            kwargs=positional_kwargs, arg_names=list(self.signature_parameter_names)
         )
 
         return self.func(*positional, **kw_only_kwargs)
@@ -376,7 +380,7 @@ _PROTECTED_ATTRIBUTES: frozenset[str] = frozenset(
     {
         "func",
         "signature",
-        "parameter_names",
+        "signature_parameter_names",
         "keyword_only_names",
         "enforce",
         "original_signature",

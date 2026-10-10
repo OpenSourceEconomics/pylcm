@@ -24,6 +24,7 @@ from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import StochasticTransition
+from lcm.typing import StateName
 
 
 def collect_stochastic_state_transitions(
@@ -133,7 +134,7 @@ def _add_stochastic_entry(
     entries: dict[TransitionFunctionName, _StochasticStateTransition],
     key: TransitionFunctionName,
     markov: StochasticTransition,
-    state_name: str,
+    state_name: StateName,
     target_regime_name: RegimeName | None,
     phase: Literal["solve", "simulate"] | None,
     user_regime: UserRegime,
@@ -184,7 +185,7 @@ def _add_stochastic_entry(
 
 def _find_state_grid(
     *,
-    state_name: str,
+    state_name: StateName,
     target_regime_name: RegimeName | None,
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -217,7 +218,7 @@ def _check_subscript_order(
     *,
     func: object,
     indexing_params: tuple[str, ...],
-    state_name: str,
+    state_name: StateName,
 ) -> None:
     """Raise if `probs_array[…]` subscripts don't match signature order.
 

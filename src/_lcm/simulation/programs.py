@@ -90,7 +90,7 @@ from _lcm.typing import (
     StateOrActionName,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import BoolND, FloatND, IntND
+from lcm.typing import BoolND, FloatND, IntND, ReferenceName
 
 
 # Why a regime whose routing the host drives cedes its own width.
@@ -672,7 +672,7 @@ def _decision_body(
     context: SolverBuildContext,
     streams_actions: bool,
     action_width_keyword: str,
-    subject_arg_names: tuple[str, ...],
+    subject_arg_names: tuple[ReferenceName, ...],
 ) -> Callable[..., object]:
     """Build one period group's decision body, tiled over the subject axis."""
     if not streams_actions:
@@ -774,7 +774,7 @@ class _StreamedArgmaxQOverA:
     action_names: tuple[ActionName, ...]
     """Action variable names, spanning the canonical streamed product."""
 
-    q_and_f_arg_names: frozenset[str]
+    q_and_f_arg_names: frozenset[ReferenceName]
     """The argument names `Q_and_F` declares, which select what it is handed."""
 
     action_width_keyword: str
@@ -835,7 +835,7 @@ class _SubjectTiled:
     func: Callable[..., object]
     """The body, at one subject's state cell."""
 
-    subject_arg_names: tuple[str, ...]
+    subject_arg_names: tuple[ReferenceName, ...]
     """Arguments carrying the per-subject leading axis this splits into tiles."""
 
     @property
@@ -914,7 +914,7 @@ class _ArgumentsBoundAtDispatch:
     program_name: str
     """Name of the program whose arguments the caller asked to bind."""
 
-    subject_arg_names: tuple[str, ...] = ()
+    subject_arg_names: tuple[ReferenceName, ...] = ()
     """Arguments partitioned across subjects; every other operand is shared."""
 
     def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:

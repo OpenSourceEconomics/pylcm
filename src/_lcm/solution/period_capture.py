@@ -104,6 +104,10 @@ class LeafLayoutDescriptor:
     """Placement the leaf was held in when the kernel was called."""
 
 
+# The `repr` of a transfer endpoint's address, compared as text.
+type RenderedAddress = str
+
+
 @dataclass(frozen=True, kw_only=True)
 class ValueTransferDescriptor:
     """One resolved stored-value transfer, as descriptors only."""
@@ -111,11 +115,11 @@ class ValueTransferDescriptor:
     kind: str
     """`ValueTransferKind` member name of the resolved operator."""
 
-    target: str
-    """Stored artifact address the transfer reads, rendered for comparison."""
+    target: RenderedAddress
+    """Stored artifact address the transfer reads."""
 
-    source: str
-    """Core-input address the transfer writes, rendered for comparison."""
+    source: RenderedAddress
+    """Core-input address the transfer writes."""
 
     stored_sharding: ShardingDescriptor
     """Placement the stored array is read from."""

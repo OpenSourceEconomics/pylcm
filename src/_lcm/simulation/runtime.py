@@ -70,6 +70,7 @@ from _lcm.solution.backward_induction import (
 )
 from _lcm.solution.solve_phase_records import nested_phase
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName
 
 # Narrowest inner tile an unbudgeted subject axis is lowered at, and the width it
 # keeps when one subject is too heavy for the byte cap below to afford more.
@@ -666,7 +667,7 @@ class _PreparedRoute:
     argument_builder: CoreArgumentBuilder
     """The declared binder invoked afresh on every call; it owns no arrays."""
 
-    subject_arg_names: tuple[str, ...]
+    subject_arg_names: tuple[ReferenceName, ...]
     """Operands partitioned across subjects, as the builder declares them."""
 
     requirements: CoreExecutionRequirements

@@ -39,7 +39,7 @@ from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
 from _lcm.typing import EconFunctionsMapping, EGMCarryProducer, StateName
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import FloatND, IntND, ScalarFloat
+from lcm.typing import FloatND, IntND, ReferenceName, ScalarFloat
 
 # Static row count of a stateless terminal carry: two grid slots suffice to
 # represent a constant function under linear interpolation.
@@ -150,7 +150,7 @@ class _TerminalWealthCarryProducer:
     utility_func: Callable[..., ScalarFloat]
     """The terminal regime's concatenated utility DAG."""
 
-    utility_extra_arg_names: tuple[str, ...]
+    utility_extra_arg_names: tuple[ReferenceName, ...]
     """Arguments of `utility_func` beyond the regime's states (its params)."""
 
     state_name: StateName

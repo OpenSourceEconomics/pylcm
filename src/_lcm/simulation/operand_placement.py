@@ -19,6 +19,7 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName
 
 
 @runtime_checkable
@@ -34,7 +35,7 @@ class SubjectArgumentNames(Protocol):
 def place_simulation_arguments(
     *,
     arguments: Mapping[str, object],
-    subject_arg_names: tuple[str, ...],
+    subject_arg_names: tuple[ReferenceName, ...],
     value_reads: tuple[ValueRead, ...],
     devices: tuple[jax.Device, ...],
     budget_bytes: int | None = None,
@@ -111,7 +112,7 @@ def place_simulation_arguments(
 def _require_operand_headroom(
     *,
     arguments: Mapping[str, object],
-    subject_arg_names: tuple[str, ...],
+    subject_arg_names: tuple[ReferenceName, ...],
     subject_sharding: jax.sharding.Sharding,
     shared_sharding: jax.sharding.Sharding,
     protected: frozenset[tuple[str | int, ...]],

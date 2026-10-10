@@ -40,13 +40,14 @@ from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
     MaxQOverAFunction,
+    QualifiedName,
     RegimeName,
     StateName,
     _ParamsLeaf,
 )
 from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d
 from _lcm.utils.functools import allow_args, allow_only_kwargs
-from lcm.typing import BoolND, FloatND, IntND, ScalarFloat
+from lcm.typing import BoolND, FloatND, IntND, ReferenceName, ScalarFloat
 
 # Flat param name of the EV1 taste-shock scale (template pseudo-function entry).
 TASTE_SHOCK_SCALE_PARAM = "taste_shocks__scale"
@@ -597,7 +598,7 @@ class _StreamedMaxQOverA:
     pareto_weights: ParetoWeights | None
     """The household's Pareto weight evaluator, or `None` for a singleton."""
 
-    q_and_f_arg_names: frozenset[str]
+    q_and_f_arg_names: frozenset[ReferenceName]
     """The argument names `Q_and_F` declares, which select what it is handed."""
 
     action_width_keyword: str
@@ -817,7 +818,7 @@ class _ActionPartitionedMaxQOverA:
     action_names: tuple[ActionName, ...]
     """Action variable names, discrete first, spanning the partitioned product."""
 
-    q_and_f_arg_names: frozenset[str]
+    q_and_f_arg_names: frozenset[ReferenceName]
     """The argument names `Q_and_F` declares, which select what it is handed."""
 
     action_width_keyword: str
@@ -913,7 +914,7 @@ def _fail_if_action_width_keyword_collides(
     action_width_keyword: str,
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
-    extra_param_names: list[str],
+    extra_param_names: list[QualifiedName],
 ) -> None:
     """Keep the planner-owned width outside the model runtime namespace."""
     runtime_arg_names = frozenset(
@@ -1019,7 +1020,7 @@ def _wrap_with_fold_reduction(
     inner_state_names: tuple[StateName, ...],
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
-    extra_param_names: list[str],
+    extra_param_names: list[QualifiedName],
 ) -> Callable[..., FloatND]:
     """Wrap the (still fold-axis-carrying) inner productmap with the fold average.
 

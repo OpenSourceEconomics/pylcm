@@ -40,7 +40,9 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     IntND,
+    RegimeName,
     ScalarInt,
+    StateName,
     UserInitialConditions,
     UserParams,
 )
@@ -490,7 +492,7 @@ def _read_initial_codes(
     rows: np.ndarray,
     name: str,
     grid: DiscreteGrid,
-    regime_name: str,
+    regime_name: RegimeName,
 ) -> np.ndarray:
     """Read only meaningful observations using their original regime's domain."""
     if not rows.any():
@@ -635,7 +637,7 @@ def _group_codes(
 def _restricted_law(
     *,
     func: Callable[..., FloatND],
-    state_name: str,
+    state_name: StateName,
     fixed_of_code: np.ndarray,
     code_by_parts: np.ndarray,
 ) -> Callable[..., FloatND]:
