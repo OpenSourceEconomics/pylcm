@@ -25,6 +25,13 @@ resolved configuration.
 There are no flag-selected tuple returns. Pass the complete result to
 `model.simulate(solution=...)`; omitting `solution` asks simulation to solve first.
 
+For models whose callables cannot be fingerprinted, set
+`Model(..., durable_identity=False)` to solve and simulate locally with the same model
+instance in the same process. This skips callable fingerprinting and binding-seal
+checks. Keep callable code, dependencies, and captured values stable throughout the
+session. Solutions and simulation archives from this mode cannot be saved; period
+capture/replay and component jobs require the default `durable_identity=True`.
+
 (api-period-capture)=
 
 ### Capturing and replaying one production period
@@ -34,11 +41,6 @@ in a normal full solve. Each target receives an atomic `entry.h5` before executi
 separate atomic `completed.h5` binds the completed value, nonfinite masks and
 synchronized dispatch time to that entry. The archives contain numerical arrays and JSON
 metadata, without a pickled model, callable or executable.
-
-Public period capture and `Model.replay_period()` require
-`Model(..., durable_identity=True)`, the default. An ephemeral model raises
-`UnsupportedOperationError` before creating log or capture files, reading an archive,
-compiling, or dispatching a period.
 
 Launch the following example in a fresh process with
 `JAX_ENABLE_COMPILATION_CACHE=false` set in its environment before importing JAX or lcm.
@@ -454,37 +456,6 @@ package's beartype claw decorates every function definition and beartype retains
 decorated function object for the life of the process. Separately, an in-memory result
 keeps its model-instance token; that same-instance check is not applied to a restored
 archive. `metadata.source` records that distinction as `IN_MEMORY` or `PERSISTED`.
-
-### Ephemeral model identity
-
-`Model(..., durable_identity=False)` lets an expert-owned model use a callable graph
-whose semantics the durable fingerprint walker cannot represent. The default is
-`durable_identity=True`. An ephemeral model skips the model callable walk and binding
-seal at construction. It can solve and simulate in its originating process with the same
-model instance. `SolutionMetadata.durable_identity` marks each result explicitly.
-
-An ephemeral solution retains parameter, solver, replay-route, schema, and artifact
-checks. Its identity is tied to the producing model instance and runtime. A different
-model, a restored model, or a different process cannot replay the result. Both
-`SolutionResult.save()` and `save_solution()` reject it. `SimulationResult.save()` also
-rejects an ephemeral simulation; `SimulationResult.to_dataframe()` remains available for
-scientific exports.
-
-Component planning, workers, and collection require a durable model and raise
-`ExecutionPlanningError` for an ephemeral model before accessing campaign files. Public
-period capture and replay raise `UnsupportedOperationError` in this mode. Ordinary local
-solve, simulation, and policy lookup remain available.
-
-An ephemeral model used outside its originating process raises `ModelIdentityError`;
-restoring it gives it a fresh local identity and requires a fresh solution. A durable
-model with a missing binding seal raises the same error. Binding movement raises its
-subclass `ModelSealError`.
-
-In this mode, users are responsible for keeping code, dependencies, and captured data
-consistent while the model runs. Rebinding or mutating a value captured by a Python
-callable may change its behavior. JAX may also keep an earlier captured value in an
-already compiled function. Rebuild generated and JIT callables, then build a new model
-and solve again after changing such state.
 
 Each `(period, regime)` value has a lightweight `ValueArraySchema` recording its exact
 shape, dtype, and canonical named axes. Artifact descriptors play the corresponding

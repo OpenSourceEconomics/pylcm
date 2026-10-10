@@ -8,9 +8,8 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable
-from functools import partial
 from pathlib import Path
-from typing import Literal, Never
+from typing import Literal
 
 import h5py
 import jax
@@ -22,11 +21,7 @@ from _lcm import version
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from _lcm.persistence.solution import _array_checksum
 from lcm import InvariantBlockSchedule, Model
-from lcm.exceptions import (
-    ExecutionPlanningError,
-    ModelIdentityError,
-    SolutionIntegrityError,
-)
+from lcm.exceptions import ExecutionPlanningError, SolutionIntegrityError
 from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
 from lcm.typing import UserParams
@@ -38,7 +33,7 @@ pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
 type CompleteCampaign = tuple[Path, Model, UserParams, SimulationResult]
 
 
-def _model(*, enable_jit: bool = True, durable_identity: bool = True) -> Model:
+def _model(*, enable_jit: bool = True) -> Model:
     """Return the typed life cycle with block-major execution."""
     model = life_cycle._model(typed_dead=True)
     return Model(
@@ -51,76 +46,7 @@ def _model(*, enable_jit: bool = True, durable_identity: bool = True) -> Model:
             schedule=InvariantBlockSchedule.BLOCK_MAJOR, subject_width=3
         ),
         enable_jit=enable_jit,
-        durable_identity=durable_identity,
     )
-
-
-@pytest.mark.parametrize("simulate", [False, True])
-@pytest.mark.parametrize("existing_directory", [False, True])
-def test_planning_ephemeral_jobs_is_refused_before_publication(
-    *,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    simulate: bool,
-    existing_directory: bool,
-) -> None:
-    """Component plans require a durable identity before writing any files."""
-    component_jobs = importlib.import_module("lcm.component_jobs")
-    model = _model(durable_identity=False)
-    directory = tmp_path / "jobs"
-    if existing_directory:
-        directory.mkdir()
-    before = _campaign_files(directory=directory)
-    monkeypatch.setattr(jax.stages.Lowered, "compile", _forbid_numerical_execution)
-    monkeypatch.setattr(jax.stages.Compiled, "__call__", _forbid_numerical_execution)
-
-    with pytest.raises(
-        ExecutionPlanningError,
-        match=r"plan_component_jobs.*ephemeral.*durable_identity=True",
-    ):
-        component_jobs.plan_component_jobs(
-            model=model,
-            params=life_cycle._params(typed_dead=True),
-            directory=directory,
-            n_jobs=3,
-            initial_conditions=life_cycle._initial() if simulate else None,
-            seed=7 if simulate else None,
-        )
-
-    assert _campaign_files(directory=directory) == before
-
-
-def _forbid_numerical_execution(*_args: object, **_kwargs: object) -> Never:
-    """Expose compilation or dispatch past an unsupported-operation guard."""
-    msg = "Ephemeral operations must reject before compilation or dispatch."
-    raise AssertionError(msg)
-
-
-@pytest.mark.parametrize("simulate", [False, True])
-@pytest.mark.parametrize("existing_directory", [False, True])
-def test_planning_requires_an_intact_durable_identity(
-    *, tmp_path: Path, simulate: bool, existing_directory: bool
-) -> None:
-    """A durable model needs its binding seal before publishing a component plan."""
-    component_jobs = importlib.import_module("lcm.component_jobs")
-    model = _model()
-    model._sealed_bindings = None
-    directory = tmp_path / "jobs"
-    if existing_directory:
-        directory.mkdir()
-    before = _campaign_files(directory=directory)
-
-    with pytest.raises(ModelIdentityError, match="binding seal"):
-        component_jobs.plan_component_jobs(
-            model=model,
-            params=life_cycle._params(typed_dead=True),
-            directory=directory,
-            n_jobs=3,
-            initial_conditions=life_cycle._initial() if simulate else None,
-            seed=7 if simulate else None,
-        )
-
-    assert _campaign_files(directory=directory) == before
 
 
 def _complete_result_bytes(
@@ -229,54 +155,6 @@ def test_collected_jobs_equal_complete_single_process_result_bitwise(
     assert _complete_result_bytes(
         solution=collected.solution, simulation=collected.simulation
     ) == _complete_result_bytes(solution=reference.solution, simulation=reference)
-
-
-@pytest.mark.parametrize("operation", ["run_component_job", "collect_component_jobs"])
-@pytest.mark.parametrize("existing_campaign", [False, True])
-def test_ephemeral_jobs_are_refused_before_reading_or_altering_campaigns(
-    *,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    complete_campaign: CompleteCampaign,
-    operation: str,
-    existing_campaign: bool,
-) -> None:
-    """Workers and collectors require durable identity before campaign access."""
-    component_jobs = importlib.import_module("lcm.component_jobs")
-    campaign, _, params, _ = complete_campaign
-    model = _model(durable_identity=False)
-    directory = tmp_path / "jobs"
-    if existing_campaign:
-        shutil.copytree(campaign, directory)
-    before = _campaign_files(directory=directory)
-    monkeypatch.setattr(jax.stages.Lowered, "compile", _forbid_numerical_execution)
-    monkeypatch.setattr(jax.stages.Compiled, "__call__", _forbid_numerical_execution)
-
-    if operation == "run_component_job":
-        invoke = partial(
-            component_jobs.run_component_job,
-            model=model,
-            params=params,
-            directory=directory,
-            job=0,
-            initial_conditions=life_cycle._initial(),
-            log_level="off",
-        )
-    else:
-        invoke = partial(
-            component_jobs.collect_component_jobs,
-            model=model,
-            params=params,
-            directory=directory,
-            log_level="off",
-        )
-    with pytest.raises(
-        ExecutionPlanningError,
-        match=rf"{operation}.*ephemeral.*durable_identity=True",
-    ):
-        invoke()
-
-    assert _campaign_files(directory=directory) == before
 
 
 def test_simulating_job_copies_its_raw_results_to_the_host_in_one_transfer(
@@ -706,13 +584,14 @@ def test_collector_validates_model_owned_fixed_raw_fields(
 
 
 def _campaign_files(*, directory: Path) -> tuple[object, ...]:
-    """Snapshot caller-owned files and directories, including campaign existence."""
+    """Snapshot caller-owned publication files, including directory existence."""
     return directory.exists(), tuple(
         (
             str(path.relative_to(directory)),
-            hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None,
+            hashlib.sha256(path.read_bytes()).hexdigest(),
         )
         for path in sorted(directory.rglob("*"))
+        if path.is_file()
     )
 
 

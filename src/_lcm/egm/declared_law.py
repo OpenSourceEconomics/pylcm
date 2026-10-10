@@ -37,7 +37,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import Float1D, ScalarFloat
+from lcm.typing import Float1D, ScalarFloat, ValueND
 
 
 def build_declared_liquid_law(
@@ -124,7 +124,7 @@ class _DeclaredLiquidLaw:
     """The params the law reads, selected from the caller's whole pool."""
 
     def __call__(
-        self, *, savings_grid: Float1D, **params: FloatND | float
+        self, *, savings_grid: Float1D, **params: ValueND | float
     ) -> tuple[Float1D, Float1D]:
         # The DAG's own signature takes arrays, so a scalar param declared as a
         # plain Python float is lifted before it enters.
@@ -150,7 +150,7 @@ def _landing_point(
     next_state_func: NextStateSimulationFunction,
     post_decision_name: str,
     law_name: TransitionFunctionName,
-    array_params: dict[str, FloatND],
+    array_params: dict[str, ValueND],
 ) -> FloatND:
     """Where one savings level lands next period under the composed law."""
     # The builder is annotated with the simulation shape, which nests by

@@ -7,6 +7,13 @@ title: Age-specialized functions and grids
 Use age specialization when a function implementation or continuous-state grid changes
 with age. If an ordinary function can simply take `age`, prefer that simpler form.
 
+In a model declared with `n_periods`, use `PeriodSpecializedFunction` and
+`PeriodSpecializedGrid`. Their factories and signatures receive integer periods; the
+determinism, signature and grid-shape requirements below still apply. Mixing age markers
+with a period model, or period markers with an age model, is an error. A varying
+parameter alone usually needs [managed temporal selection](period_time.md) rather than a
+different function implementation at each slot.
+
 A typical use is a cohort moving through different policy years: the net-income function
 at age 58 closes over a different tax system from the function at age 63.
 

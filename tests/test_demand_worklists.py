@@ -162,6 +162,7 @@ def test_solve_returns_values_exactly_at_the_demanded_pairs(
     # A model whose starts reach no nonterminal regime reads no parameter.
     params = {} if initial_nodes == {45: "dead"} else _PARAMS
     values = model.solve(params=params, log_level="off").values
+    assert model.ages is not None
     solved = frozenset(
         (model.ages.exact_values[period], name)
         for period, by_regime in values.items()

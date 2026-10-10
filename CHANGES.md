@@ -7,13 +7,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ### Explicit initial nodes and owned declarations
 
-- Declare admissible starts with `InitialNodes(by_age={25: "working"})`. The model
-  returns a normalized immutable `InitialNodes` mapping exact ages to sorted, unique
-  regime tuples. Code unpacking `model.initial_nodes` must use
+- Declare admissible starts with `InitialNodes(by_age={25: "working"})` or
+  `InitialNodes(by_period={0: "working"})`, matching the model's clock. Exactly one
+  nonempty mapping is required. This replaces the singular `InitialNode` interface.
+  The model returns a normalized immutable `InitialNodes` mapping exact coordinates
+  to sorted, unique regime tuples. Code unpacking `model.initial_nodes` must use
   `model.graph.initial_nodes` for expanded pairs. Legacy pair collections and bare
-  selector mappings remain accepted as constructor inputs.
+  selector mappings remain accepted in age models; period models require `by_period`.
 - Edge mappings and nested transition-law mappings are copied and frozen at
-  construction, including mappings in `ByAge` and `Phased`. Reusing caller dictionaries
+  construction, including mappings in `ByAge`, `ByPeriod`, and `Phased`. Reusing caller dictionaries
   cannot change a model's published configuration; callable identity is preserved.
 
 ### Gates are declared beside the transition law; derived `Transition.targets`

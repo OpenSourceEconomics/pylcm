@@ -3,7 +3,6 @@
 import copy
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
-from functools import partial
 from pathlib import Path
 from types import MappingProxyType
 from typing import ClassVar, NamedTuple, Never, Self, cast
@@ -688,38 +687,6 @@ def test_metadata_snapshot_consumes_one_exact_item_stream() -> None:
 
     assert copied.solver_types == {"working": "example.GridSearch"}
     assert backing.traversals == 1
-
-
-@pytest.mark.parametrize("boundary", ["post_init", "snapshot"])
-@pytest.mark.parametrize("durable_identity", [0, 1, None, "True", np.bool_(1)])
-def test_metadata_identity_flag_requires_an_exact_bool(
-    *, boundary: str, durable_identity: object
-) -> None:
-    """Both explicit metadata boundaries reject non-bool identity flags by type."""
-    metadata = copy.copy(_minimal_metadata())
-    object.__setattr__(metadata, "durable_identity", durable_identity)
-
-    invoke = (
-        metadata.__post_init__
-        if boundary == "post_init"
-        else partial(snapshot_solution_metadata, metadata)
-    )
-    with pytest.raises(TypeError, match=r"durable_identity.*exact bool") as error:
-        invoke()
-
-    assert type(error.value) is TypeError
-
-
-@pytest.mark.parametrize("durable_identity", [True, False])
-def test_metadata_identity_flag_preserves_both_bool_values(
-    *,
-    durable_identity: bool,
-) -> None:
-    """Construction and snapshots preserve the declared durable or ephemeral mode."""
-    metadata = replace(_minimal_metadata(), durable_identity=durable_identity)
-
-    assert metadata.durable_identity is durable_identity
-    assert snapshot_solution_metadata(metadata).durable_identity is durable_identity
 
 
 def test_result_envelope_owns_each_mapping_once_without_loading() -> None:

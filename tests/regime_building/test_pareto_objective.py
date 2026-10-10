@@ -604,6 +604,7 @@ def test_a_carried_weight_decides_on_the_imputation_not_the_seeded_value() -> No
     """
     model = _build_carried_power_model()
 
+    assert model.ages is not None
     result = model.simulate(
         params=_params(),
         initial_conditions={

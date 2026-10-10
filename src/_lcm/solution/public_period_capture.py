@@ -26,6 +26,7 @@ from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.persistence.period import read_period_archive, write_period_archive
 from _lcm.solution.period_capture import _period_layouts
+from _lcm.time import age_at
 from lcm.period_capture import PeriodCapture, PeriodCaptureRecord
 
 _GRID_SEARCH_ROUTE = "_lcm.solution.grid_search._GridSearchPeriodKernel"
@@ -204,7 +205,7 @@ def capture_public_entry(
         "identity": context.identity,
         "regime": kernel_kwargs["regime_name"],
         "period": period,
-        "age": float(kernel_kwargs["ages"].values[period]),
+        "age": age_at(ages=kernel_kwargs["ages"], period=period),
         "layouts": plain_metadata(layouts),
         "widths": {
             name: dict(core.tile_widths) for name, core in compiled_cores.items()

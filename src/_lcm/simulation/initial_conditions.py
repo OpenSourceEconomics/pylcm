@@ -47,6 +47,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.subject_devices import simulation_subject_devices
+from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.transition_checks import (
     _SerialValidationRequired,
     _validate_transition_sequence,
@@ -68,7 +69,6 @@ from _lcm.utils.containers import invert_regime_ids
 from _lcm.utils.error_messages import format_messages
 from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import raise_or_warn, validation_enabled
-from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidInitialConditionsError,
@@ -119,7 +119,7 @@ def validate_simulation_inputs(
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     logger: logging.Logger,
     execution: ResolvedExecution | None = None,
     retained_footprint: DeviceBufferFootprint | None = None,
@@ -242,7 +242,7 @@ def _preflight_memory(
     flat_params: FlatParams,
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> SimulationMemory | None:
     """Admit new summary buffers against explicit entry and model-owned roots."""
     if execution is None or execution.device_memory_bytes is None:
@@ -309,7 +309,7 @@ def _discrete_initial_specs(
 def _pack_initial_summary(
     *,
     regime_ids: Int1D,
-    age_values: Float1D,
+    age_values: Float1D | Int1D,
     canonical_ids: tuple[jax.Array, ...],
     discrete_values: tuple[jax.Array, ...],
     discrete_specs: tuple[_DiscreteInitialSpec, ...],
@@ -337,7 +337,7 @@ def _read_initial_cohorts(
     initial_conditions: InitialConditions,
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
-    ages: AgeGrid,
+    ages: TimeAxis,
     memory: SimulationMemory | None,
 ) -> _InitialCohorts:
     """Read one lossless metadata vector before any feasibility composition."""
@@ -347,7 +347,8 @@ def _read_initial_cohorts(
         not isinstance(regime_ids, jax.Array)
         or regime_ids.dtype != jnp.int32
         or not isinstance(age_values, jax.Array)
-        or age_values.dtype != canonical_float_dtype()
+        or age_values.dtype
+        != (jnp.int32 if coordinate_kind(ages) == "period" else canonical_float_dtype())
         or regime_ids.ndim != 1
         or not regime_ids.size
         or any(
@@ -417,7 +418,7 @@ def _read_initial_cohorts(
 
 
 def resolve_initial_periods(
-    *, ages: AgeGrid, initial_ages: jax.Array | np.ndarray
+    *, ages: TimeAxis, initial_ages: jax.Array | np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
     """Resolve each initial age to the period the simulation starts it in.
 
@@ -430,7 +431,7 @@ def resolve_initial_periods(
     subject's starting period. No device operation runs.
 
     Args:
-        ages: AgeGrid for the model.
+        ages: TimeAxis for the model.
         initial_ages: One initial age per subject.
 
     Returns:
@@ -438,6 +439,12 @@ def resolve_initial_periods(
         grid point. The period of an off-grid age is meaningless.
 
     """
+    if coordinate_kind(ages) == "period":
+        values = np.asarray(initial_ages)
+        valid = (values >= 0) & (values < ages.n_periods)
+        if values.dtype.kind not in "iu":
+            valid = np.zeros(values.shape, dtype=bool)
+        return values.astype(np.int32), valid
     dtype = canonical_float_dtype()
     periods, on_grid, _ = population_operations.match_starting_periods(
         initial_ages=np.asarray(initial_ages, dtype=dtype),
@@ -452,6 +459,7 @@ def canonicalize_initial_conditions(
     initial_conditions: UserInitialConditions,
     regimes: MappingProxyType[RegimeName, Regime],
     array_writer: CanonicalArrayWriter | None = None,
+    ages: TimeAxis | None = None,
 ) -> InitialConditions:
     """Cast every initial-conditions array to its canonical pylcm dtype.
 
@@ -485,7 +493,13 @@ def canonicalize_initial_conditions(
     }
     canonical: dict[str, FloatND | IntND] = {}
     for name, value in initial_conditions.items():
-        if name == "regime_id" or name in discrete_state_names:
+        if (
+            name == "regime_id"
+            or name in discrete_state_names
+            or (
+                name == "age" and ages is not None and coordinate_kind(ages) == "period"
+            )
+        ):
             canonical[name] = safe_to_int_dtype(
                 value=value, name=name, array_writer=array_writer
             )
@@ -826,7 +840,7 @@ def validate_initial_conditions(
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
@@ -849,7 +863,7 @@ def validate_initial_conditions(
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer IDs.
         flat_params: Immutable mapping of regime names to flat parameter mappings.
-        ages: AgeGrid for the model.
+        ages: TimeAxis for the model.
 
     Raises:
         InvalidInitialConditionsError: If any validation check fails.
@@ -893,7 +907,7 @@ def initial_conditions_feasibility_mask(
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> Bool1D:
     """Return the per-subject feasibility mask of canonical initial conditions.
@@ -912,7 +926,7 @@ def initial_conditions_feasibility_mask(
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer IDs.
         flat_params: Immutable mapping of regime names to flat parameter mappings.
-        ages: AgeGrid for the model.
+        ages: TimeAxis for the model.
         process_grid_resolver: Resolver for runtime-generated process grids.
 
     Returns:
@@ -967,7 +981,7 @@ def _admitted_initial_states(
     initial_conditions: InitialConditions,
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> tuple[Mapping[StateName, FloatND | IntND], Int1D]:
     """Return the initial states and regime IDs once their structure is admitted.
 
@@ -1341,7 +1355,7 @@ def _collect_structural_errors(
     regime_ids_to_names: RegimeIdsToNames,
     regime_names_to_ids: RegimeNamesToIds,
     regimes: MappingProxyType[RegimeName, Regime],
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> list[str]:
     """Collect errors about regime names, state names, age values, and array shapes.
 
@@ -1352,7 +1366,7 @@ def _collect_structural_errors(
         regime_names_to_ids: Immutable mapping of regime names to integer IDs.
         regimes: Immutable mapping of regime names to internal regime
             instances.
-        ages: AgeGrid for the model.
+        ages: TimeAxis for the model.
 
     Returns:
         List of error message strings (empty if everything is valid).
@@ -1435,7 +1449,7 @@ def _collect_feasibility_errors(
     regime_names_to_ids: RegimeNamesToIds,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     cohorts: _InitialCohorts | None = None,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
@@ -1451,7 +1465,7 @@ def _collect_feasibility_errors(
         regimes: Immutable mapping of regime names to internal regime
             instances.
         flat_params: Immutable mapping of regime names to flat parameter mappings.
-        ages: AgeGrid for the model.
+        ages: TimeAxis for the model.
 
     Returns:
         List of error message strings (empty if everything is feasible).
@@ -1701,7 +1715,7 @@ def _age_specialized_feasibility_message(
     regime_name: RegimeName,
     initial_states: Mapping[StateName, FloatND | IntND],
     subject_indices: list[int],
-    ages: AgeGrid,
+    ages: TimeAxis,
     cohorts: _InitialCohorts | None = None,
 ) -> str | None:
     """Return an error message if a subject's feasibility check would silently
@@ -1779,7 +1793,7 @@ def _check_regime_feasibility(
     initial_states: Mapping[StateName, FloatND | IntND],
     subject_indices: list[int],
     regime_params: Mapping[str, object],
-    ages: AgeGrid,
+    ages: TimeAxis,
     cohorts: _InitialCohorts | None = None,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
@@ -1798,7 +1812,7 @@ def _check_regime_feasibility(
         initial_states: Mapping of state names to arrays (includes "age").
         subject_indices: Indices of subjects starting in this regime.
         regime_params: Merged fixed and runtime parameters for this regime.
-        ages: AgeGrid for the model.
+        ages: TimeAxis for the model.
         cohorts: Host cohort metadata of the summary route.
         summary: Reduced validation summary of the summary route, which
             records a flag instead of returning a message.
@@ -1857,7 +1871,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     initial_states: Mapping[StateName, FloatND | IntND],
     subject_indices: list[int],
     regime_params: Mapping[str, object],
-    ages: AgeGrid,
+    ages: TimeAxis,
     cohorts: _InitialCohorts | None = None,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
@@ -1872,7 +1886,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
         initial_states: Mapping of state names to arrays (includes "age").
         subject_indices: Indices of subjects starting in this regime.
         regime_params: Merged fixed and runtime parameters for this regime.
-        ages: AgeGrid for the model.
+        ages: TimeAxis for the model.
         cohorts: Host cohort metadata of the summary route.
         summary: Reduced validation summary of the summary route. When given,
             the reduced flag is appended to it and no subject-sized verdict is

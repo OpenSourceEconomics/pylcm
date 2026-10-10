@@ -128,6 +128,7 @@ def test_resource_failures_never_select_serial_diagnostics(
 
     monkeypatch.setattr(initial_module, "_pack_initial_summary", denied)
     monkeypatch.setattr(initial_module, "validate_initial_conditions", forbidden)
+    assert model.ages is not None
     with pytest.raises(error_type) as caught:
         validate_simulation_inputs(
             initial_conditions=initial,
@@ -147,6 +148,7 @@ def test_summary_allocation_is_refused_before_dispatch_and_inputs_survive(
     model, params, initial = _case(n_subjects=1024)
     generous = dataclasses.replace(model._execution, device_memory_bytes=2**25)
     empty = DeviceBufferFootprint(spans={})
+    assert model.ages is not None
     memory = _preflight_memory(
         execution=generous,
         retained_footprint=empty,
@@ -182,6 +184,7 @@ def test_summary_allocation_is_refused_before_dispatch_and_inputs_survive(
     monkeypatch.setattr(initial_module, "validate_initial_conditions", forbidden)
 
     def validate(execution: ResolvedExecution) -> None:
+        assert model.ages is not None
         validate_simulation_inputs(
             initial_conditions=initial,
             regimes=model._regimes,

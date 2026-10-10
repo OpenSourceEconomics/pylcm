@@ -60,6 +60,7 @@ __all__ = [
 def get_model(n_periods: int) -> Model:
     """Return the example model with working life and retirement as first-age starts."""
     example = get_example_model(n_periods=n_periods)
+    assert example.ages is not None
     return Model(
         edges=example.edges,
         regimes=example.user_regimes,

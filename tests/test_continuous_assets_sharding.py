@@ -37,7 +37,10 @@ from lcm import (
     InvariantBlockSchedule,
     IrregSpacedGrid,
     LinSpacedGrid,
+    LogSpacedGrid,
     Model,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
     Regime,
     StochasticTransition,
     Transition,
@@ -45,6 +48,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
+from lcm.grids import GridBreakpoint
 from lcm.typing import DiscreteState, ScalarInt
 from tests.conftest import assert_agrees_to_ulp, assert_general_values_agree
 from tests.simulation import test_type_grouped_simulation as grouped_simulation
@@ -100,7 +104,35 @@ def _fixed_type_landing(*, assets, decision, pref_type: DiscreteState, spousal_i
     )
 
 
-def _regime(*, source: int, identity: bool, fixed_type: bool = False) -> Regime:
+def _regime(
+    *,
+    source: int,
+    identity: bool,
+    fixed_type: bool = False,
+    bounds: tuple[float, float] = (-4, 19),
+) -> Regime:
+    """A living regime whose savings land inside the closed asset `bounds`.
+
+    Next-period assets mirror current assets around the middle of `bounds`, so
+    every grid node on `bounds` keeps a feasible decision.
+    """
+    low, high = bounds
+    shift = low + high - 15
+    landing = _fixed_type_landing if fixed_type else _landing
+    if shift:
+        base = landing
+
+        def landing(*, assets, decision, pref_type, spousal_income):
+            return shift + base(
+                assets=assets,
+                decision=decision,
+                pref_type=pref_type,
+                spousal_income=spousal_income,
+            )
+
+        if fixed_type:
+            landing.__annotations__["pref_type"] = DiscreteState
+
     def utility(*, assets, decision, pref_type, spousal_income):
         desired = ((pref_type + 2 * spousal_income + source) % 3) - 1
         return (
@@ -121,9 +153,9 @@ def _regime(*, source: int, identity: bool, fixed_type: bool = False) -> Regime:
         actions={"decision": DiscreteGrid(_Three)},
         functions={
             "utility": utility,
-            "landing": _fixed_type_landing if fixed_type else _landing,
+            "landing": landing,
         },
-        constraints={"feasible": lambda landing: (landing >= -4) & (landing <= 19)},
+        constraints={"feasible": lambda landing: (landing >= low) & (landing <= high)},
         state_transitions={
             "assets": fixed_transition("assets")
             if identity
@@ -144,6 +176,7 @@ def _model(
     budget: int | Literal["device"] | None = 2**30,
     identity: bool = False,
     grid: Any = None,
+    bounds: tuple[float, float] = (-4, 19),
     extra_shard: bool = False,
     fixed_type: bool = False,
     invariant_block_widths: dict[str, int] | None = None,
@@ -151,8 +184,12 @@ def _model(
 ) -> Model:
     return Model(
         regimes={
-            "r0": _regime(source=0, identity=identity, fixed_type=fixed_type),
-            "r1": _regime(source=1, identity=identity, fixed_type=fixed_type),
+            "r0": _regime(
+                source=0, identity=identity, fixed_type=fixed_type, bounds=bounds
+            ),
+            "r1": _regime(
+                source=1, identity=identity, fixed_type=fixed_type, bounds=bounds
+            ),
             "terminal": Regime(
                 functions={
                     "utility": lambda assets, pref_type, spousal_income: (
@@ -190,6 +227,12 @@ def _model(
         initial_nodes={(0, 1): ("r0", "r1")},
         edges=_EDGES,
     )
+
+
+_UNIT_GRIDS = {
+    "linear": LinSpacedGrid(start=-4, stop=19, n_points=24),
+    "fixed_irregular": IrregSpacedGrid(points=tuple(range(-4, 20))),
+}
 
 
 @cache
@@ -322,15 +365,30 @@ def test_trailing_untiled_axis_is_restored_inside_max_q(*, streamed: bool) -> No
     np.testing.assert_array_equal(result, expected)
 
 
-@pytest.mark.parametrize("widths", [(1, 1), (3, 9)])
+@pytest.mark.parametrize(
+    ("grid", "widths"),
+    [
+        ("linear", (1, 1)),
+        ("linear", (3, 9)),
+        ("fixed_irregular", (1, 1)),
+    ],
+)
 def test_eight_assets_shards_use_full_reads_and_match_exact_bellman_reference(  # noqa: C901, PLR0915
-    *, widths: tuple[int, int], monkeypatch: pytest.MonkeyPatch, record_property: Any
+    *,
+    grid: str,
+    widths: tuple[int, int],
+    monkeypatch: pytest.MonkeyPatch,
+    record_property: Any,
 ) -> None:
+    """Both grid types with nodes at the integers -4..19 solve the same exact Bellman
+    equations, so each must match the same Fraction reference.
+    """
     _require_eight()
     params = {"discount_factor": 0.5}
-    reference_model = _model(devices=(0,), widths=widths, sharded=False)
+    assets = _UNIT_GRIDS[grid]
+    reference_model = _model(devices=(0,), widths=widths, sharded=False, grid=assets)
     reference_solution = reference_model.solve(params=params, log_level="off")
-    model = _model(devices=tuple(range(8)), widths=widths)
+    model = _model(devices=tuple(range(8)), widths=widths, grid=assets)
     materialized, born = [], []
     apply = value_transfer.apply_value_transfer
     execute = output_layout.execute_with_pending_work
@@ -650,21 +708,105 @@ def test_continuous_identity_still_materializes_full_continuation(
     _assert_assets_shards(solution.values[0]["r0"])
 
 
-@pytest.mark.parametrize("unsupported", ["irregular", "mixed_shards"])
+@pytest.mark.parametrize("unsupported", ["runtime_points", "mixed_shards"])
 def test_unsupported_continuous_sharding_refuses_at_construction(
     *, unsupported: str
 ) -> None:
     _require_eight()
     with pytest.raises(
-        ExecutionPlanningError, match=r"[Ss]hard|LinSpacedGrid|continuous"
+        ExecutionPlanningError, match=r"[Ss]hard|IrregSpacedGrid|continuous"
     ):
         _model(
             devices=tuple(range(8)),
             extra_shard=unsupported == "mixed_shards",
-            grid=IrregSpacedGrid(points=tuple(range(-4, 20)))
-            if unsupported == "irregular"
+            grid=IrregSpacedGrid(n_points=24)
+            if unsupported == "runtime_points"
             else None,
         )
+
+
+_NONUNIFORM_GRIDS = {
+    # Dense near the borrowing limit, sparse at the top, like a sinh asset grid.
+    "fixed_irregular": IrregSpacedGrid(
+        points=tuple((-4 + 23 * np.linspace(0, 1, 24) ** 2).tolist())
+    ),
+    # Log grids need positive assets, so their models save inside [1, 19].
+    "log": LogSpacedGrid(start=1, stop=19, n_points=24),
+    "piecewise_linear": PiecewiseLinSpacedGrid(
+        start=-4,
+        stop=19,
+        breakpoints=(GridBreakpoint(value=2.0),),
+        points_per_segment=(12, 12),
+    ),
+    "piecewise_log": PiecewiseLogSpacedGrid(
+        start=1,
+        stop=19,
+        breakpoints=(GridBreakpoint(value=4.0),),
+        points_per_segment=(12, 12),
+    ),
+}
+
+
+@pytest.mark.parametrize("grid", sorted(_NONUNIFORM_GRIDS))
+def test_nonuniform_fixed_grid_shards_solve_and_simulate_like_one_device(
+    *, grid: str
+) -> None:
+    """Sharding a grid with fixed non-uniform nodes partitions the solve without
+    changing it: values and the simulated panel agree with the one-device solve.
+    """
+    _require_eight()
+    params = {"discount_factor": 0.5}
+    assets = _NONUNIFORM_GRIDS[grid]
+    points = np.asarray(assets.to_jax()).tolist()
+    bounds = (points[0], points[-1])
+    reference_model = _model(devices=(0,), sharded=False, grid=assets, bounds=bounds)
+    model = _model(devices=tuple(range(8)), grid=assets, bounds=bounds)
+    reference_solution = reference_model.solve(params=params, log_level="off")
+    # Every node keeps a feasible decision whose landing lies on the grid, so a
+    # non-finite value would be a defect, not an infeasible state.
+    assert all(
+        np.isfinite(value).all()
+        for arrays in reference_solution.values.values()
+        for value in arrays.values()
+    )
+    solution = model.solve(params=params, log_level="off")
+    for period, arrays in reference_solution.values.items():
+        for regime, expected in arrays.items():
+            _assert_assets_shards(solution.values[period][regime])
+            assert_agrees_to_ulp(
+                got=solution.values[period][regime], expected=expected, n_ulp=8
+            )
+    rows = [(p, s, a) for p in range(3) for s in range(3) for a in points]
+    initial = {
+        "pref_type": np.array([p for p, _, _ in rows] * 2, dtype=np.int32),
+        "spousal_income": np.array([s for _, s, _ in rows] * 2, dtype=np.int32),
+        "assets": np.array([a for _, _, a in rows] * 2),
+        "regime_id": np.repeat(np.arange(2, dtype=np.int32), 216),
+        "age": np.zeros(432),
+    }
+    result = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions=initial,
+        seed=42,
+        log_level="off",
+    )
+    control = reference_model.simulate(
+        params=params,
+        solution=reference_solution,
+        initial_conditions=initial,
+        seed=42,
+        log_level="off",
+    )
+    for got, want in zip(
+        jax.tree.leaves(result.raw_results),
+        jax.tree.leaves(control.raw_results),
+        strict=True,
+    ):
+        if np.issubdtype(np.asarray(want).dtype, np.inexact):
+            assert_agrees_to_ulp(got=got, expected=want, n_ulp=8)
+        else:
+            np.testing.assert_array_equal(got, want)
 
 
 def test_budget_below_full_replica_refuses_without_transfer_and_preserves_owner(

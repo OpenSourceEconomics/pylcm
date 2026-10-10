@@ -115,6 +115,7 @@ def test_public_population_setup_uses_its_admitted_pure_bodies(
         return original(first, *args, **kwargs)
 
     monkeypatch.setattr(jnp, operation, guard)
+    assert model.ages is not None
     sentinel_args = (
         (initial["regime_id"], -1)
         if operation == "full_like"

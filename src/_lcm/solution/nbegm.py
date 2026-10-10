@@ -123,8 +123,10 @@ from _lcm.solution.egm import (
 )
 from _lcm.solution.periodization import (
     resolve_solver_build_context,
+    restrict_solver_build_context_to_period_group,
     solver_period_group_key,
 )
+from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     EconFunctionsMapping,
@@ -134,7 +136,6 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import map_over_leading_axis
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
-from lcm.ages import AgeGrid
 from lcm.case_piece import CaseBoundary, EqualityOwner
 from lcm.exceptions import RegimeInitializationError
 from lcm.fixed_forms import cash_on_hand_with_subsidy
@@ -156,6 +157,7 @@ from lcm.typing import (
     ScalarFloat,
     StateName,
     StateOrActionName,
+    ValueND,
 )
 
 # Key under which ride-along periods share one compiled core: the continuation
@@ -604,7 +606,15 @@ class NBEGM(OneMarginSolver):
         cores: dict[Hashable, Callable] = {}
         laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
-        period_group_keys: dict[int, Hashable] = {}
+        period_group_keys = {
+            period: solver_period_group_key(
+                context=context,
+                period=period,
+                continuation_targets=(target,),
+                solver_path=("nbegm",),
+            )
+            for period, target in period_to_target.items()
+        }
         variable_names = (
             frozenset(context.state_action_space.states)
             | frozenset(context.state_action_space.continuous_actions)
@@ -624,14 +634,18 @@ class NBEGM(OneMarginSolver):
             len(constraint.program.surfaces) for constraint in feasibility_constraints
         )
         for period, target in period_to_target.items():
-            group_key = solver_period_group_key(
-                context=context,
-                period=period,
-                continuation_targets=(target,),
-                solver_path=("nbegm",),
-            )
+            group_key = period_group_keys[period]
             if group_key not in cores:
-                resolved = resolve_solver_build_context(context=context, period=period)
+                resolved = restrict_solver_build_context_to_period_group(
+                    context=resolve_solver_build_context(
+                        context=context, period=period
+                    ),
+                    periods=tuple(
+                        candidate
+                        for candidate, key in period_group_keys.items()
+                        if key == group_key
+                    ),
+                )
                 core, law, checks = _build_nbegm_single_axis_group(
                     context=resolved,
                     solver=bound,
@@ -647,7 +661,6 @@ class NBEGM(OneMarginSolver):
                 cores[group_key] = guard_regime_mass(
                     core=core, enable_jit=context.enable_jit
                 )
-            period_group_keys[period] = group_key
             period_kernels[period] = _build_egm_period_kernel(
                 core=cores[group_key],
                 declared_law=laws[group_key],
@@ -797,36 +810,21 @@ class NBEGM(OneMarginSolver):
         statics_by_key: dict[_RideAlongGroupKey, _NBEGMRideAlongStatics] = {}
         cliff_candidates_by_key: dict[_RideAlongGroupKey, bool] = {}
         period_kernels: dict[int, PeriodKernel] = {}
-        period_group_keys: dict[int, Hashable] = {}
-        for period in active_periods:
-            resolved = resolve_solver_build_context(context=context, period=period)
-            group_spec = _collect_nbegm_schedule_spec(
-                context=resolved,
-                budget_target=bound.budget_target,
-                continuous_state=bound.continuous_state,
-                consumption_action_name=bound.continuous_action,
-                probe_failure=self.probe_failure,
-                probe_schedule=self.probe_schedule,
-            )
-            group_constraints = tuple(
-                replace(
-                    constraint,
-                    predicate=resolved.constraint_functions[
-                        constraint.program.constraint_name
-                    ],
-                )
-                for constraint in feasibility_constraints
-            )
-            plan = _build_nbegm_continuation_plan(
+        contexts = {
+            period: resolve_solver_build_context(context=context, period=period)
+            for period in active_periods
+        }
+        plans = {
+            period: _build_nbegm_continuation_plan(
                 context=resolved,
                 period=period,
                 post_decision_name=bound.post_decision_function,
             )
-            # One compiled core carries one set of continuation nodes, so periods
-            # whose targets sit on different age-specialized grids must not share
-            # it. The signature is empty for an age-invariant model, leaving the
-            # grouping exactly as the target split alone would make it.
-            key = (
+            for period, resolved in contexts.items()
+        }
+        # Probes and compiled cores share exactly the same resolved period group.
+        period_group_keys: dict[int, _RideAlongGroupKey] = {
+            period: (
                 *plan.stateful_targets,
                 "|",
                 *plan.scalar_targets,
@@ -843,6 +841,36 @@ class NBEGM(OneMarginSolver):
                     continuation_targets=(plan.stateful_targets + plan.scalar_targets),
                     solver_path=("nbegm", "ride_along"),
                 ),
+            )
+            for period, plan in plans.items()
+        }
+        for period in active_periods:
+            key = period_group_keys[period]
+            resolved = restrict_solver_build_context_to_period_group(
+                context=contexts[period],
+                periods=tuple(
+                    candidate
+                    for candidate, candidate_key in period_group_keys.items()
+                    if candidate_key == key
+                ),
+            )
+            plan = plans[period]
+            group_spec = _collect_nbegm_schedule_spec(
+                context=resolved,
+                budget_target=bound.budget_target,
+                continuous_state=bound.continuous_state,
+                consumption_action_name=bound.continuous_action,
+                probe_failure=self.probe_failure,
+                probe_schedule=self.probe_schedule,
+            )
+            group_constraints = tuple(
+                replace(
+                    constraint,
+                    predicate=resolved.constraint_functions[
+                        constraint.program.constraint_name
+                    ],
+                )
+                for constraint in feasibility_constraints
             )
             if key not in programs_by_key:
                 probe_arguments = _probe_arguments(context=resolved)
@@ -954,7 +982,6 @@ class NBEGM(OneMarginSolver):
                 )
                 statics_by_key[key] = statics
                 cliff_candidates_by_key[key] = cliff_candidates
-            period_group_keys[period] = key
             period_kernels[period] = _RideAlongNBEGMPeriodKernel(
                 _core_programs=programs_by_key[key],
                 statics=statics_by_key[key],
@@ -1387,7 +1414,7 @@ class _RideAlongArgumentBuilder:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         flat_params = cast("FlatParams", context.flat_params)
-        ages = cast("AgeGrid", context.ages)
+        ages = cast("TimeAxis", context.ages)
         states = dict(state_action_space.states)
         interval_arguments = (
             {_INTERVAL_COORDINATE: jnp.arange(self.n_intervals, dtype=jnp.int32)}
@@ -1589,7 +1616,7 @@ class _RideAlongNBEGMPeriodKernel:
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,  # noqa: ARG002
     ) -> KernelOutput:
         """Run the compiled program the retention selected and assemble the output.
@@ -1655,7 +1682,7 @@ class _NBEGMCaseSpec:
     """Parameter names of the lower piece."""
     above_param_names: tuple[str, ...]
     """Parameter names of the upper piece."""
-    threshold_resolver: Callable[[Mapping[str, FloatND]], FloatND]
+    threshold_resolver: Callable[[Mapping[str, ValueND]], FloatND]
     """Resolve the literal, parameter, or computed boundary value."""
     equality_owner: EqualityOwner
     """Coordinate side owning equality (`when` is below, `otherwise` above)."""
@@ -2182,7 +2209,7 @@ def _case_threshold_resolver(
     context: SolverBuildContext,
     predicate_name: FunctionName,
     threshold: Const | Ref,
-) -> Callable[[Mapping[str, FloatND]], FloatND]:
+) -> Callable[[Mapping[str, ValueND]], FloatND]:
     """Compile a case threshold without inventing a second predicate."""
     import inspect  # noqa: PLC0415
 
@@ -2225,7 +2252,7 @@ class _LiteralCaseThreshold:
     literal: float | int | bool
     """The declared boundary value."""
 
-    def __call__(self, _params: Mapping[str, FloatND]) -> FloatND:
+    def __call__(self, _params: Mapping[str, ValueND]) -> FloatND:
         """Return the literal as an array; the params play no part."""
         return jnp.asarray(self.literal)
 
@@ -2237,7 +2264,7 @@ class _ParameterCaseThreshold:
     qualified_name: str
     """The `<predicate>__<threshold>` key the boundary value is read under."""
 
-    def __call__(self, params: Mapping[str, FloatND]) -> FloatND:
+    def __call__(self, params: Mapping[str, ValueND]) -> FloatND:
         """Read the threshold from the regime's flat params."""
         return params[self.qualified_name]
 
@@ -2252,7 +2279,7 @@ class _ComputedCaseThreshold:
     argument_names: tuple[str, ...]
     """The parameter names the composed function reads, all state-independent."""
 
-    def __call__(self, params: Mapping[str, FloatND]) -> FloatND:
+    def __call__(self, params: Mapping[str, ValueND]) -> FloatND:
         """Evaluate the composed threshold on the regime's flat params."""
         return jnp.asarray(
             self.threshold_dag(**{name: params[name] for name in self.argument_names})
@@ -2322,7 +2349,7 @@ class _NBEGMCaseCore:
         next_marginal: Float1D,
         next_liquid: Float1D,
         marginal_return: Float1D,
-        **params: FloatND,
+        **params: ValueND,
     ) -> tuple[Float1D, EGMCarry]:
         """Solve one period of the case-piece regime on the liquid grid."""
         from _lcm.egm.nbegm_step import nbegm_one_asset_step  # noqa: PLC0415
@@ -2331,13 +2358,13 @@ class _NBEGMCaseCore:
         preferences = self.build_preferences(params)
         subsidy_below = case_spec.below_callable(
             **{
-                p: params[f"{case_spec.below_func}__{p}"]
+                p: params[p if p == "period" else f"{case_spec.below_func}__{p}"]
                 for p in case_spec.below_param_names
             }
         )
         subsidy_above = case_spec.above_callable(
             **{
-                p: params[f"{case_spec.above_func}__{p}"]
+                p: params[p if p == "period" else f"{case_spec.above_func}__{p}"]
                 for p in case_spec.above_param_names
             }
         )
@@ -3759,7 +3786,12 @@ def _probe_arguments(*, context: SolverBuildContext) -> _ProbeArguments:
     """Classify a regime's probe arguments from its grids and annotations."""
     annotation_sources = _probe_annotation_sources(context=context)
     return _ProbeArguments(
-        int_arg_values=_int_probe_arg_values(context.grids),
+        int_arg_values=MappingProxyType(
+            {
+                **_int_probe_arg_values(context.grids),
+                "period": context.regimes_to_active_periods[context.regime_name],
+            }
+        ),
         array_float_arg_names=_array_float_arg_names(functions=annotation_sources),
         array_arg_ranks=_indexed_arg_ranks(functions=annotation_sources),
         annotated_int_arg_names=_annotated_int_arg_names(functions=annotation_sources),
@@ -4171,14 +4203,22 @@ def _int_code_sweeps(
 ) -> tuple[MappingProxyType[str, int], ...]:
     """One-at-a-time overrides sweeping each discrete argument's actual codes.
 
-    The first assignment is empty (the plain synthetic fills); each further
-    assignment pins one integer-coded argument to one of its grid codes while the
-    other arguments keep their fills.
+    Each assignment pins one discrete argument while the others keep their fills.
+    Time-reading probes repeat these assignments at every active source period;
+    synthetic time fills could skip an active row or inspect an inactive one.
     """
     assignments: list[MappingProxyType[str, int]] = [MappingProxyType({})]
     for name in arg_names:
+        if name == "period":
+            continue
         codes = int_arg_values.get(name, ())
         assignments.extend(MappingProxyType({name: code}) for code in codes)
+    if "period" in arg_names and "period" in int_arg_values:
+        return tuple(
+            MappingProxyType({**assignment, "period": period})
+            for period in int_arg_values["period"]
+            for assignment in assignments
+        )
     return tuple(assignments)
 
 
@@ -4947,7 +4987,7 @@ class _NBEGMContinuousCore:
         effective_savings_grid: Float1D,
         boundary_savings_targets: Float1D,
         boundary_next_liquid: Float1D,
-        **params: FloatND,
+        **params: ValueND,
     ) -> tuple[Float1D, EGMCarry]:
         """Solve one period of the schedule regime on the liquid grid."""
         from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
@@ -7934,7 +7974,7 @@ class _NBEGMScheduleDiscreteCore:
         next_marginal: Float1D,
         next_liquid: Float1D,
         marginal_return: Float1D,
-        **params: FloatND,
+        **params: ValueND,
     ) -> tuple[Float1D, EGMCarry]:
         """Solve one period of the regime, branch by branch, on the liquid grid."""
         from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
@@ -8074,7 +8114,7 @@ class _NBEGMDiscreteCore:
         next_marginal: Float1D,
         next_liquid: Float1D,
         marginal_return: Float1D,
-        **params: FloatND,
+        **params: ValueND,
     ) -> tuple[Float1D, EGMCarry]:
         """Solve one period of the regime, branch by branch, on the liquid grid."""
         from _lcm.egm.nbegm_breakpoints import affine_coefficients  # noqa: PLC0415

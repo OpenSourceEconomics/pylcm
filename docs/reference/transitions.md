@@ -31,11 +31,11 @@ errors.
 
 ## Regime transitions and graph support
 
-`Model` snapshots its edge mappings, and `Transition` and `ByAge` snapshot their nested
-law mappings, including phase-specific mappings. These published mappings are read-only.
-Reusing a source dictionary for another model cannot change an existing model's
-declarations. Callables keep their identity; their captured data must remain unchanged
-while the model is in use.
+`Model` snapshots its edge mappings, and `Transition`, `ByAge`, and `ByPeriod` snapshot
+their nested law mappings, including phase-specific mappings. These published mappings
+are read-only. Reusing a source dictionary for another model cannot change an existing
+model's declarations. Callables keep their identity; their captured data must remain
+unchanged while the model is in use.
 
 `Model(edges=...)` declares every regime transition, structure and law; a `Regime`
 declares none. A source maps to either
@@ -148,6 +148,15 @@ not depend on the horizon or on fixed-zero pruning. See
 
 ### Age-indexed laws
 
+For a period model, the corresponding declaration is
+`ByPeriod(cases={selector: law, ...}, default=...)`. Case selectors are integer periods,
+tuples or ranges of integers, `Periods(values=...)`, or
+`PeriodRange(start=..., exclusive_stop=...)`. `ByPeriod.until` takes
+`start_period_inclusive` and `stop_period_exclusive`; the last selected source period
+uses `then`. Plain graph edge selectors require `Periods` or `PeriodRange`. Age and
+period declarations cannot be mixed. See
+[Periods and temporal parameters](../user_guide/period_time.md).
+
 `ByAge(cases={selector: law, ...}, default=...)` selects complete numerical laws by
 source age inside a `Transition`. Its selectors are exact ages, tuples, integer ranges,
 or half-open `AgeRange(start=..., exclusive_stop=...)` intervals. `ByAge.until` uses
@@ -218,7 +227,9 @@ phases.
 
 ### What each part may read
 
-- a callable `support` reads only `period`, `age`, and parameters;
+- a callable `support` reads only the source `period`, the source `age` when the model
+  declares an age grid, and parameters; period models reject an `age` argument at
+  construction, including in either `Phased` variant;
 - `probabilities` may also read source states, actions, and helpers;
 - an output law may transform the shared node using source values, and may read
   `next_<state>` outputs already resolved on the same target edge.

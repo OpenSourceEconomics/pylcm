@@ -92,6 +92,7 @@ def _subject_kwargs(
         kwargs[name] = value
     age = float(row["age"])
     kwargs["age"] = age
+    assert model.ages is not None
     kwargs["period"] = model.ages.age_to_period(age)
     return kwargs
 

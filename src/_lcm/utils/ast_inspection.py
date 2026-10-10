@@ -6,6 +6,29 @@ import textwrap
 from collections.abc import Callable
 
 
+def time_index_names(*, func: Callable, array_param_name: str) -> frozenset[str]:
+    """Find visible age/period reads even in computed or multiple subscripts."""
+    sources = getattr(inspect.unwrap(func), "__lcm_sources__", None)
+    if sources is not None:
+        return frozenset().union(
+            *(
+                time_index_names(func=source, array_param_name=array_param_name)
+                for source in sources
+            )
+        )
+    source = _source_of(func)
+    if source is None:
+        return frozenset()
+    return frozenset(
+        node.id
+        for subscript in _collect_subscripts(
+            tree=ast.parse(source), param_name=array_param_name
+        )
+        for node in ast.walk(subscript)
+        if isinstance(node, ast.Name) and node.id in {"age", "period"}
+    )
+
+
 def _get_func_indexing_params(
     *,
     func: Callable,

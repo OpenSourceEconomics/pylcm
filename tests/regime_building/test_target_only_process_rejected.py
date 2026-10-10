@@ -14,6 +14,7 @@ from lcm import (
     StochasticTransition,
     TauchenAR1Process,
     Transition,
+    UnlabelledTimeParameterWarning,
     categorical,
     fixed_transition,
 )
@@ -542,17 +543,20 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
         initial_nodes={(20, 21): "source"},
     )
 
-    solution = model.solve(
-        params={
-            "discount_factor": 1.0,
-            "source": {
-                "target": {
-                    "next_shock": {"entry_table": jnp.array([[0.25, 0.75], [0.9, 0.1]])}
-                }
+    with pytest.warns(UnlabelledTimeParameterWarning, match="entry_table"):
+        solution = model.solve(
+            params={
+                "discount_factor": 1.0,
+                "source": {
+                    "target": {
+                        "next_shock": {
+                            "entry_table": jnp.array([[0.25, 0.75], [0.9, 0.1]])
+                        }
+                    }
+                },
             },
-        },
-        log_level="debug",
-    ).values
+            log_level="off",
+        ).values
 
     np.testing.assert_allclose(
         np.asarray(solution[period]["source"]), expected, atol=1e-6

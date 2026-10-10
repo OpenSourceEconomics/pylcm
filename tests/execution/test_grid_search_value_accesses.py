@@ -118,6 +118,7 @@ def test_final_period_processed_kernel_declares_no_next_value_accesses() -> None
     """The final source node neither asks reachability for nor declares a successor."""
     model = _make_consent_model()
     kernels = model._regimes["single_terminal"].solution.period_kernels
+    assert model.ages is not None
     kernel = kernels[model.ages.n_periods - 1]
 
     assert isinstance(kernel, _GridSearchPeriodKernel)

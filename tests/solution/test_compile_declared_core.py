@@ -82,6 +82,7 @@ def test_a_compilation_carries_the_age_its_period_sits_at(model: Model) -> None:
         period=1,
         axis_widths=_NO_WIDTHS,
     )
+    assert model.ages is not None
     assert compiled.age == float(model.ages.values[1])
 
 

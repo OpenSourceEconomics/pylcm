@@ -48,8 +48,8 @@ from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_law import RegimeLaw
+from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, RegimeNamesToIds
-from lcm.ages import AgeGrid
 from lcm.case_piece import (
     AffineBreakpoint,
     CaseBoundary,
@@ -524,7 +524,7 @@ def _union_parameter_usage(
 
 def fingerprint_model(
     *,
-    ages: AgeGrid,
+    ages: TimeAxis,
     regimes: Mapping[RegimeName, Regime],
     user_regimes: _FingerprintUserRegimes,
     laws: _FingerprintLaws,
@@ -570,7 +570,7 @@ def fingerprint_model(
 
 def fingerprint_model_programs(
     *,
-    ages: AgeGrid,
+    ages: TimeAxis,
     regimes: Mapping[RegimeName, Regime],
     user_regimes: _FingerprintUserRegimes,
     laws: _FingerprintLaws,
@@ -653,7 +653,7 @@ type BindingRecorder = Callable[[SealedBinding], None]
 
 def fingerprint_model_structure(
     *,
-    ages: AgeGrid,
+    ages: TimeAxis,
     regimes: Mapping[RegimeName, Regime],
     user_regimes: _FingerprintUserRegimes,
     laws: _FingerprintLaws,
@@ -682,7 +682,9 @@ def fingerprint_model_structure(
     )
     record = (
         ("pylcm-model-structure", 8),
-        tuple(ages.exact_values),
+        tuple(ages.exact_values)
+        if coordinate_kind(ages) == "age"
+        else ("period", ages.n_periods),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {
             name: {

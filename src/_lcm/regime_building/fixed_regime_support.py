@@ -40,6 +40,7 @@ from _lcm.utils.namespace import flatten_regime_namespace
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.temporal import TimeVarying
 from lcm.transition import ByAge, JointTransition, StochasticTransition
 from lcm.typing import UserParams
 
@@ -473,7 +474,7 @@ def _resolve_fixed_argument(
     key = candidates[0]
     # A Series declares coordinate-indexed values; fixed parameters may
     # therefore still vary by age or model state.
-    if isinstance(fixed_flat[key], pd.Series):
+    if isinstance(fixed_flat[key], pd.Series | TimeVarying):
         return None
     return _canonicalize_fixed_leaf(
         regime_name=regime_name, qname=qname, value=fixed_flat[key]

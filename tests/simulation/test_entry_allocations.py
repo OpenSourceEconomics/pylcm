@@ -89,6 +89,7 @@ def test_model_owned_inputs_are_charged_before_the_first_upload_with_checks_off(
     )
     params = jax.tree.map(np.asarray, params)
     initial = jax.tree.map(np.asarray, initial)
+    assert model.ages is not None
     roots = (
         model.ages.values,
         model.regime_names_to_ids,

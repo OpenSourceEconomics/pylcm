@@ -44,9 +44,9 @@ from _lcm.simulation.residency import (
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import grouped_extent
 from _lcm.solution.backward_induction import _abstract_value_key, _hashable_metadata
+from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
 from _lcm.utils.logging import LogLevel
-from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -123,7 +123,7 @@ def prepare_simulation_chunks(
     flat_params: FlatParams,
     values: Mapping[int, Mapping[str, jax.Array]],
     flags: Mapping[int, Mapping[str, jax.Array]],
-    ages: AgeGrid,
+    ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
     original_population: int,
@@ -236,7 +236,7 @@ def _simulation_chunk_profile_key(
     values: Mapping[int, Mapping[str, jax.Array]],
     flags: Mapping[int, Mapping[str, jax.Array]],
     policies: Mapping[int, Mapping[str, object]] | None,
-    ages: AgeGrid,
+    ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
     n_subjects: int,
@@ -337,7 +337,7 @@ class _ChunkProfiler:
     call_inputs: SimulationCallInputs
     values: Mapping[int, Mapping[str, jax.Array]]
     flags: Mapping[int, Mapping[str, jax.Array]]
-    ages: AgeGrid
+    ages: TimeAxis
     initial_conditions: Mapping[str, jax.Array]
     regime_names_to_ids: RegimeNamesToIds
     population: int

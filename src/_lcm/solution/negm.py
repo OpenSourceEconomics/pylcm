@@ -78,6 +78,7 @@ from _lcm.solution.dcegm import (
     _combination_inputs,
     dcegm_kernel_with_declared_reads,
 )
+from _lcm.time import TimeAxis
 from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
@@ -86,7 +87,6 @@ from _lcm.typing import (
     RegimeName,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
-from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, RegimeInitializationError
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -908,7 +908,7 @@ class _NEGMPeriodKernel:
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,
     ) -> KernelOutput:
         r"""Run the keeper, then the sweep fed by the keeper's declared outputs.

@@ -126,6 +126,7 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
 
     regime = model._regimes["retirement"]
     period = 0
+    assert model.ages is not None
     age = jnp.asarray(model.ages.period_to_age(period))
     wealth = jnp.asarray([12.0, 37.5, 88.25, 210.0])
 

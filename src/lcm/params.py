@@ -13,6 +13,11 @@ from beartype import beartype
 from _lcm.beartype_conf import PARAMS_CONF
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
+from lcm.temporal import (
+    TimeVarying,
+    UnlabelledTimeParameterWarning,
+    time_varying_params,
+)
 
 
 @overload
@@ -46,7 +51,10 @@ def as_leaf(
 __all__ = [
     "MappingLeaf",
     "SequenceLeaf",
+    "TimeVarying",
+    "UnlabelledTimeParameterWarning",
     "UserMappingLeaf",
     "UserSequenceLeaf",
     "as_leaf",
+    "time_varying_params",
 ]

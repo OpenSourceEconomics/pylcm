@@ -37,8 +37,8 @@ from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import type_local_template
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _states_for_period
+from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams
-from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -82,7 +82,7 @@ def profile_forward_programs(
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
     flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
-    ages: AgeGrid,
+    ages: TimeAxis,
     n_subjects: int,
     widths: Mapping[str, int],
     ordinary_key: jax.ShapeDtypeStruct,
@@ -147,7 +147,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
     flags: Mapping[int, Mapping[str, jax.Array]],
-    ages: AgeGrid,
+    ages: TimeAxis,
     n_subjects: int,
     widths: Mapping[str, int],
     columns: Mapping[str, jax.ShapeDtypeStruct],
@@ -377,7 +377,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                 wave=wave,
             ),
         )
-        if regime.stakeholders is not None and not states:
+        if not states and indices.ndim == 0:
             indices = jax.ShapeDtypeStruct(
                 (n_subjects,), indices.dtype, sharding=subject
             )

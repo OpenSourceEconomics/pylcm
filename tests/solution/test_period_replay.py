@@ -15,9 +15,8 @@ import math
 import os
 import re
 from collections.abc import Mapping
-from functools import partial
 from pathlib import Path
-from typing import Any, Never
+from typing import Any
 
 import cloudpickle
 import jax
@@ -33,7 +32,6 @@ from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.solution import backward_induction, period_replay, public_period_capture
 from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
-from lcm.exceptions import UnsupportedOperationError
 from lcm.persistence import PeriodCapture, load_period_capture, replay_period
 from lcm.solver_api import ResultRetention
 from tests.regime_building.test_gated_edges_collective_solve import (
@@ -353,74 +351,6 @@ def test_malformed_captured_tile_widths_are_refused(
 
     with pytest.raises(error):
         replay_period(directory=tmp_path / "working_life@1")
-
-
-@pytest.mark.parametrize("operation", ["solve", "replay_period"])
-@pytest.mark.parametrize("existing_directory", [False, True])
-def test_public_capture_and_replay_require_durable_identity(
-    *,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-    existing_directory: bool,
-) -> None:
-    """Public period archives require durable identity before filesystem access."""
-    model = _make_public_capture_model(durable_identity=False)
-    capture = PeriodCapture(
-        directory=tmp_path / "captures",
-        periods=(("working_life", 0),),
-        source_identity={"model": "tiny-public-model-v1"},
-    )
-    directory = capture.directory / "working_life@0"
-    if existing_directory:
-        directory.mkdir(parents=True)
-        (directory / "caller-owned.txt").write_text("preserve this capture")
-    before = tuple(
-        (str(path.relative_to(tmp_path)), path.read_bytes() if path.is_file() else None)
-        for path in sorted(tmp_path.rglob("*"))
-    )
-    params = retirement_model.get_params(n_periods=_N_PERIODS)
-    requested = "period_capture" if operation == "solve" else operation
-    monkeypatch.setattr(jax.stages.Lowered, "compile", _forbid_numerical_execution)
-    monkeypatch.setattr(jax.stages.Compiled, "__call__", _forbid_numerical_execution)
-
-    if operation == "solve":
-        invoke = partial(
-            model.solve,
-            params=params,
-            log_level="debug",
-            log_path=tmp_path / "logs",
-            period_capture=capture,
-        )
-    else:
-        invoke = partial(
-            model.replay_period,
-            directory=directory,
-            params=params,
-            source_identity=capture.source_identity,
-        )
-    with pytest.raises(
-        UnsupportedOperationError,
-        match=rf"{requested}.*ephemeral.*durable_identity=True",
-    ):
-        invoke()
-
-    assert (
-        tuple(
-            (
-                str(path.relative_to(tmp_path)),
-                path.read_bytes() if path.is_file() else None,
-            )
-            for path in sorted(tmp_path.rglob("*"))
-        )
-        == before
-    )
-
-
-def _forbid_numerical_execution(*_args: object, **_kwargs: object) -> Never:
-    """Expose compilation or dispatch past a public archive identity guard."""
-    msg = "Ephemeral operations must reject before compilation or dispatch."
-    raise AssertionError(msg)
 
 
 @pytest.mark.parametrize("budget", [None, 32 * 1024**2])
@@ -904,7 +834,6 @@ def _make_public_capture_model(
     wealth_stop: float = 4,
     axis_widths: dict[str, int] | None = None,
     budget: int | None = None,
-    durable_identity: bool = True,
 ) -> Model:
     """Build the public retirement fixture on a small complete candidate grid."""
     base = retirement_model.get_model(n_periods=_N_PERIODS)
@@ -929,5 +858,4 @@ def _make_public_capture_model(
             device_memory_bytes=budget, axis_widths=axis_widths or {}
         ),
         initial_nodes=initial_nodes_of(model=base),
-        durable_identity=durable_identity,
     )

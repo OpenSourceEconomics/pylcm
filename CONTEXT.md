@@ -10,7 +10,7 @@ documentation and the engine; it is not a specification.
 
 **Subject**:
 One unit of the population handed to a simulation or a feasibility check; a
-subject starts in exactly one regime at one age.
+subject starts in exactly one regime at one model time coordinate.
 _Avoid_: individual, agent, row, person
 
 **Initial conditions**:
@@ -63,12 +63,16 @@ source's law at the source's current value.
 _Avoid_: dropped shock, ephemeral state
 
 **Age**:
-The user-facing time index of a subject, on the model's age grid.
+The subject's biological age, when the model uses an age grid as its time coordinate.
 
 **Period**:
-The engine's zero-based index into the age grid. Users supply ages; the engine
-converts.
+One zero-based computational slot in a finite horizon, supplied directly in a period
+model or associated with an age in an age model.
 _Avoid_: t, time step (in user-facing text)
+
+**Economic time**:
+The calendar date, quarter, year or other economic interval represented by a model's
+decisions. Several computational periods may belong to the same economic interval.
 
 ### Parameters
 
@@ -76,9 +80,13 @@ _Avoid_: t, time step (in user-facing text)
 A parameter bound when the model is built and not supplied at call time.
 
 **Runtime parameter**:
-A parameter supplied with every `solve`, `simulate` or feasibility call; when a name
-is both fixed and runtime, the runtime value binds.
+A parameter supplied with every `solve`, `simulate` or feasibility call, in a slot
+that has not been fixed at model construction.
 _Avoid_: free parameter, estimated parameter
+
+**Temporal parameter**:
+A parameter whose value is labelled by model time and selected at the period of the
+function that consumes it.
 
 ### Feasibility
 

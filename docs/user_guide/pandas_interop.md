@@ -37,6 +37,10 @@ result = model.simulate(
 - Continuous states pass through as-is.
 - `Categorical` dtype columns are also supported.
 
+The example above is for an age model. A model declared with `n_periods` requires an
+integer `"period"` column instead of `"age"`. Use exactly the coordinate kind the model
+declares; supplying both names or the wrong name fails before simulation.
+
 You can also pass initial conditions as a plain dict of JAX arrays (see
 [Solving and Simulating](solving_and_simulating.md#as-jax-arrays)).
 
@@ -66,8 +70,9 @@ result = model.simulate(
 )
 ```
 
-Scalars and existing JAX arrays pass through unchanged — only `pd.Series` values trigger
-conversion.
+Scalars remain constants. Ordinary arrays retain positional indexing, while declared
+temporal parameters require labelled inputs. `TimeVarying` provides the same time
+alignment without pandas; see [Periods and temporal parameters](period_time.md).
 
 ### Series format
 
@@ -76,8 +81,9 @@ Each `pd.Series` must have:
 - A **named** `MultiIndex` (or named `Index` for 1-D arrays). Level names must match the
   function's indexing parameters.
 - **String labels** for discrete variables, matching the model's categorical classes.
-- **`"age"`** (not `"period"`) for the age dimension, with actual age values from the
-  model's `AgeGrid`.
+- **`"age"`** for an age model, with actual values from its `AgeGrid`, or **`"period"`**
+  for a period model, with integer computational indices. These names are never
+  interchangeable, even when the numerical labels coincide.
 - For **transition functions**: an additional outcome level — `"next_health"` for a
   state transition, `"next_regime"` for a regime-transition law over all targets, whose
   parameters sit at `params["edges"][source]`. A gate or a projection under
@@ -90,6 +96,18 @@ dormant law reads keeps its slot, and its Series converts by the same categories
 
 Level order does not matter — levels are reordered to match the function signature
 automatically.
+
+For temporal data, schema checks precede filtering. **Rows outside the model's age or
+period grid are silently discarded**, including duplicates outside the grid. Duplicate
+selected full keys and missing required time–category combinations raise errors. Extra
+rows never substitute for missing required rows. A transition consumes its source
+period; an unused terminal slot needs no fabricated observation.
+
+With `@time_varying_params("wage")`, the consumer receives only the current time slice
+and indexes any remaining categorical axes normally. The existing manual `wage[period]`
+route also accepts labelled Series. **Never index a normalized array with `age`: its
+positions are periods.** Known manual temporal reads of unlabelled arrays warn in age
+models and fail in period models, independently of `log_level`.
 
 ### What happens during conversion
 

@@ -8,8 +8,8 @@ import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
 from _lcm.regime_building.processing import compute_merged_discrete_categories
+from _lcm.time import TimeAxis
 from _lcm.typing import ActionName, RegimeName, RegimeNamesToIds, StateName
-from lcm.ages import AgeGrid
 from lcm.regime import Regime as UserRegime
 
 
@@ -130,7 +130,7 @@ def _compute_metadata(
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
-    ages: AgeGrid,
+    ages: TimeAxis,
     nested_policy_regimes: frozenset[RegimeName] = frozenset(),
 ) -> ResultMetadata:
     """Compute metadata from canonical regimes, raw results, and output dtypes.

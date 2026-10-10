@@ -39,9 +39,9 @@ from _lcm.regime_building.phases import (
     normalize_regime_phases,
 )
 from _lcm.regime_law import RegimeLaw, RegimeLaws
+from _lcm.time import TimeAxis, specialization_coordinate_at
 from _lcm.typing import RegimeName, StateName, StateOrActionName
 from _lcm.utils.error_messages import format_messages
-from lcm.ages import AgeGrid
 from lcm.collective import CollectiveUtility
 from lcm.consumption_savings_regime import NetOfAdjustmentCost
 from lcm.exceptions import ModelInitializationError
@@ -162,7 +162,7 @@ def prune_broadcast_variables(
     laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
     koopmans_aggregator: UserFunction,
-    ages: AgeGrid | None = None,
+    ages: TimeAxis | None = None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> tuple[
     MappingProxyType[RegimeName, UserRegime],
@@ -484,7 +484,7 @@ def _joint_phase_closure(
     koopmans_aggregator: UserFunction,
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     all_regime_names: frozenset[RegimeName],
-    ages: AgeGrid | None,
+    ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
     phase_order: tuple[PhaseName, ...] = ("solution", "simulation"),
 ) -> dict[RegimeName, frozenset[StateOrActionName]]:
@@ -531,7 +531,7 @@ def _phase_fixed_point(
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     phase_name: PhaseName,
     all_regime_names: frozenset[RegimeName],
-    ages: AgeGrid | None,
+    ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
 ) -> dict[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to this phase slice's least fixed point.
@@ -694,7 +694,7 @@ def _is_markov_law(law: object) -> bool:
 def _resolved_at_representative_age(
     *,
     mapping: Mapping[str, UserFunction],
-    ages: AgeGrid | None,
+    ages: TimeAxis | None,
     active_periods: tuple[int, ...] | None,
 ) -> Mapping[str, UserFunction]:
     """Resolve `AgeSpecializedFunction` markers in `mapping` at a representative age.
@@ -712,7 +712,9 @@ def _resolved_at_representative_age(
         )
     ):
         return mapping
-    representative_age = float(ages.period_to_age(active_periods[0]))
+    representative_age = specialization_coordinate_at(
+        ages=ages, period=active_periods[0]
+    )
     return {
         name: cast("UserFunction", resolve_node(node=value, age=representative_age))
         for name, value in mapping.items()
@@ -729,7 +731,7 @@ def _needed_names(
     koopmans_aggregator: UserFunction,
     candidate_targets: frozenset[RegimeName],
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
-    ages: AgeGrid | None,
+    ages: TimeAxis | None,
     active_periods: tuple[int, ...] | None,
 ) -> set[str]:
     """Collect every name this phase slice's root computations read.

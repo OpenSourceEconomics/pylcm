@@ -14,8 +14,8 @@ from jaxtyping import Key, UInt32
 
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.random import _create_simulation_key, generate_simulation_keys
+from _lcm.time import TimeAxis
 from _lcm.typing import PRNGKeyND
-from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.grids import DiscreteGrid
 from lcm.typing import ActionName, RegimeName, UserAge
@@ -132,7 +132,7 @@ def advance_simulation_taste_key(
 
 def build_taste_stream_addresses(
     *,
-    ages: AgeGrid,
+    ages: TimeAxis,
     discrete_actions_by_regime: Mapping[RegimeName, Mapping[ActionName, DiscreteGrid]],
 ) -> MappingProxyType[tuple[int, RegimeName], tuple[int, ...]]:
     """Describe matching ages and ordered choices without regime identity.

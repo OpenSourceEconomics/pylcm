@@ -16,7 +16,7 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.exceptions import ModelSealError, PyLCMError
+from lcm.exceptions import ModelSealError
 from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
 
@@ -62,17 +62,6 @@ def _build_model(*, enable_jit: bool) -> Model:
 
 
 _PARAMS = {"discount_factor": 0.95}
-
-
-def test_missing_durable_seal_reports_a_model_identity_error() -> None:
-    """A durable model needs its binding seal before public execution."""
-    model = _build_model(enable_jit=False)
-    model._sealed_bindings = None
-
-    with pytest.raises(PyLCMError, match="binding seal") as error:
-        model.solve(params=_PARAMS, log_level="off")
-
-    assert type(error.value).__name__ == "ModelIdentityError"
 
 
 @pytest.fixture

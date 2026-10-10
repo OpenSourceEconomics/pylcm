@@ -55,6 +55,7 @@ from _lcm.solution.solver_diagnostics import (
     diagnostics_template_from_descriptor,
 )
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
+from _lcm.time import TimeAxis
 from _lcm.typing import (
     ContinuousState,
     DiscreteState,
@@ -62,7 +63,6 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
-from lcm.ages import AgeGrid
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     SIMULATION_POLICY,
@@ -683,7 +683,7 @@ def build_solution_authority(  # noqa: PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> SolutionAuthority:
     """Derive active value and replay descriptions solely from the model.

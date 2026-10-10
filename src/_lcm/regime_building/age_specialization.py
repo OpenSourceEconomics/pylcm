@@ -87,7 +87,7 @@ def tree_signature(*, tree: Mapping[str, object], age: float) -> Hashable:
 class _NodeSignatureAtAge:
     """Leaf-signature callback fingerprinting a node at one fixed age."""
 
-    age: float
+    age: int | float
     """The age every node is fingerprinted at."""
 
     def __call__(self, node: object) -> Hashable:

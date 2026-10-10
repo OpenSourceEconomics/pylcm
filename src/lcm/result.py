@@ -28,10 +28,10 @@ from _lcm.simulation.result_dataframe import (
     _create_flat_dataframe,
 )
 from _lcm.simulation.result_metadata import ResultMetadata, _compute_metadata
+from _lcm.time import TimeAxis
 from _lcm.typing import ActionName, FlatParams, RegimeName, StateName
 from lcm._solver_api.entries import _LazyEntry
 from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
-from lcm.ages import AgeGrid
 from lcm.typing import BoolND, FloatND
 
 if TYPE_CHECKING:
@@ -76,7 +76,7 @@ class SimulationResult:
         regimes: MappingProxyType[RegimeName, Regime],
         flat_params: FlatParams,
         period_to_regime_to_V_arr: _PeriodValuesBoundary,
-        ages: AgeGrid,
+        ages: TimeAxis,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
         subject_batch_size: int | None = None,
         nested_policy_regimes: frozenset[RegimeName] = frozenset(),
@@ -267,7 +267,7 @@ class SimulationResult:
           single-device leaf in place, a sharded leaf shard by shard), so
           a near-device-cap leaf does not need a second contiguous device
           buffer at save time.
-        - `metadata.pkl` — cloudpickle of regimes, ages, pre-computed
+        - `metadata.pkl` — cloudpickle of regimes, the age or period clock, pre-computed
           result metadata, the parameter scaffold, and the per-regime
           chunk specs needed to reassemble on `load`.
         - `simulated_data.arrow` — a feather dump of
@@ -477,7 +477,7 @@ class _SavedMetadata:
     arrays (never the sharded grid- or subject-sized arrays), so the cloudpickle
     round-trip is cheap and keeps the JAX-array leaves intact."""
 
-    ages: AgeGrid
+    ages: TimeAxis
     """Lifecycle age grid of the original model."""
 
     result_metadata: ResultMetadata

@@ -364,6 +364,7 @@ def _assert_public_membership_inventory(
         "regime_id": jnp.asarray([_LifecycleRegimeId.alive], dtype=jnp.int32),
     }
     solution = model.solve(params=params, log_level="off")
+    assert model.ages is not None
     observed = _ObservedMembershipRoots(
         channel=channel, original_ages=measure_buffer_footprint(tree=model.ages.values)
     )

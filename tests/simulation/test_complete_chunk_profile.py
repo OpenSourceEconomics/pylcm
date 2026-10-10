@@ -94,6 +94,7 @@ def test_complete_profile_covers_actual_stages_and_retained_records_without_allo
         }
     )
     module = importlib.import_module("_lcm.simulation.chunk_profiles")
+    assert model.ages is not None
     with monkeypatch.context() as guard:
         guard.setattr(jax, "device_put", _forbid_allocation)
         guard.setattr(jax._src.core.EvalTrace, "process_primitive", _forbid_allocation)

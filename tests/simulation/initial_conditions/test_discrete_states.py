@@ -16,6 +16,7 @@ def test_validate_initial_conditions_invalid_discrete_value(
     *, model: Model, flat_params: FlatParams
 ) -> None:
     """Invalid discrete state code should raise InvalidInitialConditionsError."""
+    assert model.ages is not None
     with pytest.raises(InvalidInitialConditionsError, match=r"Invalid values.*health"):
         validate_initial_conditions(
             initial_conditions={

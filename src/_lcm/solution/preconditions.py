@@ -27,8 +27,8 @@ from _lcm.engine import Regime
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY, ParetoWeights
+from _lcm.time import TimeAxis, coordinate_at
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName
-from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError
 from lcm.typing import FloatND
 
@@ -76,7 +76,7 @@ def check_pareto_weights(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Check every collective regime's Pareto weights against its parameters.
@@ -123,7 +123,7 @@ def _check_one_regimes_weights(
     regime_name: RegimeName,
     regime: Regime,
     regime_params: FlatRegimeParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Evaluate one regime's declared weights over its grid and judge them.
@@ -153,7 +153,7 @@ def _check_one_regimes_weights(
             **mesh,
             **regime_params,
             "period": jnp.int32(period),
-            "age": jnp.asarray(ages.period_to_age(period)),
+            "age": jnp.asarray(coordinate_at(ages=ages, period=period)),
         }
         declared = weights.declared(
             **{name: supplied[name] for name in weights.arg_names}

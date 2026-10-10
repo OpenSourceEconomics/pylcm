@@ -63,6 +63,11 @@ solve automatically; there are no separate value, policy, or dissolution inputs.
 [Runtime, results, and persistence](../reference/runtime_and_results.md#api-solution-result)
 for the artifact stores and compatibility rules.
 
+The time coordinate kind participates in compatibility: an age model and a period model
+cannot exchange solutions just because their numeric coordinates happen to coincide.
+Temporal parameter compatibility uses the aligned values; changes confined to silently
+discarded surplus rows do not change the consumed parameters.
+
 ### Saving and restoring a solution
 
 Save the complete result, including its metadata, omissions, and every retained artifact
@@ -158,6 +163,10 @@ The full behaviour of every `log_level` × `log_path` combination:
 meaningless result rather than an exception; use this to keep an estimation loop
 running, but read the warnings.
 
+Input schema and temporal alignment checks run at every log level. `"off"` does not
+permit missing required time labels, selected duplicate keys or a wrong coordinate kind.
+The manual-array warning in age mode is also independent of this logging policy.
+
 `simulate()` adds one further record to the console output: the resolved execution plan
 it dispatched --- the forward route, the subject devices and their backend, the resolved
 planner axis widths by regime, the chunk count and admitted widths, and the budget mode
@@ -182,8 +191,8 @@ result = model.simulate(
 
 Forward simulation using solved value functions. Each agent starts from the given
 initial conditions and makes optimal decisions at each period. Every subject's starting
-age and regime must be an admissible root in `model.graph.initial_nodes`; a start
-elsewhere is rejected even where that problem's value is solved. Returns a
+time coordinate and regime must be an admissible root in `model.graph.initial_nodes`; a
+start elsewhere is rejected even where that problem's value is solved. Returns a
 `SimulationResult` object. The complete `SolutionResult` is supplied through
 `solution=...`.
 
@@ -395,6 +404,12 @@ fingerprints.
 
 ### Heterogeneous initial ages
 
+This section describes age models. A period model instead requires `"period"`, with
+integer indices in `[0, model.n_periods)`, and uses
+`InitialNodes(by_period={0: "working"})` to declare admissible starts. Booleans,
+fractional values and out-of-range starts are invalid. The two initial-condition
+checking methods apply the same coordinate rules.
+
 `"age"` must always be provided in `initial_conditions`. Each value must be a valid
 point on the model's `AgeGrid`, and each subject's `(age, regime)` pair must be a
 declared start in `model.graph.initial_nodes`. The most common case is that all subjects
@@ -426,14 +441,15 @@ earlier periods are omitted, not filled with placeholders.
 df = result.to_dataframe()
 ```
 
-Returns a pandas DataFrame with columns: `subject_id`, `period`, `age`, `regime_name`,
-`value`, plus all states and actions. An NNBEGM regime adds `nested_policy_fallback`:
-`True` on a row means the off-grid nested policy read was refused, so the row carries
-the best admissible baseline instead. That baseline is chosen by the canonical Q, not by
-the action grid alone — the grid-argmax pair and every published replay branch are
-scored, the higher score is emitted, and the grid pair takes an exact tie. Inference
-must refuse whenever any entry is `True`. Discrete variables are pandas Categorical with
-string labels.
+Returns a pandas DataFrame with columns: `subject_id`, `period`, `regime_name`, `value`,
+plus all states and actions. An age model also supplies `age`; a period model has no age
+column, including after saving and loading. An NNBEGM regime adds
+`nested_policy_fallback`: `True` on a row means the off-grid nested policy read was
+refused, so the row carries the best admissible baseline instead. That baseline is
+chosen by the canonical Q, not by the action grid alone — the grid-argmax pair and every
+published replay branch are scored, the higher score is emitted, and the grid pair takes
+an exact tie. Inference must refuse whenever any entry is `True`. Discrete variables are
+pandas Categorical with string labels.
 
 A model with a collective regime publishes two further things. An `own_stakeholder`
 column names the role each row occupies — in every regime, not only the collective ones,
@@ -487,7 +503,8 @@ result.n_subjects  # 1000
 - `arrays/` — orbax checkpoint of the per-subject `raw_results` tree and `flat_params`.
 - `V_arr/` — orbax checkpoint of the solution value-function arrays; orbax streams
   sharded leaves shard by shard rather than gathering them onto one device.
-- `metadata.pkl` — `cloudpickle` of regimes, ages, and the parameter scaffold.
+- `metadata.pkl` — `cloudpickle` of regimes, the age or period clock, and the parameter
+  scaffold.
 - `simulated_data.arrow` — a `feather` dump of `to_dataframe`, ready for downstream
   consumers that want the flat per-subject view without re-instantiating a
   `SimulationResult`.
@@ -495,10 +512,11 @@ result.n_subjects  # 1000
 Two keywords select what that Feather table holds; neither affects the other three
 artifacts. `save(directory=..., df_additional_targets=...)` is passed through to
 `to_dataframe`: `None` (the default) writes only the base columns (states, actions,
-regime, age, period, `V_arr`), a list of target names bakes those DAG outputs in, and
-`"all"` includes every available target --- which can grow the file by an order of
-magnitude on a model with many DAG leaves. `df_use_labels=True` (the default) stores
-discrete variables as pandas `Categorical` labels; `False` stores integer codes.
+regime, period, `V_arr`, and age for age models), a list of target names bakes those DAG
+outputs in, and `"all"` includes every available target --- which can grow the file by
+an order of magnitude on a model with many DAG leaves. `df_use_labels=True` (the
+default) stores discrete variables as pandas `Categorical` labels; `False` stores
+integer codes.
 
 `save()` consumes the in-memory result by clearing its value-function arrays and
 compiled regimes. Reload the saved directory before further access that needs either.
