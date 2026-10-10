@@ -70,7 +70,9 @@ from lcm._solver_api.stores import ArtifactStore, ValueStore, _ValueStoreBoundar
 from lcm.exceptions import ExecutionPlanningError
 
 if TYPE_CHECKING:
-    type _ComponentBlocks = Mapping[int, Mapping[RegimeName, jax.Array]]
+    type _ComponentBlocks = MappingProxyType[
+        int, MappingProxyType[RegimeName, jax.Array]
+    ]
 else:
     # A component's blocks are read and deleted by the schedule itself; the
     # runtime annotation check must not walk them while they are being retired.
@@ -574,17 +576,21 @@ class RetainedComponentValues:
         )
         raise ExecutionPlanningError(msg)
 
-    def _over_budget(self, *, coordinates: tuple[_Coordinate, ...]) -> dict[int, int]:
+    def _over_budget(
+        self, *, coordinates: tuple[_Coordinate, ...]
+    ) -> MappingProxyType[int, int]:
         """Return each device whose bytes for `coordinates` exceed the budget."""
         need = _bytes_by_device(
             layouts=tuple(self._layouts[coordinate] for coordinate in coordinates),
             item_bytes=self._item_bytes(),
         )
-        return {
-            device: count
-            for device, count in need.items()
-            if self._budget_bytes is not None and count > self._budget_bytes
-        }
+        return MappingProxyType(
+            {
+                device: count
+                for device, count in need.items()
+                if self._budget_bytes is not None and count > self._budget_bytes
+            }
+        )
 
     def retention_record(self) -> ComponentRetentionRecord:
         """Return what this retention holds on the host and has moved."""
@@ -600,11 +606,9 @@ class RetainedComponentValues:
             ),
             device_to_host_bytes=self._device_to_host_bytes,
             host_to_device_bytes=self._host_to_device_bytes,
-            full_value_bytes_by_device=MappingProxyType(
-                _bytes_by_device(
-                    layouts=tuple(self._layouts.values()),
-                    item_bytes=self._item_bytes(),
-                )
+            full_value_bytes_by_device=_bytes_by_device(
+                layouts=tuple(self._layouts.values()),
+                item_bytes=self._item_bytes(),
             ),
         )
 
@@ -618,7 +622,7 @@ class RetainedComponentValues:
 
 def _bytes_by_device(
     *, layouts: tuple[ValueLayout, ...], item_bytes: int
-) -> dict[int, int]:
+) -> MappingProxyType[int, int]:
     """Sum the per-device bytes of complete values on their layouts."""
     totals: dict[int, int] = {}
     for layout in layouts:
@@ -627,7 +631,7 @@ def _bytes_by_device(
         )
         for device in footprint.device_ids:
             totals[device] = totals.get(device, 0) + footprint.bytes_per_device
-    return totals
+    return MappingProxyType(totals)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

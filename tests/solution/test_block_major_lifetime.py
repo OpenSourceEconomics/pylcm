@@ -722,7 +722,13 @@ def _record_component_blocks(
     retain = block_major.RetainedComponentValues.retain
 
     # keyword-only-exempt: library-callback=pytest.MonkeyPatch.setattr
-    def recording(self: Any, *, code: int, blocks: Mapping, **kwargs: Any) -> None:
+    def recording(
+        self: Any,
+        *,
+        code: int,
+        blocks: MappingProxyType[int, MappingProxyType[str, jax.Array]],
+        **kwargs: Any,
+    ) -> None:
         recorded.extend(
             (code, block) for regimes in blocks.values() for block in regimes.values()
         )
@@ -1113,3 +1119,14 @@ def test_a_block_major_solve_logs_its_retention_record(
     assert len(records) == 1
     assert isinstance(records[0], block_major.ComponentRetentionRecord)
     assert records[0].codes == (0, 1, 2)
+
+
+def test_value_bytes_by_device_are_a_read_only_mapping() -> None:
+    """The per-device bytes of complete values come back as a read-only mapping."""
+    layout = block_major.ValueLayout(
+        shape=(3,),
+        axis=0,
+        sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+    )
+    totals = block_major._bytes_by_device(layouts=(layout,), item_bytes=4)
+    assert type(totals) is MappingProxyType

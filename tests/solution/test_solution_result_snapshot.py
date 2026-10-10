@@ -19,6 +19,7 @@ from _lcm.engine import StateActionSpace
 from _lcm.persistence import solution as solution_persistence
 from _lcm.solution import model_authority as model_authority_module
 from _lcm.solution.result_snapshot import (
+    capture_exact_mapping,
     snapshot_artifact_authorities,
     snapshot_artifact_store,
     snapshot_artifact_template_declaration,
@@ -1556,3 +1557,14 @@ def test_save_normalizes_mapping_failure_before_lazy_load(tmp_path: Path) -> Non
     assert backing.traversals == 1
     assert lazy.materialization_count == 0
     assert not destination.exists()
+
+
+def test_captured_mapping_copy_is_read_only() -> None:
+    """The owned copy of a captured mapping is itself read-only."""
+    copied = capture_exact_mapping(
+        MappingProxyType({"a": 1}),
+        label="example",
+        snapshot_key=str,
+        snapshot_value=int,
+    )
+    assert type(copied) is MappingProxyType

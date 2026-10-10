@@ -2041,3 +2041,11 @@ def test_unsupported_numpy_dtype_is_normalized_and_stays_unloaded(
     with pytest.raises(IncompatibleSolutionError, match="cannot materialize"):
         restored.value(period=0, regime=_REGIME)
     assert values.load_state(period=0, regime=_REGIME) is LoadState.UNLOADED
+
+
+def test_persisted_categorical_domains_decode_to_a_read_only_mapping() -> None:
+    """Decoded categorical domains of an artifact are a read-only mapping."""
+    domains = solution_persistence._categorical_domains_from_manifest(
+        {"health": {"labels": ["bad", "good"], "codes": [0, 1], "ordered": True}}
+    )
+    assert type(domains) is MappingProxyType
