@@ -308,7 +308,7 @@ class ProfiledSimulationOperations:
         key: Hashable,
         function: Callable[..., object],
         arguments: Mapping[str, object],
-        static_arguments: Mapping[str, object],
+        static_arguments: Mapping[ReferenceName, StaticArgument],
         output_sharding: jax.sharding.Sharding | None = None,
     ) -> _ProfiledOperation:
         """Compile an abstract signature once, without holding the cache lock."""
@@ -363,7 +363,7 @@ class _OperationCompiler:
     key: Hashable
     function: Callable[..., object]
     arguments: Mapping[str, object]
-    static_arguments: Mapping[str, object]
+    static_arguments: Mapping[ReferenceName, StaticArgument]
     output_sharding: jax.sharding.Sharding | None
 
     def __call__(self, widths: Mapping[str, int]) -> _ProfiledOperation:
@@ -390,7 +390,10 @@ def _abstract_operation(
     static_arguments: Mapping[str, object],
     subject_outputs: bool,
 ) -> tuple[
-    Hashable, Mapping[str, object], Mapping[str, object], jax.sharding.Sharding | None
+    Hashable,
+    Mapping[str, object],
+    Mapping[ReferenceName, StaticArgument],
+    jax.sharding.Sharding | None,
 ]:
     """Canonicalize one operation's placed descriptors and derive its cache key.
 
@@ -428,7 +431,7 @@ def _lower_operation(
     *,
     function: Callable[..., object],
     arguments: Mapping[str, object],
-    static_arguments: Mapping[str, object],
+    static_arguments: Mapping[ReferenceName, StaticArgument],
     output_sharding: jax.sharding.Sharding | None,
 ) -> jax.stages.Lowered:
     """Trace and lower one pure operation over abstract operands."""
@@ -495,7 +498,7 @@ def _validated_static_arguments(
     arguments: Mapping[str, object],
     static_arguments: Mapping[str, object],
     subject_outputs: bool,
-) -> Mapping[str, object]:
+) -> Mapping[ReferenceName, StaticArgument]:
     """Use one pure-function and immutable-binding contract for both entry paths."""
     if type(subject_outputs) is not bool:
         raise ExecutionPlanningError("Subject-output metadata must be a bool.")
@@ -507,14 +510,15 @@ def _validated_static_arguments(
         _static_identity(value)
     if arguments.keys() & static.keys():
         raise ExecutionPlanningError("Dynamic and static operation arguments overlap.")
-    return static
+    # `_static_identity` has accepted every value as a `StaticArgument`.
+    return cast("Mapping[ReferenceName, StaticArgument]", static)
 
 
 def _operation_key(
     *,
     function: Callable[..., object],
     arguments: Mapping[str, object],
-    static_arguments: Mapping[str, object],
+    static_arguments: Mapping[ReferenceName, StaticArgument],
     subject_outputs: bool,
     devices: tuple[jax.Device, ...],
     output_sharding: jax.sharding.Sharding | None = None,

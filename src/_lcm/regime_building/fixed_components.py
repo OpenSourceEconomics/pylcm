@@ -29,7 +29,7 @@ from _lcm.transition_plans import OriginalLotteryLayout, signature_with_state
 from _lcm.typing import RegimeNamesToIds
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.regime import Regime
+from lcm.regime import Regime, StateTransitionEntry
 from lcm.transition import (
     AgeSpecializedFunction,
     JointTransition,
@@ -45,6 +45,7 @@ from lcm.typing import (
     StateName,
     UserInitialConditions,
     UserParams,
+    UserParamsNode,
 )
 
 
@@ -151,7 +152,7 @@ def factor_fixed_components(
     laws: RegimeLaws,
     fixed_params: UserParams,
     states: Mapping[str, object],
-    state_transitions: Mapping[str, object],
+    state_transitions: Mapping[StateName, StateTransitionEntry],
     functions: Mapping[str, object],
     constraints: Mapping[str, object],
     actions: Mapping[str, object],
@@ -160,7 +161,7 @@ def factor_fixed_components(
     Mapping[str, Regime],
     UserParams,
     Mapping[str, object],
-    Mapping[str, object],
+    Mapping[StateName, StateTransitionEntry],
     Mapping[str, object],
     Mapping[str, FixedComponentSplit],
 ]:
@@ -271,20 +272,24 @@ def factor_fixed_components(
 
 def _lower_state_laws(
     *,
-    laws: Mapping[str, object],
+    laws: Mapping[StateName, StateTransitionEntry],
     splits: Mapping[str, FixedComponentSplit],
     parts: Mapping[str, np.ndarray],
     next_outputs: Mapping[str, Callable[..., DiscreteState]],
-) -> dict[str, object]:
+) -> dict[StateName, StateTransitionEntry]:
     """Normalize the original graph before decomposing any annotated producer.
 
     Both the restricted law and its original-lottery descriptor must inherit
     the same normalized callable. Annotation determines storage, not whether
     a transition is allowed to consume an original next-state output.
     """
-    lowered: dict[str, object] = {}
+    lowered: dict[StateName, StateTransitionEntry] = {}
     for name, law in laws.items():
-        normalized = _lower_next_output_reads(node=law, next_outputs=next_outputs)
+        # Lowering keeps each declaration container and replaces only its leaves.
+        normalized = cast(
+            "StateTransitionEntry",
+            _lower_next_output_reads(node=law, next_outputs=next_outputs),
+        )
         lowered[f"{name}_rest" if name in splits else name] = (
             _lower_law(
                 law=normalized,
@@ -376,7 +381,7 @@ def rename_split_params(
     if not splits:
         return params
     regime_names = {regime for split in splits.values() for regime in split.grids}
-    renamed: dict[str, object] = dict(params)
+    renamed: dict[str, UserParamsNode] = dict(params)
     for regime_name in regime_names & params.keys():
         block = params[regime_name]
         if not isinstance(block, Mapping):
@@ -393,8 +398,8 @@ def rename_split_params(
 
 
 def _rename_law_params(
-    *, params: Mapping[str, object], splits: Mapping[str, FixedComponentSplit]
-) -> dict[str, object]:
+    *, params: Mapping[str, UserParamsNode], splits: Mapping[str, FixedComponentSplit]
+) -> dict[str, UserParamsNode]:
     """Rename function slots without inspecting their parameter payloads."""
     renamed = dict(params)
     for name in splits:
@@ -408,7 +413,9 @@ def _rename_law_params(
 
 
 def _collect_groups(
-    *, regimes: Mapping[str, Regime], state_transitions: Mapping[str, object]
+    *,
+    regimes: Mapping[str, Regime],
+    state_transitions: Mapping[StateName, StateTransitionEntry],
 ) -> dict[str, tuple[int, ...]]:
     """Require one declared grouping across all law leaves."""
     groups: dict[str, tuple[int, ...]] = {}
@@ -530,7 +537,7 @@ def _law_leaves(law: object) -> tuple[object, ...]:
 
 def _lower_law(
     *, law: object, name: str, split: FixedComponentSplit, code_by_parts: np.ndarray
-) -> object:
+) -> StateTransitionEntry:
     """Restrict every supported leaf, preserving its phase and target containers."""
     if isinstance(law, Phased):
         return Phased(
@@ -542,13 +549,17 @@ def _lower_law(
             ),
         )
     if isinstance(law, Mapping):
-        return MappingProxyType(
-            {
-                target: _lower_law(
-                    law=leaf, name=name, split=split, code_by_parts=code_by_parts
-                )
-                for target, leaf in law.items()
-            }
+        # Each per-target leaf lowers to a leaf, so the mapping stays per-target.
+        return cast(
+            "StateTransitionEntry",
+            MappingProxyType(
+                {
+                    target: _lower_law(
+                        law=leaf, name=name, split=split, code_by_parts=code_by_parts
+                    )
+                    for target, leaf in law.items()
+                }
+            ),
         )
     if law is None:
         return None

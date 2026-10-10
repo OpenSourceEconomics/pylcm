@@ -16,6 +16,7 @@ from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 from _lcm.execution.core_program import CoreBuildContext, CoreProgram, TiledOutputAxis
+from _lcm.execution.output_layout import OutputRoleTree
 from _lcm.simulation.subject_groups import SubjectGroupingRoute
 from _lcm.typing import RegimeName, StateOrActionName
 from lcm.typing import ReferenceName
@@ -96,7 +97,7 @@ class _PerSubjectFunction:
     subject_arg_names: tuple[ReferenceName, ...]
     """Arguments carrying a per-subject leading axis, which the tile splits."""
 
-    output_roles: object
+    output_roles: OutputRoleTree
     """Role tree of the same structure as the body's output, one role per leaf."""
 
 

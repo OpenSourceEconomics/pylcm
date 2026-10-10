@@ -126,6 +126,7 @@ def _evaluate_operands(q: _QAndF) -> Callable[..., Any]:
         assert len(aggregation) == 1
         name, discount = next(iter(aggregation.items()))
         assert name.split("__")[-1] == "discount_factor"
+        assert isinstance(discount, jax.Array)
         return utility, continuation, discount, feasible
 
     return evaluate

@@ -47,6 +47,7 @@ from lcm.consumption_savings_regime import NetOfAdjustmentCost
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateTransitionEntry
 from lcm.transition import (
     AgeSpecializedFunction,
     JointTransition,
@@ -246,7 +247,7 @@ def prune_broadcast_variables(
         if not pruned:
             pruned_regimes[regime_name] = user_regime
             continue
-        state_transitions: dict[StateName, object] = {}
+        state_transitions: dict[StateName, StateTransitionEntry] = {}
         for name, law in user_regime.state_transitions.items():
             if name not in pruned:
                 state_transitions[name] = law
@@ -861,10 +862,10 @@ class _ComposedResourcesEdge:
 
 def _retained_state_transition(
     *,
-    law: object,
+    law: StateTransitionEntry,
     retaining_targets: frozenset[RegimeName],
     reachable_targets: frozenset[RegimeName],
-) -> object | None:
+) -> StateTransitionEntry:
     """Return the part of a pruned state's law of motion that survives pruning.
 
     A law keyed by target regime is an *entry* law: it places a value on the

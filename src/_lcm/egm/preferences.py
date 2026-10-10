@@ -17,9 +17,9 @@ a separate runtime scalar: it multiplies a continuation, not an action, and the
 steps read it where they read the continuation.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -29,10 +29,19 @@ from _lcm.egm.numeric_inverse import numeric_inverse_marginal_utility
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.typing import (
     EconFunction,
+    EconFunctionArg,
+    EconFunctionKwargs,
     EconFunctionsMapping,
     FunctionName,
 )
-from lcm.typing import ActionName, Float1D, FloatND, ScalarFloat, UserFunction
+from lcm.typing import (
+    ActionName,
+    Float1D,
+    FloatND,
+    ReferenceName,
+    ScalarFloat,
+    UserFunction,
+)
 
 # Name of the regime function supplying the analytic inverse marginal utility.
 INVERSE_MARGINAL_UTILITY = "inverse_marginal_utility"
@@ -144,7 +153,7 @@ def get_preferences_builder(
     action_name: ActionName,
     action_lower: ScalarFloat | float,
     action_upper: ScalarFloat | float,
-) -> Callable[[Mapping[str, Any]], Preferences]:
+) -> Callable[[EconFunctionKwargs], Preferences]:
     """Return a closure binding a regime's preference maps to a parameter set.
 
     The concatenation happens once, at kernel-build time; the returned closure
@@ -190,7 +199,7 @@ def get_discount_factor_reader(
     *,
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
-) -> Callable[[Mapping[str, Any]], ScalarFloat]:
+) -> Callable[[EconFunctionKwargs], ScalarFloat]:
     """Return a closure reading `beta` off the aggregator's own signature.
 
     The aggregator declares which parameters it consumes beyond `utility` and
@@ -270,7 +279,7 @@ class BoundUtilityOfAction:
     action_name: ActionName
     """The regime's name for the consumption action."""
 
-    bound: Mapping[str, Any]
+    bound: EconFunctionKwargs
     """Every other argument of `utility_func`, by name."""
 
     def __call__(self, action_value: FloatND) -> FloatND:
@@ -284,7 +293,7 @@ class AnalyticInverseMarginalUtility:
     analytic_inverse: UserFunction
     """The regime's concatenated inverse-marginal-utility function."""
 
-    bound: Mapping[str, Any]
+    bound: EconFunctionKwargs
     """Every argument of `analytic_inverse` but `marginal_continuation`."""
 
     def __call__(self, marginal_continuation: FloatND) -> FloatND:
@@ -339,7 +348,7 @@ class _PreferencesBuilder:
     action_upper: ScalarFloat | float
     """Initial upper bracket for the Newton inverse."""
 
-    def __call__(self, params: Mapping[str, Any]) -> Preferences:
+    def __call__(self, params: EconFunctionKwargs) -> Preferences:
         utility_of_action = BoundUtilityOfAction(
             utility_func=self.utility_func, action_name=self.action_name, bound=params
         )
@@ -368,9 +377,9 @@ class _PreferencesBuilder:
 class _DiscountFactorReader:
     """Read the discount factor off the Koopmans aggregator's own signature."""
 
-    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    build_W_kwargs: Callable[[EconFunctionKwargs], dict[ReferenceName, EconFunctionArg]]
     """Assembles the aggregator's keyword arguments beyond `utility` and `CE`."""
 
-    def __call__(self, params: Mapping[str, Any]) -> ScalarFloat:
+    def __call__(self, params: EconFunctionKwargs) -> ScalarFloat:
         (discount_factor,) = tuple(self.build_W_kwargs(params).values())
-        return discount_factor
+        return cast("ScalarFloat", discount_factor)

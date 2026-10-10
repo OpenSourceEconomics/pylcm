@@ -22,13 +22,14 @@ from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
     ValueConsumerAddress,
+    ValueInputChannel,
     ValueViewDescriptor,
     apply_value_transfer_plan,
 )
 from _lcm.typing import ActionName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
-from lcm.typing import RegimeName
+from lcm.typing import ReferenceName, RegimeName
 
 _CORE_PROGRAM_VERSION = 7
 _INT32_MAX = 2_147_483_647
@@ -1374,7 +1375,9 @@ def _resolve_input_transfer_plan(
 
 def _validate_value_reads(*, program: MaterializedCoreProgram) -> None:
     """Validate exact core-input locators without constraining artifact fan-out."""
-    locators: set[tuple[object, tuple[str | int, ...], str | None]] = set()
+    locators: set[
+        tuple[ValueInputChannel, tuple[str | int, ...], ReferenceName | None]
+    ] = set()
     source_node: tuple[int, str, str] | None = None
     for read in program.requirements.value_reads:
         if not isinstance(read, ValueRead):

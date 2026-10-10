@@ -850,9 +850,9 @@ class _ActionPartitionedMaxQOverA:
         return result.best_value
 
 
-def _arguments_named(
-    *, arguments: Mapping[str, Any], names: frozenset[str]
-) -> dict[str, Any]:
+def _arguments_named[V](
+    *, arguments: Mapping[ReferenceName, V], names: frozenset[str]
+) -> dict[ReferenceName, V]:
     """Return the entries of `arguments` whose names `names` lists."""
     return {name: value for name, value in arguments.items() if name in names}
 

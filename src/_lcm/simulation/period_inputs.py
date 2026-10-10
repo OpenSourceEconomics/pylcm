@@ -19,7 +19,9 @@ from _lcm.regime_building.gated_edges import edge_may_fold_at_period
 from _lcm.simulation.replay_inputs import PreparedReplayReader, replay_payload_reads
 from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution.continuation_reads import rekeyed_value_reads
+from _lcm.typing import QAndFArg, QAndFKwargs
 from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY, ReplayReader
+from lcm.typing import FloatND, ReferenceName, RegimeName
 
 GATE_FOLD = "simulation_gate_fold"
 GATE_ROUTE = "simulation_gate_route"
@@ -216,11 +218,14 @@ def acquire_decision_inputs(
     owner: PeriodSimulationReads,
     name: str,
     next_values: Mapping[str, jax.Array],
-    referenced: Mapping[str, object],
+    referenced: QAndFKwargs,
     stored_values: Mapping[int, Mapping[str, jax.Array]],
-) -> tuple[MappingProxyType[str, jax.Array], dict[str, object]]:
+) -> tuple[MappingProxyType[RegimeName, FloatND], dict[ReferenceName, QAndFArg]]:
     """Acquire the selected decision's V/Wbar leaves at their exact channels."""
-    channels = {"next_regime_to_V_arr": dict(next_values), **referenced}
+    channels: dict[ReferenceName, QAndFArg] = {
+        "next_regime_to_V_arr": dict(next_values),
+        **referenced,
+    }
     for read in reads:
         channel = read.source.argument or read.source.channel.value
         target = read.target
