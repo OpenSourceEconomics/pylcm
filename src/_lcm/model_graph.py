@@ -49,6 +49,7 @@ from lcm.transition import (
     AgeSelector,
     ByAge,
     ByPeriod,
+    DeclaredModelEdges,
     DeterministicTransition,
     ModelEdges,
     PeriodRange,
@@ -65,7 +66,7 @@ from lcm.typing import RegimeName, UserAge, UserFunction, UserParams
 type ResolvedEdges = MappingProxyType[
     RegimeName, MappingProxyType[RegimeName, frozenset[UserAge]]
 ]
-type Edge = tuple[object, RegimeName, RegimeName]
+type Edge = tuple[UserAge, RegimeName, RegimeName]
 
 _PHASE_SIDES: tuple[Side, ...] = ("solve", "simulate")
 
@@ -116,12 +117,12 @@ class ModelGraph:
         return self.reachability.simulation
 
     @property
-    def nodes(self) -> frozenset[tuple[object, RegimeName]]:
+    def nodes(self) -> frozenset[tuple[UserAge, RegimeName]]:
         """Return every valued age-regime pair."""
         return self.reachability.nodes
 
     @property
-    def visited_nodes(self) -> frozenset[tuple[object, RegimeName]]:
+    def visited_nodes(self) -> frozenset[tuple[UserAge, RegimeName]]:
         """Return every physically reachable age-regime pair."""
         return self.reachability.visited_nodes
 
@@ -130,7 +131,7 @@ class ModelGraph:
 class DroppedCells:
     """Targets a source's law names at one age without a declared edge."""
 
-    age: object
+    age: UserAge
     """The source age."""
     targets: tuple[RegimeName, ...]
     """The law's targets that have no edge out of the source at that age."""
@@ -153,7 +154,7 @@ class GraphPreparation:
     """Graph-bound laws after fixed-zero probability pruning."""
     schedules: RegimeSchedules
     """Graph support restricted to physical and valued demand."""
-    declarations: MappingProxyType[RegimeName, object]
+    declarations: MappingProxyType[RegimeName, RegimeTransitionLaw]
     """Graph-bound kernels before fixed-zero pruning, for dormant inspection."""
     consumed_param_keys: frozenset[str]
     """Fixed leaves consumed by a removed zero cell."""
@@ -263,7 +264,9 @@ def prepare_graph(
     )
 
 
-def _validate_graph_coordinate_kind(*, edges: object, ages: TimeAxis) -> None:
+def _validate_graph_coordinate_kind(
+    *, edges: DeclaredModelEdges, ages: TimeAxis
+) -> None:
     """Refuse ambiguous or mixed public selectors before graph lowering."""
     phases = (edges.solve, edges.simulate) if isinstance(edges, Phased) else (edges,)
     for phase in phases:
@@ -288,7 +291,10 @@ def _validate_graph_coordinate_kind(*, edges: object, ages: TimeAxis) -> None:
 
 
 def bind_edge_laws(
-    *, edges: object, regimes: Mapping[RegimeName, Regime], ages: TimeAxis
+    *,
+    edges: DeclaredModelEdges,
+    regimes: Mapping[RegimeName, Regime],
+    ages: TimeAxis,
 ) -> tuple[RegimeLaws, GraphEdges]:
     """Bind each regime's law from `Model(edges=...)` and resolve its support.
 
@@ -717,18 +723,18 @@ def bind_graph_support(
     result: dict[RegimeName, RegimeLaw] = {}
     dropped: dict[tuple[RegimeName, int], DroppedCells] = {}
     for source, source_law in laws.items():
-        if source_law.terminal:
+        transition = source_law.transition
+        if transition is None:
             result[source] = source_law
             continue
-        transition = source_law.transition
         kernels = (
             transition.resolve(ages=ages).law_by_period
             if isinstance(transition, ByAge)
             else dict.fromkeys(range(ages.n_periods), transition)
         )
         _fail_if_kernel_extends_graph(kernels=kernels, source=source, edges=edges)
-        cases: list[tuple[AgeSelector, object]] = []
-        cache: dict[tuple[int, tuple[str, ...], str], object] = {}
+        cases: list[tuple[AgeSelector, CaseLaw]] = []
+        cache: dict[tuple[int, tuple[str, ...], str], PhaseLaw] = {}
         for period, age in enumerate(ages.exact_values[:-1]):
             targets = {
                 side: tuple(
@@ -746,7 +752,7 @@ def bind_graph_support(
                     "kernel selected by `ByAge`."
                 )
             kernel = kernels[period]
-            sides: dict[str, object] = {}
+            sides: dict[Side, PhaseLaw] = {}
             for side in ("solve", "simulate"):
                 law = cast(
                     "PhaseLaw",
@@ -871,7 +877,12 @@ def fixed_zero_edge_reasons(
 
 
 def _resolve_edges(
-    *, edges: object, regimes: Mapping[RegimeName, Regime], ages: TimeAxis
+    *,
+    edges: Mapping[
+        RegimeName, Mapping[RegimeName, AgeSelector | PeriodSelector] | Phased
+    ],
+    regimes: Mapping[RegimeName, Regime],
+    ages: TimeAxis,
 ) -> ResolvedEdges:
     if not isinstance(edges, Mapping):
         raise ModelInitializationError(
@@ -919,7 +930,7 @@ def _resolve_edges(
 
 def _selected_source_ages(
     *,
-    selector: object,
+    selector: AgeSelector | PeriodSelector,
     edge: str,
     ages: TimeAxis,
     period_by_age: Mapping[object, int],
@@ -986,7 +997,10 @@ def _bind_law(
 
 
 def _fail_if_kernel_extends_graph(
-    *, kernels: Mapping[int, object], source: RegimeName, edges: GraphEdges
+    *,
+    kernels: Mapping[int, AgeCaseLaw | CaseLaw],
+    source: RegimeName,
+    edges: GraphEdges,
 ) -> None:
     """Reject scalar probability destinations outside the declared phase graph."""
     for kernel in kernels.values():
