@@ -1,13 +1,24 @@
 """A Mapping wrapper that is a JAX pytree but not itself a Mapping."""
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 import jax
 
 if TYPE_CHECKING:
-    from _lcm.typing import ParamsLeaf
+    from _lcm.typing import ParamsLeaf, PytreeChild
     from lcm.typing import UserParamsLeaf
+else:
+    # `_lcm.typing` and `lcm.typing` import this module, so their aliases are not
+    # importable here at runtime; the claw admits any value in these slots.
+    type PytreeChild = object
+    type UserParamsLeaf = object
+
+# A value a leaf wraps on construction: a user params leaf, a child JAX hands
+# `unflatten`, or a nested mapping or sequence of those, which construction freezes.
+type LeafEntry = (
+    UserParamsLeaf | PytreeChild | Mapping[str, LeafEntry] | Sequence[LeafEntry]
+)
 
 
 class UserMappingLeaf:
@@ -24,11 +35,6 @@ class UserMappingLeaf:
     `frozenset`) on construction; instances themselves are not hashable
     (`__hash__ = None`), since `MappingProxyType` isn't.
 
-    The constructor accepts `Mapping[str, Any]` at runtime so beartype's
-    O(n) per-leaf check doesn't fire on user-supplied scalars or arrays;
-    the precise leaf-type contract is enforced statically through the
-    `data` class-attribute annotation.
-
     """
 
     __slots__ = ("data",)
@@ -36,12 +42,17 @@ class UserMappingLeaf:
     if TYPE_CHECKING:
         data: Mapping[str, UserParamsLeaf]
 
-    def __init__(self, data: Mapping[str, Any]) -> None:
+    def __init__(self, data: Mapping[str, LeafEntry]) -> None:
         from _lcm.utils.containers import (  # noqa: PLC0415
             ensure_containers_are_immutable,
         )
 
-        self.data = ensure_containers_are_immutable(data)
+        # Consumers read `data` in its concrete-value form; nested containers
+        # arrive frozen, and JAX's abstract children stand in for values while
+        # it traces.
+        self.data = cast(
+            "Mapping[str, UserParamsLeaf]", ensure_containers_are_immutable(data)
+        )
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({dict(self.data)!r})"
@@ -76,19 +87,23 @@ class MappingLeaf(UserMappingLeaf):
 
 def _user_flatten(
     leaf: UserMappingLeaf,
-) -> tuple[list[Any], tuple[str, ...]]:
+) -> tuple[list[UserParamsLeaf], tuple[str, ...]]:
     keys = tuple(sorted(leaf.data.keys()))
     values = [leaf.data[k] for k in keys]
     return values, keys
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-def _user_unflatten(keys: tuple[str, ...], values: Sequence[Any]) -> UserMappingLeaf:
+def _user_unflatten(
+    keys: tuple[str, ...], values: Sequence[UserParamsLeaf | PytreeChild]
+) -> UserMappingLeaf:
     return UserMappingLeaf(dict(zip(keys, values, strict=True)))
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-def _canonical_unflatten(keys: tuple[str, ...], values: Sequence[Any]) -> MappingLeaf:
+def _canonical_unflatten(
+    keys: tuple[str, ...], values: Sequence[UserParamsLeaf | PytreeChild]
+) -> MappingLeaf:
     return MappingLeaf(dict(zip(keys, values, strict=True)))
 
 

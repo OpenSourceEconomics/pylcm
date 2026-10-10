@@ -5,7 +5,7 @@ import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, no_type_check
+from typing import no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -30,6 +30,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     NextStateSimulationFunction,
     PRNGKeyND,
+    PytreeValue,
     QualifiedName,
     RegimeName,
     StateName,
@@ -47,6 +48,8 @@ from lcm.typing import (
     FloatND,
     IntND,
     ReferenceName,
+    ScalarFloat,
+    ScalarInt,
 )
 
 
@@ -293,7 +296,7 @@ def _extend_bundle_for_simulation(
     bundle: MappingProxyType[TransitionFunctionName, Callable[..., FloatND | IntND]],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     transition_plans: TargetTransitionPlans,
-) -> dict[TransitionFunctionName, Callable[..., FloatND | IntND]]:
+) -> dict[TransitionFunctionName, Callable[..., ArrayTree]]:
     """Replace stochastic transitions for one target with realisation wrappers.
 
     Deterministic transitions are passed through unchanged. Stochastic transitions
@@ -318,9 +321,7 @@ def _extend_bundle_for_simulation(
 
     """
     plan = transition_plans[target_regime_name]
-    extended: dict[TransitionFunctionName, Callable[..., FloatND | IntND]] = dict(
-        bundle
-    )
+    extended: dict[TransitionFunctionName, Callable[..., ArrayTree]] = dict(bundle)
     for next_state_name in bundle:
         lottery = plan.lotteries.get(next_state_name)
         if lottery is None:
@@ -364,7 +365,7 @@ def _create_joint_stochastic_next_func(
     support_provider_name: str | None,
     support_size: int | None,
     node_annotation: str | None,
-) -> Callable[..., Any]:
+) -> _RealizedJointNode:
     """Draw one support node and publish its whole pytree to dependent outputs."""
     if support_provider_name is None or support_size is None or node_annotation is None:
         raise ModelInitializationError(
@@ -410,7 +411,7 @@ class _RealizedJointNode:
     # Python scalars, arrays of either integer width -- so its annotations
     # document the contract and are not enforced at call time.
     @no_type_check
-    def __call__(self, **kwargs: Any) -> ArrayTree:
+    def __call__(self, **kwargs: PytreeValue) -> ArrayTree:
         index = jax.random.choice(
             key=kwargs[f"key_{self.qname}"],
             a=self.support_size,
@@ -587,7 +588,7 @@ class _AR1NextState:
     """Name of the process state whose current value the draw conditions on."""
     args: dict[ReferenceName, str]
     """Argument names and annotations, in signature order."""
-    fixed_params: dict[str, Any]
+    fixed_params: dict[str, ScalarFloat | ScalarInt]
     """Process parameters fixed at construction."""
     runtime_param_names: dict[str, str]
     """Mapping of qualified runtime-param names to the process's own names."""
@@ -655,7 +656,7 @@ class _IIDNextState:
     """Qualified `<target>__next_<state>` name of the transition."""
     args: dict[ReferenceName, str]
     """Argument names and annotations, in signature order."""
-    fixed_params: dict[str, Any]
+    fixed_params: dict[str, ScalarFloat | ScalarInt]
     """Process parameters fixed at construction."""
     runtime_param_names: dict[str, str]
     """Mapping of qualified runtime-param names to the process's own names."""
@@ -691,7 +692,7 @@ def _conditioned_sigma(
     *,
     conditioned: tuple[StateConditioned, Float1D] | None,
     kwargs: Mapping[ReferenceName, FloatND | IntND | PRNGKeyND],
-) -> Mapping[str, Any]:
+) -> Mapping[str, ScalarFloat]:
     """Return `{"sigma": <the value the conditioning state selects>}`, else `{}`.
 
     Overrides the scalar `sigma` that places the nodes, so the draw uses the same

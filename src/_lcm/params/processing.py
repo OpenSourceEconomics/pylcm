@@ -25,7 +25,7 @@ qualified name.
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -43,6 +43,7 @@ from _lcm.typing import (
     FlatEdgeParams,
     FlatParams,
     FlatRegimeParams,
+    ParamsLeaf,
     ParamsTemplate,
     QualifiedName,
     RegimeName,
@@ -52,7 +53,13 @@ from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.typing import FunctionName, ParameterName, ReferenceName, UserParams
+from lcm.typing import (
+    FunctionName,
+    ParameterName,
+    ReferenceName,
+    UserParams,
+    UserParamsLeaf,
+)
 
 
 def process_params(
@@ -115,7 +122,7 @@ def process_params(
 def broadcast_to_template(
     *,
     params: Mapping,
-    template: Mapping[str, Mapping],
+    template: ParamsTemplate,
     required: bool = True,
     already_consumed: frozenset[str] = frozenset(),
 ) -> FlatParams:
@@ -159,10 +166,10 @@ def broadcast_to_template(
     params_flat = flatten_regime_namespace(params)
 
     # User values, unvalidated until `cast_params_to_canonical_dtypes`.
-    result: dict[RegimeName, dict[str, object]] = {
+    result: dict[RegimeName, dict[QualifiedName, UserParamsLeaf]] = {
         name: {} for name in template if name != EDGES
     }
-    edge_result: dict[RegimeName, dict[str, object]] = {
+    edge_result: dict[RegimeName, dict[QualifiedName, UserParamsLeaf]] = {
         source: {} for source in template.get(EDGES, {})
     }
     used_keys: set[str] = set()
@@ -202,9 +209,11 @@ def broadcast_to_template(
             )
         raise InvalidParamsError(" ".join(messages))
 
-    frozen: dict[RegimeName, MappingProxyType[str, object]] = {
-        k: MappingProxyType(v) for k, v in result.items()
-    }
+    frozen: dict[
+        RegimeName,
+        MappingProxyType[QualifiedName, UserParamsLeaf]
+        | MappingProxyType[RegimeName, MappingProxyType[QualifiedName, UserParamsLeaf]],
+    ] = {k: MappingProxyType(v) for k, v in result.items()}
     if EDGES in template:
         frozen[EDGES] = MappingProxyType(
             {source: MappingProxyType(v) for source, v in edge_result.items()}
@@ -275,14 +284,14 @@ def materialize_granular_transition_params(
         by their granular spellings.
 
     """
-    result: dict[str, MappingProxyType[str, object]] = {}
+    result: dict[RegimeName, FlatRegimeParams | FlatEdgeParams] = {}
     for regime_name, leaves in flat_params.items():
         if regime_name == EDGES:
             result[EDGES] = leaves
             continue
         regime_expansions = expansions.get(regime_name, {})
-        materialized: dict[str, object] = {}
-        for param_qname, value in leaves.items():
+        materialized: dict[QualifiedName, ParamsLeaf] = {}
+        for param_qname, value in cast("FlatRegimeParams", leaves).items():
             path = tree_path_from_qname(param_qname)
             prefixes = regime_expansions.get(path[0])
             if len(path) == ParamsQnameDepth.REGIME__FUNC__PARAM - 1 and prefixes:
@@ -291,7 +300,7 @@ def materialize_granular_transition_params(
             else:
                 materialized[param_qname] = value
         result[regime_name] = MappingProxyType(materialized)
-    return cast("FlatParams", MappingProxyType(result))
+    return MappingProxyType(result)
 
 
 # keyword-only-exempt: primary-argument=flat_params
@@ -318,7 +327,7 @@ def cast_params_to_canonical_dtypes(
     # slots (e.g. a coarse value resolved into per-target template slots)
     # stays one shared leaf, so downstream consumers can deduplicate by
     # identity and large array leaves are not copied per slot.
-    memo: dict[int, Any] = {}
+    memo: dict[int, ParamsLeaf] = {}
 
     return MappingProxyType(
         {
@@ -338,7 +347,7 @@ def cast_params_to_canonical_dtypes(
                 )
                 if regime == EDGES
                 else _cast_flat_leaves(
-                    leaves=leaves,
+                    leaves=cast("FlatRegimeParams", leaves),
                     prefix=regime,
                     memo=memo,
                     array_writer=array_writer,
@@ -352,10 +361,10 @@ def cast_params_to_canonical_dtypes(
 def _cast_flat_leaves(
     *,
     # User values, cast here; unvalidated until then.
-    leaves: Mapping[str, object],
+    leaves: Mapping[QualifiedName, UserParamsLeaf],
     prefix: str,
     # Shared with `_cast_shared`, whose memo holds the canonical leaves.
-    memo: dict[int, Any],
+    memo: dict[int, ParamsLeaf],
     array_writer: CanonicalArrayWriter | None,
 ) -> FlatRegimeParams:
     """Cast one flat mapping's leaves, naming each by `prefix` and its key."""
@@ -374,11 +383,11 @@ def _cast_flat_leaves(
 
 def _cast_shared(
     *,
-    value: Any,
+    value: UserParamsLeaf,
     name: str,
-    memo: dict[int, Any],
+    memo: dict[int, ParamsLeaf],
     array_writer: CanonicalArrayWriter | None,
-) -> Any:
+) -> ParamsLeaf:
     """Cast `value` once per distinct input object, memoized by identity in `memo`."""
     key = id(value)
     if key not in memo:
@@ -390,10 +399,10 @@ def _cast_shared(
 
 def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
     *,
-    value: Any,
+    value: UserParamsLeaf,
     name: str,
     array_writer: CanonicalArrayWriter | None,
-) -> Any:
+) -> ParamsLeaf:
     """Cast a single params leaf to its canonical pylcm dtype.
 
     Strict whitelist — every code path either casts or raises.
@@ -487,7 +496,7 @@ def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
 def find_param_candidates(
     *,
     qname: QualifiedName,
-    params_flat: Mapping[str, object],
+    params_flat: Mapping[QualifiedName, UserParamsLeaf],
 ) -> list[str]:
     """Find candidate matches for a template qname, most to least specific.
 
@@ -578,7 +587,12 @@ def create_params_template(
             name the edge namespace.
 
     """
-    template: dict[str, Any] = {}
+    template: dict[
+        RegimeName,
+        dict[
+            FunctionName | RegimeName, MappingProxyType[str, RegimeParamsTemplateNode]
+        ],
+    ] = {}
     regime_names: set[RegimeName] = set(regimes)
     function_names: set[FunctionName] = set()
     arg_names = _edge_arg_names(regimes)
@@ -623,7 +637,10 @@ def create_params_template(
                         for role, role_params in func_val.items():
                             arg_names |= _validated_arg_names(
                                 func_name=f"{func_key}.{role}",
-                                params=cast("Mapping", role_params),
+                                params=cast(
+                                    "Mapping[str, RegimeParamsTemplateNode]",
+                                    role_params,
+                                ),
                                 regime_name=name,
                             )
                     else:
@@ -683,7 +700,7 @@ def _leaf_paths(
 def _validated_arg_names(
     *,
     func_name: FunctionName,
-    params: Mapping,
+    params: Mapping[str, RegimeParamsTemplateNode],
     regime_name: RegimeName,
 ) -> set[str]:
     """Return a function entry's argument names, validating each leaf.
@@ -770,7 +787,7 @@ def get_flat_param_names(
 
 
 def _collect_flat_param_names(
-    *, prefix: tuple[str, ...], node: object, result: set[str]
+    *, prefix: tuple[str, ...], node: RegimeParamsTemplateNode, result: set[str]
 ) -> None:
     """Add the qualified name of every leaf under `node` to `result`."""
     if isinstance(node, Mapping):

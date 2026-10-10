@@ -70,9 +70,12 @@ from _lcm.regime_building.Q_and_F import (
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.typing import (
+    ArrayTree,
     ConstraintFunction,
     EconFunctionsMapping,
+    FlatParams,
     FunctionName,
+    HostArray,
     ParamsLeaf,
     QAndFArg,
     QAndFKwargs,
@@ -91,6 +94,7 @@ from lcm.typing import (
     FloatND,
     ReferenceName,
     ScalarFloat,
+    ValueND,
 )
 
 # Suffix under which a target regime's dissolution flag `D` (cast to float) is passed
@@ -234,9 +238,9 @@ EDGE_PERIOD_CONTEXT_ARGS = frozenset({_EDGE_PERIOD_ARG, _EDGE_AGE_ARG})
 
 def bind_edge_period_context(
     *,
-    func: Callable,
+    func: Callable[..., ArrayTree],
     fold_period: int,
-    fold_age: object,
+    fold_age: float | ScalarFloat | Int[Scalar, ""] | None,
 ) -> dict[ReferenceName, Int[Scalar, ""] | ScalarFloat]:
     """Bind the target-fold context an edge callable explicitly declares.
 
@@ -417,7 +421,7 @@ class _ProvenanceBuilder:
         )
 
 
-def _uncompiled_edge_callable(*_args: object, **_kwargs: object) -> NoReturn:
+def _uncompiled_edge_callable(*_args: QAndFArg, **_kwargs: QAndFArg) -> NoReturn:
     """Stand in for a gated-edge callable model processing has not built yet.
 
     A gated edge is resolved in two stages: the resolution the build-time
@@ -465,7 +469,9 @@ class ResolvedStakeholderRoute:
     the two separately (`StakeholderRoute(fallback=Phased(...))`); `None` where one
     reference serves both. Read `realized_fallback` rather than this field."""
 
-    fallback_state_projector: Callable = _uncompiled_edge_callable
+    fallback_state_projector: Callable[..., Mapping[StateName, FloatND]] = (
+        _uncompiled_edge_callable
+    )
     """This leg's FALLBACK state projector.
 
     Maps a target-grid-coordinate point to the fallback regime's own state
@@ -546,7 +552,7 @@ class ResolvedGatedEdge:
     age-specialized read grid carries exactly one.
     """
 
-    simulate_gate_evaluators_by_period: MappingProxyType[int, Callable] = (
+    simulate_gate_evaluators_by_period: MappingProxyType[int, Callable[..., BoolND]] = (
         MappingProxyType({})
     )
     """SIMULATE-side gate evaluators, keyed by fold period. Read through
@@ -634,7 +640,7 @@ class ResolvedGatedEdge:
             target=self.target,
         ).combine
 
-    def simulate_gate_evaluator_at(self, *, period: int) -> Callable:
+    def simulate_gate_evaluator_at(self, *, period: int) -> Callable[..., BoolND]:
         """Return the simulate gate evaluator for the period it routes against."""
         return _select_period_callable(
             by_period=self.simulate_gate_evaluators_by_period,
@@ -1121,7 +1127,9 @@ class _CompiledEdgeGate:
     states it reads, and its own free params under their qualified names."""
 
 
-def _as_boolean_gate(*, value: object, target: RegimeName, phase: str) -> BoolND:
+def _as_boolean_gate(
+    *, value: ValueND | HostArray | bool | float, target: RegimeName, phase: str
+) -> BoolND:
     """Return the gate output as a Boolean array, or reject its dtype.
 
     A gate selects a branch with a strict `jnp.where`, where every nonzero
@@ -2419,7 +2427,7 @@ def _fail_if_arguments_do_not_match(
 
 def _publish_signature(
     *,
-    target: object,
+    target: Callable[..., ArrayTree],
     arg_names: tuple[ReferenceName, ...],
     return_annotation: str,
     name: str,
@@ -2591,8 +2599,7 @@ def edge_may_fold_at_period(
 def build_reference_params_mapping_for_fold(
     *,
     edge: ResolvedGatedEdge,
-    # `object` leaves: the claw would otherwise check every leaf on every call.
-    flat_params: Mapping[str, object],
+    flat_params: FlatParams,
 ) -> MappingProxyType[RegimeName, Mapping[str, ParamsLeaf]]:
     """Assemble `SAME_PERIOD_PARAMS_ARG` for one edge's reference readers.
 

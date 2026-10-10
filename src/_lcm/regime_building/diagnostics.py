@@ -12,7 +12,7 @@ The fused output is consumed by `_enrich_with_diagnostics` in
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, cast, no_type_check
+from typing import cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -30,6 +30,7 @@ from _lcm.regime_building.age_normalization import (
 )
 from _lcm.regime_building.Q_and_F import (
     GatedContinuationSchedule,
+    Intermediates,
     get_compute_intermediates,
     partition_continuation_targets,
 )
@@ -48,6 +49,11 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from lcm.typing import BoolND, FloatND, IntND
+
+# The NaN and feasibility reductions of one period's intermediates:
+# `{Y}_overall` scalars and `{Y}_by_{name}` vectors, plus `regime_probs`, the mean
+# transition probability of each target regime.
+type DiagnosticReductions = dict[str, FloatND | dict[RegimeName, FloatND]]
 
 
 def _build_compute_intermediates_per_period(
@@ -73,7 +79,7 @@ def _build_compute_intermediates_per_period(
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
-) -> MappingProxyType[int, Callable]:
+) -> MappingProxyType[int, Callable[..., DiagnosticReductions]]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
 
     Each closure fuses a productmap over the full state-action space with
@@ -143,7 +149,9 @@ def _build_compute_intermediates_per_period(
         *state_action_space.state_names,
         *state_action_space.action_names,
     )
-    built: dict[tuple[tuple[RegimeName, ...], Hashable], Callable] = {}
+    built: dict[
+        tuple[tuple[RegimeName, ...], Hashable], Callable[..., DiagnosticReductions]
+    ] = {}
     for key, periods in configs.items():
         targets = key[0]
         representative_period = periods[0]
@@ -204,9 +212,9 @@ def _build_compute_intermediates_per_period(
 
 def _wrap_with_reduction(
     *,
-    func: Callable,
+    func: Callable[..., Intermediates],
     variable_names: tuple[str, ...],
-) -> Callable:
+) -> Callable[..., DiagnosticReductions]:
     """Fuse a productmap'd intermediates function with on-device reductions.
 
     The wrapped function returns a flat pytree of scalars and per-dimension
@@ -241,7 +249,7 @@ def _wrap_with_reduction(
 class _ReducedIntermediates:
     """Productmap'd intermediates fused with on-device NaN/feasibility reductions."""
 
-    func: Callable
+    func: Callable[..., Intermediates]
     """Productmap'd function returning `(U_arr, F_arr, CE, Q_arr, regime_probs)`."""
     variable_names: tuple[str, ...]
     """State + action names in the order of `func`'s productmap axes."""
@@ -256,7 +264,7 @@ class _ReducedIntermediates:
     def __call__(
         self,
         **kwargs: MappingProxyType[RegimeName, FloatND] | FloatND | IntND | BoolND,
-    ) -> dict[str, Any]:
+    ) -> DiagnosticReductions:
         U_arr, F_arr, CE, Q_arr, regime_probs = self.func(**kwargs)
         F_float = jnp.asarray(F_arr, dtype=float)
         # NaN-count arrays are masked by feasibility: only feasible cells
@@ -269,7 +277,7 @@ class _ReducedIntermediates:
             "Q_nan": jnp.isnan(Q_arr).astype(float) * F_float,
         }
 
-        out: dict[str, Any] = {}
+        out: DiagnosticReductions = {}
         F_total = jnp.maximum(jnp.sum(F_float), 1.0)
         for key, arr in nan_arrays.items():
             out[f"{key}_overall"] = jnp.sum(arr) / F_total
