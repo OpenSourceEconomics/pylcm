@@ -53,14 +53,25 @@ from tests.conftest import X64_ENABLED
 
 DISCOUNT_FACTOR = 0.9
 LAST_ALIVE_AGE = 2
-AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
-WEALTH_GRID = LinSpacedGrid(start=0.0, stop=12.0, n_points=25)
 CONSUMPTION_NODES = (0.5, 1.0, 1.5, 2.0, 3.0)
 N_XI = 5
 POOR_BELOW = 4.0
 HEALTH_PROBS = np.array([[0.7, 0.3], [0.2, 0.8]])
 _ATOL = 1e-10 if X64_ENABLED else 1e-4
 _FP32_ATOL = 1e-5
+
+
+def _ages() -> AgeGrid:
+    return AgeGrid(start=0, inclusive_stop=3, step="Y")
+
+
+def _wealth_grid() -> LinSpacedGrid:
+    """Build the wealth grid at call time.
+
+    A grid stores its bounds as JAX scalars at the precision active when it is
+    built, so the fp32 tests need a grid built under fp32.
+    """
+    return LinSpacedGrid(start=0.0, stop=12.0, n_points=25)
 
 
 @categorical(ordered=False)
@@ -142,7 +153,7 @@ def _model(*, additive: bool, shock_reads_wealth: bool = False) -> Model:
     alive = Regime(
         actions={"consumption": IrregSpacedGrid(points=CONSUMPTION_NODES)},
         states={
-            "wealth": WEALTH_GRID,
+            "wealth": _wealth_grid(),
             "health": DiscreteGrid(_Health),
             "xi": _xi(),
         },
@@ -158,7 +169,7 @@ def _model(*, additive: bool, shock_reads_wealth: bool = False) -> Model:
         }
         | ({"negative_cost": _negative_cost} if additive else {}),
     )
-    dead = Regime(states={"wealth": WEALTH_GRID}, functions={"utility": _bequest})
+    dead = Regime(states={"wealth": _wealth_grid()}, functions={"utility": _bequest})
     return Model(
         regimes={"alive": alive, "dead": dead},
         edges={
@@ -174,7 +185,7 @@ def _model(*, additive: bool, shock_reads_wealth: bool = False) -> Model:
                 ),
             )
         },
-        ages=AGES,
+        ages=_ages(),
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
     )
@@ -205,7 +216,7 @@ def _reference_alive_values() -> dict[int, np.ndarray]:
     xi = _xi()
     xi_nodes = np.asarray(xi.to_jax(), dtype=np.float64)
     xi_weights = np.asarray(xi.get_transition_probs(), dtype=np.float64)[0]
-    wealth_nodes = np.asarray(WEALTH_GRID.to_jax(), dtype=np.float64)
+    wealth_nodes = np.asarray(_wealth_grid().to_jax(), dtype=np.float64)
     dead_V = np.log(wealth_nodes + 11.0)
 
     values: dict[int, np.ndarray] = {}
@@ -396,7 +407,7 @@ def test_the_fp32_value_matches_the_fp64_reference_at_the_plain_law_accuracy(
 
 def test_the_additive_shock_policy_equals_the_plain_law_policy() -> None:
     """Simulated consumption agrees subject by subject in the first period."""
-    wealth = jnp.asarray(np.asarray(WEALTH_GRID.to_jax())[::3])
+    wealth = jnp.asarray(np.asarray(_wealth_grid().to_jax())[::3])
     n = wealth.shape[0]
     consumption = {}
     for additive in (False, True):
