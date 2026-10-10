@@ -416,6 +416,7 @@ def test_legacy_age_model_state_restores_an_explicit_clock(
     else:
         state["initial_nodes"] = model.graph.initial_nodes  # ty: ignore[invalid-key]
     del state["_time"]
+    state.pop("_transition_only_shock_names", None)
     restored = lcm.Model.__new__(lcm.Model)
     restored.__setstate__(state)
     assert restored._model_structure_fingerprint == model._model_structure_fingerprint
