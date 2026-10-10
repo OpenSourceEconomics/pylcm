@@ -21,6 +21,7 @@ from lcm import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
+from lcm.transition import AgeCaseLaw
 from lcm.typing import AgeSelector
 
 
@@ -204,7 +205,7 @@ _TERMINAL_INSIDE = "marks a terminal regime only as the top-level"
             _TERMINAL_INSIDE,
         ),
         (
-            lambda: ByAge.until(stop_age_exclusive=62, law="a", then=None),
+            lambda: ByAge.until(stop_age_exclusive=62, law="a", then=None),  # ty: ignore[invalid-argument-type]
             _TERMINAL_INSIDE,
         ),
         (
@@ -239,7 +240,7 @@ _LAWS = {
 }
 
 
-def _phased(*, schedule_side: str, law: object) -> Phased:
+def _phased(*, schedule_side: str, law: AgeCaseLaw) -> Phased:
     schedule = ByAge.until(stop_age_exclusive=63, law=law, then="retired")
     sides = {"solve": "working", "simulate": "working"}
     for side in ("solve", "simulate"):

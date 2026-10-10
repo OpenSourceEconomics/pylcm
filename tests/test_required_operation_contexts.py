@@ -35,6 +35,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.phased import Phased
+from lcm.transition import AgeSelector
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -108,7 +109,7 @@ def _demand_model(
     """
     if perceived is None:
         perceived = _wealth_regime(utility=_backward_utility)
-    roots: dict[object, str] = {0: "source"}
+    roots: dict[AgeSelector, str] = {0: "source"}
     if promote:
         roots[1] = "perceived"
     if redundant_root:
@@ -441,7 +442,7 @@ def _collective_demand_model(*, promote: bool) -> Model:
     Each stakeholder of `perceived` has a phased utility whose simulate variant
     reads `simulate_bonus`.
     """
-    roots: dict[object, str] = {0: "source"}
+    roots: dict[AgeSelector, str] = {0: "source"}
     if promote:
         roots[1] = "perceived"
     return Model(
@@ -545,7 +546,9 @@ def _age_grid_model(
         if valid_late_law
         else (_left_from_wealth, _right_from_wealth)
     )
-    roots: dict[object, str] = {(0, 1): "working"} if earlier_root else {1: "working"}
+    roots: dict[AgeSelector, str] = (
+        {(0, 1): "working"} if earlier_root else {1: "working"}
+    )
     return Model(
         edges={
             "working": Transition(

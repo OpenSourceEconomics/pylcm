@@ -17,8 +17,23 @@ from enum import Enum, auto
 from types import MappingProxyType
 from typing import no_type_check
 
-from _lcm.typing import QualifiedName, RegimeName, TransitionFunctionName
-from lcm.typing import DiscreteState, FloatND, ReferenceName, StateName
+import numpy as np
+from jax.tree_util import PyTreeDef
+
+from _lcm.typing import (
+    EconFunctionArg,
+    QualifiedName,
+    RegimeName,
+    TransitionFunction,
+    TransitionFunctionName,
+)
+from lcm.typing import (
+    DiscreteState,
+    FloatND,
+    ReferenceName,
+    StateName,
+    UserFunction,
+)
 
 
 class SupportOrigin(Enum):
@@ -41,8 +56,8 @@ class SupportSignature:
     """Static structure of one finite support."""
 
     size: int
-    treedef: object | None = None
-    leaves: tuple[object, ...] = ()
+    treedef: PyTreeDef | None = None
+    leaves: tuple[tuple[tuple[int, ...], np.dtype], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -71,9 +86,9 @@ class InterpolationBasisInfo:
     """A deterministic support basis whose coefficients are not probabilities."""
 
     axis_name: str
-    support_provider: object | None
+    support_provider: TransitionFunction | None
     support_signature: SupportSignature
-    weight_function: object
+    weight_function: UserFunction
     params: ParameterBinding
     weight_name: str
 
@@ -133,7 +148,7 @@ def declared_law_over_codes(
         return layout, declared
 
     @no_type_check
-    def over_codes(**kwargs: object) -> FloatND:
+    def over_codes(**kwargs: EconFunctionArg) -> FloatND:
         return declared(**{k: v for k, v in kwargs.items() if k != state_name})
 
     over_codes.__signature__ = signature  # ty: ignore[unresolved-attribute]
@@ -172,9 +187,9 @@ class TransitionLotteryInfo:
 
     name: str
     qualified_name: QualifiedName
-    support_provider: object | None
+    support_provider: TransitionFunction | None
     support_signature: SupportSignature
-    probabilities: object
+    probabilities: UserFunction
     support_origin: SupportOrigin
     lifetime: LotteryLifetime
     persisted_state: StateName | None
@@ -197,7 +212,7 @@ class TransitionOutputInfo:
     next_state_name: TransitionFunctionName
     qualified_name: QualifiedName
     producer: OutputProducerRef
-    physical_resolver: object | LotteryValue
+    physical_resolver: TransitionFunction | LotteryValue
     continuation_coordinate: (
         PhysicalCoordinate | LotteryIndexCoordinate | InterpolationBasisInfo
     )

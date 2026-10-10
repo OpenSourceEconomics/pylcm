@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from beartype import beartype
 
@@ -17,7 +17,7 @@ from lcm.transition import (
     _fail_if_invalid_age_selector,
     _fail_if_invalid_period_selector,
 )
-from lcm.typing import RegimeName
+from lcm.typing import RegimeName, UserAge
 
 
 @dataclass(frozen=True, init=False)
@@ -60,7 +60,7 @@ class InitialNodes:
             raise ModelInitializationError(
                 f"`InitialNodes.by_{kind}` must be nonempty."
             )
-        normalized: dict[object, tuple[RegimeName, ...]] = {}
+        normalized: dict[K, tuple[RegimeName, ...]] = {}
         for selector, value in selected.items():
             if kind == "age" and isinstance(selector, PeriodRange | Periods):
                 raise ModelInitializationError(
@@ -102,9 +102,19 @@ class InitialNodes:
         return cls(by_period=names_by_coordinate)
 
 
-type UserInitialNodes = (
-    InitialNodes
-    | Sequence[tuple[object, str]]
-    | AbstractSet[tuple[object, str]]
-    | Mapping[object, str | Sequence[str]]
-)
+if TYPE_CHECKING:
+    type UserInitialNodes = (
+        InitialNodes
+        | Sequence[tuple[UserAge | float, RegimeName]]
+        | AbstractSet[tuple[UserAge | float, RegimeName]]
+        | Mapping[AgeSelector, RegimeName | Sequence[RegimeName]]
+    )
+else:
+    # The runtime check admits any start coordinate and selector, so that the
+    # model refuses a malformed age naming it rather than with a type violation.
+    type UserInitialNodes = (
+        InitialNodes
+        | Sequence[tuple[object, RegimeName]]
+        | AbstractSet[tuple[object, RegimeName]]
+        | Mapping[object, RegimeName | Sequence[RegimeName]]
+    )

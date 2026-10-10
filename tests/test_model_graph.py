@@ -29,6 +29,7 @@ from lcm.exceptions import (
     ModelInitializationError,
 )
 from lcm.regime import Regime
+from lcm.transition import ModelEdges
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.test_models import n_nbegm_toy
 
@@ -317,7 +318,7 @@ def test_explicit_initial_pair_requires_one_exact_age() -> None:
             regimes=_graph_regimes(),
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regime_id_class=_GraphRegimeId,
-            initial_nodes=(((0, 1), "perceived"),),
+            initial_nodes=(((0, 1), "perceived"),),  # ty: ignore[invalid-argument-type]
             edges={},
             enable_jit=False,
         )
@@ -513,7 +514,7 @@ def test_published_initial_nodes_are_accepted_by_the_constructor() -> None:
     assert rebuilt.graph.initial_nodes == frozenset({(0, "work")})
 
 
-def _declaration_model(*, edges: object, enable_jit: bool) -> Model:
+def _declaration_model(*, edges: ModelEdges, enable_jit: bool) -> Model:
     return Model(
         regimes={
             "work": Regime(functions={"utility": lambda: jnp.asarray(1.0)}),
