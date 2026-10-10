@@ -3,7 +3,6 @@
 import inspect
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
-from fractions import Fraction
 from functools import wraps
 from typing import Any, cast, no_type_check
 
@@ -13,15 +12,10 @@ import numpy as np
 from beartype import beartype
 
 from _lcm.beartype_conf import PARAMS_CONF
-from lcm.typing import ValueND
+from lcm.typing import AgeLabel, PeriodLabel, ValueND
 
-# A computational period label. A boolean passes here and is refused when the
-# labels are validated.
-type _PeriodLabel = int | np.integer
-# A numeric age label. Finiteness is checked when the labels are validated.
-type _AgeLabel = int | float | Fraction | np.integer | np.floating
 # The static labels of a `TimeVarying`: its periods and its ages, one of them set.
-type _Labels = tuple[tuple[_PeriodLabel, ...] | None, tuple[_AgeLabel, ...] | None]
+type _Labels = tuple[tuple[PeriodLabel, ...] | None, tuple[AgeLabel, ...] | None]
 
 
 @beartype(conf=PARAMS_CONF)
@@ -39,10 +33,10 @@ class TimeVarying:
 
     # Coordinates are validated deterministically in preflight, including rows
     # outside the model grid; the type check samples one entry of each tuple.
-    periods: tuple[_PeriodLabel, ...] | None = None
+    periods: tuple[PeriodLabel, ...] | None = None
     """Integer computational coordinates, mutually exclusive with ages."""
 
-    ages: tuple[_AgeLabel, ...] | None = None
+    ages: tuple[AgeLabel, ...] | None = None
     """Finite numeric age coordinates, mutually exclusive with periods."""
 
     def __post_init__(self) -> None:
@@ -53,7 +47,7 @@ class TimeVarying:
         labels = (
             self.periods
             if self.periods is not None
-            else cast("tuple[_AgeLabel, ...]", self.ages)
+            else cast("tuple[AgeLabel, ...]", self.ages)
         )
         if self.values.ndim == 0 or self.values.shape[0] != len(labels):
             raise ValueError(

@@ -23,22 +23,8 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_director
 from _lcm.regime_building.age_specialization import INVARIANT
 from _lcm.solution.cuda_lowering_identity import capture_cuda_lowering_identity
 from _lcm.solution.fingerprint import _semantic_fingerprint
-from _lcm.typing import HostArray, JSONValue
+from _lcm.typing import HostArray, JSONValue, LoweringDescriptor
 from lcm.exceptions import ExecutionPlanningError
-
-# A copied lowering descriptor: strings, integers, Booleans, bytes and `None` at
-# the leaves, nested in tuples, frozensets and read-only mappings. It retains no
-# live payload.
-type LoweringDescriptor = (
-    str
-    | int
-    | bool
-    | bytes
-    | tuple[LoweringDescriptor, ...]
-    | frozenset[LoweringDescriptor]
-    | MappingProxyType[LoweringDescriptor, LoweringDescriptor]
-    | None
-)
 
 
 def describe_lowering_value(

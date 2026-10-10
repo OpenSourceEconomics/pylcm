@@ -168,6 +168,24 @@ type PytreeValue = (
     | None
 )
 
+# A value tree whose mapping levels may also be keyed by period, as the solve and
+# the simulation hold their per-period inputs, outputs and intermediates. Code that
+# only walks a tree with JAX's tree utilities takes it; code that reads a level by
+# name takes a `PytreeValue`. One level never mixes names and periods.
+if TYPE_CHECKING:
+    type PeriodPytree = (
+        PytreeValue
+        | tuple[PeriodPytree, ...]
+        | list[PeriodPytree]
+        | Mapping[str, PeriodPytree]
+        | Mapping[int, PeriodPytree]
+    )
+else:
+    # beartype cannot build a check for a recursive alias over `PytreeValue` with
+    # more than one self-referencing container, and these trees only reach JAX's
+    # tree utilities, so the claw checks nothing here.
+    type PeriodPytree = object
+
 # The abstract counterpart of a `PytreeValue`, for lowering and memory profiling.
 type ShapeDtypePytree = (
     ShapeDtypeTree
@@ -237,6 +255,20 @@ type ShardingTree = (
     | tuple[ShardingTree, ...]
     | list[ShardingTree]
     | Mapping[str, ShardingTree]
+    | None
+)
+
+# A copied lowering descriptor: strings, integers, Booleans, bytes and `None` at
+# the leaves, nested in tuples, frozensets and read-only mappings. It retains no
+# live payload.
+type LoweringDescriptor = (
+    str
+    | int
+    | bool
+    | bytes
+    | tuple[LoweringDescriptor, ...]
+    | frozenset[LoweringDescriptor]
+    | MappingProxyType[LoweringDescriptor, LoweringDescriptor]
     | None
 )
 

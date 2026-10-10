@@ -28,6 +28,16 @@ from jaxtyping import Bool, Float, Int, Int32, Scalar, Shaped
 # wrappers import this alias, so define it before importing them below.
 type ValueND = Shaped[Array, "..."]
 
+# The coordinate labels of a `TimeVarying`, defined before the parameter
+# wrappers for the same reason:
+# - a computational period label; a boolean passes here and is refused when
+#   the labels are validated;
+# - a numeric age label; finiteness is checked when the labels are validated;
+# - either of the two.
+type PeriodLabel = int | np.integer
+type AgeLabel = int | float | Fraction | np.integer | np.floating
+type TimeLabel = PeriodLabel | AgeLabel
+
 from lcm.params import TimeVarying, UserMappingLeaf, UserSequenceLeaf  # noqa: E402
 
 if TYPE_CHECKING:

@@ -12,7 +12,7 @@ from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.utils.ast_inspection import time_index_names
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.temporal import TimeVarying
-from lcm.typing import UserAge, UserFunction, ValueND
+from lcm.typing import TimeLabel, UserAge, UserFunction, ValueND
 
 
 def temporal_parameter_names(func: UserFunction | None) -> frozenset[str]:
@@ -55,7 +55,9 @@ def validate_temporal_variants(
     return names
 
 
-def _validate_time_labels(*, labels: tuple, kind: str, name: str) -> None:
+def _validate_time_labels(
+    *, labels: tuple[TimeLabel, ...], kind: str, name: str
+) -> None:
     """Validate the schema before surplus observations can be discarded."""
     if kind == "period" and any(
         isinstance(v, (bool, np.bool_)) or not isinstance(v, (int, np.integer))
@@ -80,7 +82,7 @@ def _validate_time_labels(*, labels: tuple, kind: str, name: str) -> None:
 
 def time_gather_indices(
     *,
-    labels: tuple,
+    labels: tuple[TimeLabel, ...],
     kind: str,
     ages: TimeAxis,
     required_periods: tuple[int, ...],
@@ -129,7 +131,11 @@ def align_time_varying(
     array_writer: CanonicalArrayWriter | None = None,
 ) -> ValueND:
     """Gather static coordinates while keeping numeric values differentiable."""
-    labels = value.periods if value.periods is not None else cast("tuple", value.ages)
+    labels = (
+        value.periods
+        if value.periods is not None
+        else cast("tuple[TimeLabel, ...]", value.ages)
+    )
     indices = time_gather_indices(
         labels=labels,
         kind="period" if value.periods is not None else "age",

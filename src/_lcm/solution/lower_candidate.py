@@ -24,12 +24,11 @@ from _lcm.solution.backward_induction import (
 from _lcm.solution.continuation_arguments import MARGINAL_ARGUMENT
 from _lcm.solution.fingerprint import _semantic_fingerprint
 from _lcm.solution.lowering_descriptors import (
-    LoweringDescriptor,
     capture_lowering_identity,
     describe_lowering_value,
 )
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams
+from _lcm.typing import FlatParams, LoweringDescriptor
 from lcm.exceptions import ExecutionPlanningError
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.solver_api import ArtifactRef, ResultRetention

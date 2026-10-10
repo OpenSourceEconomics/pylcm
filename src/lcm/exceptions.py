@@ -87,6 +87,10 @@ class ExecutionPlanningError(PyLCMError):
     """Raised when the requested execution policy cannot produce a valid plan."""
 
 
+class SolverAPITypeError(PyLCMError, TypeError):
+    """Raised when a solver-API boundary receives or returns a wrongly typed value."""
+
+
 class UnsupportedOperationError(PyLCMError):
     """Raised when a valid model requests an unsupported runtime operation."""
 
