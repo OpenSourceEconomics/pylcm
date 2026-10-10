@@ -16,6 +16,7 @@ depends on the realized node, so a draw taken by the source and a value averaged
 over that draw would be correlated. That combination is refused.
 """
 
+import cloudpickle
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -276,7 +277,11 @@ def test_the_folded_policy_equals_the_unfolded_policy() -> None:
     np.testing.assert_array_equal(consumption[True], consumption[False])
 
 
-def test_an_initial_value_of_the_transition_only_shock_is_accepted_and_unread() -> None:
+@pytest.mark.parametrize("restore_pickle", [False, True])
+def test_an_initial_value_of_the_transition_only_shock_is_accepted_and_unread(
+    *,
+    restore_pickle: bool,
+) -> None:
     """A panel that still carries the shock's column simulates as one without it."""
     n = 4
     initial_conditions = {
@@ -285,6 +290,8 @@ def test_an_initial_value_of_the_transition_only_shock_is_accepted_and_unread() 
         "regime_id": jnp.full(n, _RegimeId.alive),
     }
     model = _model(fold=True)
+    if restore_pickle:
+        model = cloudpickle.loads(cloudpickle.dumps(model))
     frames = [
         model.simulate(
             params=_params(),
