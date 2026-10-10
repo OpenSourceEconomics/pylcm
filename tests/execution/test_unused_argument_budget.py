@@ -172,13 +172,13 @@ def _compile_solve_read(
     resolved = ResolvedCoreProgram(
         name="main",
         function=_shape_only_solve,
-        arguments={"next_regime_to_V_arr": {"done": source}},
-        static_kwargs={},
+        arguments=MappingProxyType({"next_regime_to_V_arr": {"done": source}}),
+        static_kwargs=MappingProxyType({}),
         requirements=CoreExecutionRequirements(value_reads=(read,)),
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         specialization_key=(),
         input_transfer_plan=(),
     )

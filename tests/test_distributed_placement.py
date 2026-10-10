@@ -1471,12 +1471,14 @@ def test_pruned_transfer_destinations_remain_budgeted_before_dispatch(
     program = ResolvedCoreProgram(
         name="main",
         function=_shape_only_transfer_inputs,
-        arguments={
-            "values": MappingProxyType(
-                {"first": lowering_value, "second": lowering_value}
-            )
-        },
-        static_kwargs={},
+        arguments=MappingProxyType(
+            {
+                "values": MappingProxyType(
+                    {"first": lowering_value, "second": lowering_value}
+                )
+            }
+        ),
+        static_kwargs=MappingProxyType({}),
         requirements=CoreExecutionRequirements(
             value_reads=tuple(
                 ValueRead(target=address, source=transfer.source)
@@ -1486,7 +1488,7 @@ def test_pruned_transfer_destinations_remain_budgeted_before_dispatch(
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         specialization_key=(),
         input_transfer_plan=transfers,
     )

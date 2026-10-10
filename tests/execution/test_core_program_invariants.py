@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Literal, cast
 
 import jax
@@ -116,7 +117,7 @@ def _program(
     return MaterializedCoreProgram(
         name="main",
         function=function,
-        arguments=arguments,
+        arguments=MappingProxyType(dict(arguments)),
         requirements=CoreExecutionRequirements(
             reduced_axes=(
                 ReducedAxis(
@@ -157,7 +158,7 @@ def _value_program(
     return MaterializedCoreProgram(
         name="main",
         function=_core_with_values,
-        arguments=arguments,
+        arguments=MappingProxyType(dict(arguments)),
         requirements=CoreExecutionRequirements(
             reduced_axes=(
                 ReducedAxis(

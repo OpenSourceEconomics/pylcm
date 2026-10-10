@@ -3067,7 +3067,7 @@ def _resident_inventory_by_triple(
     templates: SolveInputMappings,
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
-    fixed_bytes: Mapping[int, int] = MappingProxyType({}),
+    fixed_bytes: MappingProxyType[int, int] = MappingProxyType({}),
 ) -> MappingProxyType[_CoreTriple, ResidentInventory]:
     """Predict, per core triple, the live inventory at its scheduled position.
 

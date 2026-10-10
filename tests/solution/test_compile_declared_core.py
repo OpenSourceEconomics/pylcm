@@ -54,7 +54,7 @@ def _program(*, requirements: CoreExecutionRequirements) -> MaterializedCoreProg
     return MaterializedCoreProgram(
         name="main",
         function=lambda: None,
-        arguments={},
+        arguments=MappingProxyType({}),
         requirements=requirements,
         output_roles=None,
         disposition=CoreExecutionDisposition.DENSE,

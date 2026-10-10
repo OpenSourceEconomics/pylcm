@@ -416,13 +416,13 @@ def _program(*, transfer: ResolvedValueTransfer) -> ResolvedCoreProgram:
     return ResolvedCoreProgram(
         name="main",
         function=lambda: None,
-        arguments={},
-        static_kwargs={},
+        arguments=MappingProxyType({}),
+        static_kwargs=MappingProxyType({}),
         requirements=CoreExecutionRequirements(),
         output_roles=None,
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         specialization_key=("k",),
         input_transfer_plan=(transfer,),
     )

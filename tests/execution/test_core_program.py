@@ -10,7 +10,7 @@ from typing import Literal, cast
 import jax
 import jax.numpy as jnp
 import pytest
-from beartype.roar import BeartypeCallHintParamViolation
+from beartype.roar import BeartypeCallHintParamViolation, BeartypeDoorHintViolation
 from numpy.testing import assert_array_equal
 
 from _lcm.execution.core_program import (
@@ -128,7 +128,7 @@ def _program(
     return MaterializedCoreProgram(
         name="main",
         function=_hard_max_core,
-        arguments=arguments,
+        arguments=MappingProxyType(dict(arguments)),
         requirements=CoreExecutionRequirements(
             reduced_axes=(_axis() if axis is None else axis,)
         ),
@@ -242,7 +242,7 @@ def _value_consumer_program(
     return MaterializedCoreProgram(
         name="main",
         function=_unused_value_consumer_core,
-        arguments=arguments,
+        arguments=MappingProxyType(dict(arguments)),
         requirements=CoreExecutionRequirements(value_reads=accesses),
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
@@ -332,8 +332,8 @@ def test_value_input_planning_rejects_consistently_wrong_consumer_node() -> None
         ),
         pytest.param(
             "non-array-leaf",
-            BeartypeCallHintParamViolation,
-            "parameter arguments",
+            BeartypeDoorHintViolation,
+            r"variable \"value\"",
             id="non-array-leaf",
         ),
     ],
@@ -470,7 +470,7 @@ def test_explicit_value_program_rejects_wrong_lowered_metadata_before_compile(
     program = MaterializedCoreProgram(
         name="main",
         function=function,
-        arguments={"value": template},
+        arguments=MappingProxyType({"value": template}),
         requirements=CoreExecutionRequirements(),
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.DENSE,
@@ -805,7 +805,7 @@ def test_an_unplanned_program_refuses_a_resolved_input_transfer_plan(
     program = MaterializedCoreProgram(
         name="main",
         function=_unused_value_consumer_core,
-        arguments={},
+        arguments=MappingProxyType({}),
         requirements=CoreExecutionRequirements(),
         output_roles=VALUE,
         disposition=disposition,
@@ -1067,3 +1067,19 @@ def test_resolver_rejects_reduction_without_a_stable_semantic_key(
             program=_program(axis=axis),
             tile_widths={"action_product": 1},
         )
+
+
+def test_materialized_program_refuses_plain_dict_arguments() -> None:
+    """A materialized program's argument tree arrives frozen; a dict is refused."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="arguments"):
+        replace(_program(), arguments={"first": jnp.asarray([0, 1])})
+
+
+@pytest.mark.parametrize("field", ["arguments", "static_kwargs", "tile_widths"])
+def test_resolved_program_refuses_plain_dict_fields(*, field: str) -> None:
+    """A resolved program's mappings arrive frozen; a plain dict is refused."""
+    resolved = resolve_core_program(
+        program=_program(), tile_widths=MappingProxyType({"action_product": 2})
+    )
+    with pytest.raises(BeartypeCallHintParamViolation, match=field):
+        replace(resolved, **{field: {}})
