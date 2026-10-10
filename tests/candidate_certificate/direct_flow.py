@@ -404,7 +404,7 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "681a7fe6d5a31497945ade5190da4134abd344d92bf5905345f5547d296c693a",
     COLLECTIVE_SOURCE: "4e0a6a75cf8c68557e4874cb226f452bfad0fcaae4b5824f3f9bf876c2a78c86",
-    MAX_Q_SOURCE: "02a3492669709ee716695cd28f6c044b6e0693fe2078c55a0edf0aceff81df2a",
+    MAX_Q_SOURCE: "d3a6aa921d6c7f18763804c328f374b036787c4eda4b6acacbd974aa66789c3c",
     PROCESSING_SOURCE: "d02e6a706e7fd93cfc47e943537f20ff0462814a2ece9ec062ca881128138525",
     GRID_SEARCH_SOURCE: "a644001646f0a082127b1f8f305c195fee9a90686f2b3fad6d1379a41f7103d6",
     CORE_PROGRAM_SOURCE: "27a651ad36c7966fdc0a581e72ae29a26d27e11c947de9da34d804dd3d16cd37",
@@ -1671,20 +1671,20 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MAX_Q_SOURCE: (
-        "4e323faa74adbf4ab3dc8573bc776bd92788361e024a5eb639ff960c7a1cf5dc",
+        "585ece85c1cd50212e38344fd35d7aec7ec10a03bac7bfb87ca3ba69aea7e928",
         {
             "get_action_partitioned_max_Q_over_a": "9443177495a4aa17b12aed6bda675dace04c1422b7d37a96e6fc76df8e46c30e",
-            "_ActionPartitionedMaxQOverA.__call__": "42b11107cae7f2d6ddcf098584a4bf01e358b5c333b6e94c785c0d525ef42d30",
+            "_ActionPartitionedMaxQOverA.__call__": "908cb48cd85a7987cbbf3c4c92a6929b5da1e2dd7f1c70900e4934c8b3ad3c10",
             "_arguments_named": "95c0088a6f36474a87a6dd5d4f0a72745787638106bcbb911a0f5aad35101365",
-            "_OnActionPartitionAxis.__call__": "bdae3f821f2b03d181665c69c8892a9bab24c4ac53ea83085446376ae5253071",
-            "_call_with_operands": "5758549543745e6470dae727d7a774c784acf7fd6e5e2e314626015b8dece189",
+            "_OnActionPartitionAxis.__call__": "00f65bb9b858b815e7d5fc96fb308317a567e789ccb70cdbeea28a6e067ceab2",
+            "_call_with_operands": "65f621e941c69e4f0023b040374993174c013fe747fc1e8fca726bd0b82205f8",
             "_get_extra_param_names": "ccb1bc531a850fb9475d70e0a06b5d0bf53888e4b7b447e9c06f9e8b8333e958",
             "_fail_if_action_width_keyword_collides": "d72946426a1e4a1d300fa4812f07eea8139236693ef8f79d0e8384b9d59a9f0d",
             "get_streaming_max_Q_over_a": "f6049aafdb1361ab3dc07245c3e201f35719fe199c7278fb748c7658ac5f8a63",
             "_fail_if_full_V_streaming_route_is_unsupported": "cd4c96d572ec7df9dc269f5fa2bfc1ec5c16fe0a78de3be56adc28c15f065d2c",
             "_fail_if_streaming_co_map_layout_is_invalid": "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979",
             "_wrap_with_fold_reduction": "20dee195475a290e229948d79aa1b0b65a0c20a59f0412468637039809b32f07",
-            "_StreamedMaxQOverA.__call__": "33ce3d55caed7206385b8bb20c93dcd387f2c7eaf1f6127b71476811595e85d4",
+            "_StreamedMaxQOverA.__call__": "825b72e2a3efd69ea6ae04ebb9ca712ba11709fae41162cab5d8a084d88b2053",
         },
     ),
     ACTION_STREAMING_SOURCE: (
@@ -3231,7 +3231,7 @@ Q_and_F = productmap(
                 "import math",
                 "from dataclasses import dataclass",
                 "from types import MappingProxyType",
-                "from typing import Any, ClassVar, cast",
+                "from typing import ClassVar, cast",
                 "import jax",
                 "import jax.numpy as jnp",
                 "from dags import with_signature",
@@ -3257,7 +3257,7 @@ Q_and_F = productmap(
                 "build_streaming_collective_max_Q_over_a": 1,
                 "build_streaming_ev1_max_Q_over_a": 1,
                 "build_streaming_max_Q_over_a": 1,
-                "Any": 1,
+                "Any": 0,
                 "cast": 1,
                 "ClassVar": 1,
                 "collective_argmax_and_readout": 1,
@@ -6230,7 +6230,7 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
             "import jax",
             "import jax.numpy as jnp",
             "import math",
-            "from typing import Any, ClassVar, cast",
+            "from typing import ClassVar, cast",
             "from _lcm.logsum import EULER_GAMMA, logsum_and_softmax",
         ]
     )
@@ -7444,8 +7444,8 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
         1,
     )
     mutations["shared_taste_noise:cast_import_replaced"] = source.replace(
-        "from typing import Any, ClassVar, cast",
-        "from candidate_filter import Any, ClassVar, cast",
+        "from typing import ClassVar, cast",
+        "from candidate_filter import ClassVar, cast",
         1,
     )
     mutations["taste_shock_solve:captured_axis_rebinding"] = _insert_before_nth(
