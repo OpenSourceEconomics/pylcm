@@ -15,7 +15,7 @@ consumption node, health draw and shock node, with linear interpolation in
 wealth and linear extrapolation past the grid ends.
 """
 
-from typing import Any
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -47,6 +47,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    ReferenceName,
     ScalarInt,
 )
 from tests.conftest import X64_ENABLED
@@ -191,7 +192,7 @@ def _model(*, additive: bool, shock_reads_wealth: bool = False) -> Model:
     )
 
 
-def _params() -> dict:
+def _params() -> dict[ReferenceName, float]:
     return {"discount_factor": DISCOUNT_FACTOR}
 
 
@@ -356,12 +357,17 @@ def test_only_the_plain_law_maps_the_continuation_over_the_shock(
     observed: list[list[str]] = []
     original = Q_and_F._build_target_continuation
 
-    def observe(**kwargs: Any) -> Any:
-        result = original(**kwargs)
-        observed.append(sorted(result.lottery_axis_names))
-        return result
+    def observer[**P](
+        func: Callable[P, Q_and_F._TargetContinuation],
+    ) -> Callable[P, Q_and_F._TargetContinuation]:
+        def observe(*args: P.args, **kwargs: P.kwargs) -> Q_and_F._TargetContinuation:
+            result = func(*args, **kwargs)
+            observed.append(sorted(result.lottery_axis_names))
+            return result
 
-    monkeypatch.setattr(Q_and_F, "_build_target_continuation", observe)
+        return observe
+
+    monkeypatch.setattr(Q_and_F, "_build_target_continuation", observer(original))
     _model(additive=additive).solve(params=_params(), log_level="off")
 
     assert observed

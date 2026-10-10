@@ -427,6 +427,7 @@ class _PickledModel(TypedDict):
     _solution_model_instance_id: NotRequired[str]
     _declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     _cells_without_edges: MappingProxyType[tuple[RegimeName, int], DroppedCells]
+    _transition_only_shock_names: NotRequired[frozenset[str]]
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     regime_names_to_ids: RegimeNamesToIds
@@ -1288,6 +1289,7 @@ class Model:
             _fixed_component_splits=self._fixed_component_splits,
             _declared_edge_vocabulary=self._declared_edge_vocabulary,
             _cells_without_edges=self._cells_without_edges,
+            _transition_only_shock_names=self._transition_only_shock_names,
             pruned_variables=self.pruned_variables,
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
@@ -1319,6 +1321,9 @@ class Model:
         Resealing records the bindings read by this process's copies of the callables.
         """
         self.__dict__.update(state)
+        self._transition_only_shock_names = state.get(
+            "_transition_only_shock_names", frozenset()
+        )
         self._fixed_component_splits = MappingProxyType(
             dict(state["_fixed_component_splits"])
         )
