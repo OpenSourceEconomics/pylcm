@@ -15,9 +15,9 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
 from types import MappingProxyType
-from typing import SupportsIndex, cast
+from typing import Protocol, SupportsIndex, cast
 
-from _lcm.execution.compiler_memory import CompilerMemoryReport, MemoryAnalyzable
+from _lcm.execution.compiler_memory import CompilerMemoryReport
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import WidthSearch, WidthSearchPolicy
@@ -52,6 +52,14 @@ BOOTSTRAP_TILE_WIDTH_CAP = 1024
 # Largest product of unbudgeted widths a candidate aims for, so the live block
 # stays bounded by a fixed number of cells on every backend.
 BOOTSTRAP_BLOCK_CAP = BOOTSTRAP_WIDTH_CAP * BOOTSTRAP_TILE_WIDTH_CAP
+
+
+class _MemoryAnalyzable(Protocol):
+    """Compiler result exposing JAX-style memory analysis."""
+
+    def memory_analysis(self) -> CompilerMemoryReport:
+        """Return compiler workspace statistics."""
+        ...
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1497,7 +1505,7 @@ def _compiler_memory_analysis[Compiled](
 ) -> CompilerMemoryReport:
     """Read an executable report once without numerical dispatch."""
     try:
-        analyze = cast("MemoryAnalyzable", compiled).memory_analysis
+        analyze = cast("_MemoryAnalyzable", compiled).memory_analysis
     except Exception as exc:
         msg = f"Compiler memory analysis is unavailable for widths {dict(widths)!r}."
         raise ExecutionPlanningError(msg) from exc
