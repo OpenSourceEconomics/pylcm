@@ -10,6 +10,7 @@ from typing import Literal, cast
 import jax
 import jax.numpy as jnp
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from numpy.testing import assert_array_equal
 
 from _lcm.execution.core_program import (
@@ -47,6 +48,7 @@ from _lcm.solution.backward_induction import (
     _build_continuation_templates,
     _resolve_value_input_transfer_plan,
 )
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.solvers import GridSearch
 from lcm.typing import ContinuousState, FloatND
 from tests.regime_building.test_collective_feasibility_is_shared import (
@@ -114,7 +116,7 @@ def _axis(
 def _program(
     *,
     axis: ReducedAxis | None = None,
-    arguments: Mapping[str, object] | None = None,
+    arguments: Mapping[str, PytreeValue | ShapeDtypePytree] | None = None,
     disposition: CoreExecutionDisposition = CoreExecutionDisposition.PLANNED,
     disposition_reason: str | None = None,
 ) -> MaterializedCoreProgram:
@@ -234,7 +236,7 @@ def _value_access(
 def _value_consumer_program(
     *,
     accesses: tuple[ValueRead, ...],
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, PytreeValue | ShapeDtypePytree],
 ) -> MaterializedCoreProgram:
     """Build a synthetic program around exact value-consumer declarations."""
     return MaterializedCoreProgram(
@@ -330,8 +332,8 @@ def test_value_input_planning_rejects_consistently_wrong_consumer_node() -> None
         ),
         pytest.param(
             "non-array-leaf",
-            TypeError,
-            "array-like leaf",
+            BeartypeCallHintParamViolation,
+            "parameter arguments",
             id="non-array-leaf",
         ),
     ],
@@ -354,14 +356,13 @@ def test_value_input_planning_independently_resolves_argument_leaf(
             ValueInputChannel.NEXT_REGIME_VALUE.value: {"target": object()},
         },
     }
-    program = _value_consumer_program(
-        accesses=(access,),
-        arguments=argument_variants[defect],
-    )
 
     with pytest.raises(error, match=message):
         _resolve_value_input_transfer_plan(
-            program=program,
+            program=_value_consumer_program(
+                accesses=(access,),
+                arguments=argument_variants[defect],  # ty: ignore[invalid-argument-type]
+            ),
             source_value_template=value,
             source=_SCHEDULED_SOURCE,
         )
@@ -906,7 +907,7 @@ def test_resolver_rejects_invalid_planner_widths(
 
 
 def test_program_and_resolution_snapshot_their_input_mappings() -> None:
-    raw_arguments: dict[str, object] = {
+    raw_arguments: dict[str, PytreeValue | ShapeDtypePytree] = {
         "first": jnp.asarray([0, 1]),
         "second": jnp.asarray([10, 20, 30]),
     }

@@ -7,9 +7,7 @@ is kept, and says so on its own log-record attribute.
 
 import gc
 import logging
-from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -229,9 +227,7 @@ def test_replace_leaf_by_identity_swaps_exactly_the_named_leaf() -> None:
     tree = MappingProxyType({"a": old, "b": equal_but_other})
     new = jnp.ones(2)
 
-    replaced = cast(
-        "Mapping[str, jax.Array]", replace_leaf_by_identity(tree=tree, old=old, new=new)
-    )
+    replaced = replace_leaf_by_identity(tree=tree, old=old, new=new)
 
     assert (replaced["a"] is new, replaced["b"] is equal_but_other) == (True, True)
 

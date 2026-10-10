@@ -509,7 +509,9 @@ def plan_period_waves(
     return tuple(waves)
 
 
-def replace_leaf_by_identity(*, tree: object, old: object, new: object) -> object:
+def replace_leaf_by_identity[Tree](
+    *, tree: Tree, old: jax.Array, new: jax.Array
+) -> Tree:
     """Return `tree` with the leaf that is `old` replaced by `new`.
 
     Identity, not equality, selects the leaf, so an equal-valued neighbour is

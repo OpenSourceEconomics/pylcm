@@ -14,9 +14,11 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 
 from _lcm.execution.internal_outputs import assert_internal_inputs
 from _lcm.execution.pending_work import PendingSolveWork, execute_with_pending_work
@@ -33,7 +35,7 @@ from _lcm.typing import (
     StateName,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import ReferenceName
+from lcm.typing import FloatND, ReferenceName, ValueND
 
 
 class OutputRole(Enum):
@@ -63,7 +65,7 @@ class StateAxesLeading:
     n_free_leading_axes: int = 0
     """Replicated axes in front of the state axes (a branch or candidate axis)."""
 
-    dtype: object | None = None
+    dtype: DTypeLike | None = None
     """Exact dtype the leaf must have, or `None` to leave it unchecked."""
 
     shape: tuple[int, ...] | None = None
@@ -93,16 +95,31 @@ class StateAxesLeading:
 
 type OutputRoleLeaf = OutputRole | StateAxesLeading
 
-# A tree of output roles shaped like the output it declares, with `None` for an
-# output the program does not publish. A solve program's leaves are
-# `OutputRoleLeaf`s; a forward-simulation program names each leaf's role with a
-# string. A registered pytree dataclass, such as `EGMCarry`, shapes the subtree of
-# the payload it describes.
-type OutputRoleTree = (
-    OutputRoleLeaf
-    | str
-    | tuple[OutputRoleTree, ...]
-    | Mapping[str, OutputRoleTree]
+if TYPE_CHECKING:
+    # A tree of output roles shaped like the output it declares, with `None` for an
+    # output the program does not publish. A solve program's leaves are
+    # `OutputRoleLeaf`s; a forward-simulation program names each leaf's role with a
+    # string. A registered pytree dataclass, such as `EGMCarry`, shapes the subtree
+    # of the payload it describes.
+    type OutputRoleTree = (
+        OutputRoleLeaf
+        | str
+        | tuple[OutputRoleTree, ...]
+        | Mapping[str, OutputRoleTree]
+        | DataclassInstance
+        | None
+    )
+else:
+    # The claw cannot check this recursive alias, so it checks no role tree; the
+    # resolver validates every leaf itself.
+    type OutputRoleTree = object
+
+# Output shardings laid out like the role tree they place, registered dataclass
+# nodes included.
+type OutputShardingTree = (
+    jax.sharding.Sharding
+    | tuple[OutputShardingTree, ...]
+    | Mapping[str, OutputShardingTree]
     | DataclassInstance
     | None
 )
@@ -122,7 +139,7 @@ class ExpectedOutputLeaf:
     shape: tuple[int, ...] | None
     """Absolute shape, or `None` when the role leaves it unchecked."""
 
-    dtype: object | None
+    dtype: DTypeLike | None
     """Exact dtype, or `None` when the role leaves it unchecked."""
 
     sharding: jax.sharding.Sharding
@@ -133,7 +150,7 @@ class ExpectedOutputLeaf:
 class ResolvedOutputLayout:
     """Concrete output shardings and their AOT compilation identity."""
 
-    out_shardings: object
+    out_shardings: OutputShardingTree
     """Pytree accepted by ``jax.jit(..., out_shardings=...)``."""
 
     compilation_key: Hashable
@@ -142,7 +159,7 @@ class ResolvedOutputLayout:
     expected_value_shape: tuple[int, ...]
     """Absolute shape of the V leaf captured from the regime template."""
 
-    expected_value_dtype: object
+    expected_value_dtype: DTypeLike
     """Exact dtype of the V leaf captured from the regime template."""
 
     expected_leaves: tuple[ExpectedOutputLeaf, ...]
@@ -255,11 +272,11 @@ def _state_axis_spec(
 
 def _resolve_output_leaf(
     *,
-    path: tuple[object, ...],
+    path: jax.tree_util.KeyPath,
     role: OutputRoleLeaf,
     value_sharding: jax.sharding.Sharding,
     value_shape: tuple[int, ...],
-    value_dtype: object,
+    value_dtype: DTypeLike,
     state_order: tuple[StateName, ...],
     state_spec: tuple[PartitionEntry, ...] | None,
 ) -> ExpectedOutputLeaf:
@@ -388,14 +405,14 @@ def assert_output_layout(*, output: PytreeValue, layout: ResolvedOutputLayout) -
         )
 
 
-def assert_value_leaf_layout(*, value: object, layout: ResolvedOutputLayout) -> None:
+def assert_value_leaf_layout(*, value: FloatND, layout: ResolvedOutputLayout) -> None:
     """Assert that a published period value is the layout's first leaf."""
     _assert_output_leaf(output=value, path="[0]", expected=layout.expected_leaves[0])
 
 
 def _assert_output_leaf(
     *,
-    output: object,
+    output: ValueND,
     path: str,
     expected: ExpectedOutputLeaf,
 ) -> None:
@@ -420,10 +437,10 @@ def _assert_output_leaf(
 
 def _assert_output_metadata(
     *,
-    output: object,
+    output: ValueND,
     label: str,
     expected_shape: tuple[int, ...] | None,
-    expected_dtype: object | None,
+    expected_dtype: DTypeLike | None,
 ) -> None:
     """Check one planned leaf against the absolute metadata its role declares."""
     if expected_shape is not None:

@@ -23,7 +23,7 @@ def make_eager_core(
     internal_input_templates: Mapping[
         ReferenceName, PytreeValue | ShapeDtypePytree
     ] = MappingProxyType({}),
-) -> Callable[..., object]:
+) -> Callable[..., PytreeValue]:
     """Bind the same function and static widths, retaining only input descriptors."""
     if any(
         not isinstance(leaf, jax.ShapeDtypeStruct)
@@ -92,7 +92,7 @@ class _EagerCore:
     mesh: jax.sharding.Mesh | None
     """Equivalent Explicit mesh for mapped-axis propagation, when sharded."""
 
-    def __call__(self, **arguments: object) -> PytreeValue:
+    def __call__(self, **arguments: PytreeValue) -> PytreeValue:
         """Place operands first and return the numerical function's exact tree."""
         placement = _EagerPlacement(core=self)
         try:
@@ -121,7 +121,7 @@ class _EagerCore:
             placement.results.clear()
 
     def place_operand(
-        self, *, value: object, template: jax.ShapeDtypeStruct
+        self, *, value: PytreeValue, template: jax.ShapeDtypeStruct
     ) -> jax.Array:
         """Preserve committed placement and give ordinary operands their layout."""
         expected = template.sharding
@@ -191,7 +191,7 @@ class _EagerPlacement:
     """One placement per original identity and complete destination descriptor."""
 
     # keyword-only-exempt: library-callback=jax.tree.map
-    def internal(self, value: object, template: jax.ShapeDtypeStruct) -> jax.Array:
+    def internal(self, value: PytreeValue, template: jax.ShapeDtypeStruct) -> jax.Array:
         """Use an internal producer's actual guarded layout when tracing omitted it.
 
         PlannedCore checks the producer's output placement before its consumer
@@ -213,7 +213,7 @@ class _EagerPlacement:
         return self(value, template)
 
     # keyword-only-exempt: library-callback=jax.tree.map
-    def __call__(self, value: object, template: jax.ShapeDtypeStruct) -> jax.Array:
+    def __call__(self, value: PytreeValue, template: jax.ShapeDtypeStruct) -> jax.Array:
         """Share placements while validating each occurrence's numerical metadata."""
         key = (id(value), template)
         if key not in self.results:
