@@ -145,7 +145,7 @@ def _describe_tree(
     raise ExecutionPlanningError(f"Unspecified descriptor type: {type(value)}")
 
 
-def capture_lowering_identity() -> Mapping[str, JSONValue]:
+def capture_lowering_identity() -> MappingProxyType[str, JSONValue]:
     """Read exact bytes before observation; reuse existing native/source seals."""
     # This diagnostic requires an identifiable source checkout and installed native
     # payload. A wheel without source inputs cannot satisfy this schema.

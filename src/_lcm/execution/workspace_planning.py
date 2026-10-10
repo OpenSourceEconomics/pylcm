@@ -13,11 +13,10 @@ import math
 import operator
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from enum import Enum, auto
 from types import MappingProxyType
-from typing import Protocol, SupportsIndex, cast
+from typing import cast
 
-from _lcm.execution.compiler_memory import CompilerMemoryReport
+from _lcm.execution.compiler_memory import CompilerMemoryReport, MemoryAnalyzable
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import WidthSearch, WidthSearchPolicy
@@ -27,14 +26,6 @@ _logger = logging.getLogger("lcm")
 # The policy a caller who declares none plans under: today's ranked walk.
 _EXHAUSTIVE_POLICY = WidthSearchPolicy()
 
-
-class _Missing(Enum):
-    """Marks a field a compiler memory report does not carry."""
-
-    MISSING = auto()
-
-
-_MISSING = _Missing.MISSING
 
 # The single candidate of a program that declares no width axis.
 _NO_WIDTHS: MappingProxyType[str, int] = MappingProxyType({})
@@ -52,14 +43,6 @@ BOOTSTRAP_TILE_WIDTH_CAP = 1024
 # Largest product of unbudgeted widths a candidate aims for, so the live block
 # stays bounded by a fixed number of cells on every backend.
 BOOTSTRAP_BLOCK_CAP = BOOTSTRAP_WIDTH_CAP * BOOTSTRAP_TILE_WIDTH_CAP
-
-
-class _MemoryAnalyzable(Protocol):
-    """Compiler result exposing JAX-style memory analysis."""
-
-    def memory_analysis(self) -> CompilerMemoryReport:
-        """Return compiler workspace statistics."""
-        ...
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1462,9 +1445,9 @@ def compiler_memory_reservation[Compiled](
 ) -> CompilerMemoryReservation:
     """Reserve complete reported default-memory allocations and the raw peak.
 
-    Accept one scalar record or a nonempty sequence/mapping of device records.
-    Every record must supply nonnegative integral peak, argument, output, alias,
-    and temporary counters, including the four host allocation counters. Nonzero
+    Accept the attribute record JAX returns on every backend. The record must
+    supply nonnegative integral peak, argument, output, alias, and temporary
+    counters, including the four host allocation counters. Nonzero
     host allocations are refused: the peak report does not reliably separate
     their memory space. Separately compiled CPU assembly remains a CPU profile.
     Generated-code metadata does not establish host allocation residency.
@@ -1474,10 +1457,7 @@ def compiler_memory_reservation[Compiled](
     """
     analysis = _compiler_memory_analysis(compiled=compiled, widths=widths)
     try:
-        records = _allocation_records(analysis=analysis)
-        return CompilerMemoryReservation(
-            records=tuple(_allocation_record(record=record) for record in records)
-        )
+        return CompilerMemoryReservation(records=(_allocation_record(record=analysis),))
     except Exception as exc:
         raise ExecutionPlanningError(
             "Compiler memory analysis returned no valid per-device reservation "
@@ -1491,7 +1471,7 @@ def compiler_peak_bytes[Compiled](
     """Read and strictly normalize one candidate's compiler-reported peak."""
     analysis = _compiler_memory_analysis(compiled=compiled, widths=widths)
     try:
-        return _peak_from_analysis(analysis=analysis)
+        return _non_negative_bytes(value=analysis.peak_memory_in_bytes)
     except Exception as exc:
         msg = (
             "Compiler memory analysis returned no valid per-device peak for widths "
@@ -1505,7 +1485,7 @@ def _compiler_memory_analysis[Compiled](
 ) -> CompilerMemoryReport:
     """Read an executable report once without numerical dispatch."""
     try:
-        analyze = cast("_MemoryAnalyzable", compiled).memory_analysis
+        analyze = cast("MemoryAnalyzable", compiled).memory_analysis
     except Exception as exc:
         msg = f"Compiler memory analysis is unavailable for widths {dict(widths)!r}."
         raise ExecutionPlanningError(msg) from exc
@@ -1513,27 +1493,18 @@ def _compiler_memory_analysis[Compiled](
         msg = f"Compiler memory analysis is unavailable for widths {dict(widths)!r}."
         raise ExecutionPlanningError(msg)
     try:
-        return analyze()
+        report = analyze()
     except Exception as exc:
         msg = f"Compiler memory analysis failed for widths {dict(widths)!r}."
         raise ExecutionPlanningError(msg) from exc
-
-
-def _allocation_records(
-    *, analysis: CompilerMemoryReport
-) -> tuple[CompilerMemoryReport, ...]:
-    """Keep fields paired within their record before reducing across devices."""
-    if _peak_field(record=analysis) is not _MISSING:
-        return (analysis,)
-    if isinstance(analysis, Mapping):
-        records = tuple(analysis.values())
-    elif isinstance(analysis, (list, tuple)):
-        records = tuple(analysis)
-    else:
-        raise TypeError("Memory analysis must expose a complete allocation record.")
-    if not records:
-        raise ValueError("Per-device memory analysis must not be empty.")
-    return records
+    if not isinstance(report, CompilerMemoryReport):
+        msg = (
+            f"Compiler memory analysis for widths {dict(widths)!r} returned "
+            f"{type(report).__name__}, not an allocation record exposing every "
+            "counter of `CompilerMemoryReport`."
+        )
+        raise ExecutionPlanningError(msg)
+    return report
 
 
 def _allocation_record(*, record: CompilerMemoryReport) -> CompilerMemoryRecord:
@@ -1549,12 +1520,7 @@ def _allocation_record(*, record: CompilerMemoryReport) -> CompilerMemoryRecord:
         "host_alias_size_in_bytes",
         "host_temp_size_in_bytes",
     )
-    fields = {
-        name: record.get(name, _MISSING)
-        if isinstance(record, Mapping)
-        else getattr(record, name, _MISSING)
-        for name in names
-    }
+    fields = {name: getattr(record, name) for name in names}
     try:
         values = {
             name: _non_negative_bytes(value=value) for name, value in fields.items()
@@ -1568,11 +1534,7 @@ def _allocation_record(*, record: CompilerMemoryReport) -> CompilerMemoryRecord:
             temporary_bytes=values["temp_size_in_bytes"],
         )
     except Exception as exc:
-        snapshot = {
-            name: "unavailable" if value is _MISSING else value
-            for name, value in fields.items()
-        }
-        raise ValueError(f"{exc} Reported allocation fields: {snapshot!r}") from exc
+        raise ValueError(f"{exc} Reported allocation fields: {fields!r}") from exc
 
 
 def _fail_if_host_allocations(*, values: Mapping[str, int]) -> None:
@@ -1581,62 +1543,13 @@ def _fail_if_host_allocations(*, values: Mapping[str, int]) -> None:
         raise ValueError("Mixed host/default allocation spaces are unsupported.")
 
 
-def _peak_from_analysis(*, analysis: CompilerMemoryReport) -> int:
-    """Normalize one JAX-style record or nonempty per-device record collection."""
-    peak = _peak_field(record=analysis)
-    if peak is not _MISSING:
-        return _normalize_peak_field(value=peak)
-
-    if isinstance(analysis, Mapping):
-        records = tuple(analysis.values())
-    elif isinstance(analysis, (list, tuple)):
-        records = tuple(analysis)
-    else:
-        msg = "Memory analysis must expose peak_memory_in_bytes."
-        raise TypeError(msg)
-    if not records:
-        msg = "Per-device memory analysis must not be empty."
-        raise ValueError(msg)
-    return max(_peak_from_device_record(record=record) for record in records)
-
-
-def _peak_from_device_record(*, record: CompilerMemoryReport) -> int:
-    """Read the required peak field from one per-device analysis record."""
-    peak = _peak_field(record=record)
-    if peak is _MISSING:
-        msg = "Each per-device memory record must expose peak_memory_in_bytes."
-        raise TypeError(msg)
-    return _normalize_peak_field(value=peak)
-
-
-def _peak_field(*, record: CompilerMemoryReport) -> CompilerMemoryReport:
-    """Read a peak field from an attribute record or a string-keyed mapping."""
-    if isinstance(record, Mapping):
-        return record.get("peak_memory_in_bytes", _MISSING)
-    return getattr(record, "peak_memory_in_bytes", _MISSING)
-
-
-def _normalize_peak_field(*, value: CompilerMemoryReport) -> int:
-    """Normalize one integral peak or nonempty collection of per-device peaks."""
-    if isinstance(value, Mapping):
-        peaks = tuple(value.values())
-    elif isinstance(value, (list, tuple)):
-        peaks = tuple(value)
-    else:
-        return _non_negative_bytes(value=value)
-    if not peaks:
-        msg = "A per-device peak collection must not be empty."
-        raise ValueError(msg)
-    return max(_non_negative_bytes(value=peak) for peak in peaks)
-
-
-def _non_negative_bytes(*, value: CompilerMemoryReport) -> int:
+def _non_negative_bytes(*, value: int) -> int:
     """Accept integer-like byte counts while rejecting booleans and lossy casts."""
     if isinstance(value, bool):
         msg = "A compiler memory counter must be an integer byte count, not bool."
         raise TypeError(msg)
     try:
-        normalized = operator.index(cast("SupportsIndex", value))
+        normalized = operator.index(value)
     except TypeError as exc:
         msg = "A compiler memory counter must be an integer byte count."
         raise TypeError(msg) from exc

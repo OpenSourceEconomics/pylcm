@@ -243,7 +243,7 @@ def _record_resolution(
     **kwargs: Any,
 ) -> Mapping[str, FloatND]:
     if self.memory is not None and products:
-        owned = measure_buffer_footprint(tree=products)
+        owned = measure_buffer_footprint(tree=tuple(products))
         missing = resident_bytes_by_device(
             live=owned, arguments=self.memory.snapshot(), devices=tuple(owned.spans)
         )

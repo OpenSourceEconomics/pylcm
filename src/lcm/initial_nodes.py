@@ -90,11 +90,11 @@ class InitialNodes:
     def _from_pairs(
         cls,
         *,
-        pairs: frozenset[tuple[object, RegimeName]],
+        pairs: frozenset[tuple[UserAge, RegimeName]],
         kind: Literal["age", "period"],
     ) -> InitialNodes:
         """Group resolved pairs by exact coordinate for publication or restoration."""
-        names_by_coordinate: dict[object, list[RegimeName]] = {}
+        names_by_coordinate: dict[UserAge, list[RegimeName]] = {}
         for coordinate, name in sorted(pairs):
             names_by_coordinate.setdefault(coordinate, []).append(name)
         if kind == "age":

@@ -4,9 +4,12 @@ from collections.abc import Callable, Hashable, Mapping
 from types import SimpleNamespace
 from typing import Literal, cast
 
+import jax
+import jax.numpy as jnp
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
+from _lcm.execution.compiler_memory import CompilerMemoryReport
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.workspace_planning import (
@@ -336,50 +339,24 @@ def test_width_product_then_declaration_order_lexicographic_widths_rank_plans() 
     assert plan.peak_bytes == 0
 
 
-def test_per_device_peaks_are_maximized_not_summed() -> None:
-    compiler = _Compiler(lambda _widths: [_stats(60), _stats(70)])
+def test_compiler_peak_bytes_reads_the_attribute_record() -> None:
+    executable = _Executable(analysis=_stats(7))
+    assert compiler_peak_bytes(compiled=executable, widths={}) == 7
 
-    plan = plan_workspace(
-        axes=(_axis(extent=8),),
-        fixed_widths={"action_product": 3},
-        compile_candidate=compiler,
-        budget_bytes=70,
+
+def test_compiler_peak_bytes_reads_a_real_compiled_report() -> None:
+    """A JAX executable's own memory report passes the record check."""
+    compiled = jax.jit(lambda values: values + 1).lower(jnp.ones(2)).compile()
+    expected = cast("CompilerMemoryReport", compiled.memory_analysis())
+    assert compiler_peak_bytes(compiled=compiled, widths={}) == (
+        expected.peak_memory_in_bytes
     )
 
-    assert plan.widths == {"action_product": 3}
-    assert plan.peak_bytes == 70
 
-
-@pytest.mark.parametrize(
-    ("analysis", "expected"),
-    [
-        (_stats(7), 7),
-        ({"peak_memory_in_bytes": 8}, 8),
-        (_stats([3, 9]), 9),
-        ({"peak_memory_in_bytes": {"device-0": 7, "device-1": 4}}, 7),
-        ([_stats(3), {"peak_memory_in_bytes": 9}], 9),
-        (
-            {
-                "device-0": _stats(3),
-                "device-1": {"peak_memory_in_bytes": 9},
-            },
-            9,
-        ),
-    ],
-    ids=(
-        "attribute-record",
-        "mapping-record",
-        "attribute-per-device-field",
-        "mapping-per-device-field",
-        "per-device-sequence",
-        "per-device-mapping",
-    ),
-)
-def test_strict_peak_normalization_accepts_jax_style_records(
-    *, analysis: object, expected: int
-) -> None:
-    executable = _Executable(analysis=analysis)
-    assert compiler_peak_bytes(compiled=executable, widths={}) == expected
+def test_real_compiled_report_is_a_compiler_memory_report() -> None:
+    """JAX's own memory report exposes every counter pylcm reads."""
+    compiled = jax.jit(lambda values: values + 1).lower(jnp.ones(2)).compile()
+    assert isinstance(compiled.memory_analysis(), CompilerMemoryReport)
 
 
 @pytest.mark.parametrize(
@@ -392,16 +369,10 @@ def test_strict_peak_normalization_accepts_jax_style_records(
         [],
         SimpleNamespace(temp_size_in_bytes=7),
         {"temp_size_in_bytes": 7},
-        _stats(None),
-        _stats(peak=True),
-        _stats(1.0),
-        _stats(-1),
-        _stats([]),
-        [_stats(3), SimpleNamespace(temp_size_in_bytes=4)],
-        {
-            "device-0": _stats(3),
-            "device-1": {"temp_size_in_bytes": 4},
-        },
+        {"peak_memory_in_bytes": 8},
+        {"peak_memory_in_bytes": {"device-0": 7, "device-1": 4}},
+        [_stats(60), _stats(70)],
+        {"device-0": _stats(3), "device-1": _stats(9)},
     ],
     ids=(
         "none",
@@ -411,13 +382,44 @@ def test_strict_peak_normalization_accepts_jax_style_records(
         "empty-sequence",
         "missing-attribute",
         "missing-mapping-key",
+        "mapping-record",
+        "mapping-per-device-field",
+        "per-device-sequence",
+        "per-device-mapping",
+    ),
+)
+def test_report_that_is_not_an_allocation_record_fails_closed(
+    analysis: object,
+) -> None:
+    """Only the attribute record JAX returns on every backend is read."""
+    compiler = _Compiler(lambda _widths: analysis)
+
+    with pytest.raises(ExecutionPlanningError, match="not an allocation record"):
+        plan_workspace(
+            axes=(_axis(),),
+            fixed_widths={"action_product": 2},
+            compile_candidate=compiler,
+            budget_bytes=10,
+        )
+
+
+@pytest.mark.parametrize(
+    "analysis",
+    [
+        _stats(None),
+        _stats(peak=True),
+        _stats(1.0),
+        _stats(-1),
+        _stats([]),
+        _stats([3, 9]),
+    ],
+    ids=(
         "none-peak",
         "bool-peak",
         "float-peak",
         "negative-peak",
         "empty-peak-collection",
-        "malformed-device-sequence",
-        "malformed-device-mapping",
+        "per-device-peak-collection",
     ),
 )
 def test_malformed_memory_analysis_fails_closed(analysis: object) -> None:

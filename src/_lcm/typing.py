@@ -269,9 +269,10 @@ else:
     type _FootprintValueForTy = None
 
 # A tree whose device buffers are measured or registered: any JAX pytree of arrays,
-# host values and `jax.ShapeDtypeStruct` templates (which own no device bytes), with
-# mapping levels keyed by names, periods, edges or other hashable keys. The beartype
-# claw checks only the outer levels of a recursive alias.
+# host values (complex process-grid scalars among them) and `jax.ShapeDtypeStruct`
+# templates (which own no device bytes), with mapping levels keyed by names,
+# periods, edges or other hashable keys. The beartype claw checks only the outer
+# levels of a recursive alias.
 type FootprintTree = (
     _FootprintValueForTy
     | ArrayTree
@@ -283,6 +284,7 @@ type FootprintTree = (
     | bool
     | int
     | float
+    | complex
     | MappingLeaf
     | SequenceLeaf
     | DataclassInstance

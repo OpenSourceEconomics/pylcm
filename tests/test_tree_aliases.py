@@ -62,8 +62,16 @@ def test_argument_tree_rejects_strings_period_keys_and_objects(
         ({"wealth": _ABSTRACT}, [jnp.ones(2)]),
         ({"wealth": None},),
         {"key": jax.random.key(0)},
+        {"drift": 1 + 2j},
     ],
-    ids=["edge-keyed", "period-keyed", "abstract-and-list", "none-leaf", "prng-key"],
+    ids=[
+        "edge-keyed",
+        "period-keyed",
+        "abstract-and-list",
+        "none-leaf",
+        "prng-key",
+        "complex-leaf",
+    ],
 )
 def test_footprint_tree_admits_any_hashable_keys_and_abstract_leaves(
     *, tree: FootprintTree

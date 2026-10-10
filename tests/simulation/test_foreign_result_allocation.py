@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from functools import partial, partialmethod
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 from unittest.mock import Mock
 
@@ -422,7 +423,9 @@ def test_unexpected_supplied_artifact_is_rejected_before_unprofiled_copy(
         authorities={ref: artifact_authority},
     )
     foreign = replace(solution, **{channel: store})
-    object.__setattr__(foreign, "_artifact_authority", {ref: artifact_authority})
+    object.__setattr__(
+        foreign, "_artifact_authority", MappingProxyType({ref: artifact_authority})
+    )
     original = authority_module._copy_artifact_array_leaf
 
     def guard(*, leaf: jax.Array, label: str, **kwargs: Any) -> jax.Array:

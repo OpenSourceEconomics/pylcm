@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.execution.compiler_inputs import compiler_input_paths
+from _lcm.typing import ArgumentTree
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -18,7 +19,7 @@ def _nested_operation(
     return pair[0] + pair[1] + offset if first else payload["unused"]
 
 
-def _arguments() -> dict[str, object]:
+def _arguments() -> dict[str, ArgumentTree]:
     aliased = jnp.arange(8, dtype=jnp.int32)
     return {
         "payload": {"pair": (aliased, aliased), "unused": jnp.ones(16)},
@@ -76,7 +77,9 @@ def test_mismatched_dynamic_tree_is_refused(*, mismatch: str) -> None:
     else:
         payload = altered["payload"]
         assert isinstance(payload, dict)
-        altered["payload"] = {**payload, "pair": list(payload["pair"])}
+        pair = payload["pair"]
+        assert isinstance(pair, tuple)
+        altered["payload"] = {**payload, "pair": list(pair)}
     with pytest.raises(ExecutionPlanningError):
         compiler_input_paths(compiled=compiled, arguments=altered)
 
@@ -118,7 +121,7 @@ def test_matching_tree_with_invalid_sharding_metadata_is_refused(
     """A matching tree alone cannot authorize an unrecognized leaf's exclusion."""
     arguments = {"reference": jnp.arange(4, dtype=jnp.int32)}
     compiled = jax.jit(_shape_only).lower(**arguments).compile()
-    malformed = ((), {"reference": object()})
+    malformed = ((), {"reference": jax.ShapeDtypeStruct((4,), jnp.int32)})
     monkeypatch.setattr(
         jax.stages.Compiled, "input_shardings", property(lambda _compiled: malformed)
     )

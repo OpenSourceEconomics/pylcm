@@ -4,7 +4,7 @@ comparison."""
 import dataclasses
 import struct
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from fractions import Fraction
 from types import MappingProxyType
@@ -340,6 +340,7 @@ class SolutionMetadata:
     """Number of periods in the model's lifecycle."""
     regime_names: tuple[RegimeName, ...]
     """Names of every regime, in model order."""
+    # Callers pass any mappings; `__post_init__` stores read-only copies of them.
     solver_types: Mapping[RegimeName, str]
     """Qualified class name of each regime's solver."""
     model_instance_id: str
@@ -352,14 +353,14 @@ class SolutionMetadata:
     """Model identity digest; durable results may use it after restoration."""
     durable_identity: bool = True
     """Whether this result has a persistable semantic model identity."""
-    solver_identities: Mapping[RegimeName, SolverIdentity] = field(default_factory=dict)
+    solver_identities: Mapping[RegimeName, SolverIdentity] = MappingProxyType({})
     """Package-owned identity of each regime's solver."""
-    replay_routes: Mapping[RegimeName, ReplayRouteIdentity | None] = field(
-        default_factory=dict
+    replay_routes: Mapping[RegimeName, ReplayRouteIdentity | None] = MappingProxyType(
+        {}
     )
     """Durable identity of each regime's replay route."""
-    artifact_descriptors: Mapping[ArtifactRef, ArtifactDescriptor] = field(
-        default_factory=dict
+    artifact_descriptors: Mapping[ArtifactRef, ArtifactDescriptor] = MappingProxyType(
+        {}
     )
     """Descriptor of every artifact the solve accounted for, present or omitted."""
     source: SolutionSource = SolutionSource.IN_MEMORY

@@ -72,7 +72,7 @@ def _core(**_kwargs: object) -> jax.Array:
 def _context() -> CoreBuildContext:
     """A build context with every channel empty."""
     return CoreBuildContext(
-        state_action_space=object(),
+        state_action_space=None,
         next_regime_to_V_arr=MappingProxyType({}),
         next_regime_to_continuation=MappingProxyType({}),
         flat_params=MappingProxyType({}),

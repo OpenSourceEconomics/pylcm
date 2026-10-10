@@ -24,7 +24,7 @@ class NativeValueMaterializer:
     """Own and admit each detached copy in the cached array's exact layout."""
 
     @staticmethod
-    def require_entry(*, entry: object) -> None:
+    def require_entry(*, entry: _LazyEntry) -> None:
         """Reject unsupported decoders before any archive leaf is read."""
         # Persistence imports result snapshots; resolve its exact type at call time.
         from _lcm.persistence.solution import _LazyHdf5Entry  # noqa: PLC0415

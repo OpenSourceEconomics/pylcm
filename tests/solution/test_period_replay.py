@@ -16,6 +16,7 @@ import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import cloudpickle
@@ -803,6 +804,43 @@ def _assert_selected_cache_evidence(
                 for log in records
                 if log.name == "jax._src.compiler"
             )
+
+
+def test_captured_admission_records_round_trip_as_read_only_views(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A captured cell's admission records are a read-only view that JAX rebuilds."""
+    if _gpu_runtime_omits_buffer_assignment():
+        pytest.skip("This GPU runtime refuses public period capture")
+    observed: list[backward_induction._CompiledPrograms] = []
+    original = backward_induction._compile_all_functions
+
+    def observe(**kwargs: Any) -> backward_induction._CompiledPrograms:
+        compiled = original(**kwargs)
+        observed.append(compiled)
+        return compiled
+
+    monkeypatch.setattr(backward_induction, "_compile_all_functions", observe)
+    capture = PeriodCapture(
+        directory=tmp_path,
+        periods=(("working_life", 0),),
+        source_identity={"model": "tiny-public-model-v1"},
+    )
+    _make_public_capture_model().solve(
+        params=retirement_model.get_params(n_periods=_N_PERIODS),
+        log_level="off",
+        period_capture=capture,
+    )
+    records = observed[0].capture_admission[("working_life", 0)]
+    leaves, treedef = jax.tree_util.tree_flatten(records)
+
+    rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+
+    assert (type(records), type(rebuilt), dict(rebuilt)) == (
+        MappingProxyType,
+        MappingProxyType,
+        dict(records),
+    )
 
 
 def _gpu_runtime_omits_buffer_assignment() -> bool:

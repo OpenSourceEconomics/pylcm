@@ -1212,11 +1212,12 @@ def _collected_simulation(
             structure or chunk width.
 
     """
-    panels = [fragment.panel for fragment in fragments]
-    if any(panel is None for panel in panels):
+    panels = tuple(
+        fragment.panel for fragment in fragments if fragment.panel is not None
+    )
+    if len(panels) != len(fragments):
         msg = "Every fragment of a simulating plan holds a panel; one does not."
         raise SolutionIntegrityError(msg)
-    panels = cast("list[FragmentPanel]", panels)
     job_rows_sha256 = cast("tuple[str, ...]", plan.job_rows_sha256)
     for fragment, panel in zip(fragments, panels, strict=True):
         if (
@@ -1249,7 +1250,7 @@ def _collected_simulation(
             "once on one chunk width."
         )
         raise SolutionIntegrityError(msg)
-    populated = [panel for panel in panels if len(panel.rows)]
+    populated = tuple(panel for panel in panels if len(panel.rows))
     _validate_raw_fields(model=model, panels=populated, value_dtypes=value_dtypes)
     structures = {
         (
@@ -1319,8 +1320,8 @@ def _reference_shardings(
     model: Model,
     plan: ComponentJobPlan,
     width: int,
-    populated: list[FragmentPanel],
-) -> dict[LeafAddress, jax.sharding.Sharding]:
+    populated: tuple[FragmentPanel, ...],
+) -> MappingProxyType[LeafAddress, jax.sharding.Sharding]:
     """Return, per raw leaf, where the single-process simulation leaves it.
 
     The single-process simulation cuts each code's subjects into chunks of
@@ -1344,10 +1345,12 @@ def _reference_shardings(
                 device_ids=model._execution.device_ids,  # noqa: SLF001
             )
         )
-        return {
-            address: jax.sharding.SingleDeviceSharding(host)
-            for address in template.leaves
-        }
+        return MappingProxyType(
+            {
+                address: jax.sharding.SingleDeviceSharding(host)
+                for address in template.leaves
+            }
+        )
     if len(populated) != 1:
         msg = (
             f"{len(populated)} jobs hold subjects of a population the plan "
@@ -1371,7 +1374,7 @@ def _reference_shardings(
             )
             raise SolutionIntegrityError(msg) from error
         shardings[address] = sharding
-    return shardings
+    return MappingProxyType(shardings)
 
 
 def _selected_devices(*, model: Model) -> tuple[jax.Device, ...]:
@@ -1488,7 +1491,10 @@ def _device_position(*, value: JSONValue, devices: tuple[jax.Device, ...]) -> in
 
 
 def _validate_raw_fields(
-    *, model: Model, panels: list[FragmentPanel], value_dtypes: Mapping[Coordinate, str]
+    *,
+    model: Model,
+    panels: tuple[FragmentPanel, ...],
+    value_dtypes: Mapping[Coordinate, str],
 ) -> None:
     """Require model-owned raw cells, names and fixed-field representations."""
     regimes = model._regimes  # noqa: SLF001

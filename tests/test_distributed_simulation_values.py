@@ -71,7 +71,7 @@ def test_abstract_read_preserves_required_ordered_device_identity(
         target=aligned.target,
         source=aligned.source,
         kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
-        stored_template=program.arguments["extra"],
+        stored_template=cast("jax.ShapeDtypeStruct", program.arguments["extra"]),
         source_sharding=required,
     )
     candidate = replace(

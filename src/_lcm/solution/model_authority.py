@@ -121,7 +121,7 @@ class ReplayCellDescriptor:
     """Canonical representation and route of one replay-artifact cell."""
 
     ref: ArtifactRef
-    payload_type: type[object] | tuple[type[object], ...] | None
+    payload_type: ArtifactRuntimeType | tuple[ArtifactRuntimeType, ...] | None
     route: EGMPolicyRead | NNBEGMPolicyRead | None
     shape: tuple[int, ...] | None
     dtype: str | None
@@ -675,7 +675,7 @@ def _require_exact_period_lengths(
 class _ArtifactLayout:
     """Exact semantic layout supplied to the generic PyTree authority builder."""
 
-    leaf_axis_names: dict[TreePath, tuple[str, ...]]
+    leaf_axis_names: MappingProxyType[TreePath, tuple[str, ...]]
     axes: tuple[AxisAuthority, ...]
     state_roles: tuple[str, ...] = ()
     action_roles: tuple[str, ...] = ()
@@ -745,16 +745,18 @@ def build_solution_authority(  # noqa: PLR0915
                 regime=regime,
                 period=period,
             )
-            custom_authorities = {
-                key: _bind_model_owned_artifact_facts(
-                    authority=custom_authority,
-                    regime=regime,
-                    state_action_space=state_action_space,
-                )
-                for key, custom_authority in (
-                    regime.solution.artifact_authorities.items()
-                )
-            }
+            custom_authorities = MappingProxyType(
+                {
+                    key: _bind_model_owned_artifact_facts(
+                        authority=custom_authority,
+                        regime=regime,
+                        state_action_space=state_action_space,
+                    )
+                    for key, custom_authority in (
+                        regime.solution.artifact_authorities.items()
+                    )
+                }
+            )
             _validate_custom_continuation_authorities(
                 regime_name=regime_name,
                 period=period,
@@ -927,7 +929,7 @@ def build_solution_authority(  # noqa: PLR0915
                     persistence=PersistencePolicy.MODEL_VERIFIABLE,
                     payload_runtime_type=Array,
                     template=jnp.zeros(flag_shape, dtype=bool),
-                    leaf_axis_names={(): flag_axis_names},
+                    leaf_axis_names=MappingProxyType({(): flag_axis_names}),
                     axes=flag_axes,
                     state_roles=tuple(
                         name
@@ -1049,7 +1051,7 @@ def _validate_custom_continuation_authorities(
     regime_name: RegimeName,
     period: int,
     continuation_spec: ContinuationSpec | None,
-    custom_authorities: dict[ArtifactKey, ArtifactAuthority],
+    custom_authorities: MappingProxyType[ArtifactKey, ArtifactAuthority],
 ) -> None:
     """Require a custom continuation authority to agree with its producer spec.
 
@@ -1127,7 +1129,7 @@ def _validate_custom_continuation_authorities(
 def _validate_external_route_authorities(
     *,
     external_route: ExecutableReplayRoute | None,
-    authorities: dict[ArtifactKey, ArtifactAuthority],
+    authorities: MappingProxyType[ArtifactKey, ArtifactAuthority],
     producer_payload_types: MappingProxyType[ArtifactKey, ArtifactRuntimeType],
     context: ReplayModelContext,
 ) -> None:
@@ -1232,8 +1234,8 @@ def _validate_artifact_producer_types(
     regime_name: RegimeName,
     period: int,
     producer_payload_types: MappingProxyType[ArtifactKey, ArtifactRuntimeType],
-    custom_authorities: dict[ArtifactKey, ArtifactAuthority],
-    built_in_policy_type: type[object] | None,
+    custom_authorities: MappingProxyType[ArtifactKey, ArtifactAuthority],
+    built_in_policy_type: ArtifactRuntimeType | None,
     external_route: ExecutableReplayRoute | None,
 ) -> None:
     """Require producer declarations to agree with every consuming authority."""
@@ -1322,7 +1324,7 @@ def _policy_artifact_layout(
             template_snapshot=template_snapshot,
             period=period,
         )
-    return _ArtifactLayout(leaf_axis_names={}, axes=())
+    return _ArtifactLayout(leaf_axis_names=MappingProxyType({}), axes=())
 
 
 def _egm_policy_artifact_layout(
@@ -1364,8 +1366,9 @@ def _egm_policy_artifact_layout(
         ),
     )
     axis_names = (*row_names, "pylcm:egm:node")
+    leaf_axes: dict[TreePath, tuple[str, ...]] = dict.fromkeys(paths, axis_names)
     return _ArtifactLayout(
-        leaf_axis_names=dict.fromkeys(paths, axis_names),
+        leaf_axis_names=MappingProxyType(leaf_axes),
         axes=axes,
         state_roles=row_state_names,
         action_roles=_unique_names((policy_read.action_name, *row_action_names)),
@@ -1442,7 +1445,7 @@ def _finite_nnbegm_policy_artifact_layout(
             )
         )
     return _ArtifactLayout(
-        leaf_axis_names=leaf_axes,
+        leaf_axis_names=MappingProxyType(leaf_axes),
         axes=tuple(axes),
         state_roles=policy_read.state_names,
         action_roles=_unique_names(
@@ -1521,7 +1524,7 @@ def _nested_policy_artifact_layout(
             ),
         )
     return _ArtifactLayout(
-        leaf_axis_names=leaf_axes,
+        leaf_axis_names=MappingProxyType(leaf_axes),
         axes=tuple(axes),
         state_roles=_unique_names((*row_state_names, policy_read.outer_state_name)),
         action_roles=_unique_names(
@@ -1651,7 +1654,7 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
         policy_action_names = continuous_actions
     action_roles = _unique_names((*row_action_names, *policy_action_names))
     return _ArtifactLayout(
-        leaf_axis_names=leaf_axes,
+        leaf_axis_names=MappingProxyType(leaf_axes),
         axes=tuple(axes),
         state_roles=state_roles,
         action_roles=action_roles,
@@ -1751,9 +1754,9 @@ def _authority_from_template(
     key: ArtifactKey,
     channel: ArtifactChannel,
     persistence: PersistencePolicy,
-    payload_runtime_type: type[object],
+    payload_runtime_type: ArtifactRuntimeType,
     template: ArtifactPayload | None,
-    leaf_axis_names: dict[TreePath, tuple[str, ...]] | None = None,
+    leaf_axis_names: MappingProxyType[TreePath, tuple[str, ...]] | None = None,
     axes: tuple[AxisAuthority, ...] | None = None,
     state_roles: tuple[str, ...] = (),
     action_roles: tuple[str, ...] = (),
@@ -1765,7 +1768,7 @@ def _authority_from_template(
     """Observe one engine template once, then build its exact authority."""
     if template is None:
         template_snapshot = None
-        containers: dict[TreePath, ArtifactRuntimeType] = {}
+        containers: Mapping[TreePath, ArtifactRuntimeType] = {}
     else:
         template_snapshot, containers = _snapshot_artifact_template_once(
             template=template,
@@ -1794,10 +1797,10 @@ def _authority_from_observed_template(
     key: ArtifactKey,
     channel: ArtifactChannel,
     persistence: PersistencePolicy,
-    payload_runtime_type: type[object],
+    payload_runtime_type: ArtifactRuntimeType,
     template_snapshot: _CanonicalArtifactTemplate | None,
-    container_runtime_types: dict[TreePath, ArtifactRuntimeType],
-    leaf_axis_names: dict[TreePath, tuple[str, ...]] | None = None,
+    container_runtime_types: Mapping[TreePath, ArtifactRuntimeType],
+    leaf_axis_names: MappingProxyType[TreePath, tuple[str, ...]] | None = None,
     axes: tuple[AxisAuthority, ...] | None = None,
     state_roles: tuple[str, ...] = (),
     action_roles: tuple[str, ...] = (),
@@ -1903,7 +1906,7 @@ def _authority_from_observed_template(
     )
 
 
-def _payload_type_id(payload_runtime_type: type[object]) -> str:
+def _payload_type_id(payload_runtime_type: ArtifactRuntimeType) -> str:
     """Return one stable descriptive type id without importing plugin code later."""
     if payload_runtime_type is Array:
         return "jax.Array"

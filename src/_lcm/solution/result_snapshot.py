@@ -78,7 +78,7 @@ def capture_exact_mapping[RawKey, RawValue, Key, Value](
     label: str,
     snapshot_key: Callable[[RawKey], Key],
     snapshot_value: Callable[[RawValue], Value],
-) -> dict[Key, Value]:
+) -> MappingProxyType[Key, Value]:
     """Own one exact mapping through one canonicalizing item traversal.
 
     ``MappingProxyType`` can proxy an arbitrary ``Mapping`` implementation. Its
@@ -114,7 +114,7 @@ def capture_exact_mapping[RawKey, RawValue, Key, Value](
         if key in copied:
             raise ValueError(f"{label} keys collide after exact reconstruction.")
         copied[key] = value
-    return copied
+    return MappingProxyType(copied)
 
 
 def snapshot_artifact_key(key: ArtifactKey) -> ArtifactKey:
@@ -157,6 +157,7 @@ def snapshot_artifact_store(
         snapshot_value=_keep_payload,
     )
     if authorities is not None:
+        detached = dict(entries)
         for ref, payload in entries.items():
             authority = authorities.get(ref)
             if authority is None:
@@ -167,10 +168,11 @@ def snapshot_artifact_store(
                 continue
             else:
                 owned_payload = payload
-            entries[ref] = _canonical_artifact_entry_from_authority(
+            detached[ref] = _canonical_artifact_entry_from_authority(
                 payload=owned_payload,
                 authority=authority,
             )
+        entries = MappingProxyType(detached)
     return ArtifactStore(entries)
 
 
@@ -266,13 +268,12 @@ def snapshot_omissions(
     omissions: _OmissionsInput,
 ) -> _OmissionsSnapshot:
     """Copy omission addresses while retaining exact enum values for later checks."""
-    copied = capture_exact_mapping(
+    return capture_exact_mapping(
         omissions,
         label="Solution omissions",
         snapshot_key=snapshot_artifact_ref,
         snapshot_value=_snapshot_omission_reason,
     )
-    return MappingProxyType(copied)
 
 
 def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
@@ -407,13 +408,12 @@ def snapshot_artifact_authorities(
     authorities: _AuthoritiesInput,
 ) -> _AuthoritiesSnapshot:
     """Copy private authority wrappers while preserving trusted templates/types."""
-    copied = capture_exact_mapping(
+    return capture_exact_mapping(
         authorities,
         label="Artifact authority",
         snapshot_key=snapshot_artifact_ref,
         snapshot_value=_snapshot_artifact_authority,
     )
-    return MappingProxyType(copied)
 
 
 def snapshot_artifact_template_declaration(
@@ -574,7 +574,9 @@ def _snapshot_value_array_schema(schema: ValueArraySchema) -> ValueArraySchema:
     )
 
 
-def _snapshot_value_coordinate(coordinate: object) -> tuple[int, str]:
+def _snapshot_value_coordinate(
+    coordinate: tuple[int, RegimeName],
+) -> tuple[int, RegimeName]:
     if type(coordinate) is not tuple or len(coordinate) != 2:  # noqa: PLR2004
         raise TypeError("Solution value coordinates must be exact pairs.")
     period, regime = coordinate
