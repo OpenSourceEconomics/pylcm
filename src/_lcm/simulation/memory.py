@@ -12,7 +12,7 @@ not control â€” a period owner's materialized reads, a caller's transient tree â
 re-measured conservatively on every snapshot.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import cast
@@ -32,7 +32,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_reads import PeriodSimulationReads
-from _lcm.typing import ArrayTree, PytreeValue
+from _lcm.typing import ArrayTree, PytreeByPeriod, PytreeValue, RegimeName
 from lcm.typing import ReferenceName
 
 # Fields already holding measured spans; the ledger binds them without a walk.
@@ -175,7 +175,9 @@ class SimulationMemory:
             footprints=(self.outputs, measure_buffer_footprint(tree=tree))
         )
 
-    def replace_outputs(self, *, tree: object) -> None:
+    def replace_outputs(
+        self, *, tree: Sequence[Mapping[RegimeName, PytreeByPeriod]]
+    ) -> None:
         """Reset publication metadata after offload and release of the old owners."""
         self.outputs = measure_buffer_footprint(tree=tree)
 
