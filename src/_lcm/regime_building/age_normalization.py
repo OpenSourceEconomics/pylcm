@@ -30,7 +30,7 @@ import inspect
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import NoReturn, TypeVar, cast
+from typing import NoReturn, TypeVar, cast, overload
 
 from jax import numpy as jnp
 
@@ -774,6 +774,27 @@ def _resolve_grid_marker(
     )
 
 
+@overload
+def _representative_function(
+    *,
+    value: FunctionEntry,
+    function_cache: dict[int, _ResolvedFunctionMarker],
+    period: int | None = None,
+) -> FunctionEntry: ...
+@overload
+def _representative_function(
+    *,
+    value: ConstraintEntry,
+    function_cache: dict[int, _ResolvedFunctionMarker],
+    period: int | None = None,
+) -> ConstraintEntry: ...
+@overload
+def _representative_function(
+    *,
+    value: StateEntry,
+    function_cache: dict[int, _ResolvedFunctionMarker],
+    period: int | None = None,
+) -> StateEntry: ...
 def _representative_function(
     *,
     value: _RegimeEntry,

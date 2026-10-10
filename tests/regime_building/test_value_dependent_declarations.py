@@ -10,6 +10,7 @@ always run, so a model written this way solves to the numbers the same model
 written the long way solves to.
 """
 
+import dataclasses
 from collections.abc import Mapping
 from typing import cast
 
@@ -40,6 +41,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.regime import RegimeReplacement
 from lcm.transition import PhaseTransitionLaw, StochasticTransition
 from lcm.typing import FloatND, ScalarInt, UserFunction
 from tests.conftest import DECIMAL_PRECISION, bind_laws
@@ -553,7 +555,25 @@ def test_a_derived_slot_cannot_be_replaced(slot):
     )
 
     with pytest.raises(RegimeInitializationError, match=slot):
-        regime.replace(**{slot: None})
+        regime.replace(**{slot: None})  # ty: ignore[invalid-argument-type]
+
+
+def test_replace_refuses_an_unknown_slot():
+    """A keyword that names no declared slot is refused, naming it."""
+    regime = Regime(
+        states={"wage": _WAGE_3},
+        functions={"utility": _u_zero},
+    )
+
+    with pytest.raises(RegimeInitializationError, match="no_such_slot"):
+        regime.replace(no_such_slot=None)
+
+
+def test_regime_replacement_names_exactly_the_declared_slots():
+    """`replace` takes every slot a regime is constructed from, and no other."""
+    declared = {field.name for field in dataclasses.fields(Regime) if field.init}
+
+    assert RegimeReplacement.__optional_keys__ == declared
 
 
 def test_decomposed_transition_of_an_age_schedule_is_its_engine_view():

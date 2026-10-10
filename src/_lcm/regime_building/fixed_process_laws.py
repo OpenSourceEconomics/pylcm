@@ -23,7 +23,7 @@ specified — and entry into a process requires its law to be fixed *here*.
 import dataclasses
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import cast, overload
 
 import jax.numpy as jnp
 from dags.tree import qname_from_tree_path, tree_path_from_qname
@@ -46,6 +46,7 @@ from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateEntry
 from lcm.transition import AgeSpecializedGrid
 from lcm.typing import UserFunction, UserParams, UserParamsLeaf, UserParamsNode
 
@@ -317,7 +318,7 @@ def _bind_regime(
     """
     if not regime_values:
         return user_regime
-    states: dict[StateName, StateDeclaration] = dict(user_regime.states)
+    states: dict[StateName, StateEntry] = dict(user_regime.states)
     for state_name, values in regime_values.items():
         states[state_name] = _bind_declaration(
             declaration=states[state_name], values=values
@@ -325,6 +326,14 @@ def _bind_regime(
     return user_regime.replace(states=MappingProxyType(states))
 
 
+@overload
+def _bind_declaration(
+    *, declaration: StateEntry, values: Mapping[str, _ProcessField]
+) -> StateEntry: ...
+@overload
+def _bind_declaration(
+    *, declaration: StateDeclaration, values: Mapping[str, _ProcessField]
+) -> StateDeclaration: ...
 def _bind_declaration(
     *, declaration: StateDeclaration, values: Mapping[str, _ProcessField]
 ) -> StateDeclaration:

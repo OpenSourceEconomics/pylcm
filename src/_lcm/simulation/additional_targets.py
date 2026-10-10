@@ -27,7 +27,7 @@ from lcm.typing import BoolND, FloatND, FunctionName, IntND, UserFunction
 def _resolve_targets(
     *,
     additional_targets: list[str] | Literal["all"] | None,
-    available_targets: list[FunctionName],
+    available_targets: tuple[FunctionName, ...],
 ) -> tuple[str, ...] | None:
     """Resolve and validate additional targets.
 

@@ -26,7 +26,7 @@ import inspect
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal, cast, no_type_check
+from typing import Literal, TypedDict, cast, no_type_check
 
 from dags import get_ancestors
 
@@ -41,7 +41,14 @@ from _lcm.regime_building.phases import (
 )
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.time import TimeAxis, specialization_coordinate_at
-from _lcm.typing import EconFunctionArg, RegimeName, StateName, StateOrActionName
+from _lcm.typing import (
+    ActionName,
+    EconFunctionArg,
+    FunctionName,
+    RegimeName,
+    StateName,
+    StateOrActionName,
+)
 from _lcm.utils.error_messages import format_messages
 from lcm.collective import CollectiveUtility
 from lcm.consumption_savings_regime import NetOfAdjustmentCost
@@ -72,20 +79,22 @@ type SlotEntry = (
     FunctionEntry | ConstraintEntry | StateEntry | StateTransitionEntry | ActionEntry
 )
 
-_BROADCASTABLE_SLOTS = (
-    "functions",
-    "constraints",
-    "states",
-    "state_transitions",
-    "actions",
-)
+
+class ModelSlots(TypedDict, total=False):
+    """The model-level slots, each with the type its `Model` argument declares."""
+
+    functions: Mapping[FunctionName, FunctionEntry]
+    constraints: Mapping[FunctionName, ConstraintEntry]
+    states: Mapping[StateName, StateEntry]
+    state_transitions: Mapping[StateName, StateTransitionEntry]
+    actions: Mapping[ActionName, ActionEntry]
 
 
 def merge_model_slots(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
-    model_slots: Mapping[str, Mapping[str, SlotEntry]],
+    model_slots: ModelSlots,
 ) -> tuple[
     MappingProxyType[RegimeName, UserRegime],
     MappingProxyType[RegimeName, frozenset[StateOrActionName]],
@@ -113,54 +122,80 @@ def merge_model_slots(
     broadcast_variables: dict[RegimeName, frozenset[StateOrActionName]] = {}
 
     for regime_name, user_regime in user_regimes.items():
-        replacements: dict[str, Mapping[str, SlotEntry]] = {}
-        for slot_name in _BROADCASTABLE_SLOTS:
-            regime_slot = dict(getattr(user_regime, slot_name))
-            model_slot = dict(model_slots.get(slot_name, {}))
-            if slot_name == "state_transitions" and laws[regime_name].terminal:
-                # Terminal regimes consume no laws of motion; broadcast laws
-                # are inert there and must not violate the empty-transitions
-                # rule.
-                model_slot = {}
-            if slot_name == "functions":
-                # A household names its own utilities. A model-level entry
-                # under one of those names is there for the regimes that
-                # declare no household, so it does not reach this one.
-                model_slot = {
-                    name: value
-                    for name, value in model_slot.items()
-                    if name not in _names_the_household_writes(user_regime=user_regime)
-                }
-            errors.extend(
-                _merge_one_slot(
-                    slot_name=slot_name,
-                    regime_name=regime_name,
-                    regime_slot=regime_slot,
-                    model_slot=model_slot,
-                )
-            )
-            replacements[slot_name] = {**model_slot, **regime_slot}
+        household = _names_the_household_writes(user_regime=user_regime)
         # A masked state's broadcast law is dropped with it.
-        masked_states = {
+        masked_states = frozenset(
             name
             for name, value in user_regime.states.items()
             if value is None and name in model_slots.get("states", {})
-        }
-        for slot_name in _BROADCASTABLE_SLOTS:
-            replacements[slot_name] = {
+        )
+        functions, function_errors = _merged_slot(
+            slot_name="functions",
+            regime_name=regime_name,
+            regime_slot=user_regime.functions,
+            # A household names its own utilities. A model-level entry under
+            # one of those names is there for the regimes that declare no
+            # household, so it does not reach this one.
+            model_slot={
                 name: value
-                for name, value in replacements[slot_name].items()
-                if value is not None
-                and not (slot_name == "state_transitions" and name in masked_states)
-            }
+                for name, value in model_slots.get("functions", {}).items()
+                if name not in household
+            },
+        )
+        constraints, constraint_errors = _merged_slot(
+            slot_name="constraints",
+            regime_name=regime_name,
+            regime_slot=user_regime.constraints,
+            model_slot=model_slots.get("constraints", {}),
+        )
+        states, state_errors = _merged_slot(
+            slot_name="states",
+            regime_name=regime_name,
+            regime_slot=user_regime.states,
+            model_slot=model_slots.get("states", {}),
+        )
+        state_transitions, state_transition_errors = _merged_slot(
+            slot_name="state_transitions",
+            regime_name=regime_name,
+            regime_slot=user_regime.state_transitions,
+            # Terminal regimes consume no laws of motion; broadcast laws are
+            # inert there and must not violate the empty-transitions rule.
+            model_slot=(
+                {}
+                if laws[regime_name].terminal
+                else model_slots.get("state_transitions", {})
+            ),
+            dropped=masked_states,
+        )
+        actions, action_errors = _merged_slot(
+            slot_name="actions",
+            regime_name=regime_name,
+            regime_slot=user_regime.actions,
+            model_slot=model_slots.get("actions", {}),
+        )
+        errors.extend(
+            (
+                *function_errors,
+                *constraint_errors,
+                *state_errors,
+                *state_transition_errors,
+                *action_errors,
+            )
+        )
         if not errors:
-            merged_regimes[regime_name] = user_regime.replace(**replacements)
+            merged_regimes[regime_name] = user_regime.replace(
+                functions=functions,
+                constraints=constraints,
+                states=states,
+                state_transitions=state_transitions,
+                actions=actions,
+            )
             broadcast_variables[regime_name] = frozenset(
                 (
                     set(model_slots.get("states", {}))
                     | set(model_slots.get("actions", {}))
                 )
-                & (set(replacements["states"]) | set(replacements["actions"]))
+                & (set(states) | set(actions))
             )
 
     if errors:
@@ -958,6 +993,43 @@ def _law_roots(
     return MappingProxyType(roots)
 
 
+def _merged_slot[V: SlotEntry](
+    *,
+    slot_name: str,
+    regime_name: RegimeName,
+    regime_slot: Mapping[str, V],
+    model_slot: Mapping[str, V],
+    dropped: frozenset[str] = frozenset(),
+) -> tuple[dict[str, V], tuple[str, ...]]:
+    """Merge one slot of one regime under the exactly-one-level rule.
+
+    Args:
+        slot_name: Which regime slot is being merged.
+        regime_name: Name of the regime the slot belongs to.
+        regime_slot: The regime's own entries.
+        model_slot: The model-level entries that reach this regime.
+        dropped: Names left out of the merged slot.
+
+    Returns:
+        The model-level entries followed by the regime's own, without a `None`
+        entry (a mask) or a name in `dropped`, and the error messages, empty
+        when the slot merges cleanly.
+
+    """
+    errors = _merge_one_slot(
+        slot_name=slot_name,
+        regime_name=regime_name,
+        regime_slot=regime_slot,
+        model_slot=model_slot,
+    )
+    merged = {**model_slot, **regime_slot}
+    return {
+        name: value
+        for name, value in merged.items()
+        if value is not None and name not in dropped
+    }, errors
+
+
 def _merge_one_slot(
     *,
     slot_name: str,
@@ -1019,25 +1091,29 @@ def _names_the_household_writes(*, user_regime: UserRegime) -> frozenset[str]:
     )
 
 
-def _model_slot_value_errors(
-    *,
-    model_slots: Mapping[str, Mapping[str, SlotEntry]],
-) -> tuple[str, ...]:
+def _model_slot_value_errors(*, model_slots: ModelSlots) -> tuple[str, ...]:
     """Reject `None` values in model-level slots (masks are regime-level).
 
     Per-value grammar (grids, callables, law vocabulary, `Phased` placement)
     is validated when the merged regimes are constructed; only the
     merge-specific vocabulary is checked here.
     """
+    slots: tuple[tuple[str, Mapping[str, SlotEntry]], ...] = (
+        ("functions", model_slots.get("functions", {})),
+        ("constraints", model_slots.get("constraints", {})),
+        ("states", model_slots.get("states", {})),
+        ("state_transitions", model_slots.get("state_transitions", {})),
+        ("actions", model_slots.get("actions", {})),
+    )
     return tuple(
         f"Model-level {slot_name}['{name}'] cannot be `None` — masks are regime-level."
-        for slot_name, slot in model_slots.items()
+        for slot_name, slot in slots
         for name, value in slot.items()
         if value is None
     )
 
 
-def validate_model_slots(*, model_slots: Mapping[str, Mapping[str, SlotEntry]]) -> None:
+def validate_model_slots(*, model_slots: ModelSlots) -> None:
     """Raise on merge-specific vocabulary errors in model-level slots."""
     errors = _model_slot_value_errors(model_slots=model_slots)
     if errors:

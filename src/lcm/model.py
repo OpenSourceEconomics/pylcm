@@ -95,6 +95,7 @@ from _lcm.regime_building.action_partitioning import (
     fail_if_action_partition_route_is_unsupported,
 )
 from _lcm.regime_building.broadcast import (
+    ModelSlots,
     merge_model_slots,
     prune_broadcast_variables,
     validate_model_slots,
@@ -872,7 +873,7 @@ class Model:
             name: int(code)
             for name, code in get_category_codes(regime_id_class).items()
         }
-        model_slots = {
+        model_slots: ModelSlots = {
             "functions": factored_functions,
             "constraints": constraints,
             "states": factored_states,

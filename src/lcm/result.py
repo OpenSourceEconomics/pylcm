@@ -4,7 +4,7 @@ import gc
 import operator
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
@@ -109,7 +109,7 @@ class SimulationResult:
             ages=ages,
             nested_policy_regimes=nested_policy_regimes,
         )
-        self._available_targets = sorted(_collect_all_available_targets(regimes))
+        self._available_targets = tuple(sorted(_collect_all_available_targets(regimes)))
 
     @property
     def raw_results(
@@ -161,17 +161,17 @@ class SimulationResult:
         return self._plan_summary
 
     @property
-    def regime_names(self) -> list[RegimeName]:
+    def regime_names(self) -> tuple[RegimeName, ...]:
         """Names of all regimes."""
         return self._metadata.regime_names
 
     @property
-    def state_names(self) -> list[StateName]:
+    def state_names(self) -> tuple[StateName, ...]:
         """Names of all state variables (union across regimes)."""
         return self._metadata.state_names
 
     @property
-    def action_names(self) -> list[ActionName]:
+    def action_names(self) -> tuple[ActionName, ...]:
         """Names of all action variables (union across regimes)."""
         return self._metadata.action_names
 
@@ -186,7 +186,7 @@ class SimulationResult:
         return self._metadata.n_subjects
 
     @property
-    def available_targets(self) -> list[str]:
+    def available_targets(self) -> tuple[FunctionName, ...]:
         """Names of all available additional targets.
 
         These can be passed to `to_dataframe(additional_targets=...)`. Includes utility
@@ -450,8 +450,15 @@ class SimulationResult:
         instance._flat_params = metadata.flat_params  # noqa: SLF001
         instance._period_to_regime_to_V_arr = period_to_regime_to_V_arr  # noqa: SLF001
         instance._ages = metadata.ages  # noqa: SLF001
-        instance._metadata = metadata.result_metadata  # noqa: SLF001
-        instance._available_targets = metadata.available_targets  # noqa: SLF001
+        # An archive may hold the name listings as lists; loading freezes them.
+        saved_names = metadata.result_metadata
+        instance._metadata = replace(  # noqa: SLF001
+            saved_names,
+            regime_names=tuple(saved_names.regime_names),
+            state_names=tuple(saved_names.state_names),
+            action_names=tuple(saved_names.action_names),
+        )
+        instance._available_targets = tuple(metadata.available_targets)  # noqa: SLF001
         instance._subject_batch_size = metadata.subject_batch_size  # noqa: SLF001
         instance._subject_rows = metadata.subject_rows  # noqa: SLF001
         instance._solution = None  # noqa: SLF001
@@ -489,7 +496,7 @@ class _SavedMetadata:
     result_metadata: ResultMetadata
     """Pre-computed metadata; rebuilt to avoid re-deriving from regimes."""
 
-    available_targets: list[FunctionName]
+    available_targets: tuple[FunctionName, ...]
     """Names of all additional targets exposed via `to_dataframe`."""
 
     subject_batch_size: int | None = None
