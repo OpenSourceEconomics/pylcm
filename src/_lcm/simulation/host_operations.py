@@ -27,6 +27,7 @@ from types import FunctionType, MappingProxyType
 from typing import cast
 
 import jax
+import numpy as np
 
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
@@ -50,15 +51,18 @@ from _lcm.transition_plans import TargetTransitionPlan
 from _lcm.typing import (
     ConstraintFunction,
     EconFunction,
-    PytreeChild,
+    HostArray,
     PytreeValue,
     ShapeDtypePytree,
     TransitionFunction,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import ReferenceName, RegimeName
+from lcm.typing import ReferenceName, RegimeName, ValueND
 
 type StaticArgument = bool | int | float | str | tuple[StaticArgument, ...] | None
+
+# One leaf of a placed operand: an array, or a host array or scalar.
+type _OperandLeaf = ValueND | HostArray | np.generic | bool | int | float
 
 # A model-owned input a `built` composer reads: a regime name, or one of the
 # regime's function, constraint, transition or transition-plan mappings.
@@ -471,7 +475,7 @@ def _lower_operation(
     return jitted.lower(**arguments)
 
 
-def _abstract_operand(value: PytreeChild) -> PytreeChild:
+def _abstract_operand(value: _OperandLeaf) -> jax.ShapeDtypeStruct | _OperandLeaf:
     """Preserve exact placed shape, weak type and ordered device layout."""
     if isinstance(value, jax.Array):
         return jax.ShapeDtypeStruct(

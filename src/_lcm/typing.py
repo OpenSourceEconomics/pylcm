@@ -200,12 +200,32 @@ else:
     # dataclass it is, never against the protocol.
     type _PluginPytree = DataclassInstance
 
-# A child JAX hands a registered pytree's `unflatten`: a concrete or traced array,
-# a host array or scalar during calls, a `jax.ShapeDtypeStruct` during AOT
-# lowering, or `None` for an absent leaf.
-type PytreeChild = (
-    ValueND | HostArray | np.generic | jax.ShapeDtypeStruct | bool | int | float | None
-)
+if TYPE_CHECKING:
+    from lcm._solver_api.authority import _ArtifactLeafToken
+
+    # A child handed to a registered pytree's `unflatten`:
+    # - a concrete or traced array, or a host array or scalar, during calls;
+    # - a `jax.ShapeDtypeStruct` or a `jax.stages.ArgInfo` during AOT lowering;
+    # - a `jax.sharding.Sharding` when JAX lays shardings out like the tree;
+    # - the artifact authority's opaque token when it compiles a payload template;
+    # - `None` for an absent leaf.
+    type PytreeChild = (
+        ValueND
+        | HostArray
+        | np.generic
+        | jax.ShapeDtypeStruct
+        | jax.stages.ArgInfo
+        | jax.sharding.Sharding
+        | _ArtifactLeafToken
+        | bool
+        | int
+        | float
+        | None
+    )
+else:
+    # JAX also unflattens with placeholder leaves of its own (`PytreeLeaf` proxies,
+    # `object()` sentinels), so the claw accepts any child.
+    type PytreeChild = object
 
 # A runtime annotation object: a class, a `type` alias, a subscripted generic, an
 # `X | Y` union, or a string forward reference.

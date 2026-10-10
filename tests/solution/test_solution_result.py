@@ -94,17 +94,28 @@ class _RaisingLazyValueEntry(solver_api_module._LazyEntry):
         raise self._error
 
 
-def _imported_module_names(module: ModuleType) -> set[str]:
-    """Return every module name the given module's source imports."""
-    tree = ast.parse(inspect.getsource(module))
+def _imported_module_names(source: str) -> set[str]:
+    """Return every module name `source` imports when it runs.
+
+    Imports under `if TYPE_CHECKING:` exist only for type checkers and are skipped.
+    """
+    tree = ast.parse(source)
+    static_only = {
+        id(inner)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "TYPE_CHECKING"
+        for statement in node.body
+        for inner in ast.walk(statement)
+    }
+    runtime = [node for node in ast.walk(tree) if id(node) not in static_only]
     return {
         alias.name
-        for node in ast.walk(tree)
+        for node in runtime
         if isinstance(node, ast.Import)
         for alias in node.names
-    } | {
-        node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
-    }
+    } | {node.module or "" for node in runtime if isinstance(node, ast.ImportFrom)}
 
 
 def _solver_api_modules() -> list[ModuleType]:
@@ -124,9 +135,23 @@ def _solver_api_modules() -> list[ModuleType]:
 )
 def test_solver_api_has_no_private_lcm_imports(*, module: ModuleType) -> None:
     """An installed solver can import the result spine without importing `_lcm`."""
-    imported = _imported_module_names(module)
+    imported = _imported_module_names(inspect.getsource(module))
 
     assert not any(name == "_lcm" or name.startswith("_lcm.") for name in imported)
+
+
+def test_imported_module_names_skips_only_type_checking_imports() -> None:
+    """Runtime imports count, including ones beside a `TYPE_CHECKING` block."""
+    source = (
+        "import json\n"
+        "from _lcm.grids import Grid\n"
+        "if TYPE_CHECKING:\n"
+        "    from _lcm.solution.artifacts import OwnedSolutionView\n"
+        "else:\n"
+        "    from _lcm.typing import PytreeValue\n"
+    )
+
+    assert _imported_module_names(source) == {"json", "_lcm.grids", "_lcm.typing"}
 
 
 def test_artifact_identity_includes_schema_version() -> None:

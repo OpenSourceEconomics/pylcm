@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "d99b65ed4431d13a9e7d8b1c2fc0745b0f7a568d9602471d30bfc9771fa2e421",
+  "source_inventory_sha256": "7ea000fb261b9c171198de47d937b803b2334622d73559e6e53d01e493fcf121",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -238,7 +238,7 @@
     },
     {
       "path": "src/_lcm/simulation/host_operations.py",
-      "sha256": "3b05e0245241803c7f85c80086787e890103a99708c6c5c71d2defd7d3a50712"
+      "sha256": "df03f2fcd02a69d0737366d0f06f9b90a16e9d97661c85488100a905a71b913c"
     },
     {
       "path": "src/_lcm/simulation/initial_conditions.py",
@@ -266,7 +266,7 @@
     },
     {
       "path": "src/_lcm/simulation/policy_programs.py",
-      "sha256": "0e958aa141e4ff5d375081ab59100bb527faede26436bc4f4d89206d577f3a16"
+      "sha256": "40eb5f58dcbe5430cbd65ccaa447e8b5f8d4d5e5f0f7d9ad1cc76f2c8eb79746"
     },
     {
       "path": "src/_lcm/simulation/population_operations.py",
@@ -394,7 +394,7 @@
     },
     {
       "path": "src/_lcm/solution/nbegm.py",
-      "sha256": "88a5fdfd4a4c31571065a35fcad1f41195de76d5778e3c27b494b710a616f113"
+      "sha256": "1a7343072b3e8cbbb83e8a9535cd1f7e62f25b42095d62b9ea58338b84debca1"
     },
     {
       "path": "src/_lcm/solution/period_replay.py",
@@ -406,7 +406,7 @@
     },
     {
       "path": "src/_lcm/solution/result_snapshot.py",
-      "sha256": "53b27cc8229b239c70ac6eacf2cd155a507e6efd68f63b1dd2d4cae0eefaee67"
+      "sha256": "d5934c35c6fcd3efecdc98c1e45201b40bd59df39a3290dfe50f87a64ad949a4"
     },
     {
       "path": "src/_lcm/solution/retained_buffers.py",

@@ -155,8 +155,10 @@ from _lcm.typing import (
 from _lcm.utils.dispatchers import map_over_leading_axis
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.case_piece import CaseBoundary, EqualityOwner, PiecewiseAffineMeta
+from lcm.collective import CollectiveUtility
 from lcm.exceptions import RegimeInitializationError
 from lcm.fixed_forms import cash_on_hand_with_subsidy
+from lcm.phased import Phased
 from lcm.solver_api import (
     EGM_CONTINUATION,
     EGM_ENDOGENOUS_COORDINATE,
@@ -187,13 +189,15 @@ from lcm.typing import (
 
 if TYPE_CHECKING:
     from _lcm.egm.continuation import ContinuationPlan, _ChildRead
-    from lcm.regime import FunctionEntry
 else:
-    # `_lcm.egm.continuation` and `lcm.regime` import the `lcm.solvers` facade,
-    # which imports this module, so neither is importable here at runtime.
+    # `_lcm.egm.continuation` imports the `lcm.solvers` facade, which imports
+    # this module, so it is not importable here at runtime.
     type ContinuationPlan = object
     type _ChildRead = object
-    type FunctionEntry = object
+
+# A regime's function slot as the probe classifiers read it. Solver runtime
+# modules never import `lcm.regime`, so the slot's union is spelled out here.
+type _FunctionEntry = UserFunction | Phased | CollectiveUtility | None
 
 # Key under which ride-along periods share one compiled core: the continuation
 # targets either side of a `"|"` separator, followed by those targets'
@@ -4128,7 +4132,7 @@ class _DeclaresFunctions(Protocol):
     """A regime as the probe classifiers read it: through its declared functions."""
 
     @property
-    def functions(self) -> Mapping[FunctionName, FunctionEntry]:
+    def functions(self) -> Mapping[FunctionName, _FunctionEntry]:
         """The regime's functions, keyed by name."""
         ...
 
