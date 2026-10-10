@@ -38,7 +38,7 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from math import prod
 from types import MappingProxyType
-from typing import Any, cast, no_type_check
+from typing import Literal, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -55,6 +55,8 @@ from _lcm.engine import (
     _StochasticStateTransition,
 )
 from _lcm.params.edges import regime_kernel_params
+from _lcm.params.mapping_leaf import MappingLeaf
+from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.next_state import get_next_stochastic_weights_function
@@ -70,7 +72,11 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.time import TimeAxis
-from _lcm.transition_plans import LotteryLifetime, declared_law_over_codes
+from _lcm.transition_plans import (
+    LotteryLifetime,
+    TransitionLotteryInfo,
+    declared_law_over_codes,
+)
 from _lcm.typing import (
     ArrayTree,
     EconFunction,
@@ -79,10 +85,14 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
+    HostArray,
     PytreeValue,
     RegimeName,
     RegimeTransitionFunction,
+    StateName,
     StateOrActionName,
+    TransitionFunction,
+    TransitionFunctionName,
 )
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
@@ -113,7 +123,31 @@ type _RegimeProbabilityOutput = tuple[
 type _FeasibleRowsOutput = tuple[
     Mapping[RegimeName, FloatND], BoolND, Mapping[StateOrActionName, FloatND | IntND]
 ]
-type _SupportSchema = tuple[str, int, object, tuple[tuple[tuple[int, ...], str], ...]]
+type _SupportSchema = tuple[
+    str, int, jax.tree_util.PyTreeDef, tuple[tuple[tuple[int, ...], str], ...]
+]
+# One input a state-probability check binds: the period, the age, a grid or a
+# parameter leaf.
+type _BoundInput = int | float | ValueND | MappingLeaf | SequenceLeaf
+# Identifies one bound input exactly: an array by identity, an integer by value,
+# a float by its bits.
+type _BindingToken = (
+    tuple[type[jax.Array], int] | tuple[type[int], int] | tuple[type[float], bytes]
+)
+# What a cached state probability is keyed by: the law's regime, state, target,
+# phase and function identity, and its exact bound inputs.
+type _StateProbabilityKey = tuple[
+    RegimeName,
+    StateName,
+    RegimeName | None,
+    Literal["solve", "simulate"] | None,
+    int,
+    tuple[tuple[str, _BindingToken], ...],
+]
+# The law and the inputs a cached state probability was computed from.
+type _BoundInputs = tuple[Callable[..., FloatND] | _BoundInput, ...]
+# One leaf of a placed producer operand: an array, or a host array or scalar.
+type _OperandLeaf = ValueND | HostArray | np.generic | bool | int | float
 
 
 class _SerialValidationRequired(Exception):  # noqa: N818
@@ -126,7 +160,7 @@ class _StateProbabilitySummary:
 
     shape: tuple[int, ...]
     flag: jax.Array
-    bound_inputs: tuple[object, ...] = field(repr=False)
+    bound_inputs: _BoundInputs = field(repr=False)
     """Keep identity-keyed immutable operands alive until the summary closes."""
 
 
@@ -140,7 +174,7 @@ class _ValidationSummary:
     spaces: dict[tuple[RegimeName, tuple[tuple[str, int], ...]], StateActionSpace] = (
         field(default_factory=dict, repr=False)
     )
-    state_probabilities: dict[tuple[object, ...], _StateProbabilitySummary] = field(
+    state_probabilities: dict[_StateProbabilityKey, _StateProbabilitySummary] = field(
         default_factory=dict, repr=False
     )
 
@@ -1380,7 +1414,7 @@ def _set_transition_outputs(
         memory.set_derived(_transition_owner_tree(outputs))
 
 
-def _transition_owner_tree(tree: object) -> object:
+def _transition_owner_tree(tree: PytreeValue) -> PytreeValue:
     """Convert opaque mapping containers into ordinary JAX pytree nodes."""
     if isinstance(tree, Mapping):
         return {key: _transition_owner_tree(value) for key, value in tree.items()}
@@ -1393,8 +1427,8 @@ def _transition_owner_tree(tree: object) -> object:
 
 def _validate_joint_laws(
     *,
-    joint_laws: Mapping[str, Any],
-    transitions: Mapping[str, Callable[..., Any]],
+    joint_laws: Mapping[str, TransitionLotteryInfo],
+    transitions: Mapping[TransitionFunctionName, TransitionFunction],
     weights: Mapping[str, FloatND | IntND],
     n_cells: int | None,
     regime_params: FlatRegimeParams,
@@ -1513,7 +1547,7 @@ def _check_joint_support_schema(
 
 def _evaluate_joint_support(
     *,
-    func: Callable[..., Any],
+    func: Callable[..., PytreeValue],
     regime_params: FlatRegimeParams,
     period: ScalarInt,
     age: ScalarInt | ScalarFloat,
@@ -2190,7 +2224,9 @@ def _state_probability_law(
     )(*flat_arrays)
 
 
-def _abstract_transition_operand(value: object) -> object:
+def _abstract_transition_operand(
+    value: _OperandLeaf,
+) -> jax.ShapeDtypeStruct | _OperandLeaf:
     """Preserve the placed transition operand's dtype, weak type, and layout."""
     if isinstance(value, jax.Array):
         return jax.ShapeDtypeStruct(
@@ -2205,7 +2241,7 @@ def _abstract_transition_operand(value: object) -> object:
 def _append_cached_state_probability(
     *,
     summary: _ValidationSummary | None,
-    binding: tuple[tuple[object, ...], tuple[object, ...]] | None,
+    binding: tuple[_StateProbabilityKey, _BoundInputs] | None,
     transition: _StochasticStateTransition,
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
@@ -2230,7 +2266,7 @@ def _append_cached_state_probability(
 def _remember_state_probability(
     *,
     summary: _ValidationSummary | None,
-    binding: tuple[tuple[object, ...], tuple[object, ...]] | None,
+    binding: tuple[_StateProbabilityKey, _BoundInputs] | None,
     shape: tuple[int, ...],
 ) -> None:
     """Retain the completed reduction and immutable bindings, not probabilities."""
@@ -2251,7 +2287,7 @@ def _state_probability_binding(
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
     period: int,
-) -> tuple[tuple[object, ...], tuple[object, ...]] | None:
+) -> tuple[_StateProbabilityKey, _BoundInputs] | None:
     """Identify this pure law's exact immutable inputs inside one preflight.
 
     Model numerical functions obey JAX's purity contract. Mutable or opaque
@@ -2259,8 +2295,8 @@ def _state_probability_binding(
     Age and period enter the key whenever consumed. Outcome count is checked
     separately for every occurrence, including when the numerical inputs repeat.
     """
-    arguments: list[tuple[str, object]] = []
-    bound_inputs: list[object] = [transition.func]
+    arguments: list[tuple[str, _BindingToken]] = []
+    bound_inputs: list[Callable[..., FloatND] | _BoundInput] = [transition.func]
     grids = {
         **transition.derived_categorical_codes,
         **state_action_space.actions,
@@ -2268,7 +2304,7 @@ def _state_probability_binding(
     }
     for name in signature_names:
         if name == "period":
-            value: object = period
+            value: _BoundInput = period
         elif name == "age":
             value = age
         elif name in grids:
@@ -2278,9 +2314,9 @@ def _state_probability_binding(
         else:
             return None
         if isinstance(value, jax.Array):
-            token: object = (jax.Array, id(value))
-        elif type(value) in (bool, int, str, type(None)):
-            token = (type(value), value)
+            token: _BindingToken = (jax.Array, id(value))
+        elif type(value) is int:
+            token = (int, value)
         elif type(value) is float:
             token = (float, struct.pack("!d", value))
         else:
@@ -2437,16 +2473,16 @@ def _unit_mass_violations(sum_all: FloatND) -> BoolND:
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _NamedArgumentsCall:
+class _NamedArgumentsCall[R]:
     """Call a function with the keyword arguments it declares, only."""
 
-    func: Callable[..., Any] = field(repr=False)
+    func: Callable[..., R] = field(repr=False)
     """The function."""
     names: frozenset[str]
     """The argument names the function declares."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(self, **kwargs: EconFunctionArg) -> R:
         return self.func(**{k: v for k, v in kwargs.items() if k in self.names})
 
 
@@ -2454,31 +2490,33 @@ class _NamedArgumentsCall:
 class _LawAndFeasibility:
     """Evaluate a regime law and the regime's feasibility at one point."""
 
-    law: Callable[..., Any] = field(repr=False)
+    law: Callable[..., Mapping[RegimeName, FloatND]] = field(repr=False)
     """The regime law."""
-    feasibility: Callable[..., Any] = field(repr=False)
+    feasibility: Callable[..., BoolND] = field(repr=False)
     """The conjunction of the regime's constraints."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(
+        self, **kwargs: EconFunctionArg
+    ) -> tuple[Mapping[RegimeName, FloatND], BoolND]:
         return self.law(**kwargs), self.feasibility(**kwargs)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _GridPointCall:
+class _GridPointCall[R]:
     """Call a transition at one grid point, given positionally for `jax.vmap`."""
 
     names: tuple[str, ...]
     """Grid variable names, in the order the positional values arrive."""
     scalar_kwargs: EconFunctionKwargs = field(repr=False)
     """Arguments held fixed across grid points."""
-    func: Callable[..., Any] = field(repr=False)
+    func: Callable[..., R] = field(repr=False)
     """The transition function."""
 
     # The kernel is traced with whatever leaves its caller supplies -- tracers,
     # Python scalars, arrays of either integer width -- so its annotations
     # document the contract and are not enforced at call time.
     @no_type_check
-    def __call__(self, *args: FloatND | IntND) -> Any:
+    def __call__(self, *args: FloatND | IntND) -> R:
         kwargs = dict(zip(self.names, args, strict=True))
         return self.func(**kwargs, **self.scalar_kwargs)

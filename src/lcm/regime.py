@@ -791,7 +791,7 @@ def decompose_constraints(
 
 
 def _resolve_phase_variant(
-    *, value: object, phase: Literal["solve", "simulate"]
+    *, value: UserFunction | Phased | None, phase: Literal["solve", "simulate"]
 ) -> UserFunction:
     """Return the variant of a possibly `Phased` entry that applies in `phase`."""
     if isinstance(value, Phased):
