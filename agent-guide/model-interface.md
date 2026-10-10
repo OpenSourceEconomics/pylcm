@@ -166,7 +166,9 @@ are never pruned. `model.pruned_variables` records the result per regime.
 
 Declare device axes with `Model(execution_config=ExecutionConfig(sharded_states=...))`,
 using model-level discrete states or the narrow continuous GridSearch route described in
-`docs/user_guide/tuning.md`: one concrete `LinSpacedGrid`, sole continuous and sharded
+`docs/user_guide/tuning.md`: one grid with nodes fixed at model build (`LinSpacedGrid`,
+`LogSpacedGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, or
+`IrregSpacedGrid(points=...)`; never `IrregSpacedGrid(n_points=...)`), the sole sharded
 state, retained in every regime. Sharding follows pruning, regime by regime: a regime
 that prunes the sharded state simply runs single-device, and only a state that *every*
 regime prunes is refused. The narrow continuous route keeps the stricter rule — there

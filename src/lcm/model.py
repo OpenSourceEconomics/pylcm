@@ -38,7 +38,15 @@ from _lcm.execution.execution_plan import (
     visible_device_pool_limits,
 )
 from _lcm.execution.footprint import layout_footprint
-from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
+from _lcm.grids import (
+    DiscreteGrid,
+    Grid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
+)
 from _lcm.model_graph import (
     ModelGraph,
     bind_edge_laws,
@@ -4477,7 +4485,8 @@ def _validate_sharded_state_capability(
         return None
     message = (
         f"ExecutionConfig.sharded_states {sorted(sharded_states)!r}: "
-        "Continuous sharding requires one concrete model-level LinSpacedGrid as "
+        "Continuous sharding requires one model-level continuous grid with fixed "
+        "nodes (linear, log, piecewise or fixed-point irregular) as "
         "the sole sharded state, retained in every regime, with singleton hard-max "
         "GridSearch. Unsharded states may include one static piecewise-linear "
         "coordinate, concrete discrete grids, fixed unfolded Gauss-Hermite "
@@ -4490,7 +4499,7 @@ def _validate_sharded_state_capability(
         raise ExecutionPlanningError(message)
     name = next(iter(sharded_states))
     grid = model_states[name]
-    if type(grid) is not LinSpacedGrid:
+    if not _is_concrete_sharded_grid(grid):
         raise ExecutionPlanningError(message)
     for regime_name, regime in user_regimes.items():
         if (
@@ -4509,6 +4518,26 @@ def _validate_sharded_state_capability(
                 f"{message} Unsupported regime: {regime_name!r}."
             )
     return name
+
+
+_FIXED_NODE_GRID_TYPES = (
+    LinSpacedGrid,
+    LogSpacedGrid,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
+)
+
+
+def _is_concrete_sharded_grid(grid: object) -> bool:
+    """Whether a continuous grid's nodes are fixed when the model is built.
+
+    Every device reads the next-period values through the full grid, so the
+    spacing of the nodes does not matter. Only an irregular grid whose points
+    are supplied at runtime is refused.
+    """
+    if type(grid) is IrregSpacedGrid:
+        return not grid.pass_points_at_runtime
+    return type(grid) in _FIXED_NODE_GRID_TYPES
 
 
 def _supports_continuous_sharding_vocabulary(

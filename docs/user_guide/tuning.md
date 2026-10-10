@@ -650,13 +650,24 @@ then pin it with `ExecutionConfig(axis_widths=...)`, per regime where the regime
 ### Which states can be sharded
 
 - A discrete state qualifies when it is declared at model level.
+
 - A continuous state qualifies only on the continuous route: it is the only sharded
-  state, declared at model level, its grid is exactly a `LinSpacedGrid`, every regime
+  state, declared at model level, its grid has nodes fixed at model build, every regime
   retains it and solves with ordinary hard-max `GridSearch`, and no regime is
-  collective, gated, or uses taste shocks.
+  collective, gated, or uses taste shocks. Fixed-node grids are:
+
+  - `LinSpacedGrid`
+  - `LogSpacedGrid`
+  - `PiecewiseLinSpacedGrid`
+  - `PiecewiseLogSpacedGrid`
+  - `IrregSpacedGrid(points=...)`
+
+  An `IrregSpacedGrid(n_points=...)`, whose points arrive at runtime, is refused.
+
 - A sharded state runs on the largest divisor of its extent that does not exceed the
   device count; nothing is padded. A 24-point grid uses all 8 devices, a 10-point grid
   only 5.
+
 - Several sharded states place one point per device, so the product of their extents
   must fit the device count.
 
