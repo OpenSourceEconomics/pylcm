@@ -15,6 +15,7 @@ import pytest
 
 from _lcm.simulation import host_operations, process_grids
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
+from _lcm.typing import FootprintTree
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -195,7 +196,7 @@ def test_normal_support_preserves_saved_identity_value_and_policy(
     )
 
 
-def _owner(*, parameters: object) -> process_grids.SimulationProcessGrids:
+def _owner(*, parameters: FootprintTree) -> process_grids.SimulationProcessGrids:
     return process_grids.SimulationProcessGrids(
         live_footprint=lambda: measure_buffer_footprint(tree=parameters),
         devices=(jax.devices()[0],),
@@ -224,7 +225,7 @@ def test_normal_support_matches_eager_bytes_across_generated_parameters(
         )
     ]
     spec = NormalIIDProcess(n_points=n_points, gauss_hermite=False)
-    owner = _owner(parameters=parameters)
+    owner = _owner(parameters=tuple(parameters))
     required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     for operands in parameters:
         eager = np.asarray(spec.compute_gridpoints(**operands))

@@ -479,7 +479,7 @@ def _released_or_charged(
     if not live:
         return True
     missing = resident_bytes_by_device(
-        live=measure_buffer_footprint(tree=live),
+        live=measure_buffer_footprint(tree=tuple(live)),
         arguments=memory.snapshot(),
         devices=memory.devices,
     )

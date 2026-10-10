@@ -21,11 +21,14 @@ from _lcm.simulation.taste_stream import (
     create_taste_shock_key,
     generate_taste_shock_keys,
 )
+from _lcm.typing import FootprintTree
 from lcm.exceptions import ExecutionPlanningError
 
 
 def _memory(
-    *, roots: object = (), operations: ProfiledSimulationOperations | None = None
+    *,
+    roots: FootprintTree = (),
+    operations: ProfiledSimulationOperations | None = None,
 ) -> SimulationMemory:
     devices = (jax.devices()[0],)
     return SimulationMemory(

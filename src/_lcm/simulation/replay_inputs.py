@@ -15,7 +15,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.value_reads import PeriodSimulationReads
-from _lcm.typing import PytreeChild
+from _lcm.typing import ArtifactPayload, PytreeChild
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.solver_api import (
     ArtifactKey,
@@ -39,7 +39,12 @@ type _PayloadPath = tuple[_PathStep, ...]
 
 
 def replay_payload_reads(
-    *, payload: object, key: ArtifactKey, period: int, regime: RegimeName, core: str
+    *,
+    payload: ArtifactPayload,
+    key: ArtifactKey,
+    period: int,
+    regime: RegimeName,
+    core: str,
 ) -> tuple[ValueRead, ...]:
     """Name every concrete array leaf passed to one replay adapter.
 
