@@ -20,7 +20,11 @@ import numpy as np
 
 from _lcm.grids.continuous import ContinuousGrid
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import Float1D
+from lcm.typing import Float1D, UserFunction
+
+# A string-keyed mapping nesting `L` leaves to any depth, such as a regime's
+# transitions keyed by target regime and then by name.
+type NodeTree[L] = Mapping[str, L | NodeTree[L]]
 
 
 class _Invariant:
@@ -52,8 +56,8 @@ def node_signature(*, node: object, age: float) -> Hashable:
     return INVARIANT
 
 
-def _tree_signature(
-    *, tree: Mapping[str, object], leaf_signature: Callable[[object], Hashable]
+def _tree_signature[L](
+    *, tree: NodeTree[L], leaf_signature: Callable[[L], Hashable]
 ) -> Hashable:
     """Fingerprint a (possibly nested) mapping of nodes via `leaf_signature`.
 
@@ -65,7 +69,7 @@ def _tree_signature(
         value = tree[key]
         signature = (
             _tree_signature(
-                tree=cast("Mapping[str, object]", value), leaf_signature=leaf_signature
+                tree=cast("NodeTree[L]", value), leaf_signature=leaf_signature
             )
             if isinstance(value, Mapping)
             else leaf_signature(value)
@@ -74,7 +78,7 @@ def _tree_signature(
     return tuple(pairs)
 
 
-def tree_signature(*, tree: Mapping[str, object], age: float) -> Hashable:
+def tree_signature(*, tree: NodeTree[UserFunction], age: float) -> Hashable:
     """Fingerprint a (possibly nested) mapping of nodes at `age`.
 
     Recurse into `Mapping` values and emit sorted `(path, signature)` pairs, so a

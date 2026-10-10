@@ -47,6 +47,7 @@ from dags import (
 )
 from dags.exceptions import InvalidFunctionArgumentsError
 from dags.tree import qname_from_tree_path
+from jaxtyping import Int, Scalar
 
 from _lcm.params.edges import (
     FALLBACK,
@@ -87,6 +88,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ReferenceName,
+    ScalarFloat,
 )
 
 # Suffix under which a target regime's dissolution flag `D` (cast to float) is passed
@@ -233,8 +235,11 @@ def bind_edge_period_context(
     func: Callable,
     fold_period: int,
     fold_age: object,
-) -> dict[str, object]:
+) -> dict[ReferenceName, Int[Scalar, ""] | ScalarFloat]:
     """Bind the target-fold context an edge callable explicitly declares.
+
+    `period` is an `int32` scalar; `age` keeps the dtype `jnp.asarray` gives the
+    fold's age, so an integer age is JAX's default integer width.
 
     The accepted names and the binder share `EDGE_PERIOD_CONTEXT_ARGS`, so a
     context name cannot be reserved during qualification without being handled
@@ -248,10 +253,9 @@ def bind_edge_period_context(
         )
         raise ValueError(msg)
 
-    values = {
-        _EDGE_PERIOD_ARG: jnp.int32(fold_period),
-        _EDGE_AGE_ARG: None if fold_age is None else jnp.asarray(fold_age),
-    }
+    values = {_EDGE_PERIOD_ARG: jnp.int32(fold_period)}
+    if fold_age is not None:
+        values[_EDGE_AGE_ARG] = jnp.asarray(fold_age)
     return {name: values[name] for name in accepted}
 
 

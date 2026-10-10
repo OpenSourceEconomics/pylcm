@@ -71,6 +71,8 @@ from _lcm.regime_law import RegimeLaws
 from _lcm.transition_plans import LotteryLifetime, TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
+    EconFunctionArg,
+    EconFunctionKwargs,
     EconFunctionsMapping,
     FunctionName,
     QualifiedName,
@@ -345,7 +347,7 @@ class ContinuationPlan:
 def bind_continuation(
     *,
     plan: ContinuationPlan,
-    combo_pool: dict[str, Any],
+    combo_pool: EconFunctionKwargs,
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,
     stochastic_node_width: int | None = None,
@@ -403,7 +405,7 @@ def bind_continuation(
     # coefficient is a flat param resolved from the pool here (runtime), keyed by
     # the plan's build-time name. `None` keeps the linear expected-utility read.
     risk_aversion = (
-        combo_pool[plan.risk_aversion_param_name]
+        cast("FloatND", combo_pool[plan.risk_aversion_param_name])
         if plan.risk_aversion_param_name is not None
         else None
     )
@@ -689,7 +691,7 @@ def _get_child_carry_reader(
     *,
     read: _ChildRead,
     carry: EGMCarry,
-    combo_pool: dict[str, Any],
+    combo_pool: EconFunctionKwargs,
     post_decision_name: FunctionName,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
@@ -790,7 +792,7 @@ class _ChildCarryReader:
     carry: EGMCarry
     """The target's carry rows for the period."""
 
-    combo_pool: dict[str, Any]
+    combo_pool: EconFunctionKwargs
     """The combo's pool: flat params, `period`, `age`, and the combo's values."""
 
     post_decision_name: FunctionName
@@ -936,7 +938,7 @@ class _ChildEulerState:
     next_state_func: Callable[..., Any]
     """The solution-phase next-state DAG of the target."""
 
-    combo_pool: dict[str, Any]
+    combo_pool: EconFunctionKwargs
     """The combo's pool, bound into every argument but the savings node."""
 
     post_decision_name: FunctionName
@@ -974,7 +976,7 @@ class _RowQueriesAndGradients:
     deterministic_resources_kwargs: dict[str, Any]
     """Deterministic next-state values the resources function reads."""
 
-    resources_param_kwargs: dict[str, Any]
+    resources_param_kwargs: EconFunctionKwargs
     """Flat params and `age`/`period` the resources function reads."""
 
     savings_value: ScalarFloat
@@ -999,7 +1001,7 @@ def _compute_row_queries_and_gradients(
     read: _ChildRead,
     child_euler_state: Callable[[ScalarFloat], ScalarFloat],
     deterministic_resources_kwargs: dict[str, Any],
-    resources_param_kwargs: dict[str, Any],
+    resources_param_kwargs: EconFunctionKwargs,
     savings_value: ScalarFloat,
     stochastic_values: tuple[ScalarFloat | ScalarInt, ...],
 ) -> tuple[FloatND, FloatND]:
@@ -1075,7 +1077,7 @@ def _composed_simple_resources(
     *,
     read: _ChildRead,
     child_euler_state: Callable[[ScalarFloat], ScalarFloat],
-    resources_param_kwargs: dict[str, Any],
+    resources_param_kwargs: EconFunctionKwargs,
 ) -> ScalarFloat:
     """Child resources at the savings node, for a resources map of Euler state alone."""
     return read.resources_func(
@@ -1093,7 +1095,7 @@ def _composed_row_resources(
     child_euler_state: Callable[[ScalarFloat], ScalarFloat],
     deterministic_resources_kwargs: dict[str, Any],
     stochastic_kwargs: dict[str, Any],
-    resources_param_kwargs: dict[str, Any],
+    resources_param_kwargs: EconFunctionKwargs,
 ) -> ScalarFloat:
     """Child resources at the savings node for one row's discrete/passive values."""
     bound = {
@@ -1521,7 +1523,7 @@ def _accumulate_ez_partials_block(
 
 
 def euler_draw_nodes(
-    *, read: _ChildRead, combo_pool: Mapping[str, Any]
+    *, read: _ChildRead, combo_pool: EconFunctionKwargs
 ) -> dict[TransitionFunctionName, FloatND | IntND]:
     """Node values of each draw the child's Euler-state law reads.
 
@@ -1549,15 +1551,17 @@ def euler_draw_nodes(
 
 
 def child_resources_params(
-    *, read: _ChildRead, combo_pool: Mapping[str, Any]
-) -> dict[str, Any]:
+    *, read: _ChildRead, combo_pool: EconFunctionKwargs
+) -> dict[ReferenceName, EconFunctionArg]:
     """The params, `age` and `period` the child's resources function reads.
 
     Params are the combo pool's. The child is next period's regime, and its carry
     rows were built in resources evaluated at its own period and age, so `period`
     is the source's plus one and `age` is the age grid at that period.
     """
-    child_period = combo_pool["period"] + 1 if "period" in combo_pool else None
+    child_period = (
+        cast("ScalarInt", combo_pool["period"]) + 1 if "period" in combo_pool else None
+    )
     child_time = (
         {"period": child_period, "age": read.age_values[child_period]}
         if child_period is not None

@@ -23,8 +23,9 @@ from _lcm.utils.ast_inspection import _get_func_indexing_params
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateTransitionEntry
 from lcm.transition import StochasticTransition
-from lcm.typing import StateName
+from lcm.typing import Phase, StateName
 
 
 def collect_stochastic_state_transitions(
@@ -117,8 +118,8 @@ def _phase_key(
 
 
 def _phase_variants(
-    entry: object,
-) -> tuple[tuple[object, Literal["solve", "simulate"] | None], ...]:
+    entry: StateTransitionEntry,
+) -> tuple[tuple[StateTransitionEntry, Phase | None], ...]:
     """The laws carried by one `state_transitions` entry, tagged by phase.
 
     A phase-invariant entry yields itself untagged; a `Phased` entry yields both

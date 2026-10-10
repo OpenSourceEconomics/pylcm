@@ -3985,9 +3985,9 @@ def _gated_edge_group_components(
     return tuple(components)
 
 
-def _filter_kwargs_for_func(
-    *, func: Callable, kwargs: Mapping[str, object]
-) -> Mapping[str, object]:
+def _filter_kwargs_for_func[T](
+    *, func: Callable, kwargs: Mapping[ReferenceName, T]
+) -> Mapping[ReferenceName, T]:
     """Filter kwargs to only those accepted by func's signature."""
     try:
         sig = inspect.signature(func)
@@ -4118,7 +4118,7 @@ def _edge_and_same_period_kwargs(
     *,
     edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
     same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
-) -> dict[str, object]:
+) -> dict[ReferenceName, Mapping[RegimeName, FloatND]]:
     """Relay only the optional kernel arguments the caller actually supplied.
 
     The solve loop passes `edge_regime_to_V_arr` to a source with
@@ -4128,7 +4128,7 @@ def _edge_and_same_period_kwargs(
     so a base kernel whose signature declares neither is called exactly as the
     solve loop would have called it directly.
     """
-    kwargs: dict[str, object] = {}
+    kwargs: dict[ReferenceName, Mapping[RegimeName, FloatND]] = {}
     if edge_regime_to_V_arr is not None:
         kwargs["edge_regime_to_V_arr"] = edge_regime_to_V_arr
     if same_period_regime_to_V_arr is not None:

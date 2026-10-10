@@ -17,6 +17,7 @@ from _lcm.execution.core_program import (
     CoreProgram,
     ValueRead,
 )
+from _lcm.execution.output_layout import OutputRoleTree
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
     ValueArtifactKind,
@@ -26,7 +27,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.simulation.program_types import subject_axis
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.solution.continuation_reads import rekeyed_value_reads
-from _lcm.typing import FlatRegimeParams, RegimeName
+from _lcm.typing import FlatRegimeParams, QAndFKwargs, RegimeName
 from lcm.solver_api import SIMULATION_POLICY
 from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt, StateName
 
@@ -156,7 +157,7 @@ def _program(
     subject_names: tuple[str, ...],
     state_names: tuple[StateName, ...],
     reads: tuple[ValueRead, ...],
-    roles: object,
+    roles: OutputRoleTree,
 ) -> CoreProgram:
     return CoreProgram(
         name=name,
@@ -276,7 +277,8 @@ class _Rank:
                 "MappingProxyType[RegimeName, FloatND]",
                 arguments.pop("next_regime_to_V_arr"),
             ),
-            referenced_value_kwargs=arguments,
+            # What remains after the pops are the declared reference channels.
+            referenced_value_kwargs=cast("QAndFKwargs", arguments),
         )
         return (
             jax.tree.map(lambda value: value[0], actions),

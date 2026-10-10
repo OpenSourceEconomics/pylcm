@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from _lcm.simulation.memory import SimulationMemory
+from _lcm.typing import ArrayTree
 from lcm.typing import ActionName, FloatND, IntND
 
 
@@ -30,7 +31,7 @@ class PreflightActionGrids:
         *,
         action_names: tuple[ActionName, ...],
         grids: MappingProxyType[ActionName, FloatND | IntND],
-        retained_arrays: object,
+        retained_arrays: ArrayTree,
     ) -> Mapping[ActionName, FloatND | IntND]:
         """Admit each distinct Cartesian product once within the validation call."""
         if self.memory is None:

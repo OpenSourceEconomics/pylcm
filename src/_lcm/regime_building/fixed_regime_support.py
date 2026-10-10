@@ -35,14 +35,21 @@ from _lcm.params.processing import (
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.regime_law import RegimeLaw, RegimeLaws, bind_regime_law
-from _lcm.typing import FlatParams, QualifiedName, RegimeName, StateName
+from _lcm.typing import (
+    EconFunctionArg,
+    FlatParams,
+    QualifiedName,
+    RegimeName,
+    StateName,
+)
 from _lcm.utils.namespace import flatten_regime_namespace
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateTransitionEntry
 from lcm.temporal import TimeVarying
 from lcm.transition import ByAge, JointTransition, StochasticTransition
-from lcm.typing import ReferenceName, UserParams
+from lcm.typing import ReferenceName, UserParams, UserParamsLeaf
 
 type Side = Literal["solve", "simulate"]
 
@@ -152,7 +159,7 @@ def _prune_regime_transition(
     regime_name: RegimeName,
     regime: UserRegime,
     law: RegimeLaw,
-    fixed_flat: Mapping[str, object],
+    fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
 ) -> tuple[object, dict[Side, frozenset[str]], frozenset[str]]:
     """Remove zero cells, keeping a joint-lottery edge in both phases or neither.
 
@@ -235,7 +242,7 @@ def _trim_joint_transitions(
     removed: frozenset[str],
     regime_name: RegimeName,
     regime: UserRegime,
-    fixed_flat: Mapping[str, object],
+    fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     reads: dict[RegimeName, set[str]],
 ) -> MappingProxyType[str, object]:
@@ -285,7 +292,7 @@ def _prune_law(
     side: Side | None,
     regime_name: RegimeName,
     regime: UserRegime,
-    fixed_flat: Mapping[str, object],
+    fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     protected: frozenset[str],
 ) -> object:
@@ -397,11 +404,11 @@ def _evaluate_fixed_function(
     path: tuple[str, ...],
     side: Side,
     regime: UserRegime,
-    fixed_flat: Mapping[str, object],
+    fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     ancestors: tuple[str, ...],
 ) -> tuple[Any, frozenset[str]] | None:
     """Evaluate a complete fixed DAG, or retain an unresolved conditional edge."""
-    arguments: dict[str, object] = {}
+    arguments: dict[ReferenceName, EconFunctionArg] = {}
     keys: set[str] = set()
     for arg_name, parameter in inspect.signature(func).parameters.items():
         if parameter.kind not in (
@@ -438,7 +445,7 @@ def _resolve_fixed_argument(
     path: tuple[str, ...],
     side: Side,
     regime: UserRegime,
-    fixed_flat: Mapping[str, object],
+    fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     ancestors: tuple[str, ...],
 ) -> tuple[Any, frozenset[str]] | None:
     """Resolve one argument through its helper DAG or a fixed parameter leaf.
@@ -493,7 +500,7 @@ def _is_runtime_argument(*, arg_name: ReferenceName, regime: UserRegime) -> bool
 
 
 def _canonicalize_fixed_leaf(
-    *, regime_name: RegimeName, qname: QualifiedName, value: object
+    *, regime_name: RegimeName, qname: QualifiedName, value: UserParamsLeaf
 ) -> object:
     """Apply the parameter dtype boundary before executing a fixed callable."""
     canonical = cast_params_to_canonical_dtypes(
@@ -522,15 +529,15 @@ def _targets(*, law: object, side: Side) -> frozenset[str]:
 
 def _trim_state_law(
     *,
-    law: object,
+    law: StateTransitionEntry,
     removed: Mapping[Side, frozenset[str]],
     regime_name: RegimeName,
     state: StateName,
     regime: UserRegime,
-    fixed_flat: Mapping[str, object],
+    fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     reads: dict[RegimeName, set[str]],
-) -> object:
+) -> StateTransitionEntry:
     """Omit explicit laws toward targets removed from the relevant phase."""
     if isinstance(law, Phased):
         for side, variant in (("solve", law.solve), ("simulate", law.simulate)):
@@ -570,7 +577,9 @@ def _trim_state_law(
     )
 
 
-def _trim_state_side(*, law: object, removed: frozenset[str]) -> object:
+def _trim_state_side(
+    *, law: StateTransitionEntry, removed: frozenset[str]
+) -> StateTransitionEntry:
     """Keep a bare law, or the explicit target cells still needed in this phase."""
     if isinstance(law, Mapping):
         return MappingProxyType(
@@ -587,7 +596,7 @@ def _record_removed_state_keys(
     state: StateName,
     side: Side,
     regime: UserRegime,
-    fixed_flat: Mapping[str, object],
+    fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     consumed: set[str],
     reads: dict[RegimeName, set[str]],
 ) -> None:
@@ -616,7 +625,7 @@ def _get_declared_fixed_keys(
     path: tuple[str, ...],
     side: Side,
     regime: UserRegime,
-    fixed_flat: Mapping[str, object],
+    fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     ancestors: tuple[str, ...],
     non_params: frozenset[str] = frozenset(),
     reads: set[str],

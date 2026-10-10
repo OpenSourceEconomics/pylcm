@@ -13,7 +13,7 @@ from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypedDict, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -25,7 +25,7 @@ from _lcm.execution.footprint import (
     sharding_device_ids,
 )
 from _lcm.execution.runtime_sharding import runtime_shardings_match
-from _lcm.typing import RegimeName, StateName
+from _lcm.typing import HostArray, RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 from lcm.typing import ValueND
@@ -362,7 +362,17 @@ _select_value_view = jax.jit(
 )
 
 
-def _selection_operands(*, transfer: ResolvedValueTransfer) -> dict[str, object]:
+class _SelectionOperands(TypedDict):
+    """Every argument of the selection executable except the stored value."""
+
+    starts: HostArray
+    axes: tuple[int, ...]
+    widths: tuple[int, ...]
+    kept: tuple[bool, ...]
+    out_sharding: jax.sharding.Sharding
+
+
+def _selection_operands(*, transfer: ResolvedValueTransfer) -> _SelectionOperands:
     """Return every argument of the selection executable except the stored value."""
     view = transfer.view
     if view is None or view.leaf is not ValueViewLeaf.SELECTED:
@@ -1286,7 +1296,7 @@ def _select_stored_block(
         value=selected,
         expected_shape=transfer.consumer_shape,
         expected_dtype=transfer.expected_dtype,
-        expected_sharding=operands["out_sharding"],  # ty: ignore[invalid-argument-type]
+        expected_sharding=operands["out_sharding"],
         label="selected",
     )
     view = transfer.view

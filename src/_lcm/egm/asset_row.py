@@ -16,7 +16,7 @@ import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -43,6 +43,7 @@ from _lcm.egm.upper_envelope.fues import (
     QueryBracket,
 )
 from _lcm.typing import (
+    EconFunctionKwargs,
     RegimeName,
     StateName,
 )
@@ -59,7 +60,7 @@ from lcm.typing import (
 def _get_solve_one_combo_asset_rows(
     *,
     pieces: _EgmKernelPieces,
-    pool: dict[str, Any],
+    pool: EconFunctionKwargs,
     state_grid: Float1D,
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     euler_point_width: int | None,
@@ -115,7 +116,7 @@ class _SolveOneComboAssetRows:
     pieces: _EgmKernelPieces
     """Build-time statics shared by every per-combo computation."""
 
-    pool: dict[str, Any]
+    pool: EconFunctionKwargs
     """The kernel's flat params, `period`, and `age`."""
 
     state_grid: Float1D
@@ -162,7 +163,8 @@ class _SolveOneComboAssetRows:
         }
         # Validation pins the default Bellman aggregator, whose single
         # non-(utility, CE) parameter is the discount factor.
-        (discount_factor,) = tuple(pieces.build_W_kwargs(combo_pool).values())
+        (discount_factor_arg,) = tuple(pieces.build_W_kwargs(combo_pool).values())
+        discount_factor = cast("ScalarFloat", discount_factor_arg)
         own_resources_of_state = ResourcesOfState(
             resources_func=pieces.own_resources_func,
             euler_state_name=pieces.euler_state_name,
@@ -240,7 +242,7 @@ class _SolveOneNode:
     pieces: _EgmKernelPieces
     """Build-time statics shared by every per-combo computation."""
 
-    combo_pool: dict[str, Any]
+    combo_pool: EconFunctionKwargs
     """The combo's pool: flat params, `period`, `age`, and the combo's values."""
 
     discount_factor: ScalarFloat
@@ -393,7 +395,7 @@ def _continuation_of_euler_state(
     savings_value: ScalarFloat,
     *,
     pieces: _EgmKernelPieces,
-    combo_pool: dict[str, Any],
+    combo_pool: EconFunctionKwargs,
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,
     stochastic_node_width: int | None,
@@ -451,7 +453,7 @@ def _finalize_asset_row_node(
 def _get_expected_continuation_value(
     *,
     pieces: _EgmKernelPieces,
-    combo_pool: dict[str, Any],
+    combo_pool: EconFunctionKwargs,
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,
     stochastic_node_width: int | None,

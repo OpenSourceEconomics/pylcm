@@ -40,7 +40,15 @@ from _lcm.solution.backward_induction import CompilationWave, _states_for_period
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import RegimeName
+from lcm.typing import ActionName, RegimeName
+
+# Output descriptors of the finite ranking stage: the chosen actions, the value
+# they attain, and the nested-policy fallback flag.
+type _FiniteDecisionOutput = tuple[
+    Mapping[ActionName, jax.ShapeDtypeStruct],
+    jax.ShapeDtypeStruct,
+    jax.ShapeDtypeStruct,
+]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -315,7 +323,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     )
     if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
         actions, _, _ = cast(
-            "tuple[Mapping[str, object], object, object]",
+            "_FiniteDecisionOutput",
             _profile_finite_decision(
                 runtime=runtime,
                 regime=regime,
@@ -364,7 +372,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             age=age,
         )
         indices, _ = cast(
-            "tuple[jax.ShapeDtypeStruct, object]",
+            "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
             _prepare_program(
                 runtime=runtime,
                 program=regime.simulation.programs.forward_decision[period],

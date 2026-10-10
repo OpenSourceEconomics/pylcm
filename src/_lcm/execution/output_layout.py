@@ -26,7 +26,7 @@ from _lcm.execution.value_transfer import (
     TransferCache,
     apply_value_transfer_plan,
 )
-from _lcm.typing import StateName
+from _lcm.typing import DataclassInstance, StateName
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -86,6 +86,24 @@ class StateAxesLeading:
 
 
 type OutputRoleLeaf = OutputRole | StateAxesLeading
+
+# A tree of output roles shaped like the output it declares, with `None` for an
+# output the program does not publish. A solve program's leaves are
+# `OutputRoleLeaf`s; a forward-simulation program names each leaf's role with a
+# string. A registered pytree dataclass, such as `EGMCarry`, shapes the subtree of
+# the payload it describes.
+type OutputRoleTree = (
+    OutputRoleLeaf
+    | str
+    | tuple[OutputRoleTree, ...]
+    | Mapping[str, OutputRoleTree]
+    | DataclassInstance
+    | None
+)
+
+# One entry of a `jax.sharding.PartitionSpec`: the mesh axis an array axis is split
+# over, a tuple of mesh axes, or `None` for a replicated axis.
+type PartitionEntry = str | tuple[str, ...] | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -203,7 +221,7 @@ def _state_axis_spec(
     *,
     value_sharding: jax.sharding.Sharding,
     state_order: tuple[StateName, ...],
-) -> tuple[object, ...] | None:
+) -> tuple[PartitionEntry, ...] | None:
     """Read the template's partition entry per canonical state axis.
 
     Returns `None` off a named mesh: a single-device contract still fixes where
@@ -237,7 +255,7 @@ def _resolve_output_leaf(
     value_shape: tuple[int, ...],
     value_dtype: object,
     state_order: tuple[StateName, ...],
-    state_spec: tuple[object, ...] | None,
+    state_spec: tuple[PartitionEntry, ...] | None,
 ) -> ExpectedOutputLeaf:
     """Map one validated logical role to its concrete contract."""
     if role is VALUE:
@@ -275,7 +293,7 @@ def _state_axes_leading_sharding(
     role: StateAxesLeading,
     value_sharding: jax.sharding.Sharding,
     state_order: tuple[StateName, ...],
-    state_spec: tuple[object, ...] | None,
+    state_spec: tuple[PartitionEntry, ...] | None,
 ) -> jax.sharding.Sharding:
     """Place the named state axes as the template places them; replicate the rest."""
     if state_spec is None:

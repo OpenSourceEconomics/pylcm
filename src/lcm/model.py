@@ -273,6 +273,7 @@ from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateTransitionEntry
 from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
@@ -638,7 +639,9 @@ class Model:
         functions: Mapping[str, object] = MappingProxyType({}),
         constraints: Mapping[str, object] = MappingProxyType({}),
         states: Mapping[str, object] = MappingProxyType({}),
-        state_transitions: Mapping[str, object] = MappingProxyType({}),
+        state_transitions: Mapping[StateName, StateTransitionEntry] = MappingProxyType(
+            {}
+        ),
         actions: Mapping[str, object] = MappingProxyType({}),
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),

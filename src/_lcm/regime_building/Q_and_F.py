@@ -50,13 +50,16 @@ from _lcm.transition_plans import (
     TargetTransitionPlans,
 )
 from _lcm.typing import (
+    ArrayTree,
     ConstraintFunction,
     ConstraintFunctionsMapping,
     EconFunction,
+    EconFunctionArg,
     EconFunctionsMapping,
     NextStateSimulationFunction,
     ParamsLeaf,
     QAndFFunction,
+    QAndFKwargs,
     QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
@@ -433,7 +436,7 @@ class _QAndF:
     """The continuation aggregator."""
     koopmans_aggregator: EconFunction
     """The regime's Bellman aggregator `W`."""
-    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    build_W_kwargs: Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]
     """Assembles `W`'s further arguments from the cell."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
@@ -602,7 +605,7 @@ class _ComputeIntermediates:
     """The continuation aggregator."""
     koopmans_aggregator: EconFunction
     """The regime's Bellman aggregator `W`."""
-    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    build_W_kwargs: Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]
     """Assembles `W`'s further arguments from the cell."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
@@ -1525,7 +1528,7 @@ class _CollectiveQAndF:
     """The continuation aggregator."""
     koopmans_aggregator: EconFunction
     """The regime's Bellman aggregator `W`."""
-    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    build_W_kwargs: Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]
     """Assembles `W`'s further arguments from the cell."""
     value_constraint_machinery: _ValueConstraintMachinery
     """The value-constraint readers and evaluators."""
@@ -2189,7 +2192,7 @@ def _get_compute_CE(
     ),
 ) -> tuple[
     Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]],
-    tuple[Callable[..., Any], ...],
+    tuple[Callable[..., ArrayTree], ...],
     frozenset[str],
 ]:
     """Build the closure that aggregates next period's value into `CE`.
@@ -2379,7 +2382,7 @@ class _ComputeCE:
         *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         zero: FloatND,
-        states_actions_params: Mapping[str, Any],
+        states_actions_params: QAndFKwargs,
     ) -> tuple[FloatND, MappingProxyType[RegimeName, FloatND]]:
         """Aggregate the continuation lottery into `CE` at one state-action point.
 
@@ -3002,8 +3005,8 @@ class _ResolveAtNode:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Mapping[str, FloatND]:
-        drawn: dict[str, Any] = {}
+    def __call__(self, **kwargs: EconFunctionArg | ArrayTree) -> Mapping[str, FloatND]:
+        drawn: dict[TransitionFunctionName, ArrayTree] = {}
         for name in self.read_as_a_draw:
             index = kwargs[name].astype(jnp.int32)
             if name in self.support_provider_names:
@@ -3047,7 +3050,7 @@ class _InterpolateAtNode:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> FloatND:
+    def __call__(self, **kwargs: EconFunctionArg | ArrayTree) -> FloatND:
         resolved = self.resolve_at_this_node(
             **{k: v for k, v in kwargs.items() if k in self.resolver_arg_names}
         )
@@ -3559,7 +3562,7 @@ def _as_lottery(
 
 def _get_arg_names_of_Q_and_F(
     *,
-    deps: list[Callable[..., Any]],
+    deps: list[Callable[..., ArrayTree]],
     include: frozenset[str] = frozenset(),
     exclude: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:
@@ -3838,7 +3841,7 @@ def _unit_regime_mass_or_nan(
 
 def _publish_signature(
     *,
-    target: object,
+    target: Callable[..., ArrayTree],
     arg_names: tuple[ReferenceName, ...],
     return_annotation: str | type[inspect.Signature.empty],
     name: str,

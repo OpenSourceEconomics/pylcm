@@ -22,9 +22,9 @@ from typing import Any, no_type_check
 
 from dags import concatenate_functions
 
-from _lcm.typing import FunctionName
+from _lcm.typing import EconFunctionArg, FunctionName, QAndFKwargs
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import UserFunction
+from lcm.typing import ReferenceName, UserFunction
 
 
 def get_dag_targets_consumed_by_W(
@@ -59,7 +59,7 @@ def _get_build_W_kwargs(
     *,
     functions: Mapping[FunctionName, Callable[..., Any]],
     koopmans_aggregator: UserFunction,
-) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
+) -> Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]:
     """Return a closure that builds `W_kwargs` from `states_actions_params`.
 
     W's signature parameters come from two disjoint pools:
@@ -112,7 +112,9 @@ class _BuildWKwargs:
     # Python scalars, arrays of either integer width -- so its annotations
     # document the contract and are not enforced at call time.
     @no_type_check
-    def __call__(self, states_actions_params: Mapping[str, Any]) -> dict[str, Any]:
+    def __call__(
+        self, states_actions_params: QAndFKwargs
+    ) -> dict[ReferenceName, EconFunctionArg]:
         out = {k: v for k, v in states_actions_params.items() if k in self.passthrough}
         if self.dag_func is not None:
             out |= self.dag_func(**states_actions_params)

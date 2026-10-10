@@ -42,6 +42,31 @@ from lcm.transition import (
 )
 from lcm.typing import UserFunction
 
+# One `Regime.states` value; `None` masks a model-level state of the same name.
+type StateEntry = Grid | Phased | AgeSpecializedGrid | None
+
+# One `Regime.state_transitions` value: a law, a stochastic law, a phase pair, or
+# a per-target mapping of laws; `None` masks a model-level law. `Phased` inside a
+# per-target mapping passes the type check so the validator can reject it with
+# the outermost-only explanation.
+type StateTransitionEntry = (
+    UserFunction
+    | StochasticTransition
+    | Phased
+    | Mapping[RegimeName, UserFunction | StochasticTransition | Phased]
+    | None
+)
+
+# One `Regime.actions` value; `None` masks a model-level action.
+type ActionEntry = Grid | None
+
+# One `Regime.functions` value; `None` masks a model-level function.
+type FunctionEntry = UserFunction | Phased | CollectiveUtility | None
+
+# One `Regime.constraints` value; `None` masks a model-level constraint. `Phased`
+# passes the type check so the validator can reject it with an explanation.
+type ConstraintEntry = ConstraintLike | Phased | ValueDependentConstraint | None
+
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
@@ -67,8 +92,7 @@ class Regime:
 
     _accepts_margin_solver: ClassVar[bool] = False
 
-    # `None` masks a model-level entry of the same name.
-    states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None] = field(
+    states: Mapping[StateName, StateEntry] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of state variable names to grids or phase-variant declarations.
@@ -83,16 +107,9 @@ class Regime:
     model build.
     """
 
-    state_transitions: Mapping[
-        StateName,
-        UserFunction
-        | StochasticTransition
-        | Phased
-        # `Phased` inside a per-target dict passes the type check so the
-        # validator can reject it with the outermost-only explanation.
-        | Mapping[RegimeName, UserFunction | StochasticTransition | Phased]
-        | None,
-    ] = field(default_factory=lambda: MappingProxyType({}))
+    state_transitions: Mapping[StateName, StateTransitionEntry] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of state names to transition functions or per-target dicts.
 
     Every non-process target-state cell must have exactly one producer: an ordinary
@@ -125,14 +142,14 @@ class Regime:
     finite, in `[0, 1]`, and unit mass.
     """
 
-    actions: Mapping[ActionName, Grid | None] = field(
+    actions: Mapping[ActionName, ActionEntry] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of action variable names to grid objects."""
 
-    functions: Mapping[
-        FunctionName, UserFunction | Phased | CollectiveUtility | None
-    ] = field(default_factory=lambda: MappingProxyType({}))
+    functions: Mapping[FunctionName, FunctionEntry] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of function names to callables; must include 'utility'.
 
     `Phased` gives each phase its own implementation. A collective regime
@@ -141,11 +158,9 @@ class Regime:
     bodies under `utility_<s>` for the engine.
     """
 
-    # `Phased` passes the type check so the validator can reject it with an
-    # explanation (constraints are phase-invariant).
-    constraints: Mapping[
-        FunctionName, ConstraintLike | Phased | ValueDependentConstraint | None
-    ] = field(default_factory=lambda: MappingProxyType({}))
+    constraints: Mapping[FunctionName, ConstraintEntry] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of constraint names to constraints.
 
     A constraint is either a `Condition` built from `lcm.ref`, or an ordinary
@@ -711,7 +726,7 @@ class Regime:
 
 
 def decompose_functions(
-    functions: Mapping[FunctionName, UserFunction | Phased | CollectiveUtility | None],
+    functions: Mapping[FunctionName, FunctionEntry],
 ) -> Mapping[FunctionName, UserFunction | Phased | None]:
     """Replace a `CollectiveUtility` by one utility entry per stakeholder.
 
@@ -753,9 +768,7 @@ def decompose_functions(
 
 
 def decompose_constraints(
-    constraints: Mapping[
-        FunctionName, ConstraintLike | Phased | ValueDependentConstraint | None
-    ],
+    constraints: Mapping[FunctionName, ConstraintEntry],
 ) -> Mapping[FunctionName, ConstraintLike | Phased | None]:
     """Drop the value-dependent declarations from a regime's constraints.
 
