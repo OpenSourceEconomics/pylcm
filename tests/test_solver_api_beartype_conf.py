@@ -1,5 +1,6 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import cast
 
 import jax
@@ -8,6 +9,7 @@ import pytest
 from beartype import beartype
 from beartype.roar import BeartypeCallHintParamViolation
 
+from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.typing import ArtifactPayload
 from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.contract import (
@@ -17,13 +19,18 @@ from lcm._solver_api.contract import (
 from lcm._solver_api.identity import ArtifactValue, InertMetadata
 from lcm.exceptions import SolverAPITypeError
 from lcm.solver_api import (
+    ArtifactAuthority,
     ArtifactKey,
     ArtifactRef,
     ArtifactStore,
     LoadState,
+    ReplayModelContext,
+    ReplayRouteSnapshot,
+    SimulationBuildContext,
     ValueStore,
 )
-from lcm.typing import FloatND
+from lcm.typing import FloatND, IntND
+from tests.solution.test_public_mapping_admission import _metadata
 
 
 @beartype(conf=SOLVER_API_CONF)
@@ -153,3 +160,94 @@ def test_claw_checks_the_artifact_contract_module() -> None:
         _snapshot_inert_pytree_metadata(
             value=1, active_ids=cast("set[int]", "not a set")
         )
+
+
+_NODES: MappingProxyType[str, FloatND | IntND] = MappingProxyType(
+    {"wealth": jnp.asarray([0.0, 1.0])}
+)
+_NO_ARTIFACTS: MappingProxyType[ArtifactKey, ArtifactPayload] = MappingProxyType({})
+_NO_AUTHORITIES: MappingProxyType[ArtifactKey, ArtifactAuthority] = MappingProxyType({})
+
+
+def test_replay_route_snapshot_refuses_a_plain_dict_of_artifacts() -> None:
+    """The engine hands a route its snapshot artifacts as a read-only mapping."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="parameter artifacts="):
+        ReplayRouteSnapshot(
+            artifacts={},  # ty: ignore[invalid-argument-type]
+            authorities=_NO_AUTHORITIES,
+            metadata=_metadata(),
+        )
+
+
+def test_replay_route_snapshot_refuses_a_plain_dict_of_authorities() -> None:
+    """The engine hands a route its snapshot authorities as a read-only mapping."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="parameter authorities="):
+        ReplayRouteSnapshot(
+            artifacts=_NO_ARTIFACTS,
+            authorities={},  # ty: ignore[invalid-argument-type]
+            metadata=_metadata(),
+        )
+
+
+def test_replay_model_context_refuses_a_plain_dict_of_state_nodes() -> None:
+    """The engine hands a route its state nodes as a read-only mapping."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="parameter state_nodes="):
+        ReplayModelContext(
+            regime_name="alive",
+            period=0,
+            state_names=("wealth",),
+            action_names=(),
+            state_nodes=dict(_NODES),  # ty: ignore[invalid-argument-type]
+            action_nodes=MappingProxyType({}),
+        )
+
+
+def test_replay_model_context_refuses_a_plain_dict_of_action_nodes() -> None:
+    """The engine hands a route its action nodes as a read-only mapping."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="parameter action_nodes="):
+        ReplayModelContext(
+            regime_name="alive",
+            period=0,
+            state_names=(),
+            action_names=("wealth",),
+            state_nodes=MappingProxyType({}),
+            action_nodes=dict(_NODES),  # ty: ignore[invalid-argument-type]
+        )
+
+
+def test_simulation_build_context_refuses_a_plain_dict_of_state_nodes() -> None:
+    """The engine hands a reader builder its state nodes as a read-only mapping."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="parameter state_nodes="):
+        SimulationBuildContext(
+            period=0,
+            regime_name="alive",
+            state_names=("wealth",),
+            action_names=(),
+            state_nodes=dict(_NODES),  # ty: ignore[invalid-argument-type]
+            action_nodes=MappingProxyType({}),
+        )
+
+
+def test_simulation_build_context_refuses_a_plain_dict_of_action_nodes() -> None:
+    """The engine hands a reader builder its action nodes as a read-only mapping."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="parameter action_nodes="):
+        SimulationBuildContext(
+            period=0,
+            regime_name="alive",
+            state_names=(),
+            action_names=("wealth",),
+            state_nodes=MappingProxyType({}),
+            action_nodes=dict(_NODES),  # ty: ignore[invalid-argument-type]
+        )
+
+
+def test_placed_build_context_nodes_stay_read_only_mappings() -> None:
+    """Device placement of a context's nodes returns the read-only mapping type."""
+    placed = place_simulation_arguments(
+        arguments={"state_nodes": _NODES},
+        subject_arg_names=(),
+        value_reads=(),
+        devices=(jax.devices()[0],),
+    )
+
+    assert type(placed["state_nodes"]) is MappingProxyType
