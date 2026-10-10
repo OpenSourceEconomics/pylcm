@@ -21,9 +21,9 @@ specified — and entry into a process requires its law to be fixed *here*.
 """
 
 import dataclasses
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax.numpy as jnp
 from dags.tree import qname_from_tree_path, tree_path_from_qname
@@ -47,13 +47,15 @@ from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedGrid
-from lcm.typing import UserParams, UserParamsLeaf, UserParamsNode
+from lcm.typing import UserFunction, UserParams, UserParamsLeaf, UserParamsNode
 
 # A state as the user declares it on a `Regime`, or one member of a `Phased`
 # declaration. The two are one type because a carried state is
 # `Phased(solve=callable, simulate=Grid)`, so a member may be a plain function
 # where the outer slot may not.
-type StateDeclaration = Grid | Phased | AgeSpecializedGrid | Callable[..., Any] | None
+type StateDeclaration = Grid | Phased | AgeSpecializedGrid | UserFunction | None
+# A process distribution field as baked into the process: a Python scalar.
+type _ProcessField = float | int | bool
 
 
 def bind_fixed_process_laws(
@@ -118,7 +120,7 @@ def _resolve_process_law_params(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     params_flat: Mapping[QualifiedName, UserParamsLeaf],
-) -> tuple[dict[RegimeName, dict[StateName, dict[str, Any]]], set[str]]:
+) -> tuple[dict[RegimeName, dict[StateName, dict[str, _ProcessField]]], set[str]]:
     """Resolve every runtime process parameter against the user's `fixed_params`.
 
     The slots come from the regimes as declared, before any binding: binding only
@@ -179,7 +181,7 @@ def _resolve_process_law_params(
         )
     )
 
-    resolved: dict[RegimeName, dict[StateName, dict[str, Any]]] = {}
+    resolved: dict[RegimeName, dict[StateName, dict[str, _ProcessField]]] = {}
     for regime_name, regime_slots in canonical.items():
         # The cast input holds regime levels only, so no edge level comes back.
         for slot, value in cast("FlatRegimeParams", regime_slots).items():
@@ -269,7 +271,7 @@ def _fail_if_a_process_law_field_varies(
     raise InvalidParamsError(msg)
 
 
-def _as_process_field(*, value: ParamsLeaf, qname: QualifiedName) -> float | int | bool:
+def _as_process_field(*, value: ParamsLeaf, qname: QualifiedName) -> _ProcessField:
     """Return a canonically cast leaf as the Python scalar a process field takes.
 
     A process's distribution fields are Python scalars, and it computes its nodes
@@ -300,7 +302,7 @@ def _as_process_field(*, value: ParamsLeaf, qname: QualifiedName) -> float | int
 def _bind_regime(
     *,
     user_regime: UserRegime,
-    regime_values: Mapping[StateName, Mapping[str, Any]],
+    regime_values: Mapping[StateName, Mapping[str, _ProcessField]],
 ) -> UserRegime:
     """Return one regime with every resolved process law baked into its grids.
 
@@ -324,7 +326,7 @@ def _bind_regime(
 
 
 def _bind_declaration(
-    *, declaration: StateDeclaration, values: Mapping[str, Any]
+    *, declaration: StateDeclaration, values: Mapping[str, _ProcessField]
 ) -> StateDeclaration:
     """Bind a state declaration, which may be `Phased` over two grids.
 
@@ -376,7 +378,7 @@ def _drop_flat_keys(*, params: UserParams, drop: set[str]) -> UserParams:
 
 
 def _prune_flat_keys(
-    *, branch: Mapping[str, Any], prefix: tuple[str, ...], drop: set[str]
+    *, branch: Mapping[str, UserParamsNode], prefix: tuple[str, ...], drop: set[str]
 ) -> dict[str, UserParamsNode]:
     """Copy `branch` without the leaves whose qualified name is in `drop`."""
     kept: dict[str, UserParamsNode] = {}
@@ -385,9 +387,7 @@ def _prune_flat_keys(
         if qname_from_tree_path(path) in drop:
             continue
         if isinstance(value, Mapping):
-            inner = _prune_flat_keys(
-                branch=cast("Mapping[str, Any]", value), prefix=path, drop=drop
-            )
+            inner = _prune_flat_keys(branch=value, prefix=path, drop=drop)
             if inner:
                 kept[key] = inner
             continue
