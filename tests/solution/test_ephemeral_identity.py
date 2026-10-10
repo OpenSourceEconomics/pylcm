@@ -1,6 +1,7 @@
 """Local solve and simulation for models without durable callable fingerprints."""
 
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import cloudpickle
@@ -138,6 +139,38 @@ def test_ephemeral_results_cannot_be_saved(tmp_path: Path) -> None:
     with pytest.raises(IncompatibleSolutionError, match="ephemeral"):
         result.save(directory=tmp_path / "simulation")
     assert list(tmp_path.iterdir()) == []
+
+
+def test_ephemeral_solution_rejects_invalid_identity_without_comparing_it() -> None:
+    """Malformed identity fields are rejected before their comparison code runs."""
+    model, params, initial_conditions = _inputs(durable_identity=False)
+    solution = model.solve(params=params, log_level="off")
+    compared = False
+
+    class RaisingIdentity(str):
+        __slots__ = ()
+
+        def __ne__(self, other: object, /) -> bool:
+            nonlocal compared
+            compared = True
+            raise RuntimeError("Invalid identity comparison was invoked.")
+
+    malformed = replace(
+        solution,
+        metadata=replace(
+            solution.metadata,
+            model_instance_id=RaisingIdentity(solution.metadata.model_instance_id),
+        ),
+    )
+    with pytest.raises(InvalidSimulationInputError, match="ephemeral"):
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            solution=malformed,
+            log_level="off",
+            seed=0,
+        )
+    assert compared is False
 
 
 def test_ephemeral_model_requires_its_originating_process(

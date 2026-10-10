@@ -1973,9 +1973,13 @@ class Model:
             msg = "SolutionResult has the wrong exact container type."
             raise InvalidSimulationInputError(msg)
         if not self.durable_identity and (
-            solution.metadata.source is not SolutionSource.IN_MEMORY
+            type(solution.metadata) is not SolutionMetadata
+            or solution.metadata.source is not SolutionSource.IN_MEMORY
             or solution.metadata.durable_identity is not False
-            or solution.metadata.model_instance_id != self._solution_model_instance_id
+            or not _same_exactly_typed(
+                actual=solution.metadata.model_instance_id,
+                expected=self._solution_model_instance_id,
+            )
         ):
             raise InvalidSimulationInputError(
                 "An ephemeral solution belongs to its originating model and runtime."
