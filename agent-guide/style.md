@@ -124,8 +124,13 @@ if TYPE_CHECKING:
     from _lcm.solution.model_authority import SolutionAuthority
 else:
     # The authority imports this module, so the claw sees a wide fallback.
-    type SolutionAuthority = Any
+    type SolutionAuthority = object
 ```
+
+Write the fallback as `object`, not `Any`: beartype cannot build a check for a union
+holding a `type` alias of `Any` (`SolutionAuthority | None`), and the claw then
+leaves the whole function unchecked with a `BeartypeClawDecorWarning`.
+`tests/test_beartype_claw.py` fails on any such warning.
 
 Any other deliberate finding carries `# noqa: PANxxx - <reason>` on the line the hook
 reports. A code without a reason suppresses nothing.

@@ -39,7 +39,11 @@ from lcm.transition import (
 from lcm.typing import UserFunction
 
 if TYPE_CHECKING:
-    import lcm.regime
+    from lcm.regime import Regime
+else:
+    # `lcm.regime` imports this module, so `Regime` is not importable here at
+    # runtime; a regime's own constructor checks its fields.
+    type Regime = object
 
 type _PhaseStateTransition = (
     UserFunction
@@ -59,9 +63,7 @@ type _PhaseJointTransitions = MappingProxyType[
 
 
 # keyword-only-exempt: primary-argument=user_regime
-def normalize_regime_phases(
-    user_regime: lcm.regime.Regime, *, law: RegimeLaw
-) -> PhasedRegimeSpec:
+def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedRegimeSpec:
     """Expand a user regime's slots into per-phase specifications.
 
     Every phase-variant slot is split via one rule — `Phased` assigns each
@@ -169,7 +171,7 @@ def normalize_regime_phases(
     )
 
 
-def validate_law_free_phase_grammar(user_regime: lcm.regime.Regime) -> None:
+def validate_law_free_phase_grammar(user_regime: Regime) -> None:
     """Validate the phase grammar of every slot that does not depend on the law.
 
     `normalize_regime_phases` applies the same checks and adds those that need
@@ -212,7 +214,7 @@ class _LawFreeSlots:
     """Function-pool, carried-law and joint-transition errors, in that order."""
 
 
-def _resolve_law_free_slots(*, user_regime: lcm.regime.Regime) -> _LawFreeSlots:
+def _resolve_law_free_slots(*, user_regime: Regime) -> _LawFreeSlots:
     """Split every slot that does not depend on the law into its phases."""
     pools = _phase_function_pools(user_regime=user_regime)
     solve_state_transitions, simulate_state_transitions = _split_state_transitions(
@@ -250,7 +252,7 @@ def _resolve_law_free_slots(*, user_regime: lcm.regime.Regime) -> _LawFreeSlots:
 
 def normalize_all_regime_phases(
     *,
-    user_regimes: Mapping[RegimeName, lcm.regime.Regime],
+    user_regimes: Mapping[RegimeName, Regime],
     laws: RegimeLaws,
 ) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
     """Normalize every regime's `Phased` slots into per-phase specs.
@@ -313,7 +315,7 @@ def _build_phase_spec(
 
 def _resolve_solve_functions(
     *,
-    user_regime: lcm.regime.Regime,
+    user_regime: Regime,
 ) -> dict[FunctionName, UserFunction]:
     """Return the single normalized solve-phase declaration pool.
 
@@ -349,7 +351,7 @@ class _PhaseFunctionPools:
     """Function, state and carried-state collision errors, in that order."""
 
 
-def _phase_function_pools(*, user_regime: lcm.regime.Regime) -> _PhaseFunctionPools:
+def _phase_function_pools(*, user_regime: Regime) -> _PhaseFunctionPools:
     """Resolve each phase's function pool, which does not depend on the law."""
     solve_functions, simulate_functions, function_errors = _split_functions(
         user_regime=user_regime
@@ -385,7 +387,7 @@ def _phase_function_pools(*, user_regime: lcm.regime.Regime) -> _PhaseFunctionPo
 
 def phase_variation_paths(
     *,
-    user_regime: lcm.regime.Regime,
+    user_regime: Regime,
     law: RegimeLaw,
 ) -> tuple[str, ...]:
     """Names of public phase-capable slots whose variants differ by identity.
@@ -431,7 +433,7 @@ def phase_variation_paths(
     return tuple(varied)
 
 
-def project_onto_solve_phase(user_regime: lcm.regime.Regime) -> lcm.regime.Regime:
+def project_onto_solve_phase(user_regime: Regime) -> Regime:
     """Return the regime a backward problem alone reads.
 
     A regime that is valued but never visited owes its backward problem only,
@@ -562,7 +564,7 @@ class RegimePhaseSpec:
 
 
 def _split_functions(
-    *, user_regime: lcm.regime.Regime
+    *, user_regime: Regime
 ) -> tuple[
     dict[FunctionName, UserFunction], dict[FunctionName, UserFunction], list[str]
 ]:
@@ -598,7 +600,7 @@ def _split_functions(
 
 
 def _split_states(
-    *, user_regime: lcm.regime.Regime
+    *, user_regime: Regime
 ) -> tuple[
     dict[StateName, Grid | AgeSpecializedGrid],
     dict[StateName, Grid | AgeSpecializedGrid],
@@ -729,7 +731,7 @@ def _normalize_phased_state(
 
 
 def _split_state_transitions(
-    *, user_regime: lcm.regime.Regime
+    *, user_regime: Regime
 ) -> tuple[
     dict[StateName, _PhaseStateTransition], dict[StateName, _PhaseStateTransition]
 ]:
@@ -751,7 +753,7 @@ def _split_state_transitions(
 
 
 def _split_joint_transitions(
-    *, user_regime: lcm.regime.Regime
+    *, user_regime: Regime
 ) -> tuple[_PhaseJointTransitions, _PhaseJointTransitions, list[str]]:
     """Resolve whole-kernel phase variants and validate their static schema."""
     solve: dict[RegimeName, MappingProxyType[str, JointTransition]] = {}

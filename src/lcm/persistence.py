@@ -60,8 +60,8 @@ else:
     # to `Any`. The snapshot dataclasses are serialization carriers; the
     # API surface that needs strict checking is the snapshot writers,
     # which beartype polices via their own parameters.
-    type _ModelOrNone = Any
-    type _SimulationResultOrNone = Any
+    type _ModelOrNone = object
+    type _SimulationResultOrNone = object
     type _SolutionResultBoundary = object
 
 
