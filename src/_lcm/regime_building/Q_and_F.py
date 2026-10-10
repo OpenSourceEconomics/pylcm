@@ -1244,7 +1244,7 @@ class _SamePeriodReferenceReader:
 
 def _reference_interpolator_param_qnames(
     *,
-    extra_args: set[ReferenceName],
+    extra_args: frozenset[ReferenceName],
     ref: ResolvedProjectedRegimeValue,
 ) -> MappingProxyType[str, str]:
     """Map each extra interpolator input to its qname in the REFERENCE namespace.

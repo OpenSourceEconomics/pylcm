@@ -321,8 +321,10 @@ def validate_model_inputs(
             )
         )
 
-    error_messages = _reserved_age_errors(
-        user_regimes=solver_validation_regimes, laws=laws, ages=ages
+    error_messages = list(
+        _reserved_age_errors(
+            user_regimes=solver_validation_regimes, laws=laws, ages=ages
+        )
     )
 
     if not user_regimes:
@@ -382,11 +384,11 @@ def validate_model_inputs(
 
 def _reserved_age_errors(
     *, user_regimes: Mapping[RegimeName, UserRegime], laws: RegimeLaws, ages: TimeAxis
-) -> list[str]:
+) -> tuple[str, ...]:
     """Prevent unresolved ages from becoming runtime parameters in period mode."""
     errors: list[str] = []
     if coordinate_kind(ages) != "period":
-        return errors
+        return tuple(errors)
     for regime_name, regime in user_regimes.items():
         for phase in ("solve", "simulate"):
             functions = dict(
@@ -420,7 +422,7 @@ def _reserved_age_errors(
                     f"dependency in {phase} functions {consumers}. Supply ages "
                     "or define a separately named biological_age from explicit inputs."
                 )
-    return errors
+    return tuple(errors)
 
 
 def _representative_for_validation(
@@ -488,7 +490,7 @@ def _validate_all_variables_used(
     removed_edge_reads: Mapping[
         RegimeName, Mapping[str, tuple[RegimeName, ...]]
     ] = MappingProxyType({}),
-) -> list[str]:
+) -> tuple[str, ...]:
     """Validate that all states and actions are used somewhere in each regime.
 
     Each state or action must be read by one of the regime's root computations
@@ -655,7 +657,7 @@ def _validate_all_variables_used(
                 )
             )
 
-    return error_messages
+    return tuple(error_messages)
 
 
 def _removed_edge_explanation(
@@ -736,7 +738,7 @@ def _validate_constraint_phase_invariance(
     laws: RegimeLaws,
     ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Reject a constraint whose dependency ancestry contains a phase-varying node.
 
     The feasible set is a primitive of the model the agent solved, so it may not
@@ -849,7 +851,7 @@ def _validate_constraint_phase_invariance(
                     f"carried state's current value instead, or make it an "
                     f"ordinary (non-carried) state."
                 )
-    return error_messages
+    return tuple(error_messages)
 
 
 def _resolve_fixed_params(
@@ -927,7 +929,7 @@ def _trim_fixed_params(
     branch: Mapping[str, RegimeParamsTemplateNode],
     prefix: tuple[str, ...],
     fixed: FlatRegimeParams,
-) -> dict[str, RegimeParamsTemplateNode]:
+) -> MappingProxyType[str, RegimeParamsTemplateNode]:
     """Copy `branch` without the leaves whose qualified name is in `fixed`."""
     trimmed: dict[str, RegimeParamsTemplateNode] = {}
     for key, value in branch.items():
@@ -941,7 +943,7 @@ def _trim_fixed_params(
                 trimmed[key] = MappingProxyType(inner)
         elif qname_from_tree_path((*prefix, key)) not in fixed:
             trimmed[key] = value
-    return trimmed
+    return MappingProxyType(trimmed)
 
 
 def _partial_fixed_params_into_regimes(
