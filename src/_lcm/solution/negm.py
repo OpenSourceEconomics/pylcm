@@ -84,8 +84,10 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
+    PytreeValue,
     QualifiedName,
     RegimeName,
+    ShapeDtypePytree,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.exceptions import InvalidParamsError, RegimeInitializationError
@@ -986,7 +988,9 @@ class _NEGMSweepArgumentBuilder:
     coh_shift_func: Callable[..., FloatND]
     """The per-(durable, outer-node) cash-on-hand shift of each adjuster."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         flat_params = cast("FlatParams", context.flat_params)
         arguments = dict(
@@ -1022,7 +1026,7 @@ def _outer_sweep_program(
     outer_post_decision: FunctionName,
     durable_axis: int,
     _lcm_outer_candidate_width: int,
-    **arguments: object,
+    **arguments: PytreeValue,
 ) -> tuple[FloatND, EGMCarry]:
     """Solve the adjuster at every outer node and stack it with the keeper.
 
@@ -1083,7 +1087,7 @@ class _NodeSolver:
     outer_post_decision: FunctionName
     """Argument name under which the outer node is bound."""
 
-    adjuster_arguments: Mapping[str, object]
+    adjuster_arguments: Mapping[ReferenceName, PytreeValue]
     """Immutable mapping of the adjuster's own argument tree."""
 
     def __call__(self, node: ScalarFloat) -> tuple[FloatND, EGMCarry]:
@@ -1095,7 +1099,7 @@ class _NodeSolver:
 
 def _fail_if_sweep_inputs_collide_with_the_adjusters(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     own: Mapping[ReferenceName, FloatND],
     regime_name: RegimeName,
 ) -> None:

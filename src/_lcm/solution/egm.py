@@ -73,8 +73,10 @@ from _lcm.typing import (
     EconFunctionKwargs,
     EconFunctionsMapping,
     FlatParams,
+    PytreeValue,
     RegimeName,
     RegimeTransitionFunction,
+    ShapeDtypePytree,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.exceptions import ModelInitializationError
@@ -91,6 +93,7 @@ from lcm.typing import (
     Float1D,
     FloatND,
     FunctionName,
+    ReferenceName,
     ScalarFloat,
     StateName,
     ValueND,
@@ -790,7 +793,9 @@ class _EGMArgumentBuilder:
     bound_params: Mapping[str, object] = MappingProxyType({})
     """Fixed params bound into the core, kept so the law can read them too."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         flat_params = cast("FlatParams", context.flat_params)

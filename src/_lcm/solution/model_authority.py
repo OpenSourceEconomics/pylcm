@@ -57,8 +57,6 @@ from _lcm.solution.solver_diagnostics import (
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.time import TimeAxis
 from _lcm.typing import (
-    ContinuousState,
-    DiscreteState,
     FlatParams,
     RegimeName,
     StateName,
@@ -2021,10 +2019,7 @@ def _state_action_space_for_period(
     period_states = regime.solution.period_state_axes.get(period)
     if not period_states:
         return base
-    states = cast(
-        "MappingProxyType[StateName, ContinuousState | DiscreteState]",
-        MappingProxyType(dict(base.states) | dict(period_states)),
-    )
+    states = MappingProxyType(dict(base.states) | dict(period_states))
     return base.replace(states=states)
 
 

@@ -10,6 +10,7 @@ from jaxtyping import Integer
 
 from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.memory import SimulationMemory
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from _lcm.utils.logging import LogLevel, _owned_values, non_finite_by_regime
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import BoolND, FloatND, Int1D, ReferenceName
@@ -63,8 +64,8 @@ def profiled_transition_counts(
 class DiagnosticBinding:
     """One exact operation with abstract inputs; executable out_info owns its shape."""
 
-    function: Callable[..., object]
-    arguments: Mapping[str, object]
+    function: Callable[..., PytreeValue]
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     subject_arg_names: tuple[ReferenceName, ...]
     static_arguments: Mapping[str, StaticArgument] = field(
         default_factory=lambda: MappingProxyType({})

@@ -26,8 +26,14 @@ from _lcm.execution.value_transfer import (
     TransferCache,
     apply_value_transfer_plan,
 )
-from _lcm.typing import DataclassInstance, StateName
+from _lcm.typing import (
+    DataclassInstance,
+    PytreeValue,
+    ShapeDtypePytree,
+    StateName,
+)
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName
 
 
 class OutputRole(Enum):
@@ -362,7 +368,7 @@ def _validate_output_roles(
             raise ValueError(msg)
 
 
-def assert_output_layout(*, output: object, layout: ResolvedOutputLayout) -> None:
+def assert_output_layout(*, output: PytreeValue, layout: ResolvedOutputLayout) -> None:
     """Assert that a planned core output was born in its requested layout."""
     output_tree = jax.tree.structure(output)
     planned_tree = jax.tree.structure(layout.out_shardings)
@@ -447,7 +453,9 @@ class PlannedCore:
     tile_widths: Mapping[str, int]
     """Width this core was lowered at, per execution axis of its program."""
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()
-    internal_input_templates: Mapping[str, object] = MappingProxyType({})
+    internal_input_templates: Mapping[ReferenceName, ShapeDtypePytree] = (
+        MappingProxyType({})
+    )
     """Abstract template per internal input this core was lowered against."""
     transfer_cache: TransferCache | None = None
     """Per-period store shared transfers are served from, or `None` to copy."""
@@ -494,7 +502,7 @@ class PlannedCore:
             msg = "PlannedCore transfer_cache must be a TransferCache or None."
             raise TypeError(msg)
 
-    def __call__(self, *args: object, **kwargs: object) -> object:
+    def __call__(self, *args: PytreeValue, **kwargs: PytreeValue) -> PytreeValue:
         """Execute and enforce the layout contract at the compiled-core seam."""
         if self.internal_input_templates:
             assert_internal_inputs(

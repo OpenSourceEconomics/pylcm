@@ -109,6 +109,7 @@ from _lcm.typing import (
     ArrayTree,
     FlatParams,
     ParamsLeaf,
+    PytreeValue,
     QAndFArg,
     QAndFKwargs,
     RegimeName,
@@ -239,9 +240,9 @@ def simulation_gate_route(
     return outputs
 
 
-def gated_route_candidates(
-    *, regime: Regime, next_states: Mapping[RegimeName, Mapping[str, object]]
-) -> MappingProxyType[RegimeName, Mapping[str, object]]:
+def gated_route_candidates[T](
+    *, regime: Regime, next_states: Mapping[RegimeName, T]
+) -> MappingProxyType[RegimeName, T]:
     """Retain only target candidates and fallback carriers read by gated routing."""
     names = {
         name
@@ -266,7 +267,7 @@ def simulation_gate_route_delta(
     new_own_stakeholder: Int1D,
     fold_age: object = None,
     subject_width: int | None = None,
-) -> tuple[MappingProxyType[str, Mapping[str, object]], Int1D, Int1D]:
+) -> tuple[MappingProxyType[RegimeName, Mapping[str, PytreeValue]], Int1D, Int1D]:
     """Publish fixed-shape route deltas instead of a duplicate state carrier."""
     routed, routed_ids, routed_roles, closed_masks = simulation_gate_route(
         regime=regime,
@@ -463,15 +464,14 @@ def substitute_gated_edge_continuations(
             fold=edge.fold_at(period=period + 1),
             fold_period=period + 1,
             fold_age=cast("float | ScalarFloat | ScalarInt | None", fold_age),
-            target_states=cast(
-                "Mapping[str, ContinuousState | DiscreteState]",
+            target_states=(
                 target_states_by_target[target_name]
                 if target_states_by_target is not None
                 else _states_for_period(
                     regime=regimes[target_name],
                     state_action_space=base_state_action_spaces[target_name],
                     period=period + 1,
-                ),
+                )
             ),
             same_period_mapping=same_period_mapping,
             source_flat_params=edge_params(flat_params, source=regime_name),
@@ -878,7 +878,7 @@ def _call_vmapped_with_accepted_kwargs(
     *,
     func: Callable,
     batched_kwargs: QAndFKwargs,
-    static_kwargs: Mapping[str, object],
+    static_kwargs: Mapping[ReferenceName, PytreeValue],
     axis_size: int,
     subject_devices: tuple[jax.Device, ...] = (),
     subject_width: int | None = None,
@@ -949,8 +949,8 @@ def split_population_call_args(
     *,
     func: Callable,
     batched_kwargs: QAndFKwargs,
-    static_kwargs: Mapping[str, object],
-) -> tuple[dict[ReferenceName, QAndFArg], dict[str, object]]:
+    static_kwargs: Mapping[ReferenceName, PytreeValue],
+) -> tuple[dict[ReferenceName, QAndFArg], dict[ReferenceName, PytreeValue]]:
     """Filter both kwarg pools down to what `func` accepts, `static` winning.
 
     The two dicts are the positional pair a population call is invoked with,
@@ -1057,7 +1057,7 @@ def population_call(
 # keyword-only-exempt: library-callback=jax.jit
 def _map_subject_tiles(
     batched_kwargs: QAndFKwargs,
-    shared_kwargs: Mapping[str, object],
+    shared_kwargs: Mapping[ReferenceName, PytreeValue],
     *,
     func: Callable,
     subject_width: int,
@@ -1084,7 +1084,7 @@ def _call_one_subject_with_shared(
     one_subject_kwargs: QAndFKwargs,
     *,
     func: Callable,
-    shared: Mapping[str, object],
+    shared: Mapping[ReferenceName, PytreeValue],
 ) -> ArrayTree:
     """Invoke one gate evaluator or projector with shared dynamic operands."""
     return func(**one_subject_kwargs, **shared)
@@ -1093,7 +1093,7 @@ def _call_one_subject_with_shared(
 # keyword-only-exempt: library-callback=jax.vmap
 def _call_one_subject(
     one_subject_kwargs: QAndFKwargs,
-    shared_kwargs: Mapping[str, object],
+    shared_kwargs: Mapping[ReferenceName, PytreeValue],
     *,
     func: Callable,
 ) -> ArrayTree:

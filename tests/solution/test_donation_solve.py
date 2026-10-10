@@ -7,6 +7,7 @@ non-donating twin publishes.
 
 import dataclasses
 import re
+from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
@@ -21,6 +22,7 @@ from _lcm.solution import backward_induction
 from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.kernel_output import ConsumedKernelOutput
 from _lcm.solution.solve_inputs import SolveInputMappings
+from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
     ArtifactKey,
@@ -39,7 +41,7 @@ from lcm.solvers import (
     SolverBuildContext,
     StateAxesLeading,
 )
-from lcm.typing import Float1D, FloatND, StateName
+from lcm.typing import Float1D, FloatND, ReferenceName, StateName
 from tests.solution.test_compilation_identity import _lowering_key
 from tests.test_solver_api_out_of_tree import (
     _N_PERIODS,
@@ -89,7 +91,7 @@ def _counting_value(
     return wealth + count, _ReadableCounter(count=count + 1.0)
 
 
-def _counting_arguments(build: object) -> dict[str, object]:
+def _counting_arguments(build: object) -> Mapping[ReferenceName, PytreeValue]:
     """Feed the state grid and the target's published count to the program."""
     arguments = {
         "wealth": build.state_action_space.states["wealth"],  # ty: ignore[unresolved-attribute]

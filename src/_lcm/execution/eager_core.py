@@ -4,20 +4,25 @@ import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import jax.numpy as jnp
 
 from _lcm.execution.core_program import ResolvedCoreProgram
 from _lcm.execution.runtime_sharding import runtime_shardings_match
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName
 
 
 def make_eager_core(
     *,
     program: ResolvedCoreProgram,
     execution_sharding: jax.sharding.Sharding,
-    internal_input_templates: Mapping[str, object] = MappingProxyType({}),
+    internal_input_templates: Mapping[
+        ReferenceName, PytreeValue | ShapeDtypePytree
+    ] = MappingProxyType({}),
 ) -> Callable[..., object]:
     """Bind the same function and static widths, retaining only input descriptors."""
     if any(
@@ -58,8 +63,15 @@ def make_eager_core(
     )
     return _EagerCore(
         function=functools.partial(program.function, **program.static_kwargs),
-        arguments=MappingProxyType(dict(program.arguments)),
-        internal_input_templates=MappingProxyType(dict(internal_input_templates)),
+        # Both trees were checked above to hold only shape descriptors.
+        arguments=cast(
+            "Mapping[ReferenceName, ShapeDtypePytree]",
+            MappingProxyType(dict(program.arguments)),
+        ),
+        internal_input_templates=cast(
+            "Mapping[ReferenceName, ShapeDtypePytree]",
+            MappingProxyType(dict(internal_input_templates)),
+        ),
         device=devices[0],
         mesh=mesh,
     )
@@ -69,18 +81,18 @@ def make_eager_core(
 class _EagerCore:
     """A call-local eager placement context with no retained concrete arguments."""
 
-    function: Callable[..., object]
+    function: Callable[..., PytreeValue]
     """Original numerical body with its declared static widths bound."""
-    arguments: Mapping[str, object]
+    arguments: Mapping[ReferenceName, ShapeDtypePytree]
     """Input descriptor tree; no concrete runtime operands are retained."""
-    internal_input_templates: Mapping[str, object]
+    internal_input_templates: Mapping[ReferenceName, ShapeDtypePytree]
     """Producer metadata; absent sharding preserves the guarded producer layout."""
     device: jax.Device
     """Default device for eager constants in this core."""
     mesh: jax.sharding.Mesh | None
     """Equivalent Explicit mesh for mapped-axis propagation, when sharded."""
 
-    def __call__(self, **arguments: object) -> object:
+    def __call__(self, **arguments: object) -> PytreeValue:
         """Place operands first and return the numerical function's exact tree."""
         placement = _EagerPlacement(core=self)
         try:

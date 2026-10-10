@@ -12,6 +12,7 @@ import pytest
 
 from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.solution import backward_induction
+from _lcm.typing import FlatRegimeParams, PytreeValue
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -35,7 +36,7 @@ from lcm.solvers import (
     SolverBuildContext,
     StateAxesLeading,
 )
-from lcm.typing import ScalarInt
+from lcm.typing import ReferenceName, RegimeName, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution import test_donation_solve as counter_fixture
 from tests.test_models.initial_nodes import initial_nodes_of
@@ -64,16 +65,20 @@ def _consume(*, previous_value: jax.Array, previous_matrix: jax.Array) -> jax.Ar
     return previous_value + jnp.sum(previous_matrix) / previous_matrix.size
 
 
-def _producer_arguments(context: CoreBuildContext) -> Mapping[str, object]:
+def _producer_arguments(
+    context: CoreBuildContext,
+) -> Mapping[ReferenceName, PytreeValue]:
     space = cast("Any", context.state_action_space)
-    params = cast("Mapping[str, Mapping[str, object]]", context.flat_params)
+    params = cast("Mapping[RegimeName, FlatRegimeParams]", context.flat_params)
     return {
         "wealth": space.states["wealth"],
         "work": params["working"]["utility__work"],
     }
 
 
-def _consumer_arguments(_context: CoreBuildContext) -> Mapping[str, object]:
+def _consumer_arguments(
+    _context: CoreBuildContext,
+) -> Mapping[ReferenceName, PytreeValue]:
     return {}
 
 

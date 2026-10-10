@@ -49,6 +49,7 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
     union_buffer_footprints,
 )
+from _lcm.typing import PytreeValue
 from benchmarks.asv._simulation_witnesses import dissolution
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
@@ -390,7 +391,7 @@ def test_the_charge_never_falls_below_a_fresh_measurement_of_the_live_owners(
 
     # keyword-only-exempt: library-callback=SimulationMemory.budget_snapshot
     def observed(
-        self: SimulationMemory, *, additional: object = ()
+        self: SimulationMemory, *, additional: PytreeValue = ()
     ) -> DeviceBufferFootprint:
         result = original(self, additional=additional)
         witness.observe(scope=self, charged_footprint=result)

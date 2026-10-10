@@ -46,6 +46,7 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _lowering_key
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 
@@ -88,8 +89,8 @@ class ProfiledSimulationOperations:
     def dispatch(
         self,
         *,
-        function: Callable[..., object],
-        arguments: Mapping[str, object],
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, PytreeValue],
         subject_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
         live_footprint: Callable[[], DeviceBufferFootprint],
@@ -97,7 +98,7 @@ class ProfiledSimulationOperations:
         budget_bytes: int,
         static_arguments: Mapping[str, object] = MappingProxyType({}),
         subject_outputs: bool = False,
-    ) -> object:
+    ) -> PytreeValue:
         """Place once, inspect current residency, and execute the admitted code."""
         static = _validated_static_arguments(
             function=function,
@@ -170,8 +171,8 @@ class ProfiledSimulationOperations:
     def prepare_abstract(
         self,
         *,
-        function: Callable[..., object],
-        arguments: Mapping[str, object],
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         subject_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
         static_arguments: Mapping[str, object] = MappingProxyType({}),
@@ -202,13 +203,13 @@ class ProfiledSimulationOperations:
     def lower_abstract(
         self,
         *,
-        function: Callable[..., object],
-        arguments: Mapping[str, object],
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         subject_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
         wave: CompilationWave,
         label: str,
-    ) -> object:
+    ) -> ShapeDtypePytree:
         """Lower placed shape descriptors into `wave`; return compiled descriptors.
 
         The wave compiles the operation off the calling thread and publishes its
@@ -245,8 +246,8 @@ class ProfiledSimulationOperations:
     def admit_producer(
         self,
         *,
-        function: Callable[..., object],
-        arguments: Mapping[str, object],
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, ShapeDtypePytree],
         devices: tuple[jax.Device, ...],
         output_sharding: jax.sharding.Sharding | None,
         budget_bytes: int,
@@ -306,8 +307,8 @@ class ProfiledSimulationOperations:
         self,
         *,
         key: Hashable,
-        function: Callable[..., object],
-        arguments: Mapping[str, object],
+        function: Callable[..., PytreeValue],
+        arguments: Mapping[ReferenceName, ShapeDtypePytree],
         static_arguments: Mapping[ReferenceName, StaticArgument],
         output_sharding: jax.sharding.Sharding | None = None,
     ) -> _ProfiledOperation:
@@ -361,8 +362,8 @@ class _OperationCompiler:
 
     owner: ProfiledSimulationOperations
     key: Hashable
-    function: Callable[..., object]
-    arguments: Mapping[str, object]
+    function: Callable[..., PytreeValue]
+    arguments: Mapping[ReferenceName, ShapeDtypePytree]
     static_arguments: Mapping[ReferenceName, StaticArgument]
     output_sharding: jax.sharding.Sharding | None
 
@@ -383,15 +384,15 @@ class _OperationCompiler:
 
 def _abstract_operation(
     *,
-    function: Callable[..., object],
-    arguments: Mapping[str, object],
+    function: Callable[..., PytreeValue],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     subject_arg_names: tuple[ReferenceName, ...],
     devices: tuple[jax.Device, ...],
     static_arguments: Mapping[str, object],
     subject_outputs: bool,
 ) -> tuple[
     Hashable,
-    Mapping[str, object],
+    Mapping[ReferenceName, ShapeDtypePytree],
     Mapping[ReferenceName, StaticArgument],
     jax.sharding.Sharding | None,
 ]:
@@ -429,8 +430,8 @@ def _abstract_operation(
 
 def _lower_operation(
     *,
-    function: Callable[..., object],
-    arguments: Mapping[str, object],
+    function: Callable[..., PytreeValue],
+    arguments: Mapping[ReferenceName, ShapeDtypePytree],
     static_arguments: Mapping[ReferenceName, StaticArgument],
     output_sharding: jax.sharding.Sharding | None,
 ) -> jax.stages.Lowered:
@@ -462,8 +463,8 @@ def _abstract_operand(value: object) -> object:
 
 @cache
 def _validated_operation_function(
-    function: Callable[..., object],
-) -> Callable[..., object]:
+    function: Callable[..., PytreeValue],
+) -> Callable[..., PytreeValue]:
     """Validate a profiled operation's function identity once at registration.
 
     Only module-level functions qualify: this entry path backs process-wide
@@ -494,7 +495,7 @@ def _validated_operation_function(
 
 def _validated_static_arguments(
     *,
-    function: Callable[..., object],
+    function: Callable[..., PytreeValue],
     arguments: Mapping[str, object],
     static_arguments: Mapping[str, object],
     subject_outputs: bool,
@@ -516,8 +517,8 @@ def _validated_static_arguments(
 
 def _operation_key(
     *,
-    function: Callable[..., object],
-    arguments: Mapping[str, object],
+    function: Callable[..., PytreeValue],
+    arguments: Mapping[ReferenceName, ShapeDtypePytree],
     static_arguments: Mapping[ReferenceName, StaticArgument],
     subject_outputs: bool,
     devices: tuple[jax.Device, ...],
@@ -535,7 +536,7 @@ def _operation_key(
     )
 
 
-def _program_identity(function: Callable[..., object]) -> Hashable:
+def _program_identity(function: Callable[..., PytreeValue]) -> Hashable:
     """Identify a callable, resolving a `functools.partial` to its bound values.
 
     Equal bound values give equal identities, so a partial rebuilt per call from
@@ -548,7 +549,8 @@ def _program_identity(function: Callable[..., object]) -> Hashable:
         return _bound_identity(function)
     return (
         partial,
-        _program_identity(function.func),
+        # A partial dispatched here wraps an operation body like any other.
+        _program_identity(cast("Callable[..., PytreeValue]", function.func)),
         tuple(_bound_identity(value) for value in function.args),
         tuple(
             (name, _bound_identity(value)) for name, value in function.keywords.items()
@@ -585,7 +587,7 @@ class _HeldObject:
 
 def _abstract_operation_tree(
     *, tree: object, required: jax.sharding.Sharding
-) -> object:
+) -> ShapeDtypePytree:
     """Mirror placed containers while verifying every abstract leaf's layout."""
     if isinstance(tree, Mapping):
         return MappingProxyType(

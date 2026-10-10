@@ -26,7 +26,12 @@ from _lcm.execution.value_transfer import (
     ValueViewDescriptor,
     apply_value_transfer_plan,
 )
-from _lcm.typing import ActionName, StateName
+from _lcm.typing import (
+    ActionName,
+    PytreeValue,
+    ShapeDtypePytree,
+    StateName,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 from lcm.typing import ReferenceName, RegimeName
@@ -437,7 +442,11 @@ class CoreBuildContext:
             )
 
 
-type CoreArgumentBuilder = Callable[[CoreBuildContext], Mapping[str, object]]
+# Builds a core's dynamic argument tree: concrete operands at dispatch, shape
+# descriptors when the engine lowers against abstract inputs.
+type CoreArgumentBuilder = Callable[
+    [CoreBuildContext], Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
+]
 
 _COMPILER_OPTION_ARITY = 2
 
@@ -464,7 +473,7 @@ class CoreProgram:
     """One authoritative, unmaterialized program in a period kernel's graph."""
 
     name: str
-    function: Callable[..., object]
+    function: Callable[..., PytreeValue]
     argument_builder: CoreArgumentBuilder
     requirements: CoreExecutionRequirements
     output_roles: object
@@ -507,7 +516,7 @@ class MaterializedCoreProgram:
     """A declared core paired with exact dynamic arguments for one graph node."""
 
     name: str
-    function: Callable[..., object]
+    function: Callable[..., PytreeValue]
     arguments: Mapping[str, object]
     requirements: CoreExecutionRequirements
     output_roles: object
@@ -1017,7 +1026,7 @@ class ResolvedCoreProgram:
     """A core with planner-owned choices bound into its compilation identity."""
 
     name: str
-    function: Callable[..., object]
+    function: Callable[..., PytreeValue]
     arguments: Mapping[str, object]
     static_kwargs: Mapping[str, int]
     requirements: CoreExecutionRequirements
@@ -1550,7 +1559,7 @@ def _fail_if_width_policy_invalid(
 def _validate_reduced_axis(
     *,
     axis: ReducedAxis,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
 ) -> None:
     """Fail closed for product declarations outside the supported contract."""
     _validate_coordinate_declaration(axis=axis)
@@ -1616,7 +1625,9 @@ def _validate_reduction_declaration(*, axis: ReducedAxis) -> None:
 
 
 def _validate_axis_width_keyword(
-    *, axis: ReducedAxis | TiledOutputAxis, arguments: Mapping[str, object]
+    *,
+    axis: ReducedAxis | TiledOutputAxis,
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
 ) -> None:
     """Keep the planner-owned width distinct from dynamic arguments."""
     if not axis.width_keyword:
@@ -1652,7 +1663,7 @@ def _validate_coordinate_argument(
     axis_name: str,
     coordinate_name: ActionName,
     coordinate_extent: int,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
 ) -> None:
     """Tie one declared coordinate to the exact dynamic lowering grid."""
     if coordinate_name not in arguments:

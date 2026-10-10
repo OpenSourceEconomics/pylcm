@@ -120,8 +120,10 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
+    PytreeValue,
     ReferenceName,
     RegimeName,
+    ShapeDtypePytree,
     SimulationPolicy,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
@@ -888,7 +890,9 @@ class _NestedArgumentBuilder:
     outer_node: _OuterNodeBinding | None
     """The node bound into the flat params, or `None` for the keeper."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the inner program's arguments for the (possibly bound) context."""
         if self.outer_node is None:
             return self.inner(context)

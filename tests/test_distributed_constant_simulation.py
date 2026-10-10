@@ -104,6 +104,8 @@ def test_constant_program_uses_selected_devices_after_all_inputs_are_dropped(
         )
         assert isinstance(outputs, tuple)
         scalar, vector = outputs
+        assert isinstance(scalar, jax.Array)
+        assert isinstance(vector, jax.Array)
         assert scalar.devices() == vector.devices() == set(devices)
         np.testing.assert_array_equal(scalar, np.int32(7))
         np.testing.assert_array_equal(vector, np.full(4, 5, dtype=np.int32))

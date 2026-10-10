@@ -197,7 +197,7 @@ def test_a_host_loop_leaves_the_planned_inner_width_keyword_unchanged() -> None:
     assert dict(resolved.static_kwargs) == {_WIDTH_KEYWORD: 2}
 
 
-def _unused_value_consumer_core(**_arguments: object) -> object:
+def _unused_value_consumer_core(**_arguments: object) -> jax.Array:
     """Provide a stable callable for consumer-address planning tests."""
     return jnp.asarray(0.0)
 
@@ -463,7 +463,7 @@ def _wrong_dtype_value_core(*, value: jax.Array) -> jax.Array:
     ids=["wrong-shape", "wrong-dtype"],
 )
 def test_explicit_value_program_rejects_wrong_lowered_metadata_before_compile(
-    *, function: Callable[..., object], message: str
+    *, function: Callable[..., jax.Array], message: str
 ) -> None:
     template = jnp.zeros((2,), dtype=jnp.float32)
     program = MaterializedCoreProgram(

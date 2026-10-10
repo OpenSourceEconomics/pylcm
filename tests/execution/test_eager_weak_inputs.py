@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from _lcm.execution.eager_core import make_eager_core
+from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ValueND
 from tests.execution.test_eager_core import eager_program, internal_eager_program
@@ -36,7 +37,7 @@ def test_weak_binding_shares_one_allocation_and_releases_call_owners(
         calls.append(kwargs.get("dtype"))
         return original_asarray(*args, **kwargs)
 
-    def body(*, first: ValueND, second: ValueND) -> object:
+    def body(*, first: ValueND, second: ValueND) -> PytreeValue:
         original = source_ref()
         assert original is not None
         assert not original.is_deleted()

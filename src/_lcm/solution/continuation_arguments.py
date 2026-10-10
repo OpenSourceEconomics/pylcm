@@ -7,8 +7,8 @@ from typing import cast
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.execution.core_program import CoreArgumentBuilder, CoreBuildContext, ValueRead
-from _lcm.typing import RegimeName
-from lcm.typing import FloatND
+from _lcm.typing import PytreeValue, RegimeName, ShapeDtypePytree
+from lcm.typing import FloatND, ReferenceName
 
 # Reserved core operand containing exactly one original continuation leaf.
 MARGINAL_ARGUMENT = "__lcm_continuation_marginal__"
@@ -21,10 +21,15 @@ class MarginalLeafArguments:
     inner: CoreArgumentBuilder
     target: RegimeName
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         arguments = dict(self.inner(context))
         carries = dict(
-            cast("Mapping[str, object]", arguments["next_regime_to_continuation"])
+            cast(
+                "Mapping[RegimeName, PytreeValue]",
+                arguments["next_regime_to_continuation"],
+            )
         )
         carry = carries[self.target]
         if not isinstance(carry, EGMCarry):
@@ -48,19 +53,22 @@ class MarginalLeafCore:
     core: Callable
     target: RegimeName
 
-    def __call__(self, **arguments: object) -> object:
+    def __call__(self, **arguments: PytreeValue) -> PytreeValue:
         marginal = cast("FloatND", arguments.pop(MARGINAL_ARGUMENT))
         carries = dict(
-            cast("Mapping[str, object]", arguments["next_regime_to_continuation"])
+            cast(
+                "Mapping[RegimeName, PytreeValue]",
+                arguments["next_regime_to_continuation"],
+            )
         )
-        residual = cast("Mapping[str, object]", carries[self.target])
+        residual = cast("Mapping[str, FloatND | None]", carries[self.target])
         carries[self.target] = EGMCarry(
             endog_grid=cast("FloatND", residual["endog_grid"]),
             value=cast("FloatND", residual["value"]),
             marginal_utility=marginal,
             taste_shock_scale=cast("FloatND", residual["taste_shock_scale"]),
-            breakpoints=cast("FloatND | None", residual["breakpoints"]),
-            policy=cast("FloatND | None", residual["policy"]),
+            breakpoints=residual["breakpoints"],
+            policy=residual["policy"],
         )
         arguments["next_regime_to_continuation"] = MappingProxyType(carries)
         return self.core(**arguments)

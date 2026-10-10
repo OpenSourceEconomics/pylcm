@@ -69,6 +69,7 @@ from _lcm.solution.backward_induction import (
     _trace_settings_key,
 )
 from _lcm.solution.solve_phase_records import nested_phase
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 
@@ -101,7 +102,7 @@ def _empty_widths() -> Mapping[str, int]:
 class CompiledSimulationProgram:
     """One selected executable and its static argument bindings."""
 
-    executable: Callable[..., object]
+    executable: Callable[..., PytreeValue]
     """The exact executable selected by workspace planning."""
 
     static_kwargs: Mapping[str, int]
@@ -115,7 +116,7 @@ class CompiledSimulationProgram:
     compilation. `None` for an eager or host-driven callable, which never
     reaches budgeted dispatch."""
 
-    def __call__(self, **arguments: object) -> object:
+    def __call__(self, **arguments: object) -> PytreeValue:
         """Execute with live arrays; retain no call arguments on the cache entry."""
         return self.executable(**arguments, **self.static_kwargs)
 
@@ -221,11 +222,11 @@ class SimulationRuntime:
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
         residency: SimulationDispatchContext | None = None,
-    ) -> object:
+    ) -> PytreeValue:
         """Invoke the selected executable with this call's dynamic arguments.
 
         An unbudgeted repeat of an exact abstract signature takes the prepared
@@ -278,7 +279,7 @@ class SimulationRuntime:
         *,
         key: Hashable,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
     ) -> tuple[CompiledSimulationProgram, Mapping[str, object]] | None:
         """Bind this call's live leaves onto a cached static preparation.
@@ -351,7 +352,7 @@ class SimulationRuntime:
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
     ) -> CompiledSimulationProgram:
@@ -377,7 +378,7 @@ class SimulationRuntime:
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
         residency: SimulationDispatchContext | None = None,
@@ -417,7 +418,7 @@ class SimulationRuntime:
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
         widths: Mapping[str, int],
@@ -445,14 +446,14 @@ class SimulationRuntime:
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
         widths: Mapping[str, int],
         wave: CompilationWave,
         label: str,
         wait: bool = False,
-    ) -> object:
+    ) -> ShapeDtypePytree:
         """Lower an abstract candidate into `wave` and return its output descriptors.
 
         The wave compiles it off the calling thread and publishes the executable
@@ -709,7 +710,7 @@ def _operand_signature(*, arguments: Mapping[str, object]) -> Hashable | None:
 def _prepared_route_key(
     *,
     program: CoreProgram,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
     n_subjects: int,
 ) -> Hashable | None:
@@ -772,7 +773,7 @@ def _materialize_abstract(
     *,
     runtime: SimulationRuntime,
     program: CoreProgram,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
     n_subjects: int,
 ) -> MaterializedCoreProgram:
@@ -986,9 +987,9 @@ def execute_simulation_program(
     programs: SimulationPrograms,
     family: str,
     period: int,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     n_subjects: int,
-) -> object:
+) -> PytreeValue:
     """Dispatch one family's published program for the current period.
 
     The `"decision"` family is the decision forward simulation dispatches,
@@ -1075,7 +1076,7 @@ class _SimulationCandidateCompiler:
 
     def _bound(
         self, widths: Mapping[str, int]
-    ) -> tuple[Callable[..., object], Mapping[str, object], dict[str, int]]:
+    ) -> tuple[Callable[..., PytreeValue], Mapping[str, object], dict[str, int]]:
         """Return the callable, its dynamic arguments and its static keywords."""
         if (
             self.shard_subjects
@@ -1163,7 +1164,7 @@ def _with_subject_extent(*, program: CoreProgram, n_subjects: int) -> CoreProgra
 
 
 def _build_context(
-    *, arguments: Mapping[str, object], period: int
+    *, arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree], period: int
 ) -> SimulationBuildContext:
     """Carry complete invocation operands without retaining a simulated population."""
     return SimulationBuildContext(

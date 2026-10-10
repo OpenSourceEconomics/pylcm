@@ -84,9 +84,11 @@ from _lcm.solution.grid_search import (
 )
 from _lcm.typing import (
     ActionName,
+    PytreeValue,
     QAndFFunction,
     RegimeName,
     RegimeNamesToIds,
+    ShapeDtypePytree,
     StateOrActionName,
 )
 from lcm.exceptions import ExecutionPlanningError
@@ -98,7 +100,7 @@ def build_simulation_programs(
     *,
     context: SolverBuildContext,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    per_subject_decisions: MappingProxyType[int, Callable[..., object]],
+    per_subject_decisions: MappingProxyType[int, Callable[..., PytreeValue]],
     per_subject_transitions: MappingProxyType[int, _PerSubjectFunction],
     per_subject_route: _PerSubjectFunction | None,
     simulation_state_names: tuple[StateOrActionName, ...],
@@ -107,9 +109,9 @@ def build_simulation_programs(
     type_local_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = (
         MappingProxyType({})
     ),
-    type_local_per_subject_decisions: MappingProxyType[int, Callable[..., object]] = (
-        MappingProxyType({})
-    ),
+    type_local_per_subject_decisions: MappingProxyType[
+        int, Callable[..., PytreeValue]
+    ] = MappingProxyType({}),
 ) -> SimulationPrograms:
     """Declare one regime's decision, transition, and route programs.
 
@@ -179,7 +181,7 @@ def build_simulation_programs(
     # The dense decision with its action values, even where the decision
     # streams: same reads and subject tiling, no reduced action axis. A
     # taste-shock draw or a household argmax publishes no such pair.
-    action_value_bodies: dict[int, Callable[..., object]] = {}
+    action_value_bodies: dict[int, Callable[..., PytreeValue]] = {}
     action_values: dict[int, CoreProgram] = {}
     is_hard_max_singleton = (
         not context.has_taste_shocks and context.stakeholders is None
@@ -205,7 +207,7 @@ def build_simulation_programs(
             ),
         )
 
-    transition_bodies: dict[int, Callable[..., object]] = {}
+    transition_bodies: dict[int, Callable[..., PytreeValue]] = {}
     transition: dict[int, CoreProgram] = {}
     for period in active_periods:
         built = per_subject_transitions.get(period)
@@ -269,7 +271,7 @@ def _decision_programs(
     *,
     context: SolverBuildContext,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    per_subject_decisions: MappingProxyType[int, Callable[..., object]],
+    per_subject_decisions: MappingProxyType[int, Callable[..., PytreeValue]],
     simulation_state_names: tuple[StateOrActionName, ...],
     active_periods: tuple[int, ...],
     streams_actions: bool,
@@ -278,7 +280,7 @@ def _decision_programs(
     """Declare one decision program per period, sharing a body per period group."""
     action_names = context.state_action_space.action_names
     action_extents = context.state_action_space.actions_grid_shapes
-    decision_bodies: dict[int, Callable[..., object]] = {}
+    decision_bodies: dict[int, Callable[..., PytreeValue]] = {}
     decision: dict[int, CoreProgram] = {}
     for period in active_periods:
         group = id(Q_and_F_functions[period])
@@ -539,7 +541,7 @@ class _GateFoldBody:
         """Declare that the fold partitions nothing: it has no subject axis."""
         return ()
 
-    def __call__(self, **kwargs: Any) -> object:
+    def __call__(self, **kwargs: Any) -> PytreeValue:
         folded = simulation_gate_fold(
             regime=self.regime,
             regime_name=self.name,
@@ -583,7 +585,7 @@ class _GateRouteBody:
         """Name the operands whose leaves carry the independent subject axis."""
         return _GATE_ROUTE_SUBJECT_ARG_NAMES
 
-    def __call__(self, **kwargs: Any) -> object:
+    def __call__(self, **kwargs: Any) -> PytreeValue:
         return simulation_gate_route_delta(
             regime=self.regime,
             fold_period=self.fold_period,
@@ -668,12 +670,12 @@ def _decision_value_reads(
 def _decision_body(
     *,
     Q_and_F: QAndFFunction,
-    dense_reducer: Callable[..., object],
+    dense_reducer: Callable[..., PytreeValue],
     context: SolverBuildContext,
     streams_actions: bool,
     action_width_keyword: str,
     subject_arg_names: tuple[ReferenceName, ...],
-) -> Callable[..., object]:
+) -> Callable[..., PytreeValue]:
     """Build one period group's decision body, tiled over the subject axis."""
     if not streams_actions:
         return _SubjectTiled(func=dense_reducer, subject_arg_names=subject_arg_names)
@@ -707,7 +709,9 @@ def _decision_body(
     return _SubjectTiled(func=cell, subject_arg_names=subject_arg_names)
 
 
-def _with_action_values(*, reducer: Callable[..., object]) -> Callable[..., object]:
+def _with_action_values(
+    *, reducer: Callable[..., PytreeValue]
+) -> Callable[..., PytreeValue]:
     """Return `reducer` extended by the `Q` and `F` it maximizes over.
 
     `reducer` is the dense hard-max decision, a signature wrapper around one
@@ -738,7 +742,7 @@ class _DecisionWithActionValues:
     __name__: ClassVar[str] = "argmax_and_max_Q_over_a_with_action_values"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    decision: Callable[..., object]
+    decision: Callable[..., PytreeValue]
     """The dense hard-max decision reducer."""
 
     Q_and_F: Callable[..., tuple[FloatND, BoolND]]
@@ -746,7 +750,7 @@ class _DecisionWithActionValues:
 
     def __call__(
         self,
-        **kwargs: Any,
+        **kwargs: PytreeValue,
     ) -> tuple[IntND, FloatND, FloatND, BoolND]:
         """Return the chosen flat index, its value, and `Q` and `F`."""
         index, value = cast("tuple[IntND, FloatND]", self.decision(**kwargs))
@@ -789,7 +793,7 @@ class _StreamedArgmaxQOverA:
         self,
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: Any,
+        **states_actions_params: PytreeValue,
     ) -> tuple[IntND, FloatND]:
         """Return the chosen action's flat identity and the value it attains."""
         block_width = cast("int", states_actions_params[self.action_width_keyword])
@@ -832,7 +836,7 @@ class _SubjectTiled:
     __name__: ClassVar[str] = "subject_tiled"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    func: Callable[..., object]
+    func: Callable[..., PytreeValue]
     """The body, at one subject's state cell."""
 
     subject_arg_names: tuple[ReferenceName, ...]
@@ -843,7 +847,7 @@ class _SubjectTiled:
         """Certify that every output has the same independent leading subject axis."""
         return self.subject_arg_names
 
-    def __call__(self, **kwargs: Any) -> object:
+    def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
         """Return the body's output for every subject, evaluated in tiles."""
         width = cast("int", kwargs.pop(SUBJECT_WIDTH_KEYWORD))
         accepted = inspect.signature(self.func).parameters
@@ -891,11 +895,11 @@ class _SubjectTiled:
 
 # keyword-only-exempt: library-callback=jax.lax.map
 def _evaluate_subject_tile(
-    subject: Mapping[str, object],
+    subject: Mapping[ReferenceName, PytreeValue],
     *,
-    func: Callable[..., object],
-    shared: Mapping[str, object],
-) -> object:
+    func: Callable[..., PytreeValue],
+    shared: Mapping[ReferenceName, PytreeValue],
+) -> PytreeValue:
     """Evaluate one subject's cell of a tiled simulation body."""
     return func(**subject, **shared)
 
@@ -917,7 +921,9 @@ class _ArgumentsBoundAtDispatch:
     subject_arg_names: tuple[ReferenceName, ...] = ()
     """Arguments partitioned across subjects; every other operand is shared."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Bind complete forward arguments, refusing a model-build context."""
         if isinstance(context, SimulationBuildContext):
             return context.call_arguments
