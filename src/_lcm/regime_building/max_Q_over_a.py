@@ -321,7 +321,7 @@ class _SmoothedMaxQOverA:
     def __call__(
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: Any,  # noqa: ANN401
+        **states_actions_params: Any,
     ) -> FloatND:
         """Return the expected maximum over the discrete actions at this cell."""
         Q_arr, F_arr = self.Q_and_F(
@@ -365,7 +365,7 @@ class _HardMaxQOverA:
     def __call__(
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: Any,  # noqa: ANN401
+        **states_actions_params: Any,
     ) -> FloatND | tuple[FloatND, BoolND]:
         """Return the cell's value, plus the dissolution flag for a household."""
         Q_arr, F_arr = self.Q_and_F(
@@ -610,7 +610,7 @@ class _StreamedMaxQOverA:
         self,
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: Any,  # noqa: ANN401
+        **states_actions_params: Any,
     ) -> FloatND | tuple[FloatND, BoolND]:
         """Return the cell's value, plus the dissolution flag for a household."""
         action_block_width = cast(
@@ -830,7 +830,7 @@ class _ActionPartitionedMaxQOverA:
         self,
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: Any,  # noqa: ANN401
+        **states_actions_params: Any,
     ) -> FloatND:
         """Return the cell's value after merging every device's accumulator."""
         reduce_cell = build_partitioned_streaming_max_Q_over_a(
@@ -878,7 +878,7 @@ class _OnActionPartitionAxis:
     static_names: tuple[str, ...]
     """Planner-bound widths, passed as compile-time constants, not operands."""
 
-    def __call__(self, **kwargs: Any) -> FloatND:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> FloatND:
         """Evaluate the kernel on every device of the action axis."""
         static = {name: kwargs.pop(name) for name in self.static_names}
         mesh = self.mesh
@@ -902,7 +902,7 @@ def _call_with_operands(
     operands: Mapping[str, Any],
     *,
     function: Callable[..., FloatND],
-    **static: Any,  # noqa: ANN401
+    **static: Any,
 ) -> FloatND:
     """Call `function` with its traced operands and its static widths."""
     return function(**operands, **static)
@@ -1414,7 +1414,7 @@ class _TasteShockArgmaxQOverA:
     def __call__(
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: Any,  # noqa: ANN401
+        **states_actions_params: Any,
     ) -> tuple[IntND, FloatND]:
         """Return the flat index of the drawn action and its noise-free value."""
         taste_shock_key = cast("Array", states_actions_params.pop("taste_shock_key"))
@@ -1466,7 +1466,7 @@ class _HardMaxArgmaxQOverA:
     def __call__(
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: Any,  # noqa: ANN401
+        **states_actions_params: Any,
     ) -> tuple[IntND, FloatND]:
         """Return the flat index of the chosen action and the value it attains."""
         Q_arr, F_arr = self.Q_and_F(

@@ -539,7 +539,7 @@ class _GateFoldBody:
         """Declare that the fold partitions nothing: it has no subject axis."""
         return ()
 
-    def __call__(self, **kwargs: Any) -> object:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> object:
         folded = simulation_gate_fold(
             regime=self.regime,
             regime_name=self.name,
@@ -583,7 +583,7 @@ class _GateRouteBody:
         """Name the operands whose leaves carry the independent subject axis."""
         return _GATE_ROUTE_SUBJECT_ARG_NAMES
 
-    def __call__(self, **kwargs: Any) -> object:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> object:
         return simulation_gate_route_delta(
             regime=self.regime,
             fold_period=self.fold_period,
@@ -746,7 +746,7 @@ class _DecisionWithActionValues:
 
     def __call__(
         self,
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: Any,
     ) -> tuple[IntND, FloatND, FloatND, BoolND]:
         """Return the chosen flat index, its value, and `Q` and `F`."""
         index, value = cast("tuple[IntND, FloatND]", self.decision(**kwargs))
@@ -789,7 +789,7 @@ class _StreamedArgmaxQOverA:
         self,
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: Any,  # noqa: ANN401
+        **states_actions_params: Any,
     ) -> tuple[IntND, FloatND]:
         """Return the chosen action's flat identity and the value it attains."""
         block_width = cast("int", states_actions_params[self.action_width_keyword])
@@ -843,7 +843,7 @@ class _SubjectTiled:
         """Certify that every output has the same independent leading subject axis."""
         return self.subject_arg_names
 
-    def __call__(self, **kwargs: Any) -> object:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> object:
         """Return the body's output for every subject, evaluated in tiles."""
         width = cast("int", kwargs.pop(SUBJECT_WIDTH_KEYWORD))
         accepted = inspect.signature(self.func).parameters

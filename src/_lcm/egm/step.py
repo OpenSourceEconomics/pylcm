@@ -672,7 +672,7 @@ class _EGMStep:
         _lcm_savings_point_width: int | None = None,
         _lcm_euler_point_width: int | None = None,
         _lcm_envelope_cell_width: int = 1,
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: Any,
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
         """Run the DC-EGM step and publish V on the exogenous grid.
 
@@ -1075,6 +1075,6 @@ class _ComboFeasibility:
     constraints_func: Callable[..., Mapping[str, BoolND]]
     """The concatenated constraint DAG, returning every constraint by name."""
 
-    def __call__(self, **combo_pool: Any) -> ScalarBool:  # noqa: ANN401
+    def __call__(self, **combo_pool: Any) -> ScalarBool:
         outputs = self.constraints_func(**combo_pool)
         return jnp.all(jnp.stack([jnp.asarray(out) for out in outputs.values()]))

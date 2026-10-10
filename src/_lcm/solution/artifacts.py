@@ -369,7 +369,7 @@ def fingerprint_flat_params(flat_params: FlatParams) -> str:
     return digest.hexdigest()
 
 
-def _update_digest_token(*, digest: Any, chunk: str | bytes) -> None:  # noqa: ANN401
+def _update_digest_token(*, digest: Any, chunk: str | bytes) -> None:
     """Feed one length-prefixed token into the digest."""
     payload = chunk.encode() if isinstance(chunk, str) else chunk
     digest.update(len(payload).to_bytes(8, byteorder="big"))
@@ -378,8 +378,8 @@ def _update_digest_token(*, digest: Any, chunk: str | bytes) -> None:  # noqa: A
 
 def _update_digest_value(
     *,
-    digest: Any,  # noqa: ANN401
-    value: Any,  # noqa: ANN401
+    digest: Any,
+    value: Any,
     path: tuple[str, ...],
 ) -> None:
     """Feed one parameter leaf, with its tree path and container boundaries."""

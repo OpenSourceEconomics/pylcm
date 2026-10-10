@@ -262,7 +262,7 @@ class QAndFFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: Any,
     ) -> tuple[FloatND, BoolND]: ...
 
 
@@ -282,7 +282,7 @@ class MaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: Any,
     ) -> FloatND | tuple[FloatND, BoolND]: ...
 
 
@@ -303,7 +303,7 @@ class EGMStepFunction(Protocol):
         self,
         *,
         next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: Any,
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]: ...
 
 
@@ -322,7 +322,7 @@ class EGMCarryProducer(Protocol):
         self,
         *,
         V_arr: FloatND,
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: Any,
     ) -> EGMCarry: ...
 
 
@@ -340,7 +340,7 @@ class ArgmaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: Any,
     ) -> tuple[IntND, FloatND]: ...
 
 

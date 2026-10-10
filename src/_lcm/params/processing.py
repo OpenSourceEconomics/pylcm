@@ -373,11 +373,11 @@ def _cast_flat_leaves(
 
 def _cast_shared(
     *,
-    value: Any,  # noqa: ANN401
+    value: Any,
     name: str,
     memo: dict[int, Any],
     array_writer: CanonicalArrayWriter | None,
-) -> Any:  # noqa: ANN401
+) -> Any:
     """Cast `value` once per distinct input object, memoized by identity in `memo`."""
     key = id(value)
     if key not in memo:
@@ -389,10 +389,10 @@ def _cast_shared(
 
 def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
     *,
-    value: Any,  # noqa: ANN401
+    value: Any,
     name: str,
     array_writer: CanonicalArrayWriter | None,
-) -> Any:  # noqa: ANN401
+) -> Any:
     """Cast a single params leaf to its canonical pylcm dtype.
 
     Strict whitelist — every code path either casts or raises.

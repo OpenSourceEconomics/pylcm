@@ -292,7 +292,7 @@ def describe_core(*, name: str, core: PlannedCore) -> CoreLayoutDescriptor | Non
 def capture_kernel_inputs(
     *,
     capture_target: PeriodCaptureTarget | None,
-    regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
+    regime: Any,  # the canonical Regime, circular to import here
     regime_name: RegimeName,
     period: int,
     kernel_kwargs: dict[str, Any],
@@ -333,7 +333,7 @@ def capture_kernel_inputs(
 
 def _period_layouts(
     *,
-    regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
+    regime: Any,  # the canonical Regime, circular to import here
     period: int,
     kernel_kwargs: dict[str, Any],
     compiled_cores: Mapping[str, PlannedCore],

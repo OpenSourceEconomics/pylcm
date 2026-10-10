@@ -6821,7 +6821,7 @@ def _get_discrete_markov_next_function(
 ) -> UserFunction:
     @with_signature(args=None, return_annotation="Int1D")
     @functools.wraps(func)
-    def next_func(**kwargs: Any) -> Int1D:  # noqa: ANN401, ARG001
+    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001
         return grid
 
     return next_func
@@ -6833,7 +6833,7 @@ def _get_stochastic_next_function_for_process(
     """Get function returning the indices in the vf arr of the next process states."""
 
     @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
-    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001
         return jnp.arange(grid.shape[0], dtype=jnp.int32)
 
     return next_func
@@ -7190,7 +7190,7 @@ def _get_entry_next_for_process(*, grid: Float1D) -> UserFunction:
     """
 
     @with_signature(args={}, return_annotation="Int1D")
-    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001
         return jnp.arange(grid.shape[0], dtype=jnp.int32)
 
     return next_func
@@ -7932,7 +7932,7 @@ class _RegimeTransitionProbsByName:
         )
 
     @no_type_check
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         result = self.func(*args, **kwargs)
         _fail_if_not_one_entry_per_regime(
             result=result, n_regimes=len(self.regime_names)
@@ -7981,7 +7981,7 @@ class _OneHotRegimeTransition:
         object.__setattr__(self, "__wrapped__", self.func)
 
     @no_type_check
-    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
+    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:
         return jax.nn.one_hot(self.func(*args, **kwargs), self.n_regimes)
 
 

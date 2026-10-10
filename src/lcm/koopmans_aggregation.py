@@ -51,7 +51,7 @@ class KoopmansAggregator(ABC):
     """
 
     @abstractmethod
-    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
+    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:
         """Return the state-action value from utility and the continuation.
 
         Called with `utility=...`, `CE=...`, and every further parameter the

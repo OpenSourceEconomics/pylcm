@@ -395,7 +395,7 @@ class _CountBroadcastExtentInWidth:
     width_keyword: str
     """Static keyword naming the width in points of the whole product."""
 
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         width = kwargs.get(self.width_keyword, 1)
         # An invalid width passes through unchanged for the cell mapper to refuse.
         if type(width) is int and width >= 1:
@@ -417,7 +417,7 @@ class _RestoreProductAxisOrder:
     axes: tuple[int, ...]
     """Permutation from mapped state axes to the original declared order."""
 
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         return jax.tree.map(
             partial(_transpose_product_axes, axes=self.axes), self.func(**kwargs)
         )
@@ -440,7 +440,7 @@ class _TiledProductMap:
     width_keyword: str
     """Static keyword consumed by this mapping boundary."""
 
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         width = kwargs.pop(self.width_keyword, 1)
         if type(width) is not int or width < 1:
             msg = f"Tile width must be a positive static integer, got {width!r}."
@@ -499,7 +499,7 @@ def _map_grouped_product(
     shape: tuple[int, ...],
     arguments: MappingProxyType[str, Any],
     width: int,
-) -> Any:  # noqa: ANN401
+) -> Any:
     """Map a flat prefix and final coordinate with at most two cell batch axes.
 
     The rectangle's two widths multiply to at most the requested width. Separate
@@ -547,7 +547,7 @@ class _MapOverFinalCoordinate:
     width: int
     """Active final-coordinate window within the requested cell budget."""
 
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         evaluate = _EvaluateTiledCell(
             func=self.func,
             variables=(self.variable,),
@@ -568,7 +568,7 @@ def _map_whole_product(
     variables: tuple[str, ...],
     coordinates: tuple[jax.Array, ...],
     arguments: MappingProxyType[str, Any],
-) -> Any:  # noqa: ANN401
+) -> Any:
     """Map coordinates whose windows cover them, without decoding a flat index.
 
     Enumerating a grid by index and gathering every element back out of it is an
@@ -606,7 +606,7 @@ class _MapWholeCoordinate:
     coordinate: jax.Array
     """Separate final-coordinate grid, mapped in full."""
 
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         return _map_whole_product(
             func=self.func,
             variables=(self.variable,),
@@ -630,7 +630,7 @@ class _EvaluateTiledCell:
     arguments: MappingProxyType[str, Any]
     """Non-coordinate arguments forwarded unchanged to the cell function."""
 
-    def __call__(self, index: jax.Array) -> Any:  # noqa: ANN401
+    def __call__(self, index: jax.Array) -> Any:
         cell = {
             name: coordinate[(index // stride) % coordinate.shape[0]]
             for name, coordinate, stride in zip(
@@ -717,7 +717,7 @@ class _ProductMapBatched:
                 getattr(self.func, attribute, type(self).__qualname__),
             )
 
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: Any) -> Any:
         non_array_kwargs = {
             key: val for key, val in kwargs.items() if key not in self.product_axes
         }
@@ -754,9 +754,9 @@ class _MappedOverOneMoreAxis:
 
     def __call__(
         self,
-        *already_mapped_args: Any,  # noqa: ANN401
-        **already_mapped_kwargs: Any,  # noqa: ANN401
-    ) -> Any:  # noqa: ANN401
+        *already_mapped_args: Any,
+        **already_mapped_kwargs: Any,
+    ) -> Any:
         return jax.lax.map(
             partial(
                 _evaluate_at_axis_value,
@@ -772,12 +772,12 @@ class _MappedOverOneMoreAxis:
 
 # keyword-only-exempt: library-callback=jax.lax.map
 def _evaluate_at_axis_value(
-    axis_value: Any,  # noqa: ANN401
+    axis_value: Any,
     *,
     loop_func: Callable[..., Any],
     axis: str,
     mapped_args: tuple[Any, ...],
     mapped_kwargs: dict[str, Any],
-) -> Any:  # noqa: ANN401
+) -> Any:
     """Evaluate `loop_func` at one value of `axis`, forwarding the other arguments."""
     return loop_func(*mapped_args, **{axis: axis_value}, **mapped_kwargs)

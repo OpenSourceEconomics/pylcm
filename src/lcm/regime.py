@@ -614,7 +614,7 @@ class Regime:
         self,
         *,
         engine_functions: Mapping[FunctionName, UserFunction | Phased | None],
-        **other_slots: Any,  # noqa: ANN401
+        **other_slots: Any,
     ) -> Regime:
         """Overlay engine-composed functions without disturbing the declarations.
 
@@ -685,7 +685,7 @@ class Regime:
             )
         return written
 
-    def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
+    def replace(self, **kwargs: Any) -> Regime:
         """Replace the attributes of the regime.
 
         Replacing a slot that carries a `CollectiveUtility` or
