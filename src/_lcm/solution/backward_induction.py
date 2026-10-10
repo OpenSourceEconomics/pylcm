@@ -30,12 +30,16 @@ from collections.abc import (
     Sequence,
 )
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from types import MappingProxyType
+from types import MappingProxyType, TracebackType
 from typing import Self, cast
 
 import jax
+import numpy as np
 from jax._src import config as jax_config
 from jax._src import core as jax_core
+from jax._src.dtypes import ExtendedDType
+from jax._src.lib import xla_client
+from jaxtyping import Float, Int, Scalar
 
 from _lcm.engine import (
     Regime,
@@ -109,6 +113,7 @@ from _lcm.execution.invariant_blocks import (
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import (
     ExpectedOutputLeaf,
+    OutputRoleLeaf,
     PlannedCore,
     ResolvedOutputLayout,
     assert_value_leaf_layout,
@@ -191,6 +196,7 @@ from _lcm.solution.kernel_output import (
     consume_kernel_output,
 )
 from _lcm.solution.period_capture import (
+    CompiledShardingTree,
     PeriodCaptureTarget,
     PeriodKernelKwargs,
     capture_kernel_inputs,
@@ -225,15 +231,19 @@ from _lcm.solution.v_topology import (
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import (
     FlatParams,
+    HostArray,
     ParamsLeaf,
+    PRNGKeyND,
     PytreeValue,
     QAndFArg,
     QualifiedName,
     ReferenceName,
     RegimeName,
+    RegimeNamesToIds,
     ShapeDtypePytree,
     SimulationPolicy,
     StateName,
+    ValueND,
 )
 from _lcm.utils.logging import (
     format_duration,
@@ -257,12 +267,14 @@ from lcm.solver_api import (
     KernelOutput,
 )
 from lcm.typing import (
+    ActionName,
     BoolND,
+    ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
-    ScalarFloat,
-    ScalarInt,
+    IntND,
 )
 
 
@@ -279,8 +291,47 @@ class _GatherCheck:
     """Whether the classifier could not read the program completely."""
 
 
-# Fusion verdicts by runtime-executable identity, each held with its executable.
-type GatherChecks = dict[int, tuple[object, _GatherCheck]]
+# Fusion verdicts by runtime-executable identity, each held with its executable:
+# the backend's loaded executable, or the compiled stage where JAX exposes none.
+type GatherChecks = dict[
+    int, tuple[xla_client.LoadedExecutable | jax.stages.Compiled, _GatherCheck]
+]
+
+# The age of a gated edge's fold period: a Python number, a concrete or traced
+# scalar array of any integer or float width, or `None` where no age is known.
+type FoldAge = float | Int[Scalar, ""] | Float[Scalar, ""] | None
+
+# A regime's base state, discrete-action and continuous-action arrays.
+type _SpaceArrays = tuple[
+    MappingProxyType[StateName, ContinuousState | DiscreteState],
+    MappingProxyType[ActionName, DiscreteAction],
+    MappingProxyType[ActionName, ContinuousAction],
+]
+
+# One leaf of a program's concrete or abstract arguments.
+type _ArgumentLeaf = (
+    ValueND
+    | PRNGKeyND
+    | jax.ShapeDtypeStruct
+    | HostArray
+    | np.generic
+    | bool
+    | int
+    | float
+)
+
+# Metadata spelled into a lowering or admission key: a tree structure, a leaf's
+# dtype or sharding, an output role, or a regime-code table.
+type _KeyMetadata = (
+    jax.tree_util.PyTreeDef
+    | np.dtype
+    | ExtendedDType
+    | jax.sharding.Sharding
+    | OutputRoleLeaf
+    | str
+    | RegimeNamesToIds
+    | None
+)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -1278,7 +1329,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
 def _diagnostic_arrays(
     *, diagnostics: Sequence[SolverDiagnostics]
-) -> tuple[object, ...]:
+) -> tuple[FloatND | IntND | BoolND | None, ...]:
     """Return the field values of each diagnostic payload, flattened.
 
     `SolverDiagnostics` is a registered pytree, so walking one reaches exactly
@@ -1878,7 +1929,7 @@ def _evaluate_edge_fold(
     *,
     fold: CompiledEdgeFold,
     fold_period: int,
-    fold_age: object,
+    fold_age: FoldAge,
     target_states: Mapping[str, ContinuousState | DiscreteState],
     same_period_mapping: Mapping[RegimeName, FloatND],
     source_flat_params: Mapping[QualifiedName, ParamsLeaf],
@@ -1923,7 +1974,7 @@ def _evaluate_edge_fold(
         bind_edge_period_context(
             func=surfaces,
             fold_period=fold_period,
-            fold_age=cast("float | ScalarFloat | ScalarInt | None", fold_age),
+            fold_age=fold_age,
         )
     )
     kwargs[SAME_PERIOD_V_ARG] = same_period_mapping
@@ -1967,7 +2018,7 @@ def _match_leaf_pair_sharding(leaf: FloatND, template_leaf: FloatND) -> FloatND:
 def _publish_kernel_value(
     *,
     value: FloatND,
-    compiled_cores: Mapping[str, Callable],
+    compiled_cores: Mapping[str, PlannedCore],
     assembled_template: FloatND | None = None,
 ) -> FloatND:
     """Publish a period value after asserting its planned placement.
@@ -3389,7 +3440,7 @@ def _candidate_resident_bytes(
 
 def _compiler_reads_source(
     *,
-    shardings: Mapping[str, object],
+    shardings: Mapping[str, CompiledShardingTree],
     source: ValueConsumerAddress,
 ) -> bool:
     """Read one exact declared locator from the validated public input tree.
@@ -3401,7 +3452,7 @@ def _compiler_reads_source(
     node = shardings[source.argument or source.channel.value]
     for segment in source.path:
         if isinstance(node, Mapping):
-            node = node[segment]
+            node = node[cast("str", segment)]
         elif isinstance(node, tuple):
             node = node[cast("int", segment)]
         else:
@@ -3507,7 +3558,7 @@ def _selected_artifact_keys_for_cell(
     )
 
 
-def _retained_base_space_arrays(*, regime: Regime) -> object:
+def _retained_base_space_arrays(*, regime: Regime) -> _SpaceArrays:
     """Read owned base arrays without constructing another completed state space."""
     # The canonical phase retains this original even when runtime params replace
     # its placeholders. Accounting intentionally observes that owning field.
@@ -5180,7 +5231,7 @@ class CompilationWave:
             Hashable, tuple[Future[tuple[Hashable, jax.stages.Compiled]], str]
         ] = {}
         self._out_info: dict[Hashable, ShapeDtypePytree] = {}
-        self._publishers: dict[Hashable, Callable[..., object] | None] = {}
+        self._publishers: dict[Hashable, Callable[..., None] | None] = {}
 
     def __enter__(self) -> Self:
         return self
@@ -5191,7 +5242,7 @@ class CompilationWave:
         lowering_key: Hashable,
         label: str,
         lower: Callable[[], jax.stages.Lowered],
-        publish: Callable[..., object] | None = None,
+        publish: Callable[..., None] | None = None,
         wait: bool = False,
     ) -> ShapeDtypePytree:
         """Lower one program here, submit its compile, and return its outputs.
@@ -5231,7 +5282,7 @@ class CompilationWave:
         lowering_key: Hashable,
         label: str,
         lower: Callable[[], jax.stages.Lowered],
-        publish: Callable[..., object] | None,
+        publish: Callable[..., None] | None,
     ) -> None:
         """Lower one program on the calling thread and hand its compile to the pool."""
         self._raise_first_compile_error()
@@ -5262,7 +5313,12 @@ class CompilationWave:
         self._publishers[lowering_key] = publish
 
     # keyword-only-exempt: library-callback=contextlib.AbstractContextManager
-    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         if exc is not None:
             self._pool.shutdown(wait=False, cancel_futures=True)
             return
@@ -5513,7 +5569,7 @@ class _CoreFrontier:
     program: MaterializedCoreProgram
     transfer_plan: tuple[ResolvedValueTransfer, ...]
     templates: Mapping[ReferenceName, ShapeDtypePytree]
-    widths: tuple[Mapping[str, object] | None, ...]
+    widths: tuple[Mapping[str, int], ...]
     top_record: ResolvedProducer | None
     """The top-ranked candidate's producer record, for a consumed producer.
 
@@ -5973,10 +6029,7 @@ def _build_structural_blueprint(
             flat_params=flat_params,
             period=period,
             ages=ages,
-            edge_regime_to_V_arr=cast(
-                "Mapping[str, object] | None",
-                edge_kwargs.get("edge_regime_to_V_arr"),
-            ),
+            edge_regime_to_V_arr=edge_kwargs.get("edge_regime_to_V_arr"),
         )
         materialized = materialize_core_program(program=declaration, context=context)
         templates = internal_input_templates(program=materialized, producers=producers)
@@ -6527,7 +6580,7 @@ def _resolve_program_for_execution(
     *,
     program: MaterializedCoreProgram,
     tile_widths: Mapping[str, int],
-    source_value_template: object,
+    source_value_template: FloatND,
     source: _CoreTriple,
     require_full_next_value: bool = False,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] | None = None,
@@ -6603,7 +6656,7 @@ def _prepare_abstract_program(
 def _resolve_value_input_transfer_plan(
     *,
     program: MaterializedCoreProgram,
-    source_value_template: object,
+    source_value_template: FloatND,
     source: _CoreTriple,
     require_full_next_value: bool = False,
     value_axis_names: Mapping[RegimeName, tuple[StateName, ...]] = MappingProxyType({}),
@@ -6717,7 +6770,7 @@ def _bound_block_view(
 
 def _resolve_value_transfer_layout(
     *,
-    stored_sharding: object,
+    stored_sharding: jax.sharding.Sharding | None,
     source_execution_sharding: jax.sharding.Sharding,
     require_full_replica: bool = False,
     target_regime: RegimeName | None = None,
@@ -6941,7 +6994,7 @@ def _trace_settings_key() -> Hashable:
     )
 
 
-def _spelled_trace_value(value: object) -> object:
+def _spelled_trace_value(value: Hashable) -> Hashable:
     """Replace an axis environment by the axis names and sizes it binds."""
     if not isinstance(value, jax_core.AxisEnv):
         return value
@@ -6973,7 +7026,7 @@ def _abstract_value_key(*, value: object) -> Hashable:
     )
 
 
-def _abstract_leaf_key(*, leaf: object) -> Hashable:
+def _abstract_leaf_key(*, leaf: _ArgumentLeaf) -> Hashable:
     """Return the tracing-relevant metadata for one dynamic leaf."""
     raw_shape = getattr(leaf, "shape", None)
     shape = (
@@ -6990,7 +7043,7 @@ def _abstract_leaf_key(*, leaf: object) -> Hashable:
     )
 
 
-def _hashable_metadata(value: object) -> Hashable:
+def _hashable_metadata(value: _KeyMetadata) -> Hashable:
     """Return metadata directly when hashable and a stable spelling otherwise."""
     try:
         hash(value)
@@ -7034,7 +7087,7 @@ def _assert_lowered_output_roles(
 
 
 def _assert_lowered_output_tree(
-    *, output_roles: object, output_info: object, label: str
+    *, output_roles: object, output_info: ShapeDtypePytree, label: str
 ) -> None:
     """Require the lowered pytree to match the solver's declared role tree."""
     expected = jax.tree.structure(output_roles)
@@ -7049,7 +7102,7 @@ def _assert_lowered_output_tree(
 
 def _assert_lowered_output_leaf(
     *,
-    output_info: object,
+    output_info: jax.ShapeDtypeStruct,
     label: str,
     expected: ExpectedOutputLeaf,
 ) -> None:
@@ -7246,7 +7299,7 @@ def _resolve_compilation_workers(*, max_compilation_workers: int | None) -> int:
     return max_compilation_workers
 
 
-def _func_dedup_key(*, func: Callable) -> Hashable:
+def _func_dedup_key(*, func: Callable[..., PytreeValue]) -> Hashable:
     """Return a hashable deduplication key for a callable.
 
     For `functools.partial` objects wrapping shared JIT functions, deduplicate

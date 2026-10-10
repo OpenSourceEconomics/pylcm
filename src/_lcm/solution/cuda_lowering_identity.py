@@ -109,7 +109,7 @@ def _headers(
     return identities
 
 
-def _tool_identity(command: object) -> tuple[str, str, str, str]:
+def _tool_identity(command: JSONValue) -> tuple[str, str, str, str]:
     if not isinstance(command, str) or not command:
         raise ExecutionPlanningError("Native tool command must be a nonempty string.")
     declared = Path(command)

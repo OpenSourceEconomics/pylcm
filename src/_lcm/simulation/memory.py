@@ -84,11 +84,11 @@ class SimulationMemory:
     def __post_init__(self) -> None:
         """Own the call's selected common specialization independently of its caller."""
         self._held: list[object] = []
-        self._period_generation: object = None
+        self._period_generation: int | None = None
         self._period_footprint = _EMPTY_FOOTPRINT
         self._period_stable = True
         self._snapshots: dict[
-            tuple[jax.Device, ...] | None, tuple[tuple[int, object], _Footprint]
+            tuple[jax.Device, ...] | None, tuple[tuple[int, int | None], _Footprint]
         ] = {}
         self.axis_widths = MappingProxyType(dict(self.axis_widths))
         # The dataclass assigned the owner fields before `ledger` existed, so bind
@@ -127,7 +127,7 @@ class SimulationMemory:
             self.ledger.bump()
 
     @property
-    def residency_epoch(self) -> tuple[int, object]:
+    def residency_epoch(self) -> tuple[int, int | None]:
         """Identify the current ownership epoch, including the period owner's."""
         return (self.ledger.epoch, self._period_generation)
 

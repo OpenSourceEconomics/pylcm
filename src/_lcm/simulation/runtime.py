@@ -69,7 +69,7 @@ from _lcm.solution.backward_induction import (
     _trace_settings_key,
 )
 from _lcm.solution.solve_phase_records import nested_phase
-from _lcm.typing import PytreeValue, ShapeDtypePytree
+from _lcm.typing import HostArray, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 
@@ -845,9 +845,9 @@ def _unbudgeted_subject_width(
     return _admissible_width(axis=axis, width=min(proposal, axis.extent))
 
 
-def _subject_slice_bytes(*, leaf: object) -> int:
+def _subject_slice_bytes(*, leaf: jax.Array | HostArray | jax.ShapeDtypeStruct) -> int:
     """Size one subject's share of a leading-axis operand, extended dtypes included."""
-    shape = tuple(leaf.shape)  # ty: ignore[unresolved-attribute]
+    shape = tuple(leaf.shape)
     count = math.prod(shape)
     if isinstance(leaf, jax.Array):
         # nbytes also sizes extended PRNG-key dtypes, which are not NumPy dtypes.

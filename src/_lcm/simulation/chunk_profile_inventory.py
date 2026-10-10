@@ -27,7 +27,7 @@ from lcm.typing import ReferenceName
 
 # keyword-only-exempt: library-callback=jax.tree.map
 def _abstract_leaf(
-    leaf: object, *, sharding: jax.sharding.Sharding
+    leaf: jax.Array | jax.ShapeDtypeStruct, *, sharding: jax.sharding.Sharding
 ) -> jax.ShapeDtypeStruct:
     """Copy one leaf's shape/dtype metadata onto the required ordered layout.
 
@@ -42,7 +42,9 @@ def _abstract_leaf(
     )
 
 
-def abstract_tree(*, tree: object, sharding: jax.sharding.Sharding) -> ShapeDtypePytree:
+def abstract_tree(
+    *, tree: PytreeValue | ShapeDtypePytree, sharding: jax.sharding.Sharding
+) -> ShapeDtypePytree:
     """Copy only shape/dtype metadata onto the required ordered layout."""
     return jax.tree.map(partial(_abstract_leaf, sharding=sharding), tree)
 

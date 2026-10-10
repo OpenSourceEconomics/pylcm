@@ -31,7 +31,7 @@ from _lcm.execution.value_transfer import (
     resolve_value_transfer,
 )
 from _lcm.typing import RegimeName, StateName
-from lcm.typing import FloatND
+from lcm.typing import FloatND, ValueND
 
 # Program family named by the binding a grouped read's view selects with.
 _FAMILY = "simulation"
@@ -224,7 +224,7 @@ def type_local_view(
     *,
     route: SubjectGroupingRoute,
     read: ValueRead,
-    stored: object,
+    stored: ValueND,
     required_sharding: jax.sharding.Sharding,
     code: int,
     stored_codes: tuple[int, ...] | None = None,
@@ -265,7 +265,7 @@ def type_local_transfer(
     route: SubjectGroupingRoute | None,
     code: int | None,
     read: ValueRead,
-    stored: object,
+    stored: ValueND,
     required_sharding: jax.sharding.Sharding,
     stored_codes: tuple[int, ...] | None = None,
 ) -> ResolvedValueTransfer:
@@ -287,7 +287,7 @@ def type_local_transfer(
             stored_codes=stored_codes,
         )
     )
-    stored_sharding = stored.sharding  # ty: ignore[unresolved-attribute]
+    stored_sharding = stored.sharding
     delivered = (
         stored_sharding
         if view is None

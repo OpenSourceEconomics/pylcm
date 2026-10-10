@@ -1,9 +1,9 @@
 """Optional `additional_targets` computation for `SimulationResult.to_dataframe`."""
 
 import inspect
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -186,9 +186,9 @@ def _phase_split_transition_names(regime: Regime) -> set[str]:
 
 def _laws_by_target(
     transitions: TransitionFunctionsMapping,
-) -> dict[TransitionFunctionName, dict[RegimeName, Callable[..., Any]]]:
+) -> dict[TransitionFunctionName, dict[RegimeName, UserFunction]]:
     """Map each transition name to its unwrapped law per target regime."""
-    laws: dict[TransitionFunctionName, dict[RegimeName, Callable[..., Any]]] = {}
+    laws: dict[TransitionFunctionName, dict[RegimeName, UserFunction]] = {}
     for target_regime_name, bundle in transitions.items():
         for transition_name, law in bundle.items():
             laws.setdefault(transition_name, {})[target_regime_name] = inspect.unwrap(
@@ -358,7 +358,7 @@ def _create_target_function(
 
 def _get_function_variables(
     *,
-    func: Callable[..., Any],
+    func: UserFunction,
     param_names: frozenset[QualifiedName],
 ) -> tuple[str, ...]:
     """Get variable names from signature, excluding flat param names."""

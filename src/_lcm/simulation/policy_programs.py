@@ -27,7 +27,13 @@ from _lcm.execution.value_transfer import (
 from _lcm.simulation.program_types import subject_axis
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.solution.continuation_reads import rekeyed_value_reads
-from _lcm.typing import FlatRegimeParams, PytreeValue, QAndFKwargs, RegimeName
+from _lcm.typing import (
+    FlatRegimeParams,
+    PytreeChild,
+    PytreeValue,
+    QAndFKwargs,
+    RegimeName,
+)
 from lcm.solver_api import SIMULATION_POLICY
 from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt, StateName
 
@@ -58,12 +64,21 @@ class ReplayPayload:
         )
 
 
-def _flatten_payload(payload: ReplayPayload) -> tuple[tuple, object]:
+# A payload leaf as JAX hands it back: a pytree child, or the `ArgInfo` that AOT
+# lowering rebuilds a payload with when it reports the compiled arguments.
+type _PayloadChild = PytreeChild | jax.stages.ArgInfo
+
+
+def _flatten_payload(
+    payload: ReplayPayload,
+) -> tuple[tuple[_PayloadChild, ...], jax.tree_util.PyTreeDef]:
     return payload.arrays, payload.structure
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-def _unflatten_payload(structure: object, arrays: Sequence[object]) -> ReplayPayload:
+def _unflatten_payload(
+    structure: jax.tree_util.PyTreeDef, arrays: Sequence[_PayloadChild]
+) -> ReplayPayload:
     result = object.__new__(ReplayPayload)
     object.__setattr__(result, "arrays", tuple(arrays))
     object.__setattr__(result, "structure", structure)
@@ -253,7 +268,7 @@ class _Rank:
             )
         )
 
-    def __call__(self, **arguments: object) -> PytreeValue:
+    def __call__(self, **arguments: PytreeValue) -> PytreeValue:
         from _lcm.simulation.simulate import (  # noqa: PLC0415
             _rank_nnbegm_candidate_bank,
         )
