@@ -53,8 +53,10 @@ def test_only_argument_covered_bytes_leave_residency(
 ) -> None:
     """Literal overlapping-interval examples distinguish aliases from fresh copies."""
     device = jax.devices()[0]
-    live = residency.DeviceBufferFootprint(spans={device: live_spans})
-    arguments = residency.DeviceBufferFootprint(spans={device: argument_spans})
+    live = residency.DeviceBufferFootprint(spans=MappingProxyType({device: live_spans}))
+    arguments = residency.DeviceBufferFootprint(
+        spans=MappingProxyType({device: argument_spans})
+    )
     assert dict(
         residency.resident_bytes_by_device(
             live=live, arguments=arguments, devices=(device,)
@@ -68,9 +70,11 @@ def test_distinct_backend_devices_do_not_share_pointer_names() -> None:
     cpu = cast("jax.Device", Mock(spec=jax.Device, id=0, platform="cpu"))
     gpu = cast("jax.Device", Mock(spec=jax.Device, id=0, platform="gpu"))
     live = residency.DeviceBufferFootprint(
-        spans={cpu: ((100, 200),), gpu: ((100, 200),)}
+        spans=MappingProxyType({cpu: ((100, 200),), gpu: ((100, 200),)})
     )
-    arguments = residency.DeviceBufferFootprint(spans={gpu: ((100, 200),)})
+    arguments = residency.DeviceBufferFootprint(
+        spans=MappingProxyType({gpu: ((100, 200),)})
+    )
     assert dict(
         residency.resident_bytes_by_device(
             live=live, arguments=arguments, devices=(cpu, gpu)
@@ -86,12 +90,14 @@ def test_budget_devices_include_only_actual_same_backend_sources() -> None:
         for index in range(4)
     )
     live = residency.DeviceBufferFootprint(
-        spans={
-            cpu: ((100, 200),),
-            source: ((100, 200),),
-            first: ((100, 200),),
-            empty: (),
-        }
+        spans=MappingProxyType(
+            {
+                cpu: ((100, 200),),
+                source: ((100, 200),),
+                first: ((100, 200),),
+                empty: (),
+            }
+        )
     )
     assert residency.resolve_budget_devices(
         execution_devices=(second, first), live=live
@@ -101,13 +107,17 @@ def test_budget_devices_include_only_actual_same_backend_sources() -> None:
 def test_incremental_publications_union_shared_params_once() -> None:
     """New output metadata adds storage while preserving aliases of earlier inputs."""
     device = jax.devices()[0]
-    original = residency.DeviceBufferFootprint(spans={device: ((100, 120),)})
-    output = residency.DeviceBufferFootprint(spans={device: ((100, 120), (200, 260))})
+    original = residency.DeviceBufferFootprint(
+        spans=MappingProxyType({device: ((100, 120),)})
+    )
+    output = residency.DeviceBufferFootprint(
+        spans=MappingProxyType({device: ((100, 120), (200, 260))})
+    )
     live = residency.union_buffer_footprints(footprints=(original, output))
     assert dict(
         residency.resident_bytes_by_device(
             live=live,
-            arguments=residency.DeviceBufferFootprint(spans={}),
+            arguments=residency.DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=(device,),
         )
     ) == {device: 80}
@@ -120,7 +130,7 @@ def test_typed_random_keys_have_a_measured_payload() -> None:
     assert dict(
         residency.resident_bytes_by_device(
             live=measured,
-            arguments=residency.DeviceBufferFootprint(spans={}),
+            arguments=residency.DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=tuple(key.devices()),
         )
     ) == {next(iter(key.devices())): 8}
@@ -141,7 +151,9 @@ def test_snapshot_owns_no_array_and_keeps_no_mutable_span_mapping() -> None:
 def test_transfer_headroom_covers_source_destination_and_scratch(budget: int) -> None:
     """The 150-byte resident plus 100-byte copy and scratch needs 350 bytes."""
     device = jax.devices()[0]
-    live = residency.DeviceBufferFootprint(spans={device: ((100, 250),)})
+    live = residency.DeviceBufferFootprint(
+        spans=MappingProxyType({device: ((100, 250),)})
+    )
     copied = []
 
     def acquire() -> None:
@@ -169,7 +181,9 @@ def test_transfer_checks_retained_source_devices_without_a_core() -> None:
     destination = cast("jax.Device", Mock(spec=jax.Device, id=1, platform="gpu"))
     with pytest.raises(ExecutionPlanningError, match="300"):
         residency.require_transfer_headroom(
-            live=residency.DeviceBufferFootprint(spans={source: ((100, 400),)}),
+            live=residency.DeviceBufferFootprint(
+                spans=MappingProxyType({source: ((100, 400),)})
+            ),
             destination_bytes={destination: 50},
             scratch_bytes={destination: 50},
             budget_bytes=200,
@@ -187,7 +201,7 @@ def test_transfer_costs_cannot_create_fictitious_headroom(
     device = jax.devices()[0]
     with pytest.raises(ExecutionPlanningError):
         residency.require_transfer_headroom(
-            live=residency.DeviceBufferFootprint(spans={}),
+            live=residency.DeviceBufferFootprint(spans=MappingProxyType({})),
             destination_bytes={device: destination},
             scratch_bytes={device: scratch},
             budget_bytes=budget,
@@ -217,8 +231,12 @@ def test_generated_interval_counts_agree_with_individual_byte_ownership() -> Non
         expected.append(len(source_bytes - argument_bytes))
         actual.append(
             residency.resident_bytes_by_device(
-                live=residency.DeviceBufferFootprint(spans={device: sources}),
-                arguments=residency.DeviceBufferFootprint(spans={device: arguments}),
+                live=residency.DeviceBufferFootprint(
+                    spans=MappingProxyType({device: sources})
+                ),
+                arguments=residency.DeviceBufferFootprint(
+                    spans=MappingProxyType({device: arguments})
+                ),
                 devices=(device,),
             )[device]
         )
@@ -277,9 +295,9 @@ def test_fresh_admission_uses_current_residency_with_cached_width_candidates() -
     def select(retained_bytes: int) -> _CompiledCandidate:
         per_device = residency.resident_bytes_by_device(
             live=residency.DeviceBufferFootprint(
-                spans={device: ((100, 100 + retained_bytes),)}
+                spans=MappingProxyType({device: ((100, 100 + retained_bytes),)})
             ),
-            arguments=residency.DeviceBufferFootprint(spans={}),
+            arguments=residency.DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=(device,),
         )
         return plan_workspace(

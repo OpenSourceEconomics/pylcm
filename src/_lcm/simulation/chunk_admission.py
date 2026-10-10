@@ -74,7 +74,7 @@ class PreparedSimulationChunks:
         """
         profile = self.plan.profile
         setup = resident_bytes_by_device(
-            live=DeviceBufferFootprint(spans={})
+            live=DeviceBufferFootprint(spans=MappingProxyType({}))
             if completed_setup is None
             else completed_setup,
             arguments=self.admitted_inputs,
@@ -82,29 +82,33 @@ class PreparedSimulationChunks:
         )
         outputs = resident_bytes_by_device(
             live=memory.outputs,
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=memory.devices,
         )
         remaining = replace(
             profile,
-            fixed_reservation={
-                device: value
-                - min(
-                    value,
-                    profile.setup_reservation.get(device, 0),
-                    setup.get(device, 0),
-                )
-                for device, value in profile.fixed_reservation.items()
-            },
-            output_reservation={
-                device: value - min(value, outputs.get(device, 0))
-                for device, value in profile.output_reservation.items()
-            },
-            setup_reservation={},
+            fixed_reservation=MappingProxyType(
+                {
+                    device: value
+                    - min(
+                        value,
+                        profile.setup_reservation.get(device, 0),
+                        setup.get(device, 0),
+                    )
+                    for device, value in profile.fixed_reservation.items()
+                }
+            ),
+            output_reservation=MappingProxyType(
+                {
+                    device: value - min(value, outputs.get(device, 0))
+                    for device, value in profile.output_reservation.items()
+                }
+            ),
+            setup_reservation=MappingProxyType({}),
         )
         resident = resident_bytes_by_device(
             live=memory.snapshot(),
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=memory.devices,
         )
         required = _required_bytes(
@@ -198,7 +202,9 @@ def prepare_simulation_chunks(
     population = initial_conditions["regime_id"].shape[0]
     alignment = len(runtime.subject_devices)
     resident = resident_bytes_by_device(
-        live=memory.inputs, arguments=DeviceBufferFootprint(spans={}), devices=devices
+        live=memory.inputs,
+        arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
+        devices=devices,
     )
     profiler = _ChunkProfiler(
         runtime=runtime,

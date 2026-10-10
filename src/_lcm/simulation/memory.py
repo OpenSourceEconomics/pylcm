@@ -47,7 +47,7 @@ _HELD_PREFIX = "held:"
 type _Footprint = DeviceBufferFootprint
 
 # Shared immutable metadata for an owner set holding no device payload.
-_EMPTY_FOOTPRINT = DeviceBufferFootprint(spans={})
+_EMPTY_FOOTPRINT = DeviceBufferFootprint(spans=MappingProxyType({}))
 
 
 def _is_empty(*, tree: PytreeValue) -> bool:
@@ -68,12 +68,14 @@ class SimulationMemory:
         default_factory=ProfiledSimulationOperations, repr=False
     )
     """Executables of user-law producers; a Model passes its own owner."""
-    axis_widths: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
+    axis_widths: MappingProxyType[str, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     outputs: DeviceBufferFootprint = field(
-        default_factory=lambda: DeviceBufferFootprint(spans={})
+        default_factory=lambda: DeviceBufferFootprint(spans=MappingProxyType({}))
     )
     chunk_inputs: DeviceBufferFootprint = field(
-        default_factory=lambda: DeviceBufferFootprint(spans={})
+        default_factory=lambda: DeviceBufferFootprint(spans=MappingProxyType({}))
     )
     unit_inputs: ArrayTree = ()
     derived: PytreeValue = ()
@@ -82,7 +84,7 @@ class SimulationMemory:
     """Call-local span metadata for every owner this scope binds."""
 
     def __post_init__(self) -> None:
-        """Own the call's selected common specialization independently of its caller."""
+        """Start the call's held, period and snapshot bookkeeping empty."""
         self._held: list[PytreeByPeriod] = []
         self._period_generation: int | None = None
         self._period_footprint = _EMPTY_FOOTPRINT
@@ -90,7 +92,6 @@ class SimulationMemory:
         self._snapshots: dict[
             tuple[jax.Device, ...] | None, tuple[tuple[int, int | None], _Footprint]
         ] = {}
-        self.axis_widths = MappingProxyType(dict(self.axis_widths))
         # The dataclass assigned the owner fields before `ledger` existed, so bind
         # their initial values now; every later assignment goes through the hook.
         for name in (*_LEDGER_FOOTPRINT_FIELDS, *_LEDGER_TREE_FIELDS):

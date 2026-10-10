@@ -512,11 +512,11 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             else grouped_rows(sizes=group_sizes, width=n_subjects)
         ),
         stages=tuple(inventory.stages),
-        fixed_reservation=permanent,
-        output_reservation=output_bank,
+        fixed_reservation=MappingProxyType(permanent),
+        output_reservation=MappingProxyType(output_bank),
         host_stages=host_stages,
-        axis_widths=widths,
-        setup_reservation=setup,
+        axis_widths=MappingProxyType(dict(widths)),
+        setup_reservation=MappingProxyType(setup),
     )
 
 

@@ -33,7 +33,7 @@ class SimulationUnitExecutor:
     runtime: SimulationRuntime
     live_footprint: Callable[[], DeviceBufferFootprint]
     budget_devices: tuple[jax.Device, ...]
-    axis_widths: Mapping[str, int] = dataclasses.field(
+    axis_widths: MappingProxyType[str, int] = dataclasses.field(
         default_factory=lambda: MappingProxyType({})
     )
     on_output: Callable[[PytreeValue], None] | None = None

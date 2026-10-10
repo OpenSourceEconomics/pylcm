@@ -60,15 +60,8 @@ UNRESOLVED_SUBJECT_EXTENT = 1
 class SimulationBuildContext(CoreBuildContext):
     """Complete dynamic arguments for one forward program invocation."""
 
-    call_arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
+    call_arguments: MappingProxyType[ReferenceName, PytreeValue | ShapeDtypePytree]
     """Subject states, action operands, parameters, keys and addressed value reads."""
-
-    def __post_init__(self) -> None:
-        """Snapshot the call arguments together with the common core context."""
-        super().__post_init__()
-        object.__setattr__(
-            self, "call_arguments", MappingProxyType(dict(self.call_arguments))
-        )
 
 
 @runtime_checkable
@@ -155,23 +148,6 @@ class SimulationPrograms:
 
     executor: SimulationProgramExecutor | None = None
     """Call-local lowering and dispatch owner, absent from model declarations."""
-
-    def __post_init__(self) -> None:
-        """Snapshot the caller-owned program mappings."""
-        for field in (
-            "type_local_decision",
-            "action_values",
-            "decision",
-            "transition",
-            "route",
-            "gate_fold",
-            "gate_route",
-            "policy_prepare",
-            "policy_rank",
-        ):
-            object.__setattr__(
-                self, field, MappingProxyType(dict(getattr(self, field)))
-            )
 
     @property
     def forward_decision(self) -> MappingProxyType[int, CoreProgram]:

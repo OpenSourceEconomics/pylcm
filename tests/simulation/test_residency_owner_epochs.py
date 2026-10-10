@@ -44,7 +44,9 @@ def _scope(
         devices=(device,),
         subject_devices=(device,),
         operations=ProfiledSimulationOperations(),
-        inputs=DeviceBufferFootprint(spans={}) if inputs is None else inputs,
+        inputs=DeviceBufferFootprint(spans=MappingProxyType({}))
+        if inputs is None
+        else inputs,
     )
 
 
@@ -57,7 +59,7 @@ def _resident(*, memory: SimulationMemory) -> int:
     """Charge the current snapshot on the scope's single budgeted device."""
     return residency.resident_bytes_by_device(
         live=memory.budget_snapshot(),
-        arguments=DeviceBufferFootprint(spans={}),
+        arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
         devices=memory.devices,
     )[memory.devices[0]]
 
@@ -91,7 +93,10 @@ def test_ledger_reuses_one_union_while_its_epoch_is_unchanged() -> None:
     """Repeated snapshots in a stable epoch return the identical merged metadata."""
     device = _device()
     ledger = OwnerLedger()
-    ledger.bind(owner="a", footprint=DeviceBufferFootprint(spans={device: ((0, 16),)}))
+    ledger.bind(
+        owner="a",
+        footprint=DeviceBufferFootprint(spans=MappingProxyType({device: ((0, 16),)})),
+    )
     first = ledger.union()
     assert ledger.union() is first
     assert ledger.epoch == 1
@@ -101,10 +106,16 @@ def test_ledger_reuses_one_union_while_its_epoch_is_unchanged() -> None:
     "mutate",
     [
         lambda ledger, device: ledger.bind(
-            owner="b", footprint=DeviceBufferFootprint(spans={device: ((32, 48),)})
+            owner="b",
+            footprint=DeviceBufferFootprint(
+                spans=MappingProxyType({device: ((32, 48),)})
+            ),
         ),
         lambda ledger, device: ledger.bind(
-            owner="a", footprint=DeviceBufferFootprint(spans={device: ((0, 8),)})
+            owner="a",
+            footprint=DeviceBufferFootprint(
+                spans=MappingProxyType({device: ((0, 8),)})
+            ),
         ),
         lambda ledger, _device: ledger.release(owner="a"),
         lambda ledger, _device: ledger.release_prefix(prefix="a"),
@@ -117,7 +128,10 @@ def test_every_ledger_mutation_advances_the_epoch_and_the_union(
     """Publication, replacement and release each invalidate the cached union."""
     device = _device()
     ledger = OwnerLedger()
-    ledger.bind(owner="a", footprint=DeviceBufferFootprint(spans={device: ((0, 16),)}))
+    ledger.bind(
+        owner="a",
+        footprint=DeviceBufferFootprint(spans=MappingProxyType({device: ((0, 16),)})),
+    )
     before_epoch = ledger.epoch
     before = ledger.union()
     mutate(ledger, device)
@@ -129,7 +143,10 @@ def test_ledger_projection_is_cached_per_requested_device_set() -> None:
     """A projected union and an unprojected union are separate stable answers."""
     device = _device()
     ledger = OwnerLedger()
-    ledger.bind(owner="a", footprint=DeviceBufferFootprint(spans={device: ((0, 16),)}))
+    ledger.bind(
+        owner="a",
+        footprint=DeviceBufferFootprint(spans=MappingProxyType({device: ((0, 16),)})),
+    )
     projected = ledger.union(devices=(device,))
     assert ledger.union(devices=(device,)) is projected
     assert ledger.union() is not projected
@@ -351,7 +368,7 @@ def test_refusal_precedes_any_allocation() -> None:
 def test_retained_same_backend_devices_stay_in_the_budget_projection() -> None:
     """A non-selected same-backend source device keeps its own ceiling."""
     device = _device()
-    live = DeviceBufferFootprint(spans={device: ((0, 16),)})
+    live = DeviceBufferFootprint(spans=MappingProxyType({device: ((0, 16),)}))
     assert residency.resolve_budget_devices(execution_devices=(device,), live=live) == (
         device,
     )

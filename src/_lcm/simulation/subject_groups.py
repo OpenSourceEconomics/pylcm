@@ -47,14 +47,8 @@ class SubjectGroupingRoute:
     codes: tuple[int, ...]
     """Codes of the state's grid, in grid order; one group per code."""
 
-    value_axis_names: Mapping[RegimeName, tuple[StateName, ...]]
+    value_axis_names: MappingProxyType[RegimeName, tuple[StateName, ...]]
     """Per regime, the axes of its stored value in stored order."""
-
-    def __post_init__(self) -> None:
-        """Snapshot the caller's axis mapping."""
-        object.__setattr__(
-            self, "value_axis_names", MappingProxyType(dict(self.value_axis_names))
-        )
 
 
 @runtime_checkable

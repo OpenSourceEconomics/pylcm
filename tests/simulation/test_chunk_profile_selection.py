@@ -79,8 +79,10 @@ def test_whole_chunk_selection_uses_real_profiles_and_fresh_retained_storage(
                     memory=profile.memory,
                 ),
             ),
-            fixed_reservation={device: width * originals.dtype.itemsize},
-            output_reservation={device: retained_output_bank},
+            fixed_reservation=MappingProxyType(
+                {device: width * originals.dtype.itemsize}
+            ),
+            output_reservation=MappingProxyType({device: retained_output_bank}),
         )
         for width, profile in compiled.items()
     }

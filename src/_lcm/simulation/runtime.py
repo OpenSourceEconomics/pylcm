@@ -133,11 +133,13 @@ class SimulationDispatchContext:
 
     live_footprint: Callable[[], DeviceBufferFootprint]
     budget_devices: tuple[jax.Device, ...]
-    axis_widths: Mapping[str, int] = dataclasses.field(default_factory=_empty_widths)
+    axis_widths: MappingProxyType[str, int] = dataclasses.field(
+        default_factory=_empty_widths
+    )
     """One common chunk specialization, clamped to each program's own extent."""
 
     def __post_init__(self) -> None:
-        """Keep selected widths immutable and separate from cached code identity."""
+        """Require named positive widths, separate from cached code identity."""
         if any(
             type(name) is not str or not name or type(width) is not int or width <= 0
             for name, width in self.axis_widths.items()
@@ -145,9 +147,6 @@ class SimulationDispatchContext:
             raise ExecutionPlanningError(
                 "Reserved simulation widths must be positive integers with axis names."
             )
-        object.__setattr__(
-            self, "axis_widths", MappingProxyType(dict(self.axis_widths))
-        )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
@@ -1186,5 +1185,5 @@ def _build_context(
         flat_params={},
         period=period,
         ages=None,
-        call_arguments=dict(sorted(arguments.items())),
+        call_arguments=MappingProxyType(dict(sorted(arguments.items()))),
     )
