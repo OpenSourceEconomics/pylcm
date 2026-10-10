@@ -82,9 +82,11 @@ prose hides cases.
 constructor union the value is built from (`Transition | Phased`), a Protocol from
 `_lcm.typing` for a callable (`EconFunction`, `RegimeTransitionFunction`), a type
 parameter when the output has the input's type, and a recursive alias for a tree
-(`Params`, `UserParams`). A string that names a regime, state, action or function
-carries its alias from `lcm.typing` (`RegimeName`, `StateName`, `ActionName`,
-`FunctionName`), never a bare `str`.
+(`Params`, `UserParams`). A string that names a regime, state, action, function or
+parameter carries its alias from `lcm.typing` (`RegimeName`, `StateName`, `ActionName`,
+`FunctionName`, `ParameterName`), and a `__`-joined path through the params or function
+namespace carries `QualifiedName` from `_lcm.typing`, never a bare `str`. Every alias is
+a `type X = ...` statement.
 
 ```python
 # Good — the constructor union and the label alias
@@ -97,25 +99,37 @@ def resolve_law(*, transition: object, regime_name: str) -> Law: ...
 
 `object` and `Any` are for slots that genuinely hold unrelated types. The
 `precise-annotations` hook (`tests/ci/precise_annotations.py`) checks every annotation
-under `src/`, string annotations and `cast` targets included:
+under `src/` and in the `docs/` notebooks, string annotations and `cast` targets
+included:
 
 - `PAN001` / `PAN002` ⇒ `object` / `Any` in an annotation
-- `PAN003` ⇒ a bare `str` on a regime, state, action or function name
+- `PAN003` ⇒ a bare `str` on a regime, state, action, function, qualified or parameter
+  name; on a target, source or argument name it asks for a domain alias picked by hand
+- `PAN006` ⇒ a generic without its type arguments (`Callable`, `dict`, `type`, ...),
+  which leaves them `Any`
+- `PAN007` ⇒ an alias not written as a `type X = ...` statement
 
-Two placements of `object` need no marker: a parameter of a comparison or containment
-dunder (`__eq__`, `__contains__`, ...), and a parameter that its own function narrows
-with `isinstance`, `issubclass` or `match`. Any other justified `object` or `Any` takes
-a marker on its own line directly above it, naming one of three reasons:
+Two placements are exempt by rule:
 
-- `heterogeneous=<slug>` ⇒ the slot holds unrelated types; the slug names the payload
-- `library-signature=<dotted.name>` ⇒ an external signature fixes the type
-- `import-cycle=<TypeName>` ⇒ the precise type, which cannot be imported here at runtime
+- `object` in a parameter whose type the data model fixes: every parameter of a
+  comparison or containment dunder (`__eq__`, `__contains__`, ...), `__setattr__`'s
+  `value` and `__deepcopy__`'s `memo`
+- `object` or `Any` in an alias of the `else:` branch of `if TYPE_CHECKING:`, the
+  runtime fallback the beartype claw sees, when a comment directly above it, or above
+  the run of fallbacks it belongs to, gives the reason
 
 ```python
-# annotation-exempt: heterogeneous=json-value
-payload: object
+if TYPE_CHECKING:
+    from _lcm.solution.model_authority import SolutionAuthority
+else:
+    # The authority imports this module, so the claw sees a wide fallback.
+    type SolutionAuthority = Any
 ```
 
-Findings without a marker count against `tests/ci/precise-annotations-baseline.json`,
-per file and rule. The hook lowers a count when it falls and fails when it rises, so
-an edit can only remove imprecise annotations, never add them.
+Any other deliberate finding carries `# noqa: PANxxx - <reason>` on the line the hook
+reports. A code without a reason suppresses nothing.
+
+```python
+def hash_user_object(*, value: object) -> str:  # noqa: PAN001 - any user object
+    ...
+```
