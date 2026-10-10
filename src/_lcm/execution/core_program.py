@@ -29,25 +29,35 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.typing import (
     ActionName,
+    ArtifactPayload,
     PytreeValue,
     ShapeDtypePytree,
     StateName,
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
-from lcm.typing import ReferenceName, RegimeName
+from lcm.typing import FloatND, ReferenceName, RegimeName
 
 _CORE_PROGRAM_VERSION = 7
 _INT32_MAX = 2_147_483_647
 
 if TYPE_CHECKING:
+    from _lcm.execution.output_layout import OutputRoleTree
+    from _lcm.solution.contract import PeriodKernel
+
     type _RetainedArtifactKeys = tuple[ArtifactKey, ...]
-    type _RetainedArtifactPayloadTypes = Mapping[ArtifactKey, type[object]]
+    type _RetainedArtifactPayloadTypes = Mapping[ArtifactKey, type[ArtifactPayload]]
 else:
     # Runtime construction deliberately reaches CoreProgram's exact, deterministic
     # validation instead of a decorator-generated annotation error.
     type _RetainedArtifactKeys = object
     type _RetainedArtifactPayloadTypes = object
+    # The output layout module imports this one; as there, the claw checks no
+    # role tree.
+    type OutputRoleTree = object
+    # The solver contract reaches this module through the engine at import time,
+    # so a kernel is checked as the graph publisher the body requires.
+    type PeriodKernel = CoreProgramGraphAware
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -403,13 +413,17 @@ class CoreBuildContext:
     """Immutable inputs from which a core builds its dynamic argument mapping."""
 
     state_action_space: object
-    next_regime_to_V_arr: Mapping[RegimeName, object]
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]
     next_regime_to_continuation: Mapping[RegimeName, object]
     flat_params: Mapping[str, object]
     period: int
     ages: object
-    edge_regime_to_V_arr: Mapping[RegimeName, object] | None = None
-    same_period_regime_to_V_arr: Mapping[RegimeName, object] | None = None
+    edge_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None = (
+        None
+    )
+    same_period_regime_to_V_arr: (
+        Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None
+    ) = None
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned mappings and reject ambiguous period values."""
@@ -477,7 +491,7 @@ class CoreProgram:
     function: Callable[..., PytreeValue]
     argument_builder: CoreArgumentBuilder
     requirements: CoreExecutionRequirements
-    output_roles: object
+    output_roles: OutputRoleTree
     disposition: CoreExecutionDisposition
     disposition_reason: str | None = None
     donation_candidates: tuple[str, ...] = ()
@@ -520,7 +534,7 @@ class MaterializedCoreProgram:
     function: Callable[..., PytreeValue]
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     requirements: CoreExecutionRequirements
-    output_roles: object
+    output_roles: OutputRoleTree
     disposition: CoreExecutionDisposition
     donation_candidates: tuple[str, ...]
     disposition_reason: str | None = None
@@ -554,7 +568,9 @@ class CoreProgramGraphAware(Protocol):
         ...
 
 
-def core_program_graph(*, kernel: object) -> MappingProxyType[str, CoreProgram]:
+def core_program_graph(
+    *, kernel: PeriodKernel | CoreProgramGraphAware
+) -> MappingProxyType[str, CoreProgram]:
     """Return one kernel's validated native graph.
 
     This is the only engine seam that reads ``core_programs()``. A kernel without a
@@ -573,7 +589,7 @@ def core_program_graph(*, kernel: object) -> MappingProxyType[str, CoreProgram]:
 
 def retained_artifact_payload_type(
     *, graph: Mapping[str, CoreProgram], key: ArtifactKey
-) -> type[object] | None:
+) -> type[ArtifactPayload] | None:
     """Return the unique producer-declared payload type for one retained artifact.
 
     ``None`` means no program retains ``key``. A retained key without a type is
@@ -1031,7 +1047,7 @@ class ResolvedCoreProgram:
     arguments: Mapping[str, object]
     static_kwargs: Mapping[str, int]
     requirements: CoreExecutionRequirements
-    output_roles: object
+    output_roles: OutputRoleTree
     disposition: CoreExecutionDisposition
     donation_candidates: tuple[str, ...]
     tile_widths: Mapping[str, int]
@@ -1074,7 +1090,7 @@ class ResolvedCoreProgram:
 def resolve_core_program(
     *,
     program: MaterializedCoreProgram,
-    tile_widths: Mapping[str, object] | None = None,
+    tile_widths: Mapping[str, int] | None = None,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
     abstract_inputs: bool = False,
 ) -> ResolvedCoreProgram:
@@ -1104,7 +1120,7 @@ def resolve_core_program(
 def resolve_core_program_candidates(
     *,
     program: MaterializedCoreProgram,
-    tile_widths: tuple[Mapping[str, object] | None, ...],
+    tile_widths: tuple[Mapping[str, int] | None, ...],
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
     abstract_inputs: bool = False,
 ) -> tuple[ResolvedCoreProgram, ...]:
@@ -1135,7 +1151,7 @@ def resolve_core_program_candidates(
 def _resolve_core_program(
     *,
     program: MaterializedCoreProgram,
-    tile_widths: Mapping[str, object] | None,
+    tile_widths: Mapping[str, int] | None,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...],
     abstract_inputs: bool,
 ) -> ResolvedCoreProgram:
@@ -1642,7 +1658,7 @@ def _validate_axis_width_keyword(
         raise ValueError(msg)
 
 
-def _validate_tile_width(*, axis: ReducedAxis | TiledOutputAxis, width: object) -> int:
+def _validate_tile_width(*, axis: ReducedAxis | TiledOutputAxis, width: int) -> int:
     """Validate one planner-selected width against its declared product."""
     if isinstance(width, bool) or not isinstance(width, int):
         msg = f"Tile width for axis {axis.name!r} must be an integer."

@@ -764,7 +764,7 @@ def test_candidate_resolutions_preserve_width_order_identity_and_values() -> Non
 
 
 @pytest.mark.parametrize("invalid_width", [0, 7, True])
-def test_candidate_resolutions_validate_later_widths(invalid_width: object) -> None:
+def test_candidate_resolutions_validate_later_widths(invalid_width: int) -> None:
     """A valid first tile leaves every later tile subject to its axis contract."""
     with pytest.raises((TypeError, ValueError), match=r"[Tt]ile width"):
         resolve_core_program_candidates(
@@ -888,7 +888,7 @@ def test_unbudgeted_width_candidate_is_the_fixed_width() -> None:
     ("tile_width", "error", "message"),
     [
         (True, TypeError, "Tile width.*must be an integer"),
-        (1.5, TypeError, "Tile width.*must be an integer"),
+        (1.5, BeartypeCallHintParamViolation, "parameter tile_widths"),
         (0, ValueError, "Tile width.*must be positive"),
         (-1, ValueError, "Tile width.*must be positive"),
         (7, ValueError, "exceeds its product extent"),
@@ -896,7 +896,7 @@ def test_unbudgeted_width_candidate_is_the_fixed_width() -> None:
     ids=["bool", "float", "zero", "negative", "beyond-extent"],
 )
 def test_resolver_rejects_invalid_planner_widths(
-    *, tile_width: object, error: type[Exception], message: str
+    *, tile_width: int, error: type[Exception], message: str
 ) -> None:
     """A planner width outside the declared product is refused before lowering."""
     with pytest.raises(error, match=message):
@@ -985,7 +985,7 @@ def test_resolver_rejects_a_non_canonical_product_order() -> None:
     ("width", "error", "message"),
     [
         (True, TypeError, "width.*integer"),
-        (1.5, TypeError, "width.*integer"),
+        (1.5, BeartypeCallHintParamViolation, "parameter tile_widths"),
         (0, ValueError, "width.*positive"),
         (-1, ValueError, "width.*positive"),
         (7, ValueError, "width.*extent"),

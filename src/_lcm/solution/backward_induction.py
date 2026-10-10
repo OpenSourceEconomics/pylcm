@@ -7134,7 +7134,7 @@ def _assert_lowered_output_leaf(
 
 def _attach_resolved_output_layout(
     *,
-    compiled: Callable[..., object],
+    compiled: Callable[..., PytreeValue],
     layout: ResolvedOutputLayout,
     tile_widths: Mapping[str, int],
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
