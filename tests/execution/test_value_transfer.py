@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, dataclass
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TypedDict, cast
 
 import jax
 import jax.numpy as jnp
@@ -25,6 +25,21 @@ from _lcm.execution.value_transfer import (
 from _lcm.typing import ArgumentTree
 from lcm.solver_api import EGM_CONTINUATION
 from lcm.typing import RegimeName
+
+
+class _ArtifactAddressInputs(TypedDict):
+    kind: ValueArtifactKind | str
+    period: int
+    regime: RegimeName
+    target_regime: RegimeName | None
+
+
+class _ConsumerAddressInputs(TypedDict):
+    source_period: int
+    source_regime: RegimeName
+    core_key: str
+    channel: ValueInputChannel | str
+    path: tuple[str | int, ...] | list[str | int]
 
 
 def _mesh() -> jax.sharding.Mesh:
@@ -177,7 +192,7 @@ def test_addresses_are_immutable_and_same_artifact_can_feed_multiple_paths() -> 
     ],
 )
 def test_regime_value_address_fails_closed(*, kwargs, error, message) -> None:
-    values: dict[str, Any] = {
+    values: _ArtifactAddressInputs = {
         "kind": ValueArtifactKind.REGIME_VALUE,
         "period": 3,
         "regime": "working",
@@ -186,7 +201,7 @@ def test_regime_value_address_fails_closed(*, kwargs, error, message) -> None:
     values.update(kwargs)
 
     with pytest.raises(error, match=message):
-        ValueArtifactAddress(**values)
+        ValueArtifactAddress(**values)  # ty: ignore[invalid-argument-type]
 
 
 def test_gated_continuation_requires_an_edge_target() -> None:
@@ -215,7 +230,7 @@ def test_gated_continuation_requires_an_edge_target() -> None:
     ],
 )
 def test_consumer_address_fails_closed(*, replacement, error, message) -> None:
-    kwargs: dict[str, Any] = {
+    kwargs: _ConsumerAddressInputs = {
         "source_period": 2,
         "source_regime": "working",
         "core_key": "main",
@@ -225,7 +240,7 @@ def test_consumer_address_fails_closed(*, replacement, error, message) -> None:
     kwargs.update(replacement)
 
     with pytest.raises(error, match=message):
-        ValueConsumerAddress(**kwargs)
+        ValueConsumerAddress(**kwargs)  # ty: ignore[invalid-argument-type]
 
 
 def test_resolver_rejects_path_that_does_not_address_artifact() -> None:
@@ -455,22 +470,25 @@ def test_plan_rebuilds_nested_mappings_and_tuples_without_mutation() -> None:
 
 
 @dataclass(frozen=True)
-class _CarryPayload:
+class _CarryPayload[Breakpoints, Policy]:
     """A published carry shaped like the EGM family's own frozen payload."""
 
-    values: object
+    values: jax.Array
     """The row a reader's transfer replaces."""
 
-    breakpoints: object
+    breakpoints: Breakpoints
     """A sibling row the rebuild must leave alone."""
 
-    policy: object
+    policy: Policy
     """A second sibling row the rebuild must leave alone."""
 
 
-def _dataclass_plan_result(
-    *, path: tuple[str | int, ...], payload: _CarryPayload, stored: jax.Array
-) -> object:
+def _dataclass_plan_result[Breakpoints, Policy](
+    *,
+    path: tuple[str | int, ...],
+    payload: _CarryPayload[Breakpoints, Policy],
+    stored: jax.Array,
+) -> _CarryPayload[Breakpoints, Policy]:
     """Apply one transfer whose consumer path descends into `payload`."""
     transfer = resolve_value_transfer(
         target=_target(),
@@ -487,7 +505,7 @@ def _dataclass_plan_result(
         }
     )
     result = cast(
-        "Mapping[str, Mapping[str, object]]",
+        "Mapping[str, Mapping[str, _CarryPayload[Breakpoints, Policy]]]",
         apply_value_transfer_plan(arguments=arguments, plan=(transfer,)),
     )
     return result[ValueInputChannel.NEXT_REGIME_VALUE.value]["working"]
@@ -536,7 +554,7 @@ def test_a_dataclass_rebuild_moves_the_addressed_field_to_the_source_layout() ->
     )
 
     assert (
-        cast("jax.Array", rebuilt.values).sharding,
+        rebuilt.values.sharding,
         payload.values is stored,
     ) == (jax.sharding.SingleDeviceSharding(jax.devices()[0]), True)
 

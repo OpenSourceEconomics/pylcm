@@ -40,7 +40,7 @@ import time
 import tomllib
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict, Unpack
 
 if not __package__:
     # Run as a path, the repository root is not on the path, so the sibling
@@ -65,6 +65,63 @@ from benchmarks.warm_solve_phases import (
     parse_phase_records,
 )
 
+if TYPE_CHECKING:
+    from types import MappingProxyType
+
+    from numpy.typing import NDArray
+
+    from _lcm.execution.execution_plan import ResolvedExecution
+    from _lcm.typing import FlatParams, FloatND, JSONValue
+    from lcm import ExecutionConfig, Model
+    from lcm.solver_api import ArtifactKey, SolutionResult
+    from lcm.typing import RegimeName, StateName, UserParamsNode
+
+
+type _Result = (
+    SolutionResult | lcm.SimulationResult | Mapping[int, Mapping[RegimeName, FloatND]]
+)
+type _Params = dict[str, UserParamsNode]
+
+
+class _ResolveKwargs(TypedDict):
+    visible_device_ids: tuple[int, ...]
+    state_names: frozenset[StateName]
+    regime_names: NotRequired[frozenset[RegimeName]]
+    device_pool_limit_bytes: NotRequired[Mapping[int, int | None]]
+
+
+class _KernelKwargs(TypedDict):
+    regime: backward_induction.Regime
+    regime_name: backward_induction.RegimeName
+    period: int
+    compiled_cores: MappingProxyType[str, backward_induction.PlannedCore]
+    capture_target: backward_induction.PeriodCaptureTarget | None
+    state_action_space: backward_induction.StateActionSpace
+    flat_params: FlatParams
+    ages: backward_induction.TimeAxis
+    next_regime_to_V_arr: MappingProxyType[backward_induction.RegimeName, FloatND]
+    next_regime_to_continuation: MappingProxyType[
+        backward_induction.RegimeName, backward_induction.ContinuationPayload
+    ]
+    logger: backward_induction.logging.Logger
+    next_edge_to_V_arr: MappingProxyType[backward_induction._EdgeKey, FloatND]
+    period_solution: Mapping[backward_induction.RegimeName, FloatND]
+    retain_replay: bool
+    selected_artifact_keys: frozenset[ArtifactKey]
+    period_capture: NotRequired[backward_induction.CaptureContext | None]
+    captured_admission: NotRequired[Mapping[str, Mapping[str, int | None]]]
+
+
+class _CountState(TypedDict):
+    as_text: int
+    as_text_bytes: int
+    classify: int
+    gather_checks: int
+    inspected_ids: set[int]
+    dispatches: int
+    inspect_seconds: float
+
+
 MODEL_NAMES = (
     "precautionary_savings",
     "iskhakov",
@@ -80,7 +137,9 @@ def _halving_on() -> Iterator[None]:
     """Resolve every execution config with gather-width halving switched on."""
     resolve = lcm.model.resolve_execution_config
 
-    def patched(*, config: Any, **kwargs: Any) -> Any:
+    def patched(
+        *, config: ExecutionConfig, **kwargs: Unpack[_ResolveKwargs]
+    ) -> ResolvedExecution:
         return resolve(
             config=dataclasses.replace(config, halve_on_materialised_gather=True),
             **kwargs,
@@ -140,7 +199,7 @@ def assert_jax_floor(*, version: str | None = None, spec: str | None = None) -> 
     return spec
 
 
-def environment_record() -> dict[str, Any]:
+def environment_record() -> dict[str, JSONValue]:
     """Versions, precision, source location and git SHA of this process."""
     sha = subprocess.run(
         ["git", "-C", str(_PYLCM_ROOT), "rev-parse", "HEAD"],
@@ -168,7 +227,7 @@ def environment_record() -> dict[str, Any]:
     }
 
 
-def _builder(model_name: str) -> Callable[[float], tuple[Any, dict[str, Any]]]:
+def _builder(model_name: str) -> Callable[[float], tuple[Model, _Params]]:
     """Return `discount -> (model, params)` for the named benchmark model.
 
     `aca_benchmark` returns params with the benchmark initial conditions attached
@@ -185,7 +244,7 @@ def _builder(model_name: str) -> Callable[[float], tuple[Any, dict[str, Any]]]:
             get_benchmark_params,
         )
 
-        def make_aca(discount: float) -> tuple[Any, dict[str, Any]]:
+        def make_aca(discount: float) -> tuple[Model, _Params]:
             model = create_benchmark_model(
                 pref_type_grid=lcm.DiscreteGrid(category_class=BenchmarkPrefType),
             )
@@ -205,7 +264,7 @@ def _builder(model_name: str) -> Callable[[float], tuple[Any, dict[str, Any]]]:
     if model_name == "independent_types":
         from tests.test_models import independent_types
 
-        def make_independent(discount: float) -> tuple[Any, dict[str, Any]]:
+        def make_independent(discount: float) -> tuple[Model, _Params]:
             return independent_types.get_model(), independent_types.get_params(
                 discount_factor=discount
             )
@@ -217,7 +276,7 @@ def _builder(model_name: str) -> Callable[[float], tuple[Any, dict[str, Any]]]:
             _make_model,
         )
 
-        def make(discount: float) -> tuple[Any, dict[str, Any]]:
+        def make(discount: float) -> tuple[Model, _Params]:
             model, params = _make_model(wealth_n_points=500, consumption_n_points=500)
             return model, {**params, "discount_factor": discount}
 
@@ -229,7 +288,7 @@ def _builder(model_name: str) -> Callable[[float], tuple[Any, dict[str, Any]]]:
         _make_model_and_params,
     )
 
-    def make(discount: float) -> tuple[Any, dict[str, Any]]:
+    def make(discount: float) -> tuple[Model, _Params]:
         model, params = _make_model_and_params(
             wealth_n_points=_SOLVE_WEALTH_N_POINTS,
             consumption_n_points=_SOLVE_CONSUMPTION_N_POINTS,
@@ -242,7 +301,7 @@ def _builder(model_name: str) -> Callable[[float], tuple[Any, dict[str, Any]]]:
 _ACA_INITIAL_CONDITIONS = "__perf_loop_initial_conditions__"
 
 
-def _call(*, model: Any, params: dict[str, Any], log_level: str) -> Any:
+def _call(*, model: Model, params: _Params, log_level: str) -> _Result:
     """Run the arm's public call: simulate when initial conditions ride along."""
     if _ACA_INITIAL_CONDITIONS not in params:
         return model.solve(params=params, log_level=log_level)
@@ -255,7 +314,7 @@ def _call(*, model: Any, params: dict[str, Any], log_level: str) -> Any:
     )
 
 
-def _values(result: Any) -> dict[str, np.ndarray]:
+def _values(result: _Result) -> dict[str, NDArray[np.generic]]:
     if isinstance(result, lcm.SimulationResult):
         frame = result.to_dataframe()
         # Every column as round-trip `str`, so categoricals hash like numbers.
@@ -277,7 +336,7 @@ def _values(result: Any) -> dict[str, np.ndarray]:
     }
 
 
-def _fingerprint(arrays: Mapping[str, np.ndarray]) -> str:
+def _fingerprint(arrays: Mapping[str, NDArray[np.generic]]) -> str:
     digest = hashlib.sha256()
     for key in sorted(arrays):
         digest.update(key.encode())
@@ -285,14 +344,14 @@ def _fingerprint(arrays: Mapping[str, np.ndarray]) -> str:
     return digest.hexdigest()
 
 
-def _block(result: Any) -> None:
+def _block(result: _Result) -> None:
     if isinstance(result, lcm.SimulationResult):
         jax.block_until_ready(result.period_to_regime_to_V_arr)
         return
     jax.block_until_ready(getattr(result, "values", result))
 
 
-def _phases(calls: tuple[CallPhases, ...]) -> list[dict[str, Any]]:
+def _phases(calls: tuple[CallPhases, ...]) -> list[dict[str, JSONValue]]:
     return [
         {
             "call_id": call.call_id,
@@ -307,9 +366,8 @@ class _Counters:
     """Count the HLO-inspection path and record every dispatched executable."""
 
     def __init__(self) -> None:
-        self.counts: dict[str, Any] = {}
-        self.dispatch: dict[tuple[str, ...], Any] = {}
-        self._originals: dict[str, Any] = {}
+        self.counts: _CountState
+        self.dispatch: dict[tuple[str, ...], backward_induction.PlannedCore] = {}
         self.reset()
 
     def reset(self) -> None:
@@ -328,8 +386,8 @@ class _Counters:
         compiled_cls = jax.stages.Compiled
         as_text = compiled_cls.as_text
 
-        def counted_as_text(obj: Any, *args: Any, **kwargs: Any) -> Any:
-            text = as_text(obj, *args, **kwargs)
+        def counted_as_text(obj: jax.stages.Compiled) -> str | None:
+            text = as_text(obj)
             self.counts["as_text"] += 1
             self.counts["as_text_bytes"] += len(text or "")
             return text
@@ -344,10 +402,10 @@ class _Counters:
             if hasattr(backward_induction, name)
         }
 
-        def wrap_check(*, name: str, key: str) -> Callable[..., Any]:
-            original = originals[name]
-
-            def wrapped(*args: Any, **kwargs: Any) -> Any:
+        def wrap_check[**P, R](
+            *, original: Callable[P, R], key: Literal["classify", "gather_checks"]
+        ) -> Callable[P, R]:
+            def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
                 start = time.perf_counter()
                 try:
                     return original(*args, **kwargs)
@@ -363,7 +421,7 @@ class _Counters:
 
             return wrapped
 
-        def run(*args: Any, **kwargs: Any) -> Any:
+        def run(**kwargs: Unpack[_KernelKwargs]) -> backward_induction.KernelOutput:
             self.counts["dispatches"] += 1
             for core, planned in dict(kwargs["compiled_cores"]).items():
                 signature = (
@@ -375,7 +433,7 @@ class _Counters:
                     str(tuple(getattr(planned, "donated_arguments", ()))),
                 )
                 self.dispatch[signature] = planned
-            return originals["_run_period_kernel"](*args, **kwargs)
+            return originals["_run_period_kernel"](**kwargs)
 
         compiled_cls.as_text = counted_as_text  # ty: ignore[invalid-assignment]
         for name, key in (
@@ -383,7 +441,11 @@ class _Counters:
             ("_checked_gather_fusion", "gather_checks"),
         ):
             if name in originals:
-                setattr(backward_induction, name, wrap_check(name=name, key=key))
+                setattr(
+                    backward_induction,
+                    name,
+                    wrap_check(original=originals[name], key=key),
+                )
         backward_induction._run_period_kernel = run  # noqa: SLF001  # ty: ignore[invalid-assignment]
         try:
             yield
@@ -392,13 +454,13 @@ class _Counters:
             for name, original in originals.items():
                 setattr(backward_induction, name, original)
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self) -> dict[str, JSONValue]:
         return {**self.counts, "inspected_ids": len(self.counts["inspected_ids"])}
 
 
 def _counted_solve(
-    *, model: Any, params: Any, counters: _Counters, log_level: str
-) -> tuple[Any, dict[str, Any]]:
+    *, model: Model, params: _Params, counters: _Counters, log_level: str
+) -> tuple[_Result, dict[str, JSONValue]]:
     """Solve once with every counter installed; return result and its record."""
     counters.reset()
     with (
@@ -419,7 +481,7 @@ def _counted_solve(
 
 
 def _timed_warm_calls(
-    *, model: Any, params: Any, reps: int, perturb: Callable[[], None]
+    *, model: Model, params: _Params, reps: int, perturb: Callable[[], None]
 ) -> tuple[list[float], str]:
     """Time `reps` warm solves with no wrapper installed; return seconds and digest."""
     times = []
@@ -433,7 +495,7 @@ def _timed_warm_calls(
     return times, _fingerprint(_values(result))
 
 
-def _dispatch_contracts(*, counters: _Counters) -> dict[str, Any]:
+def _dispatch_contracts(*, counters: _Counters) -> dict[str, JSONValue]:
     """Digest the optimized HLO of every distinct dispatched executable."""
     contracts = []
     for signature, planned in sorted(counters.dispatch.items()):
@@ -468,7 +530,7 @@ def main(*, argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
 
-    record: dict[str, Any] = {
+    record: dict[str, JSONValue] = {
         "environment": environment_record(),
         "label": args.label,
         "model": args.model,

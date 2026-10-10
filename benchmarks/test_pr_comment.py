@@ -7,11 +7,15 @@ import re
 import tomllib
 from io import BytesIO
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.error import URLError
 
 import pytest
 
 from benchmarks import pr_comment
+
+if TYPE_CHECKING:
+    from _lcm.typing import JSONValue
 
 
 @pytest.mark.parametrize(
@@ -676,7 +680,7 @@ def test_display_sort_key_orders_families_then_execution_time_first() -> None:
     ]
 
 
-def _pixi_tasks() -> dict:
+def _pixi_tasks() -> dict[str, JSONValue]:
     pyproject = Path(__file__).parents[1] / "pyproject.toml"
     return tomllib.loads(pyproject.read_text(encoding="utf-8"))["tool"]["pixi"]["tasks"]
 

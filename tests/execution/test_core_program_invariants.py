@@ -245,7 +245,7 @@ def test_exact_value_reads_belong_to_program_and_allow_artifact_fan_out() -> Non
     assert program.requirements.value_reads == accesses
     assert resolved.input_transfer_plan == (next_transfer, edge_transfer)
     resolved_values = cast(
-        "Mapping[str, object]",
+        "Mapping[str, jax.Array]",
         resolved.arguments[ValueInputChannel.NEXT_REGIME_VALUE.value],
     )
     assert resolved_values["target"] is value
@@ -364,10 +364,10 @@ def test_transfer_specialization_reuses_periods_but_distinguishes_representation
     assert first.specialization_key == later.specialization_key
     assert first.specialization_key != copied.specialization_key
     copied_values = cast(
-        "Mapping[str, object]",
+        "Mapping[str, jax.Array]",
         copied.arguments[ValueInputChannel.NEXT_REGIME_VALUE.value],
     )
-    assert cast("jax.Array", copied_values["target"]).sharding == source_sharding
+    assert copied_values["target"].sharding == source_sharding
 
 
 def test_resolver_rejects_stale_transfer_metadata() -> None:
@@ -425,7 +425,7 @@ def test_planned_core_applies_and_retains_its_absolute_input_transfer_plan() -> 
         output_roles=VALUE,
     )
 
-    def compiled(**kwargs: object) -> jax.Array:
+    def compiled(**kwargs: PytreeValue) -> jax.Array:
         values = cast(
             "Mapping[str, jax.Array]", kwargs[ValueInputChannel.NEXT_REGIME_VALUE.value]
         )

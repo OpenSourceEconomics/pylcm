@@ -10,10 +10,10 @@ import gc
 import inspect
 import threading
 import weakref
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Hashable, Iterator, Mapping
 from functools import partial
 from types import CodeType, MappingProxyType
-from typing import Any
+from typing import Never, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -33,6 +33,7 @@ from _lcm.simulation.chunk_profile_cache import (
     profile_cache_registry,
 )
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -41,7 +42,13 @@ from lcm import (
     categorical,
 )
 from lcm.execution import ExecutionConfig
+from lcm.result import SimulationResult
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.simulation._callback_types import ChunkProfileInputs, ChunkProfileKeyInputs
+
+
+class _CacheWitness:
+    """An opaque cached payload used to compare identity and lifetime."""
 
 
 @categorical(ordered=False)
@@ -102,7 +109,7 @@ def _count_builds(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     calls = [0]
     original = admission.profile_simulation_chunk
 
-    def counted(**kwargs: Any) -> SimulationChunkProfile:
+    def counted(**kwargs: Unpack[ChunkProfileInputs]) -> SimulationChunkProfile:
         calls[0] += 1
         return original(**kwargs)
 
@@ -110,7 +117,7 @@ def _count_builds(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return calls
 
 
-def _simulate(*, model: Model, initial: dict[str, jax.Array]) -> object:
+def _simulate(*, model: Model, initial: dict[str, jax.Array]) -> SimulationResult:
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     solution = model.solve(params=params, log_level="off")
     return model.simulate(
@@ -127,9 +134,14 @@ def test_repeated_call_same_metadata_reuses_profile_and_reruns_admission(
     admission_calls: list[int] = []
     original_required = admission._required_bytes
 
-    def counted_admission(**kwargs: Any) -> object:
+    def counted_admission(
+        *,
+        profile: SimulationChunkProfile,
+        resident: Mapping[jax.Device, int],
+        devices: tuple[jax.Device, ...],
+    ) -> MappingProxyType[jax.Device, int]:
         admission_calls.append(1)
-        return original_required(**kwargs)
+        return original_required(profile=profile, resident=resident, devices=devices)
 
     monkeypatch.setattr(admission, "_required_bytes", counted_admission)
 
@@ -170,7 +182,7 @@ def _budgeted_runtime(*, model: Model) -> SimulationRuntime:
 
 def _key_for_initial_conditions(
     *, model: Model, initial: dict[str, jax.Array]
-) -> tuple:
+) -> tuple[Hashable, ...]:
     regimes = model._runtime_regimes_for_shape(compile_batch_size=3)
     runtime = _budgeted_runtime(model=model)
     assert model.ages is not None
@@ -248,10 +260,15 @@ def test_key_is_stable_and_versioned() -> None:
     """The canonical key is a plain hashable tuple carrying an explicit version."""
     model = _budgeted_model()
     regimes = model._runtime_regimes_for_shape(compile_batch_size=3)
-    key_kwargs: dict[str, Any] = {
+    assert model.ages is not None
+    key_kwargs: ChunkProfileKeyInputs = {
         "runtime": _budgeted_runtime(model=model),
         "regimes": regimes,
-        "call_inputs": None,
+        "call_inputs": SimulationCallInputs(
+            devices=(jax.devices()[0],),
+            flat_params=MappingProxyType({}),
+            base_state_action_spaces=MappingProxyType({}),
+        ),
         "values": {},
         "flags": {},
         "policies": None,
@@ -266,11 +283,6 @@ def test_key_is_stable_and_versioned() -> None:
         "log_level": "off",
     }
 
-    key_kwargs["call_inputs"] = SimulationCallInputs(
-        devices=(jax.devices()[0],),
-        flat_params=MappingProxyType({}),
-        base_state_action_spaces=MappingProxyType({}),
-    )
     first = _simulation_chunk_profile_key(**key_kwargs)
     second = _simulation_chunk_profile_key(**key_kwargs)
     assert first == second
@@ -287,21 +299,21 @@ def test_concurrent_requests_share_one_immutable_build() -> None:
     started = threading.Event()
     release = threading.Event()
     build_calls = [0]
-    sentinel = object()
+    sentinel = _CacheWitness()
 
-    def slow_build() -> object:
+    def slow_build() -> _CacheWitness:
         build_calls[0] += 1
         started.set()
         release.wait(timeout=5)
         return sentinel
 
-    def fast_build() -> object:
+    def fast_build() -> _CacheWitness:
         build_calls[0] += 1
         return sentinel
 
-    results: list[object] = []
+    results: list[_CacheWitness] = []
 
-    def worker(build: Callable[[], object]) -> None:
+    def worker(build: Callable[[], _CacheWitness]) -> None:
         results.append(
             registry.get_or_build(runtime_token=_RUNTIME_MARKER, key="k", build=build)
         )
@@ -325,7 +337,7 @@ def test_failed_build_publishes_nothing() -> None:
     class _BoomError(RuntimeError):
         pass
 
-    def failing_build() -> object:
+    def failing_build() -> Never:
         raise _BoomError("build failed")
 
     with pytest.raises(_BoomError):
@@ -334,8 +346,8 @@ def test_failed_build_publishes_nothing() -> None:
         )
     assert len(registry) == 0
 
-    def succeeding_build() -> object:
-        return object()
+    def succeeding_build() -> _CacheWitness:
+        return _CacheWitness()
 
     result = registry.get_or_build(
         runtime_token=_RUNTIME_MARKER, key="k", build=succeeding_build
@@ -407,9 +419,11 @@ def test_warm_repeat_call_does_not_add_new_trace_requests(
     abstract_tree_calls = [0]
     original_abstract_tree = inventory_module.abstract_tree
 
-    def counted(**kwargs: Any) -> object:
+    def counted(
+        *, tree: PytreeValue | ShapeDtypePytree, sharding: jax.sharding.Sharding
+    ) -> ShapeDtypePytree:
         abstract_tree_calls[0] += 1
-        return original_abstract_tree(**kwargs)
+        return original_abstract_tree(tree=tree, sharding=sharding)
 
     monkeypatch.setattr(inventory_module, "abstract_tree", counted)
     monkeypatch.setattr(
@@ -466,10 +480,10 @@ def test_registry_does_not_retain_the_builder_or_its_bound_arguments() -> None:
     assert argument_ref() is None, "the registry retained the builder's arguments"
 
 
-def _returns_sentinel(*, argument: object) -> object:
+def _returns_sentinel[Argument](*, argument: Argument) -> _CacheWitness:
     """Build a profile stand-in that does not reference the bound argument."""
     assert argument is not None
-    return object()
+    return _CacheWitness()
 
 
 def test_dropped_runtime_releases_its_cached_profiles() -> None:

@@ -11,13 +11,17 @@ import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from math import prod
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from benchmarks.grid_search_pair_scenarios import (
     EXTERNAL_HARNESS_SOURCES,
     SCENARIOS,
     TARGET_SCENARIO_SOURCES,
 )
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 _FULL_REVISION = re.compile(r"[0-9a-f]{40}")
 _AUTOTUNE_OFF = "--xla_gpu_autotune_level=0"
@@ -590,7 +594,7 @@ def _assert_scenario_execution_target(
         )
 
 
-def _float_tolerances(dtype: Any) -> tuple[float, float]:
+def _float_tolerances(dtype: np.dtype[np.float32 | np.float64]) -> tuple[float, float]:
     import numpy as np
 
     if dtype == np.dtype("float32"):
@@ -601,7 +605,12 @@ def _float_tolerances(dtype: Any) -> tuple[float, float]:
     raise TypeError(msg)
 
 
-def _max_ulp_distance(*, expected: Any, actual: Any, finite: Any) -> int:
+def _max_ulp_distance(
+    *,
+    expected: NDArray[np.float32 | np.float64],
+    actual: NDArray[np.float32 | np.float64],
+    finite: NDArray[np.bool_],
+) -> int:
     """Return exact ordered-bit distance over finite float32/float64 leaves."""
     import numpy as np
 
@@ -615,7 +624,9 @@ def _max_ulp_distance(*, expected: Any, actual: Any, finite: Any) -> int:
     if not np.any(finite):
         return 0
 
-    def ordered_bits(values: Any) -> Any:
+    def ordered_bits(
+        values: NDArray[np.float32 | np.float64],
+    ) -> NDArray[np.uint32 | np.uint64]:
         # Signed zero is one numeric value. Map the remaining IEEE sign-magnitude
         # encodings into monotonically ordered unsigned integers.
         normalized = np.where(values == 0, values.dtype.type(0), values)

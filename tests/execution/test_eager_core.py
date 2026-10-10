@@ -70,7 +70,7 @@ def test_eager_scalar_keeps_dtype_weak_type_and_original_tree(*, kind: str) -> N
         "strong_int": jnp.asarray(3, dtype=jnp.int32),
     }[kind]
     target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
-    returned: list[object] = []
+    returned: list[PytreeValue] = []
 
     def body(*, scalar: jax.Array) -> PytreeValue:
         output = {"value": (scalar, None)}
@@ -213,7 +213,7 @@ def test_eager_input_metadata_mismatch_fails_before_body(*, change: str) -> None
     shape = (1,) if change == "shape" else ()
     dtype = jnp.int32 if change == "dtype" else jnp.float32
 
-    def forbidden(*, value: object) -> NoReturn:
+    def forbidden(*, value: jax.Array) -> NoReturn:
         pytest.fail(f"numerical body received invalid operand {value!r}")
 
     adapter = make_eager_core(
@@ -255,7 +255,7 @@ def test_internal_eager_metadata_corruption_stops_before_body(*, change: str) ->
     target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     source = jax.device_put(jnp.asarray(2.0, dtype=jnp.float32), target)
 
-    def forbidden(*, produced: object) -> NoReturn:
+    def forbidden(*, produced: jax.Array) -> NoReturn:
         pytest.fail(f"corrupted internal operand reached numerical body: {produced!r}")
 
     adapter = make_eager_core(

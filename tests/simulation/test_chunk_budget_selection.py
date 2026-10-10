@@ -1,13 +1,16 @@
 """Budgeted public chunks are admitted abstractly before padding or execution."""
 
-from typing import Any
+from typing import Never, Unpack
 
 import jax.numpy as jnp
 import pytest
 
 import _lcm.simulation.simulate as simulation
-from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.engine import PeriodRegimeSimulationData
+from _lcm.simulation.runtime import CompiledSimulationProgram, SimulationRuntime
 from lcm import ExecutionConfig, Model
+from lcm.typing import RegimeName
+from tests.simulation._callback_types import RuntimePreparation, SimulationChunkInputs
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
@@ -37,18 +40,22 @@ def test_budgeted_public_chunks_prepare_without_real_prewarm_templates(
     prepare = SimulationRuntime.prepare_abstract
     run_chunk = simulation._simulate_subject_chunk
 
-    def observe_abstract(self: SimulationRuntime, **call: Any) -> object:
+    def observe_abstract(
+        self: SimulationRuntime, **call: Unpack[RuntimePreparation]
+    ) -> CompiledSimulationProgram:
         abstract_preparations.append(call["n_subjects"])
         return prepare(self, **call)
 
-    def observe_chunk(**call: Any) -> object:
+    def observe_chunk(
+        **call: Unpack[SimulationChunkInputs],
+    ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
         assert abstract_preparations, (
             "The whole chunk was dispatched before abstract admission"
         )
         chunk_sizes.append(len(call["initial_regime_ids"]))
         return run_chunk(**call)
 
-    def forbid_real_templates(*_args: object, **_kwargs: object) -> object:
+    def forbid_real_templates[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
         raise AssertionError("Budgeted chunk planning entered real-template prewarm")
 
     monkeypatch.setattr(SimulationRuntime, "prepare_abstract", observe_abstract)

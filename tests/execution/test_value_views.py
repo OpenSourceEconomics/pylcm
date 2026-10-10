@@ -7,7 +7,7 @@ declared as such. Neither is ever inferred from matching array lengths.
 """
 
 import math
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from types import MappingProxyType
 
 import jax
@@ -55,7 +55,7 @@ from _lcm.execution.value_views import (
 )
 from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import StateName
+from lcm.typing import RegimeName, StateName
 
 _STATES = ("pref_type", "assets", "health")
 _SHAPE = (3, 4, 2)
@@ -583,7 +583,7 @@ def _cache(
     *,
     transfers: tuple[ResolvedValueTransfer, ...],
     counts: tuple[int, ...],
-    generation: object = None,
+    generation: Hashable = None,
 ) -> PeriodTransferCache:
     return PeriodTransferCache(
         registry=BufferRegistry(),
@@ -882,7 +882,9 @@ def _program_reading(
     )
 
 
-def _consume(*, next_regime_to_V_arr: MappingProxyType) -> jax.Array:
+def _consume(
+    *, next_regime_to_V_arr: MappingProxyType[RegimeName, jax.Array]
+) -> jax.Array:
     return next_regime_to_V_arr["retired"] + 1.0
 
 

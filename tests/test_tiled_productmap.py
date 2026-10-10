@@ -1,14 +1,15 @@
 """A planner tile changes the working window, preserving the full state product."""
 
 import functools
-from collections.abc import Callable
-from typing import cast
+from collections.abc import Callable, Sequence
+from typing import Protocol, TypeGuard, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from jax.extend.core import ClosedJaxpr, Jaxpr
+from jax.core import ShapedArray
+from jax.extend.core import JaxprEqn
 from numpy.testing import assert_array_equal
 
 from _lcm.utils import dispatchers
@@ -23,23 +24,33 @@ def _evaluate_grouped_cell(
     return jnp.sqrt(first + second) + jnp.exp(last)
 
 
-def _primitive_input_shapes(
-    *, graph: Jaxpr | ClosedJaxpr, name: str
-) -> list[tuple[int, ...]]:
+class _GraphEquations(Protocol):
+    @property
+    def eqns(self) -> Sequence[JaxprEqn]: ...
+
+
+def _has_equations[GraphValue](graph: GraphValue) -> TypeGuard[_GraphEquations]:
+    return hasattr(graph, "eqns")
+
+
+def _primitive_input_shapes(*, graph: object, name: str) -> list[tuple[int, ...]]:  # noqa: PAN001 - Foreign IR parameters include arbitrary non-graph metadata.
     """Collect operand shapes through nested mapping and reduction bodies."""
-    if isinstance(graph, ClosedJaxpr):
-        return _primitive_input_shapes(graph=graph.jaxpr, name=name)
+    if not _has_equations(graph=graph):
+        if hasattr(graph, "jaxpr"):
+            return _primitive_input_shapes(graph=graph.jaxpr, name=name)
+        return []
     shapes = []
     for equation in graph.eqns:
         if equation.primitive.name == name:
-            shapes.append(equation.invars[0].aval.shape)
+            aval = equation.invars[0].aval
+            assert isinstance(aval, ShapedArray)
+            shapes.append(aval.shape)
         for parameter in equation.params.values():
             children = (
                 parameter if isinstance(parameter, tuple | list) else (parameter,)
             )
             for child in children:
-                if isinstance(child, Jaxpr | ClosedJaxpr):
-                    shapes.extend(_primitive_input_shapes(graph=child, name=name))
+                shapes.extend(_primitive_input_shapes(graph=child, name=name))
     return shapes
 
 
@@ -346,10 +357,12 @@ def test_untiled_outer_axes_restore_exact_flag_order(
     assert_array_equal(flags, np.asarray([[False, False, False], [True, False, False]]))
 
 
-def _primitive_count(*, graph: Jaxpr | ClosedJaxpr, name: str) -> int:
+def _primitive_count(*, graph: object, name: str) -> int:  # noqa: PAN001 - Foreign IR parameters include arbitrary non-graph metadata.
     """Count one primitive across nested mapping and reduction bodies."""
-    if isinstance(graph, ClosedJaxpr):
-        return _primitive_count(graph=graph.jaxpr, name=name)
+    if not _has_equations(graph=graph):
+        if hasattr(graph, "jaxpr"):
+            return _primitive_count(graph=graph.jaxpr, name=name)
+        return 0
     total = 0
     for equation in graph.eqns:
         total += equation.primitive.name == name
@@ -357,11 +370,7 @@ def _primitive_count(*, graph: Jaxpr | ClosedJaxpr, name: str) -> int:
             children = (
                 parameter if isinstance(parameter, tuple | list) else (parameter,)
             )
-            total += sum(
-                _primitive_count(graph=child, name=name)
-                for child in children
-                if isinstance(child, Jaxpr | ClosedJaxpr)
-            )
+            total += sum(_primitive_count(graph=child, name=name) for child in children)
     return total
 
 

@@ -142,9 +142,13 @@ def test_same_schema_warm_calls_rebind_values_without_rebuilding_structure(
     model, params = _workload(name=workload, execution_config=config)
     _warm(model=model, params=params, n=3)
     changed = copy.deepcopy(params)
-    changed["working"]["utility"]["weight"] = (
-        changed["working"]["utility"]["weight"] * 1.125
-    )
+    working = changed["working"]
+    assert isinstance(working, dict)
+    utility = working["utility"]
+    assert isinstance(utility, dict)
+    weight = utility["weight"]
+    assert isinstance(weight, jax.Array)
+    utility["weight"] = weight * 1.125
     with _counted_builders(monkeypatch) as calls:
         same = _solve(model=model, params=params)
         different = _solve(model=model, params=changed)
@@ -194,12 +198,16 @@ def test_user_typing_and_placement_normalise_to_the_cached_schema(
     model, params = _workload(name="independent_types", execution_config=config)
     _warm(model=model, params=params)
     variant = copy.deepcopy(params)
-    variant["discount_factor"] = jnp.asarray(
-        params["discount_factor"], dtype=jnp.float16
-    )
-    variant["working"]["utility"]["weight"] = jax.device_put(
-        params["working"]["utility"]["weight"], jax.devices()[0]
-    )
+    discount_factor = params["discount_factor"]
+    assert isinstance(discount_factor, float)
+    working = variant["working"]
+    assert isinstance(working, dict)
+    utility = working["utility"]
+    assert isinstance(utility, dict)
+    weight = utility["weight"]
+    assert isinstance(weight, jax.Array)
+    variant["discount_factor"] = jnp.asarray(discount_factor, dtype=jnp.float16)
+    utility["weight"] = jax.device_put(weight, jax.devices()[0])
     with _counted_builders(monkeypatch) as calls:
         got = _solve(model=model, params=variant)
     assert calls == dict.fromkeys(calls, 0), calls
@@ -347,16 +355,23 @@ def test_the_cache_is_bounded_and_released_with_its_model(
         name="independent_types", execution_config=_config(blocked=True)
     )
     cache = model._structural_blueprints
-    weight = params["working"]["utility"]["weight"]
+    working = params["working"]
+    assert isinstance(working, dict)
+    utility = working["utility"]
+    assert isinstance(utility, dict)
+    weight = utility["weight"]
+    assert isinstance(weight, jax.Array)
     for dtype in (None, jnp.float32, jnp.float16):
         for committed in (False, True):
             variant = copy.deepcopy(params)
             if dtype is not None:
                 variant["discount_factor"] = jnp.asarray(0.9, dtype=dtype)
             if committed:
-                variant["working"]["utility"]["weight"] = jax.device_put(
-                    weight, jax.devices()[0]
-                )
+                variant_working = variant["working"]
+                assert isinstance(variant_working, dict)
+                variant_utility = variant_working["utility"]
+                assert isinstance(variant_utility, dict)
+                variant_utility["weight"] = jax.device_put(weight, jax.devices()[0])
             result = _solve(model=model, params=variant)
             del result
     assert (len(cache), cache.misses) == (1, 1)

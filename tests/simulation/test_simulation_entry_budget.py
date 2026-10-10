@@ -3,7 +3,7 @@
 import gc
 import weakref
 from collections import UserDict
-from typing import Any
+from typing import Literal, Never, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -13,10 +13,14 @@ import pytest
 from _lcm.execution.scheduler import shares_a_buffer
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.typing import PytreeValue
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import UserInitialConditions, UserParams
+from tests.simulation._callback_types import RuntimeDispatch
 from tests.solution.test_solution_result import _small_grid_search_inputs
+
+type EntrySource = Literal["params", "initial_conditions"]
 
 
 @pytest.mark.parametrize("source", ["params", "initial_conditions"])
@@ -24,7 +28,7 @@ from tests.solution.test_solution_result import _small_grid_search_inputs
 def test_existing_caller_buffers_are_checked_before_parameter_conversion(
     *,
     monkeypatch: pytest.MonkeyPatch,
-    source: str,
+    source: EntrySource,
     unregistered_mapping: bool,
 ) -> None:
     """A one-byte budget is refused before any parameter normalization can run."""
@@ -43,7 +47,7 @@ def test_existing_caller_buffers_are_checked_before_parameter_conversion(
         UserDict(host_initial) if unregistered_mapping else host_initial
     )
 
-    def forbidden(*_args: object, **_kwargs: object) -> object:
+    def forbidden[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
         raise AssertionError("Parameter conversion started before entry admission")
 
     monkeypatch.setattr(Model, "_process_params", forbidden)
@@ -84,7 +88,9 @@ def test_original_inputs_survive_and_remain_charged_after_conversion_and_padding
 
     dispatch = SimulationRuntime.dispatch
 
-    def observed_dispatch(self: SimulationRuntime, **kwargs: Any) -> object:
+    def observed_dispatch(
+        self: SimulationRuntime, **kwargs: Unpack[RuntimeDispatch]
+    ) -> PytreeValue:
         residency = kwargs["residency"]
         assert residency is not None
         originals = tuple(reference() for reference in original_refs)

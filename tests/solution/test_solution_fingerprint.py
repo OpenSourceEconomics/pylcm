@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 from fractions import Fraction
 from functools import partial
-from types import CodeType, MappingProxyType, ModuleType, SimpleNamespace
-from typing import Any, cast
+from types import CodeType, FunctionType, MappingProxyType, ModuleType, SimpleNamespace
+from typing import NotRequired, TypeAliasType, TypedDict, Unpack, cast
 
 import dags.exceptions as dags_exceptions
 import jax
@@ -29,7 +29,8 @@ from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building import schedules
 from _lcm.regime_law import bind_regime_law
 from _lcm.solution import fingerprint as fingerprints
-from _lcm.typing import FlatParams, RegimeNamesToIds
+from _lcm.time import TimeAxis
+from _lcm.typing import EconFunctionArg, FlatParams, FlatRegimeParams, RegimeNamesToIds
 from _lcm.utils.functools import _PositionalAdapter, allow_args
 from lcm import (
     AgeGrid,
@@ -41,6 +42,8 @@ from lcm import (
     categorical,
     ref,
 )
+from lcm.case_piece import CaseBoundary
+from lcm.regime import FunctionEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import (
     ArtifactChannel,
@@ -57,7 +60,15 @@ from lcm.solvers import (
     Solver,
     SolverBuildContext,
 )
-from lcm.typing import ContinuousState, FloatND, IntND, ScalarInt
+from lcm.typing import (
+    ContinuousState,
+    FloatND,
+    FunctionName,
+    IntND,
+    RegimeName,
+    ScalarInt,
+    StateName,
+)
 from tests.test_models.taste_shocks_toy import (
     get_model as get_toy_model,
 )
@@ -111,7 +122,10 @@ def _module_utility_b(value: int) -> int:
 
 
 # keyword-only-exempt: library-callback=builtins.classmethod
-def _module_class_utility_a(cls: type, value: int) -> int:  # noqa: ARG001
+def _module_class_utility_a(
+    cls: type[_DynamicMethodDescriptorDependency],  # noqa: ARG001
+    value: int,
+) -> int:
     return value + 1
 
 
@@ -121,7 +135,7 @@ _HELPER_MODULE.utility = _module_utility_a  # ty: ignore[unresolved-attribute]
 class _DynamicModuleDependency(ModuleType):
     live_offset = 1
 
-    def __getattribute__(self, name: str) -> object:
+    def __getattribute__(self, name: str) -> object:  # noqa: PAN001 - Python attribute lookup may return any bound value.
         if name == "OFFSET":
             return type(self).live_offset
         return super().__getattribute__(name)
@@ -200,7 +214,7 @@ class _ClassMethodDependency:
         return value + cls.offset
 
 
-class _MetaClassMethodDependency(type):
+class _MetaClassMethodDependency(type):  # noqa: PAN006 - Metaclass fixture requires the runtime built-in base.
     offset = 1
 
     @classmethod
@@ -224,7 +238,7 @@ class _RecursiveClassDependency:
 
 class _DynamicDescriptor:
     # keyword-only-exempt: library-callback=builtins.object.__getattribute__
-    def __get__(self, instance: object, owner: type) -> int:
+    def __get__(self, instance: object, owner: type[object]) -> int:  # noqa: PAN001 - Descriptor protocol accepts arbitrary instances and classes.
         return 1
 
 
@@ -234,13 +248,21 @@ class _DescriptorDependency:
 
 class _DynamicStaticMethod(staticmethod):
     # keyword-only-exempt: library-callback=builtins.staticmethod.__get__
-    def __get__(self, instance: object, owner: type | None = None):
+    def __get__(
+        self,
+        instance: object,  # noqa: PAN001 - Descriptor protocol accepts arbitrary instances.
+        owner: type[object] | None = None,  # noqa: PAN001 - Descriptor protocol accepts arbitrary classes.
+    ) -> Callable[[int], int]:
         return _module_utility_b
 
 
 class _DynamicClassMethod(classmethod):
     # keyword-only-exempt: library-callback=builtins.classmethod.__get__
-    def __get__(self, instance: object, owner: type | None = None):
+    def __get__(
+        self,
+        instance: object,  # noqa: PAN001 - Descriptor protocol accepts arbitrary instances.
+        owner: type[object] | None = None,  # noqa: PAN001 - Descriptor protocol accepts arbitrary classes.
+    ) -> Callable[[int], int]:
         return _module_utility_b
 
 
@@ -252,7 +274,7 @@ class _DynamicMethodDescriptorDependency:
 class _CustomLookupDependency:
     value = 1
 
-    def __getattribute__(self, name: str) -> object:
+    def __getattribute__(self, name: str) -> object:  # noqa: PAN001 - Python attribute lookup may return any bound value.
         if name == "value":
             return 2
         return object.__getattribute__(self, name)
@@ -300,7 +322,7 @@ class _SpoofedBuiltinClassDependency:
 _SpoofedBuiltinClassDependency.__module__ = "builtins"
 
 
-class _BuiltinEqualitySpoofMeta(type):
+class _BuiltinEqualitySpoofMeta(type):  # noqa: PAN006 - Metaclass fixture requires the runtime built-in base.
     def __hash__(cls) -> int:
         return hash(int)
 
@@ -318,7 +340,9 @@ class _DirectObjectDependency:
 
 
 _DIRECT_OBJECT_DEPENDENCY = _DirectObjectDependency()
-_CYCLIC_CONTAINER_DEPENDENCY: list[object] = []
+type _CyclicList = list[_CyclicList]
+
+_CYCLIC_CONTAINER_DEPENDENCY: _CyclicList = []
 _CYCLIC_CONTAINER_DEPENDENCY.append(_CYCLIC_CONTAINER_DEPENDENCY)
 _FRACTION_DEPENDENCY = Fraction(1, 3)
 
@@ -336,7 +360,7 @@ _SEMANTIC_FRACTION = _SemanticFraction(1, 3)
 class _SemanticArray(np.ndarray):
     offset = 1
 
-    def __jax_array__(self):
+    def __jax_array__(self) -> jax.Array:
         return jnp.asarray(type(self).offset)
 
 
@@ -350,7 +374,7 @@ class _SemanticMapping(dict[str, int]):
         return type(self).offset
 
 
-class _DictEqualitySpoofMeta(type):
+class _DictEqualitySpoofMeta(type):  # noqa: PAN006 - Metaclass fixture requires the runtime built-in base.
     def __hash__(cls) -> int:
         return hash(dict)
 
@@ -377,7 +401,7 @@ class _ConfiguredFingerprintSolver(Solver):
             main_tradeoff="Reference implementation for contract tests",
         )
 
-    config: object
+    config: object  # noqa: PAN001 - Deliberately includes an opaque unsupported configuration.
 
     @property
     def identity(self) -> SolverIdentity:
@@ -413,7 +437,7 @@ class _StatelessFingerprintSolver(Solver):
 
 
 class _DynamicLookupFingerprintSolver(_StatelessFingerprintSolver):
-    def __getattribute__(self, name: str) -> object:
+    def __getattribute__(self, name: str) -> object:  # noqa: PAN001 - Python attribute lookup may return any bound value.
         return super().__getattribute__(name)
 
 
@@ -421,7 +445,7 @@ class _DiscreteGridSubclass(DiscreteGrid):
     pass
 
 
-class _PhasedSubclass(Phased[object, object]):
+class _PhasedSubclass(Phased[Callable[[int], int], Callable[[int], int]]):
     pass
 
 
@@ -513,7 +537,7 @@ def _reads_dynamic_descriptor() -> int:
     return _DescriptorDependency.dynamic
 
 
-def _reads_custom_lookup() -> object:
+def _reads_custom_lookup() -> int:
     return _CUSTOM_LOOKUP_DEPENDENCY.value
 
 
@@ -551,7 +575,7 @@ def _annotated_identity(
     return value
 
 
-def _uses_direct_cyclic_container() -> object:
+def _uses_direct_cyclic_container() -> _CyclicList:
     return _CYCLIC_CONTAINER_DEPENDENCY
 
 
@@ -633,8 +657,8 @@ def _add(*, left: int, right: int) -> int:
     return left + right
 
 
-def _dependency_closure(dependency: object) -> Callable[[], object]:
-    def use_dependency() -> object:
+def _dependency_closure[Dependency](dependency: Dependency) -> Callable[[], Dependency]:
+    def use_dependency() -> Dependency:
         return dependency
 
     return use_dependency
@@ -686,7 +710,9 @@ def _custom_jvp_rule_b(primals, tangents):
     return value, 2 * tangent
 
 
-def _with_custom_jvp(rule: Callable[..., tuple[FloatND, FloatND]]) -> object:
+def _with_custom_jvp(
+    rule: Callable[..., tuple[FloatND, FloatND]],
+) -> Callable[[FloatND], FloatND]:
     transform = jax.custom_jvp(_custom_jvp_primal)
     transform.defjvp(rule)
     return transform
@@ -791,7 +817,7 @@ def _terminal_utility() -> float:
     return 0.0
 
 
-def _generic_solve_callable(**params: object) -> object:
+def _generic_solve_callable[Value](**params: Value) -> dict[str, Value]:
     return params
 
 
@@ -908,7 +934,9 @@ def test_nominal_grid_twin_keeps_its_semantic_field() -> None:
     assert left != right
 
 
-def test_grid_module_rebinding_preserves_semantic_fields(*, monkeypatch) -> None:
+def test_grid_module_rebinding_preserves_semantic_fields(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     original_grid_type = grid_declarations.LinSpacedGrid
     original = original_grid_type(start=0, stop=1, n_points=3)
     original_fingerprint = fingerprints._semantic_fingerprint(original)
@@ -944,23 +972,24 @@ def _phased_regime_declaration(
     *,
     slot: str,
     simulate: Callable[[int], int],
-) -> MappingProxyType[str, object]:
+) -> MappingProxyType[str, str | MappingProxyType[str, fingerprints._Reachable]]:
     """Project a regime whose `slot` varies by phase only in its simulate member."""
     phased = Phased(solve=_solve_law, simulate=simulate)
-    law: object = phased if slot == "transition" else _solve_law
-    slots: dict[str, object] = {
-        "states": {"wealth": LinSpacedGrid(start=0, stop=1, n_points=3)},
-        "state_transitions": {"wealth": _solve_law},
-        "functions": {"utility": _terminal_utility},
-    }
+    law = phased if slot == "transition" else _solve_law
+    state_transitions: dict[StateName, StateTransitionEntry] = {"wealth": _solve_law}
+    functions: dict[FunctionName, FunctionEntry] = {"utility": _terminal_utility}
     if slot == "state_transitions":
-        slots["state_transitions"] = {"wealth": phased}
+        state_transitions = {"wealth": phased}
     elif slot == "functions":
-        slots["functions"] = {"utility": _terminal_utility, "helper": phased}
+        functions = {"utility": _terminal_utility, "helper": phased}
     elif slot != "transition":
         raise AssertionError(slot)
     return fingerprints._project_user_regime_declaration(
-        UserRegime(**slots),  # ty: ignore[invalid-argument-type]
+        UserRegime(
+            states={"wealth": LinSpacedGrid(start=0, stop=1, n_points=3)},
+            state_transitions=state_transitions,
+            functions=functions,
+        ),
         law=bind_regime_law(law),
     )
 
@@ -1033,8 +1062,8 @@ def test_callable_signature_type_alias_metadata_is_supported() -> None:
 )
 def test_trusted_frozen_dependencies_bind_their_semantic_state(
     *,
-    baseline: object,
-    changed: object,
+    baseline: slice | LinSpacedGrid | CaseBoundary,
+    changed: slice | LinSpacedGrid | CaseBoundary,
 ) -> None:
     assert fingerprints._semantic_fingerprint(_dependency_closure(baseline)) != (
         fingerprints._semantic_fingerprint(_dependency_closure(changed))
@@ -1065,7 +1094,7 @@ def test_trusted_frozen_dependencies_bind_their_semantic_state(
     ],
 )
 def test_identity_gated_direct_dependencies_have_closed_fingerprints(
-    dependency: object,
+    dependency: type[object] | TypeAliasType,  # noqa: PAN001 - Identity classification covers arbitrary class objects.
 ) -> None:
     assert fingerprints._semantic_fingerprint(_dependency_closure(dependency))
 
@@ -1074,7 +1103,9 @@ def test_callable_with_empty_argument_list_annotation_is_supported() -> None:
     assert fingerprints._semantic_fingerprint(_takes_zero_arg_callback)
 
 
-def test_exact_builtin_method_descriptor_binds_its_receiver(*, monkeypatch) -> None:
+def test_exact_builtin_method_descriptor_binds_its_receiver(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline = fingerprints._semantic_fingerprint(_uses_builtin_list_descriptor)
     monkeypatch.setitem(globals(), "_LIST_APPEND_DEPENDENCY", [2])
 
@@ -1167,7 +1198,7 @@ def test_default_model_declaration_has_a_closed_fingerprint() -> None:
 
 
 def test_user_certainty_equivalent_fingerprint_binds_protocol_code(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dependency = _FingerprintCertaintyEquivalent()
     baseline = fingerprints._semantic_fingerprint(_dependency_closure(dependency))
@@ -1179,7 +1210,7 @@ def test_user_certainty_equivalent_fingerprint_binds_protocol_code(
 
 
 def test_ce_type_name_and_metaclass_equality_cannot_spoof_shipped_identity(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dependency = _EqualitySpoofedCertaintyEquivalent()
     baseline = fingerprints._semantic_fingerprint(_dependency_closure(dependency))
@@ -1190,7 +1221,9 @@ def test_ce_type_name_and_metaclass_equality_cannot_spoof_shipped_identity(
     )
 
 
-def test_function_fingerprint_binds_globals_and_closure_cells(*, monkeypatch) -> None:
+def test_function_fingerprint_binds_globals_and_closure_cells(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline = fingerprints._semantic_fingerprint(_reads_global)
     monkeypatch.setitem(_reads_global.__globals__, "_GLOBAL_OFFSET", 2)
 
@@ -1201,7 +1234,7 @@ def test_function_fingerprint_binds_globals_and_closure_cells(*, monkeypatch) ->
 
 
 def test_function_fingerprint_binds_module_qualified_dependencies(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     constant_baseline = fingerprints._semantic_fingerprint(_reads_module_constant)
     function_baseline = fingerprints._semantic_fingerprint(_reads_module_function)
@@ -1239,7 +1272,7 @@ def test_module_subclass_with_dynamic_lookup_fails_closed() -> None:
     [_reads_instance_method_default, _reads_class_default],
 )
 def test_unsealed_method_receivers_in_function_defaults_fail_closed(
-    function: object,
+    function: Callable[..., int],
 ) -> None:
     """A local default receiver cannot hide a replaced method implementation."""
     with pytest.raises(TypeError, match="default dependency for parameter 'helper'"):
@@ -1247,7 +1280,7 @@ def test_unsealed_method_receivers_in_function_defaults_fail_closed(
 
 
 def test_function_fingerprint_binds_only_referenced_class_attributes(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     baseline = fingerprints._semantic_fingerprint(_reads_class_function)
 
@@ -1259,7 +1292,7 @@ def test_function_fingerprint_binds_only_referenced_class_attributes(
 
 
 def test_function_fingerprint_binds_only_referenced_object_attributes(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     baseline = fingerprints._semantic_fingerprint(_reads_object_attribute)
 
@@ -1271,7 +1304,7 @@ def test_function_fingerprint_binds_only_referenced_object_attributes(
 
 
 def test_referenced_bound_method_binds_only_used_receiver_attributes(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     baseline = fingerprints._semantic_fingerprint(_reads_object_method)
 
@@ -1282,7 +1315,9 @@ def test_referenced_bound_method_binds_only_used_receiver_attributes(
     assert baseline != fingerprints._semantic_fingerprint(_reads_object_method)
 
 
-def test_direct_bound_method_binds_class_fallback_attributes(*, monkeypatch) -> None:
+def test_direct_bound_method_binds_class_fallback_attributes(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline = fingerprints._semantic_fingerprint(
         _STATELESS_OBJECT_METHOD_DEPENDENCY.utility
     )
@@ -1293,7 +1328,9 @@ def test_direct_bound_method_binds_class_fallback_attributes(*, monkeypatch) -> 
     )
 
 
-def test_direct_classmethod_binds_class_attributes(*, monkeypatch) -> None:
+def test_direct_classmethod_binds_class_attributes(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline = fingerprints._semantic_fingerprint(_ClassMethodDependency.utility)
 
     monkeypatch.setattr(_ClassMethodDependency, "offset", 2)
@@ -1303,7 +1340,7 @@ def test_direct_classmethod_binds_class_attributes(*, monkeypatch) -> None:
 
 
 def test_module_qualified_bound_method_binds_used_receiver_attributes(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     baseline = fingerprints._semantic_fingerprint(_reads_module_object_method)
 
@@ -1314,7 +1351,9 @@ def test_module_qualified_bound_method_binds_used_receiver_attributes(
     assert baseline != fingerprints._semantic_fingerprint(_reads_module_object_method)
 
 
-def test_bound_method_binds_class_closure_attributes(*, monkeypatch) -> None:
+def test_bound_method_binds_class_closure_attributes(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline = fingerprints._semantic_fingerprint(_reads_class_closure_method)
 
     monkeypatch.setattr(_ClassClosureMethodDependency, "offset", 2)
@@ -1327,7 +1366,7 @@ def test_zero_argument_super_dependency_fails_closed() -> None:
 
 
 def test_referenced_classmethod_binds_only_used_class_attributes(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     baseline = fingerprints._semantic_fingerprint(_reads_class_method)
 
@@ -1338,7 +1377,9 @@ def test_referenced_classmethod_binds_only_used_class_attributes(
     assert baseline != fingerprints._semantic_fingerprint(_reads_class_method)
 
 
-def test_metaclass_classmethod_binds_the_metaclass_receiver(*, monkeypatch) -> None:
+def test_metaclass_classmethod_binds_the_metaclass_receiver(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline = fingerprints._semantic_fingerprint(_reads_metaclass_method)
 
     monkeypatch.setattr(_ClassUsingMeta, "offset", 101)
@@ -1349,7 +1390,7 @@ def test_metaclass_classmethod_binds_the_metaclass_receiver(*, monkeypatch) -> N
 
 
 def test_recursive_class_dependency_has_a_deterministic_closed_fingerprint(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     baseline = fingerprints._semantic_fingerprint(_reads_recursive_class_function)
 
@@ -1371,7 +1412,9 @@ def test_dynamic_descriptor_dependency_fails_closed() -> None:
     "function",
     [_reads_dynamic_static_method, _reads_dynamic_class_method],
 )
-def test_dynamic_method_descriptor_subclasses_fail_closed(function: object) -> None:
+def test_dynamic_method_descriptor_subclasses_fail_closed(
+    function: Callable[[int], int],
+) -> None:
     with pytest.raises(TypeError, match="dynamic descriptor"):
         fingerprints._semantic_fingerprint(function)
 
@@ -1396,7 +1439,9 @@ def test_direct_categorical_class_fails_closed() -> None:
         fingerprints._semantic_fingerprint(_LowHigh)
 
 
-def test_custom_class_annotations_remain_supported(*, monkeypatch) -> None:
+def test_custom_class_annotations_remain_supported(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline = fingerprints._semantic_fingerprint(_annotated_identity)
 
     monkeypatch.setattr(_AnnotationOnlyDependency, "metadata", 2)
@@ -1438,7 +1483,9 @@ def test_direct_cyclic_container_dependency_fails_closed() -> None:
         fingerprints._semantic_fingerprint(_uses_direct_cyclic_container)
 
 
-def test_direct_fraction_dependency_has_a_closed_fingerprint(*, monkeypatch) -> None:
+def test_direct_fraction_dependency_has_a_closed_fingerprint(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline = fingerprints._semantic_fingerprint(_uses_fraction_dependency)
 
     monkeypatch.setitem(globals(), "_FRACTION_DEPENDENCY", Fraction(2, 3))
@@ -1530,17 +1577,19 @@ def test_solver_with_dynamic_instance_lookup_fails_closed() -> None:
     ],
 )
 def test_native_numeric_module_dependencies_have_closed_fingerprints(
-    function: object,
+    function: Callable[..., jax.Array | np.ndarray | np.generic],
 ) -> None:
     baseline = fingerprints._semantic_fingerprint(function)
 
     assert baseline == fingerprints._semantic_fingerprint(function)
 
 
-def test_jax_ops_numeric_function_allowlist_is_identity_sealed(*, monkeypatch) -> None:
+def test_jax_ops_numeric_function_allowlist_is_identity_sealed(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     genuine_segment_sum = jax.ops.segment_sum
 
-    def nominal_segment_sum(*args: object, **kwargs: object) -> object:  # noqa: ARG001
+    def nominal_segment_sum(*args: object, **kwargs: object) -> object:  # noqa: ARG001, PAN001 - Uncalled impostor accepts arbitrary inputs.
         return object()
 
     nominal_segment_sum.__module__ = genuine_segment_sum.__module__
@@ -1561,22 +1610,27 @@ def test_numpy_dispatcher_alias_has_the_same_native_identity() -> None:
     )
 
 
-def test_numpy_dispatcher_rebinding_changes_the_fingerprint(*, monkeypatch) -> None:
+def test_numpy_dispatcher_rebinding_changes_the_fingerprint(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline = fingerprints._semantic_fingerprint(_uses_np_linspace)
     monkeypatch.setattr(np, "linspace", np.logspace)
     assert fingerprints._semantic_fingerprint(_uses_np_linspace) != baseline
 
 
 def test_numpy_dispatcher_version_participates_in_the_fingerprint(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     baseline = fingerprints._semantic_fingerprint(_uses_np_linspace)
     monkeypatch.setattr(np, "__version__", "changed-numpy-version")
     assert fingerprints._semantic_fingerprint(_uses_np_linspace) != baseline
 
 
-def test_numpy_dispatcher_implementation_defaults_participate(*, monkeypatch) -> None:
-    implementation = cast("Any", np.linspace)._implementation
+def test_numpy_dispatcher_implementation_defaults_participate(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    implementation = vars(np.linspace)["_implementation"]
+    assert isinstance(implementation, FunctionType)
     baseline = fingerprints._semantic_fingerprint(_uses_np_linspace)
     monkeypatch.setattr(implementation, "__defaults__", (4,))
     assert fingerprints._semantic_fingerprint(_uses_np_linspace) != baseline
@@ -1586,10 +1640,10 @@ def test_numpy_dispatcher_implementation_defaults_participate(*, monkeypatch) ->
 def test_numpy_dispatcher_type_and_name_do_not_grant_native_identity(
     check: str,
 ) -> None:
-    def dispatcher(*args: object, **kwargs: object) -> tuple:  # noqa: ARG001
+    def dispatcher(*args: object, **kwargs: object) -> tuple[()]:  # noqa: ARG001, PAN001 - Uncalled impostor accepts arbitrary inputs.
         return ()
 
-    def implementation(*args: object, **kwargs: object) -> int:  # noqa: ARG001
+    def implementation(*args: object, **kwargs: object) -> int:  # noqa: ARG001, PAN001 - Uncalled impostor accepts arbitrary inputs.
         return 1
 
     nominal = array_function_dispatch(dispatcher)(implementation)
@@ -1606,26 +1660,29 @@ def test_numpy_dispatcher_type_and_name_do_not_grant_native_identity(
 
 
 def test_numpy_dispatcher_changed_implementation_code_fails_closed(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def replacement(*args: object, **kwargs: object) -> int:  # noqa: ARG001
+    def replacement(*args: object, **kwargs: object) -> int:  # noqa: ARG001, PAN001 - Uncalled impostor accepts arbitrary inputs.
         return 1
 
-    implementation = cast("Any", np.linspace)._implementation
+    implementation = vars(np.linspace)["_implementation"]
+    assert isinstance(implementation, FunctionType)
     fingerprints._semantic_fingerprint(_uses_np_linspace)
     monkeypatch.setattr(implementation, "__code__", replacement.__code__)
     with pytest.raises(TypeError, match="direct object dependency"):
         fingerprints._semantic_fingerprint(_uses_np_linspace)
 
 
-def test_numpy_dispatcher_unknown_state_fails_closed(*, monkeypatch) -> None:
+def test_numpy_dispatcher_unknown_state_fails_closed(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(np.linspace, "semantic_offset", 1, raising=False)
     with pytest.raises(TypeError, match="unknown state"):
         fingerprints._semantic_fingerprint(_uses_np_linspace)
 
 
 def test_numpy_dispatcher_changed_wrapped_implementation_fails_closed(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(np.linspace, "__wrapped__", lambda: 1)
     with pytest.raises(TypeError, match="changed wrapped implementation"):
@@ -1633,7 +1690,7 @@ def test_numpy_dispatcher_changed_wrapped_implementation_fails_closed(
 
 
 def test_dataclasses_missing_terminal_support_is_identity_sealed(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     genuine_missing = dataclasses.MISSING
     nominal_missing = type(genuine_missing)()
@@ -1682,7 +1739,9 @@ def test_partial_with_unsealed_bound_object_argument_fails_closed() -> None:
         fingerprints._semantic_fingerprint(transform)
 
 
-def test_callable_object_binds_class_fallback_attributes(*, monkeypatch) -> None:
+def test_callable_object_binds_class_fallback_attributes(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     baseline = fingerprints._semantic_fingerprint(_STATELESS_CALLABLE_DEPENDENCY)
 
     monkeypatch.setattr(_StatelessCallableDependency, "offset", 2)
@@ -1691,7 +1750,9 @@ def test_callable_object_binds_class_fallback_attributes(*, monkeypatch) -> None
     )
 
 
-def test_callable_dataclass_binds_class_fallback_attributes(*, monkeypatch) -> None:
+def test_callable_dataclass_binds_class_fallback_attributes(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dependency = _CallableDataclassClassDependency()
     baseline = fingerprints._semantic_fingerprint(dependency)
 
@@ -1710,7 +1771,7 @@ def test_execution_like_field_name_on_user_callable_remains_semantic() -> None:
 
 def _fingerprint_space(
     *,
-    regime_params: object,
+    regime_params: FlatRegimeParams,
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> SimpleNamespace:
     """Return one fixed representative space for the focused fingerprint test."""
@@ -1731,7 +1792,7 @@ _ALIVE_AND_DEAD_LAWS = MappingProxyType(
 def _fingerprint_regime(
     *,
     second_period_nodes: tuple[float, ...],
-    artifact_authorities: dict[ArtifactKey, object] | None = None,
+    artifact_authorities: dict[ArtifactKey, SimpleNamespace] | None = None,
 ) -> EngineRegime:
     """Build a minimal canonical-regime shape with age-specific state support."""
     solution = SimpleNamespace(
@@ -1779,11 +1840,8 @@ def test_model_fingerprint_binds_each_periods_age_specialized_support() -> None:
 
     baseline = _fingerprint_model_for_test(
         ages=ages,
-        regimes=cast(
-            "dict",
-            {"alive": _fingerprint_regime(second_period_nodes=(2.0, 3.0))},
-        ),
-        user_regimes=cast("dict", user_regimes),
+        regimes={"alive": _fingerprint_regime(second_period_nodes=(2.0, 3.0))},
+        user_regimes=user_regimes,
         laws=_ALIVE_LAWS,
         regime_names_to_ids=cast(
             "RegimeNamesToIds", MappingProxyType({"alive": jnp.int32(0)})
@@ -1792,11 +1850,8 @@ def test_model_fingerprint_binds_each_periods_age_specialized_support() -> None:
     )
     moved = _fingerprint_model_for_test(
         ages=ages,
-        regimes=cast(
-            "dict",
-            {"alive": _fingerprint_regime(second_period_nodes=(2.0, 4.0))},
-        ),
-        user_regimes=cast("dict", user_regimes),
+        regimes={"alive": _fingerprint_regime(second_period_nodes=(2.0, 4.0))},
+        user_regimes=user_regimes,
         laws=_ALIVE_LAWS,
         regime_names_to_ids=cast(
             "RegimeNamesToIds", MappingProxyType({"alive": jnp.int32(0)})
@@ -1823,38 +1878,32 @@ def test_model_fingerprint_treats_artifact_authorities_as_keyed_mapping() -> Non
 
     forward = _fingerprint_model_for_test(
         ages=ages,
-        regimes=cast(
-            "dict",
-            {
-                "alive": _fingerprint_regime(
-                    second_period_nodes=(2.0, 3.0),
-                    artifact_authorities={
-                        left: left_authority,
-                        right: right_authority,
-                    },
-                )
-            },
-        ),
-        user_regimes=cast("dict", user_regimes),
+        regimes={
+            "alive": _fingerprint_regime(
+                second_period_nodes=(2.0, 3.0),
+                artifact_authorities={
+                    left: left_authority,
+                    right: right_authority,
+                },
+            )
+        },
+        user_regimes=user_regimes,
         laws=_ALIVE_LAWS,
         regime_names_to_ids=regime_names_to_ids,
         flat_params=flat_params,
     )
     reversed_order = _fingerprint_model_for_test(
         ages=ages,
-        regimes=cast(
-            "dict",
-            {
-                "alive": _fingerprint_regime(
-                    second_period_nodes=(2.0, 3.0),
-                    artifact_authorities={
-                        right: right_authority,
-                        left: left_authority,
-                    },
-                )
-            },
-        ),
-        user_regimes=cast("dict", user_regimes),
+        regimes={
+            "alive": _fingerprint_regime(
+                second_period_nodes=(2.0, 3.0),
+                artifact_authorities={
+                    right: right_authority,
+                    left: left_authority,
+                },
+            )
+        },
+        user_regimes=user_regimes,
         laws=_ALIVE_LAWS,
         regime_names_to_ids=regime_names_to_ids,
         flat_params=flat_params,
@@ -1866,17 +1915,11 @@ def test_model_fingerprint_treats_artifact_authorities_as_keyed_mapping() -> Non
 def test_model_fingerprint_binds_exact_regime_name_to_id_mapping() -> None:
     """Equal names and regimes cannot hide a different categorical code assignment."""
     solver = SimpleNamespace(identity=("test-solver", 1))
-    regimes = cast(
-        "dict",
-        {
-            name: _fingerprint_regime(second_period_nodes=(2.0, 3.0))
-            for name in ("alive", "dead")
-        },
-    )
-    user_regimes = cast(
-        "dict",
-        {name: SimpleNamespace(solver=solver) for name in ("alive", "dead")},
-    )
+    regimes = {
+        name: _fingerprint_regime(second_period_nodes=(2.0, 3.0))
+        for name in ("alive", "dead")
+    }
+    user_regimes = {name: SimpleNamespace(solver=solver) for name in ("alive", "dead")}
     flat_params = cast(
         "FlatParams",
         MappingProxyType({name: MappingProxyType({}) for name in ("alive", "dead")}),
@@ -1946,7 +1989,9 @@ def test_project_solution_params_removes_only_proven_transition_truth() -> None:
     )
 
     projected = fingerprints.project_solution_params(
-        flat_params=flat_params, regimes=cast("dict", regimes)
+        flat_params=flat_params,
+        # Focused structural fixture supplies only the fields projected here.
+        regimes=regimes,  # ty: ignore[invalid-argument-type]
     )
 
     assert projected == {
@@ -1963,9 +2008,20 @@ def test_project_solution_params_removes_only_proven_transition_truth() -> None:
         "generic": _generic_solve_callable,
     }
     conservative = fingerprints.project_solution_params(
-        flat_params=flat_params, regimes=cast("dict", regimes)
+        flat_params=flat_params,
+        # Focused structural fixture supplies only the fields projected here.
+        regimes=regimes,  # ty: ignore[invalid-argument-type]
     )
     assert conservative["alive"] == flat_params["alive"]
+
+
+class _ModelStructureKwargs(TypedDict):
+    ages: TimeAxis
+    regimes: Mapping[RegimeName, EngineRegime]
+    user_regimes: fingerprints._FingerprintUserRegimes
+    laws: fingerprints._FingerprintLaws
+    regime_names_to_ids: RegimeNamesToIds
+    binding_recorder: NotRequired[fingerprints.BindingRecorder | None]
 
 
 def test_the_model_structure_is_digested_once_across_many_parameter_vectors(
@@ -1975,7 +2031,7 @@ def test_the_model_structure_is_digested_once_across_many_parameter_vectors(
     calls = []
     original = fingerprints.fingerprint_model_structure
 
-    def counting(**kwargs: Any) -> str:
+    def counting(**kwargs: Unpack[_ModelStructureKwargs]) -> str:
         calls.append(1)
         return original(**kwargs)
 
@@ -2068,14 +2124,14 @@ def _reads_a_lookalike_size(consumption: FloatND) -> FloatND:
     ],
 )
 def test_a_referenced_array_constant_may_have_its_metadata_read(
-    function: Callable[..., object],
+    function: Callable[[FloatND], FloatND],
 ) -> None:
     """`shape`, `size`, `ndim` and `dtype` of an array constant are fingerprintable."""
     assert fingerprints._semantic_fingerprint(function)
 
 
 def test_an_array_constant_read_for_its_metadata_still_participates(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The constant behind a metadata read is itself part of the digest."""
     baseline = fingerprints._semantic_fingerprint(_reads_jax_array_size)
@@ -2163,10 +2219,10 @@ def _masked_survival(age: float) -> float:
     return 1.0 - age / 100.0
 
 
-def _reading(law: Callable[..., object]) -> Callable[..., object]:
+def _reading(law: Callable[..., FloatND]) -> Callable[..., FloatND]:
     """A function that reaches `law` only through its closure."""
 
-    def read(**kwargs: object) -> object:
+    def read(**kwargs: EconFunctionArg) -> FloatND:
         return law(**kwargs)
 
     return read

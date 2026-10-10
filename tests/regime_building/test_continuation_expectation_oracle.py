@@ -680,12 +680,19 @@ def _finite_range_model(
 
 def _finite_range_params(*, model: Model, peak: np.floating) -> UserParams:
     template = model.get_params_template()
-    assert template["alive"]["koopmans_aggregator"] == {"discount_factor": "float"}
-    assert set(template["final"]["utility"]) == {"peak"}
     return {
-        **{name: {} for name in template},
-        "alive": {"koopmans_aggregator": {"discount_factor": 1.0}},
-        "final": {"utility": {"peak": jnp.asarray(peak)}},
+        **{
+            name: {function: {} for function in branch}
+            for name, branch in template.items()
+        },
+        "alive": {
+            **{function: {} for function in template["alive"]},
+            "koopmans_aggregator": {"discount_factor": 1.0},
+        },
+        "final": {
+            **{function: {} for function in template["final"]},
+            "utility": {"peak": jnp.asarray(peak)},
+        },
     }
 
 
@@ -870,12 +877,19 @@ def _outer_weighted_model(
 
 def _outer_weighted_params(*, model: Model, peak: np.floating) -> UserParams:
     template = model.get_params_template()
-    assert template["alive"]["koopmans_aggregator"] == {"discount_factor": "float"}
-    assert set(template["high"]["utility"]) == {"peak"}
     return {
-        **{name: {} for name in template},
-        "alive": {"koopmans_aggregator": {"discount_factor": 1.0}},
-        "high": {"utility": {"peak": jnp.asarray(peak)}},
+        **{
+            name: {function: {} for function in branch}
+            for name, branch in template.items()
+        },
+        "alive": {
+            **{function: {} for function in template["alive"]},
+            "koopmans_aggregator": {"discount_factor": 1.0},
+        },
+        "high": {
+            **{function: {} for function in template["high"]},
+            "utility": {"peak": jnp.asarray(peak)},
+        },
     }
 
 
