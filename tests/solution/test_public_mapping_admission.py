@@ -9,14 +9,18 @@ the constructor consumes, so no equality-based contraction can erase the evidenc
 """
 
 from collections.abc import Iterator, Mapping
+from types import MappingProxyType
 from typing import cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from pandas.testing import assert_frame_equal
 
 from _lcm.typing import ArtifactPayload
+from lcm._solver_api.descriptors import _capture_mapping_item_stream_once
+from lcm._solver_api.stores import _traverse_public_mapping_items
 from lcm.persistence import load_solution
 from lcm.solver_api import (
     SIMULATION_POLICY,
@@ -361,3 +365,39 @@ def test_solution_result_rejects_a_nonexact_omission_reason_at_construction() ->
                 {_ref(period=0): OmissionReason.NOT_REQUESTED.value},
             ),
         )
+
+
+def test_traverse_public_mapping_items_returns_an_immutable_tuple_of_pairs() -> None:
+    """The one item traversal a store constructor reads is owned as a tuple."""
+    stream = _ItemStream(items=[(0, "zero"), (1, "one")])
+
+    pairs = _traverse_public_mapping_items(mapping=stream, label="Example entries")
+
+    assert pairs == ((0, "zero"), (1, "one"))
+
+
+def _capture_example_domains() -> MappingProxyType[str, str]:
+    return _capture_mapping_item_stream_once(
+        mapping={"health": "bad", "work": "full"},
+        label="Example domains",
+        snapshot_key=str,
+        snapshot_value=str,
+    )
+
+
+def test_capture_mapping_item_stream_once_returns_a_read_only_mapping() -> None:
+    """A captured descriptor mapping is a read-only view, not a mutable dict."""
+    assert type(_capture_example_domains()) is MappingProxyType
+
+
+def test_captured_mapping_round_trips_through_jax_tree_utilities() -> None:
+    """A captured read-only mapping flattens and rebuilds with the same items."""
+    captured = _capture_example_domains()
+    leaves, treedef = jax.tree_util.tree_flatten(captured)
+
+    rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+
+    assert (type(rebuilt), dict(rebuilt)) == (
+        MappingProxyType,
+        {"health": "bad", "work": "full"},
+    )

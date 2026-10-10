@@ -36,7 +36,8 @@ if TYPE_CHECKING:
     type _SolutionOmissionsInput = Mapping[ArtifactRef, OmissionReason]
     type _EngineView = OwnedSolutionView
     # Engine replay inputs a consuming model resolved from this result, keyed by
-    # that model's instance and the parameter fingerprint it consumed under.
+    # that model's instance and the parameter fingerprint it consumed under. The
+    # model fills this memo as it consumes the result, so it is a mutable dict.
     type _ConsumedViews = dict[tuple[str, str], _ResolvedSolution]
 else:
     # The public static contract stays precise above. At runtime the package-wide
@@ -68,12 +69,12 @@ class SolutionResult:
     """Payloads simulation replays decisions from, addressed by cell and key."""
     auxiliary_artifacts: ArtifactStore = field(default_factory=ArtifactStore)
     """Additional solver-published payloads, addressed by cell and key."""
-    omissions: _SolutionOmissionsInput = field(default_factory=dict)
+    omissions: _SolutionOmissionsInput = MappingProxyType({})
     """Why each accounted-for artifact that is absent was left out."""
     diagnostics: ArtifactStore = field(default_factory=ArtifactStore)
     """Solver diagnostics kept according to the solve's log level."""
-    _artifact_authority: Mapping[ArtifactRef, ArtifactAuthority] = field(
-        default_factory=lambda: MappingProxyType({}),
+    _artifact_authority: MappingProxyType[ArtifactRef, ArtifactAuthority] = field(
+        default=MappingProxyType({}),
         init=False,
         repr=False,
         compare=False,

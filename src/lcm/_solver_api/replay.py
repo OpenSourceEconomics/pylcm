@@ -1,7 +1,7 @@
 """Replay routes, their snapshots and build contexts, and kernel output."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import (
     Protocol,
@@ -38,6 +38,7 @@ class ReplayRouteSnapshot:
     exact placed snapshot and context again immediately before building its reader.
     """
 
+    # Callers pass any mapping; `__post_init__` stores a read-only copy.
     artifacts: Mapping[ArtifactKey, ArtifactPayload]
     """Materialized payloads of the cell, keyed by artifact key."""
     authorities: Mapping[ArtifactKey, ArtifactAuthority]
@@ -71,6 +72,7 @@ class ReplayModelContext:
     action_names: tuple[ActionName, ...]
     """Solution-action names in canonical product-map order."""
 
+    # Callers pass any mapping; `__post_init__` stores a read-only copy.
     state_nodes: Mapping[str, FloatND | IntND]
     """Period-specific grid nodes keyed exactly by ``state_names``."""
 
@@ -128,6 +130,7 @@ class SimulationBuildContext:
     action_names: tuple[ActionName, ...]
     """Solution-action names in canonical product-map order."""
 
+    # Callers pass any mapping; `__post_init__` stores a read-only copy.
     state_nodes: Mapping[str, FloatND | IntND]
     """Period-specific grid nodes keyed exactly by ``state_names``."""
 
@@ -149,6 +152,7 @@ class SimulationBuildContext:
 class ActionOutput:
     """Named action arrays returned by an external replay reader."""
 
+    # Callers pass any mapping; `__post_init__` stores a read-only copy.
     actions: Mapping[
         ActionName, ValueND | npt.NDArray[np.generic] | np.generic | float | int | bool
     ]
@@ -228,24 +232,31 @@ class ReplayRoute(Protocol):
         ...
 
 
+# Durable identity of each built-in route, by replay mode and consumer route.
+_BUILT_IN_ROUTE_IDS: MappingProxyType[tuple[ReplayMode, str | None], str] = (
+    MappingProxyType(
+        {
+            (ReplayMode.VALID_RECOMPUTATION, None): "pylcm.grid_recomputation",
+            (ReplayMode.UNSUPPORTED, None): "pylcm.replay_unsupported",
+            (ReplayMode.EXACT_REPLAY, "egm_off_grid"): "pylcm.egm_off_grid",
+            (ReplayMode.EXACT_REPLAY, "nnbegm_finite"): "pylcm.nnbegm_finite",
+            (ReplayMode.EXACT_REPLAY, "nnbegm_nested"): "pylcm.nnbegm_nested",
+            (ReplayMode.VALID_RECOMPUTATION, "nnbegm_finite"): "pylcm.nnbegm_finite",
+            (ReplayMode.VALID_RECOMPUTATION, "nnbegm_nested"): "pylcm.nnbegm_nested",
+            (ReplayMode.UNSUPPORTED, "nnbegm_finite"): "pylcm.nnbegm_finite",
+            (ReplayMode.UNSUPPORTED, "nnbegm_nested"): "pylcm.nnbegm_nested",
+        }
+    )
+)
+
+
 def _replay_route_identity(route: ReplayRoute) -> ReplayRouteIdentity:
     """Return the durable identity of a trusted built-in or executable route."""
     declared_identity = getattr(route, "identity", None)
     if type(declared_identity) is ReplayRouteIdentity:
         return declared_identity
-    route_ids: dict[tuple[ReplayMode, str | None], str] = {
-        (ReplayMode.VALID_RECOMPUTATION, None): "pylcm.grid_recomputation",
-        (ReplayMode.UNSUPPORTED, None): "pylcm.replay_unsupported",
-        (ReplayMode.EXACT_REPLAY, "egm_off_grid"): "pylcm.egm_off_grid",
-        (ReplayMode.EXACT_REPLAY, "nnbegm_finite"): "pylcm.nnbegm_finite",
-        (ReplayMode.EXACT_REPLAY, "nnbegm_nested"): "pylcm.nnbegm_nested",
-        (ReplayMode.VALID_RECOMPUTATION, "nnbegm_finite"): "pylcm.nnbegm_finite",
-        (ReplayMode.VALID_RECOMPUTATION, "nnbegm_nested"): "pylcm.nnbegm_nested",
-        (ReplayMode.UNSUPPORTED, "nnbegm_finite"): "pylcm.nnbegm_finite",
-        (ReplayMode.UNSUPPORTED, "nnbegm_nested"): "pylcm.nnbegm_nested",
-    }
     try:
-        route_id = route_ids[(route.replay_mode, route.consumer_route)]
+        route_id = _BUILT_IN_ROUTE_IDS[(route.replay_mode, route.consumer_route)]
     except KeyError as error:
         raise TypeError(
             "A replay route has no durable built-in or plugin identity."
@@ -380,18 +391,16 @@ class KernelOutput:
     value: FloatND | Float[np.ndarray, "*shape"]
     """The regime's value-function array on its exogenous state grid."""
 
-    continuations: Mapping[ArtifactKey, ArtifactPayload] = field(default_factory=dict)
+    continuations: Mapping[ArtifactKey, ArtifactPayload] = MappingProxyType({})
     """Cross-period artifacts required while backward induction is running."""
 
-    solve_time_artifacts: Mapping[ArtifactKey, ArtifactPayload] = field(
-        default_factory=dict
-    )
+    solve_time_artifacts: Mapping[ArtifactKey, ArtifactPayload] = MappingProxyType({})
     """Other artifacts consumed by the solve before the period rolls."""
 
-    replay: Mapping[ArtifactKey, ArtifactPayload] = field(default_factory=dict)
+    replay: Mapping[ArtifactKey, ArtifactPayload] = MappingProxyType({})
     """Artifacts a later simulation or policy replay may consume."""
 
-    auxiliary: Mapping[ArtifactKey, ArtifactPayload] = field(default_factory=dict)
+    auxiliary: Mapping[ArtifactKey, ArtifactPayload] = MappingProxyType({})
     """Optional, solver-defined artifacts for inspection or persistence."""
 
     def __post_init__(self) -> None:
