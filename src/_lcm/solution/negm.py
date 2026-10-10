@@ -84,6 +84,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
+    QualifiedName,
     RegimeName,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
@@ -100,6 +101,7 @@ from lcm.typing import (
     Float1D,
     FloatND,
     FunctionName,
+    ReferenceName,
     ScalarFloat,
     StateName,
     StateOrActionName,
@@ -1230,7 +1232,7 @@ class _CreditedCoHShifts:
     cost_func: Callable[..., FloatND]
     """The concatenated DAG targeting the regime's declared outer-cost node."""
 
-    cost_arg_names: frozenset[str]
+    cost_arg_names: frozenset[ReferenceName]
     """Immutable set of the argument names that DAG declares."""
 
     durable_state_name: StateName
@@ -1274,11 +1276,11 @@ class _CreditedCoHShifts:
 
 def _fail_if_the_outer_cost_reads_beyond_one_cell(
     *,
-    cost_arg_names: frozenset[str],
+    cost_arg_names: frozenset[ReferenceName],
     durable_state_name: StateName,
     outer_post_decision: FunctionName,
     outer_cost_name: FunctionName,
-    param_names: frozenset[str],
+    param_names: frozenset[QualifiedName],
 ) -> None:
     """Reject a cost DAG that needs a binding the per-cell lift cannot supply.
 
@@ -1312,7 +1314,7 @@ class _OuterCostAtCell:
     cost_func: Callable[..., FloatND]
     """The concatenated DAG targeting the declared outer-cost node."""
 
-    cost_arg_names: frozenset[str]
+    cost_arg_names: frozenset[ReferenceName]
     """Immutable set of the argument names that DAG declares."""
 
     durable_state_name: StateName
@@ -1409,7 +1411,7 @@ def _with_no_adjustment_outer_function(
         functions=functions, arg_name=outer_post_decision
     )
     if no_adjustment_func is None:
-        arg_names: tuple[str, ...] = (durable_state,)
+        arg_names: tuple[ReferenceName, ...] = (durable_state,)
         args_spec = {
             durable_state: _annotation_of_arg(
                 functions=functions, arg_name=durable_state
@@ -1458,7 +1460,7 @@ class _KeeperOuterPostDecision:
     durable_state: StateName
     """Name of the durable leaf state the identity keeper returns."""
 
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """Tuple of the argument names the no-adjustment map declares."""
 
     no_adjustment_func: EconFunction | None

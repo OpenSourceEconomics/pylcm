@@ -35,14 +35,14 @@ from _lcm.params.processing import (
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.regime_law import RegimeLaw, RegimeLaws, bind_regime_law
-from _lcm.typing import FlatParams, RegimeName, StateName
+from _lcm.typing import FlatParams, QualifiedName, RegimeName, StateName
 from _lcm.utils.namespace import flatten_regime_namespace
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.temporal import TimeVarying
 from lcm.transition import ByAge, JointTransition, StochasticTransition
-from lcm.typing import UserParams
+from lcm.typing import ReferenceName, UserParams
 
 type Side = Literal["solve", "simulate"]
 
@@ -434,7 +434,7 @@ def _evaluate_fixed_function(
 
 def _resolve_fixed_argument(
     *,
-    arg_name: str,
+    arg_name: ReferenceName,
     path: tuple[str, ...],
     side: Side,
     regime: UserRegime,
@@ -481,7 +481,7 @@ def _resolve_fixed_argument(
     ), frozenset((key,))
 
 
-def _is_runtime_argument(*, arg_name: str, regime: UserRegime) -> bool:
+def _is_runtime_argument(*, arg_name: ReferenceName, regime: UserRegime) -> bool:
     """Identify leaves whose value depends on a model problem or realization."""
     return (
         arg_name in regime.states
@@ -493,7 +493,7 @@ def _is_runtime_argument(*, arg_name: str, regime: UserRegime) -> bool:
 
 
 def _canonicalize_fixed_leaf(
-    *, regime_name: RegimeName, qname: str, value: object
+    *, regime_name: RegimeName, qname: QualifiedName, value: object
 ) -> object:
     """Apply the parameter dtype boundary before executing a fixed callable."""
     canonical = cast_params_to_canonical_dtypes(
@@ -525,7 +525,7 @@ def _trim_state_law(
     law: object,
     removed: Mapping[Side, frozenset[str]],
     regime_name: RegimeName,
-    state: str,
+    state: StateName,
     regime: UserRegime,
     fixed_flat: Mapping[str, object],
     consumed: set[str],
@@ -584,7 +584,7 @@ def _record_removed_state_keys(
     law: object,
     removed: frozenset[str],
     regime_name: RegimeName,
-    state: str,
+    state: StateName,
     side: Side,
     regime: UserRegime,
     fixed_flat: Mapping[str, object],

@@ -32,6 +32,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_reads import PeriodSimulationReads
+from lcm.typing import ReferenceName
 
 # Fields already holding measured spans; the ledger binds them without a walk.
 _LEDGER_FOOTPRINT_FIELDS = ("inputs", "outputs", "chunk_inputs")
@@ -219,7 +220,7 @@ class SimulationMemory:
         *,
         function: Callable[..., T],
         arguments: Mapping[str, object],
-        subject_arg_names: tuple[str, ...] = (),
+        subject_arg_names: tuple[ReferenceName, ...] = (),
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
         subject_outputs: bool = False,
     ) -> T:
@@ -274,7 +275,7 @@ def run_simulation_operation[T](
     memory: SimulationMemory | None,
     function: Callable[..., T],
     arguments: Mapping[str, object],
-    subject_arg_names: tuple[str, ...] = (),
+    subject_arg_names: tuple[ReferenceName, ...] = (),
     static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
     subject_outputs: bool = False,
 ) -> T:

@@ -44,6 +44,7 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     ParamsTemplate,
+    QualifiedName,
     RegimeName,
     RegimeParamsTemplateNode,
 )
@@ -51,7 +52,7 @@ from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.typing import ParameterName, UserParams
+from lcm.typing import FunctionName, ParameterName, ReferenceName, UserParams
 
 
 def process_params(
@@ -485,7 +486,7 @@ def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
 
 def find_param_candidates(
     *,
-    qname: str,
+    qname: QualifiedName,
     params_flat: Mapping[str, object],
 ) -> list[str]:
     """Find candidate matches for a template qname, most to least specific.
@@ -578,8 +579,8 @@ def create_params_template(
 
     """
     template: dict[str, Any] = {}
-    regime_names: set[str] = set(regimes)
-    function_names: set[str] = set()
+    regime_names: set[RegimeName] = set(regimes)
+    function_names: set[FunctionName] = set()
     arg_names = _edge_arg_names(regimes)
 
     for name, regime in regimes.items():
@@ -681,9 +682,9 @@ def _leaf_paths(
 
 def _validated_arg_names(
     *,
-    func_name: str,
+    func_name: FunctionName,
     params: Mapping,
-    regime_name: str,
+    regime_name: RegimeName,
 ) -> set[str]:
     """Return a function entry's argument names, validating each leaf.
 
@@ -693,7 +694,7 @@ def _validated_arg_names(
     """
     if errors := path_segment_name_errors(kind=f"{func_name!r} argument", names=params):
         raise InvalidNameError(errors[0])
-    arg_names: set[str] = set()
+    arg_names: set[ReferenceName] = set()
     for arg_name, leaf in params.items():
         if isinstance(leaf, Mapping):
             raise InvalidNameError(
@@ -706,9 +707,9 @@ def _validated_arg_names(
 
 def _fail_if_template_names_invalid(
     *,
-    regime_names: set[str],
-    function_names: set[str],
-    arg_names: set[str],
+    regime_names: set[RegimeName],
+    function_names: set[FunctionName],
+    arg_names: set[ReferenceName],
 ) -> None:
     """Validate the form and disjointness of template name sets.
 

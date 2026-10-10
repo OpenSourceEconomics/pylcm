@@ -55,7 +55,7 @@ from _lcm.simulation.residency import (
 )
 from _lcm.solution.backward_induction import _lowering_key
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import Float1D, ScalarFloat, ScalarInt, ValueND
+from lcm.typing import Float1D, ParameterName, ScalarFloat, ScalarInt, ValueND
 
 type _GridStage = Literal[
     "uniform",
@@ -539,7 +539,7 @@ def _staged_parameter_is_weak(value: object) -> bool:
 def _process_grid_call(
     *values: object,
     spec: _ContinuousStochasticProcess,
-    parameter_names: tuple[str, ...],
+    parameter_names: tuple[ParameterName, ...],
 ) -> Float1D:
     """Rebind positional trace values to their declared parameter names.
 
@@ -556,7 +556,7 @@ def _process_grid_call(
 def _trace_process_jaxpr(
     *,
     spec: _ContinuousStochasticProcess,
-    parameter_names: tuple[str, ...],
+    parameter_names: tuple[ParameterName, ...],
     parameter_values: tuple[object, ...],
 ) -> Jaxpr:
     """Trace an explicit positional binding for deterministic input ordering.
@@ -580,7 +580,7 @@ def _trace_process_jaxpr(
 def _process_jaxpr(
     *,
     spec: _ContinuousStochasticProcess,
-    parameter_names: tuple[str, ...],
+    parameter_names: tuple[ParameterName, ...],
     parameter_types: tuple[jax.ShapeDtypeStruct, ...],
 ) -> Jaxpr:
     """Trace the process once per parameter type signature."""

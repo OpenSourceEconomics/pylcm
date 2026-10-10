@@ -23,7 +23,7 @@ from lcm._solver_api.identity import (
     ReplayRouteIdentity,
     SolverIdentity,
 )
-from lcm.typing import FloatND, IntND, RegimeName, StateName
+from lcm.typing import ActionName, FloatND, IntND, RegimeName, StateName
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -62,10 +62,10 @@ class ReplayModelContext:
     """Name of the regime being replayed."""
     period: int
     """Period of the solution cell."""
-    state_names: tuple[str, ...]
+    state_names: tuple[StateName, ...]
     """Solution-state names in canonical product-map order."""
 
-    action_names: tuple[str, ...]
+    action_names: tuple[ActionName, ...]
     """Solution-action names in canonical product-map order."""
 
     state_nodes: Mapping[str, FloatND | IntND]
@@ -119,10 +119,10 @@ class SimulationBuildContext:
     """Period of the solution cell the reader is built for."""
     regime_name: RegimeName
     """Name of the regime the reader is built for."""
-    state_names: tuple[str, ...]
+    state_names: tuple[StateName, ...]
     """Solution-state names in canonical product-map order."""
 
-    action_names: tuple[str, ...]
+    action_names: tuple[ActionName, ...]
     """Solution-action names in canonical product-map order."""
 
     state_nodes: Mapping[str, FloatND | IntND]

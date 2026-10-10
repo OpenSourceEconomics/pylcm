@@ -18,6 +18,7 @@ from typing import Protocol, runtime_checkable
 from _lcm.execution.core_program import CoreBuildContext, CoreProgram, TiledOutputAxis
 from _lcm.simulation.subject_groups import SubjectGroupingRoute
 from _lcm.typing import RegimeName, StateOrActionName
+from lcm.typing import ReferenceName
 
 # Planner name of the per-subject axis every simulation program tiles.
 SUBJECT_AXIS = "subject"
@@ -92,7 +93,7 @@ class _PerSubjectFunction:
     function: Callable[..., object]
     """The body, taking one subject's states and actions as scalars."""
 
-    subject_arg_names: tuple[str, ...]
+    subject_arg_names: tuple[ReferenceName, ...]
     """Arguments carrying a per-subject leading axis, which the tile splits."""
 
     output_roles: object

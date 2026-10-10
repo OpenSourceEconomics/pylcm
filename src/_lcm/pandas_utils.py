@@ -60,7 +60,15 @@ from lcm.transition import (
     Transition,
     _select_periods,
 )
-from lcm.typing import Float1D, FloatND, Int1D, Phase, ReferenceName, UserFunction
+from lcm.typing import (
+    Float1D,
+    FloatND,
+    Int1D,
+    ParameterName,
+    Phase,
+    ReferenceName,
+    UserFunction,
+)
 
 _JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH = 4
 
@@ -592,10 +600,10 @@ def _convert_edge_params(
 def _regime_param_periods(
     *,
     parts: tuple[str, ...],
-    func_name: str,
-    regime_name: str,
+    func_name: FunctionName,
+    regime_name: RegimeName,
     ages: TimeAxis,
-    required_periods_by_regime: Mapping[str, tuple[int, ...]] | None,
+    required_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
     reachability: ModelReachability | None,
     user_regime: UserRegime,
     phase_functions: Mapping[Phase, Mapping[str, object]],
@@ -645,7 +653,7 @@ def _edge_param_periods(
     *,
     declarations: tuple[Transition, ...],
     slot: tuple[str, ...],
-    param_name: str,
+    param_name: ParameterName,
     ages: TimeAxis,
     source_periods: tuple[int, ...],
     declarations_by_phase: Mapping[Phase, Transition] | None,
@@ -721,7 +729,7 @@ def _edge_param_periods(
     return tuple(sorted(required))
 
 
-def _case_names_target(*, case: object, target: str) -> bool:
+def _case_names_target(*, case: object, target: RegimeName) -> bool:
     """Read named support without evaluating parameter-dependent probabilities."""
     if isinstance(case, Phased):
         return any(
@@ -762,7 +770,7 @@ def _joint_variants(
 def _resolve_param_consumer(
     *,
     parts: tuple[str, ...],
-    param_name: str,
+    param_name: ParameterName,
     user_regime: UserRegime,
     all_funcs: Mapping[str, object],
     aggregator_variants: tuple[Callable[..., Any], ...],
@@ -850,7 +858,7 @@ def _convert_param_value(
     *,
     value: object,
     func: Callable | None,
-    param_name: str,
+    param_name: ParameterName,
     func_name: FunctionName,
     ages: TimeAxis,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -950,7 +958,12 @@ def _convert_param_value(
 
 
 def _check_raw_time_array(
-    *, managed: bool, func: Callable | None, param_name: str, ages: TimeAxis, name: str
+    *,
+    managed: bool,
+    func: Callable | None,
+    param_name: ParameterName,
+    ages: TimeAxis,
+    name: str,
 ) -> None:
     """Reject ambiguous managed arrays and diagnose visible manual time indexing."""
     if managed:
@@ -982,7 +995,7 @@ def array_from_series(
     *,
     sr: pd.Series,
     func: Callable | None,
-    param_name: str,
+    param_name: ParameterName,
     func_name: FunctionName,
     ages: TimeAxis,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -1671,7 +1684,7 @@ _PSEUDO_KEYS_WITHOUT_A_SIGNATURE = frozenset({"certainty_equivalent", "taste_sho
 
 
 def _scheduled_consumer(
-    *, func: object, param_name: str, phase: Phase | None = None
+    *, func: object, param_name: ParameterName, phase: Phase | None = None
 ) -> Callable[..., Any] | None:
     """Return the callable law of a `ByAge` schedule that declares `param_name`.
 
@@ -1724,7 +1737,7 @@ def _scheduled_consumer(
 
 
 def _variant_declaring(
-    *, variants: tuple[Callable[..., Any], ...], param_name: str
+    *, variants: tuple[Callable[..., Any], ...], param_name: ParameterName
 ) -> Callable[..., Any]:
     """Return the first variant declaring `param_name`, else the first variant.
 

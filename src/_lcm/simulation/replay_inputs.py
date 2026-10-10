@@ -23,10 +23,11 @@ from lcm.solver_api import (
     ReplayRouteSnapshot,
     SimulationBuildContext,
 )
+from lcm.typing import RegimeName
 
 
 def replay_payload_reads(
-    *, payload: object, key: ArtifactKey, period: int, regime: str, core: str
+    *, payload: object, key: ArtifactKey, period: int, regime: RegimeName, core: str
 ) -> tuple[ValueRead, ...]:
     """Name every concrete array leaf passed to one replay adapter.
 
@@ -46,7 +47,7 @@ def place_replay_payload[T](
     payload: T,
     key: ArtifactKey,
     period: int,
-    regime: str,
+    regime: RegimeName,
     core: str,
     owner: PeriodSimulationReads,
 ) -> T:
@@ -68,7 +69,7 @@ def place_replay_payload[T](
 
 
 def _payload_read(
-    *, key: ArtifactKey, period: int, regime: str, core: str, path: tuple
+    *, key: ArtifactKey, period: int, regime: RegimeName, core: str, path: tuple
 ) -> ValueRead:
     """Build the same leaf address for declaration and acquisition."""
     return ValueRead(

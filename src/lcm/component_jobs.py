@@ -731,8 +731,17 @@ def _get_model_components(*, model: Model) -> tuple[StateName, tuple[int, ...]]:
     return state_name, codes
 
 
+# Who brings a model to a component plan, as named in its error messages:
+# `"job 3"` or `"the collector"`.
+type PlanParticipant = str
+
+
 def _fail_if_identity_differs(
-    *, model: Model, plan: ComponentJobPlan, identity: Mapping[str, object], source: str
+    *,
+    model: Model,
+    plan: ComponentJobPlan,
+    identity: Mapping[str, object],
+    source: PlanParticipant,
 ) -> None:
     """Refuse a model, parameters or build that do not reproduce the plan's."""
     state_name, codes = _get_model_components(model=model)

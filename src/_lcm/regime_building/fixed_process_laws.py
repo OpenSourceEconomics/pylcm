@@ -34,7 +34,7 @@ from _lcm.params.processing import (
     find_param_candidates,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.typing import FlatParams, RegimeName, StateName
+from _lcm.typing import FlatParams, QualifiedName, RegimeName, StateName
 from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.phased import Phased
@@ -230,7 +230,7 @@ def _fail_if_any_process_law_field_varies(
             )
 
 
-def _fail_if_a_process_law_field_varies(*, value: Any, qname: str) -> None:
+def _fail_if_a_process_law_field_varies(*, value: Any, qname: QualifiedName) -> None:
     """Reject a process law field given more than one number.
 
     Args:
@@ -257,7 +257,7 @@ def _fail_if_a_process_law_field_varies(*, value: Any, qname: str) -> None:
     raise InvalidParamsError(msg)
 
 
-def _as_process_field(*, value: Any, qname: str) -> float | int | bool:
+def _as_process_field(*, value: Any, qname: QualifiedName) -> float | int | bool:
     """Return a canonically cast leaf as the Python scalar a process field takes.
 
     A process's distribution fields are Python scalars, and it computes its nodes

@@ -47,6 +47,11 @@ from lcm.typing import (
     TransitionFunctionName,
 )
 
+# A `__`-joined path through the params or function namespace, such as
+# `"utility__risk_aversion"`. Flat params are keyed by these names, while a
+# `ParameterName` names one parameter on its own.
+type QualifiedName = str
+
 type RegimeNamesToIds = MappingProxyType[RegimeName, ScalarInt]
 type RegimeIdsToNames = MappingProxyType[int, RegimeName]
 

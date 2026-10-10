@@ -16,6 +16,7 @@ from _lcm.solution.contract import (
 )
 from _lcm.typing import (
     FlatParams,
+    QualifiedName,
     RegimeName,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -99,7 +100,7 @@ def union_fixed_params(
 
 
 def _namespace_target_param_names(
-    *, target_name: RegimeName, param_names: frozenset[str]
+    *, target_name: RegimeName, param_names: frozenset[QualifiedName]
 ) -> frozenset[str]:
     """Prefix a target regime's flat parameter names with its regime identity."""
     return frozenset(

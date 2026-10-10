@@ -2313,7 +2313,7 @@ def _format_infeasibility_message(
     regime: Regime,
     regime_name: RegimeName,
     initial_states: Mapping[StateName, FloatND | IntND],
-    state_names: Sequence[str],
+    state_names: Sequence[StateName],
     per_constraint_admits_any: Mapping[str, np.ndarray],
 ) -> str:
     """Format an error message for infeasible subjects.
