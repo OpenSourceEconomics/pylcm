@@ -29,7 +29,6 @@ its own grid is the boundary compiler's job, not the tree's.
 import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Literal, Self
 
 import jax.numpy as jnp
@@ -498,7 +497,9 @@ def _fail_if_names_are_missing(
 
 def _annotations_of_signature(
     signature: inspect.Signature,
-) -> MappingProxyType[str, AnnotationForm]:
+) -> dict[str, AnnotationForm]:
+    # It becomes the callable's `__annotations__`, which `annotationlib` reads only
+    # as a plain dict.
     annotations: dict[str, AnnotationForm] = {
         arg_name: parameter.annotation
         for arg_name, parameter in signature.parameters.items()
@@ -506,7 +507,7 @@ def _annotations_of_signature(
     }
     if signature.return_annotation is not inspect.Signature.empty:
         annotations["return"] = signature.return_annotation
-    return MappingProxyType(annotations)
+    return annotations
 
 
 def _arg_names_of(expression: BoolExpr) -> tuple[str, ...]:
