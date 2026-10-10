@@ -38,12 +38,12 @@ from _lcm.typing import (
     FlatParams,
     FunctionName,
     InitialConditions,
-    PytreeValue,
     RegimeName,
     RegimeNamesToIds,
     StateName,
 )
 from _lcm.utils.ast_inspection import _get_func_indexing_params, time_index_names
+from _lcm.utils.functools import is_user_function
 from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.exceptions import InvalidParamsError
 from lcm.params import (
@@ -807,9 +807,9 @@ def _resolve_param_consumer(
         role_funcs: tuple[UserFunction, ...]
         if role == "support":
             role_funcs = tuple(
-                cast("Callable[..., PytreeValue]", variant.support)
+                variant.support
                 for variant in variants
-                if callable(variant.support)
+                if is_user_function(variant.support)
             )
         else:
             role_funcs = tuple(variant.probabilities for variant in variants)
@@ -1741,7 +1741,7 @@ def _scheduled_consumer(
             if isinstance(law, Phased)
             else (law,)
         )
-        if callable(variant)
+        if is_user_function(variant)
     )
     if not laws:
         msg = (

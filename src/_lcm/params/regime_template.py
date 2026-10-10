@@ -11,7 +11,7 @@ declaration holds — its regime-transition law, gates, gate references and rout
 fallbacks — and returns that source's branch of `params["edges"]`.
 """
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, cast
@@ -47,7 +47,7 @@ from _lcm.typing import (
     TransitionFunctionName,
 )
 from _lcm.utils.error_messages import path_segment_name_errors
-from _lcm.utils.functools import get_union_of_args
+from _lcm.utils.functools import get_union_of_args, is_user_function
 from lcm.collective import Gate
 from lcm.exceptions import InvalidNameError, ModelInitializationError
 from lcm.phased import Phased
@@ -517,7 +517,7 @@ def iter_edge_callables(
         for side in variants if phase is None else (phase,):
             yield from iter_edge_callables(law=variants[side], path=path, phase=phase)
     elif isinstance(law, DeterministicTransition | StochasticTransition):
-        yield path, cast("UserFunction", law.func), None
+        yield path, law.func, None
     elif isinstance(law, Mapping):
         for target_regime_name, cell in law.items():
             yield from iter_edge_callables(
@@ -700,7 +700,9 @@ def _add_joint_transition_params(
         for kernel_name, raw in kernels.items():
             variants = _joint_variants(raw)
             support_functions = [
-                kernel.support for kernel in variants if callable(kernel.support)
+                kernel.support
+                for kernel in variants
+                if is_user_function(kernel.support)
             ]
             probability_functions = [kernel.probabilities for kernel in variants]
             kernel_branch = target_branch.setdefault(kernel_name, {})
@@ -750,7 +752,7 @@ def _joint_transition_node_names(user_regime: UserRegime) -> frozenset[str]:
 
 
 def _union_callable_params(
-    *, functions: list[UserFunction], non_params: set[str]
+    *, functions: Sequence[UserFunction], non_params: set[str]
 ) -> dict[str, str]:
     """Union signature-derived parameters over one role's phase variants."""
     tree: dict[str, str] = {}
@@ -835,7 +837,7 @@ def _discovered_params(
 
 
 def _annotate_temporal_params(
-    *, params: dict[str, str], functions: list[UserFunction], name: str
+    *, params: dict[str, str], functions: Sequence[UserFunction], name: str
 ) -> dict[str, str]:
     """Expose managed time slots consistently across ordinary and joint roles."""
     temporal = validate_temporal_variants(functions=functions, name=name)
@@ -901,7 +903,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
                 roles: dict[str, UserFunction] = {
                     "probabilities": kernel.probabilities,
                 }
-                if callable(kernel.support):
+                if is_user_function(kernel.support):
                     roles["support"] = kernel.support
                 for role, func in roles.items():
                     consumer_name = (
@@ -1267,7 +1269,7 @@ def _add_pareto_objective_params(
     params = {
         arg: "float"
         for weight in objective.weights.values()
-        if callable(weight)
+        if is_user_function(weight)
         for arg in get_union_of_args([weight])
         if arg not in wired
     }

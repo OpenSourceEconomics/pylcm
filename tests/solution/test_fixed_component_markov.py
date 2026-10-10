@@ -48,6 +48,7 @@ from lcm.typing import (
     IntND,
     ScalarFloat,
     ScalarInt,
+    UserFunction,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -965,7 +966,7 @@ def test_fixed_component_preserves_a_transition_reading_its_next_code(
 ) -> None:
     """A deterministic transition shares the original code of the same draw."""
     grid = DiscreteGrid(_NextOutputCode)
-    functions: dict[str, Callable[..., object]] = {"utility": _next_output_utility}
+    functions: dict[str, UserFunction] = {"utility": _next_output_utility}
     if through_helper:
         functions["landing"] = _next_output_copy
     model = Model(

@@ -35,7 +35,7 @@ created.
 import dataclasses
 import inspect
 from collections import deque
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -817,12 +817,12 @@ def _fail_if_unknown_entry_regimes(
 
 
 # keyword-only-exempt: primary-argument=func
-def _with_signature(
-    func: UserFunction,
+def _with_signature[F: UserFunction](
+    func: F,
     *,
     names: tuple[str, ...],
     sources: tuple[UserFunction, ...],
-) -> UserFunction:
+) -> F:
     """Expose `names` as keyword-only arguments annotated as in `sources`.
 
     The DAG machinery requires one annotation per argument name across a
@@ -912,7 +912,7 @@ class _DeclaredExit:
 
 def _indicator(
     *, selector: UserFunction, code: int | None, names: tuple[str, ...]
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """Probability one where a deterministic selector returns `code`."""
     return _with_signature(
         _Indicator(selector=selector, code=code, names=names),
@@ -946,7 +946,7 @@ class _Indicator:
 
 def _period_masked(
     *, cell: UserFunction, periods: tuple[int, ...], names: tuple[str, ...]
-) -> UserFunction:
+) -> Callable[..., FloatND]:
     """A probability cell that is exactly zero outside `periods`."""
     return _with_signature(
         _PeriodMasked(cell=cell, periods=periods, names=names),
@@ -978,7 +978,7 @@ def _period_dispatch(
     cases: tuple[UserFunction, ...],
     case_names: tuple[tuple[str, ...], ...],
     case_by_period: tuple[int, ...],
-) -> UserFunction:
+) -> Callable[..., FloatND | IntND]:
     """Evaluate the case callable selected for the current period."""
     names = tuple(sorted({name for names in case_names for name in names}))
     return _with_signature(
@@ -1190,7 +1190,7 @@ def _dispatch(
     cases: tuple[UserFunction, ...],
     laws: tuple[PhaseLaw, ...],
     law_by_period: Mapping[int, PhaseLaw],
-) -> UserFunction:
+) -> Callable[..., FloatND | IntND]:
     n_periods = max(law_by_period) + 2
     position = {id(law): index for index, law in enumerate(laws)}
     return _period_dispatch(
@@ -1302,7 +1302,9 @@ def _mapping_union(
     return MappingProxyType(merged)
 
 
-def _masked(*, cell: ProbabilityCell, periods: tuple[int, ...]) -> UserFunction:
+def _masked(
+    *, cell: ProbabilityCell, periods: tuple[int, ...]
+) -> Callable[..., FloatND]:
     # Validation admits `Phased` only around a whole law, never as one target's cell.
     func = (
         cell.func
@@ -1314,7 +1316,7 @@ def _masked(*, cell: ProbabilityCell, periods: tuple[int, ...]) -> UserFunction:
     )
 
 
-def _period_sum(parts: tuple[UserFunction, ...]) -> UserFunction:
+def _period_sum(parts: tuple[UserFunction, ...]) -> Callable[..., FloatND]:
     """Sum of period-masked cells whose periods never overlap."""
     part_names = tuple(_argument_names(part) for part in parts)
     names = tuple(sorted({name for names in part_names for name in names}))

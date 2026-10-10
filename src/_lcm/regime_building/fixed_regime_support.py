@@ -27,6 +27,7 @@ from typing import Literal, cast
 import numpy as np
 import pandas as pd
 from dags.tree import qname_from_tree_path
+from jax import Array
 
 from _lcm.params.edges import EDGES
 from _lcm.params.processing import (
@@ -45,6 +46,7 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
+from _lcm.utils.functools import is_user_function
 from _lcm.utils.namespace import flatten_regime_namespace
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
@@ -269,7 +271,7 @@ def _trim_joint_transitions(
                         for output, func in kernel.outputs.items()
                     ),
                 ]
-                if callable(kernel.support):
+                if is_user_function(kernel.support):
                     roles.append(((target, kernel_name, "support"), kernel.support))
                 for path, func in roles:
                     consumed.update(
@@ -443,6 +445,9 @@ def _evaluate_fixed_function(
         # The ordinary compilation/evaluation route owns errors in a user law.
         # Failed evaluation proves no structural zero.
         return None
+    if not isinstance(value, Array | float | int):
+        # Only a numeric value can prove a structural zero.
+        return None
     return value, frozenset(keys)
 
 
@@ -466,7 +471,7 @@ def _resolve_fixed_argument(
     if isinstance(helper, Phased):
         helper = helper.solve if side == "solve" else helper.simulate
     if helper is not None:
-        if not callable(helper) or arg_name in ancestors:
+        if not is_user_function(helper) or arg_name in ancestors:
             return None
         return _evaluate_fixed_function(
             func=helper,
@@ -613,7 +618,7 @@ def _record_removed_state_keys(
         return
     for target in removed & law.keys():
         cell = law[target]
-        if callable(cell):
+        if is_user_function(cell):
             consumed.update(
                 _get_declared_fixed_keys(
                     func=cell,
@@ -652,7 +657,7 @@ def _get_declared_fixed_keys(
         helper = regime.functions.get(arg_name)
         if isinstance(helper, Phased):
             helper = helper.solve if side == "solve" else helper.simulate
-        if callable(helper) and arg_name not in ancestors:
+        if is_user_function(helper) and arg_name not in ancestors:
             result.update(
                 _get_declared_fixed_keys(
                     func=helper,

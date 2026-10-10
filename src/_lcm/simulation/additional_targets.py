@@ -1,7 +1,7 @@
 """Optional `additional_targets` computation for `SimulationResult.to_dataframe`."""
 
 import inspect
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Literal
 
@@ -346,8 +346,8 @@ def _create_target_function(
     *,
     functions_pool: dict[str, UserFunction],
     targets: list[FunctionName],
-) -> UserFunction:
-    """Create combined function for computing targets."""
+) -> Callable[..., Mapping[FunctionName, FloatND | IntND | BoolND]]:
+    """Create combined function for computing targets, keyed by target name."""
     return concatenate_functions(
         functions=functions_pool,
         targets=targets,

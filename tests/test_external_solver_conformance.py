@@ -86,6 +86,7 @@ from lcm.typing import (
     FloatND,
     ScalarFloat,
     ScalarInt,
+    UserFunction,
 )
 from tests.conformance_solver import (
     COUNTER_KEY,
@@ -384,7 +385,7 @@ def _model(
     wealth_grid: LinSpacedGrid | AgeSpecializedGrid = _WEALTH_GRID,
     carried_state: bool = False,
     action_grid: LinSpacedGrid | DiscreteGrid = _ACTION_GRID,
-    utility: Callable[..., object] = _utility,
+    utility: UserFunction = _utility,
 ) -> Model:
     """Build the same tiny lifecycle around any solver under comparison."""
     return Model(

@@ -12,7 +12,7 @@ solver that silently drops it fails here even when its own tests agree with
 their own oracle.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -20,7 +20,7 @@ import pytest
 
 from lcm import LinSpacedGrid, Model
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import BoolND, ContinuousAction, ContinuousState
+from lcm.typing import BoolND, ContinuousAction, ContinuousState, UserFunction
 from tests.test_models import n_nbegm_toy
 from tests.test_models import nbegm_medicaid_toy as toy
 from tests.test_models.nbegm_common import (
@@ -40,7 +40,7 @@ def nonlinear(*, consumption: ContinuousAction, liquid: ContinuousState) -> Bool
     return jnp.square(consumption) + jnp.square(liquid) <= 400.0
 
 
-def _build(*, variant: str, constraints: Mapping[str, Callable[..., object]]) -> Model:
+def _build(*, variant: str, constraints: Mapping[str, UserFunction]) -> Model:
     """Build the Medicaid one-asset toy under `variant` with a given pool."""
     return toy.build_model(
         variant=variant,

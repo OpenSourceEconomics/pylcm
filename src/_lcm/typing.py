@@ -13,7 +13,6 @@ from dataclasses import Field
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
-    Any,
     ClassVar,
     Literal,
     Protocol,
@@ -466,7 +465,7 @@ class QAndFFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,
+        **kwargs: QAndFArg,
     ) -> tuple[FloatND, BoolND]: ...
 
 
@@ -486,7 +485,7 @@ class MaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,
+        **kwargs: QAndFArg,
     ) -> FloatND | tuple[FloatND, BoolND]: ...
 
 
@@ -497,7 +496,9 @@ class EGMStepFunction(Protocol):
     Consumes the regime's exogenous state grids, the rolling EGM-carry
     mapping, and the regime's flat params; returns the regime's value-function
     array on the exogenous state grid, the carry its parents interpolate, and
-    the published consumption policy simulation interpolates off-grid.
+    the published consumption policy simulation interpolates off-grid. The
+    `_lcm_*` keywords are the static block widths the execution plan tiles the
+    kernel's loops with.
 
     Used for both type checking and beartype runtime checks.
 
@@ -507,7 +508,12 @@ class EGMStepFunction(Protocol):
         self,
         *,
         next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-        **kwargs: Any,
+        _lcm_stochastic_node_width: int | None = None,
+        _lcm_cell_width: int | None = None,
+        _lcm_savings_point_width: int | None = None,
+        _lcm_euler_point_width: int | None = None,
+        _lcm_envelope_cell_width: int = 1,
+        **kwargs: EconFunctionArg,
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]: ...
 
 
@@ -526,7 +532,7 @@ class EGMCarryProducer(Protocol):
         self,
         *,
         V_arr: FloatND,
-        **kwargs: Any,
+        **kwargs: EconFunctionArg,
     ) -> EGMCarry: ...
 
 
@@ -544,7 +550,7 @@ class ArgmaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Any,
+        **kwargs: QAndFArg,
     ) -> tuple[IntND, FloatND]: ...
 
 

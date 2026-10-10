@@ -472,7 +472,7 @@ class _QAndF:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: ParamsLeaf,
+        **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
@@ -709,7 +709,7 @@ class _TerminalQAndF:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
-        **states_actions_params: ParamsLeaf,
+        **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
 
@@ -839,7 +839,7 @@ class _TerminalCollectiveQAndF:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
-        **states_actions_params: ParamsLeaf,
+        **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Stacked per-stakeholder utilities and the shared feasibility mask.
 
@@ -1552,7 +1552,7 @@ class _CollectiveQAndF:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: ParamsLeaf,
+        **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Per-stakeholder state-action values and the shared feasibility mask.
 

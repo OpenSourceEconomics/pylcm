@@ -41,6 +41,7 @@ from _lcm.typing import (
     StateOrActionName,
 )
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
+from _lcm.utils.functools import is_user_function
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
@@ -1265,7 +1266,7 @@ def _collect_indexing_consumers(
         if constraint is None:
             continue
         consumers.extend((name, variant) for variant in _function_variants(constraint))
-    if callable(law.transition):
+    if is_user_function(law.transition):
         consumers.append(("regime_transition", law.transition))
     return consumers
 

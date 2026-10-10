@@ -24,7 +24,7 @@ from _lcm.regime_law import RegimeLaw
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.negm import _BoundNEGM
 from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
-from _lcm.utils.functools import get_union_of_args
+from _lcm.utils.functools import array_result, get_union_of_args
 from _lcm.variables import from_regime, get_grids
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
@@ -182,7 +182,7 @@ class _IdentityResources:
 
 def _concatenate_child_resources(
     *, regime_name: RegimeName, user_regime: UserRegime, law: RegimeLaw
-) -> UserFunction:
+) -> Callable[..., ScalarFloat]:
     """Concatenate a DC-EGM / NEGM target's resources function from its user DAG.
 
     Each user function's params are renamed to target-qualified names
@@ -292,7 +292,7 @@ class _KeeperNoAdjustment:
     def __call__(self, **kwargs: ScalarFloat) -> ScalarFloat:
         if self.no_adjustment_func is None:
             return kwargs[self.durable_state]
-        return self.no_adjustment_func(kwargs[self.durable_state])
+        return array_result(self.no_adjustment_func(kwargs[self.durable_state]))
 
 
 def _annotation_of_arg(

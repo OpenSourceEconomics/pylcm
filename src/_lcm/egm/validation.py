@@ -80,6 +80,7 @@ from _lcm.typing import (
     StateName,
     StateOrActionName,
 )
+from _lcm.utils.functools import array_result
 from lcm.exceptions import GridInitializationError, ModelInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
@@ -1556,7 +1557,7 @@ def _declared_transition_variants(
     if isinstance(value, Phased):
         value = value.solve
     if isinstance(value, StochasticTransition | DeterministicTransition):
-        return [("", cast("UserFunction", value.func))]
+        return [("", value.func)]
     if isinstance(value, Mapping):
         variants: list[tuple[str, UserFunction]] = []
         for target_name, target_value in value.items():
@@ -1644,7 +1645,9 @@ def _call_with_varied(
     every sample variable (e.g. resources independent of the Euler state).
     """
     arg_names = set(inspect.signature(func).parameters)
-    return func(**fixed, **{k: v for k, v in varied.items() if k in arg_names})
+    return array_result(
+        func(**fixed, **{k: v for k, v in varied.items() if k in arg_names})
+    )
 
 
 def _isclose(

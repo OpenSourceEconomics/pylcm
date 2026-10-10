@@ -33,7 +33,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.solution.nbegm import _cliff_savings_targets
 from lcm import DiscreteGrid, LinSpacedGrid, Model
-from lcm.typing import ContinuousState, DiscreteState, FloatND
+from lcm.typing import ContinuousState, DiscreteState, FloatND, UserFunction
 from tests.solution._cliff_pullback_reference import (
     child_cliff_preimages,
     sibling_draw_preimages,
@@ -111,9 +111,7 @@ def kind_invariant_subsidy(
     return jnp.where(gross_income < fpl_cliff, subsidy_high, subsidy_low)
 
 
-def _build_model(
-    *, liquid_law: Callable[..., object], subsidy: Callable[..., object]
-) -> Model:
+def _build_model(*, liquid_law: UserFunction, subsidy: UserFunction) -> Model:
     return make_alive_dead_model(
         n_periods=3,
         n_liquid=31,
@@ -440,7 +438,7 @@ def test_solved_value_reaches_the_child_cliff_supremum(kind: int) -> None:
     ids=["reading_draw", "draw_free"],
 )
 def test_period_kernel_agrees_with_the_child_carry_oracle(
-    liquid_law: Callable[..., object],
+    liquid_law: UserFunction,
 ) -> None:
     """Value, carry and consumption match the oracle on the child period's rows.
 
@@ -475,9 +473,9 @@ def gross_income_rising_with_age(
 
 def _build_deterministic_model(
     *,
-    kind_law: Callable[..., object],
-    subsidy: Callable[..., object],
-    gross_income_func: Callable[..., object] = gross_income,
+    kind_law: UserFunction,
+    subsidy: UserFunction,
+    gross_income_func: UserFunction = gross_income,
 ) -> Model:
     """The two-kind model whose kind moves by a deterministic law."""
     return make_alive_dead_model(
