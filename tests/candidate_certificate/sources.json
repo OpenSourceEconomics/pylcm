@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "2fa974704c802552fb410bbe8e6cb205aa3129e6619dbbfd50c2dbcca458f64f",
+  "source_inventory_sha256": "f650eae3fe3be52b105ce876563a221b60c3d132d5e5486a250d189a3b1733d7",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -78,7 +78,7 @@
     },
     {
       "path": "src/_lcm/execution/workspace_planning.py",
-      "sha256": "438126621214bcc3c8ebe360ac334caabe72333adfaaa5368ae8ee27ffce1026"
+      "sha256": "0213e2fb88838275ff1a06e8e91b1a3f44f74edbf938032133af251f18d9d4f5"
     },
     {
       "path": "src/_lcm/grids/__init__.py",

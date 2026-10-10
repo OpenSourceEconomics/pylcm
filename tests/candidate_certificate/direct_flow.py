@@ -397,7 +397,7 @@ _SOURCE_SEALS = {
     SCHEDULER_SOURCE: "b5eb17b3df8fcaf5ab06ee7abf8703ce2b9ff589d596c0a0ed1d462d7c4f3a52",
     LIVENESS_SOURCE: "056bda4d48f26768ed8615925ce8ff89665bb8eed94b59d69f02701a95943dff",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
-    WORKSPACE_PLANNING_SOURCE: "438126621214bcc3c8ebe360ac334caabe72333adfaaa5368ae8ee27ffce1026",
+    WORKSPACE_PLANNING_SOURCE: "0213e2fb88838275ff1a06e8e91b1a3f44f74edbf938032133af251f18d9d4f5",
     SIMULATION_PROGRAMS_SOURCE: "849b87c55de2a6a03cf65f8db659bb828b8b7bd82d11b1b387058a29aaa43fcc",
     SIMULATION_PROGRAM_TYPES_SOURCE: "cae8d10ac68b6762b4cd75e5cce862b06d96e2b5556b165fdd53f2bd2b03fa7a",
     SIMULATION_RUNTIME_SOURCE: "57b896b0cf23a5c24743fc5819dc3b60e571e0182d74915833450c96e296df35",
@@ -867,9 +867,8 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     WORKSPACE_PLANNING_SOURCE: (
-        "97196cc32277324ea8a115c38d417f8774269005978d1f993ffba302af61f88c",
+        "36ec6809e557b1bbaa12aef1a168d1bb4ee80110bdc220c1cd4ecccffc110736",
         {
-            "_MemoryAnalyzable.memory_analysis": "1ee5fa9485d07f198ddf9c79c9854a2ee39f54168348550fe170b22e85b4d2d0",
             "WorkspacePlan.__post_init__": "d5aac605f11a499bf65418187c83f288a9e6302e341aac6334a697ebf514982e",
             "workspace_width_candidates": "6aa7f1ab2054fabf4f9232447e62b0ee672ef45210639a2be5465873e9326603",
             "plan_workspace": "510107572ee1896d4d68a8861e9812ed048f25e8727bd5ddf7cc5c61e72bbb19",
@@ -893,12 +892,8 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_smallest_admissible_width": "6f80c9145d0d2b9d2d674b0a3ba8fbcde84f3cacad677d099317f4c077117193",
             "_width_mapping": "237667842db07b3505f6c2d66395e802071b8bee98047aa4794956f793826c27",
             "_memory_for_candidate": "95e7e8b701c9098afb3320d6024503baf0d74b30a9ff6acea9a8459274677734",
-            "compiler_peak_bytes": "20c6570dec9b66a87be17f771e7de5b63836bba4b61e37c39c18cdec13153596",
-            "_peak_from_analysis": "3af1b4a2c1876df05da569fb4740efce5e9aa6fedd7a50fa9a73cb1f90d99170",
-            "_peak_from_device_record": "6fa14d073dc10dc98a45782195b0189908e28d0cbcaccd54f93ec2d2473ec9b9",
-            "_peak_field": "72e391afb412378bf838c0deeaec58254b4154be95caa1e315d2925af00d430e",
-            "_normalize_peak_field": "65c191c203059a0d3f363991ebf914244537c2ff11856f497352e848b7b875ac",
-            "_non_negative_bytes": "f1c64d722a6b5a905538af93e0b08e38f352f617ddfb8a749714a19a66d32591",
+            "compiler_peak_bytes": "febd3e7fc76778a4f820fd4e84666459b76ed363df76fbce42395cb911a3161f",
+            "_non_negative_bytes": "664e2f4e254d38d8e75fe8e23c01b4602c8f45ee0deccf2b637d1dcd2f49bdc3",
             "_resident_bytes_for_candidate": "365e0864a5ae864c0594a64c5d6877623f6dfc9a50b5c696b50ffe904ff593c3",
             "CompilerMemoryRecord.__post_init__": "ce6b673f2e4078e9fbd5cb66c194074fbce0b9f1b3555eb403d7d15ec0e77ec8",
             "CompilerMemoryRecord.allocation_bytes": "5555d63d219382decf78853463017ba5df55d7e567714110f64226f7a691ee7e",
@@ -906,10 +901,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "CompilerMemoryReservation.__post_init__": "a9f6a5d3a7afa2a595904bb54fb7f0978eb8d53364294f494ef22d5c58c7ed1e",
             "CompilerMemoryReservation.peak_bytes": "86e8e6c586154b1c40ef2f9938a1a8eb27c6f4911d016eab73d46fedda418bb7",
             "CompilerMemoryReservation.reservation_bytes": "dcaa109c5f2be124f904fbf9f9311650d9443d234f3442b22bcd0347ada332a4",
-            "compiler_memory_reservation": "8dd28b8aa933a259c323de0ff67da2fafdf6a0d171da2799b3ddec8823aed3d1",
-            "_compiler_memory_analysis": "ee282442a288979b0fb5d7c67e1f8e1c4935fb18ec864b8e60ce39db0bfc3c5b",
-            "_allocation_records": "3e752670e61cc39db091d2fc080f6057dbac486cb242d5e2f8481dc81810abfb",
-            "_allocation_record": "6be9392850dee3aa6512326ff98f73e24d5794a685bd4e1b6f1fba873552d224",
+            "compiler_memory_reservation": "eb5b356c338812bc5f6d5c768c224a1b6ac55ded1f431c5da491c75e18db12d9",
+            "_compiler_memory_analysis": "008f829f89cd0492af0af3fc9acbae65fe31ebcbba9a121856bd5ef3e2809bee",
+            "_allocation_record": "0a51e3f104316e4440931bdae51fcf39673297812cca1ac157d852625b2121c5",
             "_fail_if_host_allocations": "83cbc5f652a502ae8cdea81ae129fd8a89aedb4955e3ca4f251636b5931363a6",
         },
     ),
@@ -5147,7 +5141,6 @@ _SIMULATION_ADAPTER_CONTRACTS = _contracts(
             "with_continuation_leaf_reads",
         ),
         WORKSPACE_PLANNING_SOURCE: (
-            "_MemoryAnalyzable.memory_analysis",
             "WorkspacePlan.__post_init__",
             "workspace_width_candidates",
             "plan_workspace",
@@ -5172,10 +5165,6 @@ _SIMULATION_ADAPTER_CONTRACTS = _contracts(
             "_width_mapping",
             "_memory_for_candidate",
             "compiler_peak_bytes",
-            "_peak_from_analysis",
-            "_peak_from_device_record",
-            "_peak_field",
-            "_normalize_peak_field",
             "_non_negative_bytes",
             "_resident_bytes_for_candidate",
             "CompilerMemoryRecord.__post_init__",
@@ -5186,7 +5175,6 @@ _SIMULATION_ADAPTER_CONTRACTS = _contracts(
             "CompilerMemoryReservation.reservation_bytes",
             "compiler_memory_reservation",
             "_compiler_memory_analysis",
-            "_allocation_records",
             "_allocation_record",
             "_fail_if_host_allocations",
         ),
@@ -9029,19 +9017,19 @@ _ALLOCATION_RESERVATION_MUTATIONS = {
         "max(self.argument_bytes, self.output_bytes)",
         1,
     ),
-    "allocation_reservation:missing_mapping_counter_zeroed": (
+    "allocation_reservation:non_record_report_accepted": (
         WORKSPACE_PLANNING_SOURCE,
-        "_allocation_record",
+        "_compiler_memory_analysis",
         "expression",
-        "record.get(name, _MISSING)",
-        "record.get(name, 0)",
+        "not isinstance(report, CompilerMemoryReport)",
+        "False",
         1,
     ),
     "allocation_reservation:missing_attribute_counter_zeroed": (
         WORKSPACE_PLANNING_SOURCE,
         "_allocation_record",
         "expression",
-        "getattr(record, name, _MISSING)",
+        "getattr(record, name)",
         "getattr(record, name, 0)",
         1,
     ),
@@ -9129,7 +9117,7 @@ _ALLOCATION_RESERVATION_MUTATIONS = {
 
 EXPECTED_ALLOCATION_RESERVATION_MUTATION_COUNT = 14
 EXPECTED_ALLOCATION_RESERVATION_MUTATION_NAMES_SHA256 = (
-    "9a89ae87e2e3dc1d57111e141657e92fe29b90c3594f3afdffc39fb7c572171c"
+    "e2c9b6ce3ec5e2abd7e258aa9fcbe24deff0f3dfa1c46ce940f2c7f25f0ded03"
 )
 
 
