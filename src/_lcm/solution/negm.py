@@ -84,6 +84,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
+    ParamsLeaf,
     PytreeValue,
     QualifiedName,
     RegimeName,
@@ -772,7 +773,7 @@ class _NEGMPeriodKernel:
     carry_row_state_names: tuple[StateName, ...]
     """The discrete then passive state names leading every carry row."""
 
-    fixed_sweep_kwargs: Mapping[str, object] = MappingProxyType({})
+    fixed_sweep_kwargs: Mapping[QualifiedName, ParamsLeaf] = MappingProxyType({})
     """The regime's and its targets' fixed params, bound into the sweep."""
 
     _core_programs: Mapping[str, CoreProgram] = field(
@@ -906,7 +907,7 @@ class _NEGMPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -951,8 +952,12 @@ class _NEGMPeriodKernel:
                 )
             )
         )
-        V_arr, carry = compiled_cores["outer_sweep"](
-            **arguments, **{_KEEPER_VALUE: keeper_value, _KEEPER_CARRY: keeper_carry}
+        V_arr, carry = cast(
+            "tuple[FloatND, EGMCarry]",
+            compiled_cores["outer_sweep"](
+                **arguments,
+                **{_KEEPER_VALUE: keeper_value, _KEEPER_CARRY: keeper_carry},
+            ),
         )
         return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
 
@@ -1210,7 +1215,7 @@ def _build_coh_shift_function(
 
 
 def _zero_coh_shifts(
-    *, durable_values: FloatND, outer_values: FloatND, **params: object
+    *, durable_values: FloatND, outer_values: FloatND, **params: ParamsLeaf
 ) -> FloatND:
     """Return the identically zero cash-on-hand shift matrix.
 
@@ -1252,7 +1257,7 @@ class _CreditedCoHShifts:
     """The keeper's no-adjustment map, or `None` for the identity."""
 
     def __call__(
-        self, *, durable_values: FloatND, outer_values: FloatND, **params: object
+        self, *, durable_values: FloatND, outer_values: FloatND, **params: ParamsLeaf
     ) -> FloatND:
         """Return the shift matrix of shape `(n_durable, n_outer)`."""
         _fail_if_the_outer_cost_reads_beyond_one_cell(
@@ -1327,7 +1332,7 @@ class _OuterCostAtCell:
     outer_post_decision: FunctionName
     """Name the cost DAG reads the outer post-decision under."""
 
-    params: Mapping[str, object]
+    params: Mapping[QualifiedName, ParamsLeaf]
     """Immutable mapping of the regime's flat params bound into the cost."""
 
     def __call__(self, *, durable: FloatND, outer: FloatND) -> FloatND:

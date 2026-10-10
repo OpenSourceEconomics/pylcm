@@ -13,7 +13,7 @@ import logging
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -28,6 +28,7 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree
+from _lcm.egm.one_asset_egm_step import RetiredEGMResult
 from _lcm.egm.preferences import Preferences
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
@@ -73,7 +74,9 @@ from _lcm.typing import (
     EconFunctionKwargs,
     EconFunctionsMapping,
     FlatParams,
+    ParamsLeaf,
     PytreeValue,
+    QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
     ShapeDtypePytree,
@@ -98,6 +101,10 @@ from lcm.typing import (
     StateName,
     ValueND,
 )
+
+# A jit-able one-row core: the value array and the marginal-value carry on the
+# liquid grid.
+type OneRowCore = Callable[..., tuple[FloatND, EGMCarry]]
 
 
 @beartype(conf=REGIME_CONF)
@@ -529,7 +536,7 @@ class EGM(OneMarginSolver):
             | frozenset(context.state_action_space.discrete_actions)
         )
         period_to_target = period_to_continuation_target(context=context)
-        cores: dict[Hashable, Callable] = {}
+        cores: dict[Hashable, OneRowCore] = {}
         laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         period_group_keys: dict[int, Hashable] = {}
@@ -690,7 +697,7 @@ def _with_declared_carry_reads(
 
 def _build_egm_period_kernel(
     *,
-    core: Callable,
+    core: OneRowCore,
     declared_law: Callable[..., tuple[Float1D, Float1D]],
     compute_regime_transition_probs: RegimeTransitionFunction | None,
     savings_grid: Float1D,
@@ -790,7 +797,7 @@ class _EGMArgumentBuilder:
     compute_regime_transition_probs: RegimeTransitionFunction | None
     """The regime's transition probabilities, possibly periodized by age."""
 
-    bound_params: Mapping[str, object] = MappingProxyType({})
+    bound_params: Mapping[QualifiedName, ParamsLeaf] = MappingProxyType({})
     """Fixed params bound into the core, kept so the law can read them too."""
 
     def __call__(
@@ -1054,7 +1061,7 @@ class _EGMPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1075,7 +1082,9 @@ class _EGMPeriodKernel:
                 ages=ages,
             )
         )
-        V_arr, carry = compiled_cores["main"](**arguments)
+        V_arr, carry = cast(
+            "tuple[FloatND, EGMCarry]", compiled_cores["main"](**arguments)
+        )
         return KernelOutput(
             value=V_arr,
             continuations={EGM_CONTINUATION: carry},
@@ -1088,7 +1097,7 @@ def _one_sided_boundary_savings_targets(
     next_liquid: Float1D,
     breakpoints: Float1D,
     declared_law: Callable[..., tuple[Float1D, Float1D]],
-    law_params: Mapping[str, object],
+    law_params: EconFunctionKwargs,
 ) -> Float1D:
     """Map child boundaries to exact and adjacent savings candidates."""
     finite = jnp.isfinite(breakpoints)
@@ -1130,7 +1139,7 @@ def _build_egm_core(
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
     consumption_action: ActionName,
-) -> Callable:
+) -> _EGMCore:
     """Build the jit-able 1-D EGM core for the savings grid.
 
     The core reads the state grid under the private role keyword `liquid`, the
@@ -1176,7 +1185,7 @@ def _build_egm_core(
 class _EGMCore:
     """The jit-able 1-D EGM core bound to one regime's preferences and discounting."""
 
-    egm_one_asset_step: Callable[..., Any]
+    egm_one_asset_step: Callable[..., RetiredEGMResult]
     """The one-asset EGM step the core runs."""
     build_preferences: Callable[[EconFunctionKwargs], Preferences]
     """Build the felicity trio from the regime's scalar params."""
@@ -1218,7 +1227,7 @@ class _EGMCore:
         return step.value, carry
 
 
-def guard_regime_mass(*, core: Callable, enable_jit: bool) -> Callable:
+def guard_regime_mass(*, core: OneRowCore, enable_jit: bool) -> OneRowCore:
     """Wrap a one-row core in the lost-mass guard, compiled when JIT is enabled."""
     guarded = _RegimeMassGuardedCore(core=core)
     return jax.jit(guarded) if enable_jit else guarded
@@ -1235,11 +1244,11 @@ class _RegimeMassGuardedCore:
     NB-EGM continuations do. The arithmetic states it, so no log level skips it.
     """
 
-    core: Callable[..., tuple[FloatND, EGMCarry]]
+    core: OneRowCore
     """The one-row core whose output the guard poisons."""
 
     def __call__(
-        self, *, retains_regime_mass: BoolND, **kwargs: object
+        self, *, retains_regime_mass: BoolND, **kwargs: EconFunctionArg
     ) -> tuple[FloatND, EGMCarry]:
         """Run the core and poison its value and carry channels on lost mass."""
         value, carry = self.core(**kwargs)

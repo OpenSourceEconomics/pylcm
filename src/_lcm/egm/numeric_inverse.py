@@ -38,12 +38,11 @@ still unbracketed after expansion fails loudly with NaN; a root below the positi
 import functools
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import ScalarFloat
+from lcm.typing import LoopIndex, ScalarFloat
 
 _NEWTON_ITERATIONS = 30
 _BRACKET_EXPANSIONS = 32
@@ -187,7 +186,7 @@ def numeric_inverse_marginal_utility(
 
 # keyword-only-exempt: library-callback=jax.lax.fori_loop
 def _expand_upper_bracket(
-    _index: Any,  # the loop index follows the x64 policy
+    _index: LoopIndex,
     state: tuple[ScalarFloat, ScalarFloat],
     *,
     marginal_continuation: ScalarFloat,
