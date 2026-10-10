@@ -10,7 +10,8 @@ import numpy as np
 
 from _lcm.engine import Regime
 from _lcm.execution.core_program import ProgramScope, core_program_graph
-from _lcm.params.edges import flat_namespaces
+from _lcm.grids import DiscreteGrid
+from _lcm.params.edges import flat_namespaces, regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -34,6 +35,9 @@ from lcm.solver_api import (
     ArtifactChannel,
     ArtifactKey,
     ArtifactRef,
+    AxisDescriptor,
+    AxisRole,
+    CategoryDomain,
     OmissionReason,
     PersistencePolicy,
     ResultRetention,
@@ -103,6 +107,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     model_fingerprint: str,
     durable_identity: bool = True,
     authority: SolutionAuthority,
+    flat_params: FlatParams,
     component_values: RetainedComponentValues | None = None,
 ) -> SolutionResult:
     """Label existing engine outputs without changing their numerical meaning.
@@ -317,6 +322,27 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                         shape=authority.values[(period, regime_name)].shape,
                         dtype=authority.values[(period, regime_name)].dtype,
                         axis_names=(authority.values[(period, regime_name)].axis_names),
+                        named_axes=_value_axes(
+                            regime=regimes[regime_name],
+                            period=period,
+                            axis_names=authority.values[
+                                (period, regime_name)
+                            ].axis_names,
+                            flat_params=flat_params,
+                        ),
+                        categorical_domains={
+                            name: CategoryDomain(
+                                labels=grid.categories,
+                                codes=grid.codes,
+                                ordered=grid.ordered,
+                            )
+                            for name, grid in regimes[
+                                regime_name
+                            ].solution.grids.items()
+                            if isinstance(grid, DiscreteGrid)
+                            and name
+                            in authority.values[(period, regime_name)].axis_names
+                        },
                     )
                     for period, regime_name in value_coordinates
                 }
@@ -435,6 +461,36 @@ def _canonical_value_axis_names(*, regime: Regime) -> tuple[str, ...]:
     return (
         (*state_axes, "stakeholder") if regime.stakeholders is not None else state_axes
     )
+
+
+def _value_axes(
+    *, regime: Regime, period: int, axis_names: tuple[str, ...], flat_params: FlatParams
+) -> tuple[AxisDescriptor, ...]:
+    """Snapshot the solve's resolved nodes without retaining device buffers."""
+    states = regime.solution.state_action_space(
+        regime_params=regime_kernel_params(flat_params, regime_name=regime.name)
+    ).states
+    period_axes = regime.solution.period_state_axes
+    if period_axes is not None:
+        states = {**states, **period_axes.get(period, {})}
+    axes = []
+    for index, name in enumerate(axis_names):
+        stakeholder = regime.stakeholders is not None and index == len(axis_names) - 1
+        if stakeholder:
+            if regime.stakeholders is None:
+                raise ValueError("A stakeholder value axis requires stakeholder names.")
+            coordinates = regime.stakeholders
+        else:
+            coordinates = tuple(np.asarray(states[name]).tolist())
+        axes.append(
+            AxisDescriptor(
+                name=name,
+                length=len(coordinates),
+                role=AxisRole.STAKEHOLDER if stakeholder else AxisRole.STATE,
+                coordinates=coordinates,
+            )
+        )
+    return tuple(axes)
 
 
 def _graph_publishes_replay(*, regime: Regime, period: int) -> bool:

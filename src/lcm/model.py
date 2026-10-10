@@ -1867,6 +1867,7 @@ class Model:
                 durable_identity=self.durable_identity,
                 authority=authority,
                 component_values=component_values,
+                flat_params=flat_params,
             )
 
     def _component_schedule(
