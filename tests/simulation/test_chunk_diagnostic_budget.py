@@ -342,7 +342,7 @@ def test_host_nan_report_keeps_exception_payload_and_enrichment_order(
             regime_name="alive",
             partial_solution=payload,
             entered_process_names=("z", "a"),
-            compute_intermediates=lambda: None,
+            compute_intermediates=dict,
             state_action_space=simulation.StateActionSpace(
                 states=MappingProxyType({}),
                 discrete_actions=MappingProxyType({}),

@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.regime_building.gated_edges import D_KEY_SUFFIX
 from _lcm.simulation import gated_routing
 from _lcm.simulation.period_inputs import (
@@ -226,7 +227,7 @@ def test_selected_external_reader_omits_unused_legacy_policy_occurrences(
         period=0,
         values=values,
         flags=flags,
-        policy={"legacy": jnp.array([1.0, 2.0])},
+        policy=NBEGMGridPolicy(action=jnp.array([1.0, 2.0]), state_names=("wage",)),
         reader=reader if external else None,
     )
     policy_reads = [
@@ -242,5 +243,5 @@ def test_selected_external_reader_omits_unused_legacy_policy_occurrences(
     else:
         assert len(policy_reads) == 1
         assert policy_reads[0].source.argument == "payload"
-        assert policy_reads[0].source.path == ("legacy",)
+        assert policy_reads[0].source.path == (0,)
         assert score_reads

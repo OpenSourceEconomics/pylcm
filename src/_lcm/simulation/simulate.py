@@ -70,6 +70,7 @@ from _lcm.simulation.diagnostic_operations import (
     profiled_transition_counts,
 )
 from _lcm.simulation.gated_routing import (
+    GatedRouteDelta,
     commit_gated_route_delta,
     gated_route_candidates,
 )
@@ -885,18 +886,15 @@ def _simulate_subject_chunk(
         original_age = chunk_operations.period_age(
             values=ages.values, period=period, memory=memory
         )
-        age = cast(
-            "ScalarInt | ScalarFloat",
-            place_simulation_arguments(
-                arguments={"age": original_age},
-                subject_arg_names=(),
-                value_reads=(),
-                devices=devices,
-                budget_bytes=None if memory is None else memory.budget_bytes,
-                live_footprint=None if memory is None else memory.budget_snapshot(),
-                budget_devices=() if memory is None else memory.devices,
-            )["age"],
-        )
+        age = place_simulation_arguments(
+            arguments={"age": original_age},
+            subject_arg_names=(),
+            value_reads=(),
+            devices=devices,
+            budget_bytes=None if memory is None else memory.budget_bytes,
+            live_footprint=None if memory is None else memory.budget_snapshot(),
+            budget_devices=() if memory is None else memory.devices,
+        )["age"]
         if memory is not None:
             memory.hold(tree=age)
 
@@ -1319,7 +1317,7 @@ def _read_external_replay(
     regime: Regime,
     period: int,
     age: ScalarInt | ScalarFloat,
-    states: Mapping[StateName, object],
+    states: Mapping[StateName, FloatND | IntND],
     state_action_space: StateActionSpace,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     flat_params: FlatRegimeParams,
@@ -1989,7 +1987,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 flags=period_to_regime_to_dissolution_flags,
             )
             route_delta, new_subject_regime_ids, new_own_stakeholder = cast(
-                "tuple[Mapping[str, Mapping[str, object]], Int1D, Int1D]",
+                "tuple[Mapping[RegimeName, GatedRouteDelta], Int1D, Int1D]",
                 execute_simulation_program(
                     programs=regime.simulation.programs,
                     family="gate_route",
@@ -2040,7 +2038,7 @@ def _execute_finite_replay(
     referenced_value_kwargs: QAndFKwargs,
     logger: logging.Logger,
     memory: SimulationMemory | None = None,
-) -> tuple[MappingProxyType, FloatND, BoolND]:
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Run declared reconstruction, its host diagnostic, and canonical ranking."""
     payload = ReplayPayload.from_policy(sim_policy)
     bank = execute_simulation_program(
@@ -2072,7 +2070,7 @@ def _execute_finite_replay(
                 period=period,
             )
     return cast(
-        "tuple[MappingProxyType, FloatND, BoolND]",
+        "tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]",
         execute_simulation_program(
             programs=regime.simulation.programs,
             family="policy_rank",

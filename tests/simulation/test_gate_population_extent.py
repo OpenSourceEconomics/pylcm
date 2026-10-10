@@ -32,6 +32,7 @@ def test_stateless_gate_keeps_population_extent(*, n, width):
     call = population_call(func=scalar_gate, axis_size=n, subject_width=width)
     for threshold, expected in [(1.0, True), (-1.0, False)]:
         out = call({}, {"threshold": jnp.asarray(threshold)})
+        assert isinstance(out, jax.Array)
         assert out.shape == (n,)
         np.testing.assert_array_equal(np.asarray(out), np.full(n, expected))
     assert call is population_call(func=scalar_gate, axis_size=n, subject_width=width)

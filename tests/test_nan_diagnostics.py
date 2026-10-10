@@ -1,6 +1,7 @@
 """Tests for lazy NaN diagnostic enrichment in validate_V."""
 
 from types import MappingProxyType
+from typing import NoReturn
 
 import jax.numpy as jnp
 import pytest
@@ -264,7 +265,7 @@ def test_diagnostic_failure_preserves_original_error():
     """If diagnostics crash, the original InvalidValueFunctionError survives."""
     sas = _make_state_action_space()
 
-    def broken_compute_intermediates(**kwargs: jnp.ndarray) -> None:  # noqa: ARG001
+    def broken_compute_intermediates(**kwargs: jnp.ndarray) -> NoReturn:  # noqa: ARG001
         msg = "intentional diagnostic failure"
         raise RuntimeError(msg)
 

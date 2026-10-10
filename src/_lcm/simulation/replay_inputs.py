@@ -15,6 +15,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.value_reads import PeriodSimulationReads
+from _lcm.typing import PytreeChild
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.solver_api import (
     ArtifactKey,
@@ -24,6 +25,17 @@ from lcm.solver_api import (
     SimulationBuildContext,
 )
 from lcm.typing import RegimeName
+
+# One step of a JAX key path into a replay payload.
+type _PathStep = (
+    jax.tree_util.GetAttrKey
+    | jax.tree_util.DictKey
+    | jax.tree_util.SequenceKey
+    | jax.tree_util.FlattenedIndexKey
+)
+
+# The JAX key path from a replay payload's root to one of its leaves.
+type _PayloadPath = tuple[_PathStep, ...]
 
 
 def replay_payload_reads(
@@ -54,7 +66,7 @@ def place_replay_payload[T](
     """Acquire the declared payload leaves and preserve its exact pytree shape."""
 
     # keyword-only-exempt: library-callback=jax.tree_util.tree_map_with_path
-    def place(path: tuple, leaf: object) -> object:
+    def place(path: _PayloadPath, leaf: PytreeChild) -> PytreeChild:
         if not isinstance(leaf, jax.Array | np.ndarray):
             return leaf
         return owner.read(
@@ -69,7 +81,12 @@ def place_replay_payload[T](
 
 
 def _payload_read(
-    *, key: ArtifactKey, period: int, regime: RegimeName, core: str, path: tuple
+    *,
+    key: ArtifactKey,
+    period: int,
+    regime: RegimeName,
+    core: str,
+    path: _PayloadPath,
 ) -> ValueRead:
     """Build the same leaf address for declaration and acquisition."""
     return ValueRead(
@@ -91,7 +108,7 @@ def _payload_read(
     )
 
 
-def _consumer_step(step: object) -> str | int:
+def _consumer_step(step: _PathStep) -> str | int:
     """Use the public container selector represented by a JAX path step."""
     if isinstance(step, jax.tree_util.GetAttrKey):
         return step.name
