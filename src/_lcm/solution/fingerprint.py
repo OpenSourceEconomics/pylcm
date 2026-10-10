@@ -17,7 +17,7 @@ from collections.abc import Callable, Iterable, Mapping
 from enum import Enum, auto
 from fractions import Fraction
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeIs, cast
 
 import dags.exceptions as dags_exceptions
 import jax
@@ -89,6 +89,14 @@ _BEARTYPE_CLAW_STATE = vars(certainty_equivalent_declarations).get(
 _INSPECT_SIGNATURE_FUNCTION = inspect.signature
 _INSPECT_SIGNATURE_CODE = inspect.signature.__code__
 _DATACLASSES_MISSING = dataclasses.MISSING
+# A value the hasher walks: what a hashed callable's globals, closure cells,
+# defaults, fields and instance state hold, or what a pylcm module binds.
+type _Reachable = object  # noqa: PAN001 - user code and pylcm's modules may bind any object, and the hasher must classify each one
+# What a callable the hasher inspects would return. The hasher reads a callable's
+# signature, code and state and never calls it.
+type _CallResult = object  # noqa: PAN001 - an uncalled callable's result is never consumed, so any result type is admitted
+# A function annotation as Python evaluates it.
+type _Annotation = object  # noqa: PAN001 - an annotation may be any expression's value, and `Annotated` metadata any object
 _DATACLASSES_FIELD_MARKERS: tuple[tuple[str, object], ...] = tuple(  # noqa: PAN001 - the stdlib's dataclass field markers have no public type
     (name, vars(dataclasses)[name])
     for name in ("_FIELD", "_FIELD_CLASSVAR", "_FIELD_INITVAR")
@@ -301,6 +309,7 @@ _NUMPY_PUBLIC_TYPE_OBJECTS = tuple(
 
 if TYPE_CHECKING:
     from _lcm.regime_building.collective import ParetoWeights
+    from _lcm.solution.contract import Solver
     from _lcm.typing import (
         ConstraintFunctionsMapping,
         EconFunctionsMapping,
@@ -335,6 +344,7 @@ if TYPE_CHECKING:
         | None,
         ...,
     ]
+    type _SolverInstance = Solver
 else:
     # Runtime structural tests and extension boundaries reach the function's own
     # conservative attribute inspection instead of decorator nominal checking.
@@ -344,6 +354,9 @@ else:
     type _UserRegime = object
     type _FingerprintLaws = object
     type _CallableDeclarations = object
+    # The solver contract imports this module through the engine, so `Solver` is
+    # importable only once a value is classified, and the claw checks no solver.
+    type _SolverInstance = object
 
 
 type SolutionParamProjection = MappingProxyType[RegimeName, frozenset[str]]
@@ -504,7 +517,7 @@ def _nested_callable_parameter_names(value: _CallableDeclarations) -> frozenset[
 
 def _walk_parameter_usage(  # noqa: PLR0911
     *,
-    current: object,  # noqa: PAN001 - walks arbitrary objects reachable from user functions
+    current: _Reachable,
     seen: set[int],
 ) -> tuple[frozenset[str], bool]:
     """Collect parameter usage below one object; `seen` guards against cycles."""
@@ -559,7 +572,7 @@ def _nested_callable_parameter_usage(
 
 
 def _callable_parameter_usage(
-    value: Callable[..., object],  # noqa: PAN001 - reads the signature of any callable reachable from user functions
+    value: Callable[..., _CallResult],
 ) -> tuple[frozenset[str], bool]:
     """Return explicit parameters and whether arbitrary keywords may be read."""
     try:
@@ -689,11 +702,11 @@ class SealedBinding:
     """Qualified name of the function that reads the binding."""
     name: str
     """The name as the function's code reads it."""
-    namespace: dict[str, object] | None  # noqa: PAN001 - a function's globals bind names to arbitrary objects
+    namespace: dict[str, _Reachable] | None
     """The globals mapping holding the binding, for a global reference."""
     cell: types.CellType | None
     """The closure cell holding the binding, for a free variable."""
-    value: object  # noqa: PAN001 - a sealed name may be bound to any object
+    value: _Reachable
     """The object the name was bound to when the model was built."""
 
     def has_moved(self) -> bool:
@@ -704,7 +717,7 @@ class SealedBinding:
             except ValueError:
                 return True
             return current is not self.value
-        namespace = cast("dict[str, object]", self.namespace)  # noqa: PAN001 - a function's globals bind names to arbitrary objects
+        namespace = cast("dict[str, _Reachable]", self.namespace)
         return namespace.get(self.name, _MISSING) is not self.value
 
 
@@ -831,7 +844,7 @@ def _project_user_regime_declaration(
     regime: _UserRegime,
     *,
     law: RegimeLaw,
-) -> MappingProxyType[str, object]:  # noqa: PAN001 - a user regime declaration's fields hold arbitrary objects
+) -> MappingProxyType[str, str | MappingProxyType[str, _Reachable]]:
     """Return the semantic dataclass fields without importing declaration topology.
 
     The regime's law joins its fields as `transition` and `gated_edges`, read as
@@ -880,7 +893,7 @@ def _project_user_regime_declaration(
     )
 
 
-def _project_transition_slot_to_solve(value: object) -> object:  # noqa: PAN001 - a declared transition slot holds whatever the user declared
+def _project_transition_slot_to_solve(value: _Reachable) -> _Reachable:
     """Keep only the solve member of a `Phased` transition declaration.
 
     `Phased` is outermost-only in a transition slot: the slot value itself, or
@@ -898,7 +911,7 @@ def _project_transition_slot_to_solve(value: object) -> object:  # noqa: PAN001 
     return value
 
 
-def _semantic_fingerprint(value: object) -> str:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+def _semantic_fingerprint(value: _Reachable) -> str:
     """Return a durable digest for one nested semantic value.
 
     This private entry point also keeps the collision-focused tests small: they
@@ -926,8 +939,8 @@ class _SemanticHasher:
         *,
         owner: types.FunctionType,
         name: str,
-        value: object,  # noqa: PAN001 - a sealed name may be bound to any object
-        namespace: dict[str, object] | None = None,  # noqa: PAN001 - a function's globals bind names to arbitrary objects
+        value: _Reachable,
+        namespace: dict[str, _Reachable] | None = None,
         cell: types.CellType | None = None,
     ) -> None:
         """Report one read binding to the recorder, when one listens."""
@@ -948,7 +961,9 @@ class _SemanticHasher:
             self._digest.update(len(part).to_bytes(8, byteorder="big"))
             self._digest.update(part)
 
-    def visit(self, *, value: object, _ignore_beartype_guards: bool = False) -> None:  # noqa: C901, PLR0911, PLR0912, PLR0915, PAN001 - hashes arbitrary objects reachable from user functions
+    def visit(  # noqa: C901, PLR0911, PLR0912, PLR0915
+        self, *, value: _Reachable, _ignore_beartype_guards: bool = False
+    ) -> None:
         if value is Ellipsis:
             self.frame(label="ellipsis")
             return
@@ -1236,7 +1251,7 @@ class _SemanticHasher:
         self.visit(value=code.co_names)
         self.frame(label="code-end")
 
-    def _visit_type(self, value: type) -> None:  # noqa: PAN006 - hashes arbitrary classes reachable from user functions
+    def _visit_type(self, value: type[_Reachable]) -> None:
         self.frame(
             label="type-start",
             payload=f"{value.__module__}.{value.__qualname__}".encode(),
@@ -1253,7 +1268,7 @@ class _SemanticHasher:
                 self.visit(value=getattr(value, declaration.name))
         self.frame(label="type-end")
 
-    def _visit_native_numeric_callable(self, value: object) -> bool:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    def _visit_native_numeric_callable(self, value: _Reachable) -> bool:
         """Hash supported native numerical callables without opaque object trust."""
         kind = _native_numeric_callable_kind(value)
         if kind is None:
@@ -1262,7 +1277,7 @@ class _SemanticHasher:
         self.frame(label="native-numeric-callable-start", payload=kind.encode())
         self.visit(value=_native_numeric_versions())
         if kind == "jax-custom-jvp":
-            self._visit_custom_jvp(value)
+            self._visit_custom_jvp(cast("jax.custom_jvp[_CallResult]", value))
         elif kind == "jax-function":
             function = cast("types.FunctionType", value)
             self.frame(label="canonical-jax-function")
@@ -1320,7 +1335,7 @@ class _SemanticHasher:
         self.frame(label="native-numeric-callable-end")
         return True
 
-    def _visit_numpy_array_function(self, value: object) -> None:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    def _visit_numpy_array_function(self, value: _Reachable) -> None:
         """Seal a captured dispatcher without admitting mutable opaque state."""
         state = vars(value)
         metadata_fields = {
@@ -1351,7 +1366,7 @@ class _SemanticHasher:
                 self._visit_native_python_function_seal(implementation)
                 return
 
-    def _visit_custom_jvp(self, value: object) -> None:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    def _visit_custom_jvp(self, value: jax.custom_jvp[_CallResult]) -> None:
         """Hash an exact JAX custom-JVP wrapper through its semantic callables."""
         identity = id(value)
         if identity in self._active:
@@ -1412,7 +1427,7 @@ class _SemanticHasher:
         self.visit(value=function.__kwdefaults__)
         self.frame(label="native-python-function-end")
 
-    def _visit_native_numeric_type(self, value: type) -> None:  # noqa: PAN006 - NumPy and JAX scalar constructors share no public base class
+    def _visit_native_numeric_type(self, value: type[_Reachable]) -> None:
         """Hash a genuine NumPy/JAX scalar constructor by dtype and runtime seal."""
         self.frame(
             label="native-numeric-type-start",
@@ -1424,7 +1439,7 @@ class _SemanticHasher:
 
     def _visit_signature(
         self,
-        function: Callable[..., object],  # noqa: PAN001 - reads the signature of any callable reachable from user functions
+        function: Callable[..., _CallResult],
     ) -> None:
         try:
             signature = inspect.signature(function)
@@ -1446,7 +1461,7 @@ class _SemanticHasher:
 
     def _visit_annotation(  # noqa: C901, PLR0911, PLR0912
         self,
-        annotation: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+        annotation: _Annotation,
     ) -> None:
         """Hash type metadata without treating an annotation as executable input."""
         if annotation is inspect.Signature.empty:
@@ -1519,7 +1534,7 @@ class _SemanticHasher:
 
     def _visit_function_annotations(
         self,
-        annotations: Mapping[str, object],  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+        annotations: Mapping[str, _Annotation],
     ) -> None:
         """Hash a function's raw annotation mapping via metadata-only traversal."""
         self.frame(label="function-annotations-start")
@@ -1655,7 +1670,7 @@ class _SemanticHasher:
             raise TypeError(msg)
 
     @staticmethod
-    def _validate_partial_arguments(value: functools.partial[object]) -> None:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    def _validate_partial_arguments(value: functools.partial[_CallResult]) -> None:
         """Fail closed when a partial binds an argument with unsealed semantics."""
         for index, argument in enumerate(value.args):
             if not _is_closed_terminal_reference(value=argument):
@@ -1673,7 +1688,7 @@ class _SemanticHasher:
     def _visit_object_reference(
         self,
         *,
-        value: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+        value: _Reachable,
         attribute_paths: frozenset[tuple[str, ...]],
     ) -> None:
         """Hash only the class/object attributes that bytecode actually reads."""
@@ -1702,13 +1717,13 @@ class _SemanticHasher:
                 self._visit_terminal_reference(current)
         self.frame(label="object-reference-end")
 
-    def _visit_direct_global_reference(self, value: object) -> None:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    def _visit_direct_global_reference(self, value: _Reachable) -> None:
         """Hash a direct global value only when its complete semantics are closed."""
         self._visit_terminal_reference(value)
 
     def _visit_terminal_reference(
         self,
-        value: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+        value: _Reachable,
     ) -> None:
         """Hash one consumed reference or reject mutable protocol dispatch."""
         if inspect.ismethod(value):
@@ -1791,10 +1806,10 @@ class _SemanticHasher:
     def _resolve_referenced_attribute(
         self,
         *,
-        value: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+        value: _Reachable,
         attribute: str,
         path: tuple[str, ...],
-    ) -> object:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    ) -> _Reachable:
         """Resolve a statically inspectable attribute without executing user code."""
         _validate_static_attribute_access(value=value, path=path)
         try:
@@ -1831,7 +1846,7 @@ class _SemanticHasher:
                 )
                 raise TypeError(msg)
             self.frame(label="module-attribute-path", payload=".".join(path).encode())
-            current: object = module  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+            current: _Reachable = module
             for attribute in path:
                 if isinstance(current, types.ModuleType):
                     _validate_static_attribute_access(value=current, path=path)
@@ -1882,7 +1897,7 @@ class _SemanticHasher:
 
     def _visit_callable_object(
         self,
-        value: Callable[..., object],  # noqa: PAN001 - reads the signature of any callable reachable from user functions
+        value: Callable[..., _CallResult],
     ) -> None:
         self.frame(
             label="callable-object-start",
@@ -1914,7 +1929,7 @@ class _SemanticHasher:
 
     @staticmethod
     def _raise_uninspectable_callable(
-        value: Callable[..., object],  # noqa: PAN001 - reads the signature of any callable reachable from user functions
+        value: Callable[..., _CallResult],
     ) -> None:
         callable_type = f"{type(value).__module__}.{type(value).__qualname__}"
         msg = (
@@ -1923,7 +1938,7 @@ class _SemanticHasher:
         )
         raise TypeError(msg)
 
-    def _visit_solver(self, value: object) -> None:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    def _visit_solver(self, value: _SolverInstance) -> None:
         """Hash a Solver's public compatibility identity and instance state.
 
         A stateless solver's class implementation and class attributes are covered by
@@ -1952,7 +1967,7 @@ class _SemanticHasher:
             self._visit_named_state(state=_slot_state(value))
         self.frame(label="solver-end")
 
-    def _visit_certainty_equivalent(self, value: object) -> bool:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    def _visit_certainty_equivalent(self, value: _Reachable) -> bool:
         """Hash a CE extension through state and its three protocol operations."""
         if not isinstance(value, CertaintyEquivalent):
             return False
@@ -2008,7 +2023,7 @@ class _SemanticHasher:
     def _visit_named_state(
         self,
         *,
-        state: Mapping[str, object],  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+        state: Mapping[str, _Reachable],
     ) -> None:
         entries = state
         self.frame(label="state-start", payload=str(len(entries)).encode())
@@ -2066,7 +2081,7 @@ def _capture_shipped_beartype_wrappers() -> tuple[  # noqa: C901, PLR0912
         for name, module in tuple(sys.modules.items())
         if isinstance(module, types.ModuleType) and _is_shipped_pylcm_module_name(name)
     )
-    queue: list[object] = [*explicit_roots, *loaded_roots]  # noqa: PAN001 - walks every object reachable from pylcm's own modules
+    queue: list[_Reachable] = [*explicit_roots, *loaded_roots]
     seen: set[int] = set()
     captures: list[tuple[types.FunctionType, types.CodeType, types.FunctionType]] = []
 
@@ -2225,16 +2240,16 @@ def _unwrap_downstream_beartype_wrapper(
     return wrapped
 
 
-def _is_solver_instance(value: object) -> bool:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+def _is_solver_instance(value: _Reachable) -> TypeIs[_SolverInstance]:
     """Recognize the one stateless extension object sealed by public identity."""
     from _lcm.solution.contract import Solver  # noqa: PLC0415
 
     return isinstance(value, Solver)
 
 
-def _slot_state(value: object) -> dict[str, object]:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+def _slot_state(value: _Reachable) -> dict[str, _Reachable]:
     """Read inherited slot state without invoking arbitrary properties."""
-    result: dict[str, object] = {}  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    result: dict[str, _Reachable] = {}
     for owner in type(value).__mro__:
         declared = owner.__dict__.get("__slots__", ())
         names = (declared,) if isinstance(declared, str) else declared
@@ -2267,7 +2282,7 @@ def _has_exact_type[Candidate](
     return _contains_identity(value=type(value), candidates=candidates)
 
 
-def _is_captured_jax_python_function(value: object) -> bool:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+def _is_captured_jax_python_function(value: _Reachable) -> bool:
     """Whether this is an unchanged function captured from a public JAX module."""
     return isinstance(value, types.FunctionType) and any(
         value is candidate and value.__code__ is code
@@ -2275,7 +2290,7 @@ def _is_captured_jax_python_function(value: object) -> bool:  # noqa: PAN001 - h
     )
 
 
-def _is_captured_jax_pjit(value: object) -> bool:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+def _is_captured_jax_pjit(value: _Reachable) -> bool:
     """Whether this is an unchanged PjitFunction captured from public JAX APIs."""
     if type(value) is not _JAX_PJIT_FUNCTION_TYPE:
         return False
@@ -2296,7 +2311,7 @@ def _native_numeric_versions() -> tuple[tuple[str, str], ...]:
     )
 
 
-def _native_numeric_callable_kind(value: object) -> str | None:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+def _native_numeric_callable_kind(value: _Reachable) -> str | None:
     """Classify only native callables whose executable semantics can be sealed."""
     if type(value) is _JAX_CUSTOM_JVP_TYPE:
         return "jax-custom-jvp"
@@ -2315,7 +2330,7 @@ def _native_numeric_callable_kind(value: object) -> str | None:  # noqa: PAN001 
     return "numpy-array-function" if _is_captured_numpy_array_function(value) else None
 
 
-def _is_captured_numpy_array_function(value: object) -> bool:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+def _is_captured_numpy_array_function(value: _Reachable) -> bool:
     """Recognize unchanged genuine public NumPy array-function dispatchers."""
     if type(value) is not _NUMPY_ARRAY_FUNCTION_DISPATCHER_TYPE:
         return False
@@ -2331,14 +2346,14 @@ def _is_captured_numpy_array_function(value: object) -> bool:  # noqa: PAN001 - 
     )
 
 
-def _is_native_numeric_type(value: object) -> bool:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+def _is_native_numeric_type(value: _Reachable) -> bool:
     """Whether a class is a captured genuine NumPy/JAX scalar constructor."""
     return _contains_identity(
         value=value, candidates=_JAX_NUMERIC_SCALAR_TYPES + _NUMPY_SCALAR_TYPES
     )
 
 
-def _is_versioned_numeric_library_type(value: type) -> bool:  # noqa: PAN006 - hashes arbitrary classes reachable from user functions
+def _is_versioned_numeric_library_type(value: type[_Reachable]) -> bool:
     """Whether a class is a captured genuine public NumPy/JAX class."""
     return _contains_identity(
         value=value,
@@ -2348,7 +2363,7 @@ def _is_versioned_numeric_library_type(value: type) -> bool:  # noqa: PAN006 - h
 
 def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
     *,
-    value: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    value: _Reachable,
     _active: set[int] | None = None,
 ) -> bool:
     """Whether the semantic serializer closes direct use of this exact value."""
@@ -2434,7 +2449,7 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         active.remove(identity)
 
 
-def _is_engine_callable_dataclass(value: object) -> bool:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+def _is_engine_callable_dataclass(value: _Reachable) -> bool:
     """Whether `value` is a callable dataclass instance of a shipped pylcm class."""
     value_type = type(value)
     return (
@@ -2444,7 +2459,7 @@ def _is_engine_callable_dataclass(value: object) -> bool:  # noqa: PAN001 - hash
     )
 
 
-def _is_closed_direct_type(value: type) -> bool:  # noqa: PAN006 - hashes arbitrary classes reachable from user functions
+def _is_closed_direct_type(value: type[_Reachable]) -> bool:
     """Whether a class consumed directly enters the digest by identity alone.
 
     Builtin and versioned numeric-library classes are sealed by their library
@@ -2460,7 +2475,7 @@ def _is_closed_direct_type(value: type) -> bool:  # noqa: PAN006 - hashes arbitr
     )
 
 
-def _is_shipped_pylcm_type(value: type) -> bool:  # noqa: PAN006 - hashes arbitrary classes reachable from user functions
+def _is_shipped_pylcm_type(value: type[_Reachable]) -> bool:
     """Whether a class is the object a shipped pylcm module binds at its name.
 
     A class's `__module__` and `__qualname__` are writable, so the claim alone
@@ -2470,7 +2485,7 @@ def _is_shipped_pylcm_type(value: type) -> bool:  # noqa: PAN006 - hashes arbitr
     module = sys.modules.get(value.__module__)
     if not isinstance(module, types.ModuleType) or not _is_shipped_pylcm_module(module):
         return False
-    resolved: object = module  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    resolved: _Reachable = module
     for part in value.__qualname__.split("."):
         try:
             resolved = inspect.getattr_static(resolved, part)
@@ -2490,7 +2505,7 @@ def _is_shipped_pylcm_module(module: types.ModuleType) -> bool:
     return resolved_origin.startswith(_SHIPPED_PYLCM_PACKAGE_ROOTS)
 
 
-def _dataclasses_field_marker_name(value: object) -> str | None:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+def _dataclasses_field_marker_name(value: _Reachable) -> str | None:
     """Return the stable name of one exact stdlib dataclass field marker."""
     return next(
         (name for name, marker in _DATACLASSES_FIELD_MARKERS if value is marker),
@@ -2500,7 +2515,7 @@ def _dataclasses_field_marker_name(value: object) -> str | None:  # noqa: PAN001
 
 def _validate_static_attribute_access(
     *,
-    value: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    value: _Reachable,
     path: tuple[str, ...],
 ) -> None:
     """Reject lookup hooks whose runtime value static inspection cannot reproduce."""
@@ -2532,11 +2547,11 @@ def _validate_static_attribute_access(
 
 def _bind_referenced_member(
     *,
-    value: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    value: _Reachable,
     attribute: str,
-    member: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    member: _Reachable,
     path: tuple[str, ...],
-) -> object:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+) -> _Reachable:
     """Apply only descriptor bindings whose semantics can be inspected statically."""
     binding_context = _descriptor_binding_context(
         value=value,
@@ -2598,9 +2613,9 @@ def _bind_referenced_member(
 
 def _read_array_metadata(
     *,
-    binding_instance: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    binding_instance: _Reachable | None,
     attribute: str,
-    member: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    member: _Reachable,
 ) -> tuple[int, ...] | int | np.dtype | Literal[_NotArrayMetadata.NOT_ARRAY_METADATA]:
     """Read shape metadata an array constant already fixes, else the sentinel.
 
@@ -2634,10 +2649,10 @@ def _read_array_metadata(
 
 def _descriptor_binding_context(
     *,
-    value: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+    value: _Reachable,
     attribute: str,
-    member: object,  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
-) -> tuple[object | None, type] | None:  # noqa: PAN001, PAN006 - hashes arbitrary objects and classes reachable from user functions
+    member: _Reachable,
+) -> tuple[_Reachable | None, type[_Reachable]] | None:
     """Return the standard descriptor arguments when ``member`` comes from a type."""
     if not isinstance(value, type):
         try:
@@ -2905,7 +2920,7 @@ def _referenced_global_attribute_paths(  # noqa: C901
     return {name: frozenset(paths) for name, paths in collected.items()}
 
 
-def _semantic_sort_key(value: object) -> tuple[str, str]:  # noqa: PAN001 - hashes arbitrary objects reachable from user functions
+def _semantic_sort_key(value: _Reachable) -> tuple[str, str]:
     """Stable ordering key for unordered containers."""
     type_name = f"{type(value).__module__}.{type(value).__qualname__}"
     try:
