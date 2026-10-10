@@ -8,7 +8,7 @@ they are re-exported here so engine-internal code can import everything from
 """
 
 import types
-from collections.abc import Mapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import Field
 from types import MappingProxyType
 from typing import (
@@ -215,6 +215,81 @@ type ShapeDtypePytree = (
     | tuple[ShapeDtypePytree, ...]
     | list[ShapeDtypePytree]
     | Mapping[str, ShapeDtypePytree]
+    | None
+)
+
+if TYPE_CHECKING:
+    # ty does not prove that every `PytreeValue` or `ShapeDtypePytree` matches
+    # `ArgumentTree`'s members, so the alias names both as members of its own.
+    type _ArgumentValueForTy = PytreeValue | ShapeDtypePytree
+else:
+    # beartype cannot build a check for a recursive alias that names `PytreeValue`
+    # beside further self-references; every such tree already matches
+    # `ArgumentTree`'s other members, so the claw checks the same trees.
+    type _ArgumentValueForTy = None
+
+# The arguments of a core program, concrete or abstract: name-keyed trees whose
+# leaves are arrays, host values or `jax.ShapeDtypeStruct` templates, mixed in one
+# tree while a plan rebuilds a branch. It names its members itself so the beartype
+# claw can check it; the claw checks only the outer levels of a recursive alias.
+type ArgumentTree = (
+    _ArgumentValueForTy
+    | ArrayTree
+    | ShapeDtypeTree
+    | ValueND
+    | HostArray
+    | jax.ShapeDtypeStruct
+    | np.generic
+    | bool
+    | int
+    | float
+    | MappingLeaf
+    | SequenceLeaf
+    | DataclassInstance
+    | _PluginPytree
+    | tuple[ArgumentTree, ...]
+    | list[ArgumentTree]
+    | Mapping[str, ArgumentTree]
+    | None
+)
+
+if TYPE_CHECKING:
+    # ty keeps mapping keys invariant, so `Mapping[Hashable, ...]` admits no mapping
+    # with narrower keys; the key types that reach a footprint are named for ty.
+    type _FootprintValueForTy = (
+        PytreeByPeriod
+        | ArgumentTree
+        | Mapping[tuple[str, str], FootprintTree]
+        | Mapping[int, FootprintTree]
+        | Mapping[str, FootprintTree]
+    )
+else:
+    # beartype checks `Mapping[Hashable, ...]` below against any key type; naming the
+    # other recursive aliases here would stop it from building the check.
+    type _FootprintValueForTy = None
+
+# A tree whose device buffers are measured or registered: any JAX pytree of arrays,
+# host values and `jax.ShapeDtypeStruct` templates (which own no device bytes), with
+# mapping levels keyed by names, periods, edges or other hashable keys. The beartype
+# claw checks only the outer levels of a recursive alias.
+type FootprintTree = (
+    _FootprintValueForTy
+    | ArrayTree
+    | ShapeDtypeTree
+    | ValueND
+    | HostArray
+    | jax.ShapeDtypeStruct
+    | np.generic
+    | bool
+    | int
+    | float
+    | MappingLeaf
+    | SequenceLeaf
+    | DataclassInstance
+    | _PluginPytree
+    | tuple[FootprintTree, ...]
+    | list[FootprintTree]
+    | Mapping[Hashable, FootprintTree]
     | None
 )
 
