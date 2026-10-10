@@ -63,7 +63,7 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.grids import ContinuousGrid, GridBreakpoint
-from lcm.result import SolutionResult
+from lcm.solver_api import SolutionResult
 from lcm.typing import (
     ActionName,
     BoolND,

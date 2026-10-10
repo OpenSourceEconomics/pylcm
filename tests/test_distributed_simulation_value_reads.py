@@ -1,7 +1,7 @@
 """Simulation value-copy ownership on actual ordered four-device CPU layouts."""
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Never, Unpack, cast
 
@@ -307,21 +307,20 @@ def test_host_replay_has_no_allocation_on_an_excluded_default_device(
     allocations: list[tuple[int, ...]] = []
     actual_put = jax.device_put
 
-    # keyword-only-exempt: library-callback=jax.device_put
-    def observe(
-        value: jax.Array | np.ndarray,
-        device: jax.Device | jax.sharding.Sharding | None = None,
-    ) -> jax.Array:
-        placed = actual_put(value, device)
-        if isinstance(placed.sharding, jax.NamedSharding):
-            allocations.append(
-                tuple(device.id for device in placed.sharding.mesh.devices.flat)
-            )
-        else:
-            allocations.append(tuple(device.id for device in placed.devices()))
-        return placed
+    def observe_put[**P](func: Callable[P, jax.Array]) -> Callable[P, jax.Array]:
+        def observe(*args: P.args, **kwargs: P.kwargs) -> jax.Array:
+            placed = func(*args, **kwargs)
+            if isinstance(placed.sharding, jax.NamedSharding):
+                allocations.append(
+                    tuple(device.id for device in placed.sharding.mesh.devices.flat)
+                )
+            else:
+                allocations.append(tuple(device.id for device in placed.devices()))
+            return placed
 
-    monkeypatch.setattr(jax, "device_put", observe)
+        return observe
+
+    monkeypatch.setattr(jax, "device_put", observe_put(actual_put))
     placed = cast(
         "jax.Array",
         place_replay_payload(
