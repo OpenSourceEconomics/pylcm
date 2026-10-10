@@ -119,7 +119,8 @@ type UserParamsLeaf = (
     # `.mortality` and `.iskhakov_et_al_2017` all do exactly that.
     | Fraction
     | FloatND
-    | IntND
+    # Integer arrays of any width: with x64 enabled, `jnp.array([0])` is int64.
+    | Int[Array, "..."]
     | BoolND
     | np.ndarray
     | pd.Series
