@@ -8,7 +8,7 @@ Capacity output is a necessary lower bound, never an admission certificate.
 # Standalone acceptance probe: defer native imports to preserve failure receipts;
 # inspect internal phase metadata and assert the literal frozen workload.
 # Git subprocess arguments are fixed, apart from the inspected source directory.
-# ruff: noqa: ANN401, INP001, PLC0415, PLR0915, PLR2004, S101, S603, S607, SLF001
+# ruff: noqa: INP001, PLC0415, PLR0915, PLR2004, S101, S603, S607, SLF001
 
 import argparse
 import dataclasses
