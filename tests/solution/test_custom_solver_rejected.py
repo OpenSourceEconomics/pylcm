@@ -16,6 +16,8 @@ import pytest
 from _lcm.solution.contract import (
     SolutionKernels,
     SolverBuildContext,
+    _BoundLiquidMargin,
+    _BoundOuterContinuousMargin,
 )
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from lcm import (
@@ -86,8 +88,8 @@ class _CustomOneMargin(OneMarginSolver):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         raise NotImplementedError
 
-    def _with_liquid_margin(self, margin: object) -> _CustomOneMargin:
-        return replace(self, continuous_state=margin.state)  # ty: ignore[unresolved-attribute]
+    def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _CustomOneMargin:
+        return replace(self, continuous_state=margin.state)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -104,12 +106,14 @@ class _CustomTwoMargin(TwoMarginSolver):
             main_tradeoff="Reference implementation for contract tests",
         )
 
-    margins: tuple[object, object] | None = None
+    margins: tuple[_BoundLiquidMargin, _BoundOuterContinuousMargin] | None = None
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         raise NotImplementedError
 
-    def _with_margins(self, *, liquid: object, outer: object) -> _CustomTwoMargin:
+    def _with_margins(
+        self, *, liquid: _BoundLiquidMargin, outer: _BoundOuterContinuousMargin
+    ) -> _CustomTwoMargin:
         return replace(self, margins=(liquid, outer))
 
 

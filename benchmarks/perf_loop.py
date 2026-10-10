@@ -38,9 +38,17 @@ import subprocess
 import sys
 import time
 import tomllib
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict, Unpack
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    NotRequired,
+    Protocol,
+    TypedDict,
+    TypeGuard,
+    Unpack,
+)
 
 if not __package__:
     # Run as a path, the repository root is not on the path, so the sibling
@@ -72,9 +80,10 @@ if TYPE_CHECKING:
 
     from _lcm.execution.execution_plan import ResolvedExecution
     from _lcm.typing import FlatParams, FloatND, JSONValue
+    from _lcm.utils.logging import LogLevel
     from lcm import ExecutionConfig, Model
     from lcm.solver_api import ArtifactKey, SolutionResult
-    from lcm.typing import RegimeName, StateName, UserParamsNode
+    from lcm.typing import RegimeName, StateName, UserInitialConditions, UserParamsNode
 
 
 type _Result = (
@@ -133,7 +142,7 @@ _PYLCM_ROOT = Path(lcm.__file__).resolve().parents[2]
 
 
 @contextlib.contextmanager
-def _halving_on() -> Iterator[None]:
+def _halving_on() -> Generator[None]:
     """Resolve every execution config with gather-width halving switched on."""
     resolve = lcm.model.resolve_execution_config
 
@@ -153,7 +162,7 @@ def _halving_on() -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def _broadcast_off() -> Iterator[None]:
+def _broadcast_off() -> Generator[None]:
     """Make GridSearch's continuation-broadcast selector select no state."""
     select = grid_search._continuation_unread_state_names  # noqa: SLF001
     grid_search._continuation_unread_state_names = lambda **_: ()  # noqa: SLF001  # ty: ignore[invalid-assignment]
@@ -301,14 +310,23 @@ def _builder(model_name: str) -> Callable[[float], tuple[Model, _Params]]:
 _ACA_INITIAL_CONDITIONS = "__perf_loop_initial_conditions__"
 
 
-def _call(*, model: Model, params: _Params, log_level: str) -> _Result:
+def _is_initial_conditions[Inputs](inputs: Inputs) -> TypeGuard[UserInitialConditions]:
+    return isinstance(inputs, Mapping) and all(
+        isinstance(name, str) and isinstance(value, (jax.Array, np.ndarray))
+        for name, value in inputs.items()
+    )
+
+
+def _call(*, model: Model, params: _Params, log_level: LogLevel) -> _Result:
     """Run the arm's public call: simulate when initial conditions ride along."""
     if _ACA_INITIAL_CONDITIONS not in params:
         return model.solve(params=params, log_level=log_level)
+    initial_conditions = params[_ACA_INITIAL_CONDITIONS]
+    assert _is_initial_conditions(initial_conditions)
     rest = {k: v for k, v in params.items() if k != _ACA_INITIAL_CONDITIONS}
     return model.simulate(
         params=rest,
-        initial_conditions=params[_ACA_INITIAL_CONDITIONS],
+        initial_conditions=initial_conditions,
         log_level=log_level,
         seed=0,
     )
@@ -328,7 +346,7 @@ def _values(result: _Result) -> dict[str, NDArray[np.generic]]:
             for period in sorted(values)
             for regime in sorted(values[period])
         }
-    values = getattr(result, "values", result)
+    values = result if isinstance(result, Mapping) else result.values
     return {
         f"{period}/{regime}": np.asarray(values[period][regime])
         for period in sorted(values)
@@ -348,7 +366,8 @@ def _block(result: _Result) -> None:
     if isinstance(result, lcm.SimulationResult):
         jax.block_until_ready(result.period_to_regime_to_V_arr)
         return
-    jax.block_until_ready(getattr(result, "values", result))
+    values = result if isinstance(result, Mapping) else result.values
+    jax.block_until_ready(values)
 
 
 def _phases(calls: tuple[CallPhases, ...]) -> list[dict[str, JSONValue]]:
@@ -382,7 +401,7 @@ class _Counters:
         }
 
     @contextlib.contextmanager
-    def installed(self) -> Iterator[None]:
+    def installed(self) -> Generator[None]:
         compiled_cls = jax.stages.Compiled
         as_text = compiled_cls.as_text
 
@@ -450,7 +469,7 @@ class _Counters:
         try:
             yield
         finally:
-            compiled_cls.as_text = as_text  # ty: ignore[invalid-assignment]
+            compiled_cls.as_text = as_text
             for name, original in originals.items():
                 setattr(backward_induction, name, original)
 
@@ -459,7 +478,7 @@ class _Counters:
 
 
 def _counted_solve(
-    *, model: Model, params: _Params, counters: _Counters, log_level: str
+    *, model: Model, params: _Params, counters: _Counters, log_level: LogLevel
 ) -> tuple[_Result, dict[str, JSONValue]]:
     """Solve once with every counter installed; return result and its record."""
     counters.reset()
@@ -492,7 +511,16 @@ def _timed_warm_calls(
         result = _call(model=model, params=params, log_level="off")
         _block(result)
         times.append(time.perf_counter() - start)
+    assert result is not None
     return times, _fingerprint(_values(result))
+
+
+class _HloExecutable(Protocol):
+    def as_text(self) -> str | None: ...
+
+
+def _has_hlo_text[Executable](compiled: Executable) -> TypeGuard[_HloExecutable]:
+    return callable(getattr(compiled, "as_text", None))
 
 
 def _dispatch_contracts(*, counters: _Counters) -> dict[str, JSONValue]:
@@ -500,7 +528,7 @@ def _dispatch_contracts(*, counters: _Counters) -> dict[str, JSONValue]:
     contracts = []
     for signature, planned in sorted(counters.dispatch.items()):
         compiled = planned.compiled
-        text = compiled.as_text() if hasattr(compiled, "as_text") else None
+        text = compiled.as_text() if _has_hlo_text(compiled) else None
         contracts.append(
             {
                 "sig": list(signature),

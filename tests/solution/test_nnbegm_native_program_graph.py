@@ -14,10 +14,10 @@ base call sees both.
 """
 
 import functools
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax
 import numpy as np
@@ -35,7 +35,9 @@ from _lcm.execution.core_program import (
 from _lcm.solution import nnbegm as nnbegm_module
 from _lcm.solution.negm import _with_outer_post_decision
 from _lcm.solution.nnbegm import _NNBEGMPeriodKernel
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.solver_api import SIMULATION_POLICY
+from lcm.typing import ReferenceName
 from tests.simulation.test_nnbegm_split_workflow_parity import _MESH, _PARAMS
 from tests.solution._nbegm_direct_oracle import OracleContext, ride_along_kernel
 from tests.test_models import n_nbegm_toy as toy
@@ -62,7 +64,7 @@ def _build_context(context: OracleContext) -> CoreBuildContext:
     )
 
 
-def _innermost(function: Any) -> Any:
+def _innermost[**P, R](function: Callable[P, R]) -> Callable[P, R]:
     """The callable under every layer of bound keywords."""
     while isinstance(function, functools.partial):
         function = function.func
@@ -70,7 +72,9 @@ def _innermost(function: Any) -> Any:
 
 
 def _assert_same_arguments(
-    *, actual: Mapping[str, object], expected: Mapping[str, object]
+    *,
+    actual: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+    expected: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
 ) -> None:
     assert set(actual) == set(expected)
     assert jax.tree.structure(dict(actual)) == jax.tree.structure(dict(expected))
@@ -199,7 +203,7 @@ def test_every_republished_program_declares_the_leaves_its_role_reads():
     [("finite", NNBEGMSimPolicy), ("adaptive", NestedEGMSimPolicy)],
 )
 def test_the_graph_declares_the_final_composite_policy_type(
-    *, route: str, payload_type: type[object]
+    *, route: str, payload_type: type[NNBEGMSimPolicy | NestedEGMSimPolicy]
 ) -> None:
     kernel, _ = _kernel(route)
     graph = core_program_graph(kernel=kernel)

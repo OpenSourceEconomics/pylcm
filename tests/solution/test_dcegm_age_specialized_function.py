@@ -66,7 +66,7 @@ def _twin(
     *,
     solver_kind: Literal["brute_force", "dcegm"],
     age_specialized: bool,
-    utility: Callable | None = None,
+    utility: Callable[..., FloatND] | None = None,
 ) -> Model:
     """The DC-EGM twin, optionally with an age-drifting or pinned utility."""
     working = _working_life(solver_kind)

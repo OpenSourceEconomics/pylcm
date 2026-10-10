@@ -17,7 +17,14 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Protocol, TypeGuard, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    Protocol,
+    TypedDict,
+    TypeGuard,
+    runtime_checkable,
+)
 
 from benchmarks.grid_search_pair_scenarios import EXTERNAL_HARNESS_SOURCES
 
@@ -51,7 +58,12 @@ if TYPE_CHECKING:
     from benchmarks.grid_search_pair_scenarios import ScenarioSpec
     from lcm import Model
     from lcm.solver_api import SolutionResult
-    from lcm.typing import RegimeName
+    from lcm.typing import RegimeName, UserParams
+
+
+class _SolveKwargs(TypedDict):
+    params: UserParams
+    log_level: Literal["off"]
 
 
 class _GridExtent(Protocol):
@@ -99,6 +111,20 @@ type _GitArg = str
 
 
 type _SolutionTree = Mapping[int, Mapping[RegimeName, _ReadyLeaf]]
+
+
+class _LegacyBenchmarkModel(Protocol):
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: Literal["off"],
+        return_dissolution_flags: bool,
+    ) -> tuple[_SolutionTree, _SolutionTree]: ...
+
+
+def _has_legacy_solve(model: Model) -> TypeGuard[_LegacyBenchmarkModel]:
+    return "return_dissolution_flags" in inspect.signature(model.solve).parameters
 
 
 class _ProjectedResult[Ref: _ReplayRef](Protocol):
@@ -905,12 +931,16 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         else observe_plan(original_resolve_program)
     )
 
-    solve_kwargs = {
+    solve_kwargs: _SolveKwargs = {
         "params": params,
         "log_level": "off",
     }
-    if "return_dissolution_flags" in inspect.signature(model.solve).parameters:
-        solve_kwargs["return_dissolution_flags"] = True
+
+    def solve() -> SolutionResult | tuple[_SolutionTree, _SolutionTree]:
+        if _has_legacy_solve(model=model):
+            return model.solve(**solve_kwargs, return_dissolution_flags=True)
+        return model.solve(**solve_kwargs)
+
     memory_before_solve = _read_proc_memory()
     with ExitStack() as stack:
         backward_induction.__dict__["_compile_all_functions"] = timed_compile_all
@@ -938,7 +968,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
             )
 
         cold_started = time.perf_counter_ns()
-        cold_result = model.solve(**solve_kwargs)
+        cold_result = solve()
         _block_result(cold_result)
         cold_wall_ns = time.perf_counter_ns() - cold_started
         del cold_result
@@ -948,7 +978,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         final_warm_result = None
         for sample in range(args.warm_samples):
             warm_started = time.perf_counter_ns()
-            candidate = model.solve(**solve_kwargs)
+            candidate = solve()
             _block_result(candidate)
             warm_wall_ns.append(time.perf_counter_ns() - warm_started)
             if sample == args.warm_samples - 1:
