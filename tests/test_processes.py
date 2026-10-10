@@ -4,15 +4,18 @@ import shutil
 import subprocess
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+import numpy as np
 import pandas as pd
 import pytest
+from jax import jit
 from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 from quantecon.markov.approximation import rouwenhorst as qe_rouwenhorst
 from quantecon.markov.approximation import tauchen as qe_tauchen
+from scipy.special import ndtr
 
 from _lcm.config import TEST_DATA
 from lcm import (
@@ -214,6 +217,44 @@ _AR1_GRID_CLASSES = [TauchenAR1Process, RouwenhorstAR1Process]
 
 
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
+@pytest.mark.parametrize("rho", [1.0, 1.2, -1.0, -1.2])
+def test_ar1_rejects_nonstationary_persistence(
+    *, grid_cls: type[TauchenAR1Process | RouwenhorstAR1Process], rho: float
+) -> None:
+    """A stationary grid cannot represent a unit-root or explosive process."""
+    kwargs = {"gauss_hermite": True} if grid_cls is TauchenAR1Process else {}
+    with pytest.raises(
+        GridInitializationError,
+        match=rf"{grid_cls.__name__}.*rho={rho}.*no stationary distribution",
+    ):
+        grid_cls(n_points=5, rho=rho, sigma=0.5, mu=0.0, **kwargs)
+
+
+@pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
+@pytest.mark.parametrize("rho", [-0.9, 0.0, 0.9])
+def test_ar1_stationary_nodes_are_finite(
+    *, grid_cls: type[TauchenAR1Process | RouwenhorstAR1Process], rho: float
+) -> None:
+    """Stationary persistence gives finite grid nodes."""
+    kwargs = {"gauss_hermite": True} if grid_cls is TauchenAR1Process else {}
+    grid = grid_cls(n_points=5, rho=rho, sigma=0.5, mu=0.0, **kwargs)
+    assert jnp.isfinite(grid.get_gridpoints()).all()
+
+
+@pytest.mark.parametrize("distribution_type", ["tauchen", "rouwenhorst"])
+@pytest.mark.parametrize("rho", [1.0, 1.2, -1.0, -1.2])
+def test_ar1_solve_rejects_nonstationary_runtime_persistence(
+    *, distribution_type: Literal["tauchen", "rouwenhorst"], rho: float
+) -> None:
+    """Runtime persistence is checked before a solve places its process grid."""
+    model = get_model(n_periods=2, distribution_type=distribution_type)
+    params = get_params(distribution_type)
+    params["alive"]["income"] = {**params["alive"]["income"], "rho": rho}
+    with pytest.raises(GridInitializationError, match="no stationary distribution"):
+        model.solve(params=params, log_level="off")
+
+
+@pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
 def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
     """Midpoint of AR(1) gridpoints is approximately mu / (1 - rho)."""
     mu, rho = 2.0, 0.8
@@ -248,10 +289,72 @@ def test_ar1_transition_probs_rows_sum_to_one(grid_cls):
     ],
     ids=lambda c: c.__name__,
 )
-def test_even_n_points_rejected_for_gauss_hermite(grid_cls):
-    """Gauss-Hermite grids reject even n_points (no node at the mean)."""
-    with pytest.raises(GridInitializationError, match="n_points must be odd"):
-        grid_cls(n_points=4, gauss_hermite=True)
+@pytest.mark.parametrize("n_points", [2, 4, 10])
+@pytest.mark.parametrize("compiled", [False, True])
+def test_even_n_points_accepted_for_gauss_hermite(
+    *,
+    grid_cls: type[NormalIIDProcess | LogNormalIIDProcess | TauchenAR1Process],
+    n_points: int,
+    compiled: bool,
+) -> None:
+    """Even Gauss-Hermite grids preserve normal nodes and normalized probabilities."""
+    mu, sigma = 0.7, 0.4
+    mean, std = mu, sigma
+    if grid_cls is TauchenAR1Process:
+        rho = 0.6
+        grid = TauchenAR1Process(
+            n_points=n_points, gauss_hermite=True, mu=mu, sigma=sigma, rho=rho
+        )
+        mean, std = mu / (1 - rho), sigma / np.sqrt(1 - rho**2)
+    else:
+        grid = grid_cls(n_points=n_points, gauss_hermite=True, mu=mu, sigma=sigma)
+    raw_nodes, raw_weights = np.polynomial.hermite_e.hermegauss(n_points)
+    expected = mean + std * raw_nodes
+    get_nodes = jit(grid.compute_gridpoints) if compiled else grid.compute_gridpoints
+    get_probabilities = (
+        jit(grid.compute_transition_probs)
+        if compiled
+        else grid.compute_transition_probs
+    )
+    got = get_nodes(**grid.params)
+    if grid_cls is LogNormalIIDProcess:
+        got = jnp.log(got)
+    aaae(got, expected, decimal=DECIMAL_PRECISION)
+    assert np.all(np.abs(np.asarray(got) - mean) > std * 0.1)
+    probabilities = get_probabilities(**grid.params)
+    aaae(probabilities.sum(axis=1), np.ones(n_points), decimal=DECIMAL_PRECISION)
+    assert bool((probabilities >= 0).all())
+    if grid_cls is not TauchenAR1Process:
+        expected_weights = raw_weights / np.sqrt(2 * np.pi)
+        aaae(
+            probabilities,
+            np.tile(expected_weights, (n_points, 1)),
+            decimal=DECIMAL_PRECISION,
+        )
+        aaae(probabilities[0] @ got**2, mu**2 + sigma**2, decimal=DECIMAL_PRECISION)
+    else:
+        boundaries = np.concatenate(
+            ([-np.inf], (expected[:-1] + expected[1:]) / 2, [np.inf])
+        )
+        conditional_mean = mu + rho * expected
+        expected_probabilities = np.diff(
+            ndtr((boundaries[None, :] - conditional_mean[:, None]) / sigma), axis=1
+        )
+        aaae(probabilities, expected_probabilities, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize(
+    "grid_cls", [NormalIIDProcess, LogNormalIIDProcess, TauchenAR1Process]
+)
+@pytest.mark.parametrize("n_points", [0, -1, -2])
+def test_gauss_hermite_rejects_nonpositive_node_counts(
+    *,
+    grid_cls: type[NormalIIDProcess | LogNormalIIDProcess | TauchenAR1Process],
+    n_points: int,
+) -> None:
+    """A Gauss-Hermite support requires a positive node count at construction."""
+    with pytest.raises(GridInitializationError, match="n_points must be positive"):
+        grid_cls(n_points=n_points, gauss_hermite=True)
 
 
 @pytest.mark.parametrize(
