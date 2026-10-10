@@ -339,9 +339,7 @@ def test_process_support_preserves_simulated_value_and_action(
         monkeypatch.setattr(
             jnp,
             "linspace",
-            partial(
-                _guard_process_grid, original=jnp.linspace, observations=observations
-            ),
+            _guard_process_grid(original=jnp.linspace, observations=observations),
         )
     result = model.simulate(
         params=params,

@@ -1,7 +1,6 @@
 """Production-path control for ordinary singleton action streaming."""
 
 from collections.abc import Callable, Mapping
-from types import MappingProxyType
 from typing import Never
 
 import jax
@@ -34,9 +33,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ReferenceName,
-    RegimeName,
     ScalarInt,
-    StateName,
 )
 from tests.regime_building.test_collective_feasibility_is_shared import (
     _make_model as _build_collective_model,
@@ -200,47 +197,23 @@ def test_eager_singleton_hard_max_never_builds_the_dense_oracle(
     """JIT-disabled production resolves the same streamed native program."""
     real_get_max_Q_over_a = max_Q_over_a.get_max_Q_over_a
 
-    def fail_dense_construction(
-        *,
-        Q_and_F: Callable[..., tuple[FloatND, BoolND]],
-        batch_sizes: dict[StateName, int],
-        action_names: tuple[ActionName, ...],
-        state_names: tuple[StateName, ...],
-        n_discrete_action_axes: int = 0,
-        has_taste_shocks: bool = False,
-        co_map_state_names: tuple[StateName, ...] = (),
-        co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
-        stakeholders: tuple[str, ...] | None = None,
-        pareto_weights: max_Q_over_a.ParetoWeights | None = None,
-        fold_state_names: tuple[StateName, ...] = (),
-        fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
-        fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
-        cell_width_keyword: str | None = None,
-        untiled_state_names: tuple[StateName, ...] = (),
-        broadcast_state_names: tuple[StateName, ...] = (),
-    ) -> MaxQOverAFunction:
-        if action_names:
-            raise AssertionError("eligible eager GridSearch reached its dense oracle")
-        return real_get_max_Q_over_a(
-            Q_and_F=Q_and_F,
-            batch_sizes=batch_sizes,
-            action_names=action_names,
-            state_names=state_names,
-            n_discrete_action_axes=n_discrete_action_axes,
-            has_taste_shocks=has_taste_shocks,
-            co_map_state_names=co_map_state_names,
-            co_map_v_arr_in_axes=co_map_v_arr_in_axes,
-            stakeholders=stakeholders,
-            pareto_weights=pareto_weights,
-            fold_state_names=fold_state_names,
-            fold_weights=fold_weights,
-            fold_conditioning=fold_conditioning,
-            cell_width_keyword=cell_width_keyword,
-            untiled_state_names=untiled_state_names,
-            broadcast_state_names=broadcast_state_names,
-        )
+    def guard_dense[**P](
+        func: Callable[P, MaxQOverAFunction],
+    ) -> Callable[P, MaxQOverAFunction]:
+        def fail_dense_construction(
+            *args: P.args, **kwargs: P.kwargs
+        ) -> MaxQOverAFunction:
+            if kwargs.get("action_names"):
+                raise AssertionError(
+                    "eligible eager GridSearch reached its dense oracle"
+                )
+            return func(*args, **kwargs)
 
-    monkeypatch.setattr(max_Q_over_a, "get_max_Q_over_a", fail_dense_construction)
+        return fail_dense_construction
+
+    monkeypatch.setattr(
+        max_Q_over_a, "get_max_Q_over_a", guard_dense(real_get_max_Q_over_a)
+    )
     model = _build_model(enable_jit=False)
     actual = _solve_target(model=model, work=1.0, consumption=3.0)
 
