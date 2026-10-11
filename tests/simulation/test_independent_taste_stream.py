@@ -350,3 +350,18 @@ def test_independent_taste_key_keeps_its_implementation(
         )
     actual = np.concatenate(captured)[:7]
     np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])
+def test_batched_typed_seed_is_refused_before_solving(role: str) -> None:
+    """Only a scalar typed root crosses the public simulation boundary."""
+    model = taste_shocks_toy.get_model()
+    roots = jax.random.split(jax.random.key(17), 2)
+    with pytest.raises(InvalidSimulationInputError, match=r"scalar jax.random.key"):
+        model.simulate(
+            params={},
+            initial_conditions=_initial_conditions(),
+            log_level="off",
+            seed=roots if role == "seed" else None,
+            taste_shock_seed=roots if role == "taste_shock_seed" else None,
+        )
