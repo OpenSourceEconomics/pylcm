@@ -4111,7 +4111,7 @@ class Model:
             )
             executor = unit
         program = (
-            programs.decision_parts[period]
+            programs.action_values[period]
             if return_action_values
             else _with_action_extents(
                 program=programs.decision[period],

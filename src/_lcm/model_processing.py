@@ -1042,7 +1042,7 @@ def _partial_fixed_params_into_regimes(
                     for family in (
                         "decision",
                         "type_local_decision",
-                        "decision_parts",
+                        "action_values",
                         "transition",
                         "route",
                     )
