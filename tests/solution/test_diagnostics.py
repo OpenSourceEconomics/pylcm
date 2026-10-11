@@ -99,6 +99,26 @@ _INITIAL_CONDITIONS = {
 }
 
 
+def test_call_local_logger_preserves_application_filters(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Application filters still see call-local and reconstructed log records."""
+    application_filter = Mock(spec=logging.Filter)
+    application_filter.filter.return_value = False
+    parent = logging.getLogger("lcm")
+    monkeypatch.setattr(parent, "filters", [application_filter])
+    logger = get_logger(log_level="off", runtime_checks=False)
+    record = logging.LogRecord("lcm", logging.CRITICAL, "", 0, "entry", (), None)
+    for restored in (logger, deepcopy(logger), pickle.loads(pickle.dumps(logger))):
+        assert not restored.filter(record)
+        assert restored.level == logging.CRITICAL
+        assert not validation_enabled(restored)
+    assert application_filter.filter.call_count == 3
+    second = get_logger(log_level="debug", runtime_checks=True)
+    second.addFilter(logging.Filter("other"))
+    assert logger.filters == parent.filters == [application_filter]
+
+
 @pytest.mark.parametrize("runtime_checks", [False, True])
 @pytest.mark.parametrize("log_level", _LOG_LEVELS)
 def test_runtime_check_logger_policy_survives_copy_and_pickle(

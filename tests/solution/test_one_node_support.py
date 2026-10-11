@@ -16,6 +16,7 @@ from lcm import (
     UniformIIDProcess,
     categorical,
 )
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import ScalarFloat, ScalarInt
 
 _ONE_NODE = UniformIIDProcess(n_points=1, start=0.0, stop=2.0)
@@ -127,17 +128,19 @@ def test_a_state_dependent_entry_off_the_sole_node_is_not_silently_accepted() ->
     support at wealth zero and off it at one and two, where no representation exists
     — so those points must not come back as ordinary numbers.
     """
-    V = (
-        _model_entering_at(_keep_wealth)
-        .solve(
-            params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
-            log_level="off",
-        )
-        .values
-    )
+    model = _model_entering_at(_keep_wealth)
+    params = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
+    with pytest.raises(InvalidValueFunctionError, match="2 of 3 values are NaN"):
+        model.solve(params=params, log_level="off")
+    V = model.solve(
+        params=params,
+        log_level="off",
+        runtime_checks=False,
+    ).values
 
     off_support = np.asarray(V[0]["source"]).ravel()[1:]
     assert np.isnan(off_support).all()
+    assert np.isfinite(np.asarray(V[0]["source"]).ravel()[0])
 
 
 def test_an_entry_exactly_on_the_sole_node_stays_usable() -> None:
