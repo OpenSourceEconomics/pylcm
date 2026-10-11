@@ -631,3 +631,109 @@ def test_reached_joint_empty_state_uses_each_current_runtime_law(*, fold: bool) 
     np.testing.assert_array_almost_equal(
         reached_states[2], reached_states[0], decimal=DECIMAL_PRECISION
     )
+
+
+@pytest.mark.parametrize(
+    ("runtime", "fixed_law"), [(False, False), (True, False), (True, True)]
+)
+@pytest.mark.parametrize("fold", [False, True])
+@pytest.mark.parametrize("memory_budget", [None, 64 * 1024**2])
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_initial_joint_empty_state_reports_physical_values(
+    *,
+    runtime: bool,
+    fixed_law: bool,
+    fold: bool,
+    memory_budget: int | None,
+    log_level: Literal["off", "warning", "progress", "debug"],
+) -> None:
+    """Initial error state and constraint table expose the supplied physical law."""
+    model = _joint_empty_model(
+        constrained=True,
+        runtime=runtime,
+        fixed_law=fixed_law,
+        fold=fold,
+        memory_budget=memory_budget,
+    )
+    params = (
+        {
+            "working": {
+                "shocks": {
+                    "mean": jnp.asarray((2.0, -1.0)),
+                    "cov": jnp.asarray(((1.0, 0.4), (0.4, 2.0))),
+                }
+            }
+        }
+        if runtime and not fixed_law
+        else {}
+    )
+    initial = {
+        "age": jnp.asarray([0.0, 0.0, 0.0]),
+        "wealth": jnp.asarray([1.0, 0.0, 0.0]),
+        "x": jnp.asarray([2.0, 3.0, 1.5]),
+        "y": jnp.asarray([-1.0, -2.0, -0.5]),
+        "regime_id": jnp.asarray([DecisionId.working] * 3, dtype=jnp.int32),
+    }
+    parameter_calls = [params]
+    if runtime and not fixed_law:
+        changed: UserParams = {
+            "working": {
+                "shocks": {
+                    "mean": jnp.asarray((2.25, -0.75)),
+                    "cov": jnp.asarray(((1.5, -0.2), (-0.2, 2.5))),
+                }
+            }
+        }
+        parameter_calls = [params, changed, params]
+    control = _joint_empty_model(
+        constrained=False,
+        runtime=runtime,
+        fixed_law=fixed_law,
+        fold=fold,
+        memory_budget=memory_budget,
+    )
+    for current_params in parameter_calls:
+        positive = control.simulate(
+            params=current_params,
+            initial_conditions=initial,
+            seed=531,
+            log_level="off",
+            runtime_checks=True,
+        ).to_dataframe()
+        first_period = positive.loc[positive["period"] == 0]
+        assert np.isfinite(first_period["value"]).all()
+        np.testing.assert_array_almost_equal(
+            first_period[["wealth", "x", "y"]].to_numpy(),
+            [[1.0, 2.0, -1.0], [0.0, 3.0, -2.0], [0.0, 1.5, -0.5]],
+            decimal=DECIMAL_PRECISION,
+        )
+        with pytest.raises(exceptions.NoFeasibleActionError) as caught:
+            model.simulate(
+                params=current_params,
+                initial_conditions=initial,
+                seed=531,
+                log_level=log_level,
+                runtime_checks=True,
+            )
+        message = str(caught.value)
+        assert "period 0" in message
+        state = ast.literal_eval(
+            message.split("state ", 1)[1].split(" has no feasible", 1)[0]
+        )
+        assert set(state) == {"wealth", "x", "y"}
+        np.testing.assert_array_almost_equal(
+            [state[name] for name in ("wealth", "x", "y")],
+            [0.0, 3.0, -2.0],
+            decimal=DECIMAL_PRECISION,
+        )
+        assert "shocks_normal_" not in message
+        table = message.split("):\n", 1)[1].split("\n\nNo action", 1)[0]
+        assert table.splitlines()[0].split() == ["wealth", "x", "y", "affordable"]
+        rows = [line.split() for line in table.splitlines()[-2:]]
+        assert [row[0] for row in rows] == ["1", "2"]
+        assert all(row[-1] == "False" for row in rows)
+        np.testing.assert_array_almost_equal(
+            np.asarray([row[1:-1] for row in rows], dtype=float),
+            [[0.0, 3.0, -2.0], [0.0, 1.5, -0.5]],
+            decimal=5,
+        )

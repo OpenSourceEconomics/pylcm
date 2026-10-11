@@ -31,6 +31,11 @@ from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.processes.joint_normal import JointNormalIIDProcess
+from _lcm.processes.joint_normal_lowering import (
+    coordinate_names,
+    joint_normal_declarations,
+)
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.Q_and_F import _get_feasibility
@@ -49,6 +54,7 @@ from _lcm.simulation.residency import (
 from _lcm.simulation.subject_devices import simulation_subject_devices
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.transition_checks import (
+    _evaluate_admitted_transition_producer,
     _SerialValidationRequired,
     _validate_transition_sequence,
     _ValidationSummary,
@@ -57,6 +63,7 @@ from _lcm.transition_checks import (
 from _lcm.typing import (
     ActionName,
     FlatParams,
+    HostArray,
     InitialConditions,
     ParamsLeaf,
     PytreeValue,
@@ -82,6 +89,7 @@ from lcm.typing import (
     Bool1D,
     BoolND,
     Float1D,
+    Float2D,
     FloatND,
     Int1D,
     IntND,
@@ -1886,31 +1894,20 @@ def _check_regime_feasibility(
         memory=memory,
     )
 
-    message = _format_infeasibility_message(
+    first = infeasible_indices[0]
+    periods, _ = resolve_initial_periods(
+        ages=ages, initial_ages=np.asarray(initial_states["age"])[[first]]
+    )
+    return _format_infeasibility_message(
         infeasible_indices=infeasible_indices,
         regime=regime,
         regime_name=regime_name,
         initial_states=initial_states,
         state_names=verdict.state_names,
         per_constraint_admits_any=per_constraint_admits_any,
-    )
-    first = infeasible_indices[0]
-    periods, _ = resolve_initial_periods(
-        ages=ages, initial_ages=np.asarray(initial_states["age"])[[first]]
-    )
-    state = {
-        name: (
-            regime.simulation.discrete_grids[name].categories[
-                int(np.asarray(initial_states[name])[first])
-            ]
-            if name in regime.simulation.discrete_grids
-            else np.asarray(initial_states[name])[first].item()
-        )
-        for name in verdict.state_names
-    }
-    return (
-        f"Regime '{regime_name}', period {int(periods[0])}, state {state} "
-        f"has no feasible action.\n\n{message}"
+        period=int(periods[0]),
+        regime_params=regime_params,
+        memory=memory,
     )
 
 
@@ -2357,7 +2354,20 @@ def _raise_feasibility_type_error(
     raise InvalidInitialConditionsError(msg) from exc
 
 
-def _format_infeasibility_message(
+def _initial_physical_joint_states(
+    *,
+    process: JointNormalIIDProcess,
+    standard: Float2D,
+    mean: FloatND | None = None,
+    cov: FloatND | None = None,
+) -> Float2D:
+    """Project diagnostic subjects with the canonical law and dynamic operands."""
+    return jax.vmap(lambda node: process.transform(standard=node, mean=mean, cov=cov))(
+        standard
+    )
+
+
+def _format_infeasibility_message(  # noqa: C901
     *,
     infeasible_indices: Sequence[int],
     regime: Regime,
@@ -2365,6 +2375,9 @@ def _format_infeasibility_message(
     initial_states: Mapping[StateName, FloatND | IntND],
     state_names: Sequence[StateName],
     per_constraint_admits_any: Mapping[str, np.ndarray],
+    period: int,
+    regime_params: Mapping[QualifiedName, ParamsLeaf],
+    memory: SimulationMemory | None,
 ) -> str:
     """Format an error message for infeasible subjects.
 
@@ -2372,6 +2385,9 @@ def _format_infeasibility_message(
         infeasible_indices: Indices of subjects with no feasible action.
         regime: The internal regime instance.
         regime_name: Name of the regime.
+        period: First infeasible subject's initial period.
+        regime_params: Current merged fixed and runtime regime parameters.
+        memory: Admission owner for diagnostic physical projection.
         initial_states: Mapping of state names to arrays.
         state_names: List of state variable names.
         per_constraint_admits_any: Mapping from constraint name to a boolean
@@ -2388,9 +2404,7 @@ def _format_infeasibility_message(
     # Build DataFrame of infeasible subjects' states
     state_df = pd.DataFrame(
         {
-            name: np.asarray(initial_states[name])[list(infeasible_indices)].astype(
-                float
-            )
+            name: np.asarray(initial_states[name])[list(infeasible_indices)]
             for name in state_names
             if name in initial_states
         },
@@ -2398,10 +2412,41 @@ def _format_infeasibility_message(
     )
     state_df.index.name = "subject"
 
+    for group, process in joint_normal_declarations(regime.simulation.grids).items():
+        names = coordinate_names(group=group, process=process)
+        arguments: dict[str, FloatND | HostArray] = {
+            "standard": state_df[list(names)].to_numpy()
+        }
+        if process.mean is None:
+            arguments["mean"] = cast("FloatND", regime_params[f"{group}__mean"])
+        if process.cov is None:
+            arguments["cov"] = cast("FloatND", regime_params[f"{group}__cov"])
+        transform = cast(
+            "Callable[..., Float2D]",
+            functools.partial(_initial_physical_joint_states, process=process),
+        )
+        if memory is None:
+            physical = transform(
+                **{name: jnp.asarray(value) for name, value in arguments.items()}
+            )
+        else:
+            physical = _evaluate_admitted_transition_producer(
+                function=transform, arguments=arguments, memory=memory
+            )
+            memory.hold(tree=physical)
+        for dimension, name in enumerate(process.states):
+            state_df[name] = np.asarray(physical)[:, dimension]
+        state_df = state_df.drop(columns=list(names))
+
     # Convert discrete codes to labels
     for name, grid in regime.simulation.discrete_grids.items():
         if name in state_df.columns:
             state_df[name] = [grid.categories[int(v)] for v in state_df[name]]
+
+    state = {}
+    for name, values in state_df.items():
+        value = values.iloc[0]
+        state[name] = value.item() if isinstance(value, np.generic) else value
 
     # Append one boolean column per constraint: True = admits ≥ 1 action,
     # False = rejects every action by itself for that subject.
@@ -2418,6 +2463,8 @@ def _format_infeasibility_message(
         table_str = state_df.to_string()
 
     return (
+        f"Regime '{regime_name}', period {period}, state {state} "
+        "has no feasible action.\n\n"
         f"All actions are infeasible for {n} subject(s) "
         f"in regime '{regime_name}'.\n\n"
         f"Per-constraint admissibility (True = constraint admits ≥ 1 "

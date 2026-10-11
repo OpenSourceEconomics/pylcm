@@ -433,7 +433,7 @@ _SOURCE_SEALS = {
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
     BACKWARD_INDUCTION_SOURCE: "844a956a46a68049150a8232957c01b836bae8cc5977673a09a91db226cd8499",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
-    INITIAL_CONDITIONS_SOURCE: "d9f586a78227d2c41960f68ffde4a72b45b0313cec86327521de77a363808698",
+    INITIAL_CONDITIONS_SOURCE: "fcb46839f71082020b7904e99aa366ddc7b7bdbc1d9fe3d3e08b170b14eaf4f1",
     RESULT_SOURCE: "6da8d6ed7adc3d9d952623419f36550a16d0f49080f476299120d7a107fdcd7b",
     RESULT_DATAFRAME_SOURCE: "88773c4ce66f54feface58198c1785040ba43973f0fc24cab623c699aa400a41",
     RESULT_METADATA_SOURCE: "3f1e299a4c7aa76aedea4d39288c9941a27ba7cb881d83792a44ad63b31f775d",
@@ -460,9 +460,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "115f378c9b251e496cc6704c69fc9f1fed9c43abc56d3bd0c4763ae3991cf3b0",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 408
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 420
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "d27d7bdcb349eea62f44ad1a559abc676746e025ded98e52b42770564c6807b2"
+    "2ce1ac92a6e3cefa1c4c6b70ff0eab3139be5a3aa3ab7a2efa6d143b09be8808"
 )
 EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 54
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
@@ -536,7 +536,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     INITIAL_CONDITIONS_SOURCE: (
-        "4c6194e0c2cf064dae816e7d3a6b7485acdf096b2502be222fa67a796152b990",
+        "9dff89a1fc97114df0145f6b58a89bc715a307b822c333a890a125e3268893a5",
         {
             "validate_simulation_inputs": "11b399b724c138450522600bed2e97020966ad1795999bb18034fd8c8425c87c",
             "_preflight_memory": "55dcaad31fc350c161a1bfde013381ebe2e9948df1a55cee02044cf51a45c972",
@@ -546,14 +546,15 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "validate_initial_conditions": "5bd4508a22bf98537aac6bbf158f2fd0179f99fb508e68a3f41ffbefe7ec4942",
             "_collect_feasibility_errors": "bdc760357ec435abd0a5bacadc9890087789aedf351e1948f81080f66e7fc602",
             "_age_specialized_feasibility_message": "893004374a072675df58e2a22ef9905c784127e82283bb4a0ebac2d18aca0ff0",
-            "_check_regime_feasibility": "9f6d362113621a3a453e7b93ef1d6fb2e853323291c0f176ee1326f2c2cef734",
+            "_check_regime_feasibility": "72c808a53cc090e4f17b2a1bdc4b717e15e90bf2c2327f07f1fdb77e46e6f01b",
             "_regime_feasibility_mask": "376939e5868277767e4bee361d06c8fac5324b1a0a4552281042e24e40d410dc",
             "_run_profiled_feasibility": "4efae4cf1e6ba63418c8347c61843943079eadef62bb3b2f4cf49c9ad5961d98",
             "_batched_feasibility_check": "4f2637ac22488e5202f6bbc655f093753c5f296bd13629148c0ff937ab7d1177",
             "_evaluate_constant_feasibility": "3de32aeab79d2a95b7831fcafc75bb8da9478a8090f0859d73c2e43375f3f9c0",
             "_admits_any_action": "7b79e5bde0a32eb36456597caf5b61e1e04736099b78e8c9d2a89382747c4678",
             "_per_constraint_feasibility": "9a40c5071201df771c58b17e05c7eb088a22e94a8e5a06fef835a854b62b4b4f",
-            "_format_infeasibility_message": "f8bbf735e2c797e53e1be248998b0349d82495354d4370412d6b98f991e032b2",
+            "_initial_physical_joint_states": "86f8eedbe28cf8cfe0f69cafb8968bd619de673540f0325c495de0e2085df68b",
+            "_format_infeasibility_message": "5beabc0e138a92b8cbb11ddfd153150848a8a63de65a5c7e64015080ebd47f23",
             "_gather_feasibility_inputs": "557c76957b3e216d9a95166daee80fefdd0af163633920b30b1d7215596d8515",
             "_subject_feasibility_flag": "58bfc237bc5b8a51897de10ffee1eb33f7a2cb6504c094ed48544946185bd404",
             "_constant_feasibility_flag": "f7b994fa04576c7157f8bab30ef0e17126c181ba874cbe493c1e19e6be056f17",
@@ -5042,6 +5043,7 @@ _SIMULATION_ADAPTER_CONTRACTS = _contracts(
             "_evaluate_constant_feasibility",
             "_admits_any_action",
             "_per_constraint_feasibility",
+            "_initial_physical_joint_states",
             "_format_infeasibility_message",
             "_gather_feasibility_inputs",
             "_subject_feasibility_flag",
@@ -5318,6 +5320,66 @@ _SIMULATION_ADAPTER_CONTRACTS = _contracts(
 )
 
 _SIMULATION_ADAPTER_MUTATIONS = {
+    "simulation_adapter:initial_physical_transform_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "process.transform(standard=node, mean=mean, cov=cov)",
+        "node",
+    ),
+    "simulation_adapter:initial_physical_mean_forwarding_omitted": (
+        INITIAL_CONDITIONS_SOURCE,
+        "process.transform(standard=node, mean=mean, cov=cov)",
+        "process.transform(standard=node, cov=cov)",
+    ),
+    "simulation_adapter:initial_physical_cov_forwarding_omitted": (
+        INITIAL_CONDITIONS_SOURCE,
+        "process.transform(standard=node, mean=mean, cov=cov)",
+        "process.transform(standard=node, mean=mean)",
+    ),
+    "simulation_adapter:initial_physical_mean_operand_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        'arguments["mean"] = cast("FloatND", regime_params[f"{group}__mean"])',
+        'arguments["mean"] = jnp.zeros_like(regime_params[f"{group}__mean"])',
+    ),
+    "simulation_adapter:initial_physical_cov_operand_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        'arguments["cov"] = cast("FloatND", regime_params[f"{group}__cov"])',
+        'arguments["cov"] = jnp.zeros_like(regime_params[f"{group}__cov"])',
+    ),
+    "simulation_adapter:initial_physical_fixed_law_selection_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "if process.mean is None:",
+        "if True:",
+    ),
+    "simulation_adapter:initial_physical_subject_order_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        '"standard": state_df[list(names)].to_numpy()',
+        '"standard": state_df[list(names)].to_numpy()[::-1]',
+    ),
+    "simulation_adapter:initial_physical_admission_bypassed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "physical = _evaluate_admitted_transition_producer(\n                function=transform, arguments=arguments, memory=memory\n            )",
+        "physical = transform(**arguments)",
+    ),
+    "simulation_adapter:initial_physical_output_hold_omitted": (
+        INITIAL_CONDITIONS_SOURCE,
+        "            memory.hold(tree=physical)\n",
+        "",
+    ),
+    "simulation_adapter:initial_physical_prefix_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "        value = values.iloc[0]\n",
+        "        value = 0.0\n",
+    ),
+    "simulation_adapter:initial_physical_internal_columns_retained": (
+        INITIAL_CONDITIONS_SOURCE,
+        "        state_df = state_df.drop(columns=list(names))\n",
+        "",
+    ),
+    "simulation_adapter:initial_physical_table_column_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "            state_df[name] = np.asarray(physical)[:, dimension]",
+        "            state_df[name] = np.asarray(physical)[:, 0]",
+    ),
     "simulation_adapter:placed_operand_changed": (
         SIMULATION_OPERANDS_SOURCE,
         "return jax.device_put(leaf, sharding)",
