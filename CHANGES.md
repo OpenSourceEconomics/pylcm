@@ -21,8 +21,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   stochastic law reads values and still returns probabilities in the order of
   `values`. Integer values arrive as int32, as codes do. A variable declared with values
   must carry the same values and tolerance in every regime. Value grids are not yet
-  supported for fixed states, joint transitions, condition constraints, collective
-  regimes, or regime transition laws that read them; the model raises for these.
+  supported for joint transitions, condition constraints, collective regimes,
+  age-specialized functions, or regime transition laws that read them; the model
+  raises for these.
 
 ### Independent runtime checks
 

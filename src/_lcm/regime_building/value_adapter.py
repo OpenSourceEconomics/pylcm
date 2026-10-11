@@ -114,6 +114,10 @@ def adapt_user_function(
         The function the engine calls with codes.
 
     """
+    # A finalized regime already holds adapters; re-adapting starts from the
+    # user's function, so a regime reused in another model is wrapped once.
+    if isinstance(func, ValueAdapter):
+        func = func.func
     decoded = {
         name: value_grids[grid_name]
         for name in _read_names(func)
@@ -274,11 +278,6 @@ def _fail_if_unsupported_reader(
             for name in (*regime.states, *regime.actions, *regime.derived_categoricals)
             if name in value_grids
         }
-        problems.extend(
-            f"the fixed state '{name}' of '{regime_name}'"
-            for name, law in regime.state_transitions.items()
-            if name in value_grids and _holds_identity(law)
-        )
         if declared and regime.stakeholders is not None:
             problems.append(f"'{regime_name}' is a collective regime")
         problems.extend(
@@ -350,12 +349,3 @@ def _law_reads(law: DecomposedTransition) -> Iterator[str]:
         yield from _read_names(law.func)
     elif inspect.isfunction(law):
         yield from _read_names(law)
-
-
-def _holds_identity(law: StateTransitionEntry) -> bool:
-    """Return whether a state's law is an identity law, in any phase or target."""
-    if isinstance(law, Phased):
-        return _holds_identity(law.solve) or _holds_identity(law.simulate)
-    if isinstance(law, Mapping):
-        return any(_holds_identity(cell) for cell in law.values())
-    return isinstance(law, _IdentityTransition)

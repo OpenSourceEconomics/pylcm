@@ -315,8 +315,8 @@ def test_model_refuses_one_name_with_different_values():
         ),
     ],
 )
-def test_model_refuses_a_fixed_value_grid_state(law):
-    """A fixed state cannot be a value grid, however its identity law is wrapped."""
+def test_fixed_value_grid_state_repeats_the_reference_per_value(law):
+    """A fixed value-grid state the economics ignores repeats the reference V."""
     model = _value_grid_model(enable_jit=True)
     regime = model.user_regimes["working_life"]
     with_bracket = regime.replace(
@@ -324,8 +324,15 @@ def test_model_refuses_a_fixed_value_grid_state(law):
         state_transitions={**dict(regime.state_transitions), "bracket": law},
         functions={**dict(regime.functions), "utility": _utility_with_bracket},
     )
-    with pytest.raises(RegimeInitializationError, match="fixed state 'bracket'"):
-        _model_with(working_life=with_bracket)
+    got = _model_with(working_life=with_bracket).solve(params=_PARAMS, log_level="off")
+    expected = _reference_model(enable_jit=True).solve(params=_PARAMS, log_level="off")
+    for period in (0, 1, 2):
+        reference = np.asarray(expected.values[period]["working_life"])
+        for bracket_code in (0, 1):
+            np.testing.assert_array_equal(
+                np.asarray(got.values[period]["working_life"])[..., bracket_code],
+                reference,
+            )
 
 
 def _utility_with_bracket(
@@ -370,3 +377,12 @@ def _model_with(*, working_life: UserRegime) -> Model:
         initial_nodes={ages.exact_values[0]: "working_life"},
         edges=discrete.working_life_edges(ages),
     )
+
+
+def test_adapting_an_adapted_function_wraps_the_user_function_once():
+    """A finalized regime reused in another model is not decoded twice."""
+    once = adapt_user_function(
+        func=_identity_wealth, value_grids=_VALUE_GRIDS, encode=None
+    )
+    twice = adapt_user_function(func=once, value_grids=_VALUE_GRIDS, encode=None)
+    assert jnp.asarray(twice(wealth=jnp.int32(1))).tolist() == 11
