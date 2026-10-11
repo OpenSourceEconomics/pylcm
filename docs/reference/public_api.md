@@ -32,6 +32,7 @@ documentation and tests.
 | [`lcm.liquid_law_from_resources`](consumption_savings.md)                                            | Conventional liquid law                           |
 | [`lcm.liquid_law_from_savings`](consumption_savings.md)                                              | Conventional savings-written liquid law           |
 | [`lcm.ExtremeValueTasteShocks`](model_and_regime.md#api-extreme-value-taste-shocks)                  | EV1 discrete-choice shocks                        |
+| [`lcm.EULER_GAMMA`](model_and_regime.md#api-euler-gamma)                                             | Mean of a standard Gumbel draw                    |
 
 ## Grids, categories, and processes
 
