@@ -9,9 +9,11 @@ import itertools
 import math
 from collections.abc import Sequence
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from beartype import beartype
+from jax.typing import ArrayLike
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
@@ -22,7 +24,7 @@ from _lcm.grids.categorical import (
     get_category_codes,
 )
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, Int1D, IntND, ValueND
+from lcm.typing import Float1D, FloatND, Int1D, IntND, ValueND
 
 # The code of a value off a value grid, equal to the simulation's sentinel for
 # a categorical state missing from initial conditions. int32 min stays
@@ -46,15 +48,15 @@ class DiscreteGrid(Grid):
 
     A value returned for a value grid names a node when it equals that node. For
     float values, `tolerance` widens the match to any value within that absolute
-    distance of a node; `nearest` snaps a value to its closest node instead.
+    distance of a node; `nearest` snaps a float to its closest node instead.
 
     Args:
         category_class: The category class representing the grid categories. Must
             be a dataclass with fields that have unique int values. The legacy
             single-positional-argument form remains supported for compatibility.
-        values: The numbers the variable takes, strictly ascending, finite, and all
-            integers or all floats. Integers are stored as int32, floats at the
-            canonical float dtype.
+        values: The numbers the variable takes, as a sequence or a one-dimensional
+            array: strictly ascending, finite, and all integers or all floats.
+            Integers are stored as int32, floats at the canonical float dtype.
         tolerance: The absolute distance within which a float matches a node. Zero
             (exact match) by default. Must be below half the smallest gap between
             values, and at least the float spacing at every value when positive.
@@ -71,7 +73,7 @@ class DiscreteGrid(Grid):
         self,
         *legacy_category_class: type[DataclassInstance],
         category_class: type[DataclassInstance] | None = None,
-        values: Sequence[_UserValue] | None = None,
+        values: Sequence[_UserValue] | np.ndarray | ValueND | None = None,
         tolerance: float = 0.0,
     ) -> None:
         if len(legacy_category_class) > 1:
@@ -111,16 +113,31 @@ class DiscreteGrid(Grid):
         self.__value_array: Int1D | Float1D | None = None
         self.__tolerance = 0.0
 
-    def __init_values(self, *, values: Sequence[_UserValue], tolerance: float) -> None:
+    def __init_values(
+        self,
+        *,
+        values: Sequence[_UserValue] | np.ndarray | ValueND,
+        tolerance: float,
+    ) -> None:
         """Validate and store a value grid's numbers and tolerance."""
-        declared = _validate_values(values)
+        if isinstance(values, np.ndarray | jax.Array):
+            if values.ndim != 1:
+                raise GridInitializationError(
+                    f"`values` must be one-dimensional, got shape {values.shape}."
+                )
+            declared = _validate_values(np.asarray(values).tolist())
+        else:
+            declared = _validate_values(values)
         is_integer = isinstance(declared[0], int)
         value_array = jnp.asarray(
             declared, dtype=jnp.int32 if is_integer else canonical_float_dtype()
         )
-        if not is_integer:
-            # Distinct inputs can round to equal nodes at the canonical precision.
-            _validate_values(tuple(value_array.tolist()))
+        # Distinct floats can round to equal nodes at the canonical precision.
+        collision = _value_order_error(tuple(value_array.tolist()))
+        if collision is not None:
+            raise GridInitializationError(
+                f"{collision} The values collide after rounding to {value_array.dtype}."
+            )
         _validate_tolerance(
             tolerance=tolerance, value_array=value_array, is_integer=is_integer
         )
@@ -177,16 +194,26 @@ class DiscreteGrid(Grid):
         """
         return self.__require_value_array()
 
-    def encode(self, value: ValueND) -> IntND:
+    def encode(self, value: ArrayLike) -> IntND:
         """Return the code of the node each value names, else `MISSING_CAT_CODE`.
 
-        An integer grid matches by equality. A float grid compares at its own
-        dtype and matches the nearest node within `tolerance`. NaN never matches.
+        An integer grid takes integers and matches by equality. A float grid
+        compares at its own dtype and matches the nearest node within
+        `tolerance`. NaN never matches.
+
+        Raises:
+            TypeError: If an integer grid receives non-integer values.
+
         """
         nodes = self.__require_value_array()
         value = jnp.asarray(value)
         if jnp.issubdtype(nodes.dtype, jnp.integer):
-            # Equality, never a difference: an int32 difference can overflow.
+            if not jnp.issubdtype(value.dtype, jnp.integer):
+                msg = (
+                    "An integer value grid matches integers exactly; got "
+                    f"{value.dtype} values. Return integers from the law."
+                )
+                raise TypeError(msg)
             index = jnp.clip(
                 jnp.searchsorted(nodes, value, side="left"), 0, nodes.shape[0] - 1
             )
@@ -197,7 +224,7 @@ class DiscreteGrid(Grid):
             matches = jnp.abs(value - nodes[index]) <= self.__tolerance
         return jnp.where(matches, index, MISSING_CAT_CODE).astype(jnp.int32)
 
-    def decode(self, code: ValueND) -> ValueND:
+    def decode(self, code: ArrayLike) -> ValueND:
         """Return the value each code indexes.
 
         A code outside `0..n-1`, including `MISSING_CAT_CODE` and `-1`, reads NaN
@@ -211,21 +238,26 @@ class DiscreteGrid(Grid):
             wrap_negative_indices=False,
         )
 
-    def nearest(self, value: ValueND) -> ValueND:
-        """Return the node closest to each value, the lower one on a tie.
+    def nearest(self, value: ArrayLike) -> FloatND:
+        """Return the node of a float grid closest to each value, the lower on a tie.
 
         Use it in a law that computes a value by arithmetic and means the node it
-        lands next to. NaN stays NaN on a float grid and becomes
-        `MISSING_CAT_CODE` on an integer grid, so `encode` still flags it.
+        lands next to. NaN stays NaN, so `encode` still flags it.
+
+        Raises:
+            TypeError: If the grid holds integer values, which laws return exactly.
+
         """
         nodes = self.__require_value_array()
-        value = jnp.asarray(value)
-        if not jnp.issubdtype(nodes.dtype, jnp.integer):
-            value = value.astype(nodes.dtype)
+        if jnp.issubdtype(nodes.dtype, jnp.integer):
+            msg = (
+                "`nearest` snaps floats onto a float value grid. An integer value "
+                "grid matches the integers a law returns exactly."
+            )
+            raise TypeError(msg)
+        value = jnp.asarray(value).astype(nodes.dtype)
         snapped = nodes[_nearest_index(nodes=nodes, value=value)]
-        if jnp.issubdtype(value.dtype, jnp.floating):
-            snapped = jnp.where(jnp.isnan(value), _off_grid_value(nodes), snapped)
-        return snapped
+        return jnp.where(jnp.isnan(value), jnp.nan, snapped)
 
     def __require_value_array(self) -> Int1D | Float1D:
         if self.__value_array is None:
@@ -236,9 +268,7 @@ class DiscreteGrid(Grid):
         return self.__value_array
 
 
-def _validate_values(
-    values: Sequence[_UserValue],
-) -> tuple[int | float, ...]:
+def _validate_values(values: Sequence[_UserValue]) -> tuple[int | float, ...]:
     """Return the values as Python scalars, or raise if they are no value grid."""
     if len(values) == 0:
         raise GridInitializationError("`values` must hold at least one value.")
@@ -284,7 +314,7 @@ def _value_order_error(scalars: tuple[int | float, ...]) -> str | None:
     for position, (left, right) in enumerate(itertools.pairwise(scalars)):
         if not left < right:
             return (
-                "`values` must be strictly ascending at the canonical dtype; "
+                "`values` must be strictly ascending; "
                 f"values[{position}]={left} >= values[{position + 1}]={right}."
             )
     return None
@@ -326,11 +356,11 @@ def _validate_tolerance(
             )
 
 
-def _nearest_index(*, nodes: Int1D | Float1D, value: ValueND) -> IntND:
-    """Return the index of the node closest to each value, the lower on a tie.
+def _nearest_index(*, nodes: Float1D, value: FloatND) -> IntND:
+    """Return the index of the float node closest to each value, the lower on a tie.
 
-    A value outside the nodes takes the end node. NaN takes an arbitrary node;
-    callers decide what NaN means.
+    A value outside the nodes, infinity included, takes the end node. NaN takes an
+    arbitrary node; callers decide what NaN means.
     """
     n_nodes = nodes.shape[0]
     upper = jnp.clip(jnp.searchsorted(nodes, value, side="left"), 0, n_nodes - 1)

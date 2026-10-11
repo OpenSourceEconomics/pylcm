@@ -158,17 +158,17 @@ def _fail_if_value_grid(regime: Regime) -> None:
         **dict(regime.actions),
         **dict(regime.derived_categoricals),
     }
-    names = sorted(
+    names = {
         name
         for name, entry in grids.items()
         for grid in (
             (entry.solve, entry.simulate) if isinstance(entry, Phased) else (entry,)
         )
         if isinstance(grid, DiscreteGrid) and grid.values is not None
-    )
+    }
     if names:
         raise RegimeInitializationError(
-            f"{sorted(set(names))} are declared as `DiscreteGrid(values=...)`. "
+            f"{sorted(names)} are declared as `DiscreteGrid(values=...)`. "
             "A model passes discrete variables to user functions as codes, so "
             "declare them with a category class and decode the codes by hand."
         )

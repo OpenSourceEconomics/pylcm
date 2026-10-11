@@ -683,6 +683,8 @@ def test_value_grid_keeps_the_declared_values():
         pytest.param([0.0, 0.25], ("0.0", "0.25"), id="float"),
         pytest.param([np.float64(0.5), 1.0], ("0.5", "1.0"), id="numpy-float"),
         pytest.param(range(3), ("0", "1", "2"), id="range"),
+        pytest.param(np.linspace(0, 1, 3), ("0.0", "0.5", "1.0"), id="numpy-array"),
+        pytest.param(jnp.arange(3), ("0", "1", "2"), id="jax-array"),
     ],
 )
 def test_value_grid_labels_its_categories_with_the_python_scalar_repr(
@@ -724,6 +726,7 @@ def test_float_value_grid_values_to_jax_uses_the_canonical_float_dtype():
     ("kwargs", "match"),
     [
         pytest.param({"values": []}, "at least one value", id="empty"),
+        pytest.param({"values": np.zeros((2, 2))}, "one-dimensional", id="2d-array"),
         pytest.param({"values": [0, 40, 20]}, "strictly ascending", id="unsorted"),
         pytest.param({"values": [0, 20, 20]}, "strictly ascending", id="duplicate"),
         pytest.param({"values": [0, 0.5]}, "all integers or all floats", id="mixed"),
@@ -774,10 +777,24 @@ def test_integer_value_grid_encodes_exact_members_and_flags_others():
     assert codes.tolist() == [2, 1, MISSING_CAT_CODE, MISSING_CAT_CODE]
 
 
-def test_integer_value_grid_encodes_whole_floats():
-    """A whole float names the integer node it equals."""
-    codes = DiscreteGrid(values=[0, 20, 40]).encode(jnp.array([20.0, 20.5]))
-    assert codes.tolist() == [1, MISSING_CAT_CODE]
+def test_integer_value_grid_refuses_float_input():
+    """An integer grid matches integers only; a float input is a type error."""
+    with pytest.raises(TypeError, match="integer"):
+        DiscreteGrid(values=[0, 20, 40]).encode(jnp.array([20.0]))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(20, id="python-int"),
+        pytest.param(np.array([20]), id="numpy-array"),
+        pytest.param(np.int64(20), id="numpy-scalar"),
+    ],
+)
+def test_integer_value_grid_encodes_host_input(value):
+    """Python and NumPy integers encode like JAX arrays."""
+    code = DiscreteGrid(values=[0, 20, 40]).encode(value)
+    assert np.ravel(code).tolist() == [1]
 
 
 def test_float_value_grid_encodes_exact_nodes():
@@ -853,13 +870,17 @@ def test_float_value_grid_nearest_keeps_nan():
     assert bool(jnp.isnan(snapped))
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"), [(25, 20), (30, 20), (31, 40), (-3, 0), (99, 40)]
-)
-def test_integer_value_grid_nearest_snaps_to_the_closest_node(*, value, expected):
-    """`nearest` on an integer grid returns the closest integer node."""
-    snapped = DiscreteGrid(values=[0, 20, 40]).nearest(jnp.int32(value))
-    assert (snapped.dtype, int(snapped)) == (jnp.int32, expected)
+def test_integer_value_grid_refuses_nearest():
+    """`nearest` serves float grids; an integer law returns exact integers."""
+    with pytest.raises(TypeError, match="float"):
+        DiscreteGrid(values=[0, 20, 40]).nearest(jnp.int32(25))
+
+
+def test_float_value_grid_nearest_maps_infinity_to_the_end_nodes():
+    """`nearest` sends `-inf` to the first node and `inf` to the last."""
+    grid = DiscreteGrid(values=[0.0, 0.25, 1.0])
+    values = jnp.asarray([-jnp.inf, jnp.inf], dtype=canonical_float_dtype())
+    assert grid.nearest(values).tolist() == [0.0, 1.0]
 
 
 def test_value_grid_nearest_result_encodes_to_its_node():
