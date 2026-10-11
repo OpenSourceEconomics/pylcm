@@ -62,13 +62,13 @@ class TimeVarying:
             )
 
     @classmethod
-    def from_profile(
+    def from_profile[P: PeriodLabel, A: AgeLabel](
         cls,
         *,
         values: ValueND | np.ndarray,
         labels: Sequence[Hashable],
-        period_to_label: Mapping[PeriodLabel, Hashable] | None = None,
-        age_to_label: Mapping[AgeLabel, Hashable] | None = None,
+        period_to_label: Mapping[P, Hashable] | None = None,
+        age_to_label: Mapping[A, Hashable] | None = None,
     ) -> TimeVarying:
         """Gather an economic profile by an explicit time-to-label mapping.
 
@@ -104,7 +104,7 @@ class TimeVarying:
             )
         from _lcm.params.temporal import _validate_time_labels  # noqa: PLC0415
 
-        mapping = cast("Mapping[AgeLabel, Hashable]", age_to_label)
+        mapping = cast("Mapping[A, Hashable]", age_to_label)
         ages = tuple(mapping)
         _validate_time_labels(labels=ages, kind="age", name="Profile")
         return cls(

@@ -606,10 +606,9 @@ def test_series_time_and_categorical_axes_are_validated_together(
 
 def test_economic_profile_mapping_is_explicit_and_differentiable() -> None:
     def total(values: FloatND) -> FloatND:
+        stage_to_quarter = {0: 3, 1: 3, 2: 4, 3: 4}
         profile = lcm.TimeVarying.from_profile(
-            values=values,
-            labels=(4, 9, 3),
-            period_to_label={0: 3, 1: 3, 2: 4, 3: 4},
+            values=values, labels=(4, 9, 3), period_to_label=stage_to_quarter
         )
         assert profile.periods == (0, 1, 2, 3)
         return jnp.sum(profile.values)
@@ -697,10 +696,9 @@ def test_age_model_solves_identically_with_an_age_profile_mapping() -> None:
     source_labels = (39, 40, 41, 42)
     ages = (40, 41, 42)
     # The model reads next year's wage; the last age reads its own row.
+    next_age = {age: min(age + 1, ages[-1]) for age in ages}
     mapped = lcm.TimeVarying.from_profile(
-        values=source,
-        labels=source_labels,
-        age_to_label={age: min(age + 1, ages[-1]) for age in ages},
+        values=source, labels=source_labels, age_to_label=next_age
     )
     hand_built = lcm.TimeVarying(values=jnp.array([3.0, 5.0, 5.0]), ages=ages)
 
