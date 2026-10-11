@@ -109,8 +109,8 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     durable_identity: bool = True,
     authority: SolutionAuthority,
     flat_params: FlatParams,
-    component_values: RetainedComponentValues | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    component_values: RetainedComponentValues | None = None,
 ) -> SolutionResult:
     """Label existing engine outputs without changing their numerical meaning.
 
