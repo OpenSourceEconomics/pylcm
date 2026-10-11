@@ -39,6 +39,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   taste-shock regime. The recipe is exact under `LinearAggregator`; under other
   Koopmans aggregators it changes choice probabilities.
 
+### Flow utility and continuation in policy lookup
+
+- `Model.lookup_policy(..., return_action_values=True)` also returns `U`, the flow
+  utility, and `CE`, the undiscounted certainty-equivalent continuation, per state row
+  and action, with the shape of `Q`. `Q == W(utility=U, CE=CE, ...)` for every Koopmans
+  aggregator, so `Q == U + discount_factor * CE` under `LinearAggregator`; a terminal
+  regime has `CE == 0`. `actions`, `value`, `Q`, `F`, `U` and `CE` come from one
+  evaluation of the regime's kernel.
+
 ### Independent runtime checks
 
 - `Model.solve()` and `Model.simulate()` accept `runtime_checks=True` independently

@@ -39,6 +39,8 @@ ACTION_INDEX = "action_index"
 DECISION_VALUE = "decision_value"
 ACTION_VALUES = "action_values"
 ACTION_FEASIBILITY = "action_feasibility"
+FLOW_UTILITY = "flow_utility"
+CONTINUATION_CE = "continuation_ce"
 NEXT_STATE = "next_state"
 REGIME_TRANSITION_PROB = "regime_transition_prob"
 GATED_CONTINUATION = "gated_continuation"
@@ -136,12 +138,14 @@ class SimulationPrograms:
     state through one code's block, without that axis; empty unless a blocked
     state is carried."""
 
-    action_values: MappingProxyType[int, CoreProgram] = dataclasses.field(
+    decision_parts: MappingProxyType[int, CoreProgram] = dataclasses.field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Period to the dense decision that also publishes the action values and
-    feasibility it maximizes over, for policy lookup; empty for a regime with
-    taste shocks or stakeholders. Compiled only when dispatched."""
+    """Period to the dense decision that also publishes, from the one kernel
+    evaluation it maximizes over, the action values, their feasibility, the flow
+    utility and the certainty-equivalent continuation, for policy lookup; empty
+    for a regime with taste shocks or stakeholders. Compiled only when
+    dispatched."""
 
     grouping: SubjectGroupingRoute | None = None
     """The invariant state forward simulation groups subjects by, or `None`."""

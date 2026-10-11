@@ -5,7 +5,9 @@ every reachable target into one function of states, actions and params.
 `get_Q_and_F_terminal`, `get_Q_and_F_collective` and the terminal collective
 variant are the specializations the regimes that need them get instead, and
 `get_compute_intermediates` publishes the same chain's intermediates for the
-NaN diagnostics.
+NaN diagnostics. `get_Q_and_F_parts` publishes, from one evaluation of a
+singleton kernel, the flow utility, feasibility, certainty-equivalent
+continuation and action value that kernel returns `Q` and `F` from.
 """
 
 import dataclasses
@@ -14,7 +16,7 @@ import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import cast, no_type_check
+from typing import NamedTuple, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -79,7 +81,7 @@ from _lcm.zero_safe import (
     scaled_joint_weight,
     zero_safe_weighted_term,
 )
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -103,6 +105,27 @@ type Intermediates = tuple[
 # What the utilities-and-feasibility DAG returns at a cell: each felicity, then
 # the feasibility mask (a Python `bool` for a regime without constraints).
 type UtilitiesAndF = tuple[FloatND | IntND | BoolND | bool, ...]
+
+
+class QAndFParts(NamedTuple):
+    """One evaluation of a singleton action-value kernel, at one cell.
+
+    `Q` is `W(utility=U, CE=CE, **W_params)`, the regime's Koopmans aggregator
+    applied to the other two values. A terminal regime has no continuation, so
+    its `CE` is zero and its `Q` is `U`.
+    """
+
+    U: FloatND
+    """Flow utility, the regime's `utility` target."""
+
+    F: BoolND
+    """Feasibility of the cell."""
+
+    CE: FloatND
+    """Certainty-equivalent continuation, undiscounted: the `CE` argument of `W`."""
+
+    Q: FloatND
+    """Action value."""
 
 
 def _compare_swap_values(
@@ -445,6 +468,33 @@ def _continuation_reads(
     return frozenset(parameter.name for parameter in parameters) | arg_names
 
 
+def get_Q_and_F_parts(*, Q_and_F: QAndFFunction) -> Callable[..., QAndFParts]:
+    """Return the parts form of a singleton `Q_and_F` kernel.
+
+    The result takes the kernel's own arguments and returns `QAndFParts` from
+    the same evaluation the kernel returns `(Q, F)` from, so its `Q` and `F` are
+    the kernel's.
+
+    Args:
+        Q_and_F: A kernel built by `get_Q_and_F` or `get_Q_and_F_terminal`.
+
+    Returns:
+        The kernel's `parts` method, with the kernel's published signature.
+
+    Raises:
+        ExecutionPlanningError: If `Q_and_F` is a collective kernel, whose stacked
+            per-stakeholder values have no single flow utility and continuation.
+
+    """
+    if not isinstance(Q_and_F, _QAndF | _TerminalQAndF):
+        msg = (
+            "Flow utility and continuation are published for singleton kernels "
+            f"only; got {type(Q_and_F).__name__}."
+        )
+        raise ExecutionPlanningError(msg)
+    return _QAndFPartsOf(kernel=Q_and_F)
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _QAndF:
     """State-action value and feasibility of a non-terminal period at one cell."""
@@ -494,6 +544,29 @@ class _QAndF:
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
+        parts = self.parts(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
+        return parts.Q, parts.F
+
+    @no_type_check
+    def parts(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: QAndFArg,
+    ) -> QAndFParts:
+        """Calculate utility, feasibility, continuation and action value at a cell.
+
+        Args:
+            next_regime_to_V_arr: The next period's value function array.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            The flow utility, feasibility, certainty-equivalent continuation and
+            state-action value.
+
+        """
         # F_arr is built here, before and independently of Q (it never reads
         # E_next_V). A value-aware mask cannot be built at this point: it needs
         # the per-stakeholder Q^s, which is why `get_Q_and_F_collective` keeps
@@ -513,8 +586,13 @@ class _QAndF:
         )
 
         # Handle cases when there is only one state.
-        # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
-        return jnp.asarray(Q_arr), jnp.asarray(F_arr)
+        # In that case, the parts are scalars, but we require arrays as output.
+        return QAndFParts(
+            U=jnp.asarray(U_arr),
+            F=jnp.asarray(F_arr),
+            CE=jnp.asarray(CE),
+            Q=jnp.asarray(Q_arr),
+        )
 
 
 def get_compute_intermediates(
@@ -718,7 +796,7 @@ class _TerminalQAndF:
     @no_type_check
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
@@ -734,8 +812,63 @@ class _TerminalQAndF:
             mask (F).
 
         """
+        parts = self.parts(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
+        return parts.Q, parts.F
+
+    @no_type_check
+    def parts(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
+        **states_actions_params: QAndFArg,
+    ) -> QAndFParts:
+        """Calculate utility, feasibility, continuation and action value at a cell.
+
+        A terminal period has no continuation: `CE` is zero and `Q` is `U`.
+
+        Args:
+            next_regime_to_V_arr: Unused in the terminal period.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            The flow utility, feasibility, zero continuation and state-action
+            value.
+
+        """
         U_arr, F_arr = self.U_and_F(**states_actions_params)
-        return jnp.asarray(U_arr), jnp.asarray(F_arr)
+        U_arr = jnp.asarray(U_arr)
+        return QAndFParts(
+            U=U_arr, F=jnp.asarray(F_arr), CE=jnp.zeros_like(U_arr), Q=U_arr
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _QAndFPartsOf:
+    """The parts of one singleton kernel, under the kernel's published signature."""
+
+    kernel: _QAndF | _TerminalQAndF
+    """The kernel whose evaluation the parts come from."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=tuple(inspect.signature(self.kernel).parameters),
+            return_annotation="QAndFParts",
+            name="Q_and_F_parts",
+        )
+
+    @no_type_check
+    def __call__(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: QAndFArg,
+    ) -> QAndFParts:
+        """Return the kernel's parts at one cell."""
+        return self.kernel.parts(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
 
 
 def get_Q_and_F_terminal_collective(
