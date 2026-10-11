@@ -10,6 +10,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 import lcm
+import lcm.typing
 from lcm.exceptions import (
     GridInitializationError,
     InvalidInitialConditionsError,
