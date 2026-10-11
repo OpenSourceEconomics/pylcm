@@ -234,6 +234,13 @@ model's actual core programs declare.
   (age-specialized constraint ancestors with subjects at several ages) raise
   `UnsupportedOperationError`.
 
+`model.validate_transitions(params=params)` runs the transition preflight used by
+`solve(runtime_checks=True)` without backward induction. It returns `None` on success
+and raises the same first diagnostic for invalid regime probabilities, stochastic state
+laws or joint transition supports and probabilities. It checks active periods and phase
+grids with numerical checks always enabled and no console output. Utilities, solver
+outputs and general deterministic next-state finiteness are outside this preflight.
+
 ### Derived Categoricals
 
 When parameters are indexed by a DAG function output (not a model state/action), declare
