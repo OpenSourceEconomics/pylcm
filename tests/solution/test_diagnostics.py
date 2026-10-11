@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+from unittest.mock import Mock
 
 import jax.numpy as jnp
 import pytest
@@ -349,8 +350,7 @@ def test_runtime_checks_enrichment_failure_respects_output_policy(
     model = _make_model()
     params = {**_HEALTHY_PARAMS, "discount_factor": float("nan")}
 
-    def fail_enrichment(**_arguments: object) -> None:
-        raise RuntimeError("enrichment sentinel")
+    fail_enrichment = Mock(side_effect=RuntimeError("enrichment sentinel"))
 
     monkeypatch.setattr(value_validation, "_enrich_with_diagnostics", fail_enrichment)
     with (
