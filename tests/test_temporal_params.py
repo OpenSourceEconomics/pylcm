@@ -681,13 +681,23 @@ def test_age_profile_mapping_rejects_missing_or_duplicate_selected_labels(
 def test_age_profile_mapping_rejects_non_finite_or_non_numeric_ages(
     *, age: float | str | bool
 ) -> None:
-    with pytest.raises(
-        (lcm.exceptions.InvalidParamsError, ValueError), match=r"age|ages"
-    ):
+    with pytest.raises(lcm.exceptions.InvalidParamsError, match=r"age|ages"):
         lcm.TimeVarying.from_profile(
             values=jnp.array([5.0]),
             labels=(41,),
             age_to_label={age: 41},  # ty: ignore[invalid-argument-type]
+        )
+
+
+@pytest.mark.parametrize("period", [True, 1.0, "0"])
+def test_period_profile_mapping_rejects_non_integer_periods(
+    *, period: bool | float | str
+) -> None:
+    with pytest.raises(lcm.exceptions.InvalidParamsError, match=r"period"):
+        lcm.TimeVarying.from_profile(
+            values=jnp.array([5.0]),
+            labels=(41,),
+            period_to_label={period: 41},  # ty: ignore[invalid-argument-type]
         )
 
 
