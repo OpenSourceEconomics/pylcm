@@ -1,5 +1,6 @@
 """Report empty action sets without confusing them with feasible infinite values."""
 
+import ast
 from contextlib import nullcontext
 from typing import Literal
 
@@ -13,6 +14,7 @@ from lcm import (
     DiscreteGrid,
     ExecutionConfig,
     InvariantBlockSchedule,
+    JointNormalIIDProcess,
     LinSpacedGrid,
     Model,
     Regime,
@@ -28,6 +30,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import DECIMAL_PRECISION
 
 
 @categorical(ordered=False)
@@ -409,4 +412,110 @@ def test_blocked_solve_counts_the_complete_regime_period(
         and "working" in message
         and "period 1" in message
         for message in messages
+    )
+
+
+def _joint_utility(
+    *, consumption: ContinuousAction, x: ContinuousState, y: ContinuousState
+) -> FloatND:
+    return consumption + 0.0 * x + 0.0 * y
+
+
+def _joint_empty_model(
+    *, constrained: bool, runtime: bool, fold: bool, memory_budget: int | None
+) -> Model:
+    return Model(
+        regimes={
+            "working": Regime(
+                states={
+                    "wealth": LinSpacedGrid(start=0, stop=2, n_points=3),
+                    "shocks": JointNormalIIDProcess(
+                        states=("x", "y"),
+                        n_points=(3, 3),
+                        gauss_hermite=True,
+                        mean=None if runtime else (2.0, -1.0),
+                        cov=None if runtime else ((1.0, 0.4), (0.4, 2.0)),
+                        fold=fold,
+                    ),
+                },
+                actions={"consumption": LinSpacedGrid(start=1, stop=2, n_points=2)},
+                functions={"utility": _joint_utility},
+                constraints={"affordable": _affordable} if constrained else {},
+                state_transitions={"wealth": _next_wealth},
+            ),
+            "dead": Regime(functions={"utility": _zero}),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        initial_nodes={0: "working"},
+        edges={"working": {"working": (0,), "dead": (1,)}},
+        regime_id_class=DecisionId,
+        fixed_params={"working": {"koopmans_aggregator": {"discount_factor": 0.5}}},
+        execution_config=ExecutionConfig(device_memory_bytes=memory_budget),
+    )
+
+
+@pytest.mark.parametrize("runtime", [False, True])
+@pytest.mark.parametrize("fold", [False, True])
+@pytest.mark.parametrize("memory_budget", [None, 64 * 1024**2])
+def test_reached_joint_empty_state_reports_physical_values(
+    *, runtime: bool, fold: bool, memory_budget: int | None
+) -> None:
+    """Error state agrees with the actual reached state of a matching native run."""
+    params = (
+        {
+            "working": {
+                "shocks": {
+                    "mean": jnp.asarray((2.0, -1.0)),
+                    "cov": jnp.asarray(((1.0, 0.4), (0.4, 2.0))),
+                }
+            }
+        }
+        if runtime
+        else {}
+    )
+    initial = {
+        "age": jnp.asarray([0.0]),
+        "wealth": jnp.asarray([1.0]),
+        "x": jnp.asarray([2.0]),
+        "y": jnp.asarray([-1.0]),
+        "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
+    }
+    control = _joint_empty_model(
+        constrained=False, runtime=runtime, fold=fold, memory_budget=memory_budget
+    )
+    positive = control.simulate(
+        params=params,
+        initial_conditions=initial,
+        seed=531,
+        log_level="off",
+        runtime_checks=False,
+    ).to_dataframe()
+    reached = positive.loc[positive["period"] == 1].iloc[0]
+    assert reached["wealth"] == 0.0
+    assert reached["regime_name"] == "working"
+    assert np.isfinite(reached["value"])
+    assert reached["consumption"] == 2.0
+    assert np.isfinite(reached[["x", "y"]].to_numpy(dtype=float)).all()
+    model = _joint_empty_model(
+        constrained=True, runtime=runtime, fold=fold, memory_budget=memory_budget
+    )
+    with pytest.raises(exceptions.NoFeasibleActionError) as caught:
+        model.simulate(
+            params=params,
+            initial_conditions=initial,
+            seed=531,
+            log_level="off",
+            runtime_checks=False,
+        )
+    message = str(caught.value)
+    assert "working" in message
+    assert "period 1" in message
+    state = ast.literal_eval(
+        message.split("state ", 1)[1].rsplit(" has no feasible", 1)[0]
+    )
+    assert set(state) == {"wealth", "x", "y"}
+    np.testing.assert_array_almost_equal(
+        [state[name] for name in ("wealth", "x", "y")],
+        reached[["wealth", "x", "y"]].to_numpy(dtype=float),
+        decimal=DECIMAL_PRECISION,
     )
