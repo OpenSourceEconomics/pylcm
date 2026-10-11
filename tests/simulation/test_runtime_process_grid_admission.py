@@ -28,6 +28,7 @@ from lcm import (
     Model,
     Regime,
     RouwenhorstAR1Process,
+    TauchenAR1Process,
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
@@ -617,3 +618,32 @@ def test_refused_process_stage_releases_all_intermediate_roots(
         [True],
         [],
     )
+
+
+@pytest.mark.parametrize("runtime", [False, True])
+def test_given_node_supports_preserve_distinct_axes(*, runtime: bool) -> None:
+    """Identical law parameters cannot alias different supplied physical axes."""
+    parameters = (
+        {"rho": jax.numpy.asarray(1.0), "sigma": jax.numpy.asarray(0.1)}
+        if runtime
+        else {}
+    )
+    owner = _owner(parameters=parameters)
+    required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    for nodes in ((-1.0, 0.0, 1.0), (-2.0, 0.0, 2.0)):
+        process = TauchenAR1Process.on_nodes(
+            nodes=nodes, rho=None if runtime else 1.0, sigma=None if runtime else 0.1
+        )
+        actual = owner(spec=process, parameters=parameters, required=required)
+        np.testing.assert_array_equal(actual, jax.numpy.asarray(nodes))
+
+
+def test_given_node_support_refuses_insufficient_placement_budget() -> None:
+    """A constant physical axis cannot bypass device allocation admission."""
+    owner = _owner(parameters={})
+    owner.budget_bytes = 0
+    process = TauchenAR1Process.on_nodes(nodes=(-1.0, 0.0, 1.0), rho=1.0, sigma=0.1)
+    required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    with pytest.raises(ExecutionPlanningError):
+        owner(spec=process, parameters={}, required=required)
+    assert not owner.grids
