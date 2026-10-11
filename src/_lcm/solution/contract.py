@@ -596,10 +596,10 @@ class BackwardInductionResult:
     diagnostics: MappingProxyType[
         int, MappingProxyType[RegimeName, SolverDiagnostics]
     ] = MappingProxyType({})
-    """Solver-published diagnostics retained under the existing ``log_level``.
+    """Solver-published diagnostics retained when ``runtime_checks`` is enabled.
 
-    Sparse over periods and regimes and empty at ``log_level="off"``. This is
-    distinct from the engine's value-validation logging: it transports the
+    Sparse over periods and regimes and empty with ``runtime_checks=False``. This is
+    independent of console logging: it transports the
     numerical self-report a period kernel already published instead of dropping
     it at the period boundary.
     """

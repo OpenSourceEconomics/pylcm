@@ -559,7 +559,7 @@ def test_all_persistable_retains_model_verifiable_egm_continuation() -> None:
     )
 
 
-@pytest.mark.parametrize("log_level", ["debug", "info", "warning", "off"])
+@pytest.mark.parametrize("log_level", ["debug", "progress", "warning", "off"])
 @pytest.mark.parametrize("runtime_checks", [True, False])
 def test_solve_retains_kernel_diagnostics_only_when_runtime_checks_enabled(
     *,
