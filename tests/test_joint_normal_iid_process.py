@@ -620,7 +620,7 @@ def test_joint_normal_age_profile_alignment_matches_manual(*, fold: bool) -> Non
             solution=solution,
             initial_conditions={
                 **states,
-                "period": jnp.zeros(2, dtype=jnp.int32),
+                "age": jnp.full(2, 40, dtype=jnp.int32),
                 "regime_id": jnp.zeros(2, dtype=jnp.int32),
             },
             seed=521,
