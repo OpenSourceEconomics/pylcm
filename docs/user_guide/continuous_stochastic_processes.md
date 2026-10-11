@@ -92,6 +92,15 @@ differ from the physical names in the DAG and simulation. `fold=True` folds ever
 internal coordinate and inherits the scalar IID solver and timing restrictions. It
 retains physical shocks in simulation output.
 
+Initial-population recipes can inspect `model.initial_state_names(regime_name=...)` to
+obtain physical scalar names, including folded and carried states. For a continuous
+state,
+`model.initial_state_bounds(params=..., regime_name=..., state_name=..., period=...)`
+returns its marginal grid extents using the supplied runtime law. Supply the zero-based
+period for specialized grids. These intervals describe the discretized support; they
+neither form a Cartesian correlated grid nor truncate continuous draws. `state_names`
+and `state_grid` continue to describe value-array axes.
+
 ### LogNormalIIDProcess
 
 Discretized log-normal distribution where $\ln X \sim N(\mu, \sigma^2)$.

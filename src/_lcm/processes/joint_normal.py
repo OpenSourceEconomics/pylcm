@@ -179,6 +179,36 @@ class JointNormalIIDProcess:
             return jnp.full((math.prod(self.node_counts), len(self.states)), jnp.nan)
         return self.compute_gridpoints()
 
+    def compute_grid_bounds(
+        self, *, mean: FloatND | None = None, cov: FloatND | None = None
+    ) -> Float2D:
+        """Return physical marginal extents without constructing the product tensor.
+
+        These intervals describe each support column separately, not a Cartesian
+        joint support or the unbounded continuous sampling distribution.
+        """
+        covariance = jnp.asarray(self.cov) if self.cov is not None else cov
+        if covariance is None:
+            raise GridInitializationError("Joint normal cov must be supplied.")
+        factor = covariance_factor(covariance)
+        axes = [
+            self.standard_normal_process(count).get_gridpoints()
+            for count in self.node_counts
+        ]
+        low = jnp.stack([axis.min() for axis in axes])
+        high = jnp.stack([axis.max() for axis in axes])
+        bounds = []
+        for row in range(len(self.states)):
+            positive = factor[row] >= 0
+            lower = self.transform(
+                standard=jnp.where(positive, low, high), mean=mean, cov=cov
+            )[row]
+            upper = self.transform(
+                standard=jnp.where(positive, high, low), mean=mean, cov=cov
+            )[row]
+            bounds.append(jnp.stack((lower, upper)))
+        return jnp.stack(bounds)
+
     def get_weights(self) -> Float1D:
         """Return the product rule's parameter-independent quadrature weights."""
         weights = jnp.ones(1)

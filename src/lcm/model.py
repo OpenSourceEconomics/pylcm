@@ -90,6 +90,7 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
 from _lcm.processes.joint_normal_lowering import (
+    coordinate_names,
     joint_normal_declarations,
     lower_joint_normal_initial_conditions,
     validate_joint_normal_params,
@@ -4185,6 +4186,92 @@ class Model:
             unit=unit,
             call_roots=(states, space.states, grids, outputs),
         )
+
+    def initial_state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
+        """Return physical per-subject state names for initial observations.
+
+        Includes folded and carried states. Joint-normal coordinates are replaced
+        by their declared physical names; value-array axes remain `state_names`.
+        """
+        regime = self._regimes.get(regime_name)
+        if regime is None:
+            raise InvalidSimulationInputError(
+                f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
+            )
+        names = dict.fromkeys(regime.simulation.state_names)
+        for group, process in joint_normal_declarations(
+            regime.simulation.grids
+        ).items():
+            for name in coordinate_names(group=group, process=process):
+                names.pop(name, None)
+            names.update(dict.fromkeys(process.states))
+        return tuple(names)
+
+    @beartype(conf=SIMULATION_INPUT_CONF)
+    def initial_state_bounds(
+        self,
+        *,
+        params: UserParams,
+        regime_name: RegimeName,
+        state_name: StateName,
+        period: int | None = None,
+    ) -> tuple[float, float]:
+        """Return a continuous initial state's physical quadrature/grid extents.
+
+        Runtime laws use `params`; specialized grids require a zero-based period.
+        Joint intervals are marginal extents of the transformed product support,
+        not Cartesian joint grids or truncation bounds for continuous draws.
+        """
+        names = self.initial_state_names(regime_name=regime_name)
+        regime = self._regimes[regime_name]
+        if state_name not in names:
+            raise InvalidSimulationInputError(
+                f"Regime {regime_name!r} has no physical initial state "
+                f"{state_name!r}; known: {names}."
+            )
+        if period is not None and (
+            type(period) is not int or period not in regime.active_periods
+        ):
+            raise InvalidSimulationInputError(
+                "Initial state bounds period must be valued in regime "
+                f"{regime_name!r}; got {period!r}."
+            )
+        for group, process in joint_normal_declarations(
+            regime.simulation.grids
+        ).items():
+            if state_name in process.states:
+                flat = self._process_params(params)
+                law_params = {
+                    **regime.resolved_fixed_params,
+                    **regime_kernel_params(flat, regime_name=regime_name),
+                }
+                bounds = process.compute_grid_bounds(
+                    mean=cast("FloatND", law_params[f"{group}__mean"])
+                    if process.mean is None
+                    else None,
+                    cov=cast("FloatND", law_params[f"{group}__cov"])
+                    if process.cov is None
+                    else None,
+                )
+                row = np.asarray(bounds)[process.states.index(state_name)]
+                return float(row[0]), float(row[1])
+        grid = regime.simulation.grids[state_name]
+        if isinstance(grid, DiscreteGrid):
+            raise InvalidSimulationInputError(
+                f"State {state_name!r} is discrete; continuous bounds do not apply."
+            )
+        points = (
+            self.state_grid(
+                params=params,
+                regime_name=regime_name,
+                state_name=state_name,
+                period=period,
+            )
+            if state_name in regime.solution.state_names
+            else grid.to_jax()
+        )
+        values = np.asarray(points)
+        return float(values.min()), float(values.max())
 
     def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         """Return a regime's state names in the axis order of its value arrays.

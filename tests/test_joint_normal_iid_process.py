@@ -58,6 +58,54 @@ def test_joint_normal_process_is_public() -> None:
     assert hasattr(lcm, "JointNormalIIDProcess")
 
 
+@pytest.mark.parametrize("runtime", [False, True])
+@pytest.mark.parametrize("fold", [False, True])
+@pytest.mark.parametrize(
+    "cov",
+    [((1.0, -0.4), (-0.4, 2.0)), ((0.0, 0.0), (0.0, 2.0)), ((1.0, 2.0), (2.0, 4.0))],
+)
+def test_physical_initial_state_names_and_bounds(
+    *, runtime: bool, fold: bool, cov: tuple[tuple[float, float], tuple[float, float]]
+) -> None:
+    """Recipe introspection names physical shocks and their marginal extents."""
+    process = JointNormalIIDProcess(
+        states=("x", "y"),
+        n_points=(3, 5),
+        gauss_hermite=True,
+        mean=None if runtime else (1.0, -2.0),
+        cov=None if runtime else cov,
+        fold=fold,
+    )
+    model = _model(
+        lcm.Regime(states={"joint": process}, functions={"utility": _utility})
+    )
+    params = (
+        {
+            name: {"joint": {"mean": jnp.array([1.0, -2.0]), "cov": jnp.array(cov)}}
+            for name in ("working", "done")
+        }
+        if runtime
+        else {}
+    )
+    assert model.initial_state_names(regime_name="working") == ("x", "y")
+    assert model.state_names(regime_name="working") == (
+        "joint_normal_0",
+        "joint_normal_1",
+    )
+    physical = np.asarray(
+        process.compute_gridpoints(mean=jnp.array([1.0, -2.0]), cov=jnp.array(cov))
+    )
+    for dimension, name in enumerate(process.states):
+        bounds = model.initial_state_bounds(
+            params=params, regime_name="working", state_name=name, period=0
+        )
+        np.testing.assert_allclose(
+            bounds,
+            (physical[:, dimension].min(), physical[:, dimension].max()),
+            rtol=10**-DECIMAL_PRECISION,
+        )
+
+
 @pytest.fixture
 def joint_process_class() -> type[JointNormalIIDProcess]:
     assert hasattr(lcm, "JointNormalIIDProcess"), "Joint normal process API missing"
