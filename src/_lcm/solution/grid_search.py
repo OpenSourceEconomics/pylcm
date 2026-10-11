@@ -129,6 +129,7 @@ class _ActionStreamingDisposition(StrEnum):
     DENSE_CO_MAP_REFERENCE_CHANNEL = (
         "deliberately_dense:co_map_with_separate_reference_channel"
     )
+    DENSE_SELECTION_READOUT = "deliberately_dense:selection_readout"
     UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
     UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
     UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
@@ -254,10 +255,14 @@ class GridSearch(Solver):
         from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
             get_action_partitioned_max_Q_over_a,
             get_max_Q_over_a,
+            get_selection_readout_max_Q_over_a,
             get_streaming_max_Q_over_a,
         )
         from _lcm.regime_building.processing import (  # noqa: PLC0415
             get_conditioned_fold_weights_by_code,
+        )
+        from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
+            has_selection_aggregator,
         )
 
         program_functions: dict[int, MaxQOverAFunction] = {}
@@ -350,7 +355,17 @@ class GridSearch(Solver):
                     "fold_weights": MappingProxyType(fold_weights),
                     "fold_conditioning": MappingProxyType(fold_conditioning),
                 }
-                if action_partition_mesh is not None:
+                if has_selection_aggregator(Q_and_F=Q_and_F):
+                    _fail_if_selection_route_co_maps(context=context)
+                    program_functions[q_id] = get_selection_readout_max_Q_over_a(
+                        Q_and_F=Q_and_F,
+                        action_names=action_names,
+                        state_names=context.state_action_space.state_names,
+                        cell_width_keyword=cell_width_keyword,
+                        untiled_state_names=untiled_state_names,
+                        broadcast_state_names=broadcast_state_names,
+                    )
+                elif action_partition_mesh is not None:
                     program_functions[q_id] = get_action_partitioned_max_Q_over_a(
                         Q_and_F=Q_and_F,
                         batch_sizes=common_kwargs["batch_sizes"],
@@ -558,10 +573,24 @@ def _continuation_unread_state_names(
     return unread if 0 < len(unread) < len(inner_state_names) else ()
 
 
+def _fail_if_selection_route_co_maps(*, context: SolverBuildContext) -> None:
+    """Refuse a co-mapped state on the dense selection-aggregator route."""
+    if context.co_map_state_names:
+        msg = (
+            f"Regime {context.regime_name!r} declares a `selection_aggregator`, "
+            "whose solve does not co-map the sharded states "
+            f"{list(context.co_map_state_names)}. Do not shard them, or drop the "
+            "selection aggregator."
+        )
+        raise ExecutionPlanningError(msg)
+
+
 def _classify_action_streaming(
     *, context: SolverBuildContext
 ) -> _ActionStreamingDisposition:
     """Classify one solve route without conflating dense and unsupported cases."""
+    from _lcm.regime_building.Q_and_F import has_selection_aggregator  # noqa: PLC0415
+
     action_extents = context.state_action_space.actions_grid_shapes
     if context.has_taste_shocks and context.stakeholders is not None:
         disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1
@@ -579,6 +608,11 @@ def _classify_action_streaming(
         context.same_period_ref_regimes or context.edge_reference_regimes
     ):
         disposition = _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL
+    elif any(
+        has_selection_aggregator(Q_and_F=Q_and_F)
+        for Q_and_F in context.Q_and_F_functions.values()
+    ):
+        disposition = _ActionStreamingDisposition.DENSE_SELECTION_READOUT
     elif context.has_taste_shocks:
         disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL
     elif context.stakeholders is not None:

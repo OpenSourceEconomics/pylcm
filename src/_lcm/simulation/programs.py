@@ -46,7 +46,7 @@ from _lcm.execution.core_program import (
     ReducedAxis,
     ValueRead,
 )
-from _lcm.regime_building.argmax import argmax_and_max
+from _lcm.regime_building.argmax import argmax_and_max, argmax_and_readout
 from _lcm.regime_building.Q_and_F import QAndFParts, get_Q_and_F_parts
 from _lcm.simulation.gated_routing import (
     simulation_gate_fold,
@@ -803,7 +803,9 @@ class _DecisionWithActionParts:
     `Q`, their feasibility `F`, the flow utility `U` and the certainty-equivalent
     continuation `CE` over the action product, all from one evaluation of the
     regime's kernel. `Q`, `U` and `CE` are unmasked: an infeasible entry holds
-    what the action would have; the decision masks `Q` with `F`.
+    what the action would have; the decision masks `Q` with `F`. A regime with a
+    selection aggregator chooses on its `Q_selection` and publishes `Q` at the
+    choice.
     """
 
     __name__: ClassVar[str] = "argmax_and_max_Q_over_a_with_action_parts"
@@ -818,7 +820,13 @@ class _DecisionWithActionParts:
     ) -> tuple[IntND, FloatND, FloatND, BoolND, FloatND, FloatND]:
         """Return the chosen flat index, its value, and `Q`, `F`, `U` and `CE`."""
         parts = self.parts(**kwargs)
-        index, value = argmax_and_max(a=parts.Q, where=parts.F, initial=-jnp.inf)
+        index, value = (
+            argmax_and_max(a=parts.Q, where=parts.F, initial=-jnp.inf)
+            if parts.Q_selection is None
+            else argmax_and_readout(
+                selection=parts.Q_selection, readout=parts.Q, where=parts.F
+            )
+        )
         return index, value, parts.Q, parts.F, parts.U, parts.CE
 
 

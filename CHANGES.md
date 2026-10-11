@@ -5,6 +5,20 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Selection aggregator
+
+- `Regime(selection_aggregator=...)` separates the action selection from the value
+  passed back. The action maximizes `selection_aggregator(utility, CE, ...)` over the
+  feasible set, and `V` is `koopmans_aggregator(utility, CE, ...)` at that action. Its
+  params live under the pseudo-function name `selection_aggregator`, and `Phased`
+  gives the solve and simulation different selection rules. With `u + β̃δ·CE` in the
+  solve and `u + βδ·CE` in simulation this covers the naive (`β̃ = 1`), sophisticated
+  (`β̃ = β`) and partially naive beta-delta agents. Simulation and `lookup_policy`
+  select with the simulate variant and publish the Koopmans value of the chosen
+  action. Only `GridSearch` supports it; terminal and collective regimes, regimes with
+  taste shocks and gated-edge sources refuse it when the model is built.
+- A state or regime-function input read only by a Koopmans aggregator reaches it.
+
 ### Flow utility and continuation in policy lookup
 
 - `Model.lookup_policy(..., return_action_values=True)` also returns `U`, the flow

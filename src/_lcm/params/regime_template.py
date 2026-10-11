@@ -251,9 +251,10 @@ def create_regime_params_template(
             )
         function_params["taste_shocks"] = {"scale": "float"}
 
-    _add_koopmans_aggregator_params(
-        function_params=function_params, user_regime=user_regime
-    )
+    for slot in ("koopmans_aggregator", "selection_aggregator"):
+        _add_aggregator_params(
+            function_params=function_params, user_regime=user_regime, slot=slot
+        )
     _add_certainty_equivalent_params(
         function_params=function_params, user_regime=user_regime
     )
@@ -894,8 +895,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
             for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
         }
-        if user_regime.koopmans_aggregator is not None:
-            consumers["koopmans_aggregator"] = user_regime.koopmans_aggregator
+        consumers |= _declared_aggregators(user_regime)
         for name, func in consumers.items():
             _fail_if_a_joint_node_is_read(
                 consumer_name=name,
@@ -1099,8 +1099,7 @@ def _fail_if_a_next_name_is_read_outside_a_transition(
             for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
         }
-        if user_regime.koopmans_aggregator is not None:
-            consumers["koopmans_aggregator"] = user_regime.koopmans_aggregator
+        consumers |= _declared_aggregators(user_regime)
         for name, func in consumers.items():
             _fail_if_a_next_name_is_read(
                 consumer_name=name,
@@ -1219,31 +1218,45 @@ def _fail_if_a_next_name_is_read(
     )
 
 
-def _add_koopmans_aggregator_params(
-    *, function_params: dict[FunctionName, dict[str, str]], user_regime: UserRegime
+def _declared_aggregators(
+    user_regime: UserRegime,
+) -> dict[FunctionName, UserFunction | Phased]:
+    """Return the regime's declared aggregators under their pseudo-function names."""
+    declared = {
+        "koopmans_aggregator": user_regime.koopmans_aggregator,
+        "selection_aggregator": user_regime.selection_aggregator,
+    }
+    return {name: func for name, func in declared.items() if func is not None}
+
+
+def _add_aggregator_params(
+    *,
+    function_params: dict[FunctionName, dict[str, str]],
+    user_regime: UserRegime,
+    slot: Literal["koopmans_aggregator", "selection_aggregator"],
 ) -> None:
-    """Add the Koopmans aggregator's params under its pseudo-function name in place.
+    """Add an aggregator's params under its pseudo-function name in place.
 
     The aggregator's parameters beyond `utility` and `CE` surface in the
-    template under the reserved key `koopmans_aggregator`; a regime function
-    of that name collides and is rejected. Parameters that are states,
-    actions, or regime functions are wired at call time and never surface.
+    template under the reserved key `slot`; a regime function of that name
+    collides and is rejected. Parameters that are states, actions, or regime
+    functions are wired at call time and never surface.
     """
-    if user_regime.koopmans_aggregator is None:
+    aggregator = getattr(user_regime, slot)
+    if aggregator is None:
         return
-    if "koopmans_aggregator" in function_params:
+    if slot in function_params:
         raise InvalidNameError(
-            "The regime declares `koopmans_aggregator`, whose parameters live "
-            "under the pseudo-function name 'koopmans_aggregator' in the "
-            "params — this conflicts with a regime function of the same name."
+            f"The regime declares `{slot}`, whose parameters live under the "
+            f"pseudo-function name '{slot}' in the params — this conflicts "
+            "with a regime function of the same name."
         )
-    aggregator = user_regime.koopmans_aggregator
     if isinstance(aggregator, Phased):
-        tree = _input_types({"koopmans_aggregator": aggregator.solve}) | _input_types(
-            {"koopmans_aggregator": aggregator.simulate}
+        tree = _input_types({slot: aggregator.solve}) | _input_types(
+            {slot: aggregator.simulate}
         )
     else:
-        tree = _input_types({"koopmans_aggregator": aggregator})
+        tree = _input_types({slot: aggregator})
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
@@ -1254,7 +1267,7 @@ def _add_koopmans_aggregator_params(
         "CE",
     }
     params = {k: v for k, v in sorted(tree.items()) if k not in variables}
-    function_params["koopmans_aggregator"] = params
+    function_params[slot] = params
 
 
 def _add_pareto_objective_params(

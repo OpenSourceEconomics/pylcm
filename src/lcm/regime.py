@@ -84,6 +84,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
     koopmans_aggregator: UserFunction | Phased | None
+    selection_aggregator: UserFunction | Phased | None
     certainty_equivalent: CertaintyEquivalent | None
     description: str
 
@@ -260,6 +261,23 @@ class Regime:
     beta-delta split, say). `None` means the regime takes the model-level
     aggregator (`lcm.LinearAggregator` unless the `Model` says otherwise). Terminal
     regimes have no continuation and take none.
+    """
+
+    selection_aggregator: UserFunction | Phased | None = None
+    """Selects the action that `koopmans_aggregator` then values.
+
+    Same signature and calling convention as `koopmans_aggregator`, with
+    runtime params under the pseudo-function name `selection_aggregator`. The
+    action maximizes `selection_aggregator(utility, CE, ...)` over the feasible
+    set, and the value passed back is `koopmans_aggregator(utility, CE, ...)`
+    at that action. `Phased(solve=..., simulate=...)` gives the selves the
+    solve anticipates and the self that simulation follows different
+    selection rules: with `u + β̃δ·CE` in the solve and `u + βδ·CE` in
+    simulation, `β̃ = 1` is the naive, `β̃ = β` the sophisticated and
+    `β < β̃ < 1` the partially naive beta-delta agent. `None` means the
+    Koopmans aggregator selects as well. Only `GridSearch` supports it.
+    Terminal and collective regimes, regimes with taste shocks or folded
+    states, and gated-edge sources refuse it.
     """
 
     certainty_equivalent: CertaintyEquivalent | None = None
@@ -567,6 +585,28 @@ class Regime:
             )
             return cast("UserFunction", variant)
         return self.koopmans_aggregator
+
+    def get_selection_aggregator(
+        self,
+        phase: Literal["solve", "simulate"] = "solve",
+    ) -> UserFunction | None:
+        """Get the selection aggregator this phase runs.
+
+        Args:
+            phase: Which variant to use when the declaration is `Phased`.
+
+        Returns:
+            The aggregator, or `None` when the regime declares none.
+
+        """
+        if isinstance(self.selection_aggregator, Phased):
+            variant = (
+                self.selection_aggregator.solve
+                if phase == "solve"
+                else self.selection_aggregator.simulate
+            )
+            return cast("UserFunction", variant)
+        return self.selection_aggregator
 
     # keyword-only-exempt: primary-argument=phase
     def get_all_functions(
