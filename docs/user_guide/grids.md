@@ -68,6 +68,10 @@ actions = {"labor_supply": DiscreteGrid(category_class=LaborSupply)}
 Values are integer codes (0, 1, 2, ...) auto-assigned by `@categorical`. In simulation
 output, labels are preserved via pandas Categorical.
 
+When each category is a combination of characteristics, such as a labour-market status
+that fixes job holding and benefit duration, see
+[Categories with characteristics](categories_with_characteristics.md).
+
 When used as an **action**, no further configuration is needed. When used as a
 **state**, the transition is specified via `state_transitions` on the `Regime` — see
 [Transitions](transitions.ipynb).

@@ -17,6 +17,13 @@ an outcome grid and its transition mechanism.
   field uses `ScalarInt` and receives a consecutive `jnp.int32` code.
 - `DiscreteGrid(category_class=Category)` turns that category class into a state or
   action grid.
+- `characteristic_columns(category_class=Category, cases=...)` checks a table of every
+  category's `int` or `bool` characteristics, keyed by category name in declaration
+  order and unique per category, and returns read-only arrays indexed by code.
+- `find_code(columns, **characteristics)` returns the int32 code of the category with
+  the given characteristics, or the int32 minimum where none has them. The given
+  characteristics must tell all categories apart. See
+  [Categories with characteristics](../user_guide/categories_with_characteristics.md).
 
 The explicit `ordered` flag matters: interpolation and comparison may use ordering only
 when the economics declares it.

@@ -5,6 +5,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Categories with characteristics
+
+- `characteristic_columns(category_class=..., cases=...)` checks a table that lists
+  every category's `int` or `bool` characteristics against a categorical class and
+  returns read-only arrays indexed by code. `find_code(columns, **characteristics)`
+  maps characteristics back to a category code under `jit` and `vmap`, returning the
+  int32 minimum where no category matches. A new user-guide page shows how to declare,
+  publish and read such characteristics.
+
 ### Independent runtime checks
 
 - `Model.solve()` and `Model.simulate()` accept `runtime_checks=True` independently
