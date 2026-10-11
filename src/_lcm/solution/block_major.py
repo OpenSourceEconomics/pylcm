@@ -51,6 +51,11 @@ from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import ExecutableCache
 from _lcm.solution.contract import BackwardInductionResult, PeriodKernel
+from _lcm.solution.diagnostics import (
+    FeasibilityWarnings,
+    collect_component_feasibility_warnings,
+    emit_component_feasibility_warnings,
+)
 from _lcm.solution.grid_search import _GridSearchPeriodKernel
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.solution.v_topology import (
@@ -767,6 +772,7 @@ class ComponentSchedule:
         self._solve = solve
         self._cache = ExecutableCache()
         self._logger = logger
+        self._feasibility_warnings: FeasibilityWarnings = {}
         self._retained = RetainedComponentValues(
             state_name=state_name,
             codes=tuple(component.code for component in every_component),
@@ -811,10 +817,11 @@ class ComponentSchedule:
         (component,) = (
             component for component in self._components if component.code == code
         )
-        result = self._solve(
-            regimes=component_regimes(regimes=self._regimes, component=component),
-            executable_cache=self._cache,
-        )
+        with collect_component_feasibility_warnings(counts=self._feasibility_warnings):
+            result = self._solve(
+                regimes=component_regimes(regimes=self._regimes, component=component),
+                executable_cache=self._cache,
+            )
         values = result.value_functions
         published = {
             "simulation policies": result.simulation_policies,
@@ -859,6 +866,9 @@ class ComponentSchedule:
 
         """
         self._retained.coverage.fail_if_incomplete()
+        emit_component_feasibility_warnings(
+            logger=self._logger, counts=self._feasibility_warnings
+        )
         if self._logger.isEnabledFor(logging.DEBUG):
             record = self._retained.retention_record()
             self._logger.debug(

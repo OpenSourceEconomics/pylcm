@@ -74,6 +74,7 @@ from _lcm.utils.logging import raise_or_warn, validation_enabled
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidInitialConditionsError,
+    NoFeasibleActionError,
     PyLCMError,
     UnsupportedOperationError,
 )
@@ -921,7 +922,7 @@ def validate_initial_conditions(
         memory=memory,
     )
     if feasibility_errors:
-        raise InvalidInitialConditionsError(format_messages(feasibility_errors))
+        raise NoFeasibleActionError(format_messages(feasibility_errors))
     # `simulate` demands each collective start's role right after this preflight;
     # asking here keeps the validator's verdict the simulation's.
     _initial_own_stakeholder(
@@ -1885,13 +1886,31 @@ def _check_regime_feasibility(
         memory=memory,
     )
 
-    return _format_infeasibility_message(
+    message = _format_infeasibility_message(
         infeasible_indices=infeasible_indices,
         regime=regime,
         regime_name=regime_name,
         initial_states=initial_states,
         state_names=verdict.state_names,
         per_constraint_admits_any=per_constraint_admits_any,
+    )
+    first = infeasible_indices[0]
+    periods, _ = resolve_initial_periods(
+        ages=ages, initial_ages=np.asarray(initial_states["age"])[[first]]
+    )
+    state = {
+        name: (
+            regime.simulation.discrete_grids[name].categories[
+                int(np.asarray(initial_states[name])[first])
+            ]
+            if name in regime.simulation.discrete_grids
+            else np.asarray(initial_states[name])[first].item()
+        )
+        for name in verdict.state_names
+    }
+    return (
+        f"Regime '{regime_name}', period {int(periods[0])}, state {state} "
+        f"has no feasible action.\n\n{message}"
     )
 
 

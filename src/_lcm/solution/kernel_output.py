@@ -24,6 +24,7 @@ from _lcm.solution.contract import (
     GENERATED_REPLAY_AUTHORITY,
     GeneratedReplayAuthority,
 )
+from _lcm.solution.feasibility import FeasibilityCounts, FeasibilityKernelOutput
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import ArtifactPayload, RegimeName, SimulationPolicy
 from lcm.solver_api import (
@@ -88,6 +89,9 @@ class ConsumedKernelOutput:
 
     auxiliary_artifacts: MappingProxyType[ArtifactKey, ArtifactPayload]
     """Declared solver outputs retained only for inspection or persistence."""
+
+    feasibility_counts: FeasibilityCounts | None = None
+    """Trusted native GridSearch summaries; None denotes an unmeasured domain."""
 
 
 def consume_kernel_output(
@@ -255,6 +259,11 @@ def consume_kernel_output(
         continuation_artifacts=MappingProxyType(published_continuations),
         replay_artifacts=published_replay,
         auxiliary_artifacts=declared_auxiliary,
+        feasibility_counts=(
+            output.feasibility_counts
+            if type(output) is FeasibilityKernelOutput
+            else None
+        ),
     )
 
 

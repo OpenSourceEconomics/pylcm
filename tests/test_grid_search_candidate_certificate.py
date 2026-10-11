@@ -121,6 +121,7 @@ from lcm.typing import (
     UserParamsNode,
 )
 from tests.candidate_certificate.direct_flow import (
+    _feasibility_summary_errors,
     direct_flow_mutation_specs,
     supplemental_direct_flow_mutation_specs,
     verify_direct_candidate_flow,
@@ -157,6 +158,7 @@ class _AverageArguments(TypedDict, closed=True):
 class _KernelOutputArguments(TypedDict, closed=True):
     value: FloatND
     solve_time_artifacts: NotRequired[Mapping[ArtifactKey, ArtifactPayload]]
+    feasibility_counts: tuple[IntND, IntND]
 
 
 class _SimulationKeyArguments(TypedDict, closed=True):
@@ -405,6 +407,23 @@ def _splatted_chains(*, node: ast.AST) -> set[str]:
             if chain is not None:
                 found.add(chain)
     return found
+
+
+def test_feasibility_summary_preserves_the_native_value() -> None:
+    """Diagnostic counters cannot change the value the action reducer produced."""
+    tree = _parse("src/_lcm/solution/feasibility.py")
+    assert _feasibility_summary_errors(tree) == []
+
+
+def test_feasibility_summary_rejects_changed_native_values() -> None:
+    """Changing only the wrapper's value readout breaks its transport proof."""
+    source = (_SRC_ROOT / "_lcm/solution/feasibility.py").read_text()
+    changed = source.replace(
+        "return value, empty_count, other_inf_count",
+        "return -value, empty_count, other_inf_count",
+    )
+    assert changed != source
+    assert _feasibility_summary_errors(ast.parse(changed))
 
 
 def test_build_period_kernels_passes_the_whole_action_name_tuple():
@@ -2262,14 +2281,16 @@ def test_negating_kernel_output_reverses_the_public_candidate(
     """The solved-value transport into backward induction is behaviorally live."""
     model = _build_zero_weight_fold_model()
     baseline = _simulate_zero_weight_fold(model)
-    original = grid_search_module.KernelOutput
+    original = grid_search_module.FeasibilityKernelOutput
 
     def negated_kernel_output(**kwargs: Unpack[_KernelOutputArguments]) -> KernelOutput:
         output = original(**kwargs)
         object.__setattr__(output, "value", -output.value)
         return output
 
-    monkeypatch.setattr(grid_search_module, "KernelOutput", negated_kernel_output)
+    monkeypatch.setattr(
+        grid_search_module, "FeasibilityKernelOutput", negated_kernel_output
+    )
     shifted = _simulate_zero_weight_fold(model)
 
     assert baseline == ([1], [1], [1])
