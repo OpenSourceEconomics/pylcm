@@ -2005,6 +2005,10 @@ def test_materialization_refuses_jax_dtype_narrowing(tmp_path: Path) -> None:
         restored.value(period=0, regime=_REGIME)
 
 
+@pytest.mark.skipif(
+    np.finfo(np.longdouble).bits == 64,
+    reason="np.longdouble is float64 on this host, so JAX can materialize it.",
+)
 def test_unsupported_numpy_dtype_is_normalized_and_stays_unloaded(
     tmp_path: Path,
 ) -> None:
