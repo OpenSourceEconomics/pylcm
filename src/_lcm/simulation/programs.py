@@ -54,13 +54,10 @@ from _lcm.simulation.gated_routing import (
     simulation_gate_route_delta,
 )
 from _lcm.simulation.program_types import (
-    ACTION_FEASIBILITY,
     ACTION_INDEX,
-    ACTION_VALUES,
-    CONTINUATION_CE,
+    ACTION_PARTS_ROLES,
     DECISION_PROGRAM,
     DECISION_VALUE,
-    FLOW_UTILITY,
     GATE_FOLD_PROGRAM,
     GATE_ROUTE_PROGRAM,
     GATED_CONTINUATION,
@@ -219,10 +216,13 @@ def build_simulation_programs(
                     Q_and_F=kernel,
                     reducer=per_subject_decisions[period],
                     action_names=space.action_names,
-                    n_discrete_action_axes=(
-                        len(space.discrete_actions)
+                    body=(
+                        partial(
+                            TasteShockLookup,
+                            n_discrete_action_axes=len(space.discrete_actions),
+                        )
                         if context.has_taste_shocks
-                        else None
+                        else _DecisionWithActionParts
                     ),
                 ),
                 subject_arg_names=lookup_subject_arg_names,
@@ -777,14 +777,7 @@ def _decision_body(
 
 # What the dense decision with its parts publishes, in the order its body
 # returns them: the decision's own pair, then each part over the action product.
-ACTION_VALUES_OUTPUT_ROLES = (
-    ACTION_INDEX,
-    DECISION_VALUE,
-    ACTION_VALUES,
-    ACTION_FEASIBILITY,
-    FLOW_UTILITY,
-    CONTINUATION_CE,
-)
+ACTION_VALUES_OUTPUT_ROLES = (ACTION_INDEX, DECISION_VALUE, *ACTION_PARTS_ROLES)
 
 
 def _decision_with_action_parts(
@@ -792,33 +785,22 @@ def _decision_with_action_parts(
     Q_and_F: QAndFFunction,
     reducer: Callable[..., PytreeValue],
     action_names: tuple[ActionName, ...],
-    n_discrete_action_axes: int | None,
+    body: Callable[..., Callable[..., PytreeValue]],
 ) -> Callable[..., PytreeValue]:
     """Return the dense decision extended by the parts it reduces.
 
     The result takes the arguments of `reducer`, the dense decision over
-    `Q_and_F`, without a taste-shock key, and evaluates the parts form of
-    `Q_and_F` once over the action product:
-
-    - `n_discrete_action_axes=None` ⇒ the hard max, whose argmax and max are
-      those `reducer` takes, of the same `Q` over the same `F`;
-    - an integer ⇒ the EV1 reduction the solve applies over that many leading
-      discrete-action axes.
+    `Q_and_F`, without a taste-shock key, and calls `body`, built from the parts
+    form of `Q_and_F` mapped once over the action product: the hard max of
+    `reducer` over the same `Q` and `F`, or the EV1 reduction of the solve.
     """
     parts = productmap(
         func=get_Q_and_F_parts(Q_and_F=Q_and_F),
         variables=action_names,
         batch_sizes=dict.fromkeys(action_names, 0),
     )
-    body: Callable[..., PytreeValue] = (
-        _DecisionWithActionParts(parts=parts)
-        if n_discrete_action_axes is None
-        else TasteShockLookup(
-            parts=parts, n_discrete_action_axes=n_discrete_action_axes
-        )
-    )
     return with_signature(
-        body,
+        body(parts=parts),
         args=[
             name
             for name in inspect.signature(reducer).parameters

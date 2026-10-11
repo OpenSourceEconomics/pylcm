@@ -22,7 +22,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.regime import Regime as UserRegime
 from lcm.taste_shocks import ExtremeValueTasteShocks
@@ -90,12 +97,19 @@ def no_work_when_rich(*, work: DiscreteAction, wealth: ContinuousState) -> BoolN
     return (work == Work.off) | (wealth < 2.0)
 
 
-def get_model(*, forbid_work_when_rich: bool = False) -> Model:
+def high_consumption(*, consumption: ContinuousAction) -> BoolND:
+    return consumption >= 1.5
+
+
+def get_model(
+    *,
+    extra_constraints: dict[FunctionName, Callable[..., BoolND]] | None = None,
+    execution_config: ExecutionConfig | None = None,
+) -> Model:
     constraints: dict[FunctionName, Callable[..., BoolND]] = {
-        "budget_constraint": budget_constraint
+        "budget_constraint": budget_constraint,
+        **(extra_constraints or {}),
     }
-    if forbid_work_when_rich:
-        constraints["no_work_when_rich"] = no_work_when_rich
     alive = UserRegime(
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         state_transitions={"wealth": next_wealth},
@@ -117,6 +131,7 @@ def get_model(*, forbid_work_when_rich: bool = False) -> Model:
         ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={40: "alive"},
+        execution_config=execution_config or ExecutionConfig(),
     )
 
 
@@ -188,14 +203,6 @@ def test_lookup_choice_probabilities_are_the_softmax_of_Qc(looked_up):
     )
 
 
-def test_lookup_choice_probabilities_sum_to_one(looked_up):
-    np.testing.assert_array_almost_equal(
-        np.asarray(looked_up.choice_probabilities).sum(axis=1),
-        np.ones(2),
-        decimal=DECIMAL_PRECISION,
-    )
-
-
 def test_lookup_value_is_the_logsum_of_Qc(looked_up):
     np.testing.assert_array_almost_equal(
         np.asarray(looked_up.value), EXPECTED_VALUE, decimal=HAND_DECIMALS
@@ -211,20 +218,46 @@ def test_lookup_value_equals_the_solved_value_at_grid_rows(*, solved, looked_up)
     )
 
 
-def test_lookup_infeasible_combination_has_probability_exactly_zero():
-    model = get_model(forbid_work_when_rich=True)
-    got = lookup(model=model, params=get_params())
+@pytest.fixture(scope="module")
+def no_work_when_rich_lookup():
+    model = get_model(extra_constraints={"no_work_when_rich": no_work_when_rich})
+    return lookup(model=model, params=get_params())
+
+
+def test_lookup_infeasible_combination_has_probability_exactly_zero(
+    no_work_when_rich_lookup,
+):
     np.testing.assert_array_equal(
-        np.asarray(got.choice_probabilities)[1], np.array([1.0, 0.0])
+        np.asarray(no_work_when_rich_lookup.choice_probabilities)[1],
+        np.array([1.0, 0.0]),
     )
 
 
-def test_lookup_infeasible_combination_leaves_value_at_the_feasible_Qc():
-    model = get_model(forbid_work_when_rich=True)
-    got = lookup(model=model, params=get_params())
+def test_lookup_infeasible_combination_leaves_value_at_the_feasible_Qc(
+    no_work_when_rich_lookup,
+):
+    got = no_work_when_rich_lookup
     assert (float(got.Qc[1, 1]), float(got.value[1])) == (
         float("-inf"),
         float(got.Qc[1, 0]),
+    )
+
+
+def test_lookup_row_without_feasible_combination_has_no_mass_and_no_value():
+    model = get_model(extra_constraints={"high_consumption": high_consumption})
+    got = lookup(model=model, params=get_params())
+    assert (
+        float(got.value[0]),
+        np.asarray(got.choice_probabilities)[0].tolist(),
+        np.asarray(got.conditional_actions["consumption"])[0].tolist(),
+    ) == (float("-inf"), [0.0, 0.0], [0.5, 0.5])
+
+
+def test_lookup_under_a_device_budget_decodes_the_same_conditional_actions():
+    model = get_model(execution_config=ExecutionConfig(device_memory_bytes=2**30))
+    got = lookup(model=model, params=get_params())
+    np.testing.assert_array_equal(
+        np.asarray(got.conditional_actions["consumption"]), EXPECTED_CONSUMPTION
     )
 
 

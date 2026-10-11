@@ -17,14 +17,11 @@ from _lcm.logsum import logsum_and_softmax
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.Q_and_F import QAndFParts
 from _lcm.simulation.program_types import (
-    ACTION_FEASIBILITY,
-    ACTION_VALUES,
+    ACTION_PARTS_ROLES,
     CHOICE_PROBABILITIES,
     CONDITIONAL_ACTION_INDEX,
     CONDITIONAL_VALUE,
-    CONTINUATION_CE,
     DECISION_VALUE,
-    FLOW_UTILITY,
 )
 from _lcm.typing import PytreeValue
 from lcm.typing import BoolND, FloatND, IntND, ScalarFloat
@@ -35,10 +32,7 @@ TASTE_SHOCK_LOOKUP_OUTPUT_ROLES = (
     CONDITIONAL_VALUE,
     CHOICE_PROBABILITIES,
     CONDITIONAL_ACTION_INDEX,
-    ACTION_VALUES,
-    ACTION_FEASIBILITY,
-    FLOW_UTILITY,
-    CONTINUATION_CE,
+    *ACTION_PARTS_ROLES,
 )
 
 

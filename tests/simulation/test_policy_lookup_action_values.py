@@ -254,7 +254,8 @@ def test_budgeted_lookup_returns_the_feasibility_of_each_action():
         states={"wealth": jnp.array([2.0])},
         return_action_values=True,
     )
-    assert tuple(got.actions or ()) == ("labor_supply", "consumption")
+    assert got.actions is not None
+    assert tuple(got.actions) == ("labor_supply", "consumption")
     np.testing.assert_array_equal(
         np.asarray(got.F), np.array([[[True, True, False], [True, True, False]]])
     )

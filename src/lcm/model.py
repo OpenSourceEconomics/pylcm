@@ -4193,12 +4193,24 @@ class Model:
             )
             jax.block_until_ready(actions)
             unit.close()
+        parts = (
+            {
+                "Q": by_role[ACTION_VALUES],
+                "F": by_role[ACTION_FEASIBILITY],
+                "U": by_role[FLOW_UTILITY],
+                "CE": by_role[CONTINUATION_CE],
+            }
+            if return_action_values
+            else {}
+        )
         return _trim_lookup_rows(
-            lookup=_assemble_policy_lookup(
-                by_role=by_role,
-                decoded_actions=actions,
-                has_taste_shocks=regime.has_taste_shocks,
-                return_action_values=return_action_values,
+            lookup=PolicyLookup(
+                actions=None if regime.has_taste_shocks else actions,
+                value=by_role[DECISION_VALUE],
+                Qc=by_role.get(CONDITIONAL_VALUE),
+                choice_probabilities=by_role.get(CHOICE_PROBABILITIES),
+                conditional_actions=actions if regime.has_taste_shocks else None,
+                **parts,
             ),
             n_rows=n_query_rows,
             allocations=allocations,
@@ -5064,42 +5076,6 @@ def _lookup_live_footprint(
     )
 
 
-def _assemble_policy_lookup(
-    *,
-    by_role: Mapping[str, jax.Array],
-    decoded_actions: MappingProxyType[ActionName, FloatND | IntND],
-    has_taste_shocks: bool,
-    return_action_values: bool,
-) -> PolicyLookup:
-    """Assemble a lookup from its program's outputs by role and decoded actions.
-
-    The decoded actions are the chosen actions of a hard-max regime and the
-    conditional continuous actions of a regime with taste shocks.
-    """
-    parts = (
-        {
-            "Q": by_role[ACTION_VALUES],
-            "F": by_role[ACTION_FEASIBILITY],
-            "U": by_role[FLOW_UTILITY],
-            "CE": by_role[CONTINUATION_CE],
-        }
-        if return_action_values
-        else {}
-    )
-    if not has_taste_shocks:
-        return PolicyLookup(
-            actions=decoded_actions, value=by_role[DECISION_VALUE], **parts
-        )
-    return PolicyLookup(
-        actions=None,
-        value=by_role[DECISION_VALUE],
-        Qc=by_role[CONDITIONAL_VALUE],
-        choice_probabilities=by_role[CHOICE_PROBABILITIES],
-        conditional_actions=decoded_actions,
-        **parts,
-    )
-
-
 def _trim_lookup_rows(
     *,
     lookup: PolicyLookup,
@@ -5179,26 +5155,21 @@ def _map_lookup_arrays(
 ) -> PolicyLookup:
     """Apply `func` to every array a lookup holds."""
 
-    def array(each: jax.Array | None) -> jax.Array | None:
-        return None if each is None else func(each)
-
-    def mapping(
-        each: MappingProxyType[ActionName, FloatND] | None,
-    ) -> MappingProxyType[ActionName, FloatND] | None:
+    def apply(
+        each: jax.Array | Mapping[ActionName, jax.Array] | None,
+    ) -> jax.Array | MappingProxyType[ActionName, jax.Array] | None:
         if each is None:
             return None
-        return MappingProxyType({name: func(a) for name, a in each.items()})
+        if isinstance(each, Mapping):
+            return MappingProxyType({name: func(a) for name, a in each.items()})
+        return func(each)
 
-    return PolicyLookup(
-        actions=mapping(lookup.actions),
-        value=func(lookup.value),
-        Q=array(lookup.Q),
-        F=array(lookup.F),
-        U=array(lookup.U),
-        CE=array(lookup.CE),
-        Qc=array(lookup.Qc),
-        choice_probabilities=array(lookup.choice_probabilities),
-        conditional_actions=mapping(lookup.conditional_actions),
+    return dataclasses.replace(
+        lookup,
+        **{
+            field.name: apply(getattr(lookup, field.name))
+            for field in dataclasses.fields(lookup)
+        },
     )
 
 
