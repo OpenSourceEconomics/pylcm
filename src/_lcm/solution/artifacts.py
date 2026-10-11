@@ -14,6 +14,7 @@ from _lcm.grids import DiscreteGrid
 from _lcm.params.edges import flat_namespaces, regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
@@ -109,6 +110,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     authority: SolutionAuthority,
     flat_params: FlatParams,
     component_values: RetainedComponentValues | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> SolutionResult:
     """Label existing engine outputs without changing their numerical meaning.
 
@@ -329,6 +331,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                                 (period, regime_name)
                             ].axis_names,
                             flat_params=flat_params,
+                            process_grid_resolver=process_grid_resolver,
                         ),
                         categorical_domains={
                             name: CategoryDomain(
@@ -464,11 +467,17 @@ def _canonical_value_axis_names(*, regime: Regime) -> tuple[str, ...]:
 
 
 def _value_axes(
-    *, regime: Regime, period: int, axis_names: tuple[str, ...], flat_params: FlatParams
+    *,
+    regime: Regime,
+    period: int,
+    axis_names: tuple[str, ...],
+    flat_params: FlatParams,
+    process_grid_resolver: ProcessGridResolver | None,
 ) -> tuple[AxisDescriptor, ...]:
     """Snapshot the solve's resolved nodes without retaining device buffers."""
     states = regime.solution.state_action_space(
-        regime_params=regime_kernel_params(flat_params, regime_name=regime.name)
+        regime_params=regime_kernel_params(flat_params, regime_name=regime.name),
+        process_grid_resolver=process_grid_resolver,
     ).states
     period_axes = regime.solution.period_state_axes
     if period_axes is not None:
