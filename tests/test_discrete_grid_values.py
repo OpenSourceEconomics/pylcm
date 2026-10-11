@@ -28,10 +28,11 @@ from _lcm.regime_building.value_adapter import (
     adapt_user_function,
     collect_value_grids,
 )
-from lcm import AgeGrid, DiscreteGrid, Model, fixed_transition
+from lcm import AgeGrid, DiscreteGrid, Model, Phased, fixed_transition
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
+from lcm.transition import AgeSpecializedFunction
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND
 from lcm_examples.mortality import (
     is_working,
@@ -297,20 +298,75 @@ def test_model_refuses_one_name_with_different_values():
                     functions={"utility": lambda: 0.0},
                 ),
             },
+            laws={},
             derived_categoricals={},
         )
 
 
-def test_model_refuses_a_fixed_value_grid_state():
-    """A fixed state cannot be a value grid."""
-    with pytest.raises(RegimeInitializationError, match="fixed state"):
-        collect_value_grids(
-            regimes={
-                "a": UserRegime(
-                    states={"wealth": _WEALTH},
-                    state_transitions={"wealth": fixed_transition("wealth")},
-                    functions={"utility": lambda: 0.0},
-                )
-            },
-            derived_categoricals={},
+@pytest.mark.parametrize(
+    "law",
+    [
+        pytest.param(fixed_transition("bracket"), id="bare"),
+        pytest.param(
+            Phased(
+                solve=fixed_transition("bracket"), simulate=fixed_transition("bracket")
+            ),
+            id="phased",
+        ),
+    ],
+)
+def test_model_refuses_a_fixed_value_grid_state(law):
+    """A fixed state cannot be a value grid, however its identity law is wrapped."""
+    model = _value_grid_model(enable_jit=True)
+    regime = model.user_regimes["working_life"]
+    with_bracket = regime.replace(
+        states={**dict(regime.states), "bracket": DiscreteGrid(values=[5, 7])},
+        state_transitions={**dict(regime.state_transitions), "bracket": law},
+        functions={**dict(regime.functions), "utility": _utility_with_bracket},
+    )
+    with pytest.raises(RegimeInitializationError, match="fixed state 'bracket'"):
+        _model_with(working_life=with_bracket)
+
+
+def _utility_with_bracket(
+    *,
+    consumption: DiscreteAction,
+    is_working: BoolND,
+    disutility_of_work: float,
+    bracket: DiscreteState,
+) -> FloatND:
+    return (
+        _utility(
+            consumption=consumption,
+            is_working=is_working,
+            disutility_of_work=disutility_of_work,
         )
+        + 0.0 * bracket
+    )
+
+
+def test_model_refuses_an_age_specialized_function_beside_a_value_grid():
+    """An age-specialized function in a regime with value grids is refused."""
+    model = _value_grid_model(enable_jit=True)
+    regime = model.user_regimes["working_life"]
+    specialized = regime.replace(
+        functions={
+            **dict(regime.functions),
+            "is_working": AgeSpecializedFunction(
+                build=lambda _age: is_working, signature=lambda _age: 0
+            ),
+        }
+    )
+    with pytest.raises(RegimeInitializationError, match="age-specialized"):
+        _model_with(working_life=specialized)
+
+
+def _model_with(*, working_life: UserRegime) -> Model:
+    ages = AgeGrid(start=50, inclusive_stop=50 + (_N_PERIODS - 1) * 10, step="10Y")
+    return Model(
+        regimes={"working_life": working_life, "dead": discrete.dead},
+        ages=ages,
+        regime_id_class=discrete.RegimeId,
+        initial_nodes={ages.exact_values[0]: "working_life"},
+        edges=discrete.working_life_edges(ages),
+    )
