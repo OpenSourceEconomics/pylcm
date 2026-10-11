@@ -479,3 +479,157 @@ def test_joint_normal_rejects_malformed_physical_inputs(malformed: str) -> None:
             seed=521,
             log_level="off",
         )
+
+
+@pytest.mark.parametrize("runtime", [False, True])
+@pytest.mark.parametrize("fold", [False, True])
+@pytest.mark.parametrize(
+    "cov",
+    [((1.0, -0.4), (-0.4, 2.0)), ((0.0, 0.0), (0.0, 2.0)), ((1.0, 2.0), (2.0, 4.0))],
+)
+def test_joint_normal_validate_transitions_preserves_named_runtime_law(
+    *, runtime: bool, fold: bool, cov: tuple[tuple[float, float], tuple[float, float]]
+) -> None:
+    """Public preflight shares fixed/runtime joint-law validation with native solve."""
+    process = JointNormalIIDProcess(
+        states=("x", "y"),
+        n_points=(3, 5),
+        gauss_hermite=True,
+        mean=None if runtime else (1.0, -2.0),
+        cov=None if runtime else cov,
+        fold=fold,
+    )
+    model = _model(
+        lcm.Regime(states={"wages": process}, functions={"utility": _utility})
+    )
+    params = (
+        {
+            name: {"wages": {"mean": jnp.array([1.0, -2.0]), "cov": jnp.array(cov)}}
+            for name in ("working", "done")
+        }
+        if runtime
+        else {}
+    )
+    assert model.validate_transitions(params=params) is None
+    solution = model.solve(params=params, log_level="off", runtime_checks=True)
+    for regime_to_values in solution.values.values():
+        for values in regime_to_values.values():
+            assert np.isfinite(np.asarray(values)).all()
+
+    if runtime:
+        template = model.get_params_template()
+        for name in ("working", "done"):
+            assert set(template[name]["wages"]) == {"mean", "cov"}
+        # Leave the first regime valid; fail the later regime's named runtime law.
+        # Fresh mapping leaves the valid input untouched for the subsequent call.
+        invalid = {
+            **params,
+            "done": {
+                "wages": {
+                    "mean": jnp.array([1.0, -2.0]),
+                    "cov": jnp.array(((1.0, 2.0), (2.0, 1.0))),
+                }
+            },
+        }
+        with pytest.raises(InvalidParamsError, match=r"wages.*cov") as preflight:
+            model.validate_transitions(params=invalid)
+        with pytest.raises(InvalidParamsError, match=r"wages.*cov") as solve:
+            model.solve(params=invalid, log_level="off", runtime_checks=True)
+        assert str(preflight.value) == str(solve.value)
+        assert model.validate_transitions(params=params) is None
+
+
+@lcm.time_varying_params("wage")
+def _age_profile_joint_utility(
+    *,
+    x: lcm.typing.ContinuousState,
+    y: lcm.typing.ContinuousState,
+    wage: lcm.typing.FloatND,
+) -> lcm.typing.FloatND:
+    return x * y + x * x + wage
+
+
+@pytest.mark.parametrize("fold", [False, True])
+def test_joint_normal_age_profile_alignment_matches_manual(*, fold: bool) -> None:
+    process = JointNormalIIDProcess(
+        states=("x", "y"),
+        n_points=3,
+        gauss_hermite=True,
+        mean=(0.0, 0.0),
+        cov=None,
+        fold=fold,
+    )
+    regime = lcm.Regime(
+        states={"joint": process}, functions={"utility": _age_profile_joint_utility}
+    )
+    model = lcm.Model(
+        ages=lcm.AgeGrid(start=40, inclusive_stop=41, step="Y"),
+        regimes={"working": regime, "done": regime},
+        regime_id_class=RegimeId,
+        initial_nodes=((40, "working"),),
+        edges={"working": {"done": (40,)}},
+        fixed_params={"discount_factor": 0.9},
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
+    )
+    mapped = lcm.TimeVarying.from_profile(
+        values=jnp.array([99.0, 5.0, 3.0]),
+        labels=(39, 42, 41),
+        age_to_label={40: 41, 41: 42},
+    )
+    manual = lcm.TimeVarying(values=jnp.array([3.0, 5.0]), ages=(40, 41))
+    solutions = {}
+    frames = {}
+    for name, profile in (("mapped", mapped), ("manual", manual)):
+        params = {
+            "wage": profile,
+            **{
+                regime_name: {"joint": {"cov": np.array(((1.0, 0.4), (0.4, 2.0)))}}
+                for regime_name in ("working", "done")
+            },
+        }
+        model.validate_transitions(params=params)
+        solution = model.solve(params=params, runtime_checks=True, log_level="off")
+        solutions[name] = solution
+        states = {"x": jnp.array((0.1, 0.5)), "y": jnp.array((0.2, -0.4))}
+        expected = states["x"] * states["y"] + states["x"] ** 2 + 3.0 + 0.9 * 6.4
+        lookup = model.lookup_policy(
+            params=params,
+            solution=solution,
+            regime_name="working",
+            period=0,
+            states=states,
+        )
+        aaae(lookup.value, expected, decimal=DECIMAL_PRECISION)
+        physical = np.asarray(
+            process.compute_gridpoints(cov=jnp.array(((1.0, 0.4), (0.4, 2.0))))
+        )
+        for dimension, state_name in enumerate(("x", "y")):
+            bounds = model.initial_state_bounds(
+                params=params,
+                regime_name="working",
+                state_name=state_name,
+                period=0,
+            )
+            np.testing.assert_allclose(
+                bounds,
+                (physical[:, dimension].min(), physical[:, dimension].max()),
+                rtol=10**-DECIMAL_PRECISION,
+            )
+        frames[name] = model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                **states,
+                "period": jnp.zeros(2, dtype=jnp.int32),
+                "regime_id": jnp.zeros(2, dtype=jnp.int32),
+            },
+            seed=521,
+            runtime_checks=True,
+            log_level="off",
+        ).to_dataframe()
+    for period, regime_name in ((0, "working"), (1, "done")):
+        np.testing.assert_array_equal(
+            solutions["mapped"].values[period][regime_name],
+            solutions["manual"].values[period][regime_name],
+        )
+    pd.testing.assert_frame_equal(frames["mapped"], frames["manual"], check_exact=True)
