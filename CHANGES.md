@@ -5,6 +5,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Public `EULER_GAMMA` for location-0 taste shocks
+
+- `lcm.EULER_GAMMA` exports the Euler-Mascheroni constant (equal to
+  `numpy.euler_gamma`). pylcm's EV1 taste shocks are mean-zero; to reproduce
+  location-0 shocks, add `scale * EULER_GAMMA` to the utility of every action in each
+  taste-shock regime. The recipe is exact under `LinearAggregator`; under other
+  Koopmans aggregators it changes choice probabilities.
+
 ### Independent runtime checks
 
 - `Model.solve()` and `Model.simulate()` accept `runtime_checks=True` independently
