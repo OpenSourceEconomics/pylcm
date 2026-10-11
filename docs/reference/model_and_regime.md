@@ -71,6 +71,13 @@ Public inspection attributes include:
 - `pruned_variables`;
 - `get_params_template()`, which returns a mutable nested template.
 
+`model.validate_transitions(params=params)` runs the transition preflight used by
+`solve(runtime_checks=True)` without backward induction. It returns `None` on success
+and raises the same first diagnostic for invalid regime probabilities, stochastic state
+laws or joint transition supports and probabilities. It checks active periods and phase
+grids with numerical checks always enabled and no console output. Utilities, solver
+outputs and general deterministic next-state finiteness are outside this preflight.
+
 Two methods check initial conditions without solving or simulating. Both accept the same
 `initial_conditions` forms as `simulate` — a mapping of arrays with `"regime_id"` codes,
 or a DataFrame with a `"regime_name"` column, ages and categorical labels — and the same

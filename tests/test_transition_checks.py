@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from types import MappingProxyType
 from typing import NotRequired, Unpack
+from unittest.mock import Mock
 
 import jax.numpy as jnp
 import numpy as np
@@ -969,3 +970,63 @@ class _PreflightKwargs(TypedDict, closed=True):
     regimes: MappingProxyType[RegimeName, Regime]
     regime_names_to_ids: RegimeNamesToIds
     ages: TimeAxis
+
+
+def test_validate_transitions_returns_none_without_backward_induction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public preflight accepts valid laws without entering the solver."""
+
+    def valid_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.array([0.4, 0.6])
+
+    solver = Mock(side_effect=AssertionError("Transition validation entered solver"))
+    monkeypatch.setattr(Model, "_solve_from_flat_params", solver)
+    model = _model_with_state_probs(valid_probs)
+    assert model.validate_transitions(params={"discount_factor": 0.95}) is None
+    solver.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "probabilities", [[0.4, 0.5], [1.1, -0.1], [float("nan"), 1.0]]
+)
+def test_validate_transitions_matches_solve_failure(probabilities: list[float]) -> None:
+    """Preflight and solve preserve the first failing law's diagnostic."""
+
+    def bad_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.asarray(probabilities)
+
+    model = _model_with_state_probs(bad_probs)
+    params = {"discount_factor": 0.95}
+    with pytest.raises(InvalidStateTransitionProbabilitiesError) as preflight:
+        model.validate_transitions(params=params)
+    with pytest.raises(InvalidStateTransitionProbabilitiesError) as solve:
+        model.solve(params=params, log_level="off")
+    assert str(preflight.value) == str(solve.value)
+    assert "state 'health'" in str(preflight.value)
+    assert "regime 'alive'" in str(preflight.value)
+    assert "age 0" in str(preflight.value)
+
+
+def test_validate_transitions_checks_later_periods_and_new_params() -> None:
+    """A successful call does not hide an invalid later-period parameterization."""
+
+    def health_probs(*, health: DiscreteState, period: int, mass: float) -> FloatND:  # noqa: ARG001
+        return jnp.array([0.4, jnp.where(period == 1, mass - 0.4, 0.6)])
+
+    prototype = _model_with_state_probs(health_probs)
+    model = Model(
+        regimes=prototype.user_regimes,
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        regime_id_class=_RegimeId,
+        initial_nodes={0: "alive"},
+        edges={"alive": {"alive": (0, 1), "terminal": 2}},
+    )
+    assert (
+        model.validate_transitions(params={"discount_factor": 0.95, "mass": 1.0})
+        is None
+    )
+    with pytest.raises(
+        InvalidStateTransitionProbabilitiesError, match=r"age 1.*sum to 1"
+    ):
+        model.validate_transitions(params={"discount_factor": 0.95, "mass": 0.9})
