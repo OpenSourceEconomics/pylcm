@@ -133,8 +133,30 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
         )
     ):
         errors.append("the validated recipe must receive the complete graph")
+    producer_calls = [
+        node
+        for node in ast.walk(staged_node)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "self"
+        and node.func.attr == "_produce"
+    ]
+    if not producer_calls:
+        errors.append("staged arithmetic must select its admitted executor")
+    for producer_call in producer_calls:
+        stage_flags = [
+            keyword.value
+            for keyword in producer_call.keywords
+            if keyword.arg == "process_stage"
+        ]
+        if (
+            len(stage_flags) != 1
+            or not isinstance(stage_flags[0], ast.Constant)
+            or stage_flags[0].value is not True
+        ):
+            errors.append("staged arithmetic must select its admitted executor")
     for expression, message in (
-        ("process_stage=True", "staged arithmetic must select its admitted executor"),
         (
             "weak_type=stage.weak_type",
             "conversion strength must flow from recipe to admission",
@@ -385,8 +407,20 @@ def test_runtime_process_admission_contract_is_complete() -> None:
         ),
         (
             "SimulationProcessGrids._produce_staged",
-            "process_stage=True",
-            "process_stage=False",
+            "weak_type=stage.weak_type,\n                    process_stage=True",
+            "weak_type=stage.weak_type,\n                    process_stage=False",
+            "staged arithmetic must select its admitted executor",
+        ),
+        (
+            "SimulationProcessGrids._produce_staged",
+            (
+                "dtype=str(jax.typeof(result).dtype),\n"
+                "                    process_stage=True"
+            ),
+            (
+                "dtype=str(jax.typeof(result).dtype),\n"
+                "                    process_stage=False"
+            ),
             "staged arithmetic must select its admitted executor",
         ),
         (

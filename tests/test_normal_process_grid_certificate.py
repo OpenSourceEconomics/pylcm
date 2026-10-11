@@ -33,7 +33,13 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         assert historical.isdisjoint(names)
         assert set(population).isdisjoint(names)
         historical.update(names)
-    assert len(historical) == 556
+    added_feasibility_controls = {
+        "feasibility_summary:published_value_changed",
+        "feasibility_summary:empty_count_reversed",
+    }
+    assert added_feasibility_controls <= historical
+    assert len(historical) == 558
+    assert len(historical - added_feasibility_controls) == 556
     assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 117
 
 
