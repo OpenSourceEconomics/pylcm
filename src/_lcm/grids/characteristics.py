@@ -149,28 +149,15 @@ def find_code(
 def _check_case_names(
     *, category_names: tuple[str, ...], case_names: tuple[str, ...]
 ) -> list[str]:
-    """Return the mismatches between the table's and the class's categories."""
-    missing = [name for name in category_names if name not in case_names]
-    extra = [name for name in case_names if name not in category_names]
-    if missing or extra:
-        return [
-            message
-            for message in (
-                f"The table is missing categories: {missing}." if missing else "",
-                f"The table lists names that are not categories: {extra}."
-                if extra
-                else "",
-            )
-            if message
-        ]
-    if case_names != category_names:
-        return [
-            (
-                f"The table must list the categories in declaration order "
-                f"{list(category_names)}, but lists {list(case_names)}."
-            )
-        ]
-    return []
+    """Return a message unless the table lists the categories in order."""
+    if case_names == category_names:
+        return []
+    return [
+        (
+            f"The table must list exactly the categories {list(category_names)}, "
+            f"in declaration order, but lists {list(case_names)}."
+        )
+    ]
 
 
 def _check_rows(*, cases: Mapping[str, Mapping[str, CharacteristicValue]]) -> list[str]:
@@ -209,8 +196,14 @@ def _check_rows(*, cases: Mapping[str, Mapping[str, CharacteristicValue]]) -> li
 
 def _check_column(*, name: str, values: Mapping[str, CharacteristicValue]) -> list[str]:
     """Return the problems of one characteristic's values."""
-    kinds = {isinstance(value, bool) for value in values.values()}
-    if len(kinds) > 1:
+    error_messages = [
+        f"`{case}.{name}` is {value!r}; characteristics take an int or a bool."
+        for case, value in values.items()
+        if type(value) not in {int, bool}
+    ]
+    if error_messages:
+        return error_messages
+    if len({type(value) for value in values.values()}) > 1:
         return [f"Characteristic `{name}` mixes bool and int values."]
     return [
         f"`{case}.{name}` is {value}, outside the int32 range of category codes."

@@ -53,7 +53,7 @@ LABOUR_STATUS = characteristic_columns(
 The check raises when the table and the class disagree:
 
 - the table lists the categories of the class, in declaration order;
-- every category sets the same characteristics, each an `int` or a `bool`;
+- every category sets the same characteristics, each a Python `int` or `bool`;
 - no two categories share all characteristics.
 
 The last rule makes each category equal to its combination of characteristics. Two
@@ -69,10 +69,10 @@ or action, named `<variable>_<characteristic>`, and register it in the regime's
 ```python
 import jax.numpy as jnp
 
-from lcm.typing import DiscreteAction, DiscreteState, FloatND, IntND
+from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, IntND
 
 
-def labour_status_has_job(labour_status: DiscreteState) -> IntND:
+def labour_status_has_job(labour_status: DiscreteState) -> BoolND:
     return jnp.asarray(LABOUR_STATUS["has_job"])[labour_status]
 
 
@@ -80,7 +80,7 @@ def labour_status_di_years(labour_status: DiscreteState) -> IntND:
     return jnp.asarray(LABOUR_STATUS["di_years"])[labour_status]
 
 
-def earnings(*, wage: FloatND, labour_status_has_job: IntND) -> FloatND:
+def earnings(*, wage: FloatND, labour_status_has_job: BoolND) -> FloatND:
     return wage * labour_status_has_job
 ```
 
@@ -89,8 +89,6 @@ def earnings(*, wage: FloatND, labour_status_has_job: IntND) -> FloatND:
   working, keeps its own economic name and takes the characteristic as an argument.
 - The table holds NumPy arrays, and `jnp.asarray` inside the function moves the column
   to the device when the function runs.
-- Read the table, and never the class's fields, inside model functions; pylcm
-  fingerprints everything a model function references.
 
 ## Map characteristics back to a category
 
@@ -101,6 +99,12 @@ A deterministic transition can describe the next category by its characteristics
 from lcm import find_code
 
 
+@categorical(ordered=False)
+class Work:
+    no: ScalarInt
+    yes: ScalarInt
+
+
 def next_labour_status(*, labour_status_di_years: IntND, work: DiscreteAction) -> IntND:
     on_di = find_code(
         LABOUR_STATUS,
@@ -108,12 +112,13 @@ def next_labour_status(*, labour_status_di_years: IntND, work: DiscreteAction) -
         is_applicant=False,
         di_years=jnp.minimum(labour_status_di_years + 1, 2),
     )
-    return jnp.where(work == 1, LabourStatus.employed, on_di)
+    return jnp.where(work == Work.yes, LabourStatus.employed, on_di)
 ```
 
 - The characteristics you pass must tell all categories apart. A subset is enough when
   no two categories share it; otherwise `find_code` raises before reading any value.
-- Values may be arrays, also inside `jit` and `vmap`, and broadcast against each other.
+- Values may be Python scalars or JAX arrays, also inside `jit` and `vmap`, and
+  broadcast against each other.
 - A combination that no category has returns the missing-category code, the int32
   minimum.
 

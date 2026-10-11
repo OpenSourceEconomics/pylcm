@@ -102,6 +102,20 @@ def _columns_with_a_float():
     )
 
 
+def _columns_with_a_float_in_a_later_row():
+    characteristic_columns(
+        category_class=_Two,
+        cases={"a": {"x": 0}, "b": {"x": 1.5}},  # ty: ignore[invalid-argument-type]
+    )
+
+
+def _columns_with_a_string_in_a_later_row():
+    characteristic_columns(
+        category_class=_Two,
+        cases={"a": {"x": 0}, "b": {"x": "q"}},  # ty: ignore[invalid-argument-type]
+    )
+
+
 def _columns_mixing_bool_and_int():
     characteristic_columns(category_class=_Two, cases={"a": {"x": True}, "b": {"x": 2}})
 
@@ -131,12 +145,14 @@ def _columns_for_a_plain_class():
 @pytest.mark.parametrize(
     ("build", "message"),
     [
-        (_columns_missing_category, r"missing.*\['b'\]"),
-        (_columns_extra_category, r"not categories.*\['c'\]"),
-        (_columns_in_wrong_order, "declaration order"),
+        (_columns_missing_category, r"exactly the categories.*lists \['a'\]"),
+        (_columns_extra_category, r"lists \['a', 'b', 'c'\]"),
+        (_columns_in_wrong_order, r"declaration order, but lists \['b', 'a'\]"),
         (_columns_with_differing_characteristics, r"`b`.*\['y'\].*\['x'\]"),
         (_columns_without_characteristics, "at least one characteristic"),
         (_columns_with_a_float, r"0\.5"),
+        (_columns_with_a_float_in_a_later_row, r"`b\.x` is 1\.5"),
+        (_columns_with_a_string_in_a_later_row, r"`b\.x` is 'q'"),
         (_columns_mixing_bool_and_int, r"`x`.*bool.*int"),
         (_columns_outside_int32, r"`b\.x`.*int32"),
         (_columns_with_identical_rows, r"`a`, `b`.*same characteristics"),
