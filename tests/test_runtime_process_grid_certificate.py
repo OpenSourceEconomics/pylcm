@@ -133,7 +133,7 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
         )
     ):
         errors.append("the validated recipe must receive the complete graph")
-    produce_calls = [
+    producer_calls = [
         node
         for node in ast.walk(staged_node)
         if isinstance(node, ast.Call)
@@ -142,16 +142,30 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
         and node.func.value.id == "self"
         and node.func.attr == "_produce"
     ]
-    if not produce_calls or not all(
+    if not producer_calls or not all(
         any(
             keyword.arg == "process_stage"
             and isinstance(keyword.value, ast.Constant)
             and keyword.value.value is True
             for keyword in call.keywords
         )
-        for call in produce_calls
+        for call in producer_calls
     ):
         errors.append("staged arithmetic must select its admitted executor")
+    if not producer_calls:
+        errors.append("staged arithmetic must select its admitted executor")
+    for producer_call in producer_calls:
+        stage_flags = [
+            keyword.value
+            for keyword in producer_call.keywords
+            if keyword.arg == "process_stage"
+        ]
+        if (
+            len(stage_flags) != 1
+            or not isinstance(stage_flags[0], ast.Constant)
+            or stage_flags[0].value is not True
+        ):
+            errors.append("staged arithmetic must select its admitted executor")
     for expression, message in (
         (
             "weak_type=stage.weak_type",
@@ -403,19 +417,19 @@ def test_runtime_process_admission_contract_is_complete() -> None:
         ),
         (
             "SimulationProcessGrids._produce_staged",
-            "weak_type=stage.weak_type,\n                    process_stage=True,",
-            "weak_type=stage.weak_type,\n                    process_stage=False,",
+            "weak_type=stage.weak_type,\n                    process_stage=True",
+            "weak_type=stage.weak_type,\n                    process_stage=False",
             "staged arithmetic must select its admitted executor",
         ),
         (
             "SimulationProcessGrids._produce_staged",
             (
                 "dtype=str(jax.typeof(result).dtype),\n"
-                "                    process_stage=True,"
+                "                    process_stage=True"
             ),
             (
                 "dtype=str(jax.typeof(result).dtype),\n"
-                "                    process_stage=False,"
+                "                    process_stage=False"
             ),
             "staged arithmetic must select its admitted executor",
         ),

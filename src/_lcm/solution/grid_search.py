@@ -30,6 +30,7 @@ from typing import cast
 import jax
 import jax.numpy as jnp
 from beartype import beartype
+from dags import with_signature
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.routes import (
@@ -58,6 +59,8 @@ from _lcm.execution.invariant_blocks import block_state_action_space
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     VALUE,
+    OutputRoleLeaf,
+    StateAxesLeading,
 )
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
@@ -79,12 +82,12 @@ from _lcm.solution.contract import (
     simulation_route,
 )
 from _lcm.solution.dcegm import CELL_AXIS
+from _lcm.solution.feasibility import CountedGridSearch, FeasibilityKernelOutput
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
-    MaxQOverAFunction,
     PytreeValue,
     QAndFArg,
     QAndFFunction,
@@ -99,6 +102,7 @@ from lcm.solver_api import KernelOutput
 from lcm.typing import (
     BoolND,
     FloatND,
+    IntND,
 )
 
 # Planner name of the flattened Cartesian action axis grid search reduces.
@@ -260,7 +264,7 @@ class GridSearch(Solver):
             get_conditioned_fold_weights_by_code,
         )
 
-        program_functions: dict[int, MaxQOverAFunction] = {}
+        program_functions: dict[int, Callable[..., PytreeValue]] = {}
         broadcast_extents: dict[int, int] = {}
         result: dict[int, PeriodKernel] = {}
         # Fold weights are the folded process's own marginal distribution, a
@@ -292,6 +296,15 @@ class GridSearch(Solver):
         action_width_keyword = _select_action_width_keyword(context=context)
         action_names = context.state_action_space.action_names
         action_extents = context.state_action_space.actions_grid_shapes
+        if (
+            math.prod(
+                grid.shape[0] for grid in context.state_action_space.states.values()
+            )
+            > jnp.iinfo(jnp.int32).max
+        ):
+            raise ExecutionPlanningError(
+                "GridSearch state domains must fit an int32 feasibility count."
+            )
         untiled_state_names = tuple(
             name
             for name in context.state_action_space.state_names
@@ -349,6 +362,7 @@ class GridSearch(Solver):
                     "fold_state_names": context.fold_state_names,
                     "fold_weights": MappingProxyType(fold_weights),
                     "fold_conditioning": MappingProxyType(fold_conditioning),
+                    "return_feasibility": True,
                 }
                 if action_partition_mesh is not None:
                     program_functions[q_id] = get_action_partitioned_max_Q_over_a(
@@ -362,6 +376,7 @@ class GridSearch(Solver):
                         cell_width_keyword=cell_width_keyword,
                         untiled_state_names=untiled_state_names,
                         broadcast_state_names=broadcast_state_names,
+                        return_feasibility=True,
                     )
                 else:
                     program_functions[q_id] = (
@@ -372,6 +387,15 @@ class GridSearch(Solver):
                         if stream_actions
                         else get_max_Q_over_a(**common_kwargs)
                     )
+                reducer = program_functions[q_id]
+                program_functions[q_id] = with_signature(
+                    CountedGridSearch(
+                        function=cast("Callable[..., tuple[FloatND, BoolND]]", reducer),
+                        collective=context.stakeholders is not None,
+                    ),
+                    args=list(inspect.signature(reducer).parameters),
+                    enforce=False,
+                )
             target_regimes = (
                 ()
                 if period == context.solution_reachability.n_periods - 1
@@ -442,9 +466,18 @@ class GridSearch(Solver):
                 argument_builder=argument_builder,
                 requirements=requirements,
                 output_roles=(
-                    (VALUE, DISSOLUTION_FLAG)
+                    (
+                        VALUE,
+                        DISSOLUTION_FLAG,
+                        StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                        StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                    )
                     if context.stakeholders is not None
-                    else VALUE
+                    else (
+                        VALUE,
+                        StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                        StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                    )
                 ),
                 disposition=(
                     CoreExecutionDisposition.PLANNED
@@ -940,12 +973,19 @@ class _GridSearchPeriodKernel:
             )
         )
         out = compiled_cores[core_key](**arguments)
-        if program.output_roles == (VALUE, DISSOLUTION_FLAG):
-            V_arr, dissolution = cast("tuple[FloatND, BoolND]", out)
-            return KernelOutput(
+        if (
+            cast("tuple[OutputRoleLeaf, ...]", program.output_roles)[1]
+            is DISSOLUTION_FLAG
+        ):
+            V_arr, dissolution, empty_count, other_inf_count = cast(
+                "tuple[FloatND, BoolND, IntND, IntND]", out
+            )
+            return FeasibilityKernelOutput(
                 value=V_arr,
                 solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},
+                feasibility_counts=(empty_count, other_inf_count),
             )
-        # Every other declared output role tree is the value array alone.
-        out = cast("FloatND", out)
-        return KernelOutput(value=out)
+        V_arr, empty_count, other_inf_count = cast("tuple[FloatND, IntND, IntND]", out)
+        return FeasibilityKernelOutput(
+            value=V_arr, feasibility_counts=(empty_count, other_inf_count)
+        )

@@ -58,6 +58,10 @@ class InvalidInitialConditionsError(PyLCMError):
     """Raised when the initial conditions (states or regimes) are invalid."""
 
 
+class NoFeasibleActionError(InvalidInitialConditionsError):
+    """Raised when a simulated subject's state admits no feasible action."""
+
+
 class InvalidSimulationInputError(PyLCMError):
     """Raised when caller-supplied solve artifacts cannot drive simulation.
 
