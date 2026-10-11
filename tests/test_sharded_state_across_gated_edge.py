@@ -100,7 +100,7 @@ class _Level:
 
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=3)
-_CONSUMPTION = LinSpacedGrid(start=0.5, stop=2.0, n_points=3)
+_CONSUMPTION = LinSpacedGrid(start=0.1, stop=2.0, n_points=3)
 
 # Model-level, so the ungated control — which never reaches `solo` — needs no
 # parameters for it.
@@ -131,6 +131,13 @@ def _bequest_utility(wealth: ContinuousState) -> FloatND:
 
 def _next_wealth(*, wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
+
+
+def _positive_bequest_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> BoolND:
+    # The simulation must stay inside the logarithmic bequest's domain.
+    return consumption < wealth
 
 
 def _all_before_age_two(age: FloatND) -> FloatND:
@@ -223,6 +230,7 @@ def build_model(
     solo = Regime(
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
+        constraints={"positive_bequest_wealth": _positive_bequest_wealth},
         functions={"utility": _utility_of_x},
         state_transitions={
             "wealth": _next_wealth,
@@ -232,6 +240,7 @@ def build_model(
     pair = Regime(
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
+        constraints={"positive_bequest_wealth": _positive_bequest_wealth},
         functions={"utility": _utility_of_level},
         state_transitions={
             "wealth": _next_wealth,
@@ -244,6 +253,7 @@ def build_model(
     mate = Regime(
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
+        constraints={"positive_bequest_wealth": _positive_bequest_wealth},
         functions={"utility": _utility_of_level},
         state_transitions={
             "wealth": _next_wealth,

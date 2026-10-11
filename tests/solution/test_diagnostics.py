@@ -1,6 +1,8 @@
 """Runtime validation and verbosity remain independent in solve and simulate."""
 
 import logging
+import pickle
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -95,6 +97,24 @@ _INITIAL_CONDITIONS = {
     "wealth": jnp.array([5.0]),
     "regime_id": jnp.array([RegimeId.alive]),
 }
+
+
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("log_level", _LOG_LEVELS)
+def test_runtime_check_logger_policy_survives_copy_and_pickle(
+    *, log_level: LogLevel, runtime_checks: bool
+) -> None:
+    """Compiled-program copies preserve both independent call policies."""
+    logger = get_logger(log_level=log_level, runtime_checks=runtime_checks)
+    restored_loggers = (
+        deepcopy(logger),
+        pickle.loads(pickle.dumps(logger)),
+    )
+    for restored in restored_loggers:
+        assert restored is not logger
+        assert restored.getEffectiveLevel() == logger.getEffectiveLevel()
+        assert validation_enabled(restored) is runtime_checks
+        assert validation_raises(restored) is runtime_checks
 
 
 @pytest.mark.parametrize("log_level", _LOG_LEVELS)

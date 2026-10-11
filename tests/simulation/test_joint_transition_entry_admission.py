@@ -241,7 +241,8 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
         budget=2**28,
         devices=(selected_id,),
     )
-    solution = model.solve(params=params, log_level="off")
+    # Invalid inputs belong to the checked simulation diagnostic below.
+    solution = model.solve(params=params, log_level="off", runtime_checks=False)
 
     compiled = []
     weight_devices = []
@@ -721,7 +722,8 @@ def test_joint_owner_contexts_restore_memory_after_probability_error(
         support=_joint_support,
         budget=2**28,
     )
-    solution = model.solve(params=params, log_level="off")
+    # The controlled error is intended to occur during simulation.
+    solution = model.solve(params=params, log_level="off", runtime_checks=False)
 
     with pytest.raises(RuntimeError, match="controlled joint probability failure"):
         model.simulate(
@@ -744,7 +746,7 @@ def test_admitted_joint_weight_diagnostic_matches_unbudgeted_path() -> None:
         support=_joint_support,
         budget=None,
     )
-    oracle_solution = oracle.solve(params=params, log_level="off")
+    oracle_solution = oracle.solve(params=params, log_level="off", runtime_checks=False)
     with pytest.raises(InvalidStateTransitionProbabilitiesError) as expected:
         oracle.simulate(
             params=params,
@@ -758,7 +760,9 @@ def test_admitted_joint_weight_diagnostic_matches_unbudgeted_path() -> None:
         support=_joint_support,
         budget=2**28,
     )
-    budgeted_solution = budgeted.solve(params=params, log_level="off")
+    budgeted_solution = budgeted.solve(
+        params=params, log_level="off", runtime_checks=False
+    )
     with pytest.raises(InvalidStateTransitionProbabilitiesError) as actual:
         budgeted.simulate(
             params=params,
@@ -777,7 +781,7 @@ def test_admitted_joint_support_diagnostic_matches_unbudgeted_path() -> None:
         support=_wrong_sized_joint_support,
         budget=None,
     )
-    oracle_solution = oracle.solve(params=params, log_level="off")
+    oracle_solution = oracle.solve(params=params, log_level="off", runtime_checks=False)
     with pytest.raises(RegimeInitializationError) as expected:
         oracle.simulate(
             params=params,
@@ -791,7 +795,9 @@ def test_admitted_joint_support_diagnostic_matches_unbudgeted_path() -> None:
         support=_wrong_sized_joint_support,
         budget=2**28,
     )
-    budgeted_solution = budgeted.solve(params=params, log_level="off")
+    budgeted_solution = budgeted.solve(
+        params=params, log_level="off", runtime_checks=False
+    )
     with pytest.raises(RegimeInitializationError) as actual:
         budgeted.simulate(
             params=params,

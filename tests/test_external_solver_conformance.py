@@ -22,6 +22,7 @@ from _lcm.solution import fingerprint as fingerprint_module
 from _lcm.solution import period_replay as period_replay_module
 from _lcm.solution.fingerprint import fingerprint_solution_support
 from _lcm.typing import ArtifactPayload
+from _lcm.utils.logging import LogLevel, get_logger, validation_enabled
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -511,11 +512,14 @@ def _initial_conditions() -> dict[str, jax.Array]:
     }
 
 
-def _solve(*, model: Model) -> SolutionResult:
+def _solve(
+    *, model: Model, log_level: LogLevel = "off", runtime_checks: bool = True
+) -> SolutionResult:
     """Solve with the retention mode that exercises persistence decisions."""
     return model.solve(
         params=_PARAMS,
-        log_level="off",
+        log_level=log_level,
+        runtime_checks=runtime_checks,
         retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
     )
 
@@ -1074,13 +1078,34 @@ def test_opaque_solver_marker_cannot_hide_a_distinct_accepted_core() -> None:
     )
 
 
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
 def test_period_replay_preserves_exact_artifact_selection(
-    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    log_level: LogLevel,
+    runtime_checks: bool,
 ) -> None:
     """A captured ALL solve reselects both its replay and additive programs."""
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", "active@0")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
-    solution = _solve(model=_model(solver=ReferenceSolver()))
+    solution = _solve(
+        model=_model(solver=ReferenceSolver()),
+        log_level=log_level,
+        runtime_checks=runtime_checks,
+    )
+    payload = period_replay_module._load_capture_payload(
+        directory=tmp_path / "active@0"
+    )
+    restored_logger = payload["kernel_kwargs"]["logger"]
+    assert validation_enabled(restored_logger) is runtime_checks
+    assert (
+        restored_logger.getEffectiveLevel()
+        == get_logger(
+            log_level=log_level, runtime_checks=runtime_checks
+        ).getEffectiveLevel()
+    )
     observed: list[tuple[bool, frozenset[ArtifactKey]]] = []
     real_select = period_replay_module.select_programs
 

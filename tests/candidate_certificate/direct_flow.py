@@ -339,7 +339,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "eeb2ad50ee433902f2c23ac13889db9ecea98b67de18a9312d2be3dab6aeaf6e",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "4211ddf98911d0159742ffc6869cfd9b55a23d6ee630b040c227d85c55ffab43",
     SUPPORT_DIAGNOSTICS_SOURCE: "ac67f8399f45bb0e2d270b62043f047d97736900ec62c0ae6cfccfee3070fcb5",
     SUPPORT_PRECONDITIONS_SOURCE: "52c97f5f2f6e9e3b6a7ac7215181874cef52948f613f59c270ef9638a51493ac",
     SUPPORT_AUTHORITY_SOURCE: "32647270dba80b48e33ecc27bb77609bf30d04a5b34b754b8a7340f208a8c9a0",
@@ -368,7 +368,7 @@ _SOURCE_SEALS = {
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
     COMBINED_RESULT_SNAPSHOT_SOURCE: "95a3cd4e31bff7587defb208790620657eea96bfe6d78559f82ebfe7947aed18",
     COMBINED_VALIDATE_V_SOURCE: "70609bbd14dba6eeccf204a8f112c78cbd85799efbd007ecb880157259ecd2f3",
-    COMBINED_LOGGING_SOURCE: "e37b91fac0dc306262382af6f4d79f76cf4caac157e7aa017f6b2cf74f231b5b",
+    COMBINED_LOGGING_SOURCE: "2d3015e8d83b21936430de90b2fd8ad590b422539236fa60f8e8d4908e2c0efb",
     COMBINED_AUTHORITY_SOURCE: "9bac2b806c1a9440d3ef4ca7701ca820fa2c39091cde1ed607802b7c3a1e1f04",
     COMBINED_ENTRIES_SOURCE: "298ba9790d6fab60fd88729b476c75206319dba64f246a0979c7a58444f99bfb",
     COMBINED_STORES_SOURCE: "f40c0fdb20ebf37ff924fb970525084961ebf25e63ebfa142fff5082f2648a0d",
@@ -1307,7 +1307,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_LOGGING_SOURCE: (
-        "ad0ef1957d8c84a6e7aae90566be9cb0c14ae40c34895768e0ddae5ff31478aa",
+        "16ecfddd102d9137c21b91b9e987ccd0b63b3bcde64e21184400053d1122901e",
         {
             "_owned_values": "9295ced0a7415a8738e6e9dd1b6a2ee6dc933bd3fdf37193e591752239c411ed",
             "non_finite_by_regime": "aa597487e43e16a2a001d5c05c0e00977c494349b9af3e65f8afd47aa6d63de4",
@@ -1545,7 +1545,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_check_and_release_regime_probability": "f54a64b0239559ff0527404fe7dcaaf0783361ee24d5bf628d971f8037873b4b",
             "_validate_regime_transition_probs": "403ad994ea48ce5ee2982ffe904f3d57adbd1039d8fe9056e989019d0af19749",
             "validate_state_transitions_all_periods": "6309dd9cf4fce55766e6c21c70964ef0f66d62c580ccddd2d9f884f0644d362b",
-            "validate_joint_transitions_all_periods": "61e267de88fb2595c99f5cb25463ae1abdb12f673cae85f72ee7aa6a9b7f715c",
+            "validate_joint_transitions_all_periods": "5f66840fc4fb41343f24822084cce6a8aac183f1b389b76be333c3d83d43a3ce",
             "_own_transition_outputs": "3fbee994063b5cb63b318f51f35e7a88ada8a61ab8c9155867a54e9fd8b22a1e",
             "_set_transition_outputs": "fc03c7289678ba54ab855efb933f80ef877a071c2a2fb1566fc129053288a143",
             "_transition_owner_tree": "b977c18385d2630136d5e463d47786f1320862b7f58be015007eabbb19934bfb",

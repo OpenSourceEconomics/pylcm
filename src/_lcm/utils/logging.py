@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Callable
+from functools import partial
 from typing import Literal
 
 import jax
@@ -106,8 +107,20 @@ class _RunLogger(logging.Logger):
 
     def __init__(self, *, log_level: LogLevel, runtime_checks: bool) -> None:
         super().__init__(name="lcm", level=_LOG_LEVEL_MAP[log_level])
+        self._log_level = log_level
         self.runtime_checks = runtime_checks
         self.parent = logging.getLogger("lcm")
+
+    def __reduce__(self) -> tuple[Callable[[], logging.Logger], tuple[()]]:
+        """Rebuild call-local policy without pickling the global output handlers."""
+        return (
+            partial(
+                get_logger,
+                log_level=self._log_level,
+                runtime_checks=self.runtime_checks,
+            ),
+            (),
+        )
 
 
 def validation_enabled(logger: logging.Logger) -> bool:

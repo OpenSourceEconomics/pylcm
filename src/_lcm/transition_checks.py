@@ -1318,10 +1318,8 @@ def validate_joint_transitions_all_periods(
                 ("simulate", regime.simulation),
             ):
                 targets = phase.reachability.targets(period=period, source=regime_name)
-                functions = (
-                    regime.solution.continuation_functions
-                    if phase_name == "solve"
-                    else regime.simulation.functions
+                functions = _phase_functions(
+                    regime=regime, phase=phase_name, period=period
                 )
                 for target in targets:
                     plan = phase.transition_plans.get(target)
