@@ -16,15 +16,15 @@ from typing import Literal, TypeAliasType, cast
 
 from dags.tree import QNAME_DELIMITER
 
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import DiscreteGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.processes.joint_normal_lowering import JointStateEntry
 from _lcm.typing import RegimeName, StateName, TransitionFunctionName
 from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.phased import Phased
-from lcm.transition import AgeSpecializedGrid
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
 type _StateLaw = UserFunction | Phased | Mapping[RegimeName, UserFunction | Phased]
@@ -32,7 +32,7 @@ type _StateLaw = UserFunction | Phased | Mapping[RegimeName, UserFunction | Phas
 
 def collect_state_transitions(
     *,
-    states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
+    states: Mapping[StateName, JointStateEntry],
     state_transitions: Mapping[StateName, _StateLaw | None],
     joint_output_names: Collection[StateName] = (),
     phase: Literal["solve", "simulate"] | None = None,

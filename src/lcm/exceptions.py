@@ -50,6 +50,10 @@ class InvalidStateTransitionProbabilitiesError(PyLCMError):
     """
 
 
+class OffGridStateError(PyLCMError):
+    """Raised when an explicitly guarded continuous state leaves its grid."""
+
+
 class InvalidInitialConditionsError(PyLCMError):
     """Raised when the initial conditions (states or regimes) are invalid."""
 

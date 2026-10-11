@@ -47,6 +47,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    OffGrid,
     ReferenceName,
     ScalarInt,
 )
@@ -66,13 +67,13 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=0, inclusive_stop=3, step="Y")
 
 
-def _wealth_grid() -> LinSpacedGrid:
+def _wealth_grid(*, off_grid: OffGrid = "extrapolate") -> LinSpacedGrid:
     """Build the wealth grid at call time.
 
     A grid stores its bounds as JAX scalars at the precision active when it is
     built, so the fp32 tests need a grid built under fp32.
     """
-    return LinSpacedGrid(start=0.0, stop=12.0, n_points=25)
+    return LinSpacedGrid(start=0.0, stop=12.0, n_points=25, off_grid=off_grid)
 
 
 @categorical(ordered=False)
@@ -141,7 +142,12 @@ def _probability_dead(age: float) -> FloatND:
     return jnp.where(age < LAST_ALIVE_AGE, 0.2, 1.0)
 
 
-def _model(*, additive: bool, shock_reads_wealth: bool = False) -> Model:
+def _model(
+    *,
+    additive: bool,
+    shock_reads_wealth: bool = False,
+    off_grid: OffGrid = "extrapolate",
+) -> Model:
     law = (
         AdditiveShockTransition(
             base="before_bill",
@@ -154,7 +160,7 @@ def _model(*, additive: bool, shock_reads_wealth: bool = False) -> Model:
     alive = Regime(
         actions={"consumption": IrregSpacedGrid(points=CONSUMPTION_NODES)},
         states={
-            "wealth": _wealth_grid(),
+            "wealth": _wealth_grid(off_grid=off_grid),
             "health": DiscreteGrid(_Health),
             "xi": _xi(),
         },
@@ -170,7 +176,10 @@ def _model(*, additive: bool, shock_reads_wealth: bool = False) -> Model:
         }
         | ({"negative_cost": _negative_cost} if additive else {}),
     )
-    dead = Regime(states={"wealth": _wealth_grid()}, functions={"utility": _bequest})
+    dead = Regime(
+        states={"wealth": _wealth_grid(off_grid=off_grid)},
+        functions={"utility": _bequest},
+    )
     return Model(
         regimes={"alive": alive, "dead": dead},
         edges={
@@ -391,6 +400,41 @@ def test_the_plain_law_value_matches_the_literal_backward_induction(
     V = _alive_values(_model(additive=False))[period]
 
     np.testing.assert_allclose(V, _reference_alive_values()[period], rtol=0, atol=_ATOL)
+
+
+@pytest.mark.parametrize("off_grid", ["clip_lookup", "clip_state"])
+def test_clipped_averaged_bill_matches_every_native_shock_read(
+    off_grid: OffGrid,
+) -> None:
+    """The folded average preserves values, policies and actual state histories."""
+    values = {}
+    frames = {}
+    for additive in (False, True):
+        model = _model(additive=additive, off_grid=off_grid)
+        values[additive] = _alive_values(model)
+        frames[additive] = model.simulate(
+            params=_params(),
+            initial_conditions={
+                "wealth": jnp.array([0.0, 6.0, 12.0]),
+                "health": jnp.zeros(3, dtype=jnp.int32),
+                "age": jnp.zeros(3),
+                "regime_id": jnp.full(3, _RegimeId.alive),
+            },
+            log_level="off",
+            seed=0,
+        ).to_dataframe()
+    for period in values[False]:
+        np.testing.assert_allclose(
+            values[True][period], values[False][period], rtol=0, atol=_ATOL
+        )
+    for column in ("consumption", "wealth"):
+        np.testing.assert_allclose(
+            frames[True][column],
+            frames[False][column],
+            rtol=0,
+            atol=_ATOL,
+            equal_nan=True,
+        )
 
 
 @pytest.mark.usefixtures("x64_disabled")

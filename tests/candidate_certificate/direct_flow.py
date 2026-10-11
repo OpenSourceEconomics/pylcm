@@ -339,7 +339,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "4211ddf98911d0159742ffc6869cfd9b55a23d6ee630b040c227d85c55ffab43",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "53f0860154a345cebecb3ef9181b2a838380501db05aa5c3882ef5e4a12054d2",
     SUPPORT_DIAGNOSTICS_SOURCE: "ac67f8399f45bb0e2d270b62043f047d97736900ec62c0ae6cfccfee3070fcb5",
     SUPPORT_PRECONDITIONS_SOURCE: "52c97f5f2f6e9e3b6a7ac7215181874cef52948f613f59c270ef9638a51493ac",
     SUPPORT_AUTHORITY_SOURCE: "32647270dba80b48e33ecc27bb77609bf30d04a5b34b754b8a7340f208a8c9a0",
@@ -423,18 +423,18 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
     ENGINE_SOURCE: "1a31f2797a8c8f519a5c7ebe0ba5a2fdf8f1dd52b24cd1f6ce33ae1c5fb3ab11",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
-    SIMULATION_SOURCE: "5395200dc2ee1c35b7fe32e757594c7040cd9b8b57b6dca1253f954189cdfae2",
-    SIMULATION_TRANSITIONS_SOURCE: "6b70819235fbbdef52bf0483d32e97fbb5d1cec34afd176b2d35cf6ce820ad86",
+    SIMULATION_SOURCE: "b4eea0509bfa2e9fe8231892f2e7258e42028c9f7299f9efda693d24320ce981",
+    SIMULATION_TRANSITIONS_SOURCE: "a49edcb69cf6ae9c02ec7022c3bd15951d463a8395bd6639427f6dbc108f66ec",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "d0d0b3848f2a78ea6ec7f8b7d83c2881f739a62d9ea019cefda2c765d0239859",
+    MODEL_SOURCE: "f0c352ab4199655a61dbb516831dc423ca5cce2249c93b9d96f48e8faf8388c9",
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
     BACKWARD_INDUCTION_SOURCE: "b06a093bc535610add24a808bc8f87953987faea76e13d30e763d00118714190",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
-    INITIAL_CONDITIONS_SOURCE: "0440bfaf6c0380df246dd5184eb818e0a638c4121ec392b80f61c4a91596401f",
+    INITIAL_CONDITIONS_SOURCE: "9b98fbefe4eafe2170900b11f38ddf06a3cde403d52f83e9bbbf1549dd15f6c6",
     RESULT_SOURCE: "545c65318cb6e771da492c723f0b0a4f6bca8cb40537d6a8795d0999a0a5ae7e",
-    RESULT_DATAFRAME_SOURCE: "d4dd248500cb96179f378430236c0201d221f377f62ec63689eb5234431376a5",
-    RESULT_METADATA_SOURCE: "b775c7cda25a3d7c53e6bc08499b24e2a277d95b5a2cef6e7fce5512cf208591",
-    ADDITIONAL_TARGETS_SOURCE: "dd3c1756ba2a6fbedd67465e7eb4d92c32aebb216f9d5683f821703ccccf9619",
+    RESULT_DATAFRAME_SOURCE: "88773c4ce66f54feface58198c1785040ba43973f0fc24cab623c699aa400a41",
+    RESULT_METADATA_SOURCE: "3f1e299a4c7aa76aedea4d39288c9941a27ba7cb881d83792a44ad63b31f775d",
+    ADDITIONAL_TARGETS_SOURCE: "4949efda03115aa5911d4f901e223897f3c85697461c4ebaabfe9a9f0f37009f",
     SIMULATION_RANDOM_SOURCE: "d646f465051511559a77dd993ff26fc3adcdbd594178b7b9ba4c7986d5d07d77",
     FOLD_ZERO_SAFE_SOURCE: "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5",
     SOLUTION_CONTRACT_SOURCE: "13ba30149b02fc028fbb21880ae202978825a7474ac1f81e44303a48147e775c",
@@ -442,8 +442,8 @@ _SOURCE_SEALS = {
     GRID_BASE_SOURCE: "045d3d462aa80c6f3444030003547f76864bb1f038b8ccb1bd15a00e29e0c2a7",
     GRID_COORDINATES_SOURCE: "9dd0cf9e3c702023cd3cfa40a3164bf399ea295c57349223b8ab617c7f3533d5",
     DISCRETE_GRID_SOURCE: "574a9457210bad39263e7eaf7d5efb2f83661a5ab101f08b4ae3d8f65228452a",
-    CONTINUOUS_GRID_SOURCE: "a2b2c4f6a956e473193b46d7ba451a9e93f5c40fbb57130ecc2aa067e444c16a",
-    PIECEWISE_GRID_SOURCE: "65d571f651695af2b925cda751c9c5ecdedb8dda55cba6dd0d1714f26840ca33",
+    CONTINUOUS_GRID_SOURCE: "1b21422b57e79fa93f3ed59dd5c10fef620f2b3008eedcbf60e7bf8440323726",
+    PIECEWISE_GRID_SOURCE: "a1fbb24c824da48df6c4869c61288e3dbf533c059178e88636871a23d13dafb3",
     PROCESSES_INIT_SOURCE: "fbce6ed4c889cf4c30f5242c142b4dcf2fa9e186b75cd17be1557f827abff00a",
     PROCESS_BASE_SOURCE: "cf3eeb214e28ee9b16976cf3e741c8db44f603ca01ee7cba436d61db8ec5249b",
     PROCESS_IID_SOURCE: "6a622d0886aa903d9c5f98ae3e26e0a94eb4d16209a2481074a89fda99b1e308",
@@ -453,7 +453,7 @@ _SOURCE_SEALS = {
     PARAMS_PROCESSING_SOURCE: "a6640eef75e746b50024d11c51c572d1daa062cf3d5256afe31a97b121a5410d",
     DTYPES_SOURCE: "1d38a54667166599fd692f8c58b37741f355753138d234b650c54384321bcbb2",
     NAMESPACE_SOURCE: "9a33080663f01a6d65501663e8436b132176be51c8223c28b2e749d8dbf8b570",
-    PANDAS_UTILS_SOURCE: "6d62f9b897416aceb89143db4cbe9a691b907d75579f736b830fede239bc199b",
+    PANDAS_UTILS_SOURCE: "9ce312a18a19bd267eec3145720f5b2911429490e9e1a4742de96aab5e35080d",
     MODEL_PROCESSING_SOURCE: "3b4671f2c50dd6cba1ddb58ce9ed0270d98707f6c53c19a9bcf2585cf358266b",
 }
 
@@ -479,7 +479,7 @@ EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
 # that no family selects is a verifier error rather than a silent no-op.
 _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     PANDAS_UTILS_SOURCE: (
-        "5273a52aca54f130e969dbe1cf85ec2c3eb81d305e8fcb8022735ad52f802ef1",
+        "5dbbe7a597f6c1c7e3f26c1ab68cf0f05d9ce110486d47bb7a2e9cc99f190e3e",
         {
             "initial_conditions_from_dataframe": "996cc674b61f66fd3c1517429659eea8a6201779570bba88e2002cd2663b32e8",
             "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
@@ -526,9 +526,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     INITIAL_CONDITIONS_SOURCE: (
-        "883d296c194b51842f92e3a4edf477754ee46a954d9b841c59ecea24546cc7df",
+        "c4cdbb8548d66ba78abd06bca2d1e89feb942de85aa419a222cc536c0e21d9fa",
         {
-            "validate_simulation_inputs": "11b399b724c138450522600bed2e97020966ad1795999bb18034fd8c8425c87c",
+            "validate_simulation_inputs": "d160b3ee68487966d26ba2472fd4ce69ac8b4147e612fca8950c22e4b71b7c0b",
             "_preflight_memory": "55dcaad31fc350c161a1bfde013381ebe2e9948df1a55cee02044cf51a45c972",
             "_discrete_initial_specs": "6e837939569bad3b27093ab4a14ce38ad16756f86910f37127432d07291195a6",
             "_pack_initial_summary": "e674412100af558aae66243e25060f3ce8538ffd4ad138c7e0effd58e1e3357e",
@@ -966,10 +966,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "e4e52ab045dfc5a30f54eb4e55258e4f88467523c77c6608425be27986d295e1",
+        "5bba560adfbdf344dcede149026b0185fb1633702ef9160955679f689a7e9bfe",
         {
             "simulate": "7d91b3d3a5a97eee42b73945cf1e6a45ff0bdcb63da746fd94bc4b0a3abc867a",
-            "_simulate_regime_in_period": "4f2140aa86d7ea17876dfd938ac12d8ff2bd1f4ad1ce0a7f89eb0624c05648e8",
+            "_simulate_regime_in_period": "6504f03e6f8eba061e41f1765901d3be1ae0b395be399a354532a2a52660ba44",
             "_execute_finite_replay": "8fbb9dc117de1e2154984bbc79668966690ed60572129e2d46a376e02a60d1d9",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
             "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
@@ -994,13 +994,13 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "e0f9b8c72c263101833816fd7b59cf8f21ed372deb0f80e5555aaed0dd71f9a8",
+        "623fce479b799d1652cc315153994d222aa920ffe7608789dbd145225973b1e2",
         {
             "_validate_sharded_state_capability": "76a10f69e8f6acb1150617100119e1f61ad7ed4b759f4849c8ee7536f44f3f4c",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "d837bd4f6c97be377ae02dca1f2044e1eb9974c6e7e08bc48866bed0f6886b18",
             "Model.__init__": "e7cd6cb0b90972363fdbb016421b7b437cbbfc5c09d5014f7b6d4e735ec84f97",
-            "Model.simulate": "28b96f4fb6b79cf3f22a162c047bdd7ef2dfb5982e5b4773d1d82e5d10f6ed11",
+            "Model.simulate": "a54b72dfece9f684825fddd5664bbf66cded53d5f9b8d6e77e002d2cb1b64f0c",
             "Model._open_entry_allocations": "eaf94fb1ba743c81cce6eaf6137090ba79e120e12ade20325031e6fa8da49dbd",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "15a780da8bc0f5d8767481fc4f9442fd846d29e6105f72d9b795266256e328ff",
@@ -1015,7 +1015,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "Model._consume_owned_solution": "f646cbb48cea6c33227711df6ec93e2d51fe8fca435803069575c0cb0f01da9d",
             "Model._build_external_replay_readers": "62d5d2c5bd473f779ddb81644162279e0a3ca329105b42636220a862391dc771",
             "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
-            "Model._process_params": "8692b98788fd78cfdd12f187a14fec3a39f41c1309322554f56f4c4bb3643968",
+            "Model._process_params": "dca0d8601440606c6dd4ea4766ddc743092005c8e78de780efcf93264354aedc",
             "_simulation_programs": "02d69b94d7005c2f01cb72585af823fcc62801fb5b45fbbac975fdfc1ceaae70",
         },
     ),
@@ -1384,7 +1384,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_TRANSITIONS_SOURCE: (
-        "19e39fed54e5e59b13f7812062fdbcb92008ee0624bd6821d7f4f1a3218b12e2",
+        "ecbe8f2bb53f7daec45b52760d2a2078216de0f5c0f697aa782672ae4fb029bb",
         {
             "_draw_random_regime_ids_from_scalars": "548fcaf12654d05a584fabee3fbd81fe42ad256307d5ea4df826cb3ae3355a5a",
             "draw_key_from_dict": "9dfed8dafa357fa87cde342dc7f174028e4adf8454b5906a4e0d24bee164cdae",
@@ -1533,10 +1533,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
-        "f38373edcbfca8693046b9a171a8ecf511abcb5c105191dbac2c8dd1c1284442",
+        "5d8f2fc58b2769cddb30f121f632e94cee3f7ceccd93c9d2f74b235f79201930",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
-            "validate_transitions": "6dad8f387ecda88d9984797cdd8da57d2d4609201fe8b455c7fb6bc59a27e2d4",
+            "validate_transitions": "4e4b3e3fa1d130184c71272e006c021c314479be16f64618bf493fb6975180a7",
             "_validate_transition_sequence": "f57042cc6f993861cd755032f35e0edd80916cf9f2cc157ad09ddffa7c63ed72",
             "validate_regime_transition_probs_all_periods": "bd4b49bcb10108dd06f79e01d59ee449cd7db25bfb9e15449561d23655392c02",
             "_validate_regime_transition_single": "689a067b3c00cd24ae46e69c12e1a2a0f8f6f530607b105de2403aee82bd13dd",
@@ -8441,8 +8441,14 @@ _ACTION_GRID_MUTATIONS = {
         "src/_lcm/simulation/initial_conditions.py",
         "validate_simulation_inputs",
         "expression",
-        "contextlib.closing",
-        "contextlib.nullcontext",
+        (
+            "contextlib.closing("
+            "PreflightActionGrids(memory=memory, build=_build_flat_action_grid))"
+        ),
+        (
+            "contextlib.nullcontext("
+            "PreflightActionGrids(memory=memory, build=_build_flat_action_grid))"
+        ),
         1,
     ),
     "action_grid:binding_release_omitted": (
@@ -8964,7 +8970,7 @@ _FEASIBILITY_MUTATIONS = {
         "keyword",
         "memory",
         "None",
-        7,
+        9,
     ),
     "feasibility:joint_admission_bypassed": (
         INITIAL_CONDITIONS_SOURCE,

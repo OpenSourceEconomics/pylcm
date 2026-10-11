@@ -133,6 +133,25 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
         )
     ):
         errors.append("the validated recipe must receive the complete graph")
+    produce_calls = [
+        node
+        for node in ast.walk(staged_node)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "self"
+        and node.func.attr == "_produce"
+    ]
+    if not produce_calls or not all(
+        any(
+            keyword.arg == "process_stage"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in call.keywords
+        )
+        for call in produce_calls
+    ):
+        errors.append("staged arithmetic must select its admitted executor")
     for expression, message in (
         (
             "weak_type=stage.weak_type",
@@ -402,19 +421,19 @@ def test_runtime_process_admission_contract_is_complete() -> None:
         ),
         (
             "SimulationProcessGrids._produce_staged",
-            "weak_type=stage.weak_type,\n                    process_stage=True",
-            "weak_type=stage.weak_type,\n                    process_stage=False",
+            "weak_type=stage.weak_type,\n                    process_stage=True,",
+            "weak_type=stage.weak_type,\n                    process_stage=False,",
             "staged arithmetic must select its admitted executor",
         ),
         (
             "SimulationProcessGrids._produce_staged",
             (
                 "dtype=str(jax.typeof(result).dtype),\n"
-                "                    process_stage=True"
+                "                    process_stage=True,"
             ),
             (
                 "dtype=str(jax.typeof(result).dtype),\n"
-                "                    process_stage=False"
+                "                    process_stage=False,"
             ),
             "staged arithmetic must select its admitted executor",
         ),

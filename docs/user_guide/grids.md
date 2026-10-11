@@ -74,6 +74,32 @@ When used as an **action**, no further configuration is needed. When used as a
 
 ## Continuous Grids
 
+### Values outside a state grid
+
+Continuous grids accept `off_grid=` with an explicit meaning:
+
+| Rule                      | Continuation or policy lookup         | Economic next state                                |
+| ------------------------- | ------------------------------------- | -------------------------------------------------- |
+| `"extrapolate"` (default) | Preserve ordinary extrapolation       | Preserve the raw law of motion                     |
+| `"clip_lookup"`           | Read at the nearest closed endpoint   | Preserve the raw value in histories and later laws |
+| `"clip_state"`            | Read at the nearest closed endpoint   | Cap the next-period handoff to the grid            |
+| `"raise"`                 | Refuse a feasible exterior next state | Refuse an exterior realized next state             |
+
+The ambiguous spelling `"clip"` is rejected. `clip_lookup` is appropriate when a finite
+numerical grid approximates a state whose economic support is larger; `clip_state`
+changes the economic handoff and therefore requires an economic reason. Clipping
+preserves non-finite values so a broken law cannot become a finite endpoint.
+Stochastic-process support admission remains a separate contract.
+
+For an age-dependent grid, the bounds belong to the target period. For a grid whose
+points arrive at runtime, those supplied points define the closed endpoints. Interior
+piecewise boundary ownership is unchanged. Numerical grid rules do not replace a tax,
+benefit or other economic cap declared in the model.
+
+With `runtime_checks=True`, diagnostics count raw exterior next states before clipping,
+excluding infeasible cells and unreachable lottery support. Output still follows
+`log_level`. The explicit `"raise"` policy applies even with `runtime_checks=False`.
+
 ### LinSpacedGrid
 
 Evenly spaced points from `start` to `stop` (inclusive). The most common grid type for

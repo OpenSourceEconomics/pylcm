@@ -44,15 +44,16 @@ economic budget kink to a specialized solver. Use [case pieces](case_pieces.md) 
 
 Place process instances in `states` and omit their names from `state_transitions`:
 
-| Process                          | Meaning                                              |
-| -------------------------------- | ---------------------------------------------------- |
-| `UniformIIDProcess`              | IID uniform draws                                    |
-| `NormalIIDProcess`               | IID normal draws                                     |
-| `LogNormalIIDProcess`            | IID log-normal draws                                 |
-| `NormalMixtureIIDProcess`        | IID normal-mixture draws                             |
-| `TauchenAR1Process`              | AR(1) discretized by Tauchen                         |
-| `RouwenhorstAR1Process`          | AR(1) discretized by Rouwenhorst                     |
-| `TauchenNormalMixtureAR1Process` | Mixture innovation with Tauchen-style discretization |
+| Process                          | Meaning                                               |
+| -------------------------------- | ----------------------------------------------------- |
+| `UniformIIDProcess`              | IID uniform draws                                     |
+| `NormalIIDProcess`               | IID normal draws                                      |
+| `JointNormalIIDProcess`          | Named IID Gaussian shocks sharing a covariance matrix |
+| `LogNormalIIDProcess`            | IID log-normal draws                                  |
+| `NormalMixtureIIDProcess`        | IID normal-mixture draws                              |
+| `TauchenAR1Process`              | AR(1) discretized by Tauchen                          |
+| `RouwenhorstAR1Process`          | AR(1) discretized by Rouwenhorst                      |
+| `TauchenNormalMixtureAR1Process` | Mixture innovation with Tauchen-style discretization  |
 
 `TauchenAR1Process.on_nodes(nodes=..., rho=None, sigma=None, mu=0.0)` uses supplied
 physical nodes with midpoint probability bins and open tails. The axis is fixed;

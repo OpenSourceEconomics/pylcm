@@ -52,6 +52,7 @@ from _lcm.transition_checks import (
     _SerialValidationRequired,
     _validate_transition_sequence,
     _ValidationSummary,
+    validate_off_grid_transitions,
     validate_transitions,
 )
 from _lcm.typing import (
@@ -74,6 +75,7 @@ from _lcm.utils.logging import raise_or_warn, validation_enabled
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidInitialConditionsError,
+    OffGridStateError,
     PyLCMError,
     UnsupportedOperationError,
 )
@@ -117,7 +119,7 @@ class _InitialCohorts:
     periods: tuple[int, ...]
 
 
-def validate_simulation_inputs(
+def validate_simulation_inputs(  # noqa: C901
     *,
     initial_conditions: InitialConditions,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -176,6 +178,19 @@ def validate_simulation_inputs(
                 regime_names_to_ids=regime_names_to_ids,
                 memory=memory,
             )
+            with contextlib.closing(
+                _ValidationSummary(
+                    memory=memory, process_grid_resolver=process_grid_resolver
+                )
+            ) as summary:
+                validate_off_grid_transitions(
+                    regimes=regimes,
+                    flat_params=flat_params,
+                    ages=ages,
+                    logger=logger,
+                    summary=summary,
+                    process_grid_resolver=process_grid_resolver,
+                )
         finally:
             if memory is not None:
                 memory.close_unit()
@@ -223,7 +238,16 @@ def validate_simulation_inputs(
                     process_grid_resolver=process_grid_resolver,
                 )
                 accepted = summary.valid()
-            except UnsupportedOperationError:
+                if accepted:
+                    validate_off_grid_transitions(
+                        regimes=regimes,
+                        flat_params=flat_params,
+                        ages=ages,
+                        logger=logger,
+                        summary=summary,
+                        process_grid_resolver=process_grid_resolver,
+                    )
+            except UnsupportedOperationError, OffGridStateError:
                 raise
             except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
                 raise
@@ -257,6 +281,19 @@ def validate_simulation_inputs(
             process_grid_resolver=process_grid_resolver,
             simulation_memory=memory,
         )
+        with contextlib.closing(
+            _ValidationSummary(
+                memory=memory, process_grid_resolver=process_grid_resolver
+            )
+        ) as summary:
+            validate_off_grid_transitions(
+                regimes=regimes,
+                flat_params=flat_params,
+                ages=ages,
+                logger=logger,
+                summary=summary,
+                process_grid_resolver=process_grid_resolver,
+            )
 
 
 def _preflight_memory(

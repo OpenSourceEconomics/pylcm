@@ -60,6 +60,7 @@ else:
     type _InitialNodesClass = type[object]
 
 type ContinuousState = Float[Array, "..."]
+type OffGrid = Literal["extrapolate", "clip_lookup", "clip_state", "raise"]
 type ContinuousAction = Float[Array, "..."]
 type DiscreteState = Int32[Array, "..."]
 type DiscreteAction = Int32[Array, "..."]
