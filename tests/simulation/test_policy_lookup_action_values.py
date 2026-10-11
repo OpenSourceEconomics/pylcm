@@ -1,18 +1,30 @@
-"""The policy lookup's action values and feasibility, from its own decision program.
+"""The policy lookup's action values and their parts, from its own decision program.
 
-`Q` and `F` cover the queried (possibly restricted) action grid with one leading
-row per queried state, one axis per action in the order of `actions`. `Q` holds
-the action value as the decision program computes it, also where the action is
-infeasible; `F` says which entries the maximization admits.
+`Q`, `F`, `U` and `CE` cover the queried (possibly restricted) action grid with one
+leading row per queried state, one axis per action in the order of `actions`. `Q`
+holds the action value as the decision program computes it, also where the action
+is infeasible; `F` says which entries the maximization admits. `U` is the flow
+utility and `CE` the undiscounted certainty-equivalent continuation that the
+regime's Koopmans aggregator combines into `Q`.
 """
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    PowerMean,
+)
 from lcm.exceptions import InvalidSimulationInputError
-from lcm_examples.mortality import LaborSupply
+from lcm.typing import BoolND, ContinuousAction, FloatND
+from lcm_examples import epstein_zin
+from lcm_examples.mortality import LaborSupply, utility_working
+from tests.conftest import DECIMAL_PRECISION
 from tests.regime_building.test_nonterminal_collective_solve import (
     RegimeId as CoupleRegimeId,
 )
@@ -299,3 +311,339 @@ def test_action_values_bind_the_models_fixed_params(solved):
 def flatten_lookup(got):
     """`Q`, `F` and the value of a lookup, raveled into one array."""
     return np.concatenate([np.asarray(x).ravel() for x in (got.Q, got.F, got.value)])
+
+
+DISCOUNT_FACTOR = 0.95
+DISUTILITY_OF_WORK = 0.5
+
+
+def test_flow_utility_and_continuation_are_absent_unless_requested(solved):
+    got = lookup(solved=solved, period=0)
+    assert (got.U, got.CE) == (None, None)
+
+
+@pytest.mark.parametrize("period", [0, LAST_ALIVE_PERIOD])
+def test_flow_utility_and_continuation_have_the_shape_of_the_action_values(
+    *, solved, period
+):
+    got = lookup(solved=solved, period=period, return_action_values=True)
+    assert (got.U.shape, got.CE.shape) == (got.Q.shape, got.Q.shape)
+
+
+@pytest.mark.parametrize("period", [0, LAST_ALIVE_PERIOD])
+def test_linear_action_value_is_flow_utility_plus_discounted_continuation(
+    *, solved, period
+):
+    """Under `LinearAggregator`, `Q == U + discount_factor * CE` at every entry.
+
+    Extrapolated continuations reach magnitudes in the hundreds, so the check is
+    relative.
+    """
+    got = lookup(solved=solved, period=period, return_action_values=True)
+    np.testing.assert_allclose(
+        np.asarray(got.Q),
+        np.asarray(got.U) + DISCOUNT_FACTOR * np.asarray(got.CE),
+        rtol=10.0**-DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("period", [0, LAST_ALIVE_PERIOD])
+def test_flow_utility_is_the_utility_function_on_the_action_grid(*, solved, period):
+    """`U` is `log(consumption) - disutility_of_work * working`, in every row.
+
+    The utility of `working_life` reads no state, so every queried row holds the
+    same table over `(labor_supply, consumption)`.
+    """
+    got = lookup(solved=solved, period=period, return_action_values=True)
+    working = ACTION_GRIDS["labor_supply"] == LaborSupply.work
+    table = (
+        np.log(ACTION_GRIDS["consumption"])[None, :]
+        - DISUTILITY_OF_WORK * working[:, None]
+    )
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.U),
+        np.broadcast_to(table, got.U.shape),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("period", [1, N_PERIODS - 1])
+def test_terminal_regime_without_states_has_zero_continuation(*, solved, period):
+    """`dead` is terminal: `Q` is its flow utility and its continuation is zero."""
+    model, params, solution = solved
+    got = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=period,
+        regime_name="dead",
+        states={},
+        return_action_values=True,
+    )
+    assert (np.asarray(got.U).tolist(), np.asarray(got.CE).tolist()) == (
+        [0.0],
+        [0.0],
+    )
+
+
+def test_infeasible_actions_keep_a_finite_flow_utility_and_continuation(solved):
+    """Where `Q` is finite, so are `U` and `CE`, feasible or not."""
+    states = {"wealth": jnp.array([5.0, 20.0, 40.0, 70.0])}
+    got = lookup(
+        solved=solved,
+        period=0,
+        states=states,
+        return_action_values=True,
+    )
+    Q, F = np.asarray(got.Q), np.asarray(got.F)
+    finite = np.isfinite(Q)
+    assert (~F & finite).any()
+    assert (np.isfinite(np.asarray(got.U)) & np.isfinite(np.asarray(got.CE)))[
+        finite
+    ].all()
+
+
+@pytest.mark.parametrize("branch", [LaborSupply.work, LaborSupply.retire])
+def test_restricted_action_grid_restricts_flow_utility_and_continuation(
+    *, solved, branch
+):
+    """A one-code labor grid returns that code's slice of the full `U` and `CE`.
+
+    The restricted lookup compiles its own program, so the slice agrees to the
+    working precision, relative to continuations that reach the hundreds.
+    """
+    full = lookup(solved=solved, period=0, return_action_values=True)
+    restricted = lookup(
+        solved=solved,
+        period=0,
+        action_grids={"labor_supply": jnp.array([branch], dtype=jnp.int32)},
+        return_action_values=True,
+    )
+    labor_axis = 1 + list(full.actions).index("labor_supply")
+    position = int(np.flatnonzero(ACTION_GRIDS["labor_supply"] == branch)[0])
+    expected = np.stack(
+        [
+            np.take(np.asarray(full.U), [position], axis=labor_axis),
+            np.take(np.asarray(full.CE), [position], axis=labor_axis),
+        ]
+    )
+    np.testing.assert_allclose(
+        np.stack([np.asarray(restricted.U), np.asarray(restricted.CE)]),
+        expected,
+        rtol=10.0**-DECIMAL_PRECISION,
+    )
+
+
+EZ_N_PERIODS = 4
+EZ_DISCOUNT_FACTOR = 0.9
+EZ_ELASTICITY = 2.0
+EZ_HEALTH_COST = 0.25
+EZ_RISK_AVERSION = 3.0
+
+
+@pytest.fixture(scope="module", params=["linear", "power_mean"])
+def solved_epstein_zin(request):
+    """The Epstein-Zin example, once with each certainty equivalent."""
+    risk_aversion = None if request.param == "linear" else EZ_RISK_AVERSION
+    model = epstein_zin.get_model(
+        certainty_equivalent=None if risk_aversion is None else PowerMean(),
+        n_periods=EZ_N_PERIODS,
+    )
+    params = epstein_zin.get_params(
+        risk_aversion=risk_aversion,
+        discount_factor=EZ_DISCOUNT_FACTOR,
+        intertemporal_elasticity_of_substitution=EZ_ELASTICITY,
+        health_cost=EZ_HEALTH_COST,
+    )
+    solution = model.solve(params=params, log_level="off")
+    return model, params, solution, risk_aversion
+
+
+def lookup_alive_on_the_grid(*, solved_epstein_zin, period):
+    """Look up `alive` at every `(wealth, health)` node, with its action values."""
+    model, params, solution, _ = solved_epstein_zin
+    wealth = np.asarray(
+        model.state_grid(params=params, regime_name="alive", state_name="wealth")
+    )
+    health = np.array(
+        [epstein_zin.HealthStatus.bad, epstein_zin.HealthStatus.good], dtype=np.int32
+    )
+    wealth_rows, health_rows = (x.ravel() for x in np.meshgrid(wealth, health))
+    got = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=period,
+        regime_name="alive",
+        states={
+            "wealth": jnp.asarray(wealth_rows),
+            "health": jnp.asarray(health_rows),
+        },
+        return_action_values=True,
+    )
+    return got, wealth_rows, health_rows
+
+
+def epstein_zin_continuation_oracle(
+    *, solved_epstein_zin, period, wealth_rows, health_rows
+):
+    """The certainty equivalent of next period's value, computed by hand.
+
+    The joint lottery has one node per next health code under survival, weighted
+    by the survival probability times the health transition, and one `dead` node
+    weighted by the death probability. Next wealth stays inside both wealth grids,
+    so each node's value is a plain linear interpolation of the solved values.
+    """
+    model, params, solution, risk_aversion = solved_epstein_zin
+    consumption = np.asarray(epstein_zin.CONSUMPTION_GRID.to_jax())
+    alive_wealth = np.asarray(
+        model.state_grid(params=params, regime_name="alive", state_name="wealth")
+    )
+    dead_wealth = np.asarray(
+        model.state_grid(params=params, regime_name="dead", state_name="wealth")
+    )
+    alive_axes = model.state_names(regime_name="alive")
+    V_alive = np.moveaxis(
+        np.asarray(solution.values[period + 1]["alive"]),
+        [alive_axes.index("wealth"), alive_axes.index("health")],
+        [0, 1],
+    )
+    V_dead = np.asarray(solution.values[period + 1]["dead"])
+    health_transition = np.asarray(epstein_zin.HEALTH_TRANSITION)
+
+    def power(*, values, weights):
+        if risk_aversion is None:
+            return (weights * values).sum(axis=-1)
+        exponent = 1.0 - risk_aversion
+        return ((weights * values**exponent).sum(axis=-1)) ** (1.0 / exponent)
+
+    expected = np.empty((len(wealth_rows), len(consumption)))
+    for row, (wealth, health) in enumerate(zip(wealth_rows, health_rows, strict=True)):
+        is_bad = health == epstein_zin.HealthStatus.bad
+        survival = epstein_zin.SURVIVAL_PROBS[period] * (
+            epstein_zin.BAD_HEALTH_SURVIVAL_FACTOR if is_bad else 1.0
+        )
+        for column, choice in enumerate(consumption):
+            next_wealth = np.clip(
+                wealth
+                - choice
+                + epstein_zin.INCOME
+                - (EZ_HEALTH_COST if is_bad else 0.0),
+                epstein_zin.WEALTH_GRID.start,
+                epstein_zin.WEALTH_GRID.stop,
+            )
+            values = np.array(
+                [
+                    np.interp(next_wealth, alive_wealth, V_alive[:, next_health])
+                    for next_health in (0, 1)
+                ]
+                + [np.interp(next_wealth, dead_wealth, V_dead)]
+            )
+            weights = np.array(
+                [survival * p for p in health_transition[int(health)]]
+                + [1.0 - survival]
+            )
+            expected[row, column] = power(values=values, weights=weights)
+    return expected
+
+
+@pytest.mark.parametrize("period", [0, EZ_N_PERIODS - 3])
+def test_continuation_is_the_certainty_equivalent_of_next_values(
+    *, solved_epstein_zin, period
+):
+    got, wealth_rows, health_rows = lookup_alive_on_the_grid(
+        solved_epstein_zin=solved_epstein_zin, period=period
+    )
+    expected = epstein_zin_continuation_oracle(
+        solved_epstein_zin=solved_epstein_zin,
+        period=period,
+        wealth_rows=wealth_rows,
+        health_rows=health_rows,
+    )
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.CE), expected, decimal=DECIMAL_PRECISION
+    )
+
+
+@pytest.mark.parametrize("period", [0, EZ_N_PERIODS - 3])
+def test_ces_action_value_aggregates_flow_utility_and_continuation(
+    *, solved_epstein_zin, period
+):
+    """`Q == ((1 - b) * U**r + b * CE**r) ** (1 / r)` with `r = 1 - 1 / psi`."""
+    got, _, _ = lookup_alive_on_the_grid(
+        solved_epstein_zin=solved_epstein_zin, period=period
+    )
+    U, CE = np.asarray(got.U), np.asarray(got.CE)
+    exponent = 1.0 - 1.0 / EZ_ELASTICITY
+    expected = (
+        (1.0 - EZ_DISCOUNT_FACTOR) * U**exponent + EZ_DISCOUNT_FACTOR * CE**exponent
+    ) ** (1.0 / exponent)
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.Q), expected, decimal=DECIMAL_PRECISION
+    )
+
+
+def test_terminal_regime_with_states_has_its_utility_as_action_value(
+    solved_epstein_zin,
+):
+    """`dead` reads wealth: `U` is the bequest, `CE` is zero and `Q` equals `U`."""
+    model, params, solution, _ = solved_epstein_zin
+    wealth = np.asarray(
+        model.state_grid(params=params, regime_name="dead", state_name="wealth")
+    )
+    got = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=EZ_N_PERIODS - 1,
+        regime_name="dead",
+        states={"wealth": jnp.asarray(wealth)},
+        return_action_values=True,
+    )
+    np.testing.assert_array_almost_equal(
+        np.stack([np.asarray(got.U), np.asarray(got.Q), np.asarray(got.CE)]),
+        np.stack([np.sqrt(wealth), np.sqrt(wealth), np.zeros_like(wealth)]),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_action_value_lookup_evaluates_the_regime_kernel_once():
+    """`Q`, `F`, `U`, `CE` and the decision come from one kernel evaluation.
+
+    The utility records each time it is traced; compiling the lookup program
+    with its action values traces it once.
+    """
+    traces = []
+
+    def counting_utility(
+        *, consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
+    ) -> FloatND:
+        traces.append(None)
+        return utility_working(
+            consumption=consumption,
+            is_working=is_working,
+            disutility_of_work=disutility_of_work,
+        )
+
+    ages = AgeGrid(start=START_AGE, inclusive_stop=START_AGE + 2, step="Y")
+    model = Model(
+        regimes={
+            "working_life": working_life.replace(
+                functions={**working_life.functions, "utility": counting_utility}
+            ),
+            "dead": dead,
+        },
+        ages=ages,
+        regime_id_class=RegimeId,
+        initial_nodes={START_AGE: "working_life"},
+        edges=working_life_edges(ages),
+    )
+    params = get_params(n_periods=3)
+    solution = model.solve(params=params, log_level="off")
+    traces.clear()
+    model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="working_life",
+        states={"wealth": jnp.array([5.0, 20.0])},
+        return_action_values=True,
+    )
+    assert len(traces) == 1
