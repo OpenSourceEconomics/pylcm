@@ -100,6 +100,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.collective import CollectiveUtility
+from lcm.exceptions import NoFeasibleActionError
 from lcm.regime import Regime
 from lcm.result import SimulationResult
 from lcm.solver_api import ArtifactKey, KernelOutput
@@ -826,6 +827,8 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     """Synchronized controls attack both taste corridors and their deep helpers."""
     names = set(direct_flow_mutation_specs(repo_root=_SRC_ROOT.parent))
     required = {
+        "feasibility_summary:published_value_changed",
+        "feasibility_summary:empty_count_reversed",
         "taste_shock_solve:q_order",
         "taste_shock_solve:q_gap",
         "taste_shock_solve:support_size",
@@ -1105,15 +1108,15 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     original_names = {
         name for name in names if not name.startswith("simulation_adapter:")
     }
-    assert len(original_names) == 388
+    assert len(original_names) == 390
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "a777f806edb684b976b8da5ba78fe9425439f962a1de60a4508290cff3edb79d"
+        == "627c3198444ea515832c472808901a28793487a1b2ccfbebef9be312e151263b"
     )
-    assert len(names) == 406
+    assert len(names) == 408
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
+        == "d27d7bdcb349eea62f44ad1a559abc676746e025ded98e52b42770564c6807b2"
     )
 
 
@@ -2539,13 +2542,8 @@ def _simulation_fold_masking_the_last_action_cell(
     )
 
 
-def test_masking_one_simulate_candidate_changes_the_published_action():
-    """Hiding one cell from the simulate reducer alone moves the published action.
-
-    Without this the simulate sweep's green would only say that nothing raised. The
-    masked candidate is the one the constraint admits, so an exhaustive simulate
-    search would publish it and this run publishes a different action.
-    """
+def test_masking_the_only_simulate_candidate_raises():
+    """Hiding the sole feasible candidate triggers the native empty-action guard."""
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
             simulation_programs_module,
@@ -2557,21 +2555,22 @@ def test_masking_one_simulate_candidate_changes_the_published_action():
             constraints={"only_target": _only_target},
             terminal_utility=lambda: jnp.array(0.0),
         )
-        rows = _simulate_acting(
-            model=model,
-            work=_WORK_VALUES[-1],
-            consumption=_CONSUMPTION_VALUES[-1],
-            function_name="only_target",
-        )
-
-    assert rows["consumption"] != [_CONSUMPTION_VALUES[-1]] * len(_WEALTH_VALUES)
+        with pytest.raises(
+            NoFeasibleActionError, match=r"Regime 'acting', period 0, state .*wealth"
+        ):
+            _simulate_acting(
+                model=model,
+                work=_WORK_VALUES[-1],
+                consumption=_CONSUMPTION_VALUES[-1],
+                function_name="only_target",
+            )
 
 
 def test_masking_one_simulate_candidate_leaves_the_others_alone():
     """The simulate mask removes one cell, not the simulation.
 
-    A patch that broke the simulate reduction outright would move every published
-    action and make the control above pass for the wrong reason.
+    A broken simulate reduction could refuse every candidate and make the
+    empty-action control pass for the wrong reason.
     """
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
