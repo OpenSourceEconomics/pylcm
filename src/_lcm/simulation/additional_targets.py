@@ -94,6 +94,7 @@ def _get_available_targets_for_regime(regime: Regime) -> frozenset[str]:
             for pool in (sim.functions, sim.constraints)
             for name, func in pool.items()
             if getattr(func, "_lcm_internal_no_params", False)
+            or getattr(func, "_lcm_joint_normal_output", False)
         }
     )
     if regime.solution.solves_from_continuation:

@@ -28,8 +28,10 @@ from _lcm.processes.iid import (
     NormalMixtureIIDProcess,
     UniformIIDProcess,
 )
+from _lcm.processes.joint_normal import JointNormalIIDProcess
 
 __all__ = [
+    "JointNormalIIDProcess",
     "LogNormalIIDProcess",
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
