@@ -579,3 +579,9 @@ def test_a_state_read_only_by_the_koopmans_aggregator_is_used() -> None:
         _enumerate_values(beta_tilde=1.0)[1],
         decimal=DECIMAL_PRECISION,
     )
+
+
+def test_phased_selection_needs_both_variants() -> None:
+    """A `Phased` selection aggregator with an empty phase is refused by name."""
+    with pytest.raises(ModelInitializationError, match="selection_aggregator"):
+        _model(selection_aggregator=lcm.Phased(solve=perceived_value, simulate=None))

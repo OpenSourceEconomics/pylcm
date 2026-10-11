@@ -173,6 +173,22 @@ def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedReg
     )
 
 
+def _phased_selection_errors(*, user_regime: Regime) -> tuple[str, ...]:
+    """Name each phase a `Phased` selection aggregator leaves empty."""
+    selection = user_regime.selection_aggregator
+    if not isinstance(selection, Phased):
+        return ()
+    return tuple(
+        f"`selection_aggregator` is `Phased(...)` with `{phase}=None`. Pass a "
+        "callable for each phase, or a bare callable to use one in both."
+        for phase, variant in (
+            ("solve", selection.solve),
+            ("simulate", selection.simulate),
+        )
+        if variant is None
+    )
+
+
 def validate_law_free_phase_grammar(user_regime: Regime) -> None:
     """Validate the phase grammar of every slot that does not depend on the law.
 
@@ -248,7 +264,12 @@ def _resolve_law_free_slots(*, user_regime: Regime) -> _LawFreeSlots:
         solve_joint_transitions=solve_joint_transitions,
         simulate_joint_transitions=simulate_joint_transitions,
         carried_only=carried_only,
-        errors=(*pools.errors, *carried_errors, *joint_transition_errors),
+        errors=(
+            *pools.errors,
+            *carried_errors,
+            *joint_transition_errors,
+            *_phased_selection_errors(user_regime=user_regime),
+        ),
     )
 
 

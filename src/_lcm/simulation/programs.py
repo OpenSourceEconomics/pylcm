@@ -46,7 +46,7 @@ from _lcm.execution.core_program import (
     ReducedAxis,
     ValueRead,
 )
-from _lcm.regime_building.argmax import argmax_and_max, argmax_and_readout
+from _lcm.regime_building.argmax import argmax_and_readout
 from _lcm.regime_building.Q_and_F import QAndFParts, get_Q_and_F_parts
 from _lcm.simulation.gated_routing import (
     simulation_gate_fold,
@@ -820,12 +820,10 @@ class _DecisionWithActionParts:
     ) -> tuple[IntND, FloatND, FloatND, BoolND, FloatND, FloatND]:
         """Return the chosen flat index, its value, and `Q`, `F`, `U` and `CE`."""
         parts = self.parts(**kwargs)
-        index, value = (
-            argmax_and_max(a=parts.Q, where=parts.F, initial=-jnp.inf)
-            if parts.Q_selection is None
-            else argmax_and_readout(
-                selection=parts.Q_selection, readout=parts.Q, where=parts.F
-            )
+        index, value = argmax_and_readout(
+            selection=parts.Q if parts.Q_selection is None else parts.Q_selection,
+            readout=parts.Q,
+            where=parts.F,
         )
         return index, value, parts.Q, parts.F, parts.U, parts.CE
 

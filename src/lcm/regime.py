@@ -599,14 +599,9 @@ class Regime:
             The aggregator, or `None` when the regime declares none.
 
         """
-        if isinstance(self.selection_aggregator, Phased):
-            variant = (
-                self.selection_aggregator.solve
-                if phase == "solve"
-                else self.selection_aggregator.simulate
-            )
-            return cast("UserFunction", variant)
-        return self.selection_aggregator
+        if self.selection_aggregator is None:
+            return None
+        return _resolve_phase_variant(value=self.selection_aggregator, phase=phase)
 
     # keyword-only-exempt: primary-argument=phase
     def get_all_functions(

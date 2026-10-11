@@ -251,9 +251,12 @@ def create_regime_params_template(
             )
         function_params["taste_shocks"] = {"scale": "float"}
 
-    for slot in ("koopmans_aggregator", "selection_aggregator"):
+    for slot, aggregator in _declared_aggregators(user_regime).items():
         _add_aggregator_params(
-            function_params=function_params, user_regime=user_regime, slot=slot
+            function_params=function_params,
+            user_regime=user_regime,
+            slot=slot,
+            aggregator=aggregator,
         )
     _add_certainty_equivalent_params(
         function_params=function_params, user_regime=user_regime
@@ -1233,7 +1236,8 @@ def _add_aggregator_params(
     *,
     function_params: dict[FunctionName, dict[str, str]],
     user_regime: UserRegime,
-    slot: Literal["koopmans_aggregator", "selection_aggregator"],
+    slot: FunctionName,
+    aggregator: UserFunction | Phased,
 ) -> None:
     """Add an aggregator's params under its pseudo-function name in place.
 
@@ -1242,9 +1246,6 @@ def _add_aggregator_params(
     collides and is rejected. Parameters that are states, actions, or regime
     functions are wired at call time and never surface.
     """
-    aggregator = getattr(user_regime, slot)
-    if aggregator is None:
-        return
     if slot in function_params:
         raise InvalidNameError(
             f"The regime declares `{slot}`, whose parameters live under the "

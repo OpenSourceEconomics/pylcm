@@ -1600,7 +1600,7 @@ class _SelectionReadoutQOverA:
     binds by name.
     """
 
-    __name__: ClassVar[str] = "max_Q_over_a"
+    __name__: ClassVar[str] = "selection_readout_Q_over_a"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
     parts: Callable[..., QAndFParts]
