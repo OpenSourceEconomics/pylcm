@@ -24,6 +24,7 @@ from dags import (
 )
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.grids.discrete import read_at_codes
 from _lcm.probability import (
     is_negative,
     is_represented_zero,
@@ -2565,8 +2566,9 @@ class _ComputeCE:
             # sees the same rest-axis lookup as the original categorical grid.
             # Axes already removed by the caller's device co-map are absent.
             for axis, name in reversed(continuation.fixed_value_axes):
-                next_values = jax.lax.dynamic_index_in_dim(
-                    next_values, next_states[name], axis=axis, keepdims=False
+                next_values = read_at_codes(
+                    array=next_values,
+                    positions=(*(slice(None),) * axis, next_states[name]),
                 )
             interpolator_coordinates = {
                 name: val

@@ -22,18 +22,28 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
-from _lcm.grids.discrete import MISSING_CAT_CODE
+from _lcm.dtypes import canonical_float_dtype
+from _lcm.grids.discrete import MISSING_CAT_CODE, read_at_codes
+from _lcm.regime_building.ndimage import _compute_pinned_index_and_weight
+from _lcm.regime_building.V import _LookupWrapper
 from _lcm.regime_building.value_adapter import (
     adapt_entry,
     adapt_user_function,
     collect_value_grids,
 )
 from lcm import AgeGrid, DiscreteGrid, Model, Phased, fixed_transition
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import InvalidStateTransitionError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND
+from lcm.typing import (
+    BoolND,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    UserFunction,
+    UserParams,
+)
 from lcm_examples.mortality import (
     is_working,
     labor_income,
@@ -377,6 +387,138 @@ def _model_with(*, working_life: UserRegime) -> Model:
         initial_nodes={ages.exact_values[0]: "working_life"},
         edges=discrete.working_life_edges(ages),
     )
+
+
+_V = jnp.asarray([[0.0, 1.0], [10.0, 11.0], [20.0, 21.0]])
+
+
+@pytest.mark.parametrize("code", [-1, 3, MISSING_CAT_CODE])
+def test_value_function_read_at_an_off_grid_code_is_nan(code):
+    """A code off the axis reads NaN, never a clamped or wrapped node."""
+    lookup = _LookupWrapper(
+        array_name="V",
+        axis_names=("wealth", "health"),
+        retained_axis_names=frozenset({"health"}),
+    )
+    assert bool(jnp.isnan(lookup(wealth=jnp.int32(code), V=_V)).all())
+
+
+def test_value_function_read_at_a_code_returns_its_row():
+    """A code on the axis reads its row."""
+    lookup = _LookupWrapper(
+        array_name="V",
+        axis_names=("wealth", "health"),
+        retained_axis_names=frozenset({"health"}),
+    )
+    assert lookup(wealth=jnp.int32(1), V=_V).tolist() == [10.0, 11.0]
+
+
+def test_pinned_read_off_the_axis_carries_nan_weight():
+    """A pinned coordinate outside `0..n-1` reads with weight NaN."""
+    [(_, weight)] = _compute_pinned_index_and_weight(
+        coordinate=jnp.asarray([-1.0, 3.0, 1.0], dtype=canonical_float_dtype()),
+        input_size=3,
+    )
+    assert np.isnan(np.asarray(weight)).tolist() == [True, True, False]
+
+
+@pytest.mark.parametrize("code", [-1, 3, MISSING_CAT_CODE])
+def test_read_at_codes_off_the_axis_is_nan(code):
+    """The shared code read gives NaN for a code off the axis."""
+    read = read_at_codes(array=_V, positions=(slice(None), jnp.int32(code)))
+    assert bool(jnp.isnan(read).all())
+
+
+def _next_wealth_up(*, wealth: DiscreteState) -> DiscreteState:
+    return wealth + 1
+
+
+def _next_wealth_spent(
+    *, wealth: DiscreteState, consumption: DiscreteAction
+) -> DiscreteState:
+    return wealth - (consumption - 1.0).astype(jnp.int32)
+
+
+def _next_wealth_spent_clipped(
+    *, wealth: DiscreteState, consumption: DiscreteAction
+) -> DiscreteState:
+    return jnp.maximum(_next_wealth_spent(wealth=wealth, consumption=consumption), 10)
+
+
+# `_PARAMS` without the interest rate, which the laws below do not read.
+_PARAMS_WITHOUT_RATE: UserParams = {
+    "discount_factor": 0.95,
+    "working_life": {
+        "utility": {"disutility_of_work": 0.5},
+        "labor_income": {"wage": 1.5},
+    },
+    "final_age_alive": 50 + (_N_PERIODS - 2) * 10,
+}
+
+
+def _model_with_law(law: UserFunction) -> Model:
+    regime = _value_grid_model(enable_jit=True).user_regimes["working_life"]
+    return _model_with(
+        working_life=regime.replace(
+            state_transitions={**dict(regime.state_transitions), "wealth": law}
+        )
+    )
+
+
+def test_off_grid_law_at_a_feasible_cell_fails_the_solve():
+    """With checks on, a law leaving the grid where a choice is feasible raises."""
+    with pytest.raises(InvalidStateTransitionError, match="next_wealth") as error:
+        _model_with_law(_next_wealth_up).solve(
+            params=_PARAMS_WITHOUT_RATE, log_level="off", runtime_checks=True
+        )
+    assert "'wealth': 12" in str(error.value)
+
+
+def test_off_grid_law_at_a_feasible_cell_fails_validate_transitions():
+    """`validate_transitions` reports an off-grid deterministic law."""
+    with pytest.raises(InvalidStateTransitionError, match="next_wealth"):
+        _model_with_law(_next_wealth_up).validate_transitions(
+            params=_PARAMS_WITHOUT_RATE
+        )
+
+
+def test_off_grid_law_without_checks_reads_nan_where_it_leaves_the_grid():
+    """With checks off, exactly the cells whose path leaves the grid are NaN.
+
+    `wealth + 1` leaves `[10, 11, 12]` from 12. At period 1 only wealth 12 reads
+    off the grid; at period 0, wealth 11 lands on 12 and so reads period 1's NaN.
+    Period 2 moves only to the terminal regime.
+    """
+    values = (
+        _model_with_law(_next_wealth_up)
+        .solve(params=_PARAMS_WITHOUT_RATE, log_level="off", runtime_checks=False)
+        .values
+    )
+    nan_pattern = [
+        np.isnan(np.asarray(values[period]["working_life"])).tolist()
+        for period in (0, 1, 2)
+    ]
+    assert nan_pattern == [
+        [False, True, True],
+        [False, False, True],
+        [False, False, False],
+    ]
+
+
+def test_off_grid_law_only_at_infeasible_cells_solves_like_the_clipped_law():
+    """Leaving the grid only where no choice is feasible changes nothing."""
+    got = _model_with_law(_next_wealth_spent).solve(
+        params=_PARAMS_WITHOUT_RATE, log_level="off", runtime_checks=True
+    )
+    expected = _model_with_law(_next_wealth_spent_clipped).solve(
+        params=_PARAMS_WITHOUT_RATE, log_level="off", runtime_checks=True
+    )
+    for period in expected.values:
+        for regime in expected.values[period]:
+            np.testing.assert_array_equal(
+                np.asarray(got.values[period][regime]),
+                np.asarray(expected.values[period][regime]),
+            )
 
 
 def test_adapting_an_adapted_function_wraps_the_user_function_once():

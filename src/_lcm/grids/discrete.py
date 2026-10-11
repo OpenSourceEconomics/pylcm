@@ -13,7 +13,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from beartype import beartype
+from jax import Array
 from jax.typing import ArrayLike
+from jaxtyping import Int
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
@@ -31,6 +33,9 @@ from lcm.typing import Float1D, FloatND, Int1D, IntND, ValueND
 # out of bounds after JAX normalizes a negative index by adding the axis length,
 # so a fill-mode read cannot wrap it onto the last node the way `-1` would.
 MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
+
+# A code array of any integer width; with x64 enabled, `jnp.array([0])` is int64.
+type _CodeIndex = Int[Array, "..."]
 
 # A declared value, before it is normalized to a Python scalar.
 type _UserValue = int | float | np.integer | np.floating
@@ -376,3 +381,17 @@ def _nearest_index(*, nodes: Float1D, value: FloatND) -> IntND:
         (value > lower_value) & (value - lower_value > upper_value - value)
     )
     return jnp.where(upper_is_closer, upper, lower).astype(jnp.int32)
+
+
+def read_at_codes(
+    *, array: FloatND, positions: tuple[_CodeIndex | slice, ...]
+) -> FloatND:
+    """Return `array[positions]`, NaN wherever a code lies off its axis.
+
+    A code outside `0..n-1`, including `MISSING_CAT_CODE` and `-1`, reads NaN.
+    Nothing is clamped onto an end node or wrapped onto the last one, so a read
+    of an off-grid next state cannot pass for a value.
+    """
+    return array.at[positions].get(
+        mode="fill", fill_value=jnp.nan, wrap_negative_indices=False
+    )
