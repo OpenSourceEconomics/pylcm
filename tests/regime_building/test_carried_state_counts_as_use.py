@@ -14,8 +14,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.model_graph import bind_edge_laws
+from _lcm.regime_building.broadcast import compute_kept_variables
 from lcm import (
     AgeGrid,
+    AgeSpecializedFunction,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -73,9 +76,17 @@ def _carry_skill(skill: ScalarInt) -> ScalarInt:
     return skill
 
 
+def _utility_built_from_age_one(age: float) -> Callable[..., FloatND]:
+    if age < 1:
+        msg = f"no utility before age 1, asked for age {age}"
+        raise ValueError(msg)
+    return _utility
+
+
 def _alive(
     *,
-    utility: Callable[..., FloatND] = _utility,
+    utility: Callable[..., FloatND]
+    | Phased[Callable[..., FloatND], AgeSpecializedFunction] = _utility,
     with_skill: bool = True,
     skill_law: Callable[..., ScalarInt] | None = None,
 ) -> Regime:
@@ -103,13 +114,14 @@ def _model(
     edges: ModelEdges,
     states: Mapping[str, DiscreteGrid] | None = None,
     state_transitions: Mapping[str, StateTransitionEntry] | None = None,
+    initial_nodes: Mapping[int, str | tuple[str, ...]] | None = None,
 ) -> Model:
     return Model(
         regimes=dict(regimes),
         edges=edges,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
-        initial_nodes={0: "work"},
+        initial_nodes=dict(initial_nodes or {0: "work"}),
         states=dict(states or {}),
         state_transitions=dict(state_transitions or {}),
     )
@@ -125,6 +137,10 @@ def _work_retired_dead() -> dict[str, Regime]:
 
 
 CHAIN_EDGES = {"work": {"retired": 0}, "retired": {"dead": 1}}
+SIMULATION_ONLY_EDGES = Phased(
+    solve={"work": {"gone": 0}, "retired": {"dead": 1}},
+    simulate={"work": {"retired": 0}, "retired": {"dead": 1}},
+)
 
 
 def _model_level_skill() -> Model:
@@ -253,16 +269,7 @@ def test_rejection_names_the_hand_over_rule_and_the_targets_inspected() -> None:
 def test_hand_over_reaching_the_reader_only_in_simulation_is_used() -> None:
     model = _model(
         regimes=_work_retired_dead(),
-        edges=Phased(
-            solve={
-                "work": {"gone": 0},
-                "retired": {"dead": 1},
-            },
-            simulate={
-                "work": {"retired": 0},
-                "retired": {"dead": 1},
-            },
-        ),
+        edges=SIMULATION_ONLY_EDGES,
     )
 
     assert "skill" in model.user_regimes["work"].states
@@ -280,3 +287,88 @@ def test_hand_written_identity_law_is_a_use_whatever_the_target(
     )
 
     assert "skill" in model.user_regimes["work"].states
+
+
+def test_a_hand_over_only_to_itself_is_rejected() -> None:
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"never used in regime 'work': state \['skill'\]",
+    ):
+        _model(
+            regimes=_work_retired_dead() | {"retired": _alive(with_skill=False)},
+            edges={"work": {"work": 0, "gone": 1}, "retired": {"dead": 1}},
+        )
+
+
+def test_a_hand_over_around_a_cycle_without_a_reader_is_rejected_in_both() -> None:
+    with pytest.raises(ModelInitializationError) as error:
+        _model(
+            regimes=_work_retired_dead() | {"retired": _alive()},
+            edges={
+                "work": {"retired": 0, "gone": 1},
+                "retired": {"work": 0, "gone": 1},
+            },
+            initial_nodes={0: ("work", "retired")},
+        )
+
+    message = str(error.value)
+    assert "never used in regime 'work'" in message
+    assert "never used in regime 'retired'" in message
+
+
+def test_hand_over_reaching_the_reader_only_in_the_solution_is_used() -> None:
+    model = _model(
+        regimes=_work_retired_dead(),
+        edges=Phased(
+            solve={"work": {"retired": 0}, "retired": {"dead": 1}},
+            simulate={"work": {"gone": 0}, "retired": {"dead": 1}},
+        ),
+    )
+
+    assert "skill" in model.user_regimes["work"].states
+
+
+def test_rejection_in_a_terminal_regime_says_it_reaches_no_regime() -> None:
+    with pytest.raises(ModelInitializationError, match="'dead' reaches no regime"):
+        _model(
+            regimes=_work_retired_dead()
+            | {
+                "dead": Regime(
+                    states={
+                        "wealth": WEALTH_GRID,
+                        "skill": DiscreteGrid(category_class=_Skill),
+                    },
+                    functions={"utility": _bequest},
+                )
+            },
+            edges=CHAIN_EDGES,
+        )
+
+
+def test_simulation_side_markers_resolve_at_an_age_the_regime_is_visited() -> None:
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
+    regimes = _work_retired_dead() | {
+        "work": _alive(
+            utility=Phased(
+                solve=_utility,
+                simulate=AgeSpecializedFunction(
+                    build=_utility_built_from_age_one, signature=lambda age: age
+                ),
+            )
+        )
+    }
+    laws, _ = bind_edge_laws(edges=CHAIN_EDGES, regimes=regimes, ages=ages)
+
+    # `unread` stays a candidate after the solution slice, so the simulation
+    # slice, whose utility is only built from age 1, is walked too.
+    kept = compute_kept_variables(
+        user_regimes=regimes,
+        laws=laws,
+        candidates={"work": frozenset({"skill", "unread"})},
+        koopmans_aggregator=None,
+        ages=ages,
+        active_periods_by_regime={"work": (0, 1), "retired": (1,), "dead": (2,)},
+        visited_periods_by_regime={"work": (1,), "retired": (1,), "dead": (2,)},
+    )
+
+    assert kept["work"] == {"wealth", "consumption", "skill"}
