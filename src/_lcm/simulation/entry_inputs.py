@@ -24,6 +24,7 @@ from _lcm.simulation.residency import (
 from _lcm.solution.retained_buffers import retained_solution_buffers
 from lcm.typing import (
     ActionName,
+    PRNGKey,
     StateName,
     UserInitialConditions,
     UserParams,
@@ -78,6 +79,7 @@ def capture_simulation_entry_inputs(
     params: UserParams,
     initial_conditions: EntryCallerInputs,
     solution: SolutionResultBoundary | None,
+    random_roots: tuple[PRNGKey, ...] = (),
 ) -> SimulationEntryInputs | None:
     """Refuse excess existing residency before any input conversion or snapshot.
 
@@ -87,7 +89,7 @@ def capture_simulation_entry_inputs(
     if execution.device_memory_bytes is None:
         return None
     inputs = SimulationEntryInputs(
-        arrays=_caller_arrays(values=(params, initial_conditions))
+        arrays=(*_caller_arrays(values=(params, initial_conditions)), *random_roots)
     )
     require_transfer_headroom(
         live=inputs.footprint(solution=solution),

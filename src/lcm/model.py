@@ -145,6 +145,7 @@ from _lcm.simulation.initial_conditions import (
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.program_arguments import decision_arguments
 from _lcm.simulation.program_types import SimulationProgramExecutor
+from _lcm.simulation.random import canonicalize_simulation_seed
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -340,10 +341,12 @@ from lcm.typing import (
     FloatND,
     IntND,
     Phase,
+    PRNGKey,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
     UserParams,
+    UserSeed,
     ValueND,
     _UserFacingTemplateNode,
 )
@@ -2045,6 +2048,7 @@ class Model:
         params: UserParams,
         inputs: _EntryInputs,
         solution: _SolutionResultBoundary | None,
+        random_roots: tuple[PRNGKey, ...] = (),
     ) -> SimulationEntryAllocations | None:
         """Own a budgeted public call's original inputs, solution and model roots.
 
@@ -2056,6 +2060,7 @@ class Model:
             params=params,
             initial_conditions=inputs,
             solution=solution,
+            random_roots=random_roots,
         )
         if entry_inputs is None:
             return None
@@ -3249,8 +3254,8 @@ class Model:
         solution: _SolutionResultBoundary | None = None,
         log_level: LogLevel,
         runtime_checks: bool = True,
-        seed: int | None = None,
-        taste_shock_seed: int | None = None,
+        seed: UserSeed | None = None,
+        taste_shock_seed: UserSeed | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
@@ -3297,13 +3302,17 @@ class Model:
                 token; restored results instead match the durable model fingerprint.
                 When omitted, ``simulate`` obtains the same complete result from an
                 automatic solve.
-            seed: Random seed.
-            taste_shock_seed: Optional independent seed for common taste-shock
+            seed: Integer random seed or scalar typed `jax.random.key`; a typed
+                key is used directly, preserving its PRNG implementation. `None`
+                draws a fresh integer seed. Raw uint32 keys are refused.
+            taste_shock_seed: Optional independent integer seed or scalar typed
+                key for common taste-shock
                 realizations across counterfactual simulations. Matching exact
                 ages, initial-condition row positions and ordered discrete-action
                 domains receive the same standardized shocks, regardless of
                 `seed`, policy parameters or realized regime. Reordering or
-                resizing that discrete domain changes the stream. Uses Threefry;
+                resizing that discrete domain changes the stream. Integer seeds use
+                Threefry; typed keys retain their implementation;
                 comparisons require matching precision/backend and JAX random
                 configuration. `None` preserves the ordinary seeded stream.
             log_level: Console verbosity: off, warning, progress or debug.
@@ -3326,7 +3335,10 @@ class Model:
 
         """
         self._check_identity_runtime()
-        _fail_if_invalid_taste_shock_seed(taste_shock_seed=taste_shock_seed)
+        seed = canonicalize_simulation_seed(seed=seed, name="seed")
+        taste_shock_seed = canonicalize_simulation_seed(
+            seed=taste_shock_seed, name="taste_shock_seed"
+        )
         initial_conditions = lower_initial_time(
             initial_conditions=initial_conditions, ages=self._time
         )
@@ -3347,7 +3359,14 @@ class Model:
                     initial_conditions=initial_conditions
                 )
                 entry_allocations = self._open_entry_allocations(
-                    params=params, inputs=initial_conditions, solution=solution
+                    params=params,
+                    inputs=initial_conditions,
+                    solution=solution,
+                    random_roots=tuple(
+                        key
+                        for key in (seed, taste_shock_seed)
+                        if isinstance(key, jax.Array)
+                    ),
                 )
                 # The canonical parameters bind both the supplied result preflight
                 # and an automatic solve. Process them once and keep one
@@ -3639,6 +3658,16 @@ class Model:
                         original_population=original_n_subjects,
                         retained_footprint=entry_allocations.snapshot(),
                         independent_taste=taste_shock_seed is not None,
+                        taste_prng_impl=(
+                            str(jax.random.key_impl(taste_shock_seed))
+                            if isinstance(taste_shock_seed, jax.Array)
+                            else "threefry2x32"
+                        ),
+                        prng_impl=(
+                            str(jax.random.key_impl(seed))
+                            if isinstance(seed, jax.Array)
+                            else jax.config.jax_default_prng_impl
+                        ),
                         log_level=log_level,
                         runtime_checks=runtime_checks,
                         process_grid_resolver=process_grid_resolver,
@@ -4638,14 +4667,6 @@ def _fail_if_off_grid(
                 f"grid: {arr[off].tolist()}."
             )
             raise InvalidSimulationInputError(msg)
-
-
-def _fail_if_invalid_taste_shock_seed(*, taste_shock_seed: int | None) -> None:
-    """Refuse Boolean stream configuration before processing inputs or solving."""
-    if taste_shock_seed is not None and type(taste_shock_seed) is not int:
-        raise InvalidSimulationInputError(
-            f"taste_shock_seed must be an integer or None, got {taste_shock_seed!r}."
-        )
 
 
 def _missing_policy_message(
