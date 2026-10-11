@@ -8,11 +8,12 @@ serve:
 - `transition`: the laws of motion carrying each subject into the next period.
 - `route`: the regime-transition probabilities the realized draw reads.
 
-A hard-max singleton regime also publishes `action_values`, the dense decision
-that additionally returns, from the one kernel evaluation it maximizes over, the
+A singleton regime also publishes `action_values`, the dense decision that
+additionally returns, from the one kernel evaluation it maximizes over, the
 action values, their feasibility, the flow utility and the certainty-equivalent
-continuation. Only policy lookup dispatches it, so it compiles only when
-requested.
+continuation. With taste shocks it publishes the EV1 decision's conditional
+values and choice probabilities in place of a drawn action. Only policy lookup
+dispatches it, so it compiles only when requested.
 
 Every family tiles the subject axis, so the engine owns the width each body runs
 at. A decision whose solve counterpart streams its action product declares that
@@ -75,6 +76,10 @@ from _lcm.simulation.program_types import (
     SimulationPrograms,
     _PerSubjectFunction,
     subject_axis,
+)
+from _lcm.simulation.taste_shock_lookup import (
+    TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
+    TasteShockLookup,
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION, HardMaxResult
 from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
@@ -198,14 +203,14 @@ def build_simulation_programs(
     )
 
     # The dense decision with its parts, even where the decision streams: same
-    # reads and subject tiling, no reduced action axis. A taste-shock draw or a
-    # household argmax publishes no such parts.
+    # reads and subject tiling, no reduced action axis. A household argmax
+    # publishes no such parts. A taste-shock regime publishes the EV1 decision
+    # the solve reduces, which draws nothing, so it reads no taste-shock key.
     action_value_bodies: dict[int, Callable[..., PytreeValue]] = {}
     action_values: dict[int, CoreProgram] = {}
-    is_hard_max_singleton = (
-        not context.has_taste_shocks and context.stakeholders is None
-    )
-    for period in decision if is_hard_max_singleton else ():
+    space = context.state_action_space
+    lookup_subject_arg_names = tuple(space.states)
+    for period in decision if context.stakeholders is None else ():
         kernel = Q_and_F_functions[period]
         group = id(kernel)
         if group not in action_value_bodies:
@@ -213,17 +218,30 @@ def build_simulation_programs(
                 func=_decision_with_action_parts(
                     Q_and_F=kernel,
                     reducer=per_subject_decisions[period],
-                    action_names=context.state_action_space.action_names,
+                    action_names=space.action_names,
+                    n_discrete_action_axes=(
+                        len(space.discrete_actions)
+                        if context.has_taste_shocks
+                        else None
+                    ),
                 ),
-                subject_arg_names=_decision_subject_arg_names(context=context),
+                subject_arg_names=lookup_subject_arg_names,
             )
         action_values[period] = dataclasses.replace(
             decision[period],
             function=action_value_bodies[group],
+            argument_builder=_ArgumentsBoundAtDispatch(
+                program_name=DECISION_PROGRAM,
+                subject_arg_names=lookup_subject_arg_names,
+            ),
             requirements=dataclasses.replace(
                 decision[period].requirements, reduced_axes=()
             ),
-            output_roles=ACTION_VALUES_OUTPUT_ROLES,
+            output_roles=(
+                TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
+                if context.has_taste_shocks
+                else ACTION_VALUES_OUTPUT_ROLES
+            ),
         )
 
     transition_bodies: dict[int, Callable[..., PytreeValue]] = {}
@@ -774,23 +792,39 @@ def _decision_with_action_parts(
     Q_and_F: QAndFFunction,
     reducer: Callable[..., PytreeValue],
     action_names: tuple[ActionName, ...],
+    n_discrete_action_axes: int | None,
 ) -> Callable[..., PytreeValue]:
-    """Return the dense hard-max decision extended by the parts it maximizes over.
+    """Return the dense decision extended by the parts it reduces.
 
-    The result takes the arguments of `reducer`, the dense hard-max decision
-    over `Q_and_F`, and evaluates the parts form of `Q_and_F` once over the
-    action product. Its argmax and max are those `reducer` takes, of the same
-    `Q` over the same `F`.
+    The result takes the arguments of `reducer`, the dense decision over
+    `Q_and_F`, without a taste-shock key, and evaluates the parts form of
+    `Q_and_F` once over the action product:
+
+    - `n_discrete_action_axes=None` ⇒ the hard max, whose argmax and max are
+      those `reducer` takes, of the same `Q` over the same `F`;
+    - an integer ⇒ the EV1 reduction the solve applies over that many leading
+      discrete-action axes.
     """
     parts = productmap(
         func=get_Q_and_F_parts(Q_and_F=Q_and_F),
         variables=action_names,
         batch_sizes=dict.fromkeys(action_names, 0),
     )
+    body: Callable[..., PytreeValue] = (
+        _DecisionWithActionParts(parts=parts)
+        if n_discrete_action_axes is None
+        else TasteShockLookup(
+            parts=parts, n_discrete_action_axes=n_discrete_action_axes
+        )
+    )
     return with_signature(
-        _DecisionWithActionParts(parts=parts),
-        args=list(inspect.signature(reducer).parameters),
-        return_annotation=("tuple[IntND, FloatND, FloatND, BoolND, FloatND, FloatND]"),
+        body,
+        args=[
+            name
+            for name in inspect.signature(reducer).parameters
+            if name != "taste_shock_key"
+        ],
+        return_annotation="tuple[FloatND | IntND | BoolND, ...]",
         enforce=False,
     )
 

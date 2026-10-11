@@ -8,7 +8,7 @@ import os
 import threading
 import uuid
 from collections import OrderedDict
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
@@ -148,6 +148,9 @@ from _lcm.simulation.program_types import (
     ACTION_FEASIBILITY,
     ACTION_INDEX,
     ACTION_VALUES,
+    CHOICE_PROBABILITIES,
+    CONDITIONAL_ACTION_INDEX,
+    CONDITIONAL_VALUE,
     CONTINUATION_CE,
     DECISION_VALUE,
     FLOW_UTILITY,
@@ -3907,7 +3910,10 @@ class Model:
         Returns:
             The argmax action value per action name and the max of Q over the
             (possibly restricted) action grid, one entry per state row; with
-            `return_action_values`, also `Q`, `F`, `U` and `CE`.
+            `return_action_values`, also `Q`, `F`, `U` and `CE`. A GridSearch
+            regime with taste shocks returns no actions; it returns the smoothed
+            maximum as the value, and per discrete-action combination `Qc`,
+            the choice probabilities and the continuous actions attaining `Qc`.
 
         """
         self._check_identity_runtime()
@@ -3918,10 +3924,19 @@ class Model:
         if period not in regime.simulation.programs.decision:
             msg = f"Regime {regime_name!r} makes no decision in period {period}."
             raise InvalidSimulationInputError(msg)
-        if regime.has_taste_shocks or regime.gated_edges:
+        if regime.gated_edges:
             msg = (
-                "Policy lookup supports regimes without taste shocks or gated "
-                f"edges; {regime_name!r} declares one."
+                "Policy lookup supports regimes without gated edges; "
+                f"{regime_name!r} declares one."
+            )
+            raise InvalidSimulationInputError(msg)
+        solver = self.user_regimes[regime_name].solver
+        if regime.has_taste_shocks and type(solver) is not GridSearch:
+            msg = (
+                "Policy lookup supports taste shocks in regimes solved by "
+                f"GridSearch only; {regime_name!r} is solved by "
+                f"{type(solver).__name__}, whose simulation need not reproduce "
+                "the choice probabilities of its solve."
             )
             raise InvalidSimulationInputError(msg)
         if return_action_values and regime.stakeholders is not None:
@@ -4112,7 +4127,7 @@ class Model:
             executor = unit
         program = (
             programs.action_values[period]
-            if return_action_values
+            if return_action_values or regime.has_taste_shocks
             else _with_action_extents(
                 program=programs.decision[period],
                 extents=tuple(len(grids[n]) for n in space.action_names),
@@ -4142,11 +4157,17 @@ class Model:
             # once, for the one row an empty query stands for; every output gets
             # that row here.
             outputs = tuple(output[None] for output in outputs)
-        # Both lookup programs publish a flat tuple, one role per output.
+        # Every lookup program publishes a flat tuple, one role per output.
         roles = cast("tuple[str, ...]", program.output_roles)
         by_role = dict(zip(roles, outputs, strict=True))
-        indices, value = by_role[ACTION_INDEX], by_role[DECISION_VALUE]
-        lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
+        # A taste-shock regime draws its discrete action, so the lookup decodes
+        # the continuous action attaining each combination's `Qc` instead.
+        indices, decoded = (
+            (by_role[CONDITIONAL_ACTION_INDEX], space.continuous_actions)
+            if regime.has_taste_shocks
+            else (by_role[ACTION_INDEX], space.actions)
+        )
+        lookup_grids = MappingProxyType({n: grids[n] for n in decoded})
         if unit is None or allocations is None:
             actions = _lookup_values_from_indices(
                 flat_indices=indices, grids=lookup_grids
@@ -4173,13 +4194,11 @@ class Model:
             jax.block_until_ready(actions)
             unit.close()
         return _trim_lookup_rows(
-            lookup=PolicyLookup(
-                actions=actions,
-                value=value,
-                Q=by_role.get(ACTION_VALUES),
-                F=by_role.get(ACTION_FEASIBILITY),
-                U=by_role.get(FLOW_UTILITY),
-                CE=by_role.get(CONTINUATION_CE),
+            lookup=_assemble_policy_lookup(
+                by_role=by_role,
+                decoded_actions=actions,
+                has_taste_shocks=regime.has_taste_shocks,
+                return_action_values=return_action_values,
             ),
             n_rows=n_query_rows,
             allocations=allocations,
@@ -5045,6 +5064,42 @@ def _lookup_live_footprint(
     )
 
 
+def _assemble_policy_lookup(
+    *,
+    by_role: Mapping[str, jax.Array],
+    decoded_actions: MappingProxyType[ActionName, FloatND | IntND],
+    has_taste_shocks: bool,
+    return_action_values: bool,
+) -> PolicyLookup:
+    """Assemble a lookup from its program's outputs by role and decoded actions.
+
+    The decoded actions are the chosen actions of a hard-max regime and the
+    conditional continuous actions of a regime with taste shocks.
+    """
+    parts = (
+        {
+            "Q": by_role[ACTION_VALUES],
+            "F": by_role[ACTION_FEASIBILITY],
+            "U": by_role[FLOW_UTILITY],
+            "CE": by_role[CONTINUATION_CE],
+        }
+        if return_action_values
+        else {}
+    )
+    if not has_taste_shocks:
+        return PolicyLookup(
+            actions=decoded_actions, value=by_role[DECISION_VALUE], **parts
+        )
+    return PolicyLookup(
+        actions=None,
+        value=by_role[DECISION_VALUE],
+        Qc=by_role[CONDITIONAL_VALUE],
+        choice_probabilities=by_role[CHOICE_PROBABILITIES],
+        conditional_actions=decoded_actions,
+        **parts,
+    )
+
+
 def _trim_lookup_rows(
     *,
     lookup: PolicyLookup,
@@ -5060,16 +5115,7 @@ def _trim_lookup_rows(
     if n_rows is None:
         return lookup
     if allocations is None or unit is None:
-        return PolicyLookup(
-            actions=MappingProxyType(
-                {name: each[:n_rows] for name, each in lookup.actions.items()}
-            ),
-            value=lookup.value[:n_rows],
-            Q=None if lookup.Q is None else lookup.Q[:n_rows],
-            F=None if lookup.F is None else lookup.F[:n_rows],
-            U=None if lookup.U is None else lookup.U[:n_rows],
-            CE=None if lookup.CE is None else lookup.CE[:n_rows],
-        )
+        return _map_lookup_arrays(lookup=lookup, func=lambda array: array[:n_rows])
     return _admit_trimmed_lookup_rows(
         lookup=lookup,
         n_rows=n_rows,
@@ -5111,8 +5157,10 @@ def _admit_trimmed_lookup_rows(
                     allocations=allocations,
                     call_roots=(
                         call_roots,
-                        tuple(lookup.actions.values()),
-                        (lookup.value, lookup.Q, lookup.F, lookup.U, lookup.CE),
+                        tuple(
+                            getattr(lookup, field.name)
+                            for field in dataclasses.fields(lookup)
+                        ),
                         kept,
                     ),
                 ),
@@ -5123,15 +5171,34 @@ def _admit_trimmed_lookup_rows(
         kept.append(result)
         return result
 
+    return _map_lookup_arrays(lookup=lookup, func=trim)
+
+
+def _map_lookup_arrays(
+    *, lookup: PolicyLookup, func: Callable[[jax.Array], jax.Array]
+) -> PolicyLookup:
+    """Apply `func` to every array a lookup holds."""
+
+    def array(each: jax.Array | None) -> jax.Array | None:
+        return None if each is None else func(each)
+
+    def mapping(
+        each: MappingProxyType[ActionName, FloatND] | None,
+    ) -> MappingProxyType[ActionName, FloatND] | None:
+        if each is None:
+            return None
+        return MappingProxyType({name: func(a) for name, a in each.items()})
+
     return PolicyLookup(
-        actions=MappingProxyType(
-            {name: trim(each) for name, each in lookup.actions.items()}
-        ),
-        value=trim(lookup.value),
-        Q=None if lookup.Q is None else trim(lookup.Q),
-        F=None if lookup.F is None else trim(lookup.F),
-        U=None if lookup.U is None else trim(lookup.U),
-        CE=None if lookup.CE is None else trim(lookup.CE),
+        actions=mapping(lookup.actions),
+        value=func(lookup.value),
+        Q=array(lookup.Q),
+        F=array(lookup.F),
+        U=array(lookup.U),
+        CE=array(lookup.CE),
+        Qc=array(lookup.Qc),
+        choice_probabilities=array(lookup.choice_probabilities),
+        conditional_actions=mapping(lookup.conditional_actions),
     )
 
 

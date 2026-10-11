@@ -52,11 +52,18 @@ else:
 class PolicyLookup:
     """The optimal choice and value at caller-supplied states of one regime-period."""
 
-    actions: MappingProxyType[ActionName, FloatND]
-    """Argmax action value per action name, one entry per queried state row."""
+    actions: MappingProxyType[ActionName, FloatND] | None
+    """Argmax action value per action name, one entry per queried state row.
+
+    `None` in a regime with taste shocks, where the discrete choice is random.
+    """
 
     value: FloatND
-    """Max over the action grid of Q, using the solved continuation, per row."""
+    """Max over the action grid of Q, using the solved continuation, per row.
+
+    In a regime with taste shocks, the smoothed maximum
+    `scale * logsumexp(Qc / scale)` over the discrete-action combinations.
+    """
 
     Q: FloatND | None = None
     """Action values over the queried action grid, or `None` unless requested.
@@ -85,6 +92,30 @@ class PolicyLookup:
     `Q == U + discount_factor * CE`. Zero in a terminal regime, where `Q == U`.
     An aggregator that reads a regime function, such as a type-specific discount
     factor, also needs that function's value to rebuild `Q` from `U` and `CE`.
+    """
+
+    Qc: FloatND | None = None
+    """Conditional value per discrete-action combination, or `None`.
+
+    Filled for a regime with taste shocks only: one leading row axis, then one
+    axis per discrete action of the queried grid. The max of `Q` over the
+    feasible continuous actions, `-inf` for a combination without one.
+    """
+
+    choice_probabilities: FloatND | None = None
+    """Probability of each discrete-action combination, shape of `Qc`, or `None`.
+
+    `softmax(Qc / scale)` over the feasible combinations: exactly zero for an
+    infeasible combination, and zero everywhere in a row without a feasible
+    combination, whose `value` is `-inf`.
+    """
+
+    conditional_actions: MappingProxyType[ActionName, FloatND] | None = None
+    """Continuous actions attaining `Qc`, one array of the shape of `Qc` each.
+
+    Filled for a regime with taste shocks only. A combination without a feasible
+    continuous action holds the first grid value; mask it with
+    `choice_probabilities > 0`.
     """
 
 

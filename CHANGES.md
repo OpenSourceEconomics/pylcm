@@ -5,6 +5,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Choice probabilities in policy lookup with taste shocks
+
+- `Model.lookup_policy` accepts GridSearch regimes with `ExtremeValueTasteShocks`. The
+  returned `PolicyLookup` has `actions=None` and adds, per state row and discrete-action
+  combination, the conditional value `Qc`, the `choice_probabilities`
+  `softmax(Qc / scale)` and the `conditional_actions` attaining `Qc`; `value` is the
+  smoothed maximum the solve stores. Regimes solved by an EGM-family solver are refused.
+
 ### Flow utility and continuation in policy lookup
 
 - `Model.lookup_policy(..., return_action_values=True)` also returns `U`, the flow
