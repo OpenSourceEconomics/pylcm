@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import (
     DiscreteGrid,
     IrregSpacedGrid,
@@ -21,6 +22,8 @@ from _lcm.grids import (
 )
 from _lcm.grids.categorical import _validate_discrete_grid, get_category_codes
 from _lcm.grids.continuous import _validate_continuous_grid
+from _lcm.grids.discrete import MISSING_CAT_CODE
+from _lcm.simulation import initial_conditions
 from _lcm.typing import DataclassInstance
 from lcm.exceptions import CategoricalDefinitionError, GridInitializationError
 from lcm.typing import ScalarInt
@@ -658,3 +661,232 @@ def test_continuous_grid_rejects_distributed_true(make_grid):
     """Every continuous grid constructor refuses the retired placement keyword."""
     with pytest.raises(TypeError, match="distributed"):
         make_grid()
+
+
+def test_value_grid_codes_index_the_declared_values():
+    """A value grid's codes are `0..n-1` in the order of its values."""
+    grid = DiscreteGrid(values=[0, 20, 40])
+    assert grid.codes == (0, 1, 2)
+
+
+def test_value_grid_keeps_the_declared_values():
+    """`values` returns the declared numbers as Python scalars."""
+    grid = DiscreteGrid(values=[np.int64(0), 20, 40])
+    assert grid.values == (0, 20, 40)
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        pytest.param([0, 20, 40], ("0", "20", "40"), id="int"),
+        pytest.param([np.int64(0), np.int32(20)], ("0", "20"), id="numpy-int"),
+        pytest.param([0.0, 0.25], ("0.0", "0.25"), id="float"),
+        pytest.param([np.float64(0.5), 1.0], ("0.5", "1.0"), id="numpy-float"),
+        pytest.param(range(3), ("0", "1", "2"), id="range"),
+    ],
+)
+def test_value_grid_labels_its_categories_with_the_python_scalar_repr(
+    *, values, expected
+):
+    """Each category label is the `repr` of the declared Python scalar."""
+    assert DiscreteGrid(values=values).categories == expected
+
+
+def test_value_grid_is_ordered():
+    """Strictly ascending values give an ordered grid."""
+    assert DiscreteGrid(values=[0.0, 0.5]).ordered is True
+
+
+def test_category_grid_has_no_values():
+    """A grid declared with a category class carries no values."""
+    assert DiscreteGrid(category_class=_Category).values is None
+
+
+def test_value_grid_to_jax_returns_int32_codes():
+    """The engine representation of a value grid stays its int32 codes."""
+    codes = DiscreteGrid(values=[0, 20, 40]).to_jax()
+    assert (codes.dtype, codes.tolist()) == (jnp.int32, [0, 1, 2])
+
+
+def test_integer_value_grid_values_to_jax_returns_int32_values():
+    """Integer values are published as int32."""
+    values = DiscreteGrid(values=[0, 20, 40]).values_to_jax()
+    assert (values.dtype, values.tolist()) == (jnp.int32, [0, 20, 40])
+
+
+def test_float_value_grid_values_to_jax_uses_the_canonical_float_dtype():
+    """Float values are published at the canonical float dtype."""
+    values = DiscreteGrid(values=[0.0, 0.25]).values_to_jax()
+    assert values.dtype == canonical_float_dtype()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        pytest.param({"values": []}, "at least one value", id="empty"),
+        pytest.param({"values": [0, 40, 20]}, "strictly ascending", id="unsorted"),
+        pytest.param({"values": [0, 20, 20]}, "strictly ascending", id="duplicate"),
+        pytest.param({"values": [0, 0.5]}, "all integers or all floats", id="mixed"),
+        pytest.param({"values": [True, False]}, "bool", id="bool"),
+        pytest.param({"values": [0.0, float("nan")]}, "finite", id="nan"),
+        pytest.param({"values": [0.0, float("inf")]}, "finite", id="inf"),
+        pytest.param({"values": [0, 2**31]}, "int32", id="int32-overflow"),
+        pytest.param(
+            {"values": [0, 1], "category_class": _Category},
+            "either `category_class` or `values`",
+            id="with-category-class",
+        ),
+        pytest.param({"values": [0, 1], "tolerance": 0.1}, "Integer", id="int-tol"),
+        pytest.param({"values": [0.0, 1.0], "tolerance": -0.1}, ">= 0", id="neg-tol"),
+        pytest.param(
+            {"values": [0.0, 1.0], "tolerance": float("nan")}, ">= 0", id="nan-tol"
+        ),
+        pytest.param(
+            {"values": [0.0, 1.0], "tolerance": 0.5}, "half the smallest", id="wide-tol"
+        ),
+        pytest.param(
+            {"values": [0.0, 1e6], "tolerance": 1e-12}, "spacing", id="sub-ulp-tol"
+        ),
+    ],
+)
+def test_value_grid_rejects_invalid_declarations(*, kwargs, match):
+    """Invalid values or tolerances raise `GridInitializationError`."""
+    with pytest.raises(GridInitializationError, match=match):
+        DiscreteGrid(**kwargs)
+
+
+@pytest.mark.skipif(X64_ENABLED, reason="the two values are distinct at float64")
+def test_value_grid_rejects_values_that_collide_at_the_canonical_dtype():
+    """Values that round to one float32 node are refused at float32."""
+    with pytest.raises(GridInitializationError, match="strictly ascending"):
+        DiscreteGrid(values=[1e8, 1e8 + 1])
+
+
+def test_discrete_grid_requires_category_class_or_values():
+    """A grid without a category class or values is refused."""
+    with pytest.raises(TypeError, match="either `category_class` or `values`"):
+        DiscreteGrid()
+
+
+def test_integer_value_grid_encodes_exact_members_and_flags_others():
+    """Integers map to their code by exact membership; others get the sentinel."""
+    codes = DiscreteGrid(values=[0, 20, 40]).encode(jnp.array([40, 20, 7, -20]))
+    assert codes.tolist() == [2, 1, MISSING_CAT_CODE, MISSING_CAT_CODE]
+
+
+def test_integer_value_grid_encodes_whole_floats():
+    """A whole float names the integer node it equals."""
+    codes = DiscreteGrid(values=[0, 20, 40]).encode(jnp.array([20.0, 20.5]))
+    assert codes.tolist() == [1, MISSING_CAT_CODE]
+
+
+def test_float_value_grid_encodes_exact_nodes():
+    """A float equal to a node at the canonical dtype maps to its code."""
+    grid = DiscreteGrid(values=[0.0, 0.7])
+    codes = grid.encode(jnp.array([0.7, 0.0], dtype=canonical_float_dtype()))
+    assert codes.tolist() == [1, 0]
+
+
+def test_float_value_grid_without_tolerance_flags_one_ulp_off():
+    """With the default tolerance a value one ULP above a node is off the grid."""
+    node = jnp.asarray(0.7, dtype=canonical_float_dtype())
+    code = DiscreteGrid(values=[0.0, 0.7]).encode(jnp.nextafter(node, jnp.inf))
+    assert int(code) == MISSING_CAT_CODE
+
+
+def test_float_value_grid_tolerance_admits_a_value_near_a_node():
+    """A value within the declared tolerance maps to the nearest node."""
+    node = jnp.asarray(0.7, dtype=canonical_float_dtype())
+    grid = DiscreteGrid(values=[0.0, 0.7], tolerance=1e-6)
+    assert int(grid.encode(jnp.nextafter(node, jnp.inf))) == 1
+
+
+@pytest.mark.parametrize("value", [0.3, -0.5, 2.0, float("nan")])
+def test_float_value_grid_tolerance_flags_values_between_nodes(value):
+    """Values farther than the tolerance from every node get the sentinel."""
+    grid = DiscreteGrid(values=[0.0, 0.25, 0.5, 1.0], tolerance=1e-6)
+    code = grid.encode(jnp.asarray(value, dtype=canonical_float_dtype()))
+    assert int(code) == MISSING_CAT_CODE
+
+
+def test_float_value_grid_decodes_codes_to_values():
+    """Codes decode to the values they index."""
+    values = DiscreteGrid(values=[0.0, 0.25, 0.5]).decode(jnp.array([2, 0]))
+    aaae(values, [0.5, 0.0], decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("code", [MISSING_CAT_CODE, -1, 3])
+def test_float_value_grid_decodes_off_grid_codes_to_nan(code):
+    """A code outside `0..n-1` reads NaN, never a clamped or wrapped node."""
+    value = DiscreteGrid(values=[0.0, 0.25, 0.5]).decode(jnp.int32(code))
+    assert bool(jnp.isnan(value))
+
+
+@pytest.mark.parametrize("code", [MISSING_CAT_CODE, -1, 3])
+def test_integer_value_grid_decodes_off_grid_codes_to_the_sentinel(code):
+    """An integer grid reads the int32 sentinel for a code outside `0..n-1`."""
+    value = DiscreteGrid(values=[0, 20, 40]).decode(jnp.int32(code))
+    assert int(value) == MISSING_CAT_CODE
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        pytest.param(0.3, 0.25, id="interior"),
+        pytest.param(0.375, 0.25, id="tie-to-lower"),
+        pytest.param(0.9, 1.0, id="upper"),
+        pytest.param(-5.0, 0.0, id="below"),
+        pytest.param(7.0, 1.0, id="above"),
+    ],
+)
+def test_float_value_grid_nearest_snaps_to_the_closest_node(*, value, expected):
+    """`nearest` returns the closest node, the lower one on a tie."""
+    grid = DiscreteGrid(values=[0.0, 0.25, 0.5, 1.0])
+    snapped = grid.nearest(jnp.asarray(value, dtype=canonical_float_dtype()))
+    assert float(snapped) == expected
+
+
+def test_float_value_grid_nearest_keeps_nan():
+    """`nearest` passes NaN through, so the encoder still flags it."""
+    grid = DiscreteGrid(values=[0.0, 1.0])
+    snapped = grid.nearest(jnp.asarray(jnp.nan, dtype=canonical_float_dtype()))
+    assert bool(jnp.isnan(snapped))
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"), [(25, 20), (30, 20), (31, 40), (-3, 0), (99, 40)]
+)
+def test_integer_value_grid_nearest_snaps_to_the_closest_node(*, value, expected):
+    """`nearest` on an integer grid returns the closest integer node."""
+    snapped = DiscreteGrid(values=[0, 20, 40]).nearest(jnp.int32(value))
+    assert (snapped.dtype, int(snapped)) == (jnp.int32, expected)
+
+
+def test_value_grid_nearest_result_encodes_to_its_node():
+    """A snapped value always encodes to a valid code."""
+    grid = DiscreteGrid(values=[0.0, 0.25, 0.5, 1.0])
+    values = jnp.asarray([0.3, 0.9, -1.0], dtype=canonical_float_dtype())
+    assert grid.encode(grid.nearest(values)).tolist() == [1, 3, 0]
+
+
+def test_value_grid_encode_agrees_under_jit():
+    """The compiled encoder gives the eager result."""
+    grid = DiscreteGrid(values=[0.0, 0.25, 0.5, 1.0], tolerance=1e-6)
+    values = jnp.asarray([0.25, 0.3, 1.0, -1.0], dtype=canonical_float_dtype())
+    assert jax.jit(grid.encode)(values).tolist() == grid.encode(values).tolist()
+
+
+def test_value_grid_decode_and_nearest_agree_under_jit():
+    """The compiled decoder and snapper give the eager results."""
+    grid = DiscreteGrid(values=[0.0, 0.25, 0.5, 1.0])
+    codes = jnp.array([3, -1, 0], dtype=jnp.int32)
+    values = jnp.asarray([0.3, 0.9], dtype=canonical_float_dtype())
+    got = (jax.jit(grid.decode)(codes), jax.jit(grid.nearest)(values))
+    want = (grid.decode(codes), grid.nearest(values))
+    np.testing.assert_array_equal(np.asarray(got[0]), np.asarray(want[0]))
+    np.testing.assert_array_equal(np.asarray(got[1]), np.asarray(want[1]))
+
+
+def test_value_grid_sentinel_is_the_simulation_missing_code():
+    """Off-grid values and missing initial conditions share one sentinel code."""
+    assert MISSING_CAT_CODE == initial_conditions.MISSING_CAT_CODE

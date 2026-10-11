@@ -48,11 +48,13 @@ from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
     ScalarInt,
     UserFunction,
 )
+from tests.test_models.deterministic import discrete
 
 
 def utility(consumption):
@@ -820,3 +822,34 @@ def test_regime_with_fixed_states_only():
     assert all(
         jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
     )
+
+
+def _value_grid_utility(
+    *, wealth: DiscreteState, consumption: DiscreteAction
+) -> FloatND:
+    return jnp.asarray(wealth + consumption, dtype=float)
+
+
+def _next_value_grid_wealth(*, wealth: DiscreteState) -> DiscreteState:
+    return wealth
+
+
+def test_model_refuses_a_value_grid_until_user_functions_receive_values():
+    """A model cannot be built with a `DiscreteGrid(values=...)` state."""
+    regime = UserRegime(
+        actions={
+            "consumption": DiscreteGrid(category_class=discrete.DiscreteConsumption)
+        },
+        states={"wealth": DiscreteGrid(values=[0, 1, 2])},
+        state_transitions={"wealth": _next_value_grid_wealth},
+        functions={"utility": _value_grid_utility},
+    )
+    ages = AgeGrid(start=50, inclusive_stop=60, step="10Y")
+    with pytest.raises(RegimeInitializationError, match=r"values=\.\.\."):
+        Model(
+            regimes={"working_life": regime, "dead": discrete.dead},
+            ages=ages,
+            regime_id_class=discrete.RegimeId,
+            initial_nodes={50: "working_life"},
+            edges=discrete.working_life_edges(ages),
+        )
