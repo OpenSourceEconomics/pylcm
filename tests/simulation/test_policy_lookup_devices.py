@@ -344,8 +344,8 @@ _TRIM_SCRIPT = textwrap.dedent(
     n_rows = int(sys.argv[3])
     assert jax.device_count() == n_devices, jax.devices()
     budget = 4_718_592
-    # Q's bytes do not depend on the float precision.
-    n_actions = 800_000 // jnp.zeros(()).dtype.itemsize
+    # The bytes of Q, U and CE do not depend on the float precision.
+    n_actions = 400_000 // jnp.zeros(()).dtype.itemsize
 
     grid = LinSpacedGrid(start=1, stop=3, n_points=3)
     model = get_model(
@@ -376,7 +376,9 @@ _TRIM_SCRIPT = textwrap.dedent(
         outputs = {"outcome": "refused"}
     else:
         per_device = Counter()
-        for leaf in jax.tree.leaves((got.actions, got.value, got.Q, got.F)):
+        for leaf in jax.tree.leaves(
+            (got.actions, got.value, got.Q, got.F, got.U, got.CE)
+        ):
             for shard in leaf.addressable_shards:
                 per_device[shard.device] += shard.data.nbytes
         outputs = {
@@ -534,8 +536,8 @@ def test_budgeted_lookup_admits_trimming_padded_rows_within_the_budget(
     """Returned action values fit the per-device budget, or the lookup refuses.
 
     Three rows padded to eight subject devices trim to a layout that holds every
-    row of `Q` on each device, beyond the budget; eight rows stay split over the
-    devices and fit it.
+    row of `Q`, `U` and `CE` on each device, beyond the budget; eight rows stay
+    split over the devices and fit it.
     """
     got = _lookup_on_devices(
         n_devices=8,

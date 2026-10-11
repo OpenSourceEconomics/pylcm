@@ -336,14 +336,18 @@ def test_linear_action_value_is_flow_utility_plus_discounted_continuation(
 ):
     """Under `LinearAggregator`, `Q == U + discount_factor * CE` at every entry.
 
-    Extrapolated continuations reach magnitudes in the hundreds, so the check is
-    relative.
+    The two terms reach magnitudes in the hundreds and can cancel to near zero, so
+    the rounding of the sum is bounded relative to `|U| + discount_factor * |CE|`.
+    Where both terms are zero, `Q` must be zero itself.
     """
     got = lookup(solved=solved, period=period, return_action_values=True)
-    np.testing.assert_allclose(
-        np.asarray(got.Q),
-        np.asarray(got.U) + DISCOUNT_FACTOR * np.asarray(got.CE),
-        rtol=10.0**-DECIMAL_PRECISION,
+    U, CE = np.asarray(got.U), np.asarray(got.CE)
+    scale = np.abs(U) + DISCOUNT_FACTOR * np.abs(CE)
+    np.testing.assert_array_almost_equal(
+        (np.asarray(got.Q) - (U + DISCOUNT_FACTOR * CE))
+        / np.where(scale > 0, scale, 1),
+        np.zeros_like(scale),
+        decimal=DECIMAL_PRECISION,
     )
 
 
