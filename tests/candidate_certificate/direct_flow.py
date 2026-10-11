@@ -8441,8 +8441,14 @@ _ACTION_GRID_MUTATIONS = {
         "src/_lcm/simulation/initial_conditions.py",
         "validate_simulation_inputs",
         "expression",
-        "contextlib.closing",
-        "contextlib.nullcontext",
+        (
+            "contextlib.closing("
+            "PreflightActionGrids(memory=memory, build=_build_flat_action_grid))"
+        ),
+        (
+            "contextlib.nullcontext("
+            "PreflightActionGrids(memory=memory, build=_build_flat_action_grid))"
+        ),
         1,
     ),
     "action_grid:binding_release_omitted": (
@@ -8964,7 +8970,7 @@ _FEASIBILITY_MUTATIONS = {
         "keyword",
         "memory",
         "None",
-        7,
+        9,
     ),
     "feasibility:joint_admission_bypassed": (
         INITIAL_CONDITIONS_SOURCE,
