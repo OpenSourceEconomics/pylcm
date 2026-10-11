@@ -529,7 +529,7 @@ def _validate_all_variables_used(
     unused, exactly as in the model declared without that edge.
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
-    ones with the same `compute_kept_variables` closure.
+    ones.
 
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`

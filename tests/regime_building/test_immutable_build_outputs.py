@@ -70,6 +70,8 @@ class _ClosureKwargs(TypedDict):
     all_regime_names: frozenset[RegimeName]
     ages: None
     active_periods_by_regime: None
+    visited_periods_by_regime: None
+    targets_by_regime: None
 
 
 _IMMUTABLE = (MappingProxyType, tuple, frozenset)
@@ -100,6 +102,8 @@ def _regime_cases(model: Model) -> dict[str, Callable[[], Sized]]:
         "all_regime_names": frozenset(model.user_regimes),
         "ages": None,
         "active_periods_by_regime": None,
+        "visited_periods_by_regime": None,
+        "targets_by_regime": None,
     }
     return {
         "valuation_roots": lambda: _valuation_roots(
