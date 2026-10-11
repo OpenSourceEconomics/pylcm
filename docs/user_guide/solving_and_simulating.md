@@ -616,3 +616,36 @@ If you need bitwise-reproducible results for testing or validation, use float64 
   utilities
 - [A Tiny Example](../getting_started/tiny_example.ipynb) — complete walkthrough
 - [Examples](../examples/index.md) — full worked examples
+
+## Given shock paths
+
+Supply realised shocks to the forward simulation without changing the distribution
+agents use when solving:
+
+```python
+result = model.simulate(
+    params=params,
+    solution=solution,
+    initial_conditions=initial_conditions,
+    shock_paths={"income_shock": common_income_path},
+    seed=42,
+    log_level="off",
+)
+```
+
+Each path is a real array shaped `(periods,)` for a common history or
+`(subjects, periods)` for individual histories in the original initial-condition row
+order. Columns are computational periods, beginning at the model's first age or period;
+a subject entering later reads its entry column. The given value overrides that
+subject's initial shock and each subsequent realised draw. Continuous processes accept
+finite values in their distribution's support, including off-node values; lognormal
+levels must be positive and uniform draws must lie inside the declared interval.
+Discrete shocks require exact category codes. Persistent processes consume the supplied
+realised level directly, rather than treating it as an innovation and recursing again.
+
+Paths cover every period where the named shock is declared active in the simulation
+phase. Values outside those periods are ignored. Folded shocks are supported, including
+transition-local draws: a draw affecting the transition into period `p` comes from
+column `p`. A deterministic law reading `next_<shock>` sees the supplied draw before
+computing its own next state. Shocks omitted from the mapping retain the ordinary seeded
+stream, and solve expectations remain stochastic.
