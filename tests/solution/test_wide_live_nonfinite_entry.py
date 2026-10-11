@@ -29,6 +29,7 @@ from lcm import (
     UniformIIDProcess,
     categorical,
 )
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
@@ -219,8 +220,12 @@ def _build_model(
     )
 
 
-def _source_value(model: Model) -> FloatND:
-    return jnp.asarray(model.solve(params=_PARAMS, log_level="off").values[0]["source"])
+def _source_value(*, model: Model, runtime_checks: bool = True) -> FloatND:
+    return jnp.asarray(
+        model.solve(
+            params=_PARAMS, log_level="off", runtime_checks=runtime_checks
+        ).values[0]["source"]
+    )
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
@@ -239,7 +244,9 @@ def test_an_off_support_entry_at_a_rare_node_still_fails_loudly(
         certainty_equivalent=LinearExpectation(),
     )
 
-    assert bool(jnp.all(jnp.isnan(_source_value(model))))
+    with pytest.raises(InvalidValueFunctionError, match="all values are NaN"):
+        _source_value(model=model)
+    assert bool(jnp.all(jnp.isnan(_source_value(model=model, runtime_checks=False))))
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
@@ -257,7 +264,9 @@ def test_an_off_support_entry_survives_a_general_transform(*, enable_jit: bool) 
         certainty_equivalent=_identity_quasi_arithmetic_mean(),
     )
 
-    assert bool(jnp.all(jnp.isnan(_source_value(model))))
+    with pytest.raises(InvalidValueFunctionError, match="all values are NaN"):
+        _source_value(model=model)
+    assert bool(jnp.all(jnp.isnan(_source_value(model=model, runtime_checks=False))))
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
@@ -278,7 +287,7 @@ def test_a_live_node_whose_transform_is_nonfinite_is_not_made_null(
         certainty_equivalent=_harmonic_quasi_arithmetic_mean(),
     )
 
-    np.testing.assert_array_equal(np.asarray(_source_value(model)), 0.0)
+    np.testing.assert_array_equal(np.asarray(_source_value(model=model)), 0.0)
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
@@ -298,6 +307,6 @@ def test_an_in_support_entry_at_the_same_rare_node_is_priced_as_usual(
         certainty_equivalent=LinearExpectation(),
     )
 
-    value = float(jnp.max(_source_value(model)))
+    value = float(jnp.max(_source_value(model=model)))
 
     np.testing.assert_allclose(value, _ORDINARY_ENTRY, rtol=1e-6)

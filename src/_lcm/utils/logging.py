@@ -110,6 +110,8 @@ class _RunLogger(logging.Logger):
         self._log_level = log_level
         self.runtime_checks = runtime_checks
         self.parent = logging.getLogger("lcm")
+        # Propagation reaches parent handlers but does not run parent filters.
+        self.filters = self.parent.filters.copy()
 
     def __reduce__(self) -> tuple[Callable[[], logging.Logger], tuple[()]]:
         """Rebuild call-local policy without pickling the global output handlers."""
