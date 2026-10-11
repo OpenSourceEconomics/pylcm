@@ -140,6 +140,7 @@ from _lcm.simulation.taste_stream import (
 from _lcm.simulation.transitions import (
     calculate_next_regime_membership,
     calculate_next_states,
+    clip_next_states,
     create_regime_state_action_space,
 )
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
@@ -2016,7 +2017,30 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 delta=route_delta,
                 next_states=next_states,
             )
-        states = next_states
+        states = clip_next_states(
+            states=next_states,
+            regimes=regimes,
+            base_spaces=base_state_action_spaces,
+            targets=tuple(
+                dict.fromkeys(
+                    (
+                        *realization_targets_next_period,
+                        *(
+                            leg.realized_fallback.regime
+                            for edge in regime.gated_edges.values()
+                            for leg in edge.legs
+                        ),
+                    )
+                )
+            ),
+            next_period=period + 1,
+            source=regime_name,
+            new_regime_ids=new_subject_regime_ids,
+            regime_ids=regime_names_to_ids,
+            logger=logger,
+            subjects=subject_ids_in_regime,
+            memory=memory,
+        )
 
     return (
         simulation_result,
