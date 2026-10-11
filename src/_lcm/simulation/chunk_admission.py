@@ -133,6 +133,8 @@ def prepare_simulation_chunks(
     original_population: int,
     retained_footprint: DeviceBufferFootprint,
     independent_taste: bool,
+    prng_impl: str | None = None,
+    taste_prng_impl: str = "threefry2x32",
     log_level: LogLevel,
     runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
@@ -220,6 +222,8 @@ def prepare_simulation_chunks(
         population=population,
         original_population=original_population,
         independent_taste=independent_taste,
+        prng_impl=prng_impl,
+        taste_prng_impl=taste_prng_impl,
         log_level=log_level,
         runtime_checks=runtime_checks,
         resident=resident,
@@ -252,6 +256,8 @@ def _simulation_chunk_profile_key(
     original_population: int,
     widths: Mapping[str, int],
     independent_taste: bool,
+    prng_impl: str | None = None,
+    taste_prng_impl: str = "threefry2x32",
     log_level: LogLevel,
     runtime_checks: bool = True,
     group_sizes: tuple[int, ...] | None = None,
@@ -281,7 +287,7 @@ def _simulation_chunk_profile_key(
       that leaves every covered shape untouched (extremely unlikely given how
       regimes are constructed) would not be distinguished by this key.
     """
-    version = 1  # bump when any component below changes meaning
+    version = 2  # bump when any component below changes meaning
     key_version = ("chunk-profile-key", version)
     program_identity = (
         tuple(sorted(regimes)),
@@ -318,7 +324,8 @@ def _simulation_chunk_profile_key(
         log_level,
         runtime_checks,
         independent_taste,
-        jax.config.jax_default_prng_impl,
+        prng_impl or jax.config.jax_default_prng_impl,
+        taste_prng_impl,
         jax.config.jax_enable_x64,
     )
     # Policies are rebuilt per solve, so their Python identity is never stable
@@ -353,6 +360,8 @@ class _ChunkProfiler:
     population: int
     original_population: int
     independent_taste: bool
+    prng_impl: str | None = None
+    taste_prng_impl: str = "threefry2x32"
     log_level: LogLevel
     runtime_checks: bool = True
     resident: Mapping[jax.Device, int]
@@ -430,6 +439,8 @@ class _ChunkProfiler:
             "original_population": self.original_population,
             "widths": widths,
             "independent_taste": self.independent_taste,
+            "prng_impl": self.prng_impl,
+            "taste_prng_impl": self.taste_prng_impl,
             "log_level": self.log_level,
             "runtime_checks": self.runtime_checks,
             "group_sizes": self.group_sizes,

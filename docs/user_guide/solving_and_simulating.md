@@ -338,16 +338,34 @@ function while subjects start at different ages cannot be evaluated and raises
 - `log_level`: Required. Console verbosity (same options and table as `solve()`).
   Initial-condition schema and regime validity are always checked; numerical feasibility
   follows `runtime_checks`.
-- `seed=None`: Random seed for stochastic simulations (int). Collective dissolution
-  gates consume their addressed replay artifacts from `solution`; the automatic-solve
-  path retains and threads them itself.
-- `taste_shock_seed=None`: Optional independent seed for common taste shocks across
-  counterfactual models. Omit it to keep the ordinary `seed` behavior.
+- `seed=None`: Integer random seed or scalar typed `jax.random.key`. Typed roots retain
+  their PRNG implementation. Collective dissolution gates consume their addressed replay
+  artifacts from `solution`; the automatic-solve path retains and threads them itself.
+- `taste_shock_seed=None`: Optional independent integer seed or scalar typed key for
+  common taste shocks across counterfactual models. Omit it to keep the ordinary `seed`
+  behavior.
 - `log_path=None`: Directory for diagnostic snapshots; optional at every level.
 - `log_keep_n_latest=3`: Maximum snapshot directories to retain.
 - `max_compilation_workers=None`: Maximum number of threads for parallel XLA
   compilation. Used only on the automatic-solve path, i.e. when `solution` is omitted.
   `None` uses the number of physical CPU cores.
+
+Typed roots are consumed directly; integer seeds retain their existing streams. Raw
+uint32 keys from `jax.random.PRNGKey` and batched typed keys are refused. Derive scalar
+role roots with `fold_in`:
+
+```python
+import jax
+
+root = jax.random.key(123)
+result = model.simulate(
+    params=params,
+    initial_conditions=initial_conditions,
+    seed=jax.random.fold_in(root, 0),
+    taste_shock_seed=jax.random.fold_in(root, 1),
+    log_level="off",
+)
+```
 
 ### Common taste shocks across counterfactuals
 
@@ -383,11 +401,11 @@ categories are not matched across incompatible domains. Continuous-action grids 
 enter the address. Changing a taste-shock scale multiplies the same standardized draw,
 so equal scaled shocks additionally require equal scales.
 
-The independent stream uses Threefry and requires matching numerical precision, backend
-and JAX random configuration for exact comparisons. It does not alter the ordinary
-key-chain advancement directly. `taste_shock_seed=None` uses the existing ordinary
-stream, and the optional seed changes neither solutions nor their compatibility
-fingerprints.
+The independent stream uses Threefry for integer seeds. A supplied typed root retains
+its PRNG implementation. Exact comparisons require matching numerical precision, backend
+and JAX random configuration. It does not alter the ordinary key-chain advancement
+directly. `taste_shock_seed=None` uses the existing ordinary stream, and the optional
+seed changes neither solutions nor their compatibility fingerprints.
 
 ### Heterogeneous initial ages
 
