@@ -53,6 +53,8 @@ _Avoid_: edge law, handoff law
 **Carried state**:
 A state a regime keeps in its state space, and so in its value function. A
 regime carries a state it reads; reading the state's next-period draw counts.
+It also carries a state it hands, with any law of motion including
+`fixed_transition`, to a reachable target that carries it.
 _Avoid_: retained variable, kept state (in user-facing text)
 
 **Transition-local draw**:
