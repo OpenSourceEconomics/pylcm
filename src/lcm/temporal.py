@@ -1,7 +1,7 @@
 """Explicit temporal parameter declarations, independent of the model clock."""
 
 import inspect
-from collections.abc import Callable, Hashable, Mapping, Sequence
+from collections.abc import Callable, Collection, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import wraps
 from typing import TYPE_CHECKING, cast, no_type_check
@@ -67,39 +67,52 @@ class TimeVarying:
         *,
         values: ValueND | np.ndarray,
         labels: Sequence[Hashable],
-        period_to_label: Mapping[int, Hashable],
+        period_to_label: Mapping[PeriodLabel, Hashable] | None = None,
+        age_to_label: Mapping[AgeLabel, Hashable] | None = None,
     ) -> TimeVarying:
-        """Gather an economic profile by an explicit period-to-label mapping.
+        """Gather an economic profile by an explicit time-to-label mapping.
 
-        Several stages may share a source label. Unused source rows are ignored;
-        missing mapped labels and duplicate selected labels are errors. The result
-        is period-labelled, so it serves period models; label an age model's
-        profile by age with `TimeVarying(values=..., ages=...)`.
+        Give exactly one mapping:
+
+        - `period_to_label` returns a period-labelled table, which serves period
+          models;
+        - `age_to_label` returns an age-labelled table, which serves age models.
+          Age keys must be finite numbers.
+
+        Several periods or ages may share a source label, so a table read at the
+        next age can map the last age to its own row. Unused source rows are
+        ignored. A mapped label missing from `labels` is an error, and so is a
+        selected label that appears more than once in `labels`.
         """
-        periods = tuple(period_to_label)
-        if any(
-            isinstance(period, (bool, np.bool_))
-            or not isinstance(period, (int, np.integer))
-            for period in periods
-        ):
-            raise ValueError("Profile period coordinates must be integers.")
-        if values.ndim == 0 or values.shape[0] != len(labels):
-            raise ValueError("Profile leading axis length must match its labels.")
-        required = set(period_to_label.values())
-        positions: dict[Hashable, int] = {}
-        for index, label in enumerate(labels):
-            if label not in required:
-                continue
-            if label in positions:
-                raise ValueError(f"Profile has duplicate selected label {label!r}.")
-            positions[label] = index
-        missing = required - positions.keys()
-        if missing:
-            raise ValueError(f"Profile is missing mapped labels {list(missing)[:8]}.")
-        indices = jnp.asarray(
-            [positions[label] for label in period_to_label.values()], dtype=jnp.int32
+        if (period_to_label is None) == (age_to_label is None):
+            raise ValueError(
+                "Profile requires exactly one of period_to_label and age_to_label."
+            )
+        if period_to_label is not None:
+            periods = tuple(period_to_label)
+            if any(
+                isinstance(period, (bool, np.bool_))
+                or not isinstance(period, (int, np.integer))
+                for period in periods
+            ):
+                raise ValueError("Profile period coordinates must be integers.")
+            return cls(
+                values=_gather_profile(
+                    values=values, labels=labels, selected=period_to_label.values()
+                ),
+                periods=periods,
+            )
+        from _lcm.params.temporal import _validate_time_labels  # noqa: PLC0415
+
+        mapping = cast("Mapping[AgeLabel, Hashable]", age_to_label)
+        ages = tuple(mapping)
+        _validate_time_labels(labels=ages, kind="age", name="Profile")
+        return cls(
+            values=_gather_profile(
+                values=values, labels=labels, selected=mapping.values()
+            ),
+            ages=ages,
         )
-        return cls(values=jnp.take(values, indices, axis=0), periods=periods)
 
 
 class UnlabelledTimeParameterWarning(UserWarning):
@@ -193,3 +206,27 @@ def time_varying_params(*names: str) -> _TemporalDecorator:
     States and other DAG nodes cannot be marked as temporal parameters.
     """
     return _TemporalDecorator(names=names)
+
+
+def _gather_profile(
+    *,
+    values: ValueND | np.ndarray,
+    labels: Sequence[Hashable],
+    selected: Collection[Hashable],
+) -> ValueND:
+    """Gather the rows of `values` whose `labels` are selected, in selection order."""
+    if values.ndim == 0 or values.shape[0] != len(labels):
+        raise ValueError("Profile leading axis length must match its labels.")
+    required = set(selected)
+    positions: dict[Hashable, int] = {}
+    for index, label in enumerate(labels):
+        if label not in required:
+            continue
+        if label in positions:
+            raise ValueError(f"Profile has duplicate selected label {label!r}.")
+        positions[label] = index
+    missing = required - positions.keys()
+    if missing:
+        raise ValueError(f"Profile is missing mapped labels {list(missing)[:8]}.")
+    indices = jnp.asarray([positions[label] for label in selected], dtype=jnp.int32)
+    return jnp.take(values, indices, axis=0)
