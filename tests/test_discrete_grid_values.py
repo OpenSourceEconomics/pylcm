@@ -1,0 +1,316 @@
+"""User functions read the numbers of a `DiscreteGrid(values=...)`.
+
+The reference is the fully discrete deterministic model of
+`tests.test_models.deterministic.discrete`, which works on category codes and
+converts them by hand. The value-grid twin declares the numbers instead:
+
+- `consumption` takes the float values `1.0, 2.0`; the reference reads level
+  `1 + code` in utility and spends the code in the budget.
+- `wealth` takes the values `10, 11, 12`; the twin shifts by 10 where the
+  reference uses the code.
+
+Every shift is exact, so both models evaluate the same floats at either
+precision.
+"""
+
+from types import MappingProxyType
+
+import jax.numpy as jnp
+import numpy as np
+import pandas as pd
+import pytest
+from numpy.testing import assert_array_almost_equal as aaae
+from pandas.testing import assert_frame_equal
+
+from _lcm.grids.discrete import MISSING_CAT_CODE
+from _lcm.regime_building.value_adapter import (
+    adapt_entry,
+    adapt_user_function,
+    collect_value_grids,
+)
+from lcm import AgeGrid, DiscreteGrid, Model, fixed_transition
+from lcm.exceptions import RegimeInitializationError
+from lcm.regime import Regime as UserRegime
+from lcm.regime import StochasticTransition
+from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND
+from lcm_examples.mortality import (
+    is_working,
+    labor_income,
+    next_wealth,
+    utility_working,
+)
+from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.deterministic import discrete
+from tests.test_models.deterministic.regression import LaborSupply
+
+_N_PERIODS = 4
+_WEALTH_OFFSET = 10
+
+
+def _utility(
+    *, consumption: DiscreteAction, is_working: BoolND, disutility_of_work: float
+) -> FloatND:
+    return utility_working(
+        consumption=consumption,
+        is_working=is_working,
+        disutility_of_work=disutility_of_work,
+    )
+
+
+def _next_wealth(
+    *,
+    wealth: DiscreteState,
+    consumption: DiscreteAction,
+    labor_income: FloatND,
+    interest_rate: float,
+) -> DiscreteState:
+    continuous = next_wealth(
+        wealth=wealth - _WEALTH_OFFSET,
+        consumption=consumption - 1.0,
+        labor_income=labor_income,
+        interest_rate=interest_rate,
+    )
+    return jnp.clip(jnp.rint(continuous), 0, 2).astype(jnp.int32) + _WEALTH_OFFSET
+
+
+def _borrowing_constraint(
+    *, consumption: DiscreteAction, wealth: DiscreteState
+) -> BoolND:
+    return consumption - 1.0 <= wealth - _WEALTH_OFFSET
+
+
+def _value_grid_model(*, enable_jit: bool) -> Model:
+    working_life = UserRegime(
+        actions={
+            "labor_supply": DiscreteGrid(category_class=LaborSupply),
+            "consumption": DiscreteGrid(values=[1.0, 2.0]),
+        },
+        states={
+            "wealth": DiscreteGrid(
+                values=[_WEALTH_OFFSET, _WEALTH_OFFSET + 1, _WEALTH_OFFSET + 2]
+            )
+        },
+        state_transitions={"wealth": _next_wealth},
+        constraints={"borrowing_constraint": _borrowing_constraint},
+        functions={
+            "utility": _utility,
+            "labor_income": labor_income,
+            "is_working": is_working,
+        },
+    )
+    ages = AgeGrid(start=50, inclusive_stop=50 + (_N_PERIODS - 1) * 10, step="10Y")
+    return Model(
+        regimes={"working_life": working_life, "dead": discrete.dead},
+        ages=ages,
+        regime_id_class=discrete.RegimeId,
+        initial_nodes={ages.exact_values[0]: "working_life"},
+        edges=discrete.working_life_edges(ages),
+        enable_jit=enable_jit,
+    )
+
+
+def _reference_model(*, enable_jit: bool) -> Model:
+    if enable_jit:
+        return discrete.get_model(n_periods=_N_PERIODS)
+    ages = AgeGrid(start=50, inclusive_stop=50 + (_N_PERIODS - 1) * 10, step="10Y")
+    return Model(
+        regimes={"working_life": discrete.working_life, "dead": discrete.dead},
+        ages=ages,
+        regime_id_class=discrete.RegimeId,
+        initial_nodes={ages.exact_values[0]: "working_life"},
+        edges=discrete.working_life_edges(ages),
+        enable_jit=False,
+    )
+
+
+_PARAMS = discrete.get_params(n_periods=_N_PERIODS, wage=1.5, interest_rate=0.0)
+
+_INITIAL_CONDITIONS = {
+    "wealth": jnp.array([0, 1, 2, 0], dtype=jnp.int32),
+    "age": jnp.array([50.0, 50.0, 50.0, 50.0]),
+    "regime_id": jnp.array([discrete.RegimeId.working_life] * 4),
+}
+
+
+@pytest.mark.parametrize("enable_jit", [True, False])
+def test_value_grid_model_solves_to_the_reference_values_bitwise(enable_jit):
+    """The value-grid twin and the hand-decoded reference give identical V."""
+    got = (
+        _value_grid_model(enable_jit=enable_jit)
+        .solve(params=_PARAMS, log_level="off")
+        .values
+    )
+    expected = (
+        _reference_model(enable_jit=enable_jit)
+        .solve(params=_PARAMS, log_level="off")
+        .values
+    )
+    pairs = [
+        (np.asarray(got[period][regime]), np.asarray(expected[period][regime]))
+        for period in expected
+        for regime in expected[period]
+    ]
+    assert len(pairs) == sum(len(regimes) for regimes in got.values())
+    for got_values, expected_values in pairs:
+        np.testing.assert_array_equal(got_values, expected_values)
+
+
+def _simulated_codes(model: Model) -> pd.DataFrame:
+    frame = model.simulate(
+        params=_PARAMS,
+        initial_conditions=_INITIAL_CONDITIONS,
+        seed=0,
+        log_level="off",
+    ).to_dataframe(use_labels=False)
+    return frame.sort_values(["subject_id", "period"]).reset_index(drop=True)
+
+
+def test_value_grid_model_simulates_the_reference_choices():
+    """Both models simulate the same codes for every subject and period."""
+    assert_frame_equal(
+        _simulated_codes(_value_grid_model(enable_jit=True)),
+        _simulated_codes(_reference_model(enable_jit=True)),
+    )
+
+
+def test_value_grid_model_fingerprint_is_reproducible():
+    """Two builds of one value-grid model share their structure fingerprint."""
+    assert (
+        _value_grid_model(enable_jit=True)._model_structure_fingerprint
+        == _value_grid_model(enable_jit=True)._model_structure_fingerprint
+    )
+
+
+def test_value_grid_tolerance_enters_the_model_fingerprint():
+    """A model whose value grid declares another tolerance has another identity."""
+    model = _value_grid_model(enable_jit=True)
+    regime = model.user_regimes["working_life"]
+    tolerant = regime.replace(
+        actions={
+            **dict(regime.actions),
+            "consumption": DiscreteGrid(values=[1.0, 2.0], tolerance=1e-6),
+        }
+    )
+    ages = AgeGrid(start=50, inclusive_stop=50 + (_N_PERIODS - 1) * 10, step="10Y")
+    other = Model(
+        regimes={"working_life": tolerant, "dead": discrete.dead},
+        ages=ages,
+        regime_id_class=discrete.RegimeId,
+        initial_nodes={ages.exact_values[0]: "working_life"},
+        edges=discrete.working_life_edges(ages),
+    )
+    assert other._model_structure_fingerprint != model._model_structure_fingerprint
+
+
+_WEALTH = DiscreteGrid(values=[10, 11, 12])
+_VALUE_GRIDS = MappingProxyType({"wealth": _WEALTH})
+
+
+def _identity_wealth(*, wealth: DiscreteState) -> DiscreteState:
+    return wealth
+
+
+def _next_wealth_plus(*, wealth: DiscreteState, step: int) -> DiscreteState:
+    return wealth + step
+
+
+def _reads_next_wealth(*, next_wealth: DiscreteState) -> DiscreteState:
+    return next_wealth
+
+
+def _wealth_probabilities(*, wealth: DiscreteState) -> FloatND:
+    share = (wealth - 10) / 2
+    return jnp.stack([1 - share, share])
+
+
+def test_adapted_function_reads_the_value_of_a_code():
+    """A user function receives the value its code indexes."""
+    adapted = adapt_user_function(
+        func=_identity_wealth, value_grids=_VALUE_GRIDS, encode=None
+    )
+    assert jnp.asarray(adapted(wealth=jnp.int32(1))).tolist() == 11
+
+
+def test_adapted_function_reads_the_value_of_a_next_state():
+    """An argument `next_<state>` reads the next state's value."""
+    adapted = adapt_user_function(
+        func=_reads_next_wealth, value_grids=_VALUE_GRIDS, encode=None
+    )
+    assert jnp.asarray(adapted(next_wealth=jnp.int32(2))).tolist() == 12
+
+
+@pytest.mark.parametrize(("step", "expected"), [(1, 2), (3, MISSING_CAT_CODE)])
+def test_adapted_law_returns_the_code_of_its_value(*, step, expected):
+    """A law's value becomes the code of its node, or the sentinel off the grid."""
+    adapted = adapt_user_function(
+        func=_next_wealth_plus, value_grids=_VALUE_GRIDS, encode=_WEALTH
+    )
+    code = adapted(wealth=jnp.int32(1), step=jnp.int32(step))
+    assert jnp.asarray(code).tolist() == expected
+
+
+def test_adapted_function_publishes_code_annotations():
+    """Decoded arguments and encoded returns are annotated as codes."""
+    adapted = adapt_user_function(
+        func=_next_wealth_plus, value_grids=_VALUE_GRIDS, encode=_WEALTH
+    )
+    published = adapted.__annotations__
+    assert (published["wealth"], published["return"]) == (
+        "DiscreteState",
+        "DiscreteState",
+    )
+
+
+def test_function_reading_no_value_grid_is_left_alone():
+    """A function that reads no value grid is returned unchanged."""
+    adapted = adapt_user_function(
+        func=_reads_next_wealth, value_grids=MappingProxyType({}), encode=None
+    )
+    assert adapted is _reads_next_wealth
+
+
+def test_stochastic_law_reads_values_and_keeps_its_probabilities():
+    """A stochastic law reads values and returns probabilities over codes as is."""
+    adapted = adapt_entry(
+        entry=StochasticTransition(func=_wealth_probabilities),
+        value_grids=_VALUE_GRIDS,
+        encode=_WEALTH,
+    )
+    assert isinstance(adapted, StochasticTransition)
+    probabilities = adapted.func(wealth=jnp.int32(1))
+    aaae(probabilities, [0.5, 0.5], decimal=DECIMAL_PRECISION)
+
+
+def test_model_refuses_one_name_with_different_values():
+    """A variable declared with values must carry the same values everywhere."""
+    with pytest.raises(RegimeInitializationError, match="same values"):
+        collect_value_grids(
+            regimes={
+                "a": UserRegime(
+                    states={"wealth": _WEALTH},
+                    state_transitions={"wealth": _identity_wealth},
+                    functions={"utility": lambda: 0.0},
+                ),
+                "b": UserRegime(
+                    states={"wealth": DiscreteGrid(values=[0, 1, 2])},
+                    state_transitions={"wealth": _identity_wealth},
+                    functions={"utility": lambda: 0.0},
+                ),
+            },
+            derived_categoricals={},
+        )
+
+
+def test_model_refuses_a_fixed_value_grid_state():
+    """A fixed state cannot be a value grid."""
+    with pytest.raises(RegimeInitializationError, match="fixed state"):
+        collect_value_grids(
+            regimes={
+                "a": UserRegime(
+                    states={"wealth": _WEALTH},
+                    state_transitions={"wealth": fixed_transition("wealth")},
+                    functions={"utility": lambda: 0.0},
+                )
+            },
+            derived_categoricals={},
+        )

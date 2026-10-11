@@ -26,10 +26,12 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import Condition
 from _lcm.egm.nbegm import PieceSet
 from _lcm.grids import DiscreteGrid
+from _lcm.regime_building.value_adapter import adapt_entry, collect_value_grids
 from _lcm.regime_law import RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
 from _lcm.user_regime_validation import (
     _fail_if_collective_regime_folds,
+    _transition_node_arg_names,
     _validate_completeness,
 )
 from _lcm.utils.error_messages import format_messages
@@ -41,6 +43,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
+from lcm.regime import ConstraintEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.transition import _AgeSpecialized
 from lcm.typing import FloatND, ReferenceName, UserFunction, ValueND
@@ -104,6 +107,10 @@ def finalize_regimes(
         if regime.stakeholders is not None
         for stakeholder in regime.stakeholders
     )
+    value_grids = collect_value_grids(
+        regimes=user_regimes, derived_categoricals=derived_categoricals
+    )
+    _fail_if_edge_law_reads_value_grids(laws=laws, value_grids=value_grids)
     result: dict[RegimeName, FinalizedUserRegime] = {}
     for regime_name, user_regime in user_regimes.items():
         merged = _merge_derived_categoricals(
@@ -140,7 +147,43 @@ def finalize_regimes(
         # them straight into `functions` would put the decomposition where the
         # declaration was. The write-back goes by provenance instead.
         finalized = user_regime.with_engine_functions(
-            engine_functions=MappingProxyType(functions),
+            engine_functions=MappingProxyType(
+                {
+                    name: cast(
+                        "UserFunction | Phased | None",
+                        adapt_entry(
+                            entry=func,
+                            value_grids=value_grids,
+                            encode=value_grids.get(name) if name in merged else None,
+                        ),
+                    )
+                    for name, func in functions.items()
+                }
+            ),
+            state_transitions=MappingProxyType(
+                {
+                    name: cast(
+                        "StateTransitionEntry",
+                        adapt_entry(
+                            entry=law,
+                            value_grids=value_grids,
+                            encode=value_grids.get(name),
+                        ),
+                    )
+                    for name, law in user_regime.state_transitions.items()
+                }
+            ),
+            constraints=MappingProxyType(
+                {
+                    name: cast(
+                        "ConstraintEntry",
+                        adapt_entry(
+                            entry=constraint, value_grids=value_grids, encode=None
+                        ),
+                    )
+                    for name, constraint in user_regime.constraints.items()
+                }
+            ),
             derived_categoricals=merged,
             koopmans_aggregator=regime_koopmans_aggregator,
             certainty_equivalent=regime_certainty_equivalent,
@@ -157,6 +200,30 @@ def finalize_regimes(
         finalized._validate_finalized_structure(regime_name=regime_name)  # noqa: SLF001
         result[regime_name] = finalized
     return MappingProxyType(result)
+
+
+def _fail_if_edge_law_reads_value_grids(
+    *, laws: RegimeLaws, value_grids: Mapping[str, DiscreteGrid]
+) -> None:
+    """Raise if a regime transition law reads a value-grid variable.
+
+    Edge laws are evaluated on codes, so such a law would compare positions where
+    it means numbers.
+    """
+    readers = {
+        regime_name: sorted(
+            set(_transition_node_arg_names(law.decomposed_transition))
+            & set(value_grids)
+        )
+        for regime_name, law in laws.items()
+        if law.decomposed_transition is not None
+    }
+    readers = {name: read for name, read in readers.items() if read}
+    if readers:
+        raise RegimeInitializationError(
+            f"Regime transition laws cannot read value grids; {readers} do. "
+            "Declare these variables with a category class."
+        )
 
 
 def _compose_case_piece_outputs(

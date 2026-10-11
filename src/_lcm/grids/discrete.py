@@ -112,6 +112,7 @@ class DiscreteGrid(Grid):
         self.__values: tuple[int | float, ...] | None = None
         self.__value_array: Int1D | Float1D | None = None
         self.__tolerance = 0.0
+        self.__holds_integers = False
 
     def __init_values(
         self,
@@ -147,6 +148,7 @@ class DiscreteGrid(Grid):
         self.__values = declared
         self.__value_array = value_array
         self.__tolerance = float(tolerance)
+        self.__holds_integers = is_integer
 
     @property
     def categories(self) -> tuple[str, ...]:
@@ -207,8 +209,8 @@ class DiscreteGrid(Grid):
         """
         nodes = self.__require_value_array()
         value = jnp.asarray(value)
-        if jnp.issubdtype(nodes.dtype, jnp.integer):
-            if not jnp.issubdtype(value.dtype, jnp.integer):
+        if self.__holds_integers:
+            if value.dtype.kind not in "iu":
                 msg = (
                     "An integer value grid matches integers exactly; got "
                     f"{value.dtype} values. Return integers from the law."
@@ -234,7 +236,8 @@ class DiscreteGrid(Grid):
         nodes = self.__require_value_array()
         return nodes.at[jnp.asarray(code)].get(
             mode="fill",
-            fill_value=_off_grid_value(nodes),
+            # Integers have no NaN, so an off-grid code reads the sentinel there.
+            fill_value=MISSING_CAT_CODE if self.__holds_integers else math.nan,
             wrap_negative_indices=False,
         )
 
@@ -249,7 +252,7 @@ class DiscreteGrid(Grid):
 
         """
         nodes = self.__require_value_array()
-        if jnp.issubdtype(nodes.dtype, jnp.integer):
+        if self.__holds_integers:
             msg = (
                 "`nearest` snaps floats onto a float value grid. An integer value "
                 "grid matches the integers a law returns exactly."
@@ -373,10 +376,3 @@ def _nearest_index(*, nodes: Float1D, value: FloatND) -> IntND:
         (value > lower_value) & (value - lower_value > upper_value - value)
     )
     return jnp.where(upper_is_closer, upper, lower).astype(jnp.int32)
-
-
-def _off_grid_value(nodes: Int1D | Float1D) -> float | int:
-    """Return the value an off-grid code reads: NaN, or the int32 sentinel."""
-    if jnp.issubdtype(nodes.dtype, jnp.integer):
-        return MISSING_CAT_CODE
-    return math.nan

@@ -16,8 +16,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   integers and match them exactly. `grid.encode` maps values to codes (off-grid values
   get the missing-category code), `grid.decode` maps codes to values (an off-grid code
   reads NaN on a float grid), and `grid.nearest` snaps a float to its closest node.
-- A `Model` does not accept value grids until user functions receive values instead of
-  codes.
+- User functions of a model receive the values of its value grids, and a deterministic
+  law of a value-grid state returns a value, which becomes the code of its node. A
+  stochastic law reads values and still returns probabilities in the order of
+  `values`. Integer values arrive as int32, as codes do. A variable declared with values
+  must carry the same values and tolerance in every regime. Value grids are not yet
+  supported for fixed states, joint transitions, condition constraints, collective
+  regimes, or regime transition laws that read them; the model raises for these.
 
 ### Independent runtime checks
 

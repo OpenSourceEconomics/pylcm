@@ -48,6 +48,7 @@ from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.regime_building.value_adapter import DecodingAdapter, EncodingAdapter
 from _lcm.regime_law import RegimeLaw
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.typing import (
@@ -1110,6 +1111,18 @@ class _SemanticHasher:
                     self.visit(value=value.values_to_jax())
                     self.visit(value=value.tolerance)
                 self.frame(label="DiscreteGrid-end")
+                return
+            if isinstance(value, DecodingAdapter | EncodingAdapter):
+                # The adapter's meaning is the function it wraps and the grids
+                # it translates through; its own code is shipped engine code.
+                self.frame(label=f"{type(value).__qualname__}-start")
+                self.visit(value=value.func)
+                self.visit(
+                    value=value.decoded
+                    if isinstance(value, DecodingAdapter)
+                    else value.grid
+                )
+                self.frame(label=f"{type(value).__qualname__}-end")
                 return
             if isinstance(value, Phased):
                 if type(value) is not Phased:
