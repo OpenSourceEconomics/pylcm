@@ -15,6 +15,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - The Mahler initial-population factory accepts the same typed roots with its
   existing positional splits.
 
+### Labelled profiles for age models
+
+- `TimeVarying.from_profile()` accepts `age_to_label`, mapping each model age to a
+  source label. The result is labelled by age and serves models on an `AgeGrid`. Give
+  exactly one of `period_to_label` and `age_to_label`; the validation is the same for
+  both, and age keys must be finite numbers. `period_to_label` is unchanged.
+
 ### Independent runtime checks
 
 - `Model.solve()` and `Model.simulate()` accept `runtime_checks=True` independently
