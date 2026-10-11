@@ -45,8 +45,6 @@ import numpy as np
 import pandas as pd
 from dags import concatenate_functions
 from dags.tree import tree_path_from_qname
-from jax import Array
-from jaxtyping import Int
 
 from _lcm.engine import (
     Regime,
@@ -61,7 +59,10 @@ from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
-from _lcm.regime_building.next_state import get_next_stochastic_weights_function
+from _lcm.regime_building.next_state import (
+    get_next_state_function_for_solution,
+    get_next_stochastic_weights_function,
+)
 from _lcm.regime_building.Q_and_F import _get_feasibility
 from _lcm.regime_building.schedules import Side
 from _lcm.simulation.host_operations import StaticArgument
@@ -123,9 +124,9 @@ _NO_FUNCTION_PARAMS: FlatRegimeParams = MappingProxyType({})
 type _RegimeProbabilityOutput = tuple[
     Mapping[RegimeName, FloatND], Mapping[StateOrActionName, FloatND | IntND]
 ]
-# What a law evaluated on feasible rows returns: a regime law's probabilities, or
-# the codes a deterministic law of a discrete state lands on.
-type _FeasibleRowsLawOutput = Mapping[RegimeName, FloatND] | Int[Array, "..."]
+# What a law evaluated on feasible rows returns, by name: a regime law's target
+# probabilities, or the codes deterministic laws of discrete states land on.
+type _FeasibleRowsLawOutput = Mapping[str, ValueND]
 type _FeasibleRowsOutput = tuple[
     _FeasibleRowsLawOutput, BoolND, Mapping[StateOrActionName, FloatND | IntND]
 ]
@@ -750,27 +751,12 @@ def _validate_regime_law_on_feasible_rows(
     Cartesian grid over the variables either reads, so a row is counted exactly
     when its state-action combination is economically feasible.
     """
-    functions, constraints = phase.feasibility_pools_by_period[period]
-    feasibility = (
-        _get_feasibility(functions=functions, constraints=constraints)
-        if memory is None
-        else memory.producers.built(
-            builder=_get_feasibility, functions=functions, constraints=constraints
-        )
-    )
-    law_names = frozenset(inspect.signature(law).parameters)
-    feasibility_names = frozenset(inspect.signature(feasibility).parameters)
-    read_names = law_names | feasibility_names
-    regime_transition_probs, feasible, point = _evaluate_feasible_rows(
-        law=_NamedArgumentsCall(func=law, names=law_names),
-        feasibility=_NamedArgumentsCall(func=feasibility, names=feasibility_names),
-        grid_args=MappingProxyType(
-            {k: v for k, v in available_grids.items() if k in read_names}
-        ),
-        scalar_kwargs=MappingProxyType(
-            {k: v for k, v in regime_params.items() if k in read_names}
-            | dict(scalar_kwargs)
-        ),
+    regime_transition_probs, feasible, point = _evaluate_on_feasible_rows(
+        law=law,
+        phase=phase,
+        period=period,
+        grids=available_grids,
+        scalar_kwargs={**regime_params, **scalar_kwargs},
         memory=memory,
     )
     _set_transition_outputs(
@@ -838,9 +824,7 @@ def _evaluate_feasible_rows(
     )
     probabilities, feasible, point = cast("_FeasibleRowsOutput", produced)
     return (
-        MappingProxyType(probabilities)
-        if isinstance(probabilities, Mapping)
-        else probabilities,
+        MappingProxyType(probabilities),
         jnp.atleast_1d(feasible),
         MappingProxyType(point),
     )
@@ -1297,6 +1281,13 @@ def validate_discrete_state_laws_all_periods(
     """
     if not validation_enabled(logger):
         return
+    if not any(
+        isinstance(grid, DiscreteGrid)
+        for regime in regimes.values()
+        for name, grid in regime.solution.grids.items()
+        if name in regime.solution.state_names
+    ):
+        return
     for period in range(ages.n_periods - 1):
         for regime_name, regime in regimes.items():
             if regime.terminal or period not in regime.active_periods:
@@ -1347,93 +1338,111 @@ def _validate_discrete_state_laws(
     params: FlatRegimeParams,
     memory: SimulationMemory | None,
 ) -> None:
-    """Check one regime's deterministic discrete laws at one period, each phase."""
+    """Check one regime's deterministic discrete laws at one period, each phase.
+
+    The laws to each target are composed as the solve composes them, through the
+    regime functions and through each other. A stochastic sibling the solve
+    resolves on its node axis is an input here, swept over its target grid.
+    """
     regime = regimes[regime_name]
-    checked: set[int] = set()
     for side, phase in (("solve", regime.solution), ("simulate", regime.simulation)):
         if period not in phase.feasibility_pools_by_period:
             continue
-        functions, constraints = phase.feasibility_pools_by_period[period]
-        feasibility = _get_feasibility(functions=functions, constraints=constraints)
+        functions, _ = phase.feasibility_pools_by_period[period]
         grids = {
             **state_action_space.states,
             **_phase_extra_grids(regime=regime, phase=side),
             **state_action_space.actions,
         }
         for target in phase.reachability.targets(period=period, source=regime_name):
-            for name, law in phase.transitions.get(target, {}).items():
-                target_grid = regimes[target].solution.grids.get(
-                    name.removeprefix("next_")
+            transitions = phase.transitions.get(target, MappingProxyType({}))
+            stochastic = {
+                name
+                for name in transitions
+                if name in regime.stochastic_state_transitions
+                or f"{name}__{target}" in regime.stochastic_state_transitions
+            }
+            target_grids = {
+                name: grid
+                for name in transitions
+                if name.startswith("next_")
+                and name not in stochastic
+                and isinstance(
+                    grid := regimes[target].solution.grids.get(
+                        name.removeprefix("next_")
+                    ),
+                    DiscreteGrid,
                 )
-                if (
-                    id(law) in checked
-                    or not name.startswith("next_")
-                    or not isinstance(target_grid, DiscreteGrid)
-                    or name in regime.stochastic_state_transitions
-                    or f"{name}__{target}" in regime.stochastic_state_transitions
-                ):
-                    continue
-                checked.add(id(law))
-                composed = _law_through_functions(
-                    law=law, functions=functions, inputs=frozenset(grids)
-                )
-                scalar_kwargs = {**params, "period": jnp.int32(period), "age": age}
-                # A law reading another state's next value is evaluated over
-                # that state's grid in the target regime: every value the next
-                # state can take.
-                law_grids = {
+            }
+            if not target_grids:
+                continue
+            laws = get_next_state_function_for_solution(
+                transitions=MappingProxyType(
+                    {k: v for k, v in transitions.items() if k not in stochastic}
+                ),
+                functions=functions,
+                targets=tuple(target_grids),
+            )
+            codes, feasible, point = _evaluate_on_feasible_rows(
+                law=laws,
+                phase=phase,
+                period=period,
+                grids={
                     **grids,
                     **{
-                        read: next_grid.to_jax()
-                        for read in inspect.signature(composed).parameters
-                        if read.startswith("next_")
-                        and read not in grids
-                        and (
-                            next_grid := regimes[target].solution.grids.get(
-                                read.removeprefix("next_")
-                            )
-                        )
-                        is not None
+                        name: regimes[target]
+                        .solution.grids[name.removeprefix("next_")]
+                        .to_jax()
+                        for name in stochastic
                     },
-                }
-                if any(
-                    read not in law_grids and read not in scalar_kwargs
-                    for read in inspect.signature(composed).parameters
-                ):
-                    # The solve supplies the rest from its own nodes; this
-                    # check cannot, so it leaves such a law to the NaN checks.
-                    continue
-                _fail_if_law_leaves_its_grid(
-                    law=composed,
-                    feasibility=feasibility,
-                    grids=MappingProxyType(law_grids),
-                    scalar_kwargs=MappingProxyType(scalar_kwargs),
+                },
+                scalar_kwargs={**params, "period": jnp.int32(period), "age": age},
+                memory=memory,
+            )
+            for name, target_grid in target_grids.items():
+                _fail_if_codes_leave_the_grid(
+                    codes=codes[name],
+                    feasible=feasible,
+                    point=point,
                     target_grid=target_grid,
                     source_grids=regime.solution.grids,
                     description=(
                         f"In regime '{regime_name}' at age {age} (period {period}), "
                         f"the law '{name}' to regime '{target}'"
                     ),
-                    memory=memory,
                 )
 
 
-def _fail_if_law_leaves_its_grid(
+def _evaluate_on_feasible_rows(
     *,
-    law: Callable[..., FloatND],
-    feasibility: Callable[..., BoolND],
+    law: Callable[..., _FeasibleRowsLawOutput],
+    phase: SolutionPhase | SimulationPhase,
+    period: int,
     grids: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: EconFunctionKwargs,
-    target_grid: DiscreteGrid,
-    source_grids: Mapping[StateOrActionName, Grid],
-    description: str,
+    scalar_kwargs: Mapping[ReferenceName, EconFunctionArg],
     memory: SimulationMemory | None,
-) -> None:
-    """Raise at the first feasible cell where `law` returns no code of its grid."""
+) -> tuple[
+    _FeasibleRowsLawOutput,
+    Bool1D,
+    MappingProxyType[StateOrActionName, FloatND | IntND],
+]:
+    """Evaluate `law` and the phase's feasibility at `period` on one shared grid.
+
+    The grid spans the variables either reads, so a row is counted exactly when
+    its state-action combination is economically feasible.
+    """
+    functions, constraints = phase.feasibility_pools_by_period[period]
+    feasibility = (
+        _get_feasibility(functions=functions, constraints=constraints)
+        if memory is None
+        else memory.producers.built(
+            builder=_get_feasibility, functions=functions, constraints=constraints
+        )
+    )
     law_names = frozenset(inspect.signature(law).parameters)
     feasibility_names = frozenset(inspect.signature(feasibility).parameters)
     read_names = law_names | feasibility_names
-    codes, feasible, point = _evaluate_feasible_rows(
+    return _evaluate_feasible_rows(
         law=_NamedArgumentsCall(func=law, names=law_names),
         feasibility=_NamedArgumentsCall(func=feasibility, names=feasibility_names),
         grid_args=MappingProxyType({k: v for k, v in grids.items() if k in read_names}),
@@ -1442,6 +1451,18 @@ def _fail_if_law_leaves_its_grid(
         ),
         memory=memory,
     )
+
+
+def _fail_if_codes_leave_the_grid(
+    *,
+    codes: ValueND,
+    feasible: Bool1D,
+    point: Mapping[StateOrActionName, FloatND | IntND],
+    target_grid: DiscreteGrid,
+    source_grids: Mapping[StateOrActionName, Grid],
+    description: str,
+) -> None:
+    """Raise at the first feasible row whose code lies outside `0..n-1`."""
     # A constant feasibility, as for a regime without constraints, is unbatched.
     codes_array, feasible_array = jnp.broadcast_arrays(jnp.asarray(codes), feasible)
     off_grid = np.asarray(
@@ -1454,15 +1475,22 @@ def _fail_if_law_leaves_its_grid(
         name: _cell_label(code=values[row], grid=source_grids.get(name))
         for name, values in point.items()
     }
-    remedy = (
-        f"It returns a value on no node of `values={target_grid.values}` "  # noqa: PD011
-        f"(tolerance {target_grid.tolerance}). Return a node, snap a float with "
-        "`grid.nearest(...)`, or declare a `tolerance`."
-        if target_grid.values is not None  # noqa: PD011
-        else f"It returns a code outside 0..{len(target_grid.codes) - 1}."
-    )
     raise InvalidStateTransitionError(
-        f"{description} leaves its grid at the feasible cell {cell}. {remedy}"
+        f"{description} leaves its grid at the feasible cell {cell}. "
+        + _off_grid_remedy(target_grid)
+    )
+
+
+def _off_grid_remedy(grid: DiscreteGrid) -> str:
+    """Say what an off-grid result of a law means for the kind of grid it targets."""
+    if grid.values is None:  # noqa: PD011
+        return f"It returns a code outside 0..{len(grid.codes) - 1}."
+    if isinstance(grid.values[0], int):  # noqa: PD011
+        return f"It returns an integer that is no node of `values={grid.values}`."  # noqa: PD011
+    return (
+        f"It returns a value on no node of `values={grid.values}` "  # noqa: PD011
+        f"within tolerance {grid.tolerance}. Return a node, snap with "
+        "`grid.nearest(...)`, or declare a larger `tolerance`."
     )
 
 

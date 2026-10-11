@@ -33,7 +33,6 @@ from collections.abc import Sequence
 import jax.numpy as jnp
 from jax import jit, lax
 
-from _lcm.dtypes import canonical_float_dtype
 from _lcm.probability import is_represented_zero
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, IntND
@@ -174,25 +173,16 @@ def _compute_pinned_index_and_weight(
 ) -> list[tuple[IntND, FloatND | IntND]]:
     """Return the single full-weight corner of an axis read at one node.
 
-    A coordinate that names no node of such an axis, NaN or outside
-    `0..n-1`, reads with weight NaN at a node the gather can land on, so the
-    read is NaN and never a clamped neighbour.
+    A coordinate that names no node of such an axis arrives as NaN, which no
+    index can represent, so it is replaced by a node the read can land on. The
+    caller is the one that knows the axis, and is where such a read is
+    discarded.
     """
-    on_axis = (
-        jnp.isfinite(coordinate) & (coordinate >= 0) & (coordinate <= input_size - 1)
-    )
-    representable = jnp.where(on_axis, coordinate, 0)
-    index = jnp.round(representable).astype(jnp.int32)
+    representable = jnp.where(jnp.isfinite(coordinate), coordinate, 0)
+    index = jnp.clip(jnp.round(representable), 0, input_size - 1).astype(jnp.int32)
     # Shape and dtype as the interpolated weights of any other axis, so a
     # corner's weight product is formed in the dtype it would be either way.
-    # An integer coordinate has no NaN, so its weight takes the canonical float.
-    weight_dtype = (
-        coordinate.dtype
-        if jnp.issubdtype(coordinate.dtype, jnp.floating)
-        else canonical_float_dtype()
-    )
-    ones = jnp.ones_like(coordinate, dtype=weight_dtype)
-    return [(index, jnp.where(on_axis, ones, jnp.full_like(ones, jnp.nan)))]
+    return [(index, jnp.ones_like(coordinate))]
 
 
 def _multiply_all(arrs: Sequence[FloatND | IntND]) -> FloatND | IntND:

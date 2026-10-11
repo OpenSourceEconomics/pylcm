@@ -22,9 +22,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
-from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids.discrete import MISSING_CAT_CODE, read_at_codes
-from _lcm.regime_building.ndimage import _compute_pinned_index_and_weight
 from _lcm.regime_building.V import _LookupWrapper
 from _lcm.regime_building.value_adapter import (
     adapt_entry,
@@ -413,15 +411,6 @@ def test_value_function_read_at_a_code_returns_its_row():
     assert lookup(wealth=jnp.int32(1), V=_V).tolist() == [10.0, 11.0]
 
 
-def test_pinned_read_off_the_axis_carries_nan_weight():
-    """A pinned coordinate outside `0..n-1` reads with weight NaN."""
-    [(_, weight)] = _compute_pinned_index_and_weight(
-        coordinate=jnp.asarray([-1.0, 3.0, 1.0], dtype=canonical_float_dtype()),
-        input_size=3,
-    )
-    assert np.isnan(np.asarray(weight)).tolist() == [True, True, False]
-
-
 @pytest.mark.parametrize("code", [-1, 3, MISSING_CAT_CODE])
 def test_read_at_codes_off_the_axis_is_nan(code):
     """The shared code read gives NaN for a code off the axis."""
@@ -528,3 +517,48 @@ def test_adapting_an_adapted_function_wraps_the_user_function_once():
     )
     twice = adapt_user_function(func=once, value_grids=_VALUE_GRIDS, encode=None)
     assert jnp.asarray(twice(wealth=jnp.int32(1))).tolist() == 11
+
+
+def _next_room(*, wealth: DiscreteState) -> DiscreteState:
+    return (wealth < 12).astype(jnp.int32)
+
+
+def _next_wealth_by_room(
+    *, wealth: DiscreteState, next_room: DiscreteState
+) -> DiscreteState:
+    return wealth + next_room
+
+
+def _utility_with_room(
+    *,
+    consumption: DiscreteAction,
+    is_working: BoolND,
+    disutility_of_work: float,
+    room: DiscreteState,
+) -> FloatND:
+    return (
+        _utility(
+            consumption=consumption,
+            is_working=is_working,
+            disutility_of_work=disutility_of_work,
+        )
+        + 0.0 * room
+    )
+
+
+def test_law_reading_a_sibling_next_state_is_checked_as_the_solve_composes_it():
+    """A law reading another law's next state sees only the values it produces.
+
+    `next_wealth = wealth + next_room` stays on `[10, 11, 12]` because
+    `next_room` is 0 at wealth 12; sweeping `next_room` over its whole grid
+    would wrongly reach 13.
+    """
+    regime = _value_grid_model(enable_jit=True).user_regimes["working_life"]
+    with_room = regime.replace(
+        states={**dict(regime.states), "room": DiscreteGrid(values=[0, 1])},
+        state_transitions={"wealth": _next_wealth_by_room, "room": _next_room},
+        functions={**dict(regime.functions), "utility": _utility_with_room},
+    )
+    _model_with(working_life=with_room).validate_transitions(
+        params=_PARAMS_WITHOUT_RATE
+    )

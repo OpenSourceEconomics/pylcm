@@ -339,7 +339,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "00044a5d88fc43af26797e1e39a220fcb644b76ca795c0540433966914ad5c14",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "d0fdfa90e64b3e6fc42e6ddcce779e6cf484eeb128f21adb509489bb85994b69",
     SUPPORT_DIAGNOSTICS_SOURCE: "ac67f8399f45bb0e2d270b62043f047d97736900ec62c0ae6cfccfee3070fcb5",
     SUPPORT_PRECONDITIONS_SOURCE: "52c97f5f2f6e9e3b6a7ac7215181874cef52948f613f59c270ef9638a51493ac",
     SUPPORT_AUTHORITY_SOURCE: "32647270dba80b48e33ecc27bb77609bf30d04a5b34b754b8a7340f208a8c9a0",
@@ -1533,7 +1533,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
-        "e86c8d01e3662962556ca5ec031689b3590b3c793502a5b650ed867e814ca252",
+        "e0bccd5e3c190ce24d8fc43ab139f536d5f555290a98c6b77ec4f55f8ac132bc",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "6dad8f387ecda88d9984797cdd8da57d2d4609201fe8b455c7fb6bc59a27e2d4",
