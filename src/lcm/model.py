@@ -1498,6 +1498,31 @@ class Model:
         )
 
     @beartype(conf=PARAMS_CONF)
+    def validate_transitions(self, *, params: UserParams) -> None:
+        """Run the solve's transition preflight without backward induction.
+
+        Process parameters and check regime probabilities, stochastic state laws
+        and transition-local joint supports and probabilities over their active
+        periods and phase grids. The first failure raises with the same diagnostic
+        as ``solve(runtime_checks=True)``; valid laws return ``None``. Checks are
+        always enabled and produce no console output. This does not validate
+        utilities, solver outputs or general deterministic next-state finiteness.
+
+        Args:
+            params: Model parameters compatible with ``get_params_template()``.
+        """
+        self._check_identity_runtime()
+        flat_params = self._process_params(params)
+        with naming_cells_without_edges(self._cells_without_edges):
+            validate_transitions(
+                regimes=self._regimes,
+                flat_params=flat_params,
+                ages=self._time,
+                logger=get_logger(log_level="off", runtime_checks=True),
+                process_grid_resolver=None,
+            )
+
+    @beartype(conf=PARAMS_CONF)
     def solve(
         self,
         *,
