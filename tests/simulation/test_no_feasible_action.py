@@ -258,13 +258,18 @@ def test_simulation_reports_an_empty_initial_state(*, enable_jit: bool) -> None:
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_a_fully_feasible_solve_has_no_warning(
+def test_a_fully_feasible_solve_has_only_off_grid_warning(
     *, enable_jit: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A fully feasible finite grid leaves the warning log empty."""
+    """Feasible actions can leave the hull without empty-action/value warnings."""
     model = _model(enable_jit=enable_jit, constrained=False)
     model.solve(params={"discount_factor": 0.5}, log_level="warning")
-    assert [record.getMessage() for record in caplog.records] == []
+    assert [record.getMessage() for record in caplog.records] == [
+        (
+            "Off-grid next states: regime='working', target='working', "
+            "period=0, state='wealth', phase='solve', count=2"
+        )
+    ]
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])

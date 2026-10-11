@@ -189,6 +189,7 @@ def validate_simulation_inputs(  # noqa: C901
                     flat_params=flat_params,
                     ages=ages,
                     logger=logger,
+                    mandatory_only=True,
                     summary=summary,
                     process_grid_resolver=process_grid_resolver,
                 )
@@ -245,6 +246,7 @@ def validate_simulation_inputs(  # noqa: C901
                         flat_params=flat_params,
                         ages=ages,
                         logger=logger,
+                        mandatory_only=True,
                         summary=summary,
                         process_grid_resolver=process_grid_resolver,
                     )
@@ -292,6 +294,7 @@ def validate_simulation_inputs(  # noqa: C901
                 flat_params=flat_params,
                 ages=ages,
                 logger=logger,
+                mandatory_only=True,
                 summary=summary,
                 process_grid_resolver=process_grid_resolver,
             )

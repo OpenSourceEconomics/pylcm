@@ -417,11 +417,12 @@ def validate_off_grid_transitions(
     flat_params: FlatParams,
     ages: TimeAxis,
     logger: logging.Logger,
+    mandatory_only: bool = False,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
-    """Count raw continuous landings on feasible, positive-support grid cells."""
-    checked = validation_enabled(logger)
+    """Count raw landings, or only enforce mandatory raise policy in preflight."""
+    checked = validation_enabled(logger) and not mandatory_only
     for period in range(ages.n_periods - 1):
         for name, regime in regimes.items():
             for law, reachability, realized in _regime_laws_at_period(
