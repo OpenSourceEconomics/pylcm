@@ -89,6 +89,11 @@ from _lcm.processes.ar1 import RouwenhorstAR1Process, TauchenAR1Process, _AR1Pro
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
+from _lcm.processes.joint_normal_lowering import (
+    joint_normal_declarations,
+    lower_joint_normal_initial_conditions,
+    validate_joint_normal_params,
+)
 from _lcm.reachability import ModelReachability
 from _lcm.regime_building.action_partitioning import (
     action_partition_width_ceilings,
@@ -3431,6 +3436,10 @@ class Model:
                     user_regimes=self.user_regimes,
                     regime_names_to_ids=self.regime_names_to_ids,
                 )
+                initial_conditions = self._lower_joint_initial_conditions(
+                    initial_conditions=initial_conditions,
+                    flat_params=flat_params,
+                )
                 if isinstance(initial_conditions, pd.DataFrame):
                     initial_conditions = initial_conditions_from_dataframe(
                         df=initial_conditions,
@@ -3895,8 +3904,36 @@ class Model:
             params=params, inputs=(states, action_grids), solution=solution
         )
         try:
+            lookup_inputs: UserInitialConditions = states
+            processed_params = None
+            if joint_normal_declarations(regime.simulation.grids):
+                flat_params = self._process_params(params, array_writer=allocations)
+                processed_params = flat_params
+                first_state = (
+                    np.asarray(next(iter(states.values()))) if states else None
+                )
+                if first_state is not None and first_state.ndim != 1:
+                    raise InvalidInitialConditionsError(
+                        "Joint normal policy inputs must be one-dimensional arrays."
+                    )
+                n_rows = len(first_state) if first_state is not None else 1
+                lowered = self._lower_joint_initial_conditions(
+                    initial_conditions={
+                        **states,
+                        "regime_id": np.full(
+                            n_rows, int(self.regime_names_to_ids[regime_name])
+                        ),
+                    },
+                    flat_params=flat_params,
+                )
+                # The lowering preserves the supplied mapping/frame container kind.
+                lookup_inputs = {
+                    name: value
+                    for name, value in cast("UserInitialConditions", lowered).items()
+                    if name != "regime_id"
+                }
             states = canonicalize_initial_conditions(
-                initial_conditions=states,
+                initial_conditions=lookup_inputs,
                 regimes=MappingProxyType({regime_name: regime}),
                 array_writer=allocations,
             )
@@ -3925,6 +3962,7 @@ class Model:
                 states=states,
                 action_grids=action_grids,
                 allocations=allocations,
+                processed_params=processed_params,
                 return_action_values=return_action_values,
                 n_query_rows=(
                     n_rows
@@ -3948,6 +3986,7 @@ class Model:
         allocations: SimulationEntryAllocations | None,
         return_action_values: bool,
         n_query_rows: int | None,
+        processed_params: FlatParams | None = None,
     ) -> PolicyLookup:
         """Run a validated lookup under the call's entry owner, if budgeted.
 
@@ -3958,9 +3997,13 @@ class Model:
         """
         regime = self._regimes[regime_name]
         flat_params = (
-            self._process_params(params)
-            if allocations is None
-            else self._process_params(params, array_writer=allocations)
+            processed_params
+            if processed_params is not None
+            else (
+                self._process_params(params)
+                if allocations is None
+                else self._process_params(params, array_writer=allocations)
+            )
         )
         resolver = None if allocations is None else allocations.process_grid_resolver
         if resolver is not None:
@@ -4323,6 +4366,10 @@ class Model:
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
+        initial_conditions = self._lower_joint_initial_conditions(
+            initial_conditions=initial_conditions,
+            flat_params=flat_params,
+        )
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
@@ -4338,6 +4385,30 @@ class Model:
         )
         self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
         return canonical, flat_params
+
+    def _lower_joint_initial_conditions(
+        self,
+        *,
+        initial_conditions: UserInitialConditions | pd.DataFrame,
+        flat_params: FlatParams,
+    ) -> UserInitialConditions | pd.DataFrame:
+        """Resolve named physical shocks before canonical entry allocation."""
+        return lower_joint_normal_initial_conditions(
+            initial_conditions=initial_conditions,
+            grids_by_regime={
+                name: regime.simulation.grids for name, regime in self._regimes.items()
+            },
+            params_by_regime={
+                name: MappingProxyType(
+                    {
+                        **regime.resolved_fixed_params,
+                        **regime_kernel_params(flat_params, regime_name=name),
+                    }
+                )
+                for name, regime in self._regimes.items()
+            },
+            regime_names_to_ids=self.regime_names_to_ids,
+        )
 
     def _fail_if_declared_entry_is_not_permitted(
         self, *, initial_conditions: UserInitialConditions | pd.DataFrame
@@ -4546,6 +4617,18 @@ class Model:
         fail_if_nonpositive_taste_shock_scale(flat_params)
         for regime_name, regime in self._regimes.items():
             for phase in (regime.solution, regime.simulation):
+                validate_joint_normal_params(
+                    grids=phase.grids,
+                    params=MappingProxyType(
+                        {
+                            **regime.resolved_fixed_params,
+                            **regime_kernel_params(
+                                flat_params, regime_name=regime_name
+                            ),
+                        }
+                    ),
+                    regime_name=regime_name,
+                )
                 for state_name, grid in phase.grids.items():
                     if (
                         isinstance(grid, _AR1Process)
