@@ -662,6 +662,25 @@ def test_joint_normal_budgeted_runtime_typed_seed_preserves_physical_frame() -> 
         params=params, solution=solution, period=0, regime_name="working", states=states
     )
     aaae(lookup.value, expected, decimal=DECIMAL_PRECISION)
+    parts = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="working",
+        states=states,
+        return_action_values=True,
+    )
+    assert parts.U is not None
+    assert parts.CE is not None
+    assert parts.Q is not None
+    assert parts.F is not None
+    aaae(
+        parts.U, states["x"] * states["y"] + states["x"] ** 2, decimal=DECIMAL_PRECISION
+    )
+    aaae(parts.CE, jnp.full_like(expected, 1.4), decimal=DECIMAL_PRECISION)
+    aaae(parts.Q, expected, decimal=DECIMAL_PRECISION)
+    aaae(parts.value, lookup.value, decimal=DECIMAL_PRECISION)
+    np.testing.assert_array_equal(parts.F, jnp.ones_like(expected, dtype=bool))
     initial = {
         **states,
         "period": jnp.zeros(2, dtype=jnp.int32),
