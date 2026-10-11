@@ -1,6 +1,7 @@
 """Validate given realisations and bind them to call-local transition programs."""
 
 import dataclasses
+import functools
 from collections.abc import Mapping
 from types import MappingProxyType
 
@@ -10,9 +11,12 @@ import numpy as np
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.iid import LogNormalIIDProcess, UniformIIDProcess, _IIDProcess
+from _lcm.regime_building.age_normalization import group_periods_by_key
 from _lcm.regime_building.processing import _build_next_state_vmapped
+from _lcm.simulation.program_types import _PerSubjectFunction
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.typing import FlatParams, ReferenceName, RegimeName
@@ -181,32 +185,42 @@ def bind_shock_path_programs(
     )
     bound = {}
     for name, regime in regimes.items():
-        built = _build_next_state_vmapped(
+        pools = regime.simulation.feasibility_pools_by_period
+        groups = group_periods_by_key(
             active_periods=regime.active_periods,
-            phase_reachability=regime.simulation.reachability,
-            source_regime_name=name,
-            functions=regime.simulation.functions,
-            transitions=regime.simulation.transitions,
-            transition_plans=regime.simulation.transition_plans,
-            all_grids=all_grids,
-            flat_param_names=frozenset(params[name]),
-            enable_jit=False,
-            supplied_states=frozenset(paths),
+            key=lambda period: id(pools[period][0]),
         )
+        flat_param_names = frozenset(
+            regime_kernel_params(params, regime_name=name)
+        ) | frozenset(regime.resolved_fixed_params)
+        built_by_period: dict[int, _PerSubjectFunction] = {}
+        for periods in groups.values():
+            built = _build_next_state_vmapped(
+                active_periods=tuple(periods),
+                phase_reachability=regime.simulation.reachability,
+                source_regime_name=name,
+                functions=pools[periods[0]][0],
+                transitions=regime.simulation.transitions,
+                transition_plans=regime.simulation.transition_plans,
+                all_grids=all_grids,
+                flat_param_names=flat_param_names,
+                enable_jit=False,
+                supplied_states=frozenset(paths),
+            )
+            built_by_period.update(built.per_subject_by_period)
         transitions = {
             period: dataclasses.replace(
                 program,
-                function=_SubjectTiled(
-                    func=built.per_subject_by_period[period].function,
-                    subject_arg_names=built.per_subject_by_period[
-                        period
-                    ].subject_arg_names,
+                function=functools.partial(
+                    _SubjectTiled(
+                        func=built_by_period[period].function,
+                        subject_arg_names=built_by_period[period].subject_arg_names,
+                    ),
+                    **regime.resolved_fixed_params,
                 ),
                 argument_builder=_ArgumentsBoundAtDispatch(
                     program_name=program.name,
-                    subject_arg_names=built.per_subject_by_period[
-                        period
-                    ].subject_arg_names,
+                    subject_arg_names=built_by_period[period].subject_arg_names,
                 ),
             )
             for period, program in regime.simulation.programs.transition.items()

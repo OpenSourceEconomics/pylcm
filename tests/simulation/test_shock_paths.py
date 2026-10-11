@@ -10,6 +10,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeSpecializedFunction,
     ExecutionConfig,
     LinSpacedGrid,
     LogNormalIIDProcess,
@@ -17,11 +18,20 @@ from lcm import (
     NormalIIDProcess,
     Regime,
     TauchenAR1Process,
+    TimeVarying,
     UniformIIDProcess,
     categorical,
+    time_varying_params,
 )
 from lcm.exceptions import InvalidSimulationInputError
-from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
+from lcm.typing import (
+    ContinuousState,
+    FloatND,
+    ScalarFloat,
+    ScalarInt,
+    UserFunction,
+    UserParams,
+)
 from tests.simulation import test_law_reading_a_realized_draw
 
 health_model = test_law_reading_a_realized_draw.model
@@ -230,6 +240,112 @@ def test_transition_only_fold_uses_given_destination_period_draw() -> None:
         log_level="off",
     ).to_dataframe(use_labels=False)
     np.testing.assert_array_equal(df.query("period == 1")["wealth"], [1.5, 2.5])
+
+
+@time_varying_params("schedule")
+def _bonus(schedule: FloatND) -> ScalarFloat:
+    return schedule
+
+
+def _bonus_early() -> ScalarFloat:
+    return jnp.asarray(0.1)
+
+
+def _bonus_middle() -> ScalarFloat:
+    return jnp.asarray(0.2)
+
+
+def _bonus_late() -> ScalarFloat:
+    return jnp.asarray(0.3)
+
+
+def _bonus_at_age(age: float) -> UserFunction:
+    return {20.0: _bonus_early, 21.0: _bonus_middle, 22.0: _bonus_late}[age]
+
+
+def _bonus_age_signature(age: float) -> float:
+    return age
+
+
+def _wealth_shock_utility(
+    *, wealth: ContinuousState, shock: ContinuousState
+) -> ScalarFloat:
+    return wealth + shock
+
+
+def _next_wealth_with_bonus(
+    *, wealth: ContinuousState, next_shock: ContinuousState, bonus: ScalarFloat
+) -> ScalarFloat:
+    return wealth + next_shock + bonus
+
+
+@pytest.mark.parametrize("kind", ["fixed", "runtime", "by_age"])
+@pytest.mark.parametrize("budget", [None, 100_000_000])
+def test_given_paths_preserve_dated_transition_bindings(
+    *, kind: str, budget: int | None
+) -> None:
+    """Rebuilding a lottery retains fixed operands and each age's own function."""
+    schedule: UserParams = {
+        "alive": {
+            "bonus": {
+                "schedule": TimeVarying(
+                    values=jnp.array([0.1, 0.2, 0.3]), ages=(20, 21, 22)
+                )
+            }
+        }
+    }
+    model = Model(
+        ages=AgeGrid(start=20, inclusive_stop=23, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={(20, 21): "alive"},
+        fixed_params=schedule if kind == "fixed" else {},
+        execution_config=ExecutionConfig(
+            axis_widths={"subject": 3}, device_memory_bytes=budget
+        ),
+        regimes={
+            "alive": Regime(
+                states={
+                    "wealth": LinSpacedGrid(start=-5.0, stop=8.0, n_points=5),
+                    "shock": NormalIIDProcess(
+                        n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0
+                    ),
+                },
+                functions={
+                    "utility": _wealth_shock_utility,
+                    "bonus": (
+                        AgeSpecializedFunction(
+                            build=_bonus_at_age, signature=_bonus_age_signature
+                        )
+                        if kind == "by_age"
+                        else _bonus
+                    ),
+                },
+                state_transitions={"wealth": _next_wealth_with_bonus},
+            ),
+            "dead": Regime(
+                states={"wealth": LinSpacedGrid(start=-5.0, stop=8.0, n_points=5)},
+                functions={"utility": _wealth_utility},
+            ),
+        },
+        edges={"alive": {"alive": (20, 21), "dead": (22,)}},
+    )
+    params: UserParams = {
+        "discount_factor": 0.9,
+        **(schedule if kind == "runtime" else {}),
+    }
+    solution = model.solve(params=params, log_level="off")
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions=_initial() | {"wealth": jnp.array([1.0, 2.0])},
+        shock_paths={"shock": jnp.array([1.0, -1.0, 2.0, 0.5])},
+        seed=7,
+        log_level="off",
+    ).to_dataframe(use_labels=False)
+    for subject, expected in ((0, [1.0, 0.1, 2.3, 3.1]), (1, [2.0, 4.2, 5.0])):
+        np.testing.assert_allclose(
+            frame.loc[frame["subject_id"] == subject, "wealth"], expected, rtol=1e-5
+        )
 
 
 @pytest.mark.parametrize("width", [1, 3])
