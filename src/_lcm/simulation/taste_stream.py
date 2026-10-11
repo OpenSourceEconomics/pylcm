@@ -18,7 +18,7 @@ from _lcm.time import TimeAxis
 from _lcm.typing import ArrayTree, PRNGKeyND
 from lcm.exceptions import ExecutionPlanningError
 from lcm.grids import DiscreteGrid
-from lcm.typing import ActionName, RegimeName, UserAge
+from lcm.typing import ActionName, PRNGKey, RegimeName, UserAge
 
 type _DiscreteDomain = tuple[tuple[str, tuple[tuple[str, int], ...]], ...]
 type _AddressWords = UInt32[jax.Array | np.ndarray, "8"]
@@ -30,13 +30,20 @@ _WORD_BASE = 2**32
 
 
 def create_taste_shock_key(
-    *, seed: int | None, memory: SimulationMemory | None, live_inputs: ArrayTree = ()
+    *,
+    seed: int | PRNGKey | None,
+    memory: SimulationMemory | None,
+    live_inputs: ArrayTree = (),
 ) -> PRNGKeyND | None:
-    """Create an optional Threefry root, counting its caller's live inputs first."""
+    """Create an optional typed root, counting its caller's live inputs first."""
     if seed is None:
         return None
     if memory is not None:
         memory.hold(tree=live_inputs)
+    if isinstance(seed, jax.Array):
+        if memory is not None:
+            memory.hold(tree=seed)
+        return seed
     return run_simulation_operation(
         memory=memory,
         function=_create_simulation_key,
@@ -203,7 +210,7 @@ def draw_taste_shock_keys(
 
     Rows use two uint32 words, high first, including when JAX disables x64.
     Padded rows duplicate the final real subject. Only the current chunk is
-    constructed. The caller supplies an explicitly Threefry root; no mutable
+    constructed. The caller supplies the caller's typed root; no mutable
     transition stream, regime code or population-wide split enters these keys.
     """
     if type(subject_count) is not int or not 0 <= subject_count < 2**64:

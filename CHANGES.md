@@ -5,12 +5,48 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Typed simulation random roots
+
+- `Model.simulate(seed=...)` and `taste_shock_seed=...` accept scalar typed
+  `jax.random.key` roots directly, preserving their PRNG implementation and the
+  existing integer-seeded streams. Legacy uint32 keys receive guidance naming the
+  typed constructor. Budgeted entry accounts for caller key buffers before uploads
+  or automatic solving; chunk profiles distinguish the actual implementations.
+- The Mahler initial-population factory accepts the same typed roots with its
+  existing positional splits.
+
 ### Labelled profiles for age models
 
 - `TimeVarying.from_profile()` accepts `age_to_label`, mapping each model age to a
   source label. The result is labelled by age and serves models on an `AgeGrid`. Give
   exactly one of `period_to_label` and `age_to_label`; the validation is the same for
   both, and age keys must be finite numbers. `period_to_label` is unchanged.
+
+### Carrying a state to a regime that uses it counts as a use
+
+- A regime-level state that a regime only carries, with `fixed_transition` or any other
+  law of motion, toward a target it can reach is used when that target keeps the state.
+  The same rule already kept model-level states; both now share one closure. Chains
+  count, and a target reached only at ages the source never occupies does not. A
+  zero-weight read such as `0.0 * skill` is no longer needed to keep such a state. The
+  rejection message names the hand-over rule and the regimes the source can reach.
+
+### Public `EULER_GAMMA` for location-0 taste shocks
+
+- `lcm.EULER_GAMMA` exports the Euler-Mascheroni constant (equal to
+  `numpy.euler_gamma`). pylcm's EV1 taste shocks are mean-zero; to reproduce
+  location-0 shocks, add `scale * EULER_GAMMA` to the utility of every action in each
+  taste-shock regime. The recipe is exact under `LinearAggregator`; under other
+  Koopmans aggregators it changes choice probabilities.
+
+### Flow utility and continuation in policy lookup
+
+- `Model.lookup_policy(..., return_action_values=True)` also returns `U`, the flow
+  utility, and `CE`, the undiscounted certainty-equivalent continuation, per state row
+  and action, with the shape of `Q`. `Q == W(utility=U, CE=CE, ...)` for every Koopmans
+  aggregator, so `Q == U + discount_factor * CE` under `LinearAggregator`; a terminal
+  regime has `CE == 0`. `actions`, `value`, `Q`, `F`, `U` and `CE` come from one
+  evaluation of the regime's kernel.
 
 ### Independent runtime checks
 

@@ -94,6 +94,12 @@ from _lcm.processes.ar1 import (
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
+from _lcm.processes.joint_normal_lowering import (
+    coordinate_names,
+    joint_normal_declarations,
+    lower_joint_normal_initial_conditions,
+    validate_joint_normal_params,
+)
 from _lcm.reachability import ModelReachability
 from _lcm.regime_building.action_partitioning import (
     action_partition_width_ceilings,
@@ -149,7 +155,16 @@ from _lcm.simulation.initial_conditions import (
 )
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.program_arguments import decision_arguments
-from _lcm.simulation.program_types import SimulationProgramExecutor
+from _lcm.simulation.program_types import (
+    ACTION_FEASIBILITY,
+    ACTION_INDEX,
+    ACTION_VALUES,
+    CONTINUATION_CE,
+    DECISION_VALUE,
+    FLOW_UTILITY,
+    SimulationProgramExecutor,
+)
+from _lcm.simulation.random import canonicalize_simulation_seed
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -345,10 +360,12 @@ from lcm.typing import (
     FloatND,
     IntND,
     Phase,
+    PRNGKey,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
     UserParams,
+    UserSeed,
     ValueND,
     _UserFacingTemplateNode,
 )
@@ -997,6 +1014,7 @@ class Model:
             broadcast_variables=broadcast_variables,
             ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
+            targets_by_regime=schedules.targets_by_regime,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
         )
@@ -2079,6 +2097,7 @@ class Model:
         params: UserParams,
         inputs: _EntryInputs,
         solution: _SolutionResultBoundary | None,
+        random_roots: tuple[PRNGKey, ...] = (),
     ) -> SimulationEntryAllocations | None:
         """Own a budgeted public call's original inputs, solution and model roots.
 
@@ -2090,6 +2109,7 @@ class Model:
             params=params,
             initial_conditions=inputs,
             solution=solution,
+            random_roots=random_roots,
         )
         if entry_inputs is None:
             return None
@@ -3283,8 +3303,8 @@ class Model:
         solution: _SolutionResultBoundary | None = None,
         log_level: LogLevel,
         runtime_checks: bool = True,
-        seed: int | None = None,
-        taste_shock_seed: int | None = None,
+        seed: UserSeed | None = None,
+        taste_shock_seed: UserSeed | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
@@ -3331,13 +3351,17 @@ class Model:
                 token; restored results instead match the durable model fingerprint.
                 When omitted, ``simulate`` obtains the same complete result from an
                 automatic solve.
-            seed: Random seed.
-            taste_shock_seed: Optional independent seed for common taste-shock
+            seed: Integer random seed or scalar typed `jax.random.key`; a typed
+                key is used directly, preserving its PRNG implementation. `None`
+                draws a fresh integer seed. Raw uint32 keys are refused.
+            taste_shock_seed: Optional independent integer seed or scalar typed
+                key for common taste-shock
                 realizations across counterfactual simulations. Matching exact
                 ages, initial-condition row positions and ordered discrete-action
                 domains receive the same standardized shocks, regardless of
                 `seed`, policy parameters or realized regime. Reordering or
-                resizing that discrete domain changes the stream. Uses Threefry;
+                resizing that discrete domain changes the stream. Integer seeds use
+                Threefry; typed keys retain their implementation;
                 comparisons require matching precision/backend and JAX random
                 configuration. `None` preserves the ordinary seeded stream.
             log_level: Console verbosity: off, warning, progress or debug.
@@ -3360,7 +3384,10 @@ class Model:
 
         """
         self._check_identity_runtime()
-        _fail_if_invalid_taste_shock_seed(taste_shock_seed=taste_shock_seed)
+        seed = canonicalize_simulation_seed(seed=seed, name="seed")
+        taste_shock_seed = canonicalize_simulation_seed(
+            seed=taste_shock_seed, name="taste_shock_seed"
+        )
         initial_conditions = lower_initial_time(
             initial_conditions=initial_conditions, ages=self._time
         )
@@ -3381,7 +3408,14 @@ class Model:
                     initial_conditions=initial_conditions
                 )
                 entry_allocations = self._open_entry_allocations(
-                    params=params, inputs=initial_conditions, solution=solution
+                    params=params,
+                    inputs=initial_conditions,
+                    solution=solution,
+                    random_roots=tuple(
+                        key
+                        for key in (seed, taste_shock_seed)
+                        if isinstance(key, jax.Array)
+                    ),
                 )
                 # The canonical parameters bind both the supplied result preflight
                 # and an automatic solve. Process them once and keep one
@@ -3464,6 +3498,10 @@ class Model:
                     splits=self._fixed_component_splits,
                     user_regimes=self.user_regimes,
                     regime_names_to_ids=self.regime_names_to_ids,
+                )
+                initial_conditions = self._lower_joint_initial_conditions(
+                    initial_conditions=initial_conditions,
+                    flat_params=flat_params,
                 )
                 if isinstance(initial_conditions, pd.DataFrame):
                     initial_conditions = initial_conditions_from_dataframe(
@@ -3673,6 +3711,16 @@ class Model:
                         original_population=original_n_subjects,
                         retained_footprint=entry_allocations.snapshot(),
                         independent_taste=taste_shock_seed is not None,
+                        taste_prng_impl=(
+                            str(jax.random.key_impl(taste_shock_seed))
+                            if isinstance(taste_shock_seed, jax.Array)
+                            else "threefry2x32"
+                        ),
+                        prng_impl=(
+                            str(jax.random.key_impl(seed))
+                            if isinstance(seed, jax.Array)
+                            else jax.config.jax_default_prng_impl
+                        ),
                         log_level=log_level,
                         runtime_checks=runtime_checks,
                         process_grid_resolver=process_grid_resolver,
@@ -3895,15 +3943,16 @@ class Model:
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
-            return_action_values: Whether to also return the action values `Q`
-                and their feasibility `F` over the (possibly restricted) action
-                grid, from the same decision program. Not supported for a
-                collective regime.
+            return_action_values: Whether to also return the action values `Q`,
+                their feasibility `F`, the flow utility `U` and the
+                certainty-equivalent continuation `CE` over the (possibly
+                restricted) action grid, all from the one kernel evaluation the
+                decision maximizes over. Not supported for a collective regime.
 
         Returns:
             The argmax action value per action name and the max of Q over the
             (possibly restricted) action grid, one entry per state row; with
-            `return_action_values`, also `Q` and `F`.
+            `return_action_values`, also `Q`, `F`, `U` and `CE`.
 
         """
         self._check_identity_runtime()
@@ -3930,8 +3979,36 @@ class Model:
             params=params, inputs=(states, action_grids), solution=solution
         )
         try:
+            lookup_inputs: UserInitialConditions = states
+            processed_params = None
+            if joint_normal_declarations(regime.simulation.grids):
+                flat_params = self._process_params(params, array_writer=allocations)
+                processed_params = flat_params
+                first_state = (
+                    np.asarray(next(iter(states.values()))) if states else None
+                )
+                if first_state is not None and first_state.ndim != 1:
+                    raise InvalidInitialConditionsError(
+                        "Joint normal policy inputs must be one-dimensional arrays."
+                    )
+                n_rows = len(first_state) if first_state is not None else 1
+                lowered = self._lower_joint_initial_conditions(
+                    initial_conditions={
+                        **states,
+                        "regime_id": np.full(
+                            n_rows, int(self.regime_names_to_ids[regime_name])
+                        ),
+                    },
+                    flat_params=flat_params,
+                )
+                # The lowering preserves the supplied mapping/frame container kind.
+                lookup_inputs = {
+                    name: value
+                    for name, value in cast("UserInitialConditions", lowered).items()
+                    if name != "regime_id"
+                }
             states = canonicalize_initial_conditions(
-                initial_conditions=states,
+                initial_conditions=lookup_inputs,
                 regimes=MappingProxyType({regime_name: regime}),
                 array_writer=allocations,
             )
@@ -3960,6 +4037,7 @@ class Model:
                 states=states,
                 action_grids=action_grids,
                 allocations=allocations,
+                processed_params=processed_params,
                 return_action_values=return_action_values,
                 n_query_rows=(
                     n_rows
@@ -3983,6 +4061,7 @@ class Model:
         allocations: SimulationEntryAllocations | None,
         return_action_values: bool,
         n_query_rows: int | None,
+        processed_params: FlatParams | None = None,
     ) -> PolicyLookup:
         """Run a validated lookup under the call's entry owner, if budgeted.
 
@@ -3993,9 +4072,13 @@ class Model:
         """
         regime = self._regimes[regime_name]
         flat_params = (
-            self._process_params(params)
-            if allocations is None
-            else self._process_params(params, array_writer=allocations)
+            processed_params
+            if processed_params is not None
+            else (
+                self._process_params(params)
+                if allocations is None
+                else self._process_params(params, array_writer=allocations)
+            )
         )
         resolver = None if allocations is None else allocations.process_grid_resolver
         if resolver is not None:
@@ -4106,17 +4189,18 @@ class Model:
                 ),
             )
             executor = unit
+        program = (
+            programs.decision_parts[period]
+            if return_action_values
+            else _with_action_extents(
+                program=programs.decision[period],
+                extents=tuple(len(grids[n]) for n in space.action_names),
+            )
+        )
         outputs = cast(
             "tuple[jax.Array, ...]",
             executor.dispatch(
-                program=(
-                    programs.action_values[period]
-                    if return_action_values
-                    else _with_action_extents(
-                        program=programs.decision[period],
-                        extents=tuple(len(grids[n]) for n in space.action_names),
-                    )
-                ),
+                program=program,
                 period=period,
                 n_subjects=n_rows,
                 arguments=decision_arguments(
@@ -4137,8 +4221,10 @@ class Model:
             # once, for the one row an empty query stands for; every output gets
             # that row here.
             outputs = tuple(output[None] for output in outputs)
-        indices, value = outputs[:2]
-        Q, F = outputs[2:] if return_action_values else (None, None)
+        # Both lookup programs publish a flat tuple, one role per output.
+        roles = cast("tuple[str, ...]", program.output_roles)
+        by_role = dict(zip(roles, outputs, strict=True))
+        indices, value = by_role[ACTION_INDEX], by_role[DECISION_VALUE]
         lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
         if unit is None or allocations is None:
             actions = _lookup_values_from_indices(
@@ -4166,12 +4252,105 @@ class Model:
             jax.block_until_ready(actions)
             unit.close()
         return _trim_lookup_rows(
-            lookup=PolicyLookup(actions=actions, value=value, Q=Q, F=F),
+            lookup=PolicyLookup(
+                actions=actions,
+                value=value,
+                Q=by_role.get(ACTION_VALUES),
+                F=by_role.get(ACTION_FEASIBILITY),
+                U=by_role.get(FLOW_UTILITY),
+                CE=by_role.get(CONTINUATION_CE),
+            ),
             n_rows=n_query_rows,
             allocations=allocations,
             unit=unit,
             call_roots=(states, space.states, grids, outputs),
         )
+
+    def initial_state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
+        """Return physical per-subject state names for initial observations.
+
+        Includes folded and carried states. Joint-normal coordinates are replaced
+        by their declared physical names; value-array axes remain `state_names`.
+        """
+        regime = self._regimes.get(regime_name)
+        if regime is None:
+            raise InvalidSimulationInputError(
+                f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
+            )
+        names = dict.fromkeys(regime.simulation.state_names)
+        for group, process in joint_normal_declarations(
+            regime.simulation.grids
+        ).items():
+            for name in coordinate_names(group=group, process=process):
+                names.pop(name, None)
+            names.update(dict.fromkeys(process.states))
+        return tuple(names)
+
+    @beartype(conf=SIMULATION_INPUT_CONF)
+    def initial_state_bounds(
+        self,
+        *,
+        params: UserParams,
+        regime_name: RegimeName,
+        state_name: StateName,
+        period: int | None = None,
+    ) -> tuple[float, float]:
+        """Return a continuous initial state's physical quadrature/grid extents.
+
+        Runtime laws use `params`; specialized grids require a zero-based period.
+        Joint intervals are marginal extents of the transformed product support,
+        not Cartesian joint grids or truncation bounds for continuous draws.
+        """
+        names = self.initial_state_names(regime_name=regime_name)
+        regime = self._regimes[regime_name]
+        if state_name not in names:
+            raise InvalidSimulationInputError(
+                f"Regime {regime_name!r} has no physical initial state "
+                f"{state_name!r}; known: {names}."
+            )
+        if period is not None and (
+            type(period) is not int or period not in regime.active_periods
+        ):
+            raise InvalidSimulationInputError(
+                "Initial state bounds period must be valued in regime "
+                f"{regime_name!r}; got {period!r}."
+            )
+        for group, process in joint_normal_declarations(
+            regime.simulation.grids
+        ).items():
+            if state_name in process.states:
+                flat = self._process_params(params)
+                law_params = {
+                    **regime.resolved_fixed_params,
+                    **regime_kernel_params(flat, regime_name=regime_name),
+                }
+                bounds = process.compute_grid_bounds(
+                    mean=cast("FloatND", law_params[f"{group}__mean"])
+                    if process.mean is None
+                    else None,
+                    cov=cast("FloatND", law_params[f"{group}__cov"])
+                    if process.cov is None
+                    else None,
+                )
+                row = np.asarray(bounds)[process.states.index(state_name)]
+                return float(row[0]), float(row[1])
+        grid = regime.simulation.grids[state_name]
+        if isinstance(grid, DiscreteGrid):
+            raise InvalidSimulationInputError(
+                f"State {state_name!r} is discrete; continuous bounds do not apply."
+            )
+        points = (
+            self.state_grid(
+                params=params,
+                regime_name=regime_name,
+                state_name=state_name,
+                period=period,
+            )
+            if state_name in regime.solution.state_names
+            else grid.to_jax()
+        )
+        values = np.asarray(points)
+        return float(values.min()), float(values.max())
 
     def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         """Return a regime's state names in the axis order of its value arrays.
@@ -4358,6 +4537,10 @@ class Model:
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
+        initial_conditions = self._lower_joint_initial_conditions(
+            initial_conditions=initial_conditions,
+            flat_params=flat_params,
+        )
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
@@ -4373,6 +4556,30 @@ class Model:
         )
         self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
         return canonical, flat_params
+
+    def _lower_joint_initial_conditions(
+        self,
+        *,
+        initial_conditions: UserInitialConditions | pd.DataFrame,
+        flat_params: FlatParams,
+    ) -> UserInitialConditions | pd.DataFrame:
+        """Resolve named physical shocks before canonical entry allocation."""
+        return lower_joint_normal_initial_conditions(
+            initial_conditions=initial_conditions,
+            grids_by_regime={
+                name: regime.simulation.grids for name, regime in self._regimes.items()
+            },
+            params_by_regime={
+                name: MappingProxyType(
+                    {
+                        **regime.resolved_fixed_params,
+                        **regime_kernel_params(flat_params, regime_name=name),
+                    }
+                )
+                for name, regime in self._regimes.items()
+            },
+            regime_names_to_ids=self.regime_names_to_ids,
+        )
 
     def _fail_if_declared_entry_is_not_permitted(
         self, *, initial_conditions: UserInitialConditions | pd.DataFrame
@@ -4581,6 +4788,18 @@ class Model:
         fail_if_nonpositive_taste_shock_scale(flat_params)
         for regime_name, regime in self._regimes.items():
             for phase in (regime.solution, regime.simulation):
+                validate_joint_normal_params(
+                    grids=phase.grids,
+                    params=MappingProxyType(
+                        {
+                            **regime.resolved_fixed_params,
+                            **regime_kernel_params(
+                                flat_params, regime_name=regime_name
+                            ),
+                        }
+                    ),
+                    regime_name=regime_name,
+                )
                 for state_name, grid in phase.grids.items():
                     if (
                         isinstance(grid, _AR1Process)
@@ -4673,14 +4892,6 @@ def _fail_if_off_grid(
                 f"grid: {arr[off].tolist()}."
             )
             raise InvalidSimulationInputError(msg)
-
-
-def _fail_if_invalid_taste_shock_seed(*, taste_shock_seed: int | None) -> None:
-    """Refuse Boolean stream configuration before processing inputs or solving."""
-    if taste_shock_seed is not None and type(taste_shock_seed) is not int:
-        raise InvalidSimulationInputError(
-            f"taste_shock_seed must be an integer or None, got {taste_shock_seed!r}."
-        )
 
 
 def _missing_policy_message(
@@ -5057,6 +5268,8 @@ def _trim_lookup_rows(
             value=lookup.value[:n_rows],
             Q=None if lookup.Q is None else lookup.Q[:n_rows],
             F=None if lookup.F is None else lookup.F[:n_rows],
+            U=None if lookup.U is None else lookup.U[:n_rows],
+            CE=None if lookup.CE is None else lookup.CE[:n_rows],
         )
     return _admit_trimmed_lookup_rows(
         lookup=lookup,
@@ -5100,7 +5313,7 @@ def _admit_trimmed_lookup_rows(
                     call_roots=(
                         call_roots,
                         tuple(lookup.actions.values()),
-                        (lookup.value, lookup.Q, lookup.F),
+                        (lookup.value, lookup.Q, lookup.F, lookup.U, lookup.CE),
                         kept,
                     ),
                 ),
@@ -5118,6 +5331,8 @@ def _admit_trimmed_lookup_rows(
         value=trim(lookup.value),
         Q=None if lookup.Q is None else trim(lookup.Q),
         F=None if lookup.F is None else trim(lookup.F),
+        U=None if lookup.U is None else trim(lookup.U),
+        CE=None if lookup.CE is None else trim(lookup.CE),
     )
 
 

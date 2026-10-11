@@ -20,6 +20,8 @@ import lcm.solvers as _solvers
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.processed import ConstraintLike
 from _lcm.grids import DiscreteGrid, Grid
+from _lcm.processes.joint_normal import JointNormalIIDProcess
+from _lcm.processes.joint_normal_lowering import lower_joint_normal_processes
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.regime_law import RegimeLaw
 from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
@@ -43,7 +45,7 @@ from lcm.transition import (
 from lcm.typing import UserFunction
 
 # One `Regime.states` value; `None` masks a model-level state of the same name.
-type StateEntry = Grid | Phased | AgeSpecializedGrid | None
+type StateEntry = Grid | JointNormalIIDProcess | Phased | AgeSpecializedGrid | None
 
 # One `Regime.state_transitions` value: a law, a stochastic law, a phase pair, or
 # a per-target mapping of laws; `None` masks a model-level law. `Phased` inside a
@@ -247,7 +249,9 @@ class Regime:
     Taste shocks are currently supported by `GridSearch` and `DCEGM`. They are
     rejected on a collective regime, on the source of a `Gate`, with a folded
     IID state or nonlinear certainty equivalent, and with `NEGM`, `NBEGM`, or
-    `NNBEGM`.
+    `NNBEGM`. For location-0 shocks, add `scale * lcm.EULER_GAMMA` to the
+    utility of every action; `ExtremeValueTasteShocks` states when that recipe
+    is exact.
     """
 
     koopmans_aggregator: UserFunction | Phased | None = None
@@ -413,6 +417,18 @@ class Regime:
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
+        if any(
+            isinstance(state, JointNormalIIDProcess) for state in self.states.values()
+        ):
+            states, functions = lower_joint_normal_processes(
+                states=self.states,
+                functions=self.functions,
+                other_names=frozenset(self.actions)
+                | frozenset(self.constraints)
+                | frozenset(self.state_transitions),
+            )
+            object.__setattr__(self, "states", states)
+            object.__setattr__(self, "functions", functions)
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()
         # What depends on the law is validated once the model binds it from

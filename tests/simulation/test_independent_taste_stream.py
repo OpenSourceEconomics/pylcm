@@ -11,10 +11,11 @@ import pandas as pd
 import pytest
 
 from _lcm.simulation.program_types import SimulationPrograms
+from _lcm.simulation.taste_stream import _taste_address_words
 from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm import ExecutionConfig
 from lcm.exceptions import InvalidSimulationInputError
-from lcm.typing import ReferenceName
+from lcm.typing import ReferenceName, UserSeed
 from tests.test_models import taste_shocks_toy
 
 simulation = importlib.import_module("_lcm.simulation.simulate")
@@ -197,4 +198,170 @@ def test_budgeted_padded_chunks_preserve_independent_taste_keys_and_choices(
     ):
         pd.testing.assert_series_equal(
             frames[0][column], frames[1][column], check_exact=True
+        )
+
+
+@pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])
+@pytest.mark.parametrize("budgeted", [False, True])
+def test_typed_seed_matches_integer_draws_and_choices(
+    *, monkeypatch: pytest.MonkeyPatch, role: str, budgeted: bool
+) -> None:
+    """A typed root preserves integer draws, including admitted padded chunks."""
+    captured = _capture_decision_keys(monkeypatch=monkeypatch)
+    model = taste_shocks_toy.get_model(
+        execution_config=ExecutionConfig(
+            axis_widths={"subject": 3} if budgeted else {},
+            device_memory_bytes=2**30 if budgeted else None,
+        )
+    )
+    params = taste_shocks_toy.get_params(scale=0.2)
+    solution = model.solve(params=params, log_level="off")
+    frames = []
+    for typed in (False, True):
+        seeds: dict[str, UserSeed] = {"seed": 11, "taste_shock_seed": 721}
+        if typed:
+            seeds[role] = jax.random.key(seeds[role])
+        frames.append(
+            model.simulate(
+                params=params,
+                initial_conditions=_initial_conditions(count=7),
+                solution=solution,
+                log_level="off",
+                seed=seeds["seed"],
+                taste_shock_seed=seeds["taste_shock_seed"],
+            ).to_dataframe(use_labels=False)
+        )
+    assert len(captured) == 2
+    np.testing.assert_array_equal(captured[0], captured[1])
+    pd.testing.assert_frame_equal(frames[0], frames[1], check_exact=True)
+
+
+@pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])
+def test_folded_seed_children_change_dispatched_draws(
+    *, monkeypatch: pytest.MonkeyPatch, role: str
+) -> None:
+    """Independent children change draws while a repeated child repeats them."""
+    captured = _capture_decision_keys(monkeypatch=monkeypatch)
+    model = taste_shocks_toy.get_model()
+    params = taste_shocks_toy.get_params(scale=0.2)
+    solution = model.solve(params=params, log_level="off")
+    root = jax.random.key(17)
+    for child in (0, 1, 0):
+        seeds: dict[str, UserSeed | None] = {"seed": 11, "taste_shock_seed": None}
+        seeds[role] = jax.random.fold_in(root, child)
+        model.simulate(
+            params=params,
+            initial_conditions=_initial_conditions(),
+            solution=solution,
+            log_level="off",
+            seed=seeds["seed"],
+            taste_shock_seed=seeds["taste_shock_seed"],
+        )
+    assert len(captured) == 3
+    assert np.any(captured[0] != captured[1])
+    np.testing.assert_array_equal(captured[0], captured[2])
+
+
+@pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])
+def test_legacy_seed_names_typed_key_constructor_before_solving(role: str) -> None:
+    """Raw uint32 keys are refused with the typed constructor in the message."""
+    model = taste_shocks_toy.get_model()
+    with pytest.raises(InvalidSimulationInputError, match=r"jax.random.key"):
+        model.simulate(
+            params={},
+            initial_conditions=_initial_conditions(),
+            log_level="off",
+            seed=jax.random.PRNGKey(17) if role == "seed" else None,
+            taste_shock_seed=jax.random.PRNGKey(17)
+            if role == "taste_shock_seed"
+            else None,
+        )
+
+
+@pytest.mark.parametrize("budgeted", [False, True])
+def test_typed_ordinary_key_keeps_its_implementation(*, budgeted: bool) -> None:
+    """A supplied RBG key survives a different ambient default and chunk planning."""
+    model = taste_shocks_toy.get_model(
+        execution_config=ExecutionConfig(
+            axis_widths={"subject": 3} if budgeted else {},
+            device_memory_bytes=2**30 if budgeted else None,
+        )
+    )
+    params = taste_shocks_toy.get_params(scale=0.2)
+    solution = model.solve(params=params, log_level="off")
+    with jax.default_prng_impl("rbg"):
+        expected = model.simulate(
+            params=params,
+            initial_conditions=_initial_conditions(count=7),
+            solution=solution,
+            seed=11,
+            log_level="off",
+        ).to_dataframe(use_labels=False)
+    with jax.default_prng_impl("threefry2x32"):
+        actual = model.simulate(
+            params=params,
+            initial_conditions=_initial_conditions(count=7),
+            solution=solution,
+            seed=jax.random.key(11, impl="rbg"),
+            log_level="off",
+        ).to_dataframe(use_labels=False)
+    pd.testing.assert_frame_equal(actual, expected, check_exact=True)
+
+
+@pytest.mark.parametrize("budgeted", [False, True])
+def test_independent_taste_key_keeps_its_implementation(
+    *, budgeted: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Addressed taste draws preserve the supplied root's implementation and words."""
+
+    captured = _capture_decision_keys(monkeypatch=monkeypatch)
+    model = taste_shocks_toy.get_model(
+        execution_config=ExecutionConfig(
+            axis_widths={"subject": 3} if budgeted else {},
+            device_memory_bytes=2**30 if budgeted else None,
+        )
+    )
+    params = taste_shocks_toy.get_params(scale=0.2)
+    solution = model.solve(params=params, log_level="off")
+    root = jax.random.key(17, impl="rbg")
+    words = _taste_address_words(age=40, domain=(("work", (("off", 0), ("on", 1))),))
+    addressed = root
+    for word in words:
+        addressed = jax.random.fold_in(addressed, np.uint32(word))
+    expected = np.stack(
+        [
+            np.asarray(
+                jax.random.key_data(
+                    jax.random.fold_in(
+                        jax.random.fold_in(addressed, np.uint32(0)), np.uint32(row)
+                    )
+                )
+            )
+            for row in range(7)
+        ]
+    )
+    with jax.default_prng_impl("threefry2x32"):
+        model.simulate(
+            params=params,
+            initial_conditions=_initial_conditions(count=7),
+            solution=solution,
+            taste_shock_seed=root,
+            log_level="off",
+        )
+    actual = np.concatenate(captured)[:7]
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])
+def test_batched_typed_seed_is_refused_before_solving(role: str) -> None:
+    """Only a scalar typed root crosses the public simulation boundary."""
+    model = taste_shocks_toy.get_model()
+    roots = jax.random.split(jax.random.key(17), 2)
+    with pytest.raises(InvalidSimulationInputError, match=r"scalar jax.random.key"):
+        model.simulate(
+            params={},
+            initial_conditions=_initial_conditions(),
+            log_level="off",
+            seed=roots if role == "seed" else None,
+            taste_shock_seed=roots if role == "taste_shock_seed" else None,
         )

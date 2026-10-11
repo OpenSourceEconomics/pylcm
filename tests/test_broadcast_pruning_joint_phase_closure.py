@@ -515,7 +515,7 @@ class _ClosureArguments(TypedDict, closed=True):
     specs: Mapping[RegimeName, PhasedRegimeSpec]
     user_regimes: Mapping[RegimeName, Regime]
     laws: RegimeLaws
-    broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]]
+    candidates: Mapping[RegimeName, frozenset[StateOrActionName]]
     koopmans_aggregator: UserFunction
     kept: Mapping[RegimeName, frozenset[StateOrActionName]]
     all_regime_names: frozenset[RegimeName]
@@ -551,7 +551,7 @@ def _closure_arguments() -> _ClosureArguments:
         },
         "user_regimes": merged_regimes,
         "laws": laws,
-        "broadcast_variables": broadcast_variables,
+        "candidates": broadcast_variables,
         "koopmans_aggregator": LinearAggregator(),
         "kept": seed,
         "all_regime_names": frozenset(merged_regimes),

@@ -159,6 +159,7 @@ from lcm.persistence import (  # noqa: E402
 )
 from lcm.phased import Phased  # noqa: E402
 from lcm.processes import (  # noqa: E402
+    JointNormalIIDProcess,
     LogNormalIIDProcess,
     NormalIIDProcess,
     NormalMixtureIIDProcess,
@@ -170,7 +171,7 @@ from lcm.processes import (  # noqa: E402
 )
 from lcm.regime import Regime  # noqa: E402
 from lcm.result import PolicyLookup, SimulationResult  # noqa: E402
-from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
+from lcm.taste_shocks import EULER_GAMMA, ExtremeValueTasteShocks  # noqa: E402
 from lcm.temporal import (  # noqa: E402
     TimeVarying,
     UnlabelledTimeParameterWarning,
@@ -225,6 +226,7 @@ jax.tree_util.register_pytree_node(
 )
 
 __all__ = [
+    "EULER_GAMMA",
     "AdditiveShockTransition",
     "AgeGrid",
     "AgeRange",
@@ -246,6 +248,7 @@ __all__ = [
     "InitialNodes",
     "InvariantBlockSchedule",
     "IrregSpacedGrid",
+    "JointNormalIIDProcess",
     "JointTransition",
     "LinSpacedGrid",
     "LinearAggregator",
