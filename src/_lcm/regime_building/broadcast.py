@@ -310,6 +310,7 @@ def compute_kept_variables(
     koopmans_aggregator: UserFunction | None,
     ages: TimeAxis | None = None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]] | None = None,
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Close each regime's kept states and actions under use.
@@ -336,6 +337,10 @@ def compute_kept_variables(
             markers at a representative age. `None` skips resolution.
         active_periods_by_regime: The per-regime coverage, whose first period
             is the representative one. `None` skips resolution.
+        visited_periods_by_regime: Per regime, the periods a subject can be in
+            it. The simulation slice is resolved at the first of them, since it
+            runs only where subjects are; a regime without any falls back to its
+            coverage. `None` resolves both slices on the coverage.
         targets_by_regime: Per regime, the targets the model graph reaches at
             the demanded periods. A law toward any other target is no use.
             `None` takes every candidate target of the lowered regime
@@ -371,6 +376,7 @@ def compute_kept_variables(
         all_regime_names=frozenset(user_regimes),
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
+        visited_periods_by_regime=visited_periods_by_regime,
         targets_by_regime=targets_by_regime,
     )
 
@@ -786,6 +792,7 @@ def _joint_phase_closure(
     all_regime_names: frozenset[RegimeName],
     ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]] | None = None,
     phase_order: tuple[PhaseName, ...] = ("solution", "simulation"),
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
@@ -817,6 +824,7 @@ def _joint_phase_closure(
                 all_regime_names=all_regime_names,
                 ages=ages,
                 active_periods_by_regime=active_periods_by_regime,
+                visited_periods_by_regime=visited_periods_by_regime,
                 targets_by_regime=targets_by_regime,
             )
         if grown == before:
@@ -835,6 +843,7 @@ def _phase_fixed_point(
     all_regime_names: frozenset[RegimeName],
     ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]] | None = None,
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to this phase slice's least fixed point.
@@ -878,10 +887,11 @@ def _phase_fixed_point(
                 candidate_targets=candidates_by_source[regime_name],
                 kept=grown,
                 ages=ages,
-                active_periods=(
-                    None
-                    if active_periods_by_regime is None
-                    else active_periods_by_regime.get(regime_name, ())
+                active_periods=_representative_periods(
+                    regime_name=regime_name,
+                    phase_name=phase_name,
+                    active_periods_by_regime=active_periods_by_regime,
+                    visited_periods_by_regime=visited_periods_by_regime,
                 ),
             )
             needed |= _state_conditioned_names(
@@ -898,6 +908,27 @@ def _phase_fixed_point(
                 changed = True
         if not changed:
             return MappingProxyType(grown)
+
+
+def _representative_periods(
+    *,
+    regime_name: RegimeName,
+    phase_name: PhaseName,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+) -> tuple[int, ...] | None:
+    """Return the periods whose first one a phase slice is resolved at.
+
+    The solution slice runs at every solved period. The simulation slice runs
+    only where a subject can be, so it takes the visited periods when there are
+    any, and the solved periods otherwise.
+    """
+    if active_periods_by_regime is None:
+        return None
+    active_periods = active_periods_by_regime.get(regime_name, ())
+    if phase_name == "solution" or visited_periods_by_regime is None:
+        return active_periods
+    return visited_periods_by_regime.get(regime_name, ()) or active_periods
 
 
 def _state_conditioned_names(
