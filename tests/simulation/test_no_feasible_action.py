@@ -29,6 +29,8 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserInitialConditions,
+    UserParams,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -422,8 +424,26 @@ def _joint_utility(
 
 
 def _joint_empty_model(
-    *, constrained: bool, runtime: bool, fold: bool, memory_budget: int | None
+    *,
+    constrained: bool,
+    runtime: bool,
+    fold: bool,
+    memory_budget: int | None,
+    fixed_law: bool = False,
 ) -> Model:
+    fixed_params: UserParams = {
+        "working": {"koopmans_aggregator": {"discount_factor": 0.5}}
+    }
+    if fixed_law:
+        fixed_params = {
+            "working": {
+                "koopmans_aggregator": {"discount_factor": 0.5},
+                "shocks": {
+                    "mean": jnp.asarray((2.0, -1.0)),
+                    "cov": jnp.asarray(((1.0, 0.4), (0.4, 2.0))),
+                },
+            }
+        }
     return Model(
         regimes={
             "working": Regime(
@@ -449,9 +469,53 @@ def _joint_empty_model(
         initial_nodes={0: "working"},
         edges={"working": {"working": (0,), "dead": (1,)}},
         regime_id_class=DecisionId,
-        fixed_params={"working": {"koopmans_aggregator": {"discount_factor": 0.5}}},
+        fixed_params=fixed_params,
         execution_config=ExecutionConfig(device_memory_bytes=memory_budget),
     )
+
+
+def _assert_joint_empty_matches_native_control(
+    *,
+    control: Model,
+    model: Model,
+    params: UserParams,
+    initial: UserInitialConditions,
+) -> dict[str, float]:
+    """Run the native positive oracle before checking the matched empty-state error."""
+    positive = control.simulate(
+        params=params,
+        initial_conditions=initial,
+        seed=531,
+        log_level="off",
+        runtime_checks=False,
+    ).to_dataframe()
+    reached = positive.loc[positive["period"] == 1].iloc[0]
+    assert reached["wealth"] == 0.0
+    assert reached["regime_name"] == "working"
+    assert np.isfinite(reached["value"])
+    assert reached["consumption"] == 2.0
+    assert np.isfinite(reached[["x", "y"]].to_numpy(dtype=float)).all()
+    with pytest.raises(exceptions.NoFeasibleActionError) as caught:
+        model.simulate(
+            params=params,
+            initial_conditions=initial,
+            seed=531,
+            log_level="off",
+            runtime_checks=False,
+        )
+    message = str(caught.value)
+    assert "working" in message
+    assert "period 1" in message
+    state = ast.literal_eval(
+        message.split("state ", 1)[1].rsplit(" has no feasible", 1)[0]
+    )
+    assert set(state) == {"wealth", "x", "y"}
+    np.testing.assert_array_almost_equal(
+        [state[name] for name in ("wealth", "x", "y")],
+        reached[["wealth", "x", "y"]].to_numpy(dtype=float),
+        decimal=DECIMAL_PRECISION,
+    )
+    return {name: float(reached[name]) for name in ("wealth", "x", "y")}
 
 
 @pytest.mark.parametrize("runtime", [False, True])
@@ -483,39 +547,87 @@ def test_reached_joint_empty_state_reports_physical_values(
     control = _joint_empty_model(
         constrained=False, runtime=runtime, fold=fold, memory_budget=memory_budget
     )
-    positive = control.simulate(
-        params=params,
-        initial_conditions=initial,
-        seed=531,
-        log_level="off",
-        runtime_checks=False,
-    ).to_dataframe()
-    reached = positive.loc[positive["period"] == 1].iloc[0]
-    assert reached["wealth"] == 0.0
-    assert reached["regime_name"] == "working"
-    assert np.isfinite(reached["value"])
-    assert reached["consumption"] == 2.0
-    assert np.isfinite(reached[["x", "y"]].to_numpy(dtype=float)).all()
     model = _joint_empty_model(
         constrained=True, runtime=runtime, fold=fold, memory_budget=memory_budget
     )
-    with pytest.raises(exceptions.NoFeasibleActionError) as caught:
-        model.simulate(
-            params=params,
-            initial_conditions=initial,
-            seed=531,
-            log_level="off",
-            runtime_checks=False,
-        )
-    message = str(caught.value)
-    assert "working" in message
-    assert "period 1" in message
-    state = ast.literal_eval(
-        message.split("state ", 1)[1].rsplit(" has no feasible", 1)[0]
+    _assert_joint_empty_matches_native_control(
+        control=control, model=model, params=params, initial=initial
     )
-    assert set(state) == {"wealth", "x", "y"}
+
+
+@pytest.mark.parametrize("fold", [False, True])
+def test_reached_joint_empty_state_uses_fixed_runtime_law(*, fold: bool) -> None:
+    """A runtime-declared law supplied by Model.fixed_params stays physical."""
+    control = _joint_empty_model(
+        constrained=False,
+        runtime=True,
+        fold=fold,
+        memory_budget=64 * 1024**2,
+        fixed_law=True,
+    )
+    model = _joint_empty_model(
+        constrained=True,
+        runtime=True,
+        fold=fold,
+        memory_budget=64 * 1024**2,
+        fixed_law=True,
+    )
+    initial = {
+        "age": jnp.asarray([0.0]),
+        "wealth": jnp.asarray([1.0]),
+        "x": jnp.asarray([2.0]),
+        "y": jnp.asarray([-1.0]),
+        "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
+    }
+    _assert_joint_empty_matches_native_control(
+        control=control, model=model, params={}, initial=initial
+    )
+
+
+@pytest.mark.parametrize("fold", [False, True])
+def test_reached_joint_empty_state_uses_each_current_runtime_law(*, fold: bool) -> None:
+    """Changed then original laws on the same Models cannot bind a stale law."""
+    control = _joint_empty_model(
+        constrained=False,
+        runtime=True,
+        fold=fold,
+        memory_budget=64 * 1024**2,
+    )
+    model = _joint_empty_model(
+        constrained=True,
+        runtime=True,
+        fold=fold,
+        memory_budget=64 * 1024**2,
+    )
+    original_mean = (2.0, -1.0)
+    original_cov = ((1.0, 0.4), (0.4, 2.0))
+    reached_states = []
+    for mean, cov in (
+        (original_mean, original_cov),
+        ((4.0, 3.0), ((2.0, 0.2), (0.2, 1.0))),
+        (original_mean, original_cov),
+    ):
+        params = {
+            "working": {
+                "shocks": {
+                    "mean": jnp.asarray(mean),
+                    "cov": jnp.asarray(cov),
+                }
+            }
+        }
+        initial = {
+            "age": jnp.asarray([0.0]),
+            "wealth": jnp.asarray([1.0]),
+            "x": jnp.asarray([mean[0]]),
+            "y": jnp.asarray([mean[1]]),
+            "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
+        }
+        reached = _assert_joint_empty_matches_native_control(
+            control=control, model=model, params=params, initial=initial
+        )
+        reached_states.append([reached[name] for name in ("wealth", "x", "y")])
+    # The native control proves the changed law reaches a different physical state.
+    assert not np.allclose(reached_states[0][1:], reached_states[1][1:])
     np.testing.assert_array_almost_equal(
-        [state[name] for name in ("wealth", "x", "y")],
-        reached[["wealth", "x", "y"]].to_numpy(dtype=float),
-        decimal=DECIMAL_PRECISION,
+        reached_states[2], reached_states[0], decimal=DECIMAL_PRECISION
     )

@@ -2166,7 +2166,7 @@ def _evaluate_state_probability_law(
 def _evaluate_admitted_transition_producer(
     *,
     function: Callable[..., PytreeValue],
-    arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
+    arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs | HostArray],
     memory: SimulationMemory,
 ) -> PytreeValue:
     """Place, profile, admit, and complete one transition validation producer."""
