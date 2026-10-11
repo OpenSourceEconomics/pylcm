@@ -40,6 +40,7 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.persistence import load_solution
+from lcm.solver_api import SolutionResult
 from lcm.typing import FloatND, UserInitialConditions, UserParams
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
@@ -351,6 +352,11 @@ def test_process_support_preserves_simulated_value_and_action(
     first = rows.iloc[0]
     np.testing.assert_array_equal(
         first[["income", "saving", "value"]].to_numpy(dtype=float), [2.0, 1.0, 3.0]
+    )
+    assert isinstance(result.solution, SolutionResult)
+    np.testing.assert_array_equal(
+        result.solution.value_frame(period=0, regime="alive")["income"],
+        [1.0, 1.5, 2.0, 2.5, 3.0],
     )
     if budget is not None:
         assert observations == [True]
