@@ -6,6 +6,7 @@ from typing import cast
 
 import jax
 
+from _lcm.engine import StateActionSpace
 from _lcm.typing import PRNGKeyND, PytreeValue, QualifiedName, ShapeDtypePytree
 from lcm.typing import ReferenceName, ScalarFloat, ScalarInt, StateName
 
@@ -36,6 +37,17 @@ def decision_arguments(
     }
 
 
+def process_node_arguments(
+    *, base_spaces: Mapping[str, StateActionSpace]
+) -> dict[ReferenceName, PytreeValue]:
+    """Supply the already-resolved solve axes; transition signatures select users."""
+    return {
+        f"nodes_{target}__next_{state}": nodes
+        for target, space in base_spaces.items()
+        for state, nodes in space.states.items()
+    }
+
+
 def transition_arguments(
     *,
     states: Mapping[StateName, PytreeValue | ShapeDtypePytree],
@@ -45,11 +57,13 @@ def transition_arguments(
     period: PytreeValue | ShapeDtypePytree,
     age: PytreeValue | ShapeDtypePytree,
     params: Mapping[QualifiedName, PytreeValue | ShapeDtypePytree],
+    process_nodes: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree] | None = None,
 ) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Preserve the state/route call's existing last-writer parameter precedence."""
     return {
         **states,
         **carried,
+        **({} if process_nodes is None else process_nodes),
         **actions,
         **keys,
         "period": period,

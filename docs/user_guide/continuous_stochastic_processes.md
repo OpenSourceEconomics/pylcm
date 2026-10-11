@@ -24,6 +24,47 @@ from lcm import NormalIIDProcess, TauchenAR1Process
 > EGM-family and collective regimes support narrower combinations than `GridSearch`;
 > build the intended specialized regime early and let model validation check it.
 
+## Simulation draws
+
+Continuous process simulation defaults to `simulate_draws="continuous"`: draw from its
+distribution rather than from the discretization. Set `simulate_draws="nodes"` when
+simulation must stay on the solve support:
+
+```python
+NormalIIDProcess(
+    n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0, simulate_draws="nodes"
+)
+```
+
+Node mode samples the exact resolved physical solve nodes with the IID weights or
+current Markov transition row. It works with fixed and runtime parameters, supplied
+Tauchen nodes and ordinary folded IID declarations. It changes forward realizations; it
+leaves the solve grid and expectations alone. Transition-local shock lotteries already
+sample their declared support and retain that behavior in either mode.
+
+To solve under one process law and simulate a different continuous law, declare the
+process state with public `Phased`:
+
+```python
+from lcm import Phased
+
+income = Phased(
+    solve=TauchenAR1Process(
+        n_points=7, gauss_hermite=False, n_std=2.0, mu=0.0, rho=0.6, sigma=0.2
+    ),
+    simulate=TauchenAR1Process(
+        n_points=7, gauss_hermite=False, n_std=2.0, mu=0.0, rho=0.8, sigma=0.4
+    ),
+)
+```
+
+Put `income` in `states`, with no ordinary `state_transitions` entry. Values and
+continuation decisions use the solve law; realized shocks use the simulation law.
+Constructor parameters can hold separate estimates. A parameter left `None` in both
+variants uses the same runtime parameter name and value. Process/non-process pairs,
+folded phase pairs, and distinct simulation laws with node draws are rejected at
+construction. Ordinary node simulation is a bare process declaration.
+
 ## IID Processes
 
 Processes whose draws are independent across periods.
@@ -142,8 +183,8 @@ probabilities integrate the conditional normal with mean `mu + rho * y` over bin
 separated by adjacent midpoints; the first and last bins include the tails. `mu`
 defaults to zero. Set `rho`, `sigma`, or `mu` to `None` to supply that law parameter at
 solve or simulation time. The nodes remain fixed as parameters vary, and `rho=1` is
-supported. Simulation draws the continuous AR(1) law, as for ordinary Tauchen; it does
-not draw a categorical node code.
+supported. Simulation defaults to the continuous AR(1) law, as for ordinary Tauchen. Set
+`simulate_draws="nodes"` to sample these physical nodes with the transition rows.
 
 This factory does not reproduce a row-normalized density-at-nodes rule. Use an explicit
 categorical transition when that discrete law is the intended model.

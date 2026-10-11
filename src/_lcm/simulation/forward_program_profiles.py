@@ -31,6 +31,7 @@ from _lcm.simulation.program_arguments import (
     gate_fold_arguments,
     policy_prepare_arguments,
     policy_rank_arguments,
+    process_node_arguments,
     transition_arguments,
 )
 from _lcm.simulation.runtime import SimulationRuntime
@@ -444,6 +445,9 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
         arguments = transition_arguments(
             states=states,
             carried=carried,
+            process_nodes=_shared_tree(
+                tree=process_node_arguments(base_spaces=base_spaces), devices=devices
+            ),
             actions=actions,
             keys=keys,
             period=period_value,

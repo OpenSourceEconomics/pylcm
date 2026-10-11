@@ -6,6 +6,7 @@ transition functions from user-defined regimes; this module executes them.
 
 """
 
+from collections.abc import Mapping
 from functools import partial
 from types import MappingProxyType
 from typing import cast
@@ -28,6 +29,7 @@ from _lcm.typing import (
     ActionName,
     FlatRegimeParams,
     PRNGKeyND,
+    PytreeValue,
     RegimeName,
     RegimeNamesToIds,
     RegimeStates,
@@ -85,6 +87,7 @@ def calculate_next_states(
     n_subjects: int,
     subject_slice: slice | SubjectRows,
     original_n_subjects: int | None = None,
+    process_nodes: Mapping[str, PytreeValue] | None = None,
     memory: SimulationMemory | None = None,
 ) -> StatesPerRegime:
     """Calculate next period states for subjects in a regime.
@@ -153,6 +156,7 @@ def calculate_next_states(
                 arguments=transition_arguments(
                     states=state_action_space.states,
                     carried=simulate_only_states,
+                    process_nodes={} if process_nodes is None else process_nodes,
                     actions=optimal_actions,
                     keys=stochastic_variables_keys,
                     period=jnp.int32(period) if memory is None else np.int32(period),

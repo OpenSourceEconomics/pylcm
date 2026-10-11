@@ -58,7 +58,10 @@ def collect_state_transitions(
     transitions: dict[TransitionFunctionName, UserFunction | Phased] = {}
     for name, grid in states.items():
         # Process transitions built directly in _process_regime_core
-        if isinstance(grid, _ContinuousStochasticProcess):
+        if isinstance(grid, _ContinuousStochasticProcess) or (
+            isinstance(grid, Phased)
+            and isinstance(grid.solve, _ContinuousStochasticProcess)
+        ):
             continue
 
         if name not in state_transitions:

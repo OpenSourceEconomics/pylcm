@@ -5,7 +5,7 @@ import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import no_type_check
+from typing import cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -505,6 +505,18 @@ def _create_continuous_stochastic_next_func(
     state_name = next_state_name.removeprefix("next_")
     grid: _ContinuousStochasticProcess = all_grids[target_regime_name][state_name]  # ty: ignore [invalid-assignment]
     qname = qname_from_tree_path((target_regime_name, next_state_name))
+
+    if grid.simulate_draws == "nodes":
+        # A process support is an array leaf, unlike a joint lottery's general tree.
+        return cast(
+            "StochasticNextFunction",
+            _RealizedJointNode(
+                qname=qname,
+                support_provider_name=f"nodes_{qname}",
+                support_size=grid.n_points,
+                node_annotation="ContinuousState",
+            ),
+        )
 
     # A state-conditioned process draws with the sigma its conditioning state selects,
     # not the scalar `sigma` that places the nodes, so the simulated law is the one the
