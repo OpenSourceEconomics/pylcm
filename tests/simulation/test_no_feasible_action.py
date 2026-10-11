@@ -631,3 +631,78 @@ def test_reached_joint_empty_state_uses_each_current_runtime_law(*, fold: bool) 
     np.testing.assert_array_almost_equal(
         reached_states[2], reached_states[0], decimal=DECIMAL_PRECISION
     )
+
+
+@pytest.mark.parametrize("runtime", [False, True])
+@pytest.mark.parametrize("fold", [False, True])
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_initial_joint_error_preserves_public_physical_states(
+    *,
+    runtime: bool,
+    fold: bool,
+    log_level: Literal["off", "warning", "progress", "debug"],
+) -> None:
+    """An adopted initial error must describe physical inputs, not lowered slots."""
+    params: UserParams = (
+        {
+            "working": {
+                "shocks": {
+                    "mean": jnp.asarray((2.0, -1.0)),
+                    "cov": jnp.asarray(((1.0, 0.4), (0.4, 2.0))),
+                }
+            }
+        }
+        if runtime
+        else {}
+    )
+    initial = {
+        "age": jnp.asarray([0.0]),
+        "wealth": jnp.asarray([0.5]),
+        "x": jnp.asarray([3.1]),
+        "y": jnp.asarray([-1.3]),
+        "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
+    }
+    control = _joint_empty_model(
+        constrained=False, runtime=runtime, fold=fold, memory_budget=None
+    )
+    positive = control.simulate(
+        params=params,
+        initial_conditions=initial,
+        seed=534,
+        log_level="off",
+        runtime_checks=True,
+    ).to_dataframe()
+    first = positive.loc[positive["period"] == 0].iloc[0]
+    assert np.isfinite(first["value"])
+    assert first["consumption"] == 2.0
+    expected = np.asarray([0.5, 3.1, -1.3])
+    names = ("wealth", "x", "y")
+    np.testing.assert_array_almost_equal(
+        first[list(names)].to_numpy(dtype=float), expected, decimal=DECIMAL_PRECISION
+    )
+    model = _joint_empty_model(
+        constrained=True, runtime=runtime, fold=fold, memory_budget=None
+    )
+    with pytest.raises(
+        exceptions.NoFeasibleActionError, match=r"working.*period 0"
+    ) as caught:
+        model.simulate(
+            params=params,
+            initial_conditions=initial,
+            seed=534,
+            log_level=log_level,
+            # False would reach a different guard and miss initial formatting.
+            runtime_checks=True,
+        )
+    message = str(caught.value)
+    state = ast.literal_eval(
+        message.split("state ", 1)[1].split(" has no feasible action.", 1)[0]
+    )
+    assert set(state) == set(names)
+    np.testing.assert_array_almost_equal(
+        [state[name] for name in names], expected, decimal=DECIMAL_PRECISION
+    )
+    table = message.split("Per-constraint admissibility", 1)[1]
+    header = next(line for line in table.splitlines() if "affordable" in line)
+    assert set(names).issubset(header.split())
+    assert "shocks_normal_" not in message
