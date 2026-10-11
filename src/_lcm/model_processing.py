@@ -658,6 +658,7 @@ def _validate_all_variables_used(
         koopmans_aggregator=None,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
+        visited_periods_by_regime=visited_periods_by_regime,
         targets_by_regime=targets_by_regime,
     )
     error_messages = []
