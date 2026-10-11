@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.logsum import EULER_GAMMA
+
+__all__ = ["EULER_GAMMA", "ExtremeValueTasteShocks"]
 
 
 @beartype(conf=REGIME_CONF)
@@ -38,4 +41,17 @@ class ExtremeValueTasteShocks:
     `fold=True`; and together with a nonlinear certainty equivalent. These
     combinations are rejected during `Regime` declaration or `Model`
     construction, before solve, rather than silently dropping the shocks.
+
+    The shocks are mean-zero. A model written with location-0 (standard
+    Gumbel) shocks, whose mean is `scale * EULER_GAMMA`, is reproduced by
+    adding `scale * EULER_GAMMA` to the utility of every action in each regime
+    that declares taste shocks, with `EULER_GAMMA` imported from `lcm`. The
+    recipe is exact when the regime's Koopmans aggregator is additive in
+    utility with unit slope, as `LinearAggregator` is. Every choice-specific
+    value then moves by the same constant, so choice probabilities stay the
+    same and the value function rises by the discounted sum of
+    `scale * EULER_GAMMA` over the remaining taste-shock periods. The shock
+    enters after aggregation, so under any other aggregator, such as
+    `CESAggregator`, the constant moves each action's value by a different
+    amount and changes the choice probabilities.
     """

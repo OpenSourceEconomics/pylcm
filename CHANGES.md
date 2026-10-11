@@ -31,6 +31,23 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   zero-weight read such as `0.0 * skill` is no longer needed to keep such a state. The
   rejection message names the hand-over rule and the regimes the source can reach.
 
+### Public `EULER_GAMMA` for location-0 taste shocks
+
+- `lcm.EULER_GAMMA` exports the Euler-Mascheroni constant (equal to
+  `numpy.euler_gamma`). pylcm's EV1 taste shocks are mean-zero; to reproduce
+  location-0 shocks, add `scale * EULER_GAMMA` to the utility of every action in each
+  taste-shock regime. The recipe is exact under `LinearAggregator`; under other
+  Koopmans aggregators it changes choice probabilities.
+
+### Flow utility and continuation in policy lookup
+
+- `Model.lookup_policy(..., return_action_values=True)` also returns `U`, the flow
+  utility, and `CE`, the undiscounted certainty-equivalent continuation, per state row
+  and action, with the shape of `Q`. `Q == W(utility=U, CE=CE, ...)` for every Koopmans
+  aggregator, so `Q == U + discount_factor * CE` under `LinearAggregator`; a terminal
+  regime has `CE == 0`. `actions`, `value`, `Q`, `F`, `U` and `CE` come from one
+  evaluation of the regime's kernel.
+
 ### Independent runtime checks
 
 - `Model.solve()` and `Model.simulate()` accept `runtime_checks=True` independently
