@@ -11,7 +11,7 @@ The two programs are one body, so the values and carries they publish agree to
 the working format's spacing. Under a values-only retention the nested finite
 solve never assembles its candidate banks. Persistence-oriented retention builds
 the finite bank but skips the non-persistable adaptive policy and generated
-authority. Solver diagnostics keep following `log_level` alone.
+authority. Solver diagnostics follow `runtime_checks` independently of logging.
 """
 
 from collections.abc import Callable, Mapping
@@ -247,20 +247,22 @@ def test_a_values_only_adaptive_nested_solve_publishes_no_policy_or_authority(
     assert all(EGM_CONTINUATION in result.continuations for result in results[:-1])
 
 
-@pytest.mark.parametrize(
-    ("log_level", "expects_diagnostics"), [("warning", True), ("off", False)]
-)
-def test_diagnostics_follow_log_level_under_a_values_only_retention(
-    *, log_level: Literal["warning", "off"], expects_diagnostics: bool
+@pytest.mark.parametrize("log_level", ["warning", "off"])
+@pytest.mark.parametrize("runtime_checks", [True, False])
+def test_diagnostics_follow_runtime_checks_under_a_values_only_retention(
+    *, log_level: Literal["warning", "off"], runtime_checks: bool
 ):
     model, params = _nested("adaptive")
 
     solution = model.solve(
-        params=params, log_level=log_level, retention=Retention.VALUES
+        params=params,
+        log_level=log_level,
+        runtime_checks=runtime_checks,
+        retention=Retention.VALUES,
     )
 
     retained = solution.diagnostics.project(SOLVER_DIAGNOSTICS)
-    assert bool(retained) is expects_diagnostics
+    assert bool(retained) is runtime_checks
     for regime_to_diagnostics in retained.values():
         for diagnostics in regime_to_diagnostics.values():
             error = cast("SolverDiagnostics", diagnostics).max_outer_interpolation_error

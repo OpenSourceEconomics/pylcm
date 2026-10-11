@@ -57,6 +57,7 @@ type _PlanSummary = tuple[
 
 class _ProcessKwargs(TypedDict):
     array_writer: NotRequired[SimulationEntryAllocations | None]
+    runtime_checks: NotRequired[bool]
 
 
 def _config(*, blocked: bool, budget: int | None = 2**30) -> ExecutionConfig:
