@@ -5,6 +5,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Carrying a state to a regime that uses it counts as a use
+
+- A regime-level state that a regime only carries, with `fixed_transition` or any other
+  law of motion, toward a target it can reach is used when that target keeps the state.
+  The same rule already kept model-level states; both now share one closure. Chains
+  count, and a target reached only at ages the source never occupies does not. A
+  zero-weight read such as `0.0 * skill` is no longer needed to keep such a state. The
+  rejection message names the hand-over rule and the regimes the source can reach.
+
 ### Independent runtime checks
 
 - `Model.solve()` and `Model.simulate()` accept `runtime_checks=True` independently
