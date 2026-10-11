@@ -1854,8 +1854,8 @@ class Model:
         flat_params: FlatParams,
         log: logging.Logger,
         call_id: CallId | None,
-        component_values: RetainedComponentValues | None = None,
         process_grid_resolver: ProcessGridResolver | None = None,
+        component_values: RetainedComponentValues | None = None,
     ) -> SolutionResult:
         """Assemble the public result of one solve's engine outputs."""
         with solve_phase(name="result_assembly", logger=log, call_id=call_id):
