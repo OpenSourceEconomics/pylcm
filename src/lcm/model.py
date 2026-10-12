@@ -4550,6 +4550,8 @@ class Model:
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
         for regime_name, regime in self._regimes.items():
+            if not regime.active_periods:
+                continue
             for phase in (regime.solution, regime.simulation):
                 for state_name, grid in phase.grids.items():
                     if (
