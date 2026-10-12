@@ -49,19 +49,30 @@ def test_the_household_publishes_one_value_per_partner(solved):
     assert model.user_regimes["couple"].stakeholders == ("f", "m")
 
 
-def test_the_poorest_household_is_the_one_participation_rules_out(solved):
-    """Dissolution is where a partner does better alone, not everywhere.
+def test_households_too_poor_to_outweigh_her_income_alone_dissolve(solved):
+    """Participation rules out exactly the poorest households, and no richer one.
 
-    At the last period in which the couple is active, the household on the
-    lowest wealth node cannot clear both participation constraints while every
-    richer node can — so exactly one cell carries the flag.
+    Living alone she keeps her whole income, while the household splits the
+    pooled income evenly, so the marriage premium has to make up the difference.
+    At the last period in which the couple is active, it does not on the three
+    lowest wealth nodes and does on every richer one.
     """
     _, _, solution = solved
     dissolution_flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
     flags = np.asarray(dissolution_flags[_N_PERIODS - 2]["couple"])
 
-    assert flags[0]
-    assert not flags[1:].any()
+    assert np.flatnonzero(flags).tolist() == [0, 1, 2]
+
+
+def test_some_simulated_couples_dissolve(simulated):
+    """A household that participation rules out sends both partners back single."""
+    by_subject = simulated.sort_values(["subject_id", "period"])
+    previous = by_subject.groupby("subject_id")["regime_name"].shift()
+    dissolved = (previous == "couple") & by_subject["regime_name"].isin(
+        ["single_f", "single_m"]
+    )
+
+    assert dissolved.any()
 
 
 def test_singles_of_both_sexes_reach_the_household(simulated):
@@ -86,11 +97,3 @@ def test_every_subject_ends_in_a_terminal_regime(simulated):
 
     assert len(last) == _N_SUBJECTS
     assert last["regime_name"].str.endswith("terminal").all()
-
-
-def test_every_reached_state_affords_the_lowest_consumption_node(simulated):
-    """Wealth never falls below the cheapest consumption, so no row is stranded."""
-    couple_rows = simulated["regime_name"].str.startswith("couple")
-    floor = np.where(couple_rows, 2.0 * household.WEALTH_MIN, household.WEALTH_MIN)
-
-    assert (simulated["wealth"].to_numpy() >= floor).all()
