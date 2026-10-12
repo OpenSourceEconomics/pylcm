@@ -53,9 +53,9 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         "simulation_adapter:initial_physical_transform_changed",
     }
     assert added_initial_controls <= historical
-    assert len(historical) == 570
-    assert len(historical - added_initial_controls) == 558
-    assert len(historical - added_initial_controls - added_feasibility_controls) == 556
+    assert len(historical) == 571
+    assert len(historical - added_initial_controls) == 559
+    assert len(historical - added_initial_controls - added_feasibility_controls) == 557
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
     assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 118
     original_corridor_sources = tuple(
