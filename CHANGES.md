@@ -5,12 +5,37 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Flow utility and continuation in policy lookup
+
+- `Model.lookup_policy(..., return_action_values=True)` also returns `U`, the flow
+  utility, and `CE`, the undiscounted certainty-equivalent continuation, per state row
+  and action, with the shape of `Q`. `Q == W(utility=U, CE=CE, ...)` for every Koopmans
+  aggregator, so `Q == U + discount_factor * CE` under `LinearAggregator`; a terminal
+  regime has `CE == 0`. `actions`, `value`, `Q`, `F`, `U` and `CE` come from one
+  evaluation of the regime's kernel.
+
+### Public `EULER_GAMMA` for location-0 taste shocks
+
+- `lcm.EULER_GAMMA` exports the Euler-Mascheroni constant. Adding
+  `scale * EULER_GAMMA` to utility turns pylcm's mean-zero taste shocks into
+  location-0 shocks under `LinearAggregator`.
+
+### Carrying a state to a regime that uses it counts as a use
+
+- A regime-level state that a regime only carries, with `fixed_transition` or any other
+  law of motion, toward a target it can reach is used when that target keeps the state.
+  The same rule already kept model-level states; both now share one closure. Chains
+  count, and a target reached only at ages the source never occupies does not. A
+  zero-weight read such as `0.0 * skill` is no longer needed to keep such a state. The
+  rejection message names the hand-over rule and the regimes the source can reach.
+
 ### Labelled profiles for age models
 
 - `TimeVarying.from_profile()` accepts `age_to_label`, mapping each model age to a
   source label. The result is labelled by age and serves models on an `AgeGrid`. Give
   exactly one of `period_to_label` and `age_to_label`; the validation is the same for
-  both, and age keys must be finite numbers. `period_to_label` is unchanged.
+  both, and age keys must be finite numbers. A non-integer period key, including a
+  boolean, raises `InvalidParamsError`, as it does for a `TimeVarying` coordinate.
 
 ### Independent runtime checks
 

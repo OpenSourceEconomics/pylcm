@@ -149,7 +149,15 @@ from _lcm.simulation.initial_conditions import (
 )
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.program_arguments import decision_arguments
-from _lcm.simulation.program_types import SimulationProgramExecutor
+from _lcm.simulation.program_types import (
+    ACTION_FEASIBILITY,
+    ACTION_INDEX,
+    ACTION_VALUES,
+    CONTINUATION_CE,
+    DECISION_VALUE,
+    FLOW_UTILITY,
+    SimulationProgramExecutor,
+)
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -957,6 +965,7 @@ class Model:
             ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
         )
+        # Removal is regime-local; initialization preserves names another regime keeps.
         self._transition_only_shock_names = frozenset(
             name for shocks in draw_only_processes.values() for name in shocks
         )
@@ -997,6 +1006,7 @@ class Model:
             broadcast_variables=broadcast_variables,
             ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
+            targets_by_regime=schedules.targets_by_regime,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
         )
@@ -3895,15 +3905,16 @@ class Model:
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
-            return_action_values: Whether to also return the action values `Q`
-                and their feasibility `F` over the (possibly restricted) action
-                grid, from the same decision program. Not supported for a
-                collective regime.
+            return_action_values: Whether to also return the action values `Q`,
+                their feasibility `F`, the flow utility `U` and the
+                certainty-equivalent continuation `CE` over the (possibly
+                restricted) action grid, all from the one kernel evaluation the
+                decision maximizes over. Not supported for a collective regime.
 
         Returns:
             The argmax action value per action name and the max of Q over the
             (possibly restricted) action grid, one entry per state row; with
-            `return_action_values`, also `Q` and `F`.
+            `return_action_values`, also `Q`, `F`, `U` and `CE`.
 
         """
         self._check_identity_runtime()
@@ -4106,17 +4117,18 @@ class Model:
                 ),
             )
             executor = unit
+        program = (
+            programs.action_values[period]
+            if return_action_values
+            else _with_action_extents(
+                program=programs.decision[period],
+                extents=tuple(len(grids[n]) for n in space.action_names),
+            )
+        )
         outputs = cast(
             "tuple[jax.Array, ...]",
             executor.dispatch(
-                program=(
-                    programs.action_values[period]
-                    if return_action_values
-                    else _with_action_extents(
-                        program=programs.decision[period],
-                        extents=tuple(len(grids[n]) for n in space.action_names),
-                    )
-                ),
+                program=program,
                 period=period,
                 n_subjects=n_rows,
                 arguments=decision_arguments(
@@ -4137,8 +4149,10 @@ class Model:
             # once, for the one row an empty query stands for; every output gets
             # that row here.
             outputs = tuple(output[None] for output in outputs)
-        indices, value = outputs[:2]
-        Q, F = outputs[2:] if return_action_values else (None, None)
+        # Both lookup programs publish a flat tuple, one role per output.
+        roles = cast("tuple[str, ...]", program.output_roles)
+        by_role = dict(zip(roles, outputs, strict=True))
+        indices, value = by_role[ACTION_INDEX], by_role[DECISION_VALUE]
         lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
         if unit is None or allocations is None:
             actions = _lookup_values_from_indices(
@@ -4166,7 +4180,14 @@ class Model:
             jax.block_until_ready(actions)
             unit.close()
         return _trim_lookup_rows(
-            lookup=PolicyLookup(actions=actions, value=value, Q=Q, F=F),
+            lookup=PolicyLookup(
+                actions=actions,
+                value=value,
+                Q=by_role.get(ACTION_VALUES),
+                F=by_role.get(ACTION_FEASIBILITY),
+                U=by_role.get(FLOW_UTILITY),
+                CE=by_role.get(CONTINUATION_CE),
+            ),
             n_rows=n_query_rows,
             allocations=allocations,
             unit=unit,
@@ -5057,6 +5078,8 @@ def _trim_lookup_rows(
             value=lookup.value[:n_rows],
             Q=None if lookup.Q is None else lookup.Q[:n_rows],
             F=None if lookup.F is None else lookup.F[:n_rows],
+            U=None if lookup.U is None else lookup.U[:n_rows],
+            CE=None if lookup.CE is None else lookup.CE[:n_rows],
         )
     return _admit_trimmed_lookup_rows(
         lookup=lookup,
@@ -5100,7 +5123,7 @@ def _admit_trimmed_lookup_rows(
                     call_roots=(
                         call_roots,
                         tuple(lookup.actions.values()),
-                        (lookup.value, lookup.Q, lookup.F),
+                        (lookup.value, lookup.Q, lookup.F, lookup.U, lookup.CE),
                         kept,
                     ),
                 ),
@@ -5118,6 +5141,8 @@ def _admit_trimmed_lookup_rows(
         value=trim(lookup.value),
         Q=None if lookup.Q is None else trim(lookup.Q),
         F=None if lookup.F is None else trim(lookup.F),
+        U=None if lookup.U is None else trim(lookup.U),
+        CE=None if lookup.CE is None else trim(lookup.CE),
     )
 
 
