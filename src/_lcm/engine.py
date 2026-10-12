@@ -530,6 +530,17 @@ class SolutionPhase:
     period `t`'s grid. `None` for age-invariant regimes (the base axis is used
     unchanged)."""
 
+    counts_raise_landings: bool = dataclasses.field(
+        default=False, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Whether the solve kernels count this regime's raw raise-rule landings.
+
+    Set for a regime whose value constraints or gated edges decide, only once
+    values are known, which actions and branches reach a landing. The kernel
+    counts those landings in the pass that takes the maximum, so the
+    transition preflight leaves the regime alone.
+    """
+
     @property
     def solves_from_continuation(self) -> bool:
         """Whether this regime's V is built from interpolated continuations.
