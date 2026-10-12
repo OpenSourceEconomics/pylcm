@@ -339,7 +339,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "4211ddf98911d0159742ffc6869cfd9b55a23d6ee630b040c227d85c55ffab43",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "f5183bfe44ea609e291dda99cbfc1e35972845e3ccfad23b2481128bc5109b6f",
     SUPPORT_DIAGNOSTICS_SOURCE: "ac67f8399f45bb0e2d270b62043f047d97736900ec62c0ae6cfccfee3070fcb5",
     SUPPORT_PRECONDITIONS_SOURCE: "52c97f5f2f6e9e3b6a7ac7215181874cef52948f613f59c270ef9638a51493ac",
     SUPPORT_AUTHORITY_SOURCE: "32647270dba80b48e33ecc27bb77609bf30d04a5b34b754b8a7340f208a8c9a0",
@@ -1533,7 +1533,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
-        "f38373edcbfca8693046b9a171a8ecf511abcb5c105191dbac2c8dd1c1284442",
+        "be9e5999aea8ecbf7d659130d542bf4be5b3b27444362714befcd73875bd260a",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "6dad8f387ecda88d9984797cdd8da57d2d4609201fe8b455c7fb6bc59a27e2d4",
@@ -1544,8 +1544,8 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_regime_probability_law": "45faf8cf57fd2fb8a754589d2edcda7a1eb82910c7dd4f3c9fc8115caf6728a1",
             "_check_and_release_regime_probability": "f54a64b0239559ff0527404fe7dcaaf0783361ee24d5bf628d971f8037873b4b",
             "_validate_regime_transition_probs": "403ad994ea48ce5ee2982ffe904f3d57adbd1039d8fe9056e989019d0af19749",
-            "validate_state_transitions_all_periods": "6309dd9cf4fce55766e6c21c70964ef0f66d62c580ccddd2d9f884f0644d362b",
-            "validate_joint_transitions_all_periods": "5f66840fc4fb41343f24822084cce6a8aac183f1b389b76be333c3d83d43a3ce",
+            "validate_state_transitions_all_periods": "835363237568754713af2b841349cb3f7e70e564d22ecb677788b0f2e2728423",
+            "validate_joint_transitions_all_periods": "27a6e3026d603052c37201fb8c406b4ca150c58ccbf0721db0ce698e1823dd90",
             "_own_transition_outputs": "3fbee994063b5cb63b318f51f35e7a88ada8a61ab8c9155867a54e9fd8b22a1e",
             "_set_transition_outputs": "fc03c7289678ba54ab855efb933f80ef877a071c2a2fb1566fc129053288a143",
             "_transition_owner_tree": "b977c18385d2630136d5e463d47786f1320862b7f58be015007eabbb19934bfb",
@@ -1556,7 +1556,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
             "_evaluate_joint_weights": "ad98e50978a61c64fc8e90ac84db7cb7cac6551491aceb3446dc352e38f8622d",
             "_joint_weight_law": "3ee7cd29818e915de77c8ed40d905b741912c49706cf76a3fd09a900d3c38fd9",
-            "_validate_state_transition_single": "441a9e31f06432159c8bf612c6b0085f016765dfb95efc0cc856efd16722d1d3",
+            "_validate_state_transition_single": "bd70fcd5f16e1fdaff02d044906eb873a8c732bb626e25e8144ced17510a1194",
             "_check_and_release_state_probability": "bbe5c53744d66283f4268a996341767fb18455c29017ca5bf6476e1f6ae1df6a",
             "_evaluate_state_probability_law": "91814f1439275d2c0af44fcff5cd2b6de9ce8f746a7b3945cf803120449e8e79",
             "_evaluate_admitted_transition_producer": "310d5e1a8e90866764775a44b77bed9103deac3a71b0ab01a75603f8206b7de0",
