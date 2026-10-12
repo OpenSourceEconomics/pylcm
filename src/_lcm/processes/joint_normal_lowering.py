@@ -144,11 +144,18 @@ def validate_joint_normal_params(
             )
         try:
             process.validate_mean(mean)
-            process.validate_covariance(cov)
+            zero_pivots = process.validate_covariance(cov)
         except GridInitializationError as error:
             raise InvalidParamsError(
                 f"Joint normal process '{group}' in regime '{regime_name}': {error}"
             ) from error
+        # Only a fixed covariance carries its exact zero pivots into the factor.
+        if process.cov is None and any(zero_pivots):
+            raise GridInitializationError(
+                f"Joint normal process '{group}' in regime '{regime_name}': the "
+                "runtime cov is singular. A singular covariance must be supplied "
+                "as the declaration's fixed cov."
+            )
 
 
 def lower_joint_normal_initial_conditions(
@@ -220,7 +227,10 @@ def lower_joint_normal_initial_conditions(
                 physical=physical.astype(float),
                 mean=mean.astype(float),
                 factor=np.asarray(
-                    compiled_covariance_factor(jnp.asarray(cov)), dtype=float
+                    compiled_covariance_factor(
+                        cov=jnp.asarray(cov), zero_pivots=process.fixed_zero_pivots()
+                    ),
+                    dtype=float,
                 ),
                 precision=float(np.finfo(cov.dtype).eps),
             )

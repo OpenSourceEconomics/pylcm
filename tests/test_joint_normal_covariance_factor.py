@@ -19,6 +19,7 @@ import pytest
 
 import lcm
 import lcm.typing
+from lcm.exceptions import GridInitializationError, InvalidInitialConditionsError
 
 
 def _dtype_and_extreme_exponent() -> tuple[type[np.floating], int]:
@@ -118,9 +119,9 @@ def test_scaled_and_permuted_quadrature_keeps_the_declared_covariance(
     for order in permutations(range(len(matrix))):
         reference = matrix[np.ix_(order, order)]
         scale, cov = _scaled_law(exponent_sign=exponent_sign, matrix=reference)
-        process = _process(cov=None, dimensions=len(matrix))
-        process.validate_covariance(cov)
-        nodes = np.asarray(jax.jit(process.compute_gridpoints)(cov=jnp.asarray(cov)))
+        # Several laws are singular, which only a fixed covariance may declare.
+        process = _process(cov=cov, dimensions=len(matrix))
+        nodes = np.asarray(jax.jit(process.compute_gridpoints)())
         normalized = nodes / scale
         weights = np.asarray(process.get_weights())
         np.testing.assert_allclose(
@@ -330,3 +331,138 @@ def test_simulation_publishes_the_supplied_physical_initial_state(
     frame = result.to_dataframe(use_labels=False)
     initial = frame.loc[frame["period"] == 0, ["x", "y"]].to_numpy() / scale
     np.testing.assert_array_equal(initial, ((0.0, 1.0),))
+
+
+def _exactly_singular_integer_covariances() -> tuple[np.ndarray, ...]:
+    """Return `M M^T` for integer 3x2 matrices `M` of rank two.
+
+    Each covariance has exact integer entries, positive leading pivots and an
+    exactly zero third pivot, so the declared law has no third direction. Products
+    and quotients of their entries round, which leaves a nonzero third residual in
+    an unguided elimination for about a quarter of them.
+    """
+    rng = np.random.default_rng(seed=1)
+    covariances = []
+    for _ in range(3000):
+        loadings = rng.integers(-7, 8, size=(3, 2))
+        cov = loadings @ loadings.T
+        first = Fraction(int(cov[0, 0]))
+        second = Fraction(int(cov[1, 1])) - (
+            Fraction(int(cov[1, 0])) ** 2 / first if first else Fraction(0)
+        )
+        if np.linalg.matrix_rank(loadings) == 2 and first > 0 and second > 0:
+            covariances.append(cov)
+    return tuple(covariances)
+
+
+_SINGULAR_COVARIANCES = _exactly_singular_integer_covariances()
+
+
+def test_fixed_singular_covariance_has_no_spurious_direction() -> None:
+    """A fixed exactly singular law maps the third coordinate to exactly zero."""
+    dtype, _ = _dtype_and_extreme_exponent()
+    spurious = []
+    for index, cov in enumerate(_SINGULAR_COVARIANCES):
+        process = _process(cov=cov.astype(dtype), dimensions=3)
+        image = np.asarray(process.transform(standard=jnp.asarray((0.0, 0.0, 1.0))))
+        if np.any(image != 0):
+            spurious.append(index)
+    assert spurious == []
+
+
+@lcm.categorical(ordered=False)
+class SingularRegimeId:
+    working: lcm.typing.ScalarInt
+    done: lcm.typing.ScalarInt
+
+
+def _three_shock_utility(
+    *,
+    x: lcm.typing.ContinuousState,
+    y: lcm.typing.ContinuousState,
+    z: lcm.typing.ContinuousState,
+) -> lcm.typing.FloatND:
+    return x + y + z
+
+
+def _three_shock_model(*, cov: np.ndarray | None) -> lcm.Model:
+    process = lcm.JointNormalIIDProcess(
+        states=("x", "y", "z"),
+        n_points=3,
+        gauss_hermite=True,
+        mean=(0.0, 0.0, 0.0),
+        cov=None if cov is None else tuple(tuple(float(v) for v in row) for row in cov),
+    )
+    regime = lcm.Regime(
+        states={"wages": process}, functions={"utility": _three_shock_utility}
+    )
+    return lcm.Model(
+        regimes={"working": regime, "done": regime},
+        n_periods=2,
+        regime_id_class=SingularRegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "working"}),
+        edges={"working": {"done": lcm.Periods(values=(0,))}},
+        fixed_params={"working": {"koopmans_aggregator": {"discount_factor": 0.9}}},
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+# Exactly singular, and its unguided elimination leaves a third pivot at either
+# precision.
+_SINGULAR = np.asarray(((10, 13, -5), (13, 25, 16), (-5, 16, 65)))
+
+
+@pytest.mark.parametrize(
+    "cov",
+    [
+        pytest.param(_SINGULAR, id="rank-two-3d"),
+        pytest.param(
+            np.asarray(((1, 1, 0), (1, 1, 0), (0, 0, 2))), id="rank-one-block"
+        ),
+    ],
+)
+def test_runtime_singular_covariance_is_refused_by_name(*, cov: np.ndarray) -> None:
+    """A singular runtime covariance names its group and asks for a fixed one."""
+    model = _three_shock_model(cov=None)
+    params = {
+        name: {"wages": {"cov": cov.astype(float)}} for name in ("working", "done")
+    }
+    with pytest.raises(GridInitializationError, match=r"'wages'.*singular.*fixed"):
+        model.solve(params=params, log_level="off")
+
+
+def test_runtime_positive_definite_covariance_is_accepted() -> None:
+    """A nonsingular runtime covariance solves and prices `E[x+y+z]=0`."""
+    model = _three_shock_model(cov=None)
+    cov = np.asarray(((4.0, 1.0, 0.0), (1.0, 2.0, 0.5), (0.0, 0.5, 3.0)))
+    params = {name: {"wages": {"cov": cov}} for name in ("working", "done")}
+    solution = model.solve(params=params, log_level="off")
+    lookup = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="working",
+        states={name: jnp.asarray((1.0,)) for name in ("x", "y", "z")},
+    )
+    np.testing.assert_allclose(lookup.value, (3.0,), atol=1e-5, rtol=0)
+
+
+def test_fixed_singular_law_refuses_an_off_support_initial_state() -> None:
+    """A physical point off the exact singular support is refused, not lowered."""
+    model = _three_shock_model(cov=_SINGULAR)
+    solution = model.solve(params={}, log_level="off")
+    # (x, y) = (0, 0) forces z = 0 on the support; z = 0.5 lies off it.
+    with pytest.raises(InvalidInitialConditionsError, match="singular"):
+        model.simulate(
+            params={},
+            solution=solution,
+            initial_conditions={
+                "x": jnp.asarray((0.0,)),
+                "y": jnp.asarray((0.0,)),
+                "z": jnp.asarray((0.5,)),
+                "period": jnp.zeros(1, dtype=jnp.int32),
+                "regime_id": jnp.zeros(1, dtype=jnp.int32),
+            },
+            seed=521,
+            log_level="off",
+        )
