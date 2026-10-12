@@ -83,11 +83,13 @@ from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import (
     LotteryLifetime,
+    TargetTransitionPlans,
     TransitionLotteryInfo,
     declared_law_over_codes,
 )
 from _lcm.typing import (
     ArrayTree,
+    ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionArg,
     EconFunctionKwargs,
@@ -438,10 +440,18 @@ def validate_off_grid_transitions(
                     grids = {
                         state: grid
                         for state, grid in target_phase.grids.items()
-                        if state in phase.transition_plans[target].outputs
+                        if state in target_phase.state_names
                         and isinstance(grid, ContinuousGrid)
                         and not isinstance(grid, _ContinuousStochasticProcess)
                         and (checked or grid.off_grid == "raise")
+                    }
+                    if not grids:
+                        continue
+                    plan = phase.transition_plans[target]
+                    grids = {
+                        state: grid
+                        for state, grid in grids.items()
+                        if state in plan.outputs
                     }
                     if not grids:
                         continue
@@ -515,9 +525,71 @@ def _off_grid_target_counts(
     )
     space = _state_action_space_for_period(regime=regime, base=base, period=period)
     functions, constraints = phase.feasibility_pools_by_period[period]
-    feasibility = _get_feasibility(functions=functions, constraints=constraints)
     plan = phase.transition_plans[target]
     bundle = phase.transitions[target]
+    memory = None if summary is None else summary.memory
+    builder_inputs = {
+        "functions": functions,
+        "constraints": constraints,
+        "bundle": bundle,
+        "transition_plans": phase.transition_plans,
+        "target": target,
+        "law": law,
+        "states": tuple(points),
+    }
+    point_call = (
+        _build_off_grid_cell(**builder_inputs)
+        if memory is None
+        else memory.producers.built(builder=_build_off_grid_cell, **builder_inputs)
+    )
+    available = {**space.states, **space.actions}
+    if phase is regime.simulation:
+        available |= dict(_phase_extra_grids(regime=regime, phase="simulate"))
+    function = partial(
+        _off_grid_counts_law, grid_names=tuple(available), func=point_call
+    )
+    scalar_kwargs = MappingProxyType(
+        {
+            **regime.resolved_fixed_params,
+            **params,
+            "age": ages.values[period],  # noqa: PD011
+            "period": jnp.int32(period),
+            **{f"__off_grid_points_{state}": nodes for state, nodes in points.items()},
+            **{
+                f"__off_grid_nodes_{name}": target_axes[name.removeprefix("next_")]
+                for name, lottery in plan.lotteries.items()
+                if lottery.support_provider_name is None
+            },
+        }
+    )
+    arguments = {"grid_args": available, "scalar_kwargs": scalar_kwargs}
+    return (
+        function(grid_args=available, scalar_kwargs=scalar_kwargs)
+        if memory is None
+        else cast(
+            "IntND",
+            _evaluate_admitted_transition_producer(
+                function=function,
+                arguments=arguments,
+                memory=memory,
+            ),
+        )
+    )
+
+
+def _build_off_grid_cell(
+    *,
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    transition_plans: TargetTransitionPlans,
+    target: RegimeName,
+    law: RegimeTransitionFunction,
+    states: tuple[StateName, ...],
+) -> Callable[..., IntND]:
+    """Compose a model-owned cell while leaving all numerical nodes as operands."""
+    feasibility = _get_feasibility(functions=functions, constraints=constraints)
+    plan = transition_plans[target]
     lotteries = tuple(plan.lotteries)
     support_names = MappingProxyType(
         {
@@ -527,7 +599,7 @@ def _off_grid_target_counts(
         }
     )
     raw_reader = _OffGridNode(
-        states=tuple(points),
+        states=states,
         lotteries=tuple(
             (name, lottery.weight_name) for name, lottery in plan.lotteries.items()
         ),
@@ -537,15 +609,14 @@ def _off_grid_target_counts(
         bundle=bundle,
         functions=functions,
         stochastic_names=lotteries,
-        draw_dependent_names=tuple(f"next_{name}" for name in points),
-        node_values=MappingProxyType(
+        draw_dependent_names=tuple(f"next_{name}" for name in states),
+        node_values=MappingProxyType({}),
+        support_provider_names=MappingProxyType(
             {
-                name: target_axes[name.removeprefix("next_")]
+                name: support_names.get(name, f"__off_grid_nodes_{name}")
                 for name in lotteries
-                if name not in support_names
             }
         ),
-        support_provider_names=support_names,
     )
     reader = (
         productmap(
@@ -565,9 +636,9 @@ def _off_grid_target_counts(
         regime_name=target,
         functions=functions,
         transitions=bundle,
-        transition_plans=phase.transition_plans,
+        transition_plans=transition_plans,
     )
-    point_call = _OffGridCell(
+    return _OffGridCell(
         next_inputs=_NamedArgumentsCall(
             func=next_inputs, names=frozenset(inspect.signature(next_inputs).parameters)
         ),
@@ -585,35 +656,6 @@ def _off_grid_target_counts(
         ),
         target=target,
         n_lotteries=len(lotteries),
-    )
-    available = {**space.states, **space.actions}
-    if phase is regime.simulation:
-        available |= dict(_phase_extra_grids(regime=regime, phase="simulate"))
-    function = partial(
-        _off_grid_counts_law, grid_names=tuple(available), func=point_call
-    )
-    scalar_kwargs = MappingProxyType(
-        {
-            **regime.resolved_fixed_params,
-            **params,
-            "age": ages.values[period],  # noqa: PD011
-            "period": jnp.int32(period),
-            **{f"__off_grid_points_{state}": nodes for state, nodes in points.items()},
-        }
-    )
-    arguments = {"grid_args": available, "scalar_kwargs": scalar_kwargs}
-    memory = None if summary is None else summary.memory
-    return (
-        function(grid_args=available, scalar_kwargs=scalar_kwargs)
-        if memory is None
-        else cast(
-            "IntND",
-            _evaluate_admitted_transition_producer(
-                function=function,
-                arguments=arguments,
-                memory=memory,
-            ),
-        )
     )
 
 
