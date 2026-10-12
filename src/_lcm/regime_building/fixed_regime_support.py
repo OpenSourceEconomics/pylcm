@@ -41,6 +41,7 @@ from _lcm.typing import (
     EconFunctionArg,
     FlatParams,
     FlatRegimeParams,
+    HostArray,
     ParamsLeaf,
     QualifiedName,
     RegimeName,
@@ -68,6 +69,12 @@ type Side = Literal["solve", "simulate"]
 # phases, or a `Phased` pair of kernels.
 type _JointDeclaration = JointTransition | Phased
 type _JointDeclarations = Mapping[RegimeName, Mapping[str, _JointDeclaration]]
+
+
+# A value flowing through a fixed DAG: a parameter leaf, or whatever a user function
+# returns, including host NumPy scalars and arrays. Host values keep their own dtype
+# until the exact-zero decision, so a positive value is never rounded to zero first.
+type _FixedValue = EconFunctionArg | HostArray | np.generic
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -473,9 +480,9 @@ def _evaluate_fixed_function(
     regime: UserRegime,
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     ancestors: tuple[str, ...],
-) -> tuple[EconFunctionArg, frozenset[str]] | None:
+) -> tuple[_FixedValue, frozenset[str]] | None:
     """Evaluate a complete fixed DAG, or retain an unresolved conditional edge."""
-    arguments: dict[ReferenceName, EconFunctionArg] = {}
+    arguments: dict[ReferenceName, _FixedValue] = {}
     keys: set[str] = set()
     for arg_name, parameter in inspect.signature(func).parameters.items():
         if parameter.kind not in (
@@ -503,7 +510,7 @@ def _evaluate_fixed_function(
         # The ordinary compilation/evaluation route owns errors in a user law.
         # Failed evaluation proves no structural zero.
         return None
-    if not isinstance(value, Array | float | int):
+    if not isinstance(value, Array | np.ndarray | np.generic | float | int):
         # Only a numeric value can prove a structural zero.
         return None
     return value, frozenset(keys)
@@ -517,7 +524,7 @@ def _resolve_fixed_argument(
     regime: UserRegime,
     fixed_flat: Mapping[QualifiedName, UserParamsLeaf],
     ancestors: tuple[str, ...],
-) -> tuple[EconFunctionArg, frozenset[str]] | None:
+) -> tuple[_FixedValue, frozenset[str]] | None:
     """Resolve one argument through its helper DAG or a fixed parameter leaf.
 
     `path` is the params path of the callable reading the argument: a regime

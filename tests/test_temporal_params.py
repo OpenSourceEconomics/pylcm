@@ -619,13 +619,15 @@ def test_economic_profile_mapping_is_explicit_and_differentiable() -> None:
     )
 
 
-@pytest.mark.parametrize("labels", [(3, 9), (3, 3)])
+@pytest.mark.parametrize(
+    ("labels", "error"), [((3, 9), "missing"), ((3, 3, 4), "duplicate")]
+)
 def test_economic_profile_mapping_rejects_missing_or_duplicate_selected_labels(
-    labels: tuple[int, ...],
+    *, labels: tuple[int, ...], error: str
 ) -> None:
-    with pytest.raises(ValueError, match=r"missing|duplicate"):
+    with pytest.raises(ValueError, match=error):
         lcm.TimeVarying.from_profile(
-            values=jnp.array([5.0, 10.0]),
+            values=jnp.arange(len(labels), dtype=float),
             labels=labels,
             period_to_label={0: 3, 1: 4},
         )
@@ -665,15 +667,41 @@ def test_profile_requires_exactly_one_time_mapping(mappings: str) -> None:
         )
 
 
-@pytest.mark.parametrize("labels", [(41, 99), (41, 41)])
+@pytest.mark.parametrize(
+    ("labels", "error"), [((41, 99), "missing"), ((41, 41, 42), "duplicate")]
+)
 def test_age_profile_mapping_rejects_missing_or_duplicate_selected_labels(
-    labels: tuple[int, ...],
+    *, labels: tuple[int, ...], error: str
 ) -> None:
-    with pytest.raises(ValueError, match=r"missing|duplicate"):
+    with pytest.raises(ValueError, match=error):
         lcm.TimeVarying.from_profile(
-            values=jnp.array([5.0, 10.0]),
+            values=jnp.arange(len(labels), dtype=float),
             labels=labels,
             age_to_label={40: 41, 41: 42},
+        )
+
+
+@pytest.mark.parametrize("clock", ["period", "age"])
+def test_profile_mapping_ignores_duplicates_among_unused_labels(clock: str) -> None:
+    mapping = {"period_to_label": {0: 41, 1: 42}, "age_to_label": {40: 41, 41: 42}}
+    profile = lcm.TimeVarying.from_profile(
+        values=jnp.array([1.0, 2.0, 8.0, 9.0]),
+        labels=(41, 42, 99, 99),
+        **{f"{clock}_to_label": mapping[f"{clock}_to_label"]},
+    )
+    np.testing.assert_array_equal(profile.values, [1.0, 2.0])
+
+
+@pytest.mark.parametrize("clock", ["period", "age"])
+def test_profile_mapping_rejects_a_leading_axis_longer_than_its_labels(
+    clock: str,
+) -> None:
+    mapping = {"period_to_label": {0: 41, 1: 42}, "age_to_label": {40: 41, 41: 42}}
+    with pytest.raises(ValueError, match="leading axis"):
+        lcm.TimeVarying.from_profile(
+            values=jnp.array([1.0, 2.0, 3.0]),
+            labels=(41, 42),
+            **{f"{clock}_to_label": mapping[f"{clock}_to_label"]},
         )
 
 

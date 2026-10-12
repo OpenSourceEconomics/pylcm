@@ -7,7 +7,6 @@ they are re-exported here so engine-internal code can import everything from
 `_lcm.typing`.
 """
 
-import types
 from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import Field
 from types import MappingProxyType
@@ -16,7 +15,6 @@ from typing import (
     ClassVar,
     Literal,
     Protocol,
-    TypeAliasType,
     runtime_checkable,
 )
 
@@ -344,9 +342,9 @@ else:
     # `object()` sentinels), so the claw accepts any child.
     type PytreeChild = object
 
-# A runtime annotation object: a class, a `type` alias, a subscripted generic, an
-# `X | Y` union, or a string forward reference.
-type AnnotationForm = type | TypeAliasType | types.GenericAlias | types.UnionType | str  # noqa: PAN006 - an annotation may name any class
+# A runtime annotation object. Python admits any value as an annotation, including
+# `Annotated` and `Literal` forms, so each consumer classifies the forms it reads.
+type AnnotationForm = object  # noqa: PAN001 - an annotation may be any expression's value, and `Annotated` metadata any object
 
 # Shardings laid out like the tree they place.
 type ShardingTree = (
