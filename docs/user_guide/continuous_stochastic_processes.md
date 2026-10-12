@@ -366,6 +366,13 @@ nothing but its conditioners, the draws, the period or age, and parameters. Each
 conditioner is a function or discrete variable of the source with the finite support
 given; declared conditioners the shock does not read are ignored.
 
+Precomputation admits the exact `LinSpacedGrid` and `IrregSpacedGrid` classes for the
+target's shocked state. Their interpolation and extrapolation are linear in the physical
+state between the represented knots and along the endpoint segments. Other grids,
+including `LogSpacedGrid`, piecewise grids and custom subclasses, retain ordinary
+outcome enumeration. This preserves their existing coordinate semantics, including
+extrapolation outside the target grid.
+
 Eligibility uses the exact `LinearExpectation` class, rather than its subclasses.
 `PowerMean`, `QuasiArithmeticMean`, and custom certainty equivalents retain ordinary
 outcome enumeration, including subclasses of `LinearExpectation` that override its

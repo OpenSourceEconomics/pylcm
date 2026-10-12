@@ -71,7 +71,7 @@ class _ClosureKwargs(TypedDict):
     ages: None
     active_periods_by_regime: None
     visited_periods_by_regime: None
-    targets_by_regime: None
+    targets_by_phase: None
 
 
 _IMMUTABLE = (MappingProxyType, tuple, frozenset)
@@ -103,7 +103,7 @@ def _regime_cases(model: Model) -> dict[str, Callable[[], Sized]]:
         "ages": None,
         "active_periods_by_regime": None,
         "visited_periods_by_regime": None,
-        "targets_by_regime": None,
+        "targets_by_phase": None,
     }
     return {
         "valuation_roots": lambda: _valuation_roots(
