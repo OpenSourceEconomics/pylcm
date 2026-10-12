@@ -57,9 +57,15 @@ def clip_next_states(
     regime_ids: RegimeNamesToIds,
     logger: logging.Logger,
     subjects: Bool1D,
+    genuine: np.ndarray,
     memory: SimulationMemory | None,
 ) -> StatesPerRegime:
-    """Check raw realized states before applying explicit economic state clipping."""
+    """Check raw realized states before applying explicit economic state clipping.
+
+    `subjects` selects the rows this source advances; `genuine` additionally marks
+    the rows that stand for a distinct real subject, so alignment and grouping
+    duplicates are advanced and clipped but never counted.
+    """
     points: dict[RegimeName, dict[StateName, Float1D]] = {}
     for target in targets:
         regime = regimes[target]
@@ -88,7 +94,7 @@ def clip_next_states(
                         arguments={
                             "values": states[target][name],
                             "points": nodes,
-                            "subjects": subjects,
+                            "subjects": subjects & genuine,
                             "new_regime_ids": new_regime_ids,
                             "target_id": regime_ids[target],
                         },
