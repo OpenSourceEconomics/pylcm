@@ -426,8 +426,8 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
     ENGINE_SOURCE: "1a31f2797a8c8f519a5c7ebe0ba5a2fdf8f1dd52b24cd1f6ce33ae1c5fb3ab11",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
-    SIMULATION_SOURCE: "9444e6cc80def18c3b54f790c2d264c6cd4654e36e8e8083f612bf4e233e576f",
-    SIMULATION_TRANSITIONS_SOURCE: "ec11a592c7d74faaa92f843e10779514ccb35529d1ed4ec4ee46459e745d3038",
+    SIMULATION_SOURCE: "daf6a5ac77dfc9ccc0dd23810bd02557d4206f9a40f55cb8a383b98be431f24a",
+    SIMULATION_TRANSITIONS_SOURCE: "5a037dbba28b1096e39747083413f8ab89507f735cb0e3732a3f02c64021d87f",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "b2892420fcead4cbcb5282a5985ff563ac30cf3ff448df3d0f94a38599157357",
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
@@ -976,10 +976,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "c95e08787951f32f3809550a160c51f13c8f4e0875e669894dcad31f4c870ecf",
+        "e4820f759173daceab6926e17d0544b7c4c742c9faf4561354b71abe6bc3bf96",
         {
             "simulate": "2297e57405cff8011fe309ca1d93c4d9dc3af1212c698afc47c292c79fdc53f7",
-            "_simulate_regime_in_period": "ad50db2cff9ebab79be49136b8173d396920260168a6a0953b3f2ab2125858fc",
+            "_simulate_regime_in_period": "6ceeb0e08cc988e05d20277501a76d780284fc0b1e091951c6b28e63e5a49dc9",
             "_execute_finite_replay": "8fbb9dc117de1e2154984bbc79668966690ed60572129e2d46a376e02a60d1d9",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
             "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
@@ -1394,7 +1394,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_TRANSITIONS_SOURCE: (
-        "5af68d6cab8763adf24cc57362034b47abc2edd604d4a1b1185a79d621ec24ae",
+        "c7113abeb6e76e517fec01ee41144b6c2aa332ca4496d6d220b4afb53c3a1fe3",
         {
             "_draw_random_regime_ids_from_scalars": "548fcaf12654d05a584fabee3fbd81fe42ad256307d5ea4df826cb3ae3355a5a",
             "draw_key_from_dict": "9dfed8dafa357fa87cde342dc7f174028e4adf8454b5906a4e0d24bee164cdae",

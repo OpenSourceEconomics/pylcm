@@ -788,3 +788,121 @@ def test_budgeted_counts_read_changed_node_operands_on_the_same_model() -> None:
             np.testing.assert_array_equal(counts, [[expected, 0]])
         finally:
             summary.close()
+
+
+def _advance_one(x: ContinuousState) -> FloatND:
+    return x + 1.0
+
+
+def _zero_utility(x: ContinuousState) -> FloatND:
+    return 0.0 * x
+
+
+_SUBJECT_LAYOUTS = pytest.mark.parametrize(
+    ("n_subjects", "subject_width"),
+    [
+        pytest.param(1, 2, id="one-subject-width-clamps"),
+        pytest.param(2, 1, id="two-subjects-unit-width"),
+        pytest.param(2, 3, id="two-subjects-width-clamps"),
+        pytest.param(3, 2, id="three-subjects-one-pad-row"),
+        pytest.param(4, 2, id="four-subjects-exact-multiple"),
+        pytest.param(5, 4, id="five-subjects-three-pad-rows"),
+        pytest.param(6, 4, id="six-subjects-two-pad-rows"),
+        pytest.param(7, 3, id="seven-subjects-two-pad-rows"),
+        pytest.param(8, 3, id="eight-subjects-one-pad-row"),
+        pytest.param(8, 4, id="eight-subjects-exact-multiple"),
+        pytest.param(3, 0, id="three-subjects-unbatched"),
+        pytest.param(8, 0, id="eight-subjects-unbatched"),
+    ],
+)
+
+
+def _simulate_every_subject_off_grid(
+    *, n_subjects: int, subject_width: int, caplog: pytest.LogCaptureFixture
+) -> tuple[pd.DataFrame, list[int]]:
+    """Simulate distinct dyadic subjects that all leave `[0, 1]` once.
+
+    Returns the public panel and the realized `alive -> terminal` counts.
+    """
+    grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"x": grid},
+                functions={"utility": _zero_utility},
+                state_transitions={"x": _advance_one},
+            ),
+            "terminal": Regime(states={"x": grid}, functions={"utility": _terminal_x}),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
+        regime_id_class=RegimeId,
+        execution_config=ExecutionConfig(
+            device_memory_bytes=None,
+            axis_widths={} if subject_width == 0 else {"subject": subject_width},
+        ),
+    )
+    params = {"discount_factor": 1.0}
+    solution = model.solve(params=params, log_level="off")
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        frame = model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "age": jnp.zeros(n_subjects),
+                "regime_id": jnp.full(n_subjects, RegimeId.alive),
+                "x": jnp.arange(1, n_subjects + 1) / 8.0,
+            },
+            runtime_checks=True,
+            log_level="warning",
+            seed=0,
+        ).to_dataframe(use_labels=False)
+    counts = [
+        int(message.rsplit("count=", 1)[1])
+        for record in caplog.records
+        if "Off-grid next states:" in (message := record.getMessage())
+        and "phase='realized'" in message
+        and "target='terminal'" in message
+    ]
+    return frame, counts
+
+
+def _terminal_x(x: ContinuousState) -> FloatND:
+    return x**2
+
+
+@_SUBJECT_LAYOUTS
+def test_realized_off_grid_count_includes_each_genuine_subject_once(
+    *, n_subjects: int, subject_width: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Synthetic alignment rows never add to the realized exterior count."""
+    _, counts = _simulate_every_subject_off_grid(
+        n_subjects=n_subjects, subject_width=subject_width, caplog=caplog
+    )
+    assert sum(counts) == n_subjects
+
+
+@_SUBJECT_LAYOUTS
+def test_realized_off_grid_panel_keeps_raw_states_in_subject_order(
+    *, n_subjects: int, subject_width: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The public panel holds every genuine subject's raw exterior handoff once."""
+    frame, _ = _simulate_every_subject_off_grid(
+        n_subjects=n_subjects, subject_width=subject_width, caplog=caplog
+    )
+    initial = np.arange(1, n_subjects + 1) / 8.0
+    expected = pd.DataFrame(
+        {
+            "subject_id": np.repeat(np.arange(n_subjects), 2),
+            "period": np.tile([0, 1], n_subjects),
+            "x": np.column_stack((initial, initial + 1.0)).reshape(-1),
+        }
+    )
+    pd.testing.assert_frame_equal(
+        frame[["subject_id", "period", "x"]].reset_index(drop=True),
+        expected,
+        check_dtype=False,
+        check_exact=True,
+    )

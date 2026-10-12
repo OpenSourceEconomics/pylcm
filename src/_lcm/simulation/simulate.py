@@ -2132,6 +2132,12 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             regime_ids=regime_names_to_ids,
             logger=logger,
             subjects=subject_ids_in_regime,
+            genuine=_genuine_rows(
+                subject_slice=subject_slice,
+                n_real=n_subjects
+                if original_n_subjects is None
+                else original_n_subjects,
+            ),
             memory=memory,
         )
 
@@ -4266,6 +4272,18 @@ def _resources_at_subjects(
         ),
         (n_subjects,),
     )
+
+
+def _genuine_rows(*, subject_slice: slice | SubjectRows, n_real: int) -> np.ndarray:
+    """Mark the chunk rows that stand for a distinct real subject.
+
+    An ungrouped chunk's rows at or past `n_real` are alignment copies of the
+    last subject; a grouped chunk's short tail repeats its last original row.
+    """
+    if isinstance(subject_slice, SubjectRows):
+        rows = subject_slice.rows
+        return np.concatenate(([True], rows[1:] != rows[:-1]))
+    return np.arange(subject_slice.start, subject_slice.stop) < n_real
 
 
 def _first_empty_action_row(*, indices: IntND, in_regime: BoolND) -> IntND:
