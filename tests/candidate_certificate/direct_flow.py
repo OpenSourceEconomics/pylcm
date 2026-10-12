@@ -431,7 +431,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "b2892420fcead4cbcb5282a5985ff563ac30cf3ff448df3d0f94a38599157357",
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
-    BACKWARD_INDUCTION_SOURCE: "844a956a46a68049150a8232957c01b836bae8cc5977673a09a91db226cd8499",
+    BACKWARD_INDUCTION_SOURCE: "3080de0da5669997f55534688ac857644246fc214efb2ec6817da1d2a990756c",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
     INITIAL_CONDITIONS_SOURCE: "4ae36ff404fc367ed266c1b894af46cf5ba24323e70a968398181b052bd7b446",
     RESULT_SOURCE: "90aef72078273514aab54a02db61791a1644cead6c5d1c5db3a08822996583bf",
@@ -1141,7 +1141,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_attach_resolved_output_layout": "86b17ee66949cdc2a0751de70bf01eae7498333b18d9252d0c969e272498069c",
             "_publish_kernel_value": "50d720543d37adaae9c5e8799d72306ab1456d98ce590b3083b0d501d97e3516",
             "_resident_bytes_by_triple": "b87b5df2ce91647adf464bf2175d9453c186c1c65a7cc7e54ff6967dc015aa1d",
-            "_resident_inventory_by_triple": "17e58bb6b445235b0bebcff0915bef92a8795838b7f0e5371553492de8586396",
+            "_resident_inventory_by_triple": "9af4d09e320a0cdb362f10cafb326ef4d8f66fe0047bc743e459cedbc52dc15c",
             "_candidate_resident_bytes": "ac8b5a9aad74d28aa50407882824f567314e9a582dc47b60766eef33686689df",
             "_compiler_reads_source": "3a1099c48958b2a5ec59affe0d9cf0dc179d773c8e96e9fcf821526572f23439",
             "_period_copy_reservations": "4bf41c2f458b194cef80ab182a8b9e3db392353ae606828c3699b07c0c63a831",
@@ -3387,15 +3387,56 @@ _STREAMED_MAX_BUILDER_PINS = _callable_pins(
 
 def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
     """Pin streamed VALUE production, optional folding, and fail-closed boundaries."""
-    return _exact_callable_errors(
+    errors = _exact_callable_errors(
         tree=tree,
         label="streamed max-Q builder",
         contracts=_STREAMED_MAX_BUILDER_PINS,
     )
+    try:
+        _, folded = _method_definition(
+            tree=tree, class_name="_FoldedMaxQOverA", method_name="__call__"
+        )
+    except ValueError as error:
+        return [*errors, f"streamed max-Q builder: {error}"]
+    if not _body_matches(
+        node=folded,
+        expected_source="""out = self.mapped(
+    next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+)
+if self.return_feasibility:
+    V_arr, empty = cast("tuple[FloatND, BoolND]", out)
+else:
+    V_arr = cast("FloatND", out)
+    empty = None
+for name, axis, conditioning_axis in self.fold_steps:
+    weights = self.fold_weights[name]
+    if conditioning_axis is not None:
+        weights = _broadcast_conditioned_rows(
+            rows=weights,
+            conditioning_axis=conditioning_axis,
+            fold_axis=axis,
+            shape=V_arr.shape,
+        )
+    if empty is not None:
+        if weights.ndim == 1:
+            weight_shape = [1] * V_arr.ndim
+            weight_shape[axis] = weights.shape[0]
+            support = weights.reshape(weight_shape) > 0
+        else:
+            support = weights > 0
+        empty = jnp.any(empty & support, axis=axis)
+    V_arr = self.fold_reducers[name](a=V_arr, axis=axis, weights=weights)
+return V_arr if empty is None else (V_arr, empty)
+""",
+    ):
+        errors.append(
+            "streamed max-Q builder: folded value or support transport changed"
+        )
+    return errors
 
 
 def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
-    """Pin the five max-Q kernel classes to fields, one ``__call__``, and no more.
+    """Pin the six max-Q kernel classes to fields, one ``__call__``, and no more.
 
     Every corridor above reads the reduction out of a kernel's ``__call__`` and
     its operands out of ``self.<field>``. A property, a descriptor, or a
@@ -3441,6 +3482,17 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "action_width_keyword: str",
                 "whole_product_Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
                 "return_feasibility: bool = False",
+            ),
+        ),
+        (
+            "folded max-Q kernel",
+            "_FoldedMaxQOverA",
+            (
+                "mapped: Callable[..., FloatND | tuple[FloatND, BoolND]]",
+                "fold_steps: tuple[tuple[StateName, int, int | None], ...]",
+                "fold_weights: Mapping[StateName, FloatND]",
+                "fold_reducers: Mapping[StateName, Callable[..., FloatND]]",
+                "return_feasibility: bool",
             ),
         ),
         (

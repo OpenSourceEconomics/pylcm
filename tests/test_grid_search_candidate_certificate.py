@@ -759,6 +759,73 @@ def test_structural_blueprint_mutation_is_rejected(*, tmp_path: Path, mutation: 
     assert result["offending_paths"] == [_STRUCTURAL_BLUEPRINT_SOURCE]
 
 
+_MAX_Q_SOURCE = "src/_lcm/regime_building/max_Q_over_a.py"
+_FOLDED_BODY_MUTATIONS = {
+    "width_forwarding_filtered": (
+        (
+            "        out = self.mapped(\n"
+            "            next_regime_to_V_arr=next_regime_to_V_arr, "
+            "**states_actions_params\n"
+            "        )"
+        ),
+        (
+            "        out = self.mapped(\n"
+            "            next_regime_to_V_arr=next_regime_to_V_arr,\n"
+            "            **{\n"
+            "                name: value\n"
+            "                for name, value in states_actions_params.items()\n"
+            "                if name != '_lcm_action_block_width'\n"
+            "            },\n"
+            "        )"
+        ),
+    ),
+    "published_value_changed": (
+        "return V_arr if empty is None else (V_arr, empty)",
+        "return -V_arr if empty is None else (-V_arr, empty)",
+    ),
+    "empty_support_dropped": (
+        "empty = jnp.any(empty & support, axis=axis)",
+        "empty = jnp.any(empty, axis=axis)",
+    ),
+}
+
+
+@pytest.mark.parametrize("mutation", tuple(_FOLDED_BODY_MUTATIONS))
+def test_folded_kernel_mutation_is_rejected_after_byte_reseal(
+    *, mutation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resealing the source bytes cannot hide a changed folded-kernel body."""
+    root = _SRC_ROOT.parent
+    marker, replacement = _FOLDED_BODY_MUTATIONS[mutation]
+    source = (root / _MAX_Q_SOURCE).read_text(encoding="utf-8")
+    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
+    for relative in sources:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            source.replace(marker, replacement, 1)
+            if relative == _MAX_Q_SOURCE
+            else (root / relative).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(
+        "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
+        {
+            relative: hashlib.sha256((tmp_path / relative).read_bytes()).hexdigest()
+            for relative in sources
+        },
+    )
+
+    result = verify_direct_candidate_flow(repo_root=tmp_path)
+
+    assert (
+        source.count(marker),
+        any("source seal mismatch" in error for error in result["errors"]),
+        result["offending_paths"],
+        any("streamed max-Q builder" in error for error in result["errors"]),
+    ) == (1, False, [_MAX_Q_SOURCE], True)
+
+
 def test_streamed_reducer_sources_are_literal_certificate_obligations():
     """The generated inventory owns every live streamed transport helper."""
     assert isinstance(_parse("src/_lcm/execution/core_program.py"), ast.Module)
