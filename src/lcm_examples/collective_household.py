@@ -61,6 +61,11 @@ WEALTH_MIN = 1.0
 # Highest wealth node.
 WEALTH_MAX = 20.0
 
+# Income each person receives every period. Equal to the lowest consumption
+# node, so wealth carried forward never falls below it: every reached state,
+# single or couple, affords at least one consumption choice.
+INCOME = WEALTH_MIN
+
 # Chance a single meets a partner in a period, before consent is decided.
 MEETING_PROBABILITY = 0.4
 
@@ -313,7 +318,7 @@ def get_model(
 def get_params(
     *,
     discount_factor: float = 0.95,
-    marriage_premium: float = 1.0,
+    marriage_premium: float = 0.75,
     interest_rate: float = 0.03,
     participation_slack: float = 0.0,
 ) -> dict[str, UserParamsNode]:
@@ -417,20 +422,20 @@ def _terminal_utility_collective(consumption: ContinuousAction) -> FloatND:
 def _next_single_wealth(
     *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
 ) -> ContinuousState:
-    return (1.0 + interest_rate) * (wealth - consumption)
+    return (1.0 + interest_rate) * (wealth - consumption) + INCOME
 
 
 def _pooled_wealth(
     *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
 ) -> ContinuousState:
-    """Household wealth on entry: two partners' savings, pooled."""
-    return 2.0 * (1.0 + interest_rate) * (wealth - consumption)
+    """Household wealth on entry: two partners' savings and incomes, pooled."""
+    return 2.0 * ((1.0 + interest_rate) * (wealth - consumption) + INCOME)
 
 
 def _next_couple_wealth(
     *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
 ) -> ContinuousState:
-    return (1.0 + interest_rate) * (wealth - consumption)
+    return (1.0 + interest_rate) * (wealth - consumption) + 2.0 * INCOME
 
 
 def _consumption_within_single_wealth(
