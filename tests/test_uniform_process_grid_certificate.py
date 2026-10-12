@@ -42,14 +42,14 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
         for name, spec in registered.items()
         if not name.startswith("simulation_adapter:initial_physical_")
     }
-    assert len(historical) == 408
+    assert len(historical) == 409
     assert (
         _name_digest(historical)
-        == "d27d7bdcb349eea62f44ad1a559abc676746e025ded98e52b42770564c6807b2"
+        == "3c5fdaf1c4a0eb22ad92ac592d4ca84cef0c97a4b94bc525a7f8592d886880a7"
     )
-    assert len(registered) == 420
+    assert len(registered) == 421
     assert _name_digest(registered) == (
-        "2ce1ac92a6e3cefa1c4c6b70ff0eab3139be5a3aa3ab7a2efa6d143b09be8808"
+        "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
     )
     assert len(supplemental) == 54
     assert _name_digest(supplemental) == (

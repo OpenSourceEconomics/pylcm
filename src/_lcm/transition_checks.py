@@ -471,7 +471,12 @@ def validate_off_grid_transitions(
     process_grid_resolver: ProcessGridResolver | None = None,
     count_when_silent: bool = False,
 ) -> None:
-    """Count raw landings, or only enforce mandatory raise policy in preflight."""
+    """Count raw landings, or only enforce mandatory raise policy in preflight.
+
+    A regime whose solve kernels count its landings is left out: its value
+    constraints or gated edges decide which landings are reached only once
+    values are known. Its realized landings are counted as simulation advances.
+    """
     # Count-only diagnostics can expand simulation-only axes during solve, so a
     # silent solve skips them; an explicit validation request still counts.
     checked = (
@@ -481,6 +486,8 @@ def validate_off_grid_transitions(
     )
     for period in range(ages.n_periods - 1):
         for name, regime in regimes.items():
+            if regime.solution.counts_raise_landings:
+                continue
             for law, reachability, realized in _regime_laws_at_period(
                 regime=regime, regime_name=name, period=period
             ):
