@@ -138,7 +138,7 @@ class SimulationPrograms:
     state through one code's block, without that axis; empty unless a blocked
     state is carried."""
 
-    decision_parts: MappingProxyType[int, CoreProgram] = dataclasses.field(
+    action_values: MappingProxyType[int, CoreProgram] = dataclasses.field(
         default_factory=lambda: MappingProxyType({})
     )
     """Period to the dense decision that also publishes, from the one kernel

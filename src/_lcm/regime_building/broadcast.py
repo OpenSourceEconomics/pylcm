@@ -17,12 +17,14 @@ its next-period draw is read, since the draw is taken from the state, and so is
 every input of the Markov law the draw is taken from.
 
 `compute_kept_variables` is that fixed point, and `root_functions` is the
-single definition of its root computations. The pruning walk here and the
-variable-usage check in `_lcm.model_processing` both run it, pruning over the
-broadcast variables and the usage check over the variables a regime does not
-read itself, so the two cannot disagree about what counts as a use: a state is
-used where it is read, and where the regime hands it to a reachable target that
-keeps it.
+single definition of its root computations. The pruning walk here runs it over
+the broadcast variables, and the variable-usage check in `_lcm.model_processing`
+over the variables a regime does not read itself. Both count a state as used
+where it is read, and where the regime hands it to a reachable target that keeps
+it. They differ in two ways: pruning takes every candidate target of a regime's
+transition as reachable, where the usage check takes the model graph's targets;
+and the usage check also counts, within the regime, every law of motion that is
+not a `fixed_transition` identity.
 """
 
 import inspect
@@ -404,7 +406,6 @@ def _reachable_targets(
                     all_regime_names=all_regime_names,
                 )
             )
-            & all_regime_names
             for regime_name, user_regime in user_regimes.items()
         }
     )
@@ -544,9 +545,7 @@ class _NamesRead:
     candidate targets, so a name in the result is read within the regime's
     period or by a law it hands to one of those targets.
 
-    Every declared state counts as kept by its regime. That is the fixed point
-    `compute_kept_variables` reaches on a model that builds, since the
-    variable-usage check rejects any declared state outside it.
+    Every declared state counts as kept by its regime.
     """
 
     specs: Mapping[RegimeName, PhasedRegimeSpec]
@@ -792,8 +791,8 @@ def _joint_phase_closure(
     all_regime_names: frozenset[RegimeName],
     ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
-    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
-    targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]] | None = None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]] | None,
     phase_order: tuple[PhaseName, ...] = ("solution", "simulation"),
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to the least fixed point of both phase operators.
@@ -843,8 +842,8 @@ def _phase_fixed_point(
     all_regime_names: frozenset[RegimeName],
     ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
-    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
-    targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]] | None = None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]] | None,
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to this phase slice's least fixed point.
 
@@ -896,7 +895,7 @@ def _phase_fixed_point(
             )
             needed |= _state_conditioned_names(
                 user_regime=user_regime,
-                reachable_targets=candidates_by_source[regime_name] & all_regime_names,
+                reachable_targets=candidates_by_source[regime_name],
                 user_regimes=user_regimes,
                 candidates=candidates[regime_name],
                 grown_here=grown[regime_name],

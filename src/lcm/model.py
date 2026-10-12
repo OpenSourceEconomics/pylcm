@@ -85,7 +85,12 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
-from _lcm.processes.ar1 import RouwenhorstAR1Process, TauchenAR1Process, _AR1Process
+from _lcm.processes.ar1 import (
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+    _AR1Process,
+    _TauchenOnNodesProcess,
+)
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
@@ -969,6 +974,7 @@ class Model:
             ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
         )
+        # Removal is regime-local; initialization preserves names another regime keeps.
         self._transition_only_shock_names = frozenset(
             name for shocks in draw_only_processes.values() for name in shocks
         )
@@ -4185,7 +4191,7 @@ class Model:
             )
             executor = unit
         program = (
-            programs.decision_parts[period]
+            programs.action_values[period]
             if return_action_values
             else _with_action_extents(
                 program=programs.decision[period],
@@ -5040,7 +5046,11 @@ def _supports_unsharded_continuous_process(grid: Grid) -> bool:
         iid = cast("NormalIIDProcess | LogNormalIIDProcess", grid)
         if iid.fold or not iid.gauss_hermite:
             return False
-    elif type(grid) not in (RouwenhorstAR1Process, TauchenAR1Process):
+    elif type(grid) not in (
+        RouwenhorstAR1Process,
+        TauchenAR1Process,
+        _TauchenOnNodesProcess,
+    ):
         return False
     process = cast("_ContinuousStochasticProcess", grid)
     return process.is_fully_specified and process.state_conditioned is None

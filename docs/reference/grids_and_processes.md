@@ -55,6 +55,12 @@ Place process instances in `states` and omit their names from `state_transitions
 | `RouwenhorstAR1Process`          | AR(1) discretized by Rouwenhorst                      |
 | `TauchenNormalMixtureAR1Process` | Mixture innovation with Tauchen-style discretization  |
 
+`TauchenAR1Process.on_nodes(nodes=..., rho=None, sigma=None, mu=0.0)` uses supplied
+physical nodes with midpoint probability bins and open tails. The axis is fixed;
+unspecified law parameters are runtime operands and unit-root persistence is allowed.
+Nodes must be finite and strictly increasing at the working precision. Ordinary Tauchen
+construction still places its own stationary grid.
+
 A process owns its transition mechanism. Adding a second law under `state_transitions`
 is an ambiguous declaration and is rejected.
 

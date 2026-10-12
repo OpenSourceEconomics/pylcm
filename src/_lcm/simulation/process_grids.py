@@ -33,6 +33,7 @@ from _lcm.processes.ar1 import (
     RouwenhorstAR1Process,
     TauchenAR1Process,
     TauchenNormalMixtureAR1Process,
+    _TauchenOnNodesProcess,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.iid import (
@@ -139,6 +140,7 @@ _STAGED_PROCESS_TYPES = (
     LogNormalIIDProcess,
     NormalMixtureIIDProcess,
     TauchenAR1Process,
+    _TauchenOnNodesProcess,
     RouwenhorstAR1Process,
     TauchenNormalMixtureAR1Process,
 )
@@ -319,6 +321,8 @@ class SimulationProcessGrids:
                     for name, value in sorted(complete.items())
                 ),
             )
+        if type(spec) is _TauchenOnNodesProcess:
+            key = (key, spec.nodes)
         if key not in self.grids:
             if self.sealed:
                 raise ExecutionPlanningError(
@@ -448,7 +452,17 @@ class SimulationProcessGrids:
             result = _read_process_operand(
                 operand=recipe.result, environment=environment
             )
-            return cast("Float1D", result)
+            if not isinstance(result, jax.Array):
+                # A constant-only support still needs admitted device placement.
+                result = self._produce(
+                    parameters={"operand_0": result},
+                    n_points=spec.n_points,
+                    required=required,
+                    stage="convert_element_type",
+                    dtype=str(jax.typeof(result).dtype),
+                    process_stage=True,
+                )
+            return result
         finally:
             self.temporary_roots.clear()
 
