@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "c4ff3ada233fa42b35db5420636ad47b0e1c938331c57d1014ddc608aa029916",
+  "source_inventory_sha256": "91fd2b8d2e4352796f598ed9db2623836f67f95ffcc9702c371223d6e77cddbe",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -478,7 +478,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "cb128e2793920a1f213d1ec407006811bec3c5700214bd4db7f85f46fd1e1fa0"
+      "sha256": "adc67bc5c829202859e762e3ac9c7241e1135fb24bdbe2ba22ae9b6c1537e633"
     },
     {
       "path": "src/lcm/result.py",

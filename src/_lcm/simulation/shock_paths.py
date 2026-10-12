@@ -16,9 +16,11 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.iid import LogNormalIIDProcess, UniformIIDProcess, _IIDProcess
 from _lcm.regime_building.age_normalization import group_periods_by_key
 from _lcm.regime_building.processing import _build_next_state_vmapped
+from _lcm.simulation.initial_conditions import resolve_initial_periods
 from _lcm.simulation.program_types import _PerSubjectFunction
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.subject_groups import SubjectRows
+from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, ReferenceName, RegimeName
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.typing import StateName, UserInitialConditions
@@ -43,20 +45,22 @@ def canonicalize_shock_paths(  # noqa: C901, PLR0912
     for name, path in (paths or {}).items():
         declarations: list[tuple[RegimeName, Grid, tuple[int, ...]]] = []
         for regime_name, regime in regimes.items():
+            simulation_periods = tuple(regime.simulation.feasibility_pools_by_period)
             grid = regime.simulation.grids.get(name)
             is_lottery = any(
                 f"next_{name}" in plan.lotteries
                 for source in regimes.values()
                 for plan in source.simulation.transition_plans.values()
             )
-            if isinstance(grid, _ContinuousStochasticProcess) or (
-                isinstance(grid, DiscreteGrid) and is_lottery
+            if simulation_periods and (
+                isinstance(grid, _ContinuousStochasticProcess)
+                or (isinstance(grid, DiscreteGrid) and is_lottery)
             ):
-                declarations.append((regime_name, grid, regime.active_periods))
+                declarations.append((regime_name, grid, simulation_periods))
             local_grid = draw_only.get(regime_name, {}).get(name, grid)
             local_periods = tuple(
                 period + 1
-                for period in regime.active_periods
+                for period in simulation_periods
                 if period < regime.simulation.reachability.n_periods - 1
                 and any(
                     f"next_{name}"
@@ -148,15 +152,15 @@ def seed_shock_paths(
     *,
     initial: UserInitialConditions,
     paths: Mapping[StateName, np.ndarray],
-    age_values: jax.Array,
+    ages: TimeAxis,
     regimes: Mapping[RegimeName, Regime],
 ) -> UserInitialConditions:
     """A subject's entry value comes from its starting computational period."""
     if not paths:
         return initial
-    starts = np.argmax(
-        np.asarray(initial["age"])[:, None] == np.asarray(age_values), axis=1
-    )
+    starts, on_grid = resolve_initial_periods(ages=ages, initial_ages=initial["age"])
+    # Leave invalid ages to the standard input validator, without indexing them.
+    starts = np.where(on_grid, starts, 0)
     state_names = {
         state for regime in regimes.values() for state in regime.simulation.state_names
     }
@@ -187,7 +191,7 @@ def bind_shock_path_programs(
     for name, regime in regimes.items():
         pools = regime.simulation.feasibility_pools_by_period
         groups = group_periods_by_key(
-            active_periods=regime.active_periods,
+            active_periods=tuple(pools),
             key=lambda period: id(pools[period][0]),
         )
         flat_param_names = frozenset(

@@ -3563,7 +3563,7 @@ class Model:
                 initial_conditions = seed_shock_paths(
                     initial=initial_conditions,
                     paths=resolved_shock_paths,
-                    age_values=self._time.values,
+                    ages=self._time,
                     regimes=self._regimes,
                 )
                 initial_conditions = canonicalize_initial_conditions(
