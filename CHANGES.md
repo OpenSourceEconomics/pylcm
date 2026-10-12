@@ -12,6 +12,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   existing integer-seeded streams. Legacy uint32 keys receive guidance naming the
   typed constructor. Budgeted entry accounts for caller key buffers before uploads
   or automatic solving; chunk profiles distinguish the actual implementations.
+  Independent taste draws from an RBG or unsafe-RBG root fold and draw each
+  subject's key as a scalar, so subject widths and padding do not change them.
 - The Mahler initial-population factory accepts the same typed roots with its
   existing positional splits.
 
