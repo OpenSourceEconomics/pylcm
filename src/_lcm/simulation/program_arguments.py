@@ -69,7 +69,7 @@ def transition_arguments(
     states: Mapping[StateName, PytreeValue | ShapeDtypePytree],
     carried: Mapping[StateName, PytreeValue | ShapeDtypePytree],
     actions: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
-    keys: Mapping[ReferenceName, PRNGKeyND | jax.ShapeDtypeStruct],
+    keys: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: PytreeValue | ShapeDtypePytree,
     age: PytreeValue | ShapeDtypePytree,
     params: Mapping[QualifiedName, PytreeValue | ShapeDtypePytree],

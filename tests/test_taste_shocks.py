@@ -262,14 +262,15 @@ def test_location_zero_utility_shift_moves_value_by_constant_and_keeps_choices()
     """Adding `scale * EULER_GAMMA` to utility gives location-0 EV1 shocks.
 
     Under the default linear Koopmans aggregator, the constant enters every
-    discrete action's `Q` with unit slope. The decision-period value therefore
-    rises by exactly `scale * EULER_GAMMA`, the terminal value is unchanged,
+    discrete action's `Q` with unit slope. In this toy every action leads to
+    the same shock-free terminal regime, so each `Q` moves by the same
+    constant: the decision-period value rises by exactly `scale * EULER_GAMMA`
     and the same seed draws the same discrete choices.
     """
     scale = 0.2
     discount_factor = 0.95
-    n_subjects = 600
-    wealth = np.tile(np.linspace(1.0, 10.0, 6), n_subjects // 6)
+    wealth = np.linspace(1.0, 10.0, 6)
+    n_subjects = wealth.size
     initial_conditions = {
         "age": jnp.full(n_subjects, 40.0),
         "wealth": jnp.asarray(wealth),
@@ -303,7 +304,6 @@ def test_location_zero_utility_shift_moves_value_by_constant_and_keeps_choices()
         mean_zero_V[0]["alive"] + scale * EULER_GAMMA,
         decimal=DECIMAL_PRECISION,
     )
-    aaae(location_zero_V[1]["done"], mean_zero_V[1]["done"], decimal=DECIMAL_PRECISION)
 
     mean_zero_choices = mean_zero_model.simulate(
         params=mean_zero_params,

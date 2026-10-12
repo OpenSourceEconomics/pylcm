@@ -219,6 +219,7 @@ def calculate_next_states(
     original_n_subjects: int | None = None,
     process_nodes: Mapping[str, PytreeValue] | None = None,
     memory: SimulationMemory | None = None,
+    supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
 ) -> StatesPerRegime:
     """Calculate next period states for subjects in a regime.
 
@@ -288,7 +289,7 @@ def calculate_next_states(
                     carried=simulate_only_states,
                     process_nodes={} if process_nodes is None else process_nodes,
                     actions=optimal_actions,
-                    keys=stochastic_variables_keys,
+                    keys={**stochastic_variables_keys, **supplied_shocks},
                     period=jnp.int32(period) if memory is None else np.int32(period),
                     age=age,
                     params=regime_params,

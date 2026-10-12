@@ -8,7 +8,7 @@ serve:
 - `transition`: the laws of motion carrying each subject into the next period.
 - `route`: the regime-transition probabilities the realized draw reads.
 
-A hard-max singleton regime also publishes `decision_parts`, the dense decision
+A hard-max singleton regime also publishes `action_values`, the dense decision
 that additionally returns, from the one kernel evaluation it maximizes over, the
 action values, their feasibility, the flow utility and the certainty-equivalent
 continuation. Only policy lookup dispatches it, so it compiles only when
@@ -200,16 +200,16 @@ def build_simulation_programs(
     # The dense decision with its parts, even where the decision streams: same
     # reads and subject tiling, no reduced action axis. A taste-shock draw or a
     # household argmax publishes no such parts.
-    decision_part_bodies: dict[int, Callable[..., PytreeValue]] = {}
-    decision_parts: dict[int, CoreProgram] = {}
+    action_value_bodies: dict[int, Callable[..., PytreeValue]] = {}
+    action_values: dict[int, CoreProgram] = {}
     is_hard_max_singleton = (
         not context.has_taste_shocks and context.stakeholders is None
     )
     for period in decision if is_hard_max_singleton else ():
         kernel = Q_and_F_functions[period]
         group = id(kernel)
-        if group not in decision_part_bodies:
-            decision_part_bodies[group] = _SubjectTiled(
+        if group not in action_value_bodies:
+            action_value_bodies[group] = _SubjectTiled(
                 func=_decision_with_action_parts(
                     Q_and_F=kernel,
                     reducer=per_subject_decisions[period],
@@ -217,13 +217,13 @@ def build_simulation_programs(
                 ),
                 subject_arg_names=_decision_subject_arg_names(context=context),
             )
-        decision_parts[period] = dataclasses.replace(
+        action_values[period] = dataclasses.replace(
             decision[period],
-            function=decision_part_bodies[group],
+            function=action_value_bodies[group],
             requirements=dataclasses.replace(
                 decision[period].requirements, reduced_axes=()
             ),
-            output_roles=DECISION_PARTS_OUTPUT_ROLES,
+            output_roles=ACTION_VALUES_OUTPUT_ROLES,
         )
 
     transition_bodies: dict[int, Callable[..., PytreeValue]] = {}
@@ -282,7 +282,7 @@ def build_simulation_programs(
         transition=MappingProxyType(transition),
         route=MappingProxyType(route),
         type_local_decision=MappingProxyType(type_local_decision),
-        decision_parts=MappingProxyType(decision_parts),
+        action_values=MappingProxyType(action_values),
     )
 
 
@@ -759,7 +759,7 @@ def _decision_body(
 
 # What the dense decision with its parts publishes, in the order its body
 # returns them: the decision's own pair, then each part over the action product.
-DECISION_PARTS_OUTPUT_ROLES = (
+ACTION_VALUES_OUTPUT_ROLES = (
     ACTION_INDEX,
     DECISION_VALUE,
     ACTION_VALUES,

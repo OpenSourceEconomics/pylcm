@@ -23,6 +23,7 @@ import jax.numpy as jnp
 from dags import (
     concatenate_functions,
     get_annotations,
+    with_signature,
 )
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
@@ -81,7 +82,7 @@ from _lcm.zero_safe import (
     scaled_joint_weight,
     zero_safe_weighted_term,
 )
-from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
+from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -481,18 +482,14 @@ def get_Q_and_F_parts(*, Q_and_F: QAndFFunction) -> Callable[..., QAndFParts]:
     Returns:
         The kernel's `parts` method, with the kernel's published signature.
 
-    Raises:
-        ExecutionPlanningError: If `Q_and_F` is a collective kernel, whose stacked
-            per-stakeholder values have no single flow utility and continuation.
-
     """
-    if not isinstance(Q_and_F, _QAndF | _TerminalQAndF):
-        msg = (
-            "Flow utility and continuation are published for singleton kernels "
-            f"only; got {type(Q_and_F).__name__}."
-        )
-        raise ExecutionPlanningError(msg)
-    return _QAndFPartsOf(kernel=Q_and_F)
+    kernel = cast("_QAndF | _TerminalQAndF", Q_and_F)
+    return with_signature(
+        kernel.parts,
+        args=list(inspect.signature(kernel).parameters),
+        return_annotation="QAndFParts",
+        enforce=False,
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -841,33 +838,6 @@ class _TerminalQAndF:
         U_arr = jnp.asarray(U_arr)
         return QAndFParts(
             U=U_arr, F=jnp.asarray(F_arr), CE=jnp.zeros_like(U_arr), Q=U_arr
-        )
-
-
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _QAndFPartsOf:
-    """The parts of one singleton kernel, under the kernel's published signature."""
-
-    kernel: _QAndF | _TerminalQAndF
-    """The kernel whose evaluation the parts come from."""
-
-    def __post_init__(self) -> None:
-        _publish_signature(
-            target=self,
-            arg_names=tuple(inspect.signature(self.kernel).parameters),
-            return_annotation="QAndFParts",
-            name="Q_and_F_parts",
-        )
-
-    @no_type_check
-    def __call__(
-        self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: QAndFArg,
-    ) -> QAndFParts:
-        """Return the kernel's parts at one cell."""
-        return self.kernel.parts(
-            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
         )
 
 
@@ -2407,6 +2377,18 @@ def _get_compute_CE(
         formed inside the node axes.
 
     """
+    # The plain expectation reduces each target on its own; every other
+    # certainty equivalent needs the whole joint lottery in one piece, because
+    # its transform has to be applied before any expectation is taken.
+    # `LinearExpectation.aggregate` states the same quantity over the flattened
+    # lottery, but reducing per target is materially cheaper.
+    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
+    # different quantity, and the per-target route would silently discard the
+    # override.
+    reduces_per_target = (
+        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
+    )
+
     continuations = {
         target_regime_name: _build_target_continuation(
             target_regime_name=target_regime_name,
@@ -2417,10 +2399,8 @@ def _get_compute_CE(
             co_map_state_names=co_map_state_names,
             n_stakeholders=n_stakeholders,
             gated_continuation=gated_continuations.get(target_regime_name),
-            restore_original_layout=(
-                certainty_equivalent is None
-                or type(certainty_equivalent) is LinearExpectation
-            ),
+            restore_original_layout=reduces_per_target,
+            allow_shock_average=reduces_per_target,
             allowed_shock_inputs=flat_param_names,
         )
         for target_regime_name in period_targets
@@ -2454,17 +2434,6 @@ def _get_compute_CE(
         for target_regime_name, reader in gated_scalar_readers.items()
     }
 
-    # The plain expectation reduces each target on its own; every other
-    # certainty equivalent needs the whole joint lottery in one piece, because
-    # its transform has to be applied before any expectation is taken.
-    # `LinearExpectation.aggregate` states the same quantity over the flattened
-    # lottery, but reducing per target is materially cheaper.
-    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
-    # different quantity, and the per-target route would silently discard the
-    # override.
-    reduces_per_target = (
-        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
-    )
     ce_flat_param_names = (
         MappingProxyType({})
         if certainty_equivalent is None
@@ -3249,6 +3218,7 @@ def _build_target_continuation(
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
     n_stakeholders: int | None,
+    allow_shock_average: bool,
     gated_continuation: GatedContinuationSpec | None = None,
     restore_original_layout: bool = False,
     allowed_shock_inputs: frozenset[str] | None = None,
@@ -3279,6 +3249,9 @@ def _build_target_continuation(
         gated_continuation: How to turn this target's stacked operand channels
             into one value per leg at the landing point, or `None` when the
             target's leaf is an ordinary value function.
+        allow_shock_average: Whether the source uses the exact linear expectation,
+            so a transition-local draw may be averaged before the certainty
+            equivalent is applied. Other specifications retain draw enumeration.
         allowed_shock_inputs: Names an additive shock may read besides its
             conditioners, the draws and the time coordinates: the source's
             parameters. `None` skips that check.
@@ -3439,6 +3412,9 @@ def _build_target_continuation(
         allowed_inputs=allowed_shock_inputs,
         co_map_state_names=co_map_state_names,
     )
+    # Validate the additive declaration even when its averaging route is ineligible.
+    if not allow_shock_average:
+        shock_average = None
     averaged_inputs: tuple[str, ...] = ()
     integrated_weight_names: tuple[str, ...] = ()
     if shock_average is not None:

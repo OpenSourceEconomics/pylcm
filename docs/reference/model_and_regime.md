@@ -259,13 +259,12 @@ def utility(*, consumption, work, kappa, taste_shock_scale):
 Pass `taste_shock_scale` with the same value as the regime's `taste_shocks` scale.
 `lcm.EULER_GAMMA` equals `numpy.euler_gamma`.
 
-The recipe is exact when the regime's Koopmans aggregator is additive in utility with
-unit slope, as `LinearAggregator` (the default) is. Every choice-specific value then
-moves by the same constant, so choice probabilities stay the same and the value function
-rises by the discounted sum of `scale * EULER_GAMMA` over the remaining taste-shock
-periods. pylcm adds the shock to the choice-specific value after aggregation. Under any
-other aggregator, such as `CESAggregator`, the constant moves each action's value by a
-different amount and changes the choice probabilities.
+The recipe reproduces the location-0 model exactly, values and choice probabilities,
+when the Koopmans aggregator is additive in utility with unit slope, as
+`LinearAggregator` (the default) is. pylcm adds the shock to the choice-specific value
+after aggregation, so under any other aggregator, such as `CESAggregator`, the constant
+moves each action's value by a different amount and the result differs from the
+location-0 model.
 
 ## Derived categoricals
 

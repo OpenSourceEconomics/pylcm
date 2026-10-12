@@ -253,9 +253,7 @@ class Regime:
     Taste shocks are currently supported by `GridSearch` and `DCEGM`. They are
     rejected on a collective regime, on the source of a `Gate`, with a folded
     IID state or nonlinear certainty equivalent, and with `NEGM`, `NBEGM`, or
-    `NNBEGM`. For location-0 shocks, add `scale * lcm.EULER_GAMMA` to the
-    utility of every action; `ExtremeValueTasteShocks` states when that recipe
-    is exact.
+    `NNBEGM`.
     """
 
     koopmans_aggregator: UserFunction | Phased | None = None
