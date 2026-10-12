@@ -13,6 +13,7 @@ import weakref
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from lcm.solver_api import (
     ValueStore,
@@ -50,9 +51,9 @@ def _holds_array(
 
 def _live_holders(length: int) -> int:
     # NumPy arrays are not gc-tracked themselves, so the probe counts the tracked
-    # objects that hold one: a store's value entry, or a leaf tuple/list. A tuple
-    # whose members are all untracked is untracked too, which is why the leaf
-    # tuples below carry a list as their second member.
+    # objects that hold one: a store's value entry, or a tuple/list. A tuple whose
+    # members are all untracked is untracked too and escapes this count, which is
+    # why the artifact-leaf probe below tracks the arrays by weak reference.
     gc.collect()
     return sum(
         1
@@ -76,18 +77,39 @@ def test_dropped_value_stores_release_their_values() -> None:
     assert _live_holders(_VALUE_LENGTH) == 0
 
 
+def _any_leaf_alive_after_walks(*, walker: str, retain: bool) -> bool:
+    """Walk fresh leaves through an artifact plan; report whether any leaf survives.
+
+    With `retain`, the leaf tuples are kept alive on purpose, so the probe must
+    report a survivor.
+    """
+    plan = _ArtifactTuplePlan(children=(_ArtifactLeafSlot(index=0),))
+    retained: list[tuple[NDArray[np.float64], ...]] = []
+    references: list[weakref.ReferenceType[NDArray[np.float64]]] = []
+    for _ in range(8):
+        leaves = (np.zeros(_LEAF_LENGTH),)
+        references.append(weakref.ref(leaves[0]))
+        if walker == "reconstruct":
+            _reconstruct_artifact_from_plan(plan=plan, leaves=leaves)
+        else:
+            _artifact_leaf_values_from_plan(payload=leaves, plan=plan, leaf_count=1)
+        if retain:
+            retained.append(leaves)
+    del leaves
+    gc.collect()
+    return any(reference() is not None for reference in references)
+
+
 @pytest.mark.parametrize("walker", ["reconstruct", "extract"])
 def test_dropped_artifact_plan_walks_release_their_leaves(walker: str) -> None:
     """Building or reading an artifact through its plan retains no leaf."""
-    plan = _ArtifactTuplePlan(children=(_ArtifactLeafSlot(index=0),))
-    for _ in range(8):
-        leaf = np.zeros(_LEAF_LENGTH)
-        if walker == "reconstruct":
-            _reconstruct_artifact_from_plan(plan=plan, leaves=(leaf,))
-        else:
-            _artifact_leaf_values_from_plan(payload=(leaf,), plan=plan, leaf_count=1)
+    assert not _any_leaf_alive_after_walks(walker=walker, retain=False)
 
-    assert _live_holders(_LEAF_LENGTH) == 0
+
+@pytest.mark.parametrize("walker", ["reconstruct", "extract"])
+def test_artifact_leaf_probe_reports_retained_leaf_tuples(walker: str) -> None:
+    """A tuple holding only the leaf array keeps it alive, and the probe says so."""
+    assert _any_leaf_alive_after_walks(walker=walker, retain=True)
 
 
 def test_dropped_solution_and_simulation_release_value_entries() -> None:
