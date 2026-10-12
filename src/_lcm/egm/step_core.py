@@ -352,6 +352,11 @@ class _SolveOneCombo:
             V_row = jnp.where(feasible, V_row, -jnp.inf)
             value_row = jnp.where(feasible, value_row, -jnp.inf)
             marginal_utility_row = jnp.where(feasible, marginal_utility_row, 0.0)
+            # Dead rows need finite geometry for continuation reads and their JVPs.
+            refined_grid = jnp.where(
+                feasible, refined_grid, jnp.arange(refined_grid.size, dtype=dtype)
+            )
+            refined_policy = jnp.where(feasible, refined_policy, 0.0)
 
         return (
             V_row,

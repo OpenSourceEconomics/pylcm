@@ -338,16 +338,34 @@ function while subjects start at different ages cannot be evaluated and raises
 - `log_level`: Required. Console verbosity (same options and table as `solve()`).
   Initial-condition schema and regime validity are always checked; numerical feasibility
   follows `runtime_checks`.
-- `seed=None`: Random seed for stochastic simulations (int). Collective dissolution
-  gates consume their addressed replay artifacts from `solution`; the automatic-solve
-  path retains and threads them itself.
-- `taste_shock_seed=None`: Optional independent seed for common taste shocks across
-  counterfactual models. Omit it to keep the ordinary `seed` behavior.
+- `seed=None`: Integer random seed or scalar typed `jax.random.key`. Typed roots retain
+  their PRNG implementation. Collective dissolution gates consume their addressed replay
+  artifacts from `solution`; the automatic-solve path retains and threads them itself.
+- `taste_shock_seed=None`: Optional independent integer seed or scalar typed key for
+  common taste shocks across counterfactual models. Omit it to keep the ordinary `seed`
+  behavior.
 - `log_path=None`: Directory for diagnostic snapshots; optional at every level.
 - `log_keep_n_latest=3`: Maximum snapshot directories to retain.
 - `max_compilation_workers=None`: Maximum number of threads for parallel XLA
   compilation. Used only on the automatic-solve path, i.e. when `solution` is omitted.
   `None` uses the number of physical CPU cores.
+
+Typed roots are consumed directly; integer seeds retain their existing streams. Raw
+uint32 keys from `jax.random.PRNGKey` and batched typed keys are refused. Derive scalar
+role roots with `fold_in`:
+
+```python
+import jax
+
+root = jax.random.key(123)
+result = model.simulate(
+    params=params,
+    initial_conditions=initial_conditions,
+    seed=jax.random.fold_in(root, 0),
+    taste_shock_seed=jax.random.fold_in(root, 1),
+    log_level="off",
+)
+```
 
 ### Common taste shocks across counterfactuals
 
@@ -383,11 +401,11 @@ categories are not matched across incompatible domains. Continuous-action grids 
 enter the address. Changing a taste-shock scale multiplies the same standardized draw,
 so equal scaled shocks additionally require equal scales.
 
-The independent stream uses Threefry and requires matching numerical precision, backend
-and JAX random configuration for exact comparisons. It does not alter the ordinary
-key-chain advancement directly. `taste_shock_seed=None` uses the existing ordinary
-stream, and the optional seed changes neither solutions nor their compatibility
-fingerprints.
+The independent stream uses Threefry for integer seeds. A supplied typed root retains
+its PRNG implementation. Exact comparisons require matching numerical precision, backend
+and JAX random configuration. It does not alter the ordinary key-chain advancement
+directly. `taste_shock_seed=None` uses the existing ordinary stream, and the optional
+seed changes neither solutions nor their compatibility fingerprints.
 
 ### Heterogeneous initial ages
 
@@ -459,6 +477,9 @@ df = result.to_dataframe(additional_targets=["utility", "consumption"])
 # All available targets
 df = result.to_dataframe(additional_targets="all")
 
+# The published target tuple can be passed directly
+df = result.to_dataframe(additional_targets=result.available_targets)
+
 # See what's available
 result.available_targets  # ('consumption', 'earnings', 'utility', ...)
 ```
@@ -499,9 +520,9 @@ result.n_subjects  # 1000
 Two keywords select what that Feather table holds; neither affects the other three
 artifacts. `save(directory=..., df_additional_targets=...)` is passed through to
 `to_dataframe`: `None` (the default) writes only the base columns (states, actions,
-regime, period, `V_arr`, and age for age models), a list of target names bakes those DAG
-outputs in, and `"all"` includes every available target --- which can grow the file by
-an order of magnitude on a model with many DAG leaves. `df_use_labels=True` (the
+regime, period, `V_arr`, and age for age models), a sequence of target names bakes those
+DAG outputs in, and `"all"` includes every available target --- which can grow the file
+by an order of magnitude on a model with many DAG leaves. `df_use_labels=True` (the
 default) stores discrete variables as pandas `Categorical` labels; `False` stores
 integer codes.
 
@@ -598,3 +619,36 @@ If you need bitwise-reproducible results for testing or validation, use float64 
   utilities
 - [A Tiny Example](../getting_started/tiny_example.ipynb) — complete walkthrough
 - [Examples](../examples/index.md) — full worked examples
+
+## Given shock paths
+
+Supply realised shocks to the forward simulation without changing the distribution
+agents use when solving:
+
+```python
+result = model.simulate(
+    params=params,
+    solution=solution,
+    initial_conditions=initial_conditions,
+    shock_paths={"income_shock": common_income_path},
+    seed=42,
+    log_level="off",
+)
+```
+
+Each path is a real array shaped `(periods,)` for a common history or
+`(subjects, periods)` for individual histories in the original initial-condition row
+order. Columns are computational periods, beginning at the model's first age or period;
+a subject entering later reads its entry column. The given value overrides that
+subject's initial shock and each subsequent realised draw. Continuous processes accept
+finite values in their distribution's support, including off-node values; lognormal
+levels must be positive and uniform draws must lie inside the declared interval.
+Discrete shocks require exact category codes. Persistent processes consume the supplied
+realised level directly, rather than treating it as an innovation and recursing again.
+
+Paths cover every period where the named shock is declared active in the simulation
+phase. Values outside those periods are ignored. Folded shocks are supported, including
+transition-local draws: a draw affecting the transition into period `p` comes from
+column `p`. A deterministic law reading `next_<shock>` sees the supplied draw before
+computing its own next state. Shocks omitted from the mapping retain the ordinary seeded
+stream, and solve expectations remain stochastic.

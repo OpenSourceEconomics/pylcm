@@ -3,6 +3,7 @@
 import numpy as np
 
 import lcm
+import lcm.processes
 from lcm_examples.stochastic_volatility import get_model, get_params
 
 
