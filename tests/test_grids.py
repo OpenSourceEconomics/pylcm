@@ -1,5 +1,8 @@
 import dataclasses
+import itertools
+import math
 from dataclasses import make_dataclass
+from fractions import Fraction
 from types import MappingProxyType
 from typing import cast
 
@@ -911,3 +914,261 @@ def test_value_grid_decode_and_nearest_agree_under_jit():
 def test_value_grid_sentinel_is_the_simulation_missing_code():
     """Off-grid values and missing initial conditions share one sentinel code."""
     assert MISSING_CAT_CODE == initial_conditions.MISSING_CAT_CODE
+
+
+def _exact_nearest_value(*, nodes: tuple[float, ...], value: float) -> float:
+    """Return the nearest node by exact rational distance, the lower on a tie."""
+    if math.isnan(value):
+        return math.nan
+    if math.isinf(value):
+        return nodes[0] if value < 0 else nodes[-1]
+    exact = Fraction(value)
+    distances = [abs(exact - Fraction(node)) for node in nodes]
+    return nodes[min(range(len(nodes)), key=lambda index: (distances[index], index))]
+
+
+def _exact_downward_midpoints(
+    *, nodes: tuple[float, ...], dtype: type[np.floating]
+) -> tuple[float, ...]:
+    """Return the largest float of `dtype` at or below each exact midpoint."""
+    cuts = []
+    for left, right in itertools.pairwise(nodes):
+        midpoint = (Fraction(left) + Fraction(right)) / 2
+        cut = float(dtype(float(midpoint)))
+        while Fraction(cut) > midpoint:
+            cut = float(np.nextafter(dtype(cut), dtype(-math.inf)))
+        while Fraction(float(np.nextafter(dtype(cut), dtype(math.inf)))) <= midpoint:
+            cut = float(np.nextafter(dtype(cut), dtype(math.inf)))
+        cuts.append(cut)
+    return tuple(cuts)
+
+
+def _canonical_np_float() -> type[np.floating]:
+    return np.float64 if X64_ENABLED else np.float32
+
+
+@pytest.mark.parametrize("shape", [(), (1,), (1, 1)])
+@pytest.mark.parametrize(
+    ("integer_dtype", "value"),
+    [(np.int64, 2**32 + 20), (np.int64, -(2**32) + 20), (np.uint64, 2**32 + 20)],
+)
+@pytest.mark.parametrize("route", ["eager", "jit_closure"])
+def test_integer_value_grid_keeps_wide_host_integers_off_the_grid(
+    *, shape, integer_dtype, value, route
+):
+    """A wide host integer whose low int32 word is a node does not match it."""
+    grid = DiscreteGrid(values=[0, 20, 40])
+    query = np.asarray(value, dtype=integer_dtype).reshape(shape)
+    observed = np.asarray(
+        jax.jit(lambda: grid.encode(query))()
+        if route == "jit_closure"
+        else grid.encode(query)
+    )
+    np.testing.assert_array_equal(observed, np.full(shape, MISSING_CAT_CODE))
+
+
+def test_integer_value_grid_matches_across_int32_boundaries():
+    """Membership follows the original integer on both sides of the int32 range."""
+    nodes = (-(2**31) + 1, -1, 0, 20, 2**31 - 1)
+    query = np.asarray(
+        [-(2**31) - 1, -(2**31), -(2**31) + 1, -1, 0, 20, 2**31 - 1, 2**31, 2**32 + 20],
+        dtype=np.int64,
+    )
+    expected = [nodes.index(v) if v in nodes else MISSING_CAT_CODE for v in query]
+    observed = DiscreteGrid(values=nodes).encode(query)
+    assert np.asarray(observed).tolist() == expected
+
+
+@pytest.mark.parametrize("integer_dtype", [np.int64, np.uint64])
+def test_float_value_grid_reads_wide_host_integers_as_floats(integer_dtype):
+    """A wide host integer reaches a float grid as its own float, not its low word."""
+    grid = DiscreteGrid(values=[0.0, 20.0, 40.0])
+    query = np.asarray([2**32 + 20], dtype=integer_dtype)
+    assert (
+        np.asarray(grid.encode(query)).tolist(),
+        np.asarray(grid.nearest(query)).tolist(),
+    ) == ([MISSING_CAT_CODE], [40.0])
+
+
+@pytest.mark.parametrize("float_grid", [False, True])
+@pytest.mark.parametrize("integer_dtype", [np.int64, np.uint64])
+@pytest.mark.parametrize("route", ["eager", "jit_closure"])
+def test_value_grid_decodes_wide_host_codes_as_off_grid(
+    *, float_grid, integer_dtype, route
+):
+    """A host code outside `0..n-1` reads off-grid even when its low word is valid."""
+    alias = -(2**32) if integer_dtype == np.int64 else 2**33
+    codes = np.asarray([[0, 2**32, alias], [1, 2**32 + 1, alias + 1]], integer_dtype)
+    nodes = (0.0, 0.25, 0.5) if float_grid else (0, 20, 40)
+    off = math.nan if float_grid else MISSING_CAT_CODE
+    grid = DiscreteGrid(values=nodes)
+    observed = np.asarray(
+        jax.jit(lambda: grid.decode(codes))()
+        if route == "jit_closure"
+        else grid.decode(codes)
+    )
+    expected = np.asarray(
+        [nodes[int(c)] if 0 <= int(c) < 3 else off for c in codes.flat]
+    ).reshape(codes.shape)
+    np.testing.assert_array_equal(observed, expected)
+
+
+@pytest.mark.skipif(X64_ENABLED, reason="these floats are finite at float64")
+@pytest.mark.parametrize("values", [(1e39,), (-1e39,), (0.0, 1e39), (-1e39, 0.0, 1e39)])
+def test_value_grid_refuses_finite_values_that_overflow_storage(values):
+    """Finite declared values that round to infinity at the canonical dtype raise."""
+    with pytest.raises(GridInitializationError, match="finite"):
+        DiscreteGrid(values=values)
+
+
+def test_value_grid_keeps_finite_values_at_both_dtype_extremes():
+    """The largest finite values of the canonical dtype remain valid nodes."""
+    largest = float(np.finfo(_canonical_np_float()).max)
+    grid = DiscreteGrid(values=[-largest, 0.0, largest])
+    assert np.asarray(grid.values_to_jax()).tolist() == [-largest, 0.0, largest]
+
+
+def test_value_grid_refuses_tolerance_above_an_overflowing_half_gap():
+    """A gap that overflows when subtracted still bounds the tolerance exactly."""
+    magnitude, tolerance = (1e308, 1.5e308) if X64_ENABLED else (3e38, 3.1e38)
+    with pytest.raises(GridInitializationError, match="half the smallest gap"):
+        DiscreteGrid(values=[-magnitude, magnitude], tolerance=tolerance)
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [(0.0, 1.0), (1024.0, 1028.0, 1040.0), (0.125, 0.5, 2.0), "wide"],
+)
+@pytest.mark.parametrize("side", ["below", "equal", "above"])
+def test_value_grid_tolerance_stays_strictly_below_the_exact_half_gap(
+    *, declared, side
+):
+    """Only a tolerance strictly below the exact half gap is accepted."""
+    dtype = _canonical_np_float()
+    if declared == "wide":
+        magnitude = 1e308 if X64_ENABLED else 3e38
+        declared = (-magnitude, magnitude)
+    nodes = tuple(float(dtype(node)) for node in declared)
+    half_gap = float(
+        min(
+            Fraction(right) - Fraction(left)
+            for left, right in itertools.pairwise(nodes)
+        )
+        / 2
+    )
+    tolerance = (
+        half_gap
+        if side == "equal"
+        else float(
+            np.nextafter(
+                dtype(half_gap), dtype(-math.inf if side == "below" else math.inf)
+            )
+        )
+    )
+    if side == "below":
+        assert DiscreteGrid(values=nodes, tolerance=tolerance).tolerance == tolerance
+    else:
+        with pytest.raises(GridInitializationError, match="half the smallest gap"):
+            DiscreteGrid(values=nodes, tolerance=tolerance)
+
+
+@pytest.mark.parametrize("route", ["eager", "jit", "vmap"])
+def test_float_value_grid_nearest_tells_apart_both_sides_of_an_exact_midpoint(route):
+    """A query just above the midpoint of two nodes snaps up, just below snaps down."""
+    dtype = _canonical_np_float()
+    tiny = 2.0 ** (-55 if X64_ENABLED else -26)
+    queries = jnp.asarray([[-tiny, 0.0, tiny], [-math.inf, math.inf, math.nan]], dtype)
+    grid = DiscreteGrid(values=[-1.0, 1.0])
+    observed = np.asarray(
+        _apply_route(function=grid.nearest, values=queries, route=route)
+    )
+    expected = np.asarray(
+        [
+            _exact_nearest_value(nodes=(-1.0, 1.0), value=float(q))
+            for q in queries.ravel()
+        ],
+        dtype,
+    ).reshape(queries.shape)
+    np.testing.assert_array_equal(observed, expected)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "scaled_small",
+        "scaled_large",
+        "translated_negative",
+        "translated_positive",
+        "nonuniform",
+        "adjacent",
+        "wide_signed",
+    ],
+)
+@pytest.mark.parametrize("route", ["eager", "jit", "vmap"])
+def test_float_value_grid_nearest_matches_exact_distances_at_every_cutoff(
+    *, case, route
+):
+    """Each represented neighbour of every midpoint snaps to its exact nearest node."""
+    dtype = _canonical_np_float()
+    nodes = _differential_nodes(case=case, dtype=dtype)
+    queries = list(nodes)
+    for cut in _exact_downward_midpoints(nodes=nodes, dtype=dtype):
+        queries += [
+            float(np.nextafter(dtype(cut), dtype(-math.inf))),
+            cut,
+            float(np.nextafter(dtype(cut), dtype(math.inf))),
+        ]
+    queries += [-math.inf, math.inf, math.nan]
+    grid = DiscreteGrid(values=nodes)
+    observed = np.asarray(
+        _apply_route(
+            function=grid.nearest, values=jnp.asarray(queries, dtype), route=route
+        )
+    )
+    expected = np.asarray(
+        [_exact_nearest_value(nodes=nodes, value=q) for q in queries], dtype
+    )
+    np.testing.assert_array_equal(observed, expected)
+
+
+@pytest.mark.parametrize("route", ["eager", "jit", "vmap"])
+def test_singleton_float_value_grid_nearest_keeps_endpoints_and_nan(route):
+    """A one-node grid snaps every finite or infinite query to it and keeps NaN."""
+    dtype = _canonical_np_float()
+    queries = jnp.asarray([-math.inf, -1.0, 2.0, 8.0, math.inf, math.nan], dtype)
+    observed = np.asarray(
+        _apply_route(
+            function=DiscreteGrid(values=[2.0]).nearest, values=queries, route=route
+        )
+    )
+    np.testing.assert_array_equal(observed, [2.0, 2.0, 2.0, 2.0, 2.0, math.nan])
+
+
+def _differential_nodes(*, case, dtype):
+    """Finite normal grids with different scales and gap geometries."""
+    if case in ("scaled_small", "scaled_large"):
+        exponent = 400 if dtype == np.float64 else 80
+        scale = 2.0 ** (-exponent if case == "scaled_small" else exponent)
+        declared = tuple(scale * value for value in (0.5, 1.0, 1.75, 4.0))
+    elif case in ("translated_negative", "translated_positive"):
+        shift = -1024.0 if case == "translated_negative" else 1024.0
+        declared = tuple(shift + value for value in (0.0, 1.0, 3.0, 7.0))
+    elif case == "nonuniform":
+        declared = (0.125, 0.5, 1.0, 16.0, 1024.0)
+    elif case == "adjacent":
+        steps = [dtype(1.0)]
+        for _ in range(6):
+            steps.append(np.nextafter(steps[-1], dtype(math.inf)))
+        declared = tuple(float(steps[index]) for index in (0, 1, 2, 6))
+    else:
+        scale = 2.0 ** (1022 if dtype == np.float64 else 126)
+        declared = (-3.0 * scale, 2.0 * scale)
+    return tuple(float(dtype(node)) for node in declared)
+
+
+def _apply_route(*, function, values, route):
+    if route == "jit":
+        return jax.jit(function)(values)
+    if route == "vmap":
+        return jax.vmap(function)(values)
+    return function(values)

@@ -8,6 +8,7 @@ movement over the codes is declared with `StochasticTransition`, not here.
 import itertools
 import math
 from collections.abc import Sequence
+from fractions import Fraction
 
 import jax
 import jax.numpy as jnp
@@ -31,6 +32,7 @@ from lcm.typing import Float1D, FloatND, Int1D, IntND, ValueND
 # out of bounds after JAX normalizes a negative index by adding the axis length,
 # so a fill-mode read cannot wrap it onto the last node the way `-1` would.
 MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
+_INT32_MAX = jnp.iinfo(jnp.int32).max
 
 # A declared value, before it is normalized to a Python scalar.
 type _UserValue = int | float | np.integer | np.floating
@@ -111,6 +113,7 @@ class DiscreteGrid(Grid):
         self.__ordered: bool = getattr(category_class, "_ordered", False)
         self.__values: tuple[int | float, ...] | None = None
         self.__value_array: Int1D | Float1D | None = None
+        self.__midpoints = None
         self.__tolerance = 0.0
 
     def __init_values(
@@ -132,14 +135,28 @@ class DiscreteGrid(Grid):
         value_array = jnp.asarray(
             declared, dtype=jnp.int32 if is_integer else canonical_float_dtype()
         )
+        stored = tuple(value_array.tolist())
+        # A finite declared float can overflow the canonical precision.
+        if not is_integer and not all(math.isfinite(value) for value in stored):
+            raise GridInitializationError(
+                f"`values` must remain finite at {value_array.dtype}; got {stored}."
+            )
         # Distinct floats can round to equal nodes at the canonical precision.
-        collision = _value_order_error(tuple(value_array.tolist()))
+        collision = _value_order_error(stored)
         if collision is not None:
             raise GridInitializationError(
                 f"{collision} The values collide after rounding to {value_array.dtype}."
             )
         _validate_tolerance(
             tolerance=tolerance, value_array=value_array, is_integer=is_integer
+        )
+        self.__midpoints: Float1D | None = (
+            None
+            if is_integer
+            else jnp.asarray(
+                _downward_midpoints(nodes=np.asarray(value_array)),
+                dtype=value_array.dtype,
+            )
         )
         self.__categories = tuple(repr(value) for value in declared)
         self.__codes = tuple(range(len(declared)))
@@ -206,21 +223,15 @@ class DiscreteGrid(Grid):
 
         """
         nodes = self.__require_value_array()
-        value = jnp.asarray(value)
-        if jnp.issubdtype(nodes.dtype, jnp.integer):
-            if not jnp.issubdtype(value.dtype, jnp.integer):
-                msg = (
-                    "An integer value grid matches integers exactly; got "
-                    f"{value.dtype} values. Return integers from the law."
-                )
-                raise TypeError(msg)
+        if self.__midpoints is None:
+            value = _as_integer_query(value)
             index = jnp.clip(
                 jnp.searchsorted(nodes, value, side="left"), 0, nodes.shape[0] - 1
             )
             matches = nodes[index] == value
         else:
-            value = value.astype(nodes.dtype)
-            index = _nearest_index(nodes=nodes, value=value)
+            value = _as_float_query(value=value, dtype=nodes.dtype)
+            index = _nearest_index(midpoints=self.__midpoints, value=value)
             matches = jnp.abs(value - nodes[index]) <= self.__tolerance
         return jnp.where(matches, index, MISSING_CAT_CODE).astype(jnp.int32)
 
@@ -232,7 +243,7 @@ class DiscreteGrid(Grid):
         clamped or wrapped onto a node.
         """
         nodes = self.__require_value_array()
-        return nodes.at[jnp.asarray(code)].get(
+        return nodes.at[_as_index(code=code, n_nodes=nodes.shape[0])].get(
             mode="fill",
             fill_value=_off_grid_value(nodes),
             wrap_negative_indices=False,
@@ -249,14 +260,14 @@ class DiscreteGrid(Grid):
 
         """
         nodes = self.__require_value_array()
-        if jnp.issubdtype(nodes.dtype, jnp.integer):
+        if self.__midpoints is None:
             msg = (
                 "`nearest` snaps floats onto a float value grid. An integer value "
                 "grid matches the integers a law returns exactly."
             )
             raise TypeError(msg)
-        value = jnp.asarray(value).astype(nodes.dtype)
-        snapped = nodes[_nearest_index(nodes=nodes, value=value)]
+        value = _as_float_query(value=value, dtype=nodes.dtype)
+        snapped = nodes[_nearest_index(midpoints=self.__midpoints, value=value)]
         return jnp.where(jnp.isnan(value), jnp.nan, snapped)
 
     def __require_value_array(self) -> Int1D | Float1D:
@@ -336,12 +347,21 @@ def _validate_tolerance(
             f"`tolerance` must be finite and >= 0, got {tolerance}."
         )
     nodes = np.asarray(value_array)
+    # Compared as the dtype it is applied at, against exact rational gaps: a
+    # float subtraction of distant nodes can overflow.
+    stored_tolerance = Fraction(float(nodes.dtype.type(tolerance)))
     if nodes.size > 1:
-        smallest_gap = float(np.min(np.diff(nodes)))
-        if not tolerance < smallest_gap / 2:
+        half_gap = (
+            min(
+                Fraction(float(right)) - Fraction(float(left))
+                for left, right in itertools.pairwise(nodes)
+            )
+            / 2
+        )
+        if not stored_tolerance < half_gap:
             raise GridInitializationError(
                 f"`tolerance` must be below half the smallest gap between values "
-                f"({smallest_gap / 2}), so a value matches at most one node; got "
+                f"({float(half_gap)}), so a value matches at most one node; got "
                 f"{tolerance}."
             )
     if tolerance > 0:
@@ -356,23 +376,85 @@ def _validate_tolerance(
             )
 
 
-def _nearest_index(*, nodes: Float1D, value: FloatND) -> IntND:
+def _nearest_index(*, midpoints: Float1D, value: FloatND) -> IntND:
     """Return the index of the float node closest to each value, the lower on a tie.
 
-    A value outside the nodes, infinity included, takes the end node. NaN takes an
-    arbitrary node; callers decide what NaN means.
+    `midpoints` holds, for each pair of adjacent nodes, the largest float at or
+    below their exact midpoint, so a value owns the upper node exactly when it
+    lies above that float. A value outside the nodes, infinity included, takes
+    the end node. NaN takes an arbitrary node; callers decide what NaN means.
     """
-    n_nodes = nodes.shape[0]
-    upper = jnp.clip(jnp.searchsorted(nodes, value, side="left"), 0, n_nodes - 1)
-    lower = jnp.clip(upper - 1, 0, n_nodes - 1)
-    lower_value = nodes[lower]
-    upper_value = nodes[upper]
-    # Inside the nodes `lower_value < value <= upper_value`, so both distances
-    # are nonnegative; at or above the last node the upper node is the closest.
-    upper_is_closer = (value >= upper_value) | (
-        (value > lower_value) & (value - lower_value > upper_value - value)
-    )
-    return jnp.where(upper_is_closer, upper, lower).astype(jnp.int32)
+    return jnp.searchsorted(midpoints, value, side="left").astype(jnp.int32)
+
+
+def _downward_midpoints(*, nodes: np.ndarray) -> np.ndarray:
+    """Return the largest float of the nodes' dtype at or below each exact midpoint.
+
+    The midpoints are compared as exact rationals, so no rounding of a distance or
+    a midpoint can move a value to the wrong side.
+    """
+    dtype = nodes.dtype.type
+    cuts = []
+    for left, right in itertools.pairwise(nodes):
+        midpoint = (Fraction(float(left)) + Fraction(float(right))) / 2
+        cut = dtype(float(midpoint))
+        while Fraction(float(cut)) > midpoint:
+            cut = np.nextafter(cut, dtype(-math.inf))
+        while Fraction(float(np.nextafter(cut, dtype(math.inf)))) <= midpoint:
+            cut = np.nextafter(cut, dtype(math.inf))
+        cuts.append(cut)
+    return np.asarray(cuts, dtype=nodes.dtype)
+
+
+def _as_integer_query(value: ArrayLike) -> ValueND:
+    """Return integer queries without letting a host integer narrow onto a node.
+
+    A host integer outside the int32 range becomes `MISSING_CAT_CODE`, which no
+    integer grid holds, before it can be narrowed to its low word.
+
+    Raises:
+        TypeError: If the values are not integers.
+
+    """
+    if isinstance(value, jax.Array):
+        query = value
+    else:
+        host = np.asarray(value)
+        if host.dtype.kind in "iu":
+            in_range = host <= _INT32_MAX
+            if host.dtype.kind == "i":
+                in_range &= host > MISSING_CAT_CODE
+            host = np.where(in_range, host, MISSING_CAT_CODE).astype(np.int32)
+        query = jnp.asarray(host)
+    if not jnp.issubdtype(query.dtype, jnp.integer):
+        msg = (
+            "An integer value grid matches integers exactly; got "
+            f"{query.dtype} values. Return integers from the law."
+        )
+        raise TypeError(msg)
+    return query
+
+
+def _as_float_query(*, value: ArrayLike, dtype: np.dtype) -> FloatND:
+    """Return queries at the grid's float dtype, converting host values directly."""
+    if isinstance(value, jax.Array):
+        return value.astype(dtype)
+    return jnp.asarray(np.asarray(value).astype(dtype))
+
+
+def _as_index(*, code: ArrayLike, n_nodes: int) -> IntND:
+    """Return int32 gather indices, with every code outside `0..n-1` at `n`.
+
+    The bounds are checked on the original integers, host or device, before any
+    narrowing, so a wide code cannot wrap onto a node.
+    """
+    if not isinstance(code, jax.Array):
+        host = np.asarray(code)
+        if host.dtype.kind in "iu":
+            host = np.where((host >= 0) & (host < n_nodes), host, n_nodes)
+            host = host.astype(np.int32)
+        code = jnp.asarray(host)
+    return jnp.where((code >= 0) & (code < n_nodes), code, n_nodes).astype(jnp.int32)
 
 
 def _off_grid_value(nodes: Int1D | Float1D) -> float | int:
