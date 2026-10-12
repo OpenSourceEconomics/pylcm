@@ -378,6 +378,7 @@ class GridSearch(Solver):
                         cell_width_keyword=cell_width_keyword,
                         untiled_state_names=untiled_state_names,
                         broadcast_state_names=broadcast_state_names,
+                        return_feasibility=True,
                     )
                 elif action_partition_mesh is not None:
                     program_functions[q_id] = get_action_partitioned_max_Q_over_a(

@@ -407,9 +407,9 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "760f08ea3533cb55ed6ff59c52f022ed97b851c2782f28e8a7dace3e08f6bec1",
     COLLECTIVE_SOURCE: "3b7f2efb763c8334e9a70eaab00f7037c2dd990d0b310929d959d8919059c810",
-    MAX_Q_SOURCE: "8ee120f1f1896ef1e5bec883cacb58e3f263bfc278e7a54ccb48cac4002fde6b",
+    MAX_Q_SOURCE: "ee776445c7b79cb926a90a1a8f04081fbad4dbe637fe6739b5683af4a284856f",
     PROCESSING_SOURCE: "73ae2e151da59e7dfbac248628c6d8661592f7af564f90068b4dcb76462be48b",
-    GRID_SEARCH_SOURCE: "0a66da924695488aa31ef92dd5a2382db56dd79fdce5bc2c2f4af91cf7c8f7e4",
+    GRID_SEARCH_SOURCE: "17b9a2e6b7169e1a5d1cdce0b8cbf4617efa324ea5563081df5b5c15173078d7",
     CORE_PROGRAM_SOURCE: "21e86cda882a227086aa6550a63daa9492071f7a14a9e56565e751a67ffae2b1",
     OUTPUT_LAYOUT_SOURCE: "1173fe52bc6c9315b328d5ed5bc752f8012614443bd15756e0bf7245595aafbb",
     VALUE_TRANSFER_SOURCE: "c3b8b9df21ea6ebb6d029becdafd4da8905f1a3699d2a1ff5d206af218d097f6",
@@ -1651,7 +1651,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     GRID_SEARCH_SOURCE: (
         "ef9f4f8ff3229248b4a4461f07718d1fe8721317385c4a78a2b6f50eae0a6909",
         {
-            "GridSearch.build_period_kernels": "ff9d0f80673c16eb48a77fe10e370263672f5dd0c6450d9525def2c9abb2b384",
+            "GridSearch.build_period_kernels": "78946a40f9842708c645656c06c8f2f5803846cc49bccb1879fbd3587264678f",
             "_action_partition_mesh": "cab2381dbe9650e10620db20b6614ccb015eb147ff3356ab66e90cec58bf06fe",
             "_classify_action_streaming": "94f0ab10c4d1337793325404f36c04db32e07a88ac51e03265af60bc52b3c801",
             "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
@@ -1672,7 +1672,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MAX_Q_SOURCE: (
-        "55a18eb64af0f6d1057ce81791ee77f4ccfa37b7dfb99b99206b537735ad4b7e",
+        "733606ca6a3fa3dfe99dbd6c8e1a981ec64fc2e6fb536fee7ce2c240606aaf1a",
         {
             "get_action_partitioned_max_Q_over_a": "1fc3280eb991581e01fd097902f248c24cc48349c976780bbf7ecbd0d493a5fd",
             "_ActionPartitionedMaxQOverA.__call__": "5f09c6f1757b622b6c36c0fcbc80463b5edd8a0e04f387eacbab4265730c8c35",

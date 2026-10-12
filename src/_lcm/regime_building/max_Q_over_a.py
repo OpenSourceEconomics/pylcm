@@ -1595,7 +1595,8 @@ def get_selection_readout_Q_over_a(
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
     publishes_index: bool,
-) -> Callable[..., FloatND | tuple[IntND, FloatND]]:
+    return_feasibility: bool = False,
+) -> Callable[..., FloatND | tuple[IntND, FloatND] | tuple[FloatND, BoolND]]:
     """Get the reduction over actions of a regime with a selection aggregator.
 
     At one state cell the action is the first feasible maximizer of the
@@ -1609,10 +1610,14 @@ def get_selection_readout_Q_over_a(
         state_names: Tuple of state names.
         publishes_index: Whether the reduction also returns the flat index of
             the selected action, as simulation needs.
+        return_feasibility: Whether the reduction also returns the flag that no
+            action is feasible at the cell, as the counted solve needs. Exclusive
+            with `publishes_index`.
 
     Returns:
         The value at the selected action, preceded by its flat index if
-        `publishes_index` is set.
+        `publishes_index` is set, or followed by the empty-action flag if
+        `return_feasibility` is set.
 
     """
     extra_param_names = _get_extra_param_names(
@@ -1623,10 +1628,24 @@ def get_selection_readout_Q_over_a(
         variables=action_names,
         batch_sizes=dict.fromkeys(action_names, 0),
     )
+    if publishes_index and return_feasibility:
+        msg = "A selection readout publishes either its index or its feasibility."
+        raise ValueError(msg)
+    return_annotation = (
+        "tuple[IntND, FloatND]"
+        if publishes_index
+        else "tuple[FloatND, BoolND]"
+        if return_feasibility
+        else "FloatND"
+    )
     return with_signature(
-        _SelectionReadoutQOverA(parts=parts, publishes_index=publishes_index),
+        _SelectionReadoutQOverA(
+            parts=parts,
+            publishes_index=publishes_index,
+            return_feasibility=return_feasibility,
+        ),
         args=["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names],
-        return_annotation="tuple[IntND, FloatND]" if publishes_index else "FloatND",
+        return_annotation=return_annotation,
         enforce=False,
     )
 
@@ -1639,6 +1658,7 @@ def get_selection_readout_max_Q_over_a(
     cell_width_keyword: str | None,
     untiled_state_names: tuple[StateName, ...],
     broadcast_state_names: tuple[StateName, ...],
+    return_feasibility: bool = False,
 ) -> MaxQOverAFunction:
     """Get the value function of a regime with a selection aggregator.
 
@@ -1651,6 +1671,7 @@ def get_selection_readout_max_Q_over_a(
         action_names=action_names,
         state_names=state_names,
         publishes_index=False,
+        return_feasibility=return_feasibility,
     )
     mapped = (
         productmap(
@@ -1688,12 +1709,15 @@ class _SelectionReadoutQOverA:
     publishes_index: bool
     """Whether to return the selected flat index alongside the value."""
 
+    return_feasibility: bool = False
+    """Whether to return the empty-action flag after the value."""
+
     def __call__(
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
-    ) -> FloatND | tuple[IntND, FloatND]:
-        """Return the value at the selected action, with its index if requested."""
+    ) -> FloatND | tuple[IntND, FloatND] | tuple[FloatND, BoolND]:
+        """Return the selected action's value, with its index or flag if requested."""
         parts = self.parts(
             next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
@@ -1703,7 +1727,9 @@ class _SelectionReadoutQOverA:
             readout=parts.Q,
             where=parts.F,
         )
-        return (index, value) if self.publishes_index else value
+        if self.publishes_index:
+            return index, value
+        return (value, ~jnp.any(parts.F)) if self.return_feasibility else value
 
 
 def draw_taste_shock_noise(
