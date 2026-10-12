@@ -1,4 +1,5 @@
 import dataclasses
+import functools
 import itertools
 import math
 from dataclasses import make_dataclass
@@ -23,6 +24,7 @@ from _lcm.grids import (
     categorical,
     validate_category_class,
 )
+from _lcm.grids import discrete as discrete_module
 from _lcm.grids.categorical import _validate_discrete_grid, get_category_codes
 from _lcm.grids.continuous import _validate_continuous_grid
 from _lcm.grids.discrete import MISSING_CAT_CODE
@@ -1268,3 +1270,159 @@ def test_integer_value_grid_encodes_narrow_host_integers_by_membership(dtype):
     expected = [nodes.index(v) if v in nodes else MISSING_CAT_CODE for v in raw]
     encoded = DiscreteGrid(values=nodes).encode(np.asarray(raw, dtype=dtype))
     assert np.asarray(encoded).tolist() == expected
+
+
+_MAX_NODE = 2**31 - 1
+_NEGATIVE_NODES = (MISSING_CAT_CODE + 1, -65537, -65536, -257, -256, -129, -128, -2, -1)
+_INTEGER_GRIDS = {
+    "singleton": (-1,),
+    "negative_family": _NEGATIVE_NODES,
+    "mixed_boundaries": (*_NEGATIVE_NODES, 0, 1, 20, _MAX_NODE),
+}
+_INTEGER_DTYPES = [
+    np.int8,
+    np.uint8,
+    np.int16,
+    np.uint16,
+    np.int32,
+    np.uint32,
+    np.int64,
+    np.uint64,
+]
+
+
+def _reference_encode(*, nodes, query):
+    """The code of the node equal to the original integer, else the missing code."""
+    return nodes.index(query) if query in nodes else MISSING_CAT_CODE
+
+
+def _reference_decode(*, nodes, code, floating):
+    """The node a code indexes, bounds checked on the original integer."""
+    if 0 <= code < len(nodes):
+        return nodes[code]
+    return math.nan if floating else MISSING_CAT_CODE
+
+
+def _representable(*, dtype, candidates):
+    info = np.iinfo(dtype)
+    return sorted({c for c in candidates if info.min <= c <= info.max})
+
+
+def _integer_routes(*, function, host, dtype):
+    """Evaluate `function` on host and device routes the precision can represent."""
+    results = {
+        "host_eager": function(host),
+        "host_jit_closure": jax.jit(functools.partial(function, host))(),
+    }
+    if np.dtype(dtype).itemsize < 8 or X64_ENABLED:
+        device = jnp.asarray(host)
+        assert np.asarray(device).tolist() == host.tolist()
+        results |= {
+            "device_eager": function(device),
+            "device_jit": jax.jit(function)(device),
+            "device_vmap": jax.vmap(function)(device),
+        }
+    return {route: np.asarray(result) for route, result in results.items()}
+
+
+@pytest.mark.parametrize("grid_name", list(_INTEGER_GRIDS))
+@pytest.mark.parametrize("dtype", _INTEGER_DTYPES)
+def test_integer_value_grid_encodes_every_integer_dtype_like_python_integers(
+    *, grid_name, dtype
+):
+    """Each input integer type matches a node exactly when its integer equals it."""
+    nodes = _INTEGER_GRIDS[grid_name]
+    queries = _representable(
+        dtype=dtype,
+        candidates=(
+            *nodes,
+            *(2**32 + node for node in nodes),
+            *(2**64 + node for node in nodes),
+            MISSING_CAT_CODE,
+            2**31,
+            2**32 - 1,
+            int(np.iinfo(dtype).min),
+            int(np.iinfo(dtype).max),
+            0,
+            1,
+        ),
+    )
+    host = np.asarray(queries, dtype=dtype)
+    expected = [_reference_encode(nodes=nodes, query=q) for q in queries]
+    grid = DiscreteGrid(values=nodes)
+    observed = _integer_routes(function=grid.encode, host=host, dtype=dtype)
+    assert {
+        route: codes.tolist() for route, codes in observed.items()
+    } == dict.fromkeys(observed, expected)
+
+
+@pytest.mark.parametrize("kind", ["integer", "float"])
+@pytest.mark.parametrize("dtype", _INTEGER_DTYPES)
+def test_value_grid_decodes_every_integer_dtype_like_python_integers(*, kind, dtype):
+    """Each code type reads its node exactly when its integer lies in `0..n-1`."""
+    nodes = (0, 20, 40, 60, 80) if kind == "integer" else (0.0, 0.5, 1.0, 1.5, 2.0)
+    codes = _representable(
+        dtype=dtype,
+        candidates=(
+            int(np.iinfo(dtype).min),
+            -1,
+            0,
+            4,
+            5,
+            int(np.iinfo(dtype).max),
+            2**32,
+            2**32 + 4,
+            2**64 - 1,
+            -(2**32) + 4,
+        ),
+    )
+    host = np.asarray(codes, dtype=dtype)
+    expected = np.asarray(
+        [
+            _reference_decode(nodes=nodes, code=c, floating=kind == "float")
+            for c in codes
+        ],
+        dtype=float,
+    )
+    grid = DiscreteGrid(values=nodes)
+    for route, decoded in _integer_routes(
+        function=grid.decode, host=host, dtype=dtype
+    ).items():
+        np.testing.assert_array_equal(
+            np.asarray(decoded, dtype=float), expected, err_msg=route
+        )
+
+
+_CLASSIFY_INTEGERS = discrete_module._classify_integers
+
+
+def _classify_bypassing_device_inputs(value):
+    if isinstance(value, jax.Array):
+        return jnp.asarray(value).astype(jnp.int32)
+    return _CLASSIFY_INTEGERS(value)
+
+
+def _classify_after_casting_to_int32(value):
+    return _CLASSIFY_INTEGERS(jnp.asarray(value).astype(jnp.int32))
+
+
+def _classify_with_a_zero_fill(value):
+    classified = _CLASSIFY_INTEGERS(value)
+    return jnp.where(classified == MISSING_CAT_CODE, 0, classified)
+
+
+@pytest.mark.parametrize(
+    "mutant",
+    [
+        _classify_bypassing_device_inputs,
+        _classify_after_casting_to_int32,
+        _classify_with_a_zero_fill,
+    ],
+)
+def test_integer_differential_detects_each_broken_classifier(*, monkeypatch, mutant):
+    """Each way of losing the original integer makes the encode differential fail."""
+    monkeypatch.setattr(discrete_module, "_classify_integers", mutant)
+    with pytest.raises(AssertionError):
+        test_integer_value_grid_encodes_every_integer_dtype_like_python_integers(
+            grid_name="mixed_boundaries", dtype=np.uint32
+        )

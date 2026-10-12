@@ -224,7 +224,7 @@ class DiscreteGrid(Grid):
         """
         nodes = self.__require_value_array()
         if self.__midpoints is None:
-            value = _as_integer_query(value)
+            value = _classify_integers(value)
             index = jnp.clip(
                 jnp.searchsorted(nodes, value, side="left"), 0, nodes.shape[0] - 1
             )
@@ -243,7 +243,10 @@ class DiscreteGrid(Grid):
         clamped or wrapped onto a node.
         """
         nodes = self.__require_value_array()
-        return nodes.at[_as_index(code=code, n_nodes=nodes.shape[0])].get(
+        codes = _classify_integers(code)
+        n_nodes = nodes.shape[0]
+        index = jnp.where((codes >= 0) & (codes < n_nodes), codes, n_nodes)
+        return nodes.at[index].get(
             mode="fill",
             fill_value=_off_grid_value(nodes),
             wrap_negative_indices=False,
@@ -406,33 +409,40 @@ def _downward_midpoints(*, nodes: np.ndarray) -> np.ndarray:
     return np.asarray(cuts, dtype=nodes.dtype)
 
 
-def _as_integer_query(value: ArrayLike) -> ValueND:
-    """Return integer queries without letting a host integer narrow onto a node.
+def _classify_integers(value: ArrayLike) -> IntND:
+    """Return each integer as int32 if int32 holds it, else `MISSING_CAT_CODE`.
 
-    A host integer outside the int32 range becomes `MISSING_CAT_CODE`, which no
-    integer grid holds, before it can be narrowed to its low word.
+    The range test runs on the original integers, in their own dtype, before any
+    conversion, so no integer of any width or signedness can alias a different
+    int32. `MISSING_CAT_CODE` is never a node and never a valid code, so callers
+    need no separate validity mask:
+
+    - int8, int16, uint8 and uint16 widen to int32 first, which is exact; a
+      bound wider than the dtype would otherwise wrap into it.
+    - int32, int64, uint32 and uint64 compare against bounds built in their own
+      dtype, so no comparison promotes; unsigned integers are never negative, so
+      their lower bound is 0.
+    - Host values are classified in NumPy before they reach the device, so a
+      64-bit host integer is never truncated on upload when x64 is off.
 
     Raises:
         TypeError: If the values are not integers.
 
     """
-    if isinstance(value, jax.Array):
-        query = value
-    else:
-        host = np.asarray(value)
-        if host.dtype.kind in "iu":
-            in_range = host <= _INT32_MAX
-            if host.dtype.kind == "i":
-                in_range &= host > MISSING_CAT_CODE
-            host = _int32_where(in_range=in_range, host=host, fill=MISSING_CAT_CODE)
-        query = jnp.asarray(host)
-    if not jnp.issubdtype(query.dtype, jnp.integer):
-        msg = (
-            "An integer value grid matches integers exactly; got "
-            f"{query.dtype} values. Return integers from the law."
-        )
+    library = jnp if isinstance(value, jax.Array) else np
+    integers = library.asarray(value)
+    if integers.dtype.kind not in "iu":
+        msg = f"Value-grid integers and codes must be integers; got {integers.dtype}."
         raise TypeError(msg)
-    return query
+    if integers.dtype.itemsize < np.dtype(np.int32).itemsize:
+        integers = integers.astype(library.int32)
+    bound = integers.dtype.type
+    lowest = 0 if integers.dtype.kind == "u" else MISSING_CAT_CODE + 1
+    in_range = (integers >= bound(lowest)) & (integers <= bound(_INT32_MAX))
+    classified = library.where(
+        in_range, integers.astype(library.int32), library.int32(MISSING_CAT_CODE)
+    )
+    return jnp.asarray(classified, dtype=jnp.int32)
 
 
 def _as_float_query(*, value: ArrayLike, dtype: np.dtype) -> FloatND:
@@ -440,40 +450,6 @@ def _as_float_query(*, value: ArrayLike, dtype: np.dtype) -> FloatND:
     if isinstance(value, jax.Array):
         return value.astype(dtype)
     return jnp.asarray(np.asarray(value).astype(dtype))
-
-
-def _as_index(*, code: ArrayLike, n_nodes: int) -> IntND:
-    """Return int32 gather indices, with every code outside `0..n-1` at `n`.
-
-    The bounds are checked on the original integers, host or device, before any
-    narrowing, so a wide code cannot wrap onto a node.
-    """
-    if not isinstance(code, jax.Array):
-        host = np.asarray(code)
-        if host.dtype.kind in "iu":
-            host = _int32_where(
-                in_range=(host >= 0) & (host < n_nodes), host=host, fill=n_nodes
-            )
-        code = jnp.asarray(host)
-    # A narrow dtype cannot hold `n`, so it widens to int32 before the limit
-    # meets it; a wider dtype keeps its own integers for the comparison.
-    if code.dtype.itemsize < jnp.dtype(jnp.int32).itemsize:
-        code = code.astype(jnp.int32)
-    return jnp.where((code >= 0) & (code < n_nodes), code, n_nodes).astype(jnp.int32)
-
-
-def _int32_where(
-    *, in_range: np.ndarray | np.bool_, host: np.ndarray, fill: int
-) -> np.ndarray:
-    """Return `host` as int32 where `in_range`, else `fill`.
-
-    The result is built in int32, so neither the fill nor an out-of-range input
-    passes through the input's own dtype, narrow or wide.
-    """
-    in_range = np.asarray(in_range)
-    out = np.full(host.shape, fill, dtype=np.int32)
-    out[in_range] = host[in_range]
-    return out
 
 
 def _off_grid_value(nodes: Int1D | Float1D) -> float | int:
