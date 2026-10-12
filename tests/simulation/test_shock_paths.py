@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
@@ -575,6 +576,8 @@ def test_supplied_paths_on_subject_mesh(*, budget: int | None) -> None:
 
 
 def test_unrepresentable_path_reports_state_and_period() -> None:
+    if np.finfo(np.longdouble).max <= jnp.finfo(canonical_float_dtype()).max:
+        pytest.skip("No float on this platform is wider than the simulation dtype.")
     path = np.full(3, np.finfo(np.longdouble).max, dtype=np.longdouble)
     with pytest.raises(InvalidSimulationInputError, match=r"shock.*dtype at period 0"):
         _model().simulate(
