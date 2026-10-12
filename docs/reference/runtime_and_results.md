@@ -396,21 +396,29 @@ solution = model.solve(
 )
 
 V_working = solution.value(period=0, regime="working")
-frame = solution.value_frame(period=0, regime="working")
+values = solution.value_array(period=0, regime="working")
+curve = values.sel(education="college")
+frame = curve.to_dataframe().reset_index()
+full_frame = solution.value_frame(period=0, regime="working")
 codes = solution.value_frame(period=0, regime="working", use_labels=False)
 ```
 
-`value_frame` returns a long pandas DataFrame: state columns in
-`metadata.value_schemas[(period, regime)].axis_names` order, followed by `V`. Axis names
-must be unique and cannot be `V`, which is reserved for the value column. Discrete
-states use categorical labels and ordering matching simulation; `use_labels=False` keeps
-integer codes. Collective regimes also have a `stakeholder` column. Coordinates are the
-resolved grid nodes used by the solve, including parameter-dependent process grids and
-period-specialized grids, and remain available after saving and loading. The call
-materializes every grid point, so the frame can be large. For values between nodes, use
-`Model.lookup_policy`, which uses the same interpolation as simulation. The
-coordinate-bearing value schema uses solution schema version 3; archives from a
-different schema version are refused by the existing compatibility gate.
+`value_array` returns an xarray `DataArray` named `V` with one dimension per axis in
+`metadata.value_schemas[(period, regime)].axis_names` order. Axis names must be unique
+and cannot be `V`, which is reserved for the value. Discrete states carry their labels
+as a categorical coordinate in declaration order, with the ordering matching simulation;
+`use_labels=False` keeps integer codes. Collective regimes also have a `stakeholder`
+dimension, and a regime without states yields a zero-dimensional array. Coordinates are
+the resolved grid nodes used by the solve, including parameter-dependent process grids
+and period-specialized grids, and remain available after saving and loading. The array
+wraps the stored value without copying it to the host, so select the slice you need
+before converting it to a table.
+
+`value_frame` is the same array in long form: a pandas DataFrame with one column per
+dimension followed by `V`. It materializes every grid point, so the frame can be large.
+For values between nodes, use `Model.lookup_policy`, which uses the same interpolation
+as simulation. The coordinate-bearing value schema uses solution schema version 3;
+archives from a different schema version are refused by the existing compatibility gate.
 
 The result and its supporting types live in the lightweight `lcm.solver_api` submodule;
 they are not re-exported from the top-level `lcm` namespace. The retention modes are:
