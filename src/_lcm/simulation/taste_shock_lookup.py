@@ -1,10 +1,12 @@
 """Policy lookup's decision in a regime with EV1 taste shocks.
 
-The body performs the solve's reduction in the solve's order: it masks the
-kernel's `Q` with `F`, takes the max over the continuous-action axes for each
-discrete-action combination (`Qc`), and passes `Qc` to `logsum_and_softmax`
-over the discrete axes. The smoothed maximum is the value the solve stores, and
-the softmax it discards there is the choice probability published here.
+The body applies the solve's reduction, in the solve's order, to the simulation
+decision: it masks the kernel's `Q` with `F`, takes the max over the
+continuous-action axes for each discrete-action combination (`Qc`), and passes
+`Qc` to `logsum_and_softmax` over the discrete axes. Its `Q` uses the simulate
+phase's current utility and aggregator with the solved continuation, so the
+smoothed maximum equals the stored solve value at grid rows when both phases
+share those primitives and the action grid is the declared one.
 """
 
 import dataclasses

@@ -142,11 +142,11 @@ def _evaluate_operands(
         values: MappingProxyType[RegimeName, FloatND],
     ) -> tuple[jax.Array | bool, jax.Array, jax.Array, jax.Array | bool]:
         utility, feasible = q.U_and_F(**cell)
-        continuation, _ = q.compute_CE(
+        continuation = q.compute_CE(
             next_regime_to_V_arr=values,
             zero=jnp.zeros_like(utility),
             states_actions_params=cell,
-        )
+        )[0]
         aggregation = q.build_W_kwargs(cell)
         assert len(aggregation) == 1
         name, discount = next(iter(aggregation.items()))

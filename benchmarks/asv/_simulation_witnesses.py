@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 
 from jax import numpy as jnp
 
-from lcm import Model
+from lcm import LinSpacedGrid, Model
 from lcm.execution import ExecutionConfig
 from lcm.typing import UserInitialConditions, UserParams
 
@@ -44,9 +44,25 @@ def multi_regime(
     *, execution_config: ExecutionConfig | None = None
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build the two-non-terminal-regime shock model and its simulate inputs."""
-    model = get_multi_regime_model(
+    base = get_multi_regime_model(
         n_periods=6,
         distribution_type="normal",
+        execution_config=execution_config or ExecutionConfig(),
+    )
+    # Five living decisions spend at most 0.75 of the minimum initial wealth 1.0.
+    consumption = LinSpacedGrid(start=0.1, stop=0.15, n_points=4)
+    model = Model(
+        regimes={
+            name: regime.replace(actions={"consumption": consumption})
+            if name in {"work", "retire"}
+            else regime
+            for name, regime in base.user_regimes.items()
+        },
+        edges=base.edges,
+        regime_id_class=MultiRegimeId,
+        ages=base.ages,
+        fixed_params=dict(base.fixed_params),
+        initial_nodes=base.initial_nodes,
         execution_config=execution_config or ExecutionConfig(),
     )
     return (

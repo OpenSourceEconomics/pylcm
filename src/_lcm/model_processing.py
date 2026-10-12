@@ -35,6 +35,7 @@ from _lcm.params.processing import (
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.reachability import PhaseName
 from _lcm.regime_building.age_normalization import (
     _regime_has_markers,
     normalize_age_specialization,
@@ -261,7 +262,7 @@ def validate_model_inputs(
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
-    targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]],
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     removed_edge_reads: Mapping[
         RegimeName, Mapping[str, tuple[RegimeName, ...]]
@@ -279,9 +280,9 @@ def validate_model_inputs(
     resolved at the first of `visited_periods_by_regime`, where a subject can be;
     they default to the active periods.
 
-    `targets_by_regime` names, per regime, the targets the model graph reaches
-    at the demanded periods; a state handed to one of them that keeps it is
-    used.
+    `targets_by_phase` names, per phase and regime, the targets the model graph
+    reaches at the demanded periods; a state a phase's law hands to one of that
+    phase's targets that keeps it as a state is used.
 
     `removed_edge_reads` name, per regime, the variables read by declarations
     that fixed-zero pruning removed with their edges, and those edges' targets.
@@ -360,7 +361,7 @@ def validate_model_inputs(
             broadcast_variables=broadcast_variables,
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
-            targets_by_regime=targets_by_regime,
+            targets_by_phase=targets_by_phase,
             visited_periods_by_regime=visited_periods_by_regime,
             removed_edge_reads=removed_edge_reads,
         )
@@ -498,7 +499,7 @@ def _validate_all_variables_used(
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
-    targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]],
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     removed_edge_reads: Mapping[
         RegimeName, Mapping[str, tuple[RegimeName, ...]]
@@ -545,8 +546,8 @@ def _validate_all_variables_used(
         ages: The model's time axis, used to resolve `AgeSpecializedFunction`
             markers at a representative age.
         active_periods_by_regime: The per-regime coverage.
-        targets_by_regime: Per regime, the targets the model graph reaches at
-            the demanded periods, in either phase.
+        targets_by_phase: Per phase and regime, the targets the model graph
+            reaches at the demanded periods.
         visited_periods_by_regime: Per regime, the periods a subject can be in
             it, where a simulate-only marker is resolved.
         removed_edge_reads: Per regime, each state or action read by a
@@ -664,7 +665,7 @@ def _validate_all_variables_used(
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
         visited_periods_by_regime=visited_periods_by_regime,
-        targets_by_regime=targets_by_regime,
+        targets_by_phase=targets_by_phase,
     )
     error_messages = []
     for regime_name, unread in unread_by_regime.items():
@@ -691,8 +692,11 @@ def _validate_all_variables_used(
                 + (
                     _hand_over_explanation(
                         regime_name=regime_name,
-                        reachable_targets=targets_by_regime.get(
-                            regime_name, frozenset()
+                        reachable_targets=frozenset().union(
+                            *(
+                                by_regime.get(regime_name, frozenset())
+                                for by_regime in targets_by_phase.values()
+                            )
                         ),
                     )
                     if unused_states

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 if TYPE_CHECKING:
-    from tests.candidate_certificate.verify import _VerificationReport
+    from tests.candidate_certificate.verify import _CliVerificationReport
 
 
 class _ControlCase(TypedDict):
@@ -39,7 +39,7 @@ class _ProcessOutput(TypedDict):
     errors: NotRequired[list[str]]
 
 
-type _VerifierPayload = _VerificationReport | _ProcessOutput
+type _VerifierPayload = _CliVerificationReport | _ProcessOutput
 
 CERTIFICATE = Path("tests/test_grid_search_candidate_certificate.py")
 VERIFIER = Path("tests/candidate_certificate/verify.py")
