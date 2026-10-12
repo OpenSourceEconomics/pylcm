@@ -194,7 +194,9 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
 
     # The trace is cached per abstract parameter signature: the caller maps the
     # values to their types in positional order, and the cached body binds the
-    # names and traces those types positionally, so both halves are pinned.
+    # names and traces those types positionally, so both halves are pinned. A
+    # supplied physical axis is captured as a graph constant, so its exact bytes
+    # join the key.
     trace = ast.unparse(_definition(tree=tree, name="_trace_process_jaxpr"))
     cached = _definition(tree=tree, name="_process_jaxpr")
     cached_trace = ast.unparse(cached)
@@ -202,6 +204,7 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
     if (
         "dict(zip(parameter_names, values, strict=True))" not in call
         or "_process_jaxpr(spec=spec, parameter_names=parameter_names, "
+        "node_identity=_supplied_node_identity(spec), "
         "parameter_types=tuple((jax.ShapeDtypeStruct(kind.shape, kind.dtype, "
         "weak_type=kind.weak_type) for kind in map(jax.typeof, parameter_values))))"
         not in trace
@@ -471,6 +474,12 @@ def test_runtime_process_admission_contract_is_complete() -> None:
             "_trace_process_jaxpr",
             "weak_type=kind.weak_type",
             "weak_type=False",
+            "traced inputs must use one explicit positional order",
+        ),
+        (
+            "_trace_process_jaxpr",
+            "node_identity=_supplied_node_identity(spec)",
+            "node_identity=None",
             "traced inputs must use one explicit positional order",
         ),
         (

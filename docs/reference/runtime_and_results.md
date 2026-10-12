@@ -688,20 +688,30 @@ function, such as a type-specific discount factor, rebuilding `Q` from `U` and `
 needs that function's value.
 
 In a regime with `ExtremeValueTasteShocks` the discrete choice is random, so `actions`
-is `None` and the lookup publishes the distribution the solve implies. For each state
-row and discrete-action combination, `Qc` is the max of `Q` over the feasible continuous
-actions (`-inf` without one), `choice_probabilities` is `softmax(Qc / scale)` over the
-feasible combinations (exactly `0.0` for an infeasible one), and `conditional_actions`
-maps each continuous action to its grid value at that max. All three have one leading
-row axis and one axis per discrete action of the (possibly restricted) grid. `value` is
-the smoothed maximum `scale * logsumexp(Qc / scale)` the solve stores. A row without a
-feasible combination has `value == -inf` and zero probabilities, and its conditional
-actions hold the first grid value. The lookup performs the solve's own reduction, mask,
-continuous max and logsum, so the probabilities are the ones a likelihood needs for the
-solved model. To evaluate them on the full state grid, pass the nodes `Model.state_grid`
-returns as `states`. Only GridSearch regimes support this: the simulation of an
-EGM-family solver recomputes the choice on the action grid and need not reproduce the
-choice probabilities of its solve, so the lookup refuses such a regime.
+is `None` and the lookup publishes the distribution of the discrete choice that
+`simulate` draws. For each state row and discrete-action combination, `Qc` is the max of
+`Q` over the feasible continuous actions (`-inf` without one), `choice_probabilities` is
+`softmax(Qc / scale)` over the feasible combinations (exactly `0.0` for an infeasible
+one), and `conditional_actions` maps each continuous action to its grid value at that
+max. All three have one leading row axis and one axis per discrete action of the
+(possibly restricted) grid. `value` is the smoothed maximum
+`scale * logsumexp(Qc / scale)` of those conditional values. A row without a feasible
+combination has `value == -inf` and zero probabilities, and its conditional actions hold
+the first grid value.
+
+The lookup applies the solve's reduction (mask, continuous max, logsum) to the decision
+`simulate` runs: current utility and the Koopmans aggregator take their `simulate`
+variants, and the continuation is the solved one. When both phases share those
+primitives and the action grid is the declared one, `value` equals the stored solve
+value at grid rows to numerical precision. With `Phased` current utility the two can
+differ, and the probabilities are those of the simulated choice.
+
+To evaluate the distribution on the full state grid, take each state's nodes from
+`Model.state_grid` in `Model.state_names(regime_name=...)` order, form their Cartesian
+product with `numpy.meshgrid(*nodes, indexing="ij")`, and pass each flattened mesh as
+that state's array. Only GridSearch regimes support this lookup: an EGM-family solver's
+simulation recomputes the choice on an action grid that can differ from its solve's
+candidates, so the lookup refuses such a regime.
 
 (api-simulation-result)=
 

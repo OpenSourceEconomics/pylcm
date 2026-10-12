@@ -17,6 +17,12 @@ than one per node of every draw. Linear interpolation makes `V` linear between i
 grid points `a_j`, so `W` is linear between the merged points `{a_j - shock_k}`.
 Storing `W` there is exact, and reading it with the same linear interpolation
 reproduces the per-node expectation up to rounding.
+
+The sum over `k` takes the same arithmetic as the ordinary continuation: each node's
+read `V(z + shock_k)` is formed first, and the node weights travel as scaled joint
+products into `zero_safe_average`. A rare node whose probability the format cannot
+hold as a plain number therefore still keeps an infinity standing at it, and still
+contributes its share against a large finite value.
 """
 
 import dataclasses
@@ -32,7 +38,7 @@ from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
 from _lcm.additive_shock_transition import AdditiveShockTransition
-from _lcm.grids.continuous import IrregSpacedGrid
+from _lcm.grids.continuous import IrregSpacedGrid, LinSpacedGrid
 from _lcm.probability import is_represented_zero
 from _lcm.regime_building.V import (
     VInterpolationInfo,
@@ -41,6 +47,7 @@ from _lcm.regime_building.V import (
     _get_lookup_function,
     _publish_signature,
 )
+from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.transition_plans import (
     LotteryLifetime,
     TargetTransitionPlan,
@@ -58,8 +65,9 @@ from _lcm.typing import (
     TransitionFunctionName,
 )
 from _lcm.utils.functools import get_union_of_args
+from _lcm.zero_safe import scaled_joint_weight
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import Float1D, FloatND, Int1D, ScalarInt, UserFunction
+from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarInt, UserFunction
 
 _TIME_NAMES = frozenset({"period", "age"})
 # Knots `_merged_knots` adds beyond the merged points, one on each side.
@@ -93,39 +101,39 @@ def average_over_shock(
         points, plus one anchor below and one above them (`_merged_knots`).
 
     """
-    knots, averaging = shock_averaging_matrix(
-        points=points, coordinate=coordinate, shocks=shocks, weights=weights
+    knots, stencil = shock_reading_stencil(
+        points=points, coordinate=coordinate, shocks=shocks
     )
     return knots, apply_averaging(
-        values=values, averaging=averaging, subscripts="...n,nm->...m"
+        values=values,
+        stencil=stencil,
+        coefficients=weights,
+        shifts=None,
+        subscripts="...n,nzm->...mz",
     )
 
 
-def shock_averaging_matrix(
+def shock_reading_stencil(
     *,
     points: Float1D,
     coordinate: Callable[[FloatND], FloatND],
     shocks: Float1D,
-    weights: Float1D,
 ) -> tuple[Float1D, FloatND]:
-    """Return the merged points and the matrix averaging a grid onto them.
+    """Return the merged points and every shock's interpolation stencil onto them.
 
-    Row `j` and column `m` hold the weight the grid's node `j` receives in the
-    average at merged point `m`: each shock's linear-interpolation stencil at
-    `m + shock_k`, times the shock's probability, normalized by the
-    probabilities' sum. A second slab marks the entries some stencil reaches
-    under a nonzero weight, which decides whether a non-finite node reaches the
-    average.
+    Entry `[j, k, m]` holds the weight the grid's node `j` receives when the
+    value is read at merged point `m` plus shock `k`. A second slab marks the
+    entries a read reaches under a nonzero interpolation weight, which decides
+    whether a non-finite node reaches that read.
 
     Args:
         points: The grid points, ascending.
         coordinate: Map from a value to its fractional grid coordinate.
         shocks: One shock per node of the averaged draws.
-        weights: The nodes' probabilities.
 
     Returns:
-        Tuple of the merged points `[M]` and the matrix `[2, n, M]`: the
-        averaging weights and the reach indicator.
+        Tuple of the merged points `[M]` and the stencil `[2, n, K, M]`: the
+        interpolation weights and the reach indicator.
 
     """
     knots = _merged_knots(points=points, shocks=shocks)
@@ -143,39 +151,48 @@ def shock_averaging_matrix(
     reach = (is_lower & ~is_represented_zero(lower_weight)[None]) | (
         is_upper & ~is_represented_zero(upper_weight)[None]
     )
-    live = ~is_represented_zero(weights)
-    averaging = jnp.einsum(
-        "k,nkm->nm", weights / jnp.sum(weights), stencil, precision=_HIGHEST
-    )
-    reached = jnp.any(reach & live[None, :, None], axis=1)
-    return knots, jnp.stack([averaging, reached.astype(averaging.dtype)])
+    return knots, jnp.stack([stencil, reach.astype(stencil.dtype)])
 
 
-def apply_averaging(*, values: FloatND, averaging: FloatND, subscripts: str) -> FloatND:
-    """Contract values with an averaging matrix, keeping infeasibility exact.
+def apply_averaging(
+    *,
+    values: FloatND,
+    stencil: FloatND,
+    coefficients: Float1D,
+    shifts: IntND | None,
+    subscripts: str,
+) -> FloatND:
+    """Read values at every shock, then average the reads over the shock's nodes.
 
-    The contraction runs on the finite values. An average that reaches a `-inf`
-    node under a nonzero weight is `-inf`, as an interpolated read touching it
-    is; one that reaches any other non-finite node is NaN.
+    The reads run on the finite values. A read that reaches a `-inf` node under
+    a nonzero interpolation weight is `-inf`, and one that reaches any other
+    non-finite node is NaN, as an interpolated read touching it is. The average
+    over the nodes is `zero_safe_average`: an exactly null node drops out
+    whatever it reads, a live node keeps a non-finite read, and scaled weights
+    keep a rare node's contribution against a large finite read.
 
     Args:
         values: The values, holding the grid axis named `n` in `subscripts`.
-        averaging: The `[2, ..., n, M]` output of `shock_averaging_matrix`, with
+        stencil: The `[2, ..., n, K, M]` output of `shock_reading_stencil`, with
             any batch axes it shares with `values`.
-        subscripts: The `einsum` contraction of `values` with one slab.
+        coefficients: The `[K]` node weights, or their scaled significands.
+        shifts: Each node weight's base-two scale, or `None` when the weights
+            are plain numbers.
+        subscripts: The `einsum` contraction of `values` with one stencil slab,
+            the node axis `z` last in its output.
 
     Returns:
-        The averaged values.
+        The averaged values, the node axis reduced away.
 
     """
     finite = jnp.isfinite(values)
-    averaged = jnp.einsum(
+    reads = jnp.einsum(
         subscripts,
         jnp.where(finite, values, 0),
-        averaging[0],
+        stencil[0],
         precision=_HIGHEST,
     )
-    reach = averaging[1]
+    reach = stencil[1]
     infeasible = (
         jnp.einsum(
             subscripts,
@@ -194,8 +211,9 @@ def apply_averaging(*, values: FloatND, averaging: FloatND, subscripts: str) -> 
         )
         > 0
     )
-    averaged = jnp.where(infeasible, -jnp.inf, averaged)
-    return jnp.where(undefined, jnp.nan, averaged)
+    reads = jnp.where(infeasible, -jnp.inf, reads)
+    reads = jnp.where(undefined, jnp.nan, reads)
+    return zero_safe_average(a=reads, weights=coefficients, shifts=shifts, axis=-1)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -249,8 +267,9 @@ def plan_shock_average(
         co_map_state_names: States whose axes are sliced off the value array.
 
     Returns:
-        The plan, or `None` when no law of the bundle is an additive shock
-        transition.
+        The plan, or `None` when no law is an additive shock transition or the
+        target's coordinate map has no established physical piecewise-linear
+        interpolation and end-segment extrapolation contract.
 
     Raises:
         ModelInitializationError: If the declaration cannot be averaged exactly.
@@ -337,6 +356,17 @@ def plan_shock_average(
                 f"{sorted(conditioner_reads & set(lottery_variables))}"
             ),
         )
+    # Merged physical knots preserve the ordinary reader only when the complete
+    # coordinate geometry is linear between these nodes and uses the endpoint
+    # segments outside them. LogSpacedGrid has further virtual geometric cells;
+    # arbitrary subclasses can change coordinate semantics as well. Keep the
+    # ordinary law/draw reader for every grid outside this explicit contract.
+    # All declaration/dependency validation above still runs before fallback.
+    if type(v_interpolation_info.continuous_states[state_name]) not in (
+        LinSpacedGrid,
+        IrregSpacedGrid,
+    ):
+        return None
     return ShockAveragePlan(
         law=law,
         law_name=law_name,
@@ -738,10 +768,16 @@ class _ShockAverageReader:
                 draw.name: grid.ravel()
                 for draw, grid in zip(self.integrated, node_values, strict=True)
             }
-            weights = jnp.prod(jnp.stack([w.ravel() for w in node_weights]), axis=0)
+            # The joint probability keeps its scale beside it: a product of
+            # normal marginals can fall below every representable magnitude.
+            coefficients, shift = scaled_joint_weight(
+                jnp.stack([w.ravel() for w in node_weights])
+            )
+            shifts = jnp.broadcast_to(shift, coefficients.shape)
         else:
             draw_values = {}
-            weights = jnp.ones(1, dtype=values.dtype)
+            coefficients = jnp.ones(1, dtype=values.dtype)
+            shifts = jnp.zeros(1, dtype=jnp.int32)
 
         def shock_at(index: Mapping[str, ScalarInt]) -> FloatND:
             return self.shock(
@@ -751,7 +787,8 @@ class _ShockAverageReader:
                 **fixed,
             )
 
-        shape = (len(combos), len(kept_combos), weights.shape[0])
+        n_nodes = coefficients.shape[0]
+        shape = (len(combos), len(kept_combos), n_nodes)
         grid = jnp.meshgrid(
             *(jnp.arange(n, dtype=jnp.int32) for n in shape), indexing="ij"
         )
@@ -772,29 +809,35 @@ class _ShockAverageReader:
                 **{f"next_{self.state_name}": value}, **points_kwargs
             )
 
-        def matrix(shocks_row: Float1D) -> tuple[Float1D, FloatND]:
-            return shock_averaging_matrix(
-                points=points, coordinate=coordinate, shocks=shocks_row, weights=weights
+        def stencil_at(shocks_row: Float1D) -> tuple[Float1D, FloatND]:
+            return shock_reading_stencil(
+                points=points, coordinate=coordinate, shocks=shocks_row
             )
 
-        knots, averaging = jax.vmap(jax.vmap(matrix))(shocks)
+        knots, stencil = jax.vmap(jax.vmap(stencil_at))(shocks)
         condition_sizes = [len(support) for support in supports]
         n_knots = knots.shape[-1]
         knots = knots.reshape(*condition_sizes, *kept_sizes, n_knots)
-        averaging = jnp.moveaxis(averaging, 2, 0).reshape(
-            2, *condition_sizes, *kept_sizes, len(points), n_knots
+        stencil = jnp.moveaxis(stencil, 2, 0).reshape(
+            2, *condition_sizes, *kept_sizes, len(points), n_nodes, n_knots
         )
         return (
             apply_averaging(
                 values=values,
-                averaging=averaging,
+                stencil=stencil,
+                coefficients=coefficients,
+                shifts=shifts,
                 subscripts=self._subscripts(n_conditions=len(condition_sizes)),
             ),
             knots,
         )
 
     def _subscripts(self, *, n_conditions: int) -> str:
-        """Return the contraction of the value array with one averaging slab."""
+        """Return the contraction of the value array with one stencil slab.
+
+        The shock's node axis is `z`, kept last in the output so the average
+        over the nodes reduces it.
+        """
         letters = iter("abcdefghijklopqrstuvwxyABCDEFGHIJKLOPQRSTUVWXY")
         condition_letters = "".join(next(letters) for _ in range(n_conditions))
         axis_letters = {name: next(letters) for name in self.array_state_names}
@@ -814,7 +857,9 @@ class _ShockAverageReader:
         output_letters = (
             condition_letters + local_letters + value_letters.replace("n", "m")
         )
-        return f"{value_letters},{condition_letters}{kept_letters}nm->{output_letters}"
+        return (
+            f"{value_letters},{condition_letters}{kept_letters}nzm->{output_letters}z"
+        )
 
 
 def _merged_knots(*, points: Float1D, shocks: Float1D) -> Float1D:

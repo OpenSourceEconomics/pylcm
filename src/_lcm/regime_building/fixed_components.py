@@ -194,6 +194,7 @@ def factor_fixed_components(
     Without a fixed component the model's own declarations pass through as given.
     """
     groups = _collect_groups(regimes=regimes, state_transitions=state_transitions)
+    _fail_if_value_grid_is_factored(groups=groups, regimes=regimes, states=states)
     if not groups:
         return (
             regimes,
@@ -445,6 +446,42 @@ def _rename_law_params(
             raise ValueError(f"Parameters declare both {key!r} and {replacement!r}.")
         renamed[replacement] = renamed.pop(key)
     return renamed
+
+
+def _fail_if_value_grid_is_factored(
+    *,
+    groups: Mapping[StateName, tuple[int, ...]],
+    regimes: Mapping[str, Regime],
+    states: Mapping[StateName, StateEntry],
+) -> None:
+    """Raise if a state with a fixed component is declared as a value grid.
+
+    Factoring replaces the declared grid with category grids for the group and the
+    rest before user functions are wrapped to receive values, so the values would
+    reach them as codes.
+    """
+    declarations = (
+        ("the model", states),
+        *((f"regime {name!r}", regime.states) for name, regime in regimes.items()),
+    )
+    for name, grouping in groups.items():
+        for owner, owned in declarations:
+            entry = owned.get(name)
+            grids = (
+                (entry.solve, entry.simulate) if isinstance(entry, Phased) else (entry,)
+            )
+            if any(
+                isinstance(grid, DiscreteGrid) and grid.values is not None  # noqa: PD011
+                for grid in grids
+            ):
+                raise RegimeInitializationError(
+                    f"State {name!r} in {owner} is declared as "
+                    "`DiscreteGrid(values=...)` and its transition declares "
+                    f"`fixed_component={grouping}`. Fixed-component factoring "
+                    "replaces the grid with category grids before user functions "
+                    "receive values, so declare the state with a category class "
+                    "or drop the fixed component."
+                )
 
 
 def _collect_groups(
