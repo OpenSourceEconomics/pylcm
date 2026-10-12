@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Literal, NoReturn, cast, no_type_check
 import jax.numpy as jnp
 
 from _lcm.gated_edge import GatedEdge
+from _lcm.reachability import PhaseName
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
@@ -159,15 +160,35 @@ class RegimeSchedules:
     """Per source regime, its gated edges by gated target."""
 
     @property
+    def targets_by_phase(
+        self,
+    ) -> MappingProxyType[
+        PhaseName, MappingProxyType[RegimeName, frozenset[RegimeName]]
+    ]:
+        """Per phase and source regime, every target its support names."""
+        return MappingProxyType(
+            {
+                cast("PhaseName", phase): MappingProxyType(
+                    {
+                        name: frozenset(
+                            target
+                            for targets in by_regime.get(name, {}).values()
+                            for target in targets
+                        )
+                        for name in self.coverage_by_regime
+                    }
+                )
+                for phase, by_regime in self.support_by_phase.items()
+            }
+        )
+
+    @property
     def targets_by_regime(self) -> MappingProxyType[RegimeName, frozenset[RegimeName]]:
         """Per source regime, every target its support names in either phase."""
         return MappingProxyType(
             {
-                name: frozenset(
-                    target
-                    for by_regime in self.support_by_phase.values()
-                    for targets in by_regime.get(name, {}).values()
-                    for target in targets
+                name: frozenset().union(
+                    *(by_regime[name] for by_regime in self.targets_by_phase.values())
                 )
                 for name in self.coverage_by_regime
             }
