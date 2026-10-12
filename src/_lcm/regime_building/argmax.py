@@ -47,20 +47,19 @@ def argmax_and_max(
     elif isinstance(axis, int):
         axis = (axis,)
 
-    # Handle scalar or empty axis case (no actions to maximize over)
+    # A scalar or empty-axis cell still has one candidate. Use the same masked
+    # reduction so feasibility and initial retain their meaning at every rank.
     if a.ndim == 0 or len(axis) == 0:
-        # When there are no dimensions to reduce over, return:
-        # - index 0 (trivial argmax since there's only one element)
-        # - the array itself (already the maximum)
-        return jnp.array(0, dtype=jnp.int32), a
-
-    if a.ndim != 0:
+        if where is not None:
+            where = jnp.broadcast_to(where, a.shape)[..., None]
+        a = a[..., None]
+    else:
         a = _move_axes_to_back(a=a, axes=axis)
         a = _flatten_last_n_axes(a=a, n=len(axis))
 
-    if where is not None and where.ndim != 0:
-        where = _move_axes_to_back(a=where, axes=axis)
-        where = _flatten_last_n_axes(a=where, n=len(axis))
+        if where is not None and where.ndim != 0:
+            where = _move_axes_to_back(a=where, axes=axis)
+            where = _flatten_last_n_axes(a=where, n=len(axis))
 
     where = (
         jnp.ones(a.shape, dtype=bool)

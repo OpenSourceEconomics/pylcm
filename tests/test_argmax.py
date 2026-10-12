@@ -1,8 +1,11 @@
+import itertools
+import math
 from functools import partial
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
-from jax import grad, jit, make_jaxpr, vmap
+from jax import Array, grad, jit, make_jaxpr, vmap
 from numpy.testing import assert_array_equal
 
 from _lcm.regime_building.argmax import (
@@ -217,3 +220,129 @@ def test_argmax_and_max_differentiates_like_jnp_max_when_initial_ties(
     got = grad(lambda a: argmax_and_max(a=a, axis=0, initial=initial)[1])(a)
     expected = grad(lambda a: jnp.max(a, axis=0, initial=initial))(a)
     assert_array_equal(got, expected)
+
+
+def _admitted_maximum(*, value: float, feasible: bool, initial: float | None) -> float:
+    """Maximum over one candidate and `initial`, written out without tensor code.
+
+    An infeasible candidate is not admitted; `initial` always is, and a missing
+    `initial` stands for minus infinity. A feasible NaN candidate is the result.
+    The cases use the `initial` every caller passes: minus infinity, or none.
+    """
+    if feasible and math.isnan(value):
+        return math.nan
+    admitted = [value] if feasible else []
+    admitted.append(-math.inf if initial is None else initial)
+    return max(admitted)
+
+
+def _expected_one_candidate_maxima(
+    *,
+    a: np.ndarray,
+    where: np.ndarray | bool | list[list[bool]] | None,
+    initial: float | None,
+) -> np.ndarray:
+    feasible = np.broadcast_to(True if where is None else np.asarray(where), a.shape)
+    expected = np.empty_like(a)
+    for cell in np.ndindex(a.shape):
+        expected[cell] = _admitted_maximum(
+            value=float(a[cell]), feasible=bool(feasible[cell]), initial=initial
+        )
+    return expected
+
+
+ONE_CANDIDATE_CASES = list(
+    itertools.product(
+        [-8.0, -0.0, 0.0, 1.0, 8.0, float("nan")],
+        [None, False, True],
+        [None, -math.inf],
+    )
+)
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("axis", [None, ()], ids=["scalar", "empty-axes"])
+@pytest.mark.parametrize(("value", "where", "initial"), ONE_CANDIDATE_CASES)
+def test_argmax_and_max_of_one_candidate_respects_where_and_initial(
+    *,
+    compiled: bool,
+    axis: tuple[int, ...] | None,
+    value: float,
+    where: bool | None,
+    initial: float | None,
+) -> None:
+    """A cell with no axis to reduce has one candidate, admitted only where feasible."""
+    reduce = jitted_argmax if compiled else argmax_and_max
+    a = jnp.asarray(value)
+    mask = None if where is None else jnp.asarray(where)
+    index, maximum = reduce(a=a, axis=axis, where=mask, initial=initial)
+    expected = _expected_one_candidate_maxima(
+        a=np.asarray(a), where=where, initial=initial
+    )
+    assert_array_equal(
+        np.stack([np.asarray(index, dtype=float), np.asarray(maximum)]),
+        np.stack([np.zeros_like(expected), expected]),
+    )
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("where", [None, False, True, [[True, False, True]]], ids=str)
+def test_argmax_and_max_over_empty_axes_keeps_each_cell_and_broadcasts_where(
+    *, compiled: bool, where: bool | list[list[bool]] | None
+) -> None:
+    """Reducing over no axes leaves every cell, each masked by its own feasibility."""
+    reduce = jitted_argmax if compiled else argmax_and_max
+    a = jnp.asarray([[-2.0, 1.0, 4.0], [7.0, float("nan"), -0.0]])
+    mask = None if where is None else jnp.asarray(where)
+    index, maximum = reduce(a=a, axis=(), where=mask, initial=-math.inf)
+    expected = _expected_one_candidate_maxima(
+        a=np.asarray(a), where=where, initial=-math.inf
+    )
+    assert_array_equal(
+        np.stack([np.asarray(index, dtype=float), np.asarray(maximum)]),
+        np.stack([np.zeros_like(expected), expected]),
+    )
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_argmax_and_max_of_mapped_scalar_cells_masks_at_the_feasibility_boundary(
+    *, compiled: bool
+) -> None:
+    """Mapped over cells, each scalar candidate is admitted exactly when `x >= 0`.
+
+    The smallest normal numbers on either side of zero sit at the boundary;
+    subnormals are avoided because the backend may flush them to zero.
+    """
+    tiny = jnp.finfo(jnp.asarray(0.0).dtype).tiny
+    x = jnp.asarray([-1.0, 0.0, 1.0, -tiny, tiny])
+    assert bool(x[3] < 0)
+    assert bool(x[4] > 0)
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def one_cell(value: Array, feasible: Array) -> tuple[Array, Array]:
+        return argmax_and_max(a=value, where=feasible, initial=-jnp.inf)
+
+    mapped = vmap(one_cell)
+    reduce = jit(mapped) if compiled else mapped
+    index, maximum = reduce(x + 2, x >= 0)
+    expected = _expected_one_candidate_maxima(
+        a=np.asarray(x + 2), where=np.asarray(x >= 0), initial=-math.inf
+    )
+    assert_array_equal(
+        np.stack([np.asarray(index, dtype=float), np.asarray(maximum)]),
+        np.stack([np.zeros_like(expected), expected]),
+    )
+
+
+@pytest.mark.parametrize(
+    ("feasible", "initial", "expected"),
+    [(False, -math.inf, 0.0), (True, -math.inf, 1.0)],
+)
+def test_argmax_and_max_of_one_candidate_differentiates_like_jnp_max(
+    *, feasible: bool, initial: float, expected: float
+) -> None:
+    """The value's derivative in the candidate is 1 if admitted, 0 if excluded."""
+    derivative = grad(
+        lambda x: argmax_and_max(a=x, where=jnp.asarray(feasible), initial=initial)[1]
+    )
+    assert_array_equal(np.asarray(derivative(jnp.asarray(1.0))), expected)
