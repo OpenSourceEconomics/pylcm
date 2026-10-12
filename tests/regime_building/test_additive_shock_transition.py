@@ -24,6 +24,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.regime_building import Q_and_F
 from _lcm.regime_building.ndimage import map_coordinates
@@ -129,7 +130,8 @@ def _next_wealth(*, before_bill: FloatND, cost: FloatND) -> ContinuousState:
 
 
 def _next_health(health: DiscreteState) -> FloatND:
-    return jnp.asarray(HEALTH_PROBS)[health]
+    # NumPy literals must enter the traced law at the active precision.
+    return jnp.asarray(HEALTH_PROBS, dtype=canonical_float_dtype())[health]
 
 
 def _utility(*, consumption: ContinuousAction, health: DiscreteState) -> FloatND:
@@ -413,6 +415,7 @@ def test_the_fp32_value_matches_the_fp64_reference_at_the_plain_law_accuracy(
     """
     V = _alive_values(_model(additive=additive))[period]
 
+    assert V.dtype == np.dtype(np.float32)
     np.testing.assert_allclose(
         V, _reference_alive_values()[period], rtol=0, atol=_FP32_ATOL
     )
