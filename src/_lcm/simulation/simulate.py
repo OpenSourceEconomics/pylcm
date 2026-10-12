@@ -1933,7 +1933,11 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
 
         next_states = calculate_next_states(
             regime=regime,
-            process_nodes=process_node_arguments(base_spaces=base_state_action_spaces),
+            process_nodes=process_node_arguments(
+                regime=regime,
+                regimes=regimes,
+                base_spaces=base_state_action_spaces,
+            ),
             optimal_actions=optimal_actions,
             period=period,
             age=age,

@@ -6,7 +6,8 @@ from typing import cast
 
 import jax
 
-from _lcm.engine import StateActionSpace
+from _lcm.engine import Regime, StateActionSpace
+from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import PRNGKeyND, PytreeValue, QualifiedName, ShapeDtypePytree
 from lcm.typing import (
     ContinuousState,
@@ -45,13 +46,21 @@ def decision_arguments(
 
 
 def process_node_arguments(
-    *, base_spaces: Mapping[str, StateActionSpace]
+    *,
+    regime: Regime,
+    regimes: Mapping[str, Regime],
+    base_spaces: Mapping[str, StateActionSpace],
 ) -> dict[ReferenceName, ContinuousState | DiscreteState]:
-    """Supply the already-resolved solve axes as shared transition operands."""
+    """Supply resolved solve axes only for this source's node-draw targets."""
     return {
         f"nodes_{target}__next_{state}": nodes
-        for target, space in base_spaces.items()
-        for state, nodes in space.states.items()
+        for target in regime.simulation.transition_plans
+        for state, nodes in base_spaces[target].states.items()
+        if isinstance(
+            process := regimes[target].simulation.grids[state],
+            _ContinuousStochasticProcess,
+        )
+        and process.simulate_draws == "nodes"
     }
 
 
