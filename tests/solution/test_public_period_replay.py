@@ -52,6 +52,7 @@ _ADMISSION = {
     "reservation_bytes": 128,
     "peak_bytes": 128,
 }
+_CALL_POLICY = {"log_level": "warning", "runtime_checks": False}
 _METADATA = {
     "regime": "work",
     "period": 0,
@@ -60,6 +61,7 @@ _METADATA = {
     "admission": {"main": _ADMISSION},
     "optimized_hlo": {"main": {"fingerprint": "abc"}},
     "retain_replay": False,
+    "call_policy": _CALL_POLICY,
 }
 
 _RECORDS = {
@@ -69,6 +71,7 @@ _RECORDS = {
     "_is_core_record": _CORE,
     "_is_layouts_record": _LAYOUTS,
     "_is_admission_record": _ADMISSION,
+    "_is_run_policy": _CALL_POLICY,
     "_is_capture_metadata": _METADATA,
 }
 
@@ -109,3 +112,9 @@ def test_layouts_validator_names_a_key_missing_from_a_nested_leaf() -> None:
 
     with pytest.raises(ValueError, match="'dtype'"):
         public_period_replay._is_layouts_record({**_LAYOUTS, "leaves": [leaf]})
+
+
+def test_call_policy_validator_names_an_unknown_key() -> None:
+    """A call policy carrying an entry beyond its schema is refused, naming it."""
+    with pytest.raises(ValueError, match="'unknown'"):
+        public_period_replay._is_run_policy({**_CALL_POLICY, "unknown": 1})
