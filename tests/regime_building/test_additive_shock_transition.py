@@ -15,8 +15,10 @@ consumption node, health draw and shock node, with linear interpolation in
 wealth and linear extrapolation past the grid ends.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 
+import cloudpickle
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -26,20 +28,24 @@ from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.regime_building import Q_and_F
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.shock_average import average_over_shock
+from _lcm.utils.logging import LogLevel
 from lcm import (
     AdditiveShockTransition,
     AgeGrid,
     ByAge,
     DiscreteGrid,
     IrregSpacedGrid,
+    LinearExpectation,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
+    PowerMean,
+    QuasiArithmeticMean,
     Regime,
     Transition,
     categorical,
 )
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -47,10 +53,12 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    IntND,
+    OffGrid,
     ReferenceName,
     ScalarInt,
 )
-from tests.conftest import X64_ENABLED
+from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 DISCOUNT_FACTOR = 0.9
 LAST_ALIVE_AGE = 2
@@ -66,13 +74,13 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=0, inclusive_stop=3, step="Y")
 
 
-def _wealth_grid() -> LinSpacedGrid:
+def _wealth_grid(*, off_grid: OffGrid = "extrapolate") -> LinSpacedGrid:
     """Build the wealth grid at call time.
 
     A grid stores its bounds as JAX scalars at the precision active when it is
     built, so the fp32 tests need a grid built under fp32.
     """
-    return LinSpacedGrid(start=0.0, stop=12.0, n_points=25)
+    return LinSpacedGrid(start=0.0, stop=12.0, n_points=25, off_grid=off_grid)
 
 
 @categorical(ordered=False)
@@ -122,7 +130,8 @@ def _next_wealth(*, before_bill: FloatND, cost: FloatND) -> ContinuousState:
 
 
 def _next_health(health: DiscreteState) -> FloatND:
-    return jnp.asarray(HEALTH_PROBS)[health]
+    # NumPy literals must enter the traced law at the active precision.
+    return jnp.asarray(HEALTH_PROBS, dtype=jnp.result_type(0.0))[health]
 
 
 def _utility(*, consumption: ContinuousAction, health: DiscreteState) -> FloatND:
@@ -141,7 +150,12 @@ def _probability_dead(age: float) -> FloatND:
     return jnp.where(age < LAST_ALIVE_AGE, 0.2, 1.0)
 
 
-def _model(*, additive: bool, shock_reads_wealth: bool = False) -> Model:
+def _model(
+    *,
+    additive: bool,
+    shock_reads_wealth: bool = False,
+    off_grid: OffGrid = "extrapolate",
+) -> Model:
     law = (
         AdditiveShockTransition(
             base="before_bill",
@@ -154,7 +168,7 @@ def _model(*, additive: bool, shock_reads_wealth: bool = False) -> Model:
     alive = Regime(
         actions={"consumption": IrregSpacedGrid(points=CONSUMPTION_NODES)},
         states={
-            "wealth": _wealth_grid(),
+            "wealth": _wealth_grid(off_grid=off_grid),
             "health": DiscreteGrid(_Health),
             "xi": _xi(),
         },
@@ -170,7 +184,10 @@ def _model(*, additive: bool, shock_reads_wealth: bool = False) -> Model:
         }
         | ({"negative_cost": _negative_cost} if additive else {}),
     )
-    dead = Regime(states={"wealth": _wealth_grid()}, functions={"utility": _bequest})
+    dead = Regime(
+        states={"wealth": _wealth_grid(off_grid=off_grid)},
+        functions={"utility": _bequest},
+    )
     return Model(
         regimes={"alive": alive, "dead": dead},
         edges={
@@ -393,6 +410,41 @@ def test_the_plain_law_value_matches_the_literal_backward_induction(
     np.testing.assert_allclose(V, _reference_alive_values()[period], rtol=0, atol=_ATOL)
 
 
+@pytest.mark.parametrize("off_grid", ["clip_lookup", "clip_state"])
+def test_clipped_averaged_bill_matches_every_native_shock_read(
+    off_grid: OffGrid,
+) -> None:
+    """The folded average preserves values, policies and actual state histories."""
+    values = {}
+    frames = {}
+    for additive in (False, True):
+        model = _model(additive=additive, off_grid=off_grid)
+        values[additive] = _alive_values(model)
+        frames[additive] = model.simulate(
+            params=_params(),
+            initial_conditions={
+                "wealth": jnp.array([0.0, 6.0, 12.0]),
+                "health": jnp.zeros(3, dtype=jnp.int32),
+                "age": jnp.zeros(3),
+                "regime_id": jnp.full(3, _RegimeId.alive),
+            },
+            log_level="off",
+            seed=0,
+        ).to_dataframe()
+    for period in values[False]:
+        np.testing.assert_allclose(
+            values[True][period], values[False][period], rtol=0, atol=_ATOL
+        )
+    for column in ("consumption", "wealth"):
+        np.testing.assert_allclose(
+            frames[True][column],
+            frames[False][column],
+            rtol=0,
+            atol=_ATOL,
+            equal_nan=True,
+        )
+
+
 @pytest.mark.usefixtures("x64_disabled")
 @pytest.mark.parametrize("additive", [True, False], ids=["additive", "plain"])
 @pytest.mark.parametrize("period", [0, 1, 2])
@@ -406,6 +458,7 @@ def test_the_fp32_value_matches_the_fp64_reference_at_the_plain_law_accuracy(
     """
     V = _alive_values(_model(additive=additive))[period]
 
+    assert V.dtype == np.dtype(np.float32)
     np.testing.assert_allclose(
         V, _reference_alive_values()[period], rtol=0, atol=_FP32_ATOL
     )
@@ -449,3 +502,255 @@ def test_validate_transitions_accepts_plain_and_folded_shock_laws(
 ) -> None:
     """The no-solve preflight accepts both declarations of the same shock law."""
     assert _model(additive=additive).validate_transitions(params=_params()) is None
+
+
+@dataclass(frozen=True, kw_only=True)
+class _HarmonicLinearSubclass(LinearExpectation):
+    """Use a harmonic mean even though the public base class is linear."""
+
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],  # noqa: ARG002
+    ) -> FloatND:
+        return PowerMean().aggregate(
+            values=values, weights=weights, params={"risk_aversion": jnp.asarray(2.0)}
+        )
+
+    def aggregate_scaled(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],  # noqa: ARG002
+    ) -> FloatND:
+        return PowerMean().aggregate_scaled(
+            values=values,
+            coefficients=coefficients,
+            shifts=shifts,
+            params={"risk_aversion": jnp.asarray(2.0)},
+        )
+
+
+def _reciprocal(value: FloatND) -> FloatND:
+    return 1.0 / value
+
+
+def _constant_utility(wealth: ContinuousState) -> FloatND:
+    return 1.0 + 0.0 * wealth
+
+
+def _wealth_base(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _additive_law(*, base: FloatND, shock: FloatND) -> ContinuousState:
+    return base + shock
+
+
+def _identity_shock(next_xi: ContinuousState) -> FloatND:
+    return next_xi
+
+
+def _terminal_value(wealth: ContinuousState) -> FloatND:
+    return wealth + 10.0
+
+
+def _terminal_value_with_xi(*, wealth: ContinuousState, xi: ContinuousState) -> FloatND:
+    return wealth + 10.0 + xi
+
+
+def _ce_model(
+    *,
+    additive: bool,
+    ce_kind: str = "linear",
+    ce_at_model: bool = True,
+    live_terminal_shock: bool = False,
+    shock_reads_wealth: bool = False,
+    alive_reads_xi: bool = False,
+) -> Model:
+    grid = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
+    ce = {
+        "power": PowerMean(),
+        "quasi": QuasiArithmeticMean(transform=_reciprocal, inverse=_reciprocal),
+        "subclass": _HarmonicLinearSubclass(),
+        "linear": LinearExpectation(),
+        "default": None,
+    }[ce_kind]
+    alive = Regime(
+        states={
+            "wealth": grid,
+            "xi": NormalIIDProcess(
+                n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, fold=True
+            ),
+        },
+        state_transitions={
+            "wealth": _wealth_base
+            if alive_reads_xi
+            else (
+                AdditiveShockTransition(base="base", shock="shock")
+                if additive
+                else _additive_law
+            )
+        },
+        functions={
+            "utility": _terminal_value_with_xi if alive_reads_xi else _constant_utility,
+        }
+        | (
+            {}
+            if alive_reads_xi
+            else {
+                "base": _wealth_base,
+                "shock": _cost_reading_wealth
+                if shock_reads_wealth
+                else _identity_shock,
+            }
+        ),
+        certainty_equivalent=None if ce_at_model else ce,
+    )
+    dead = Regime(
+        states={"wealth": grid}
+        | (
+            {"xi": NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)}
+            if live_terminal_shock
+            else {}
+        ),
+        functions={
+            "utility": _terminal_value_with_xi
+            if live_terminal_shock
+            else _terminal_value
+        },
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        edges={"alive": Transition(targets={"dead": (0,)}, law="dead")},
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_RegimeId,
+        initial_nodes={0: ("alive", "dead")},
+        **({"certainty_equivalent": ce} if ce_at_model and ce is not None else {}),
+    )
+
+
+@pytest.mark.parametrize(
+    ("ce_kind", "ce_at_model"),
+    [
+        ("power", True),
+        ("quasi", True),
+        ("subclass", True),
+        ("linear", True),
+        ("linear", False),
+        ("default", True),
+    ],
+)
+@pytest.mark.parametrize("round_trip", [False, True], ids=["built", "restored"])
+def test_additive_transition_preserves_each_certainty_equivalent(
+    *, ce_kind: str, ce_at_model: bool, round_trip: bool
+) -> None:
+    """Arithmetic averaging is reserved for exact linear expectations.
+
+    The independent oracle evaluates the arithmetic or harmonic mean directly
+    at every wealth node, including landings outside the wealth grid.
+    """
+    # Three-node standard-normal Gauss-Hermite quadrature, independently stated.
+    nodes = np.array([-np.sqrt(3.0), 0.0, np.sqrt(3.0)])
+    weights = np.array([1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0])
+    realized = 10.0 + np.arange(5)[:, None] + nodes[None, :]
+    assert np.all(realized > 0.0)
+    assert np.ptp(realized[2]) > 0.0
+    ce = (
+        (weights * realized).sum(axis=1)
+        if ce_kind in {"linear", "default"}
+        else (1.0 / (weights / realized).sum(axis=1))
+    )
+    expected = 1.0 + DISCOUNT_FACTOR * ce
+    params = {"discount_factor": DISCOUNT_FACTOR} | (
+        {"alive": {"certainty_equivalent": {"risk_aversion": 2.0}}}
+        if ce_kind == "power"
+        else {}
+    )
+    for additive in (False, True):
+        model = _ce_model(additive=additive, ce_kind=ce_kind, ce_at_model=ce_at_model)
+        if round_trip:
+            model = cloudpickle.loads(cloudpickle.dumps(model))
+        values = model.solve(params=params, log_level="off").values[0]["alive"]
+        np.testing.assert_array_almost_equal(
+            values, expected, decimal=DECIMAL_PRECISION
+        )
+
+
+@pytest.mark.parametrize("round_trip", [False, True], ids=["built", "restored"])
+@pytest.mark.parametrize("log_level", ["off", "debug"])
+def test_a_transition_only_name_preserves_another_regimes_live_initial_state(
+    *, round_trip: bool, log_level: LogLevel
+) -> None:
+    """A terminal entrant retains xi 0.7 and receives terminal value 12.7."""
+    model = _ce_model(additive=False, live_terminal_shock=True)
+    if round_trip:
+        model = cloudpickle.loads(cloudpickle.dumps(model))
+    frame = model.simulate(
+        params={"discount_factor": DISCOUNT_FACTOR},
+        initial_conditions={
+            "wealth": jnp.array([2.0]),
+            "xi": jnp.array([0.7]),
+            "age": jnp.array([0.0]),
+            "regime_id": jnp.array([_RegimeId.dead]),
+        },
+        log_level=log_level,
+    ).to_dataframe()
+    np.testing.assert_array_almost_equal(frame["xi"], [0.7], decimal=DECIMAL_PRECISION)
+    np.testing.assert_array_almost_equal(
+        frame["value"], [12.7], decimal=DECIMAL_PRECISION
+    )
+
+
+@pytest.mark.parametrize("ce_kind", ["power", "quasi", "subclass"])
+def test_nonlinear_fallback_still_validates_the_additive_decomposition(
+    ce_kind: str,
+) -> None:
+    """An undeclared source-state dependency is refused even without averaging."""
+    with pytest.raises(ModelInitializationError, match="reads the source's"):
+        _ce_model(additive=True, ce_kind=ce_kind, shock_reads_wealth=True)
+
+
+@pytest.mark.parametrize("ce_kind", ["power", "quasi", "subclass", "linear", "default"])
+@pytest.mark.parametrize("ce_at_model", [False, True], ids=["regime-ce", "model-ce"])
+def test_within_period_folding_requires_the_exact_linear_expectation(
+    *, ce_kind: str, ce_at_model: bool
+) -> None:
+    """Within-period averaging admits only an absent or exact linear mean."""
+    if ce_kind in {"power", "quasi", "subclass"}:
+        with pytest.raises(RegimeInitializationError, match="certainty_equivalent"):
+            _ce_model(
+                additive=False,
+                ce_kind=ce_kind,
+                ce_at_model=ce_at_model,
+                alive_reads_xi=True,
+            )
+    else:
+        model = _ce_model(
+            additive=False,
+            ce_kind=ce_kind,
+            ce_at_model=ce_at_model,
+            alive_reads_xi=True,
+        )
+        assert "xi" in model.state_names(regime_name="alive")
+        solution = model.solve(
+            params={"discount_factor": DISCOUNT_FACTOR}, log_level="off"
+        )
+        np.testing.assert_array_almost_equal(
+            solution.values[0]["alive"],
+            (1.0 + DISCOUNT_FACTOR) * (10.0 + np.arange(5)),
+            decimal=DECIMAL_PRECISION,
+        )
+
+
+@pytest.mark.parametrize("ce_kind", ["power", "quasi", "subclass"])
+def test_an_explicit_regime_nonlinear_ce_keeps_its_fold_admission_restriction(
+    ce_kind: str,
+) -> None:
+    """Regime construction refuses nonlinear means before draw-only pruning."""
+    with pytest.raises(RegimeInitializationError, match="certainty_equivalent"):
+        _ce_model(additive=True, ce_kind=ce_kind, ce_at_model=False)

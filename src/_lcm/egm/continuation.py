@@ -59,6 +59,7 @@ from _lcm.execution.reductions import (
     WeightedExpectationAccumulator,
 )
 from _lcm.grids import Grid
+from _lcm.grids.discrete import read_at_codes
 from _lcm.logsum import logsum_and_softmax
 from _lcm.probability import probabilities_form_distribution, scaled_by_power_of_two
 from _lcm.processes import _ContinuousStochasticProcess
@@ -1728,9 +1729,11 @@ def _aggregate_child_choices(
     """
     leaves = carry.leaves()
     n_pad = leaves[("value",)].shape[-1]
-    grid_block = leaves[("endog_grid",)][child_index]
-    value_block = leaves[("value",)][child_index]
-    marginal_block = leaves[("marginal_utility",)][child_index]
+    grid_block = read_at_codes(array=leaves[("endog_grid",)], positions=child_index)
+    value_block = read_at_codes(array=leaves[("value",)], positions=child_index)
+    marginal_block = read_at_codes(
+        array=leaves[("marginal_utility",)], positions=child_index
+    )
     # The prepared search key and valid length are indexed by the same
     # `child_index` as the carry rows, so each row reads its own precomputed
     # pair instead of recomputing the NaN mask per query.

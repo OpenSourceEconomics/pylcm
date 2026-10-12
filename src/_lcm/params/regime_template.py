@@ -251,9 +251,13 @@ def create_regime_params_template(
             )
         function_params["taste_shocks"] = {"scale": "float"}
 
-    _add_koopmans_aggregator_params(
-        function_params=function_params, user_regime=user_regime
-    )
+    for slot, aggregator in _declared_aggregators(user_regime).items():
+        _add_aggregator_params(
+            function_params=function_params,
+            user_regime=user_regime,
+            slot=slot,
+            aggregator=aggregator,
+        )
     _add_certainty_equivalent_params(
         function_params=function_params, user_regime=user_regime
     )
@@ -894,8 +898,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
             for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
         }
-        if user_regime.koopmans_aggregator is not None:
-            consumers["koopmans_aggregator"] = user_regime.koopmans_aggregator
+        consumers |= _declared_aggregators(user_regime)
         for name, func in consumers.items():
             _fail_if_a_joint_node_is_read(
                 consumer_name=name,
@@ -1099,8 +1102,7 @@ def _fail_if_a_next_name_is_read_outside_a_transition(
             for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
         }
-        if user_regime.koopmans_aggregator is not None:
-            consumers["koopmans_aggregator"] = user_regime.koopmans_aggregator
+        consumers |= _declared_aggregators(user_regime)
         for name, func in consumers.items():
             _fail_if_a_next_name_is_read(
                 consumer_name=name,
@@ -1219,31 +1221,43 @@ def _fail_if_a_next_name_is_read(
     )
 
 
-def _add_koopmans_aggregator_params(
-    *, function_params: dict[FunctionName, dict[str, str]], user_regime: UserRegime
+def _declared_aggregators(
+    user_regime: UserRegime,
+) -> dict[FunctionName, UserFunction | Phased]:
+    """Return the regime's declared aggregators under their pseudo-function names."""
+    declared = {
+        "koopmans_aggregator": user_regime.koopmans_aggregator,
+        "selection_aggregator": user_regime.selection_aggregator,
+    }
+    return {name: func for name, func in declared.items() if func is not None}
+
+
+def _add_aggregator_params(
+    *,
+    function_params: dict[FunctionName, dict[str, str]],
+    user_regime: UserRegime,
+    slot: FunctionName,
+    aggregator: UserFunction | Phased,
 ) -> None:
-    """Add the Koopmans aggregator's params under its pseudo-function name in place.
+    """Add an aggregator's params under its pseudo-function name in place.
 
     The aggregator's parameters beyond `utility` and `CE` surface in the
-    template under the reserved key `koopmans_aggregator`; a regime function
-    of that name collides and is rejected. Parameters that are states,
-    actions, or regime functions are wired at call time and never surface.
+    template under the reserved key `slot`; a regime function of that name
+    collides and is rejected. Parameters that are states, actions, or regime
+    functions are wired at call time and never surface.
     """
-    if user_regime.koopmans_aggregator is None:
-        return
-    if "koopmans_aggregator" in function_params:
+    if slot in function_params:
         raise InvalidNameError(
-            "The regime declares `koopmans_aggregator`, whose parameters live "
-            "under the pseudo-function name 'koopmans_aggregator' in the "
-            "params — this conflicts with a regime function of the same name."
+            f"The regime declares `{slot}`, whose parameters live under the "
+            f"pseudo-function name '{slot}' in the params — this conflicts "
+            "with a regime function of the same name."
         )
-    aggregator = user_regime.koopmans_aggregator
     if isinstance(aggregator, Phased):
-        tree = _input_types({"koopmans_aggregator": aggregator.solve}) | _input_types(
-            {"koopmans_aggregator": aggregator.simulate}
+        tree = _input_types({slot: aggregator.solve}) | _input_types(
+            {slot: aggregator.simulate}
         )
     else:
-        tree = _input_types({"koopmans_aggregator": aggregator})
+        tree = _input_types({slot: aggregator})
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
@@ -1254,7 +1268,7 @@ def _add_koopmans_aggregator_params(
         "CE",
     }
     params = {k: v for k, v in sorted(tree.items()) if k not in variables}
-    function_params["koopmans_aggregator"] = params
+    function_params[slot] = params
 
 
 def _add_pareto_objective_params(
@@ -1315,7 +1329,23 @@ def _add_runtime_grid_params(
     *, function_params: dict[FunctionName, dict[str, str]], user_regime: UserRegime
 ) -> None:
     """Add runtime-supplied state/action grid params to the template in place."""
-    for state_name, grid in user_regime.states.items():
+    for state_name, declaration in user_regime.states.items():
+        if isinstance(declaration, Phased) and isinstance(
+            declaration.solve, _ContinuousStochasticProcess
+        ):
+            names = sorted(
+                set(declaration.solve.params_to_pass_at_runtime)
+                | set(declaration.simulate.params_to_pass_at_runtime)
+            )
+            if names:
+                _fail_if_runtime_grid_shadows_function(
+                    function_params=function_params,
+                    name=state_name,
+                    kind="process state",
+                )
+                function_params[state_name] = dict.fromkeys(names, "float")
+            continue
+        grid = declaration
         if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
             _fail_if_runtime_grid_shadows_function(
                 function_params=function_params, name=state_name, kind="state"
@@ -1512,7 +1542,7 @@ def _collect_all_functions_for_template(
     # surface in the template. Its law of motion is its regular
     # `state_transitions` entry (keyed `next_<name>`), collected below.
     for name, spec in user_regime.states.items():
-        if isinstance(spec, Phased):
+        if isinstance(spec, Phased) and callable(spec.solve):
             result[name] = cast("UserFunction", spec.solve)
     if not law.terminal:
         joint_output_names = {

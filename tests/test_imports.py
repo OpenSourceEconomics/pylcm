@@ -10,6 +10,8 @@ import os
 import subprocess
 import sys
 
+import numpy as np
+
 import lcm
 import lcm.consumption_savings_regime
 import lcm.regime
@@ -79,6 +81,18 @@ def test_consumption_savings_declarations_share_their_own_module():
 def test_joint_transition_is_exported_from_lcm() -> None:
     """`JointTransition` is available from the package's public namespace."""
     assert lcm.JointTransition.__name__ == "JointTransition"
+
+
+def test_euler_gamma_is_public_and_equals_numpy_constant() -> None:
+    """`lcm.EULER_GAMMA` is advertised and is the Euler-Mascheroni constant.
+
+    Users add `scale * EULER_GAMMA` to utility to turn pylcm's mean-zero EV1
+    taste shocks into location-0 shocks, so the value must be exactly the
+    float64 literal NumPy publishes.
+    """
+    assert "EULER_GAMMA" in lcm.__all__
+    assert np.euler_gamma == lcm.EULER_GAMMA
+    assert lcm.EULER_GAMMA == 0.5772156649015329
 
 
 def test_model_import_keeps_runtime_type_checking_decoratable() -> None:

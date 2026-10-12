@@ -22,6 +22,7 @@ from lcm.exceptions import GridInitializationError
 from lcm.typing import (
     Float1D,
     FloatND,
+    OffGrid,
     ScalarFloat,
     ScalarInt,
 )
@@ -35,6 +36,11 @@ class ContinuousGrid(Grid):
     used in interpolation.
 
     """
+
+    @property
+    def off_grid(self) -> OffGrid:
+        """Default lookup policy; stochastic supports retain their own admission."""
+        return "extrapolate"
 
     @abstractmethod
     def get_coordinate(self, value: FloatND) -> FloatND:
@@ -59,6 +65,9 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     n_points: ScalarInt
     """The number of points in the grid (`jnp.int32` JAX scalar)."""
 
+    off_grid: OffGrid = "extrapolate"
+    """Extrapolate, clip only lookup, clip the next state, or refuse exterior states."""
+
     @beartype(conf=GRID_CONF)
     def __init__(
         self,
@@ -66,6 +75,7 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
         start: float | ScalarFloat,
         stop: float | ScalarFloat,
         n_points: int | ScalarInt,
+        off_grid: OffGrid = "extrapolate",
     ) -> None:
         _init_uniform_grid(
             grid=self,
@@ -73,6 +83,7 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
             stop=stop,
             n_points=n_points,
             requires_positive_start=False,
+            off_grid=off_grid,
         )
 
     @abstractmethod
@@ -83,7 +94,9 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     def get_coordinate(self, value: FloatND) -> FloatND:
         """Return the generalized coordinate of a value in the grid."""
 
-    def replace(self, **kwargs: float) -> UniformContinuousGrid:
+    def replace(
+        self, **kwargs: float | ScalarFloat | ScalarInt | OffGrid
+    ) -> UniformContinuousGrid:
         """Replace the attributes of the grid.
 
         Args:
@@ -144,6 +157,7 @@ class LogSpacedGrid(UniformContinuousGrid):
         start: float | ScalarFloat,
         stop: float | ScalarFloat,
         n_points: int | ScalarInt,
+        off_grid: OffGrid = "extrapolate",
     ) -> None:
         _init_uniform_grid(
             grid=self,
@@ -151,6 +165,7 @@ class LogSpacedGrid(UniformContinuousGrid):
             stop=stop,
             n_points=n_points,
             requires_positive_start=True,
+            off_grid=off_grid,
         )
 
     def to_jax(self) -> Float1D:
@@ -176,6 +191,7 @@ def _init_uniform_grid(
     stop: float | ScalarFloat,
     n_points: int | ScalarInt,
     requires_positive_start: bool,
+    off_grid: OffGrid,
 ) -> None:
     """Cast `start` / `stop` / `n_points` to canonical JAX scalars, validate, store.
 
@@ -187,6 +203,7 @@ def _init_uniform_grid(
     positivity).
     """
     dtype = canonical_float_dtype()
+    _validate_off_grid(off_grid)
     start_jax = jnp.asarray(start, dtype=dtype)
     stop_jax = jnp.asarray(stop, dtype=dtype)
     n_points_jax = jnp.int32(n_points)
@@ -199,6 +216,7 @@ def _init_uniform_grid(
     object.__setattr__(grid, "start", start_jax)
     object.__setattr__(grid, "stop", stop_jax)
     object.__setattr__(grid, "n_points", n_points_jax)
+    object.__setattr__(grid, "off_grid", off_grid)
 
 
 @dataclass(frozen=True, kw_only=True, init=False)
@@ -226,13 +244,18 @@ class IrregSpacedGrid(ContinuousGrid):
     n_points: int
     """Number of points. Derived from `len(points)` when points are given."""
 
+    off_grid: OffGrid = "extrapolate"
+    """Policy applied to values outside the supplied closed grid."""
+
     @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
         points: Sequence[float] | Float1D | None = None,
         n_points: int | None = None,
+        off_grid: OffGrid = "extrapolate",
     ) -> None:
+        _validate_off_grid(off_grid)
         if points is not None:
             _validate_irreg_spaced_grid(points)
             derived_n = len(points)
@@ -259,6 +282,7 @@ class IrregSpacedGrid(ContinuousGrid):
             stored_points = None
         object.__setattr__(self, "points", stored_points)
         object.__setattr__(self, "n_points", n_points)
+        object.__setattr__(self, "off_grid", off_grid)
 
     @property
     def pass_points_at_runtime(self) -> bool:
@@ -294,6 +318,19 @@ class IrregSpacedGrid(ContinuousGrid):
                 "supply points at runtime via params."
             )
         return grid_coordinates.get_irreg_coordinate(value=value, points=self.points)
+
+
+def _clip_grid_value(*, value: FloatND, points: Float1D) -> FloatND:
+    """Cap finite physical values without concealing an invalid transition."""
+    return jnp.where(jnp.isfinite(value), jnp.clip(value, points[0], points[-1]), value)
+
+
+def _validate_off_grid(off_grid: OffGrid) -> None:
+    """Refuse ambiguous clipping and undeclared policies at construction."""
+    if off_grid not in ("extrapolate", "clip_lookup", "clip_state", "raise"):
+        raise GridInitializationError(
+            "off_grid must be 'extrapolate', 'clip_lookup', 'clip_state', or 'raise'."
+        )
 
 
 def _validate_continuous_grid(

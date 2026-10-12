@@ -50,8 +50,24 @@ class InvalidStateTransitionProbabilitiesError(PyLCMError):
     """
 
 
+class InvalidStateTransitionError(PyLCMError):
+    """Raised when a deterministic law of a discrete state leaves its grid.
+
+    Reported for a cell where some choice is feasible: the law returns a code
+    outside `0..n-1`, or a value on no node of a `DiscreteGrid(values=...)`.
+    """
+
+
+class OffGridStateError(PyLCMError):
+    """Raised when an explicitly guarded continuous state leaves its grid."""
+
+
 class InvalidInitialConditionsError(PyLCMError):
     """Raised when the initial conditions (states or regimes) are invalid."""
+
+
+class NoFeasibleActionError(InvalidInitialConditionsError):
+    """Raised when a simulated subject's state admits no feasible action."""
 
 
 class InvalidSimulationInputError(PyLCMError):

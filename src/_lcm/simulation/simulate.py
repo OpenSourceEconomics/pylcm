@@ -47,6 +47,11 @@ from _lcm.engine import (
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.processes.joint_normal import JointNormalIIDProcess
+from _lcm.processes.joint_normal_lowering import (
+    coordinate_names,
+    joint_normal_declarations,
+)
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
@@ -107,6 +112,7 @@ from _lcm.simulation.program_arguments import (
     gate_route_arguments,
     policy_prepare_arguments,
     policy_rank_arguments,
+    process_node_arguments,
 )
 from _lcm.simulation.programs import (
     budgeted_simulation_programs_ready,
@@ -126,6 +132,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
+from _lcm.simulation.shock_paths import shock_path_values, supplied_shock_argument_names
 from _lcm.simulation.subject_groups import (
     ComponentValueSource,
     SubjectGroupPlan,
@@ -140,6 +147,7 @@ from _lcm.simulation.taste_stream import (
 from _lcm.simulation.transitions import (
     calculate_next_regime_membership,
     calculate_next_states,
+    clip_next_states,
     create_regime_state_action_space,
 )
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
@@ -149,12 +157,14 @@ from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
+from _lcm.transition_checks import _evaluate_admitted_transition_producer
 from _lcm.typing import (
     ActionName,
     ArrayTree,
     EconFunctionArg,
     FlatParams,
     FlatRegimeParams,
+    HostArray,
     InitialConditions,
     PeriodToRegimeToSimulationPolicy,
     PRNGKeyND,
@@ -182,6 +192,7 @@ from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
+    NoFeasibleActionError,
     UnrepresentableOuterCandidateError,
 )
 from lcm.result import SimulationResult
@@ -193,6 +204,7 @@ from lcm.typing import (
     FunctionName,
     Int1D,
     IntND,
+    PRNGKey,
     ReferenceName,
     ScalarFloat,
     ScalarInt,
@@ -219,8 +231,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
-    seed: int | None = None,
-    taste_shock_seed: int | None = None,
+    seed: int | PRNGKey | None = None,
+    taste_shock_seed: int | PRNGKey | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
     period_to_regime_to_dissolution_flags: MappingProxyType[
@@ -230,6 +242,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     retained_footprint: DeviceBufferFootprint | None = None,
     prepared_chunks: PreparedSimulationChunks | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
     call_id: CallId | None = None,
     component_values: ComponentValueSource | None = None,
 ) -> SimulationResult:
@@ -612,6 +625,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         memory=memory,
                         call_inputs=call_inputs,
                         process_grid_resolver=process_grid_resolver,
+                        shock_paths=shock_paths,
                     )
                     if host_device is not None:
                         # `block_until_ready` forces the D2H copy to complete
@@ -756,7 +770,7 @@ def _initialize_chunk_state(
     initial_own_stakeholder: Int1D,
     regimes: MappingProxyType[RegimeName, Regime],
     device_ids: tuple[int, ...],
-    seed: int,
+    seed: int | PRNGKey,
     memory: SimulationMemory | None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
     """Build a chunk's carriers, enrolling completed arrays before the next step."""
@@ -798,7 +812,7 @@ def _simulate_subject_chunk(
     ],
     flat_params: FlatParams,
     ages: TimeAxis,
-    seed: int,
+    seed: int | PRNGKey,
     logger: logging.Logger,
     initial_own_stakeholder: Int1D,
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
@@ -808,11 +822,12 @@ def _simulate_subject_chunk(
     device_ids: tuple[int, ...] = (),
     memory: SimulationMemory | None = None,
     call_inputs: SimulationCallInputs | None = None,
-    taste_shock_seed: int | None = None,
+    taste_shock_seed: int | PRNGKey | None = None,
     taste_addresses: Mapping[
         tuple[int, RegimeName], tuple[int, ...]
     ] = MappingProxyType({}),
     process_grid_resolver: ProcessGridResolver | None = None,
+    shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -1015,6 +1030,15 @@ def _simulate_subject_chunk(
                     n_subjects=n_subjects,
                     subject_slice=subject_slice,
                     original_n_subjects=original_n_subjects,
+                    supplied_shocks=shock_path_values(
+                        paths=shock_paths,
+                        argument_names=supplied_shock_argument_names(
+                            regime=regime, period=period
+                        ),
+                        period=period + 1,
+                        subject_slice=subject_slice,
+                        n_subjects=len(subject_regime_ids),
+                    ),
                     own_stakeholder=own_stakeholder,
                     new_own_stakeholder=new_own_stakeholder,
                     gated_edge_fold_age=(
@@ -1597,6 +1621,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     replay_reader: PreparedReplayReader | ReplayReader | None = None,
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
+    supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D]:
     """Simulate one regime for one period.
 
@@ -1866,6 +1891,75 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 n_subjects=n_chunk_subjects,
                 memory=memory,
             )
+        empty_row = run_simulation_operation(
+            memory=memory,
+            function=_first_empty_action_row,
+            arguments={
+                "indices": indices_optimal_actions,
+                "in_regime": subject_ids_in_regime,
+            },
+            subject_arg_names=("indices", "in_regime"),
+        ).item()
+        if empty_row >= 0 and sim_policy is None:
+            state = {
+                name: (
+                    regime.simulation.discrete_grids[name].categories[
+                        int(np.asarray(values)[empty_row])
+                    ]
+                    if name in regime.simulation.discrete_grids
+                    else np.asarray(values)[empty_row].item()
+                )
+                for name, values in state_action_space.states.items()
+            }
+            for group, process in joint_normal_declarations(
+                regime.simulation.grids
+            ).items():
+                names = coordinate_names(group=group, process=process)
+                arguments: dict[str, FloatND | HostArray] = {
+                    "standard": np.stack(
+                        [
+                            np.asarray(state_action_space.states[name])[empty_row]
+                            for name in names
+                        ]
+                    )
+                }
+                law_params = {
+                    **regime.resolved_fixed_params,
+                    **regime_kernel_params(flat_params, regime_name=regime_name),
+                }
+                if process.mean is None:
+                    arguments["mean"] = cast("FloatND", law_params[f"{group}__mean"])
+                if process.cov is None:
+                    arguments["cov"] = cast("FloatND", law_params[f"{group}__cov"])
+                transform = cast(
+                    "Callable[..., FloatND]",
+                    functools.partial(JointNormalIIDProcess.transform, self=process),
+                )
+                if memory is None:
+                    physical = transform(
+                        **{
+                            name: jnp.asarray(value)
+                            for name, value in arguments.items()
+                        }
+                    )
+                else:
+                    physical = _evaluate_admitted_transition_producer(
+                        function=transform, arguments=arguments, memory=memory
+                    )
+                    memory.hold(tree=physical)
+                host_physical = np.asarray(physical)
+                state.update(
+                    {
+                        name: host_physical[dimension].item()
+                        for dimension, name in enumerate(process.states)
+                    }
+                )
+                for name in names:
+                    del state[name]
+            raise NoFeasibleActionError(
+                f"Regime '{regime_name}', period {period}, state {state} "
+                "has no feasible action."
+            )
         optimal_actions = run_simulation_operation(
             memory=memory,
             function=_lookup_values_from_indices,
@@ -1930,6 +2024,11 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
 
         next_states = calculate_next_states(
             regime=regime,
+            process_nodes=process_node_arguments(
+                regime=regime,
+                regimes=regimes,
+                base_spaces=base_state_action_spaces,
+            ),
             optimal_actions=optimal_actions,
             period=period,
             age=age,
@@ -1940,6 +2039,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             subjects_in_regime=subject_ids_in_regime,
             n_subjects=n_subjects,
             subject_slice=subject_slice,
+            supplied_shocks=supplied_shocks,
             original_n_subjects=original_n_subjects,
             memory=memory,
         )
@@ -2016,7 +2116,30 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 delta=route_delta,
                 next_states=next_states,
             )
-        states = next_states
+        states = clip_next_states(
+            states=next_states,
+            regimes=regimes,
+            base_spaces=base_state_action_spaces,
+            targets=tuple(
+                dict.fromkeys(
+                    (
+                        *realization_targets_next_period,
+                        *(
+                            leg.realized_fallback.regime
+                            for edge in regime.gated_edges.values()
+                            for leg in edge.legs
+                        ),
+                    )
+                )
+            ),
+            next_period=period + 1,
+            source=regime_name,
+            new_regime_ids=new_subject_regime_ids,
+            regime_ids=regime_names_to_ids,
+            logger=logger,
+            subjects=subject_ids_in_regime,
+            memory=memory,
+        )
 
     return (
         simulation_result,
@@ -4149,6 +4272,13 @@ def _resources_at_subjects(
         ),
         (n_subjects,),
     )
+
+
+def _first_empty_action_row(*, indices: IntND, in_regime: BoolND) -> IntND:
+    """Find an owned empty decision, excluding other regimes and padding."""
+    rows = jnp.arange(in_regime.shape[0], dtype=jnp.int32)
+    first = jnp.min(jnp.where(in_regime & (indices < 0), rows, in_regime.shape[0]))
+    return jnp.where(first < in_regime.shape[0], first, -1)
 
 
 def _lookup_values_from_indices(

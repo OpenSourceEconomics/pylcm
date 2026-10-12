@@ -90,6 +90,7 @@ beartype_package("_lcm", conf=INTERNAL_CONF)
 beartype_package("lcm", conf=INTERNAL_CONF)
 
 from _lcm.additive_shock_transition import AdditiveShockTransition  # noqa: E402
+from _lcm.logsum import EULER_GAMMA  # noqa: E402
 from _lcm.variables import (  # noqa: E402
     _bind_forward_refs as _bind_variables_forward_refs,
 )
@@ -161,6 +162,7 @@ from lcm.persistence import (  # noqa: E402
 )
 from lcm.phased import Phased  # noqa: E402
 from lcm.processes import (  # noqa: E402
+    JointNormalIIDProcess,
     LogNormalIIDProcess,
     NormalIIDProcess,
     NormalMixtureIIDProcess,
@@ -227,6 +229,7 @@ jax.tree_util.register_pytree_node(
 )
 
 __all__ = [
+    "EULER_GAMMA",
     "AdditiveShockTransition",
     "AgeGrid",
     "AgeRange",
@@ -248,6 +251,7 @@ __all__ = [
     "InitialNodes",
     "InvariantBlockSchedule",
     "IrregSpacedGrid",
+    "JointNormalIIDProcess",
     "JointTransition",
     "LinSpacedGrid",
     "LinearAggregator",

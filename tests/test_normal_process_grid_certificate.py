@@ -33,8 +33,28 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         assert historical.isdisjoint(names)
         assert set(population).isdisjoint(names)
         historical.update(names)
-    assert len(historical) == 556
-    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 117
+    added_feasibility_controls = {
+        "feasibility_summary:published_value_changed",
+        "feasibility_summary:empty_count_reversed",
+    }
+    assert added_feasibility_controls <= historical
+    assert len(historical) == 558
+    assert len(historical - added_feasibility_controls) == 556
+    assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
+    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 118
+    original_corridor_sources = tuple(
+        relative
+        for relative in direct_flow._CERTIFIED_CORRIDOR_SOURCES
+        if relative != "src/_lcm/solution/feasibility.py"
+    )
+    assert len(original_corridor_sources) == 117
+    # Exact ordered source roster from 0a39539fd628bb60dcae2d3cca601816fe4832f4.
+    assert (
+        hashlib.sha256(
+            ("\n".join(original_corridor_sources) + "\n").encode()
+        ).hexdigest()
+        == "176867afe4246804efd4231a7a7a8439c6852d2bd099f6f537d3597473d70c85"
+    )
 
 
 @pytest.mark.parametrize("mutation", tuple(direct_flow._NORMAL_PROCESS_MUTATIONS))

@@ -7,8 +7,10 @@ matrix its discretization implies.
 
 from abc import abstractmethod
 from dataclasses import dataclass, fields
+from functools import partial
 from math import comb
 from types import MappingProxyType
+from typing import ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -17,6 +19,8 @@ from beartype import beartype
 from jax.scipy.stats.norm import cdf
 
 from _lcm.beartype_conf import GRID_CONF
+from _lcm.dtypes import canonical_float_dtype
+from _lcm.grids import coordinates as grid_coordinates
 from _lcm.processes.base import (
     StateConditioned,
     _ContinuousStochasticProcess,
@@ -26,6 +30,7 @@ from _lcm.processes.base import (
     sealed,
     standard_normal,
 )
+from _lcm.processes.state_conditioned import tauchen_row
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
 from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, ScalarInt
@@ -101,6 +106,31 @@ class TauchenAR1Process(_AR1Process):
     n_std: float | int | None = None
     """Number of standard deviations for the grid boundary."""
 
+    @staticmethod
+    def on_nodes(
+        *,
+        nodes: tuple[float, ...],
+        simulate_draws: Literal["continuous", "nodes"] = "continuous",
+        rho: float | None = None,
+        sigma: float | StateConditioned | None = None,
+        mu: float | None = 0.0,
+    ) -> TauchenAR1Process:
+        """Bin an AR(1) law on finite increasing physical nodes.
+
+        Bin edges are adjacent midpoints, with open first and last tails.
+        The nodes do not depend on stationarity, so unit roots are supported.
+        Unspecified law parameters are supplied at solve or simulation time.
+        """
+        return _TauchenOnNodesProcess(
+            nodes=nodes,
+            simulate_draws=simulate_draws,
+            n_points=len(nodes),
+            gauss_hermite=False,
+            rho=rho,
+            sigma=sigma,
+            mu=mu,
+        )
+
     def __post_init__(self) -> None:
         super().__post_init__()
         _validate_gauss_hermite_grid(
@@ -168,6 +198,77 @@ class TauchenAR1Process(_AR1Process):
             + sealed(params["rho"] * current_value)
             + sealed(params["sigma"] * standard_normal(key))
         )
+
+
+@beartype(conf=GRID_CONF)
+@dataclass(frozen=True, kw_only=True)
+class _TauchenOnNodesProcess(TauchenAR1Process):
+    """Tauchen bins on a fixed physical axis independent of law parameters."""
+
+    nodes: tuple[float, ...]
+
+    _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = (
+        TauchenAR1Process._NON_PARAM_FIELDS | {"nodes", "n_std"}  # noqa: SLF001
+    )
+
+    def __post_init__(self) -> None:
+        points = np.asarray(self.nodes, dtype=canonical_float_dtype())
+        if (
+            len(points) < 2  # noqa: PLR2004
+            or self.n_points != len(points)
+            or not np.isfinite(points).all()
+            or not np.all(points[1:] > points[:-1])
+        ):
+            raise GridInitializationError(
+                "nodes must contain at least two finite strictly increasing values "
+                "at the active precision."
+            )
+        super().__post_init__()
+
+    def fail_if_nonstationary_rho(self, *, rho: float | FloatND | IntND) -> None:
+        """Require finite persistence; supplied nodes need no stationary law."""
+        if not np.isfinite(np.asarray(rho)).all():
+            raise GridInitializationError("rho must be finite for supplied nodes.")
+
+    def compute_gridpoints(self, **kwargs: ScalarFloat | ScalarInt) -> Float1D:
+        """Return the supplied nodes, independent of runtime law parameters."""
+        del kwargs
+        return jnp.asarray(self.nodes, dtype=canonical_float_dtype())
+
+    def get_gridpoints(self) -> Float1D:
+        """Return the physical axis even when law parameters are unspecified."""
+        return self.compute_gridpoints()
+
+    def get_coordinate(self, value: FloatND) -> FloatND:
+        """Interpolate a coordinate on the supplied physical axis."""
+        return grid_coordinates.get_irreg_coordinate(value=value, points=self.to_jax())
+
+    def compute_transition_probs(self, **kwargs: ScalarFloat | ScalarInt) -> FloatND:
+        """Integrate each conditional normal over midpoint bins and open tails."""
+        nodes = self.compute_gridpoints()
+        return jax.vmap(
+            partial(
+                _tauchen_on_nodes_row,
+                nodes=nodes,
+                rho=kwargs["rho"],
+                sigma=kwargs["sigma"],
+                mu=kwargs["mu"],
+            ),
+            in_axes=0,
+        )(nodes)
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _tauchen_on_nodes_row(
+    from_value: ScalarFloat,
+    *,
+    nodes: Float1D,
+    rho: ScalarFloat | ScalarInt,
+    sigma: ScalarFloat | ScalarInt,
+    mu: ScalarFloat | ScalarInt,
+) -> Float1D:
+    """Bind the physical source value for a vmapped direct-CDF row."""
+    return tauchen_row(nodes=nodes, from_value=from_value, rho=rho, sigma=sigma, mu=mu)
 
 
 @beartype(conf=GRID_CONF)
