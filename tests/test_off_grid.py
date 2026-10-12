@@ -11,14 +11,19 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from _lcm import transition_checks
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.off_grid import count_off_grid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.shock_average import average_over_shock
 from _lcm.regime_building.V import (
     VInterpolationInfo,
     _get_coordinate_finder,
     get_V_interpolator,
 )
+from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.transitions import _clip_next_states
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
@@ -29,6 +34,7 @@ from lcm import (
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    NormalIIDProcess,
     StochasticTransition,
     Transition,
     categorical,
@@ -713,3 +719,78 @@ def test_budgeted_mandatory_counts_reuse_the_warm_executable() -> None:
         True,
         0,
     )
+
+
+def _shock_count_utility(*, wealth: ContinuousState, z: ContinuousState) -> FloatND:
+    return wealth**2 + z**2
+
+
+def _wealth_from_next_shock(next_z: ContinuousState) -> FloatND:
+    return 1 + next_z
+
+
+def test_budgeted_counts_read_changed_runtime_nodes_on_the_same_model() -> None:
+    """Changing same-shaped process support changes raw counts, not cached code."""
+    grid = LinSpacedGrid(start=0, stop=2, n_points=3, off_grid="raise")
+    shock = NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0)
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"wealth": grid, "z": shock},
+                functions={"utility": _shock_count_utility},
+                state_transitions={"wealth": _wealth_from_next_shock},
+            ),
+            "terminal": Regime(
+                states={"wealth": grid, "z": shock},
+                functions={"utility": _shock_count_utility},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"alive": {"terminal": 0}},
+        initial_nodes={0: "alive"},
+        regime_id_class=RegimeId,
+    )
+    devices = tuple(jax.devices()[:1])
+    memory = SimulationMemory(
+        budget_bytes=2**28,
+        devices=devices,
+        subject_devices=devices,
+        operations=ProfiledSimulationOperations(),
+        inputs=measure_buffer_footprint(tree={}),
+    )
+    source = model._regimes["alive"]
+    target = model._regimes["terminal"]
+    law = transition_checks._regime_laws_at_period(
+        regime=source, regime_name="alive", period=0
+    )[0][0]
+    for sigma, expected in ((0.1, 0), (1.0, 18)):
+        params = model._process_params(
+            {
+                "alive": {
+                    "z": {"sigma": sigma},
+                    "koopmans_aggregator": {"discount_factor": 1.0},
+                },
+                "terminal": {"z": {"sigma": sigma}},
+            }
+        )
+        axes = target.solution.state_action_space(
+            regime_params=regime_kernel_params(params, regime_name="terminal")
+        ).states
+        summary = transition_checks._ValidationSummary(memory=memory)
+        try:
+            counts = transition_checks._off_grid_target_counts(
+                regime=source,
+                phase=source.solution,
+                target="terminal",
+                law=law,
+                points={"wealth": grid.to_jax()},
+                target_axes=axes,
+                period=0,
+                flat_params=params,
+                ages=model._time,
+                summary=summary,
+                process_grid_resolver=None,
+            )
+            np.testing.assert_array_equal(counts, [[expected, 0]])
+        finally:
+            summary.close()
