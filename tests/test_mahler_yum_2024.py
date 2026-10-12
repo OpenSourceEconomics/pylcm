@@ -478,3 +478,12 @@ def test_consumption_positive(simulation_result):
 def test_category_names_are_a_tuple_in_declaration_order() -> None:
     """A categorical class's names come back as a tuple in declaration order."""
     assert _category_names(Education) == ("low", "high")
+
+
+def test_create_inputs_typed_key_preserves_integer_population() -> None:
+    """The initial-population factory consumes a caller's typed root directly."""
+    _, expected = create_inputs(seed=32, n_simulation_subjects=16, params=START_PARAMS)
+    _, actual = create_inputs(
+        seed=jax.random.key(32), n_simulation_subjects=16, params=START_PARAMS
+    )
+    pd.testing.assert_frame_equal(actual, expected, check_exact=True)

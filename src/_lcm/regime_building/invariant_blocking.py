@@ -206,6 +206,10 @@ def _regime_failures(
             f"is solved by {type(regime.solver).__name__}, not GridSearch",
         ),
         (regime.taste_shocks is not None, "declares taste shocks"),
+        (
+            regime.selection_aggregator is not None,
+            "declares a selection aggregator",
+        ),
         (regime.stakeholders is not None, "is a collective regime"),
         (bool(law.gated_edges), "declares gated edges"),
         (bool(regime.same_period_refs), "declares same-period references"),

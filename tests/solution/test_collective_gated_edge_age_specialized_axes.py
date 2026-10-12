@@ -25,6 +25,7 @@ Two models, one per collective-only object:
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
@@ -207,6 +208,27 @@ def test_collective_dissolution_fold_reads_the_flag_at_its_own_period() -> None:
         _EXPECTED_COUPLE_V_AT_AGE_1,
         decimal=DECIMAL_PRECISION,
     )
+
+
+def test_empty_counts_use_households_and_the_periods_own_grid(
+    *,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Participation rejects households, counted on each age's current nodes."""
+    model = _build_dissolution_model()
+    model.solve(
+        params={"discount_factor": _DISCOUNT_FACTOR, "floor_f": _FLOOR_F},
+        log_level="warning",
+    )
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if "no feasible action for regime 'pair'" in record.getMessage()
+    ]
+    assert warnings == [
+        "2 state(s) with no feasible action for regime 'pair', period 2 (age 2.0)",
+        "1 state(s) with no feasible action for regime 'pair', period 1 (age 1.0)",
+    ]
 
 
 def _build_gate_ref_model() -> Model:

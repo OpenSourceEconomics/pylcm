@@ -1,21 +1,35 @@
 """DataFrame assembly for `SimulationResult.to_dataframe`."""
 
 from collections.abc import Mapping, Sequence
+from functools import partial
 from types import MappingProxyType
+from typing import cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
 from _lcm.params.edges import regime_kernel_params
+from _lcm.processes.joint_normal import JointNormalIIDProcess
+from _lcm.processes.joint_normal_lowering import (
+    coordinate_names,
+)
 from _lcm.simulation.additional_targets import (
     _compute_targets,
     _filter_targets_for_regime,
 )
 from _lcm.simulation.result_metadata import ResultMetadata
 from _lcm.time import TimeAxis, coordinate_kind
-from _lcm.typing import ActionName, FlatParams, FlatRegimeParams, RegimeName, StateName
+from _lcm.typing import (
+    ActionName,
+    FlatParams,
+    FlatRegimeParams,
+    ProcessName,
+    RegimeName,
+    StateName,
+)
 from lcm.exceptions import PyLCMError
 from lcm.typing import BoolND, FloatND, FunctionName, IntND
 
@@ -45,6 +59,9 @@ def _create_flat_dataframe(
         _process_regime(
             regime_name=name,
             regime=regimes.get(name),
+            joint_normals=metadata.regime_to_joint_normals.get(
+                name, MappingProxyType({})
+            ),
             regime_results=raw_results[name],
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
@@ -107,6 +124,9 @@ def _process_regime(
     *,
     regime_name: RegimeName,
     regime: Regime | None,
+    joint_normals: MappingProxyType[
+        ProcessName, JointNormalIIDProcess
+    ] = MappingProxyType({}),
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
@@ -126,7 +146,7 @@ def _process_regime(
     role. A model with none would carry a column that is the sentinel in every
     row, so it publishes none.
 
-    `regime` is required only when `additional_targets` is set. With
+    `regime` is required only for optional targets. With
     `additional_targets=None`, only `regime_name` is read, so callers
     may pass `regime=None` after dropping compiled `Regime` objects to
     free device workspaces. `stakeholders` is read unconditionally (from
@@ -178,6 +198,13 @@ def _process_regime(
         data["age"] = ages.values[data["period"]]  # noqa: PD011
     data["regime_name"] = [regime_name] * len(data["period"])
 
+    _project_joint_shocks(
+        data=data,
+        joint_normals=joint_normals,
+        regime_params=regime_params,
+        subject_batch_size=subject_batch_size,
+    )
+
     if additional_targets:
         if regime is None:
             msg = (
@@ -211,7 +238,43 @@ def _process_regime(
                 }
             )
 
+    for group, process in joint_normals.items():
+        for name in coordinate_names(group=group, process=process):
+            data.pop(name, None)
     return pd.DataFrame(data)
+
+
+def _project_joint_shocks(
+    *,
+    data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]],
+    joint_normals: MappingProxyType[ProcessName, JointNormalIIDProcess],
+    regime_params: FlatRegimeParams,
+    subject_batch_size: int | None,
+) -> None:
+    """Publish named shocks without retaining the compiled decision programs."""
+    for group, process in joint_normals.items():
+        mean = cast("FloatND | None", regime_params.get(f"{group}__mean"))
+        cov = cast("FloatND | None", regime_params.get(f"{group}__cov"))
+        names = coordinate_names(group=group, process=process)
+        standard = np.stack([np.asarray(data[name]) for name in names], axis=-1)
+        n_rows = len(standard)
+        batch_size = subject_batch_size or max(n_rows, 1)
+        transform = jax.jit(jax.vmap(partial(process.transform, mean=mean, cov=cov)))
+        chunks = [
+            np.asarray(
+                transform(standard=jnp.asarray(standard[start : start + batch_size]))
+            )
+            for start in range(0, n_rows, batch_size)
+        ]
+        physical = (
+            np.concatenate(chunks) if chunks else np.empty((0, len(process.states)))
+        )
+        data.update(
+            {
+                name: physical[:, dimension]
+                for dimension, name in enumerate(process.states)
+            }
+        )
 
 
 def _split_stakeholder_value(

@@ -15,11 +15,15 @@ from typing import TYPE_CHECKING, Literal, TypeAliasType
 import numpy as np
 import pandas as pd
 from jax import Array
-from jaxtyping import Bool, Float, Int, Int32, Scalar, Shaped
+from jaxtyping import Bool, Float, Int, Int32, Key, Scalar, Shaped
 
 # Any model dtype; use only for genuinely dtype-polymorphic slots. Parameter
 # wrappers import this alias, so define it before importing them below.
 type ValueND = Shaped[Array, "..."]
+
+# Arrays stay wide at the seed boundary so raw keys receive constructor guidance.
+type UserSeed = int | ValueND
+type PRNGKey = Key[Array, ""]
 
 # The coordinate labels of a `TimeVarying`, defined before the parameter
 # wrappers for the same reason:
@@ -56,6 +60,7 @@ else:
     type _InitialNodesClass = type[object]
 
 type ContinuousState = Float[Array, "..."]
+type OffGrid = Literal["extrapolate", "clip_lookup", "clip_state", "raise"]
 type ContinuousAction = Float[Array, "..."]
 type DiscreteState = Int32[Array, "..."]
 type DiscreteAction = Int32[Array, "..."]

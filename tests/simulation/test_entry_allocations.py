@@ -450,3 +450,36 @@ def test_profile_cache_does_not_prolong_closed_entry_owners() -> None:
     gc.collect()
     assert len(operations.cache) == 1
     assert all(reference() is None for reference in references)
+
+
+@pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])
+def test_caller_random_root_is_charged_before_first_upload(
+    *, role: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Caller random roots stay in current residency before uploads and auto-solve."""
+    model, params, initial = _small_grid_search_inputs(
+        execution_config=ExecutionConfig(device_memory_bytes=2**28)
+    )
+    params = jax.tree.map(np.asarray, params)
+    initial = jax.tree.map(np.asarray, initial)
+    root = jax.random.key(11)
+    expected = measure_buffer_footprint(tree=root)
+    assert any(expected.spans.values())
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        entry_allocations_module,
+        "place_simulation_arguments",
+        _ModelUploadInventory(
+            expected=expected,
+            original=entry_allocations_module.place_simulation_arguments,
+            calls=calls,
+        ),
+    )
+    model.simulate(
+        params=params,
+        initial_conditions=initial,
+        log_level="off",
+        seed=root if role == "seed" else None,
+        taste_shock_seed=root if role == "taste_shock_seed" else None,
+    )
+    assert calls

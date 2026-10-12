@@ -150,6 +150,7 @@ from _lcm.regime_building.gated_edges import (
 from _lcm.regime_building.invariant_blocking import bound_state_names
 from _lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
+    get_selection_readout_Q_over_a,
 )
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.next_state import get_next_state_function_for_simulation
@@ -198,6 +199,7 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F_collective,
     get_Q_and_F_terminal,
     get_Q_and_F_terminal_collective,
+    has_selection_aggregator,
     partition_continuation_targets,
 )
 from _lcm.regime_building.stochastic_state_transitions import (
@@ -1260,7 +1262,23 @@ class _CanonicalRegimeBuilder:
                 solution_reachability=self.reachability.solution,
                 simulation_reachability=self.reachability.simulation,
                 nested_transitions=self.simulate_nested_transitions[regime_name],
-                all_grids=self.all_grids,
+                all_grids=MappingProxyType(
+                    {
+                        name: MappingProxyType(
+                            {
+                                **grids,
+                                **{
+                                    state: grid
+                                    for state, grid in self.phased_specs[
+                                        name
+                                    ].simulation.grid_states.items()
+                                    if isinstance(grid, Grid)
+                                },
+                            }
+                        )
+                        for name, grids in self.all_grids.items()
+                    }
+                ),
                 state_grids=self.state_grids,
                 regime_params_template=regime_params_template,
                 edge_params_template=edge_params_template,
@@ -3456,6 +3474,7 @@ def _build_solution_phase(  # noqa: PLR0915
     core = _process_regime_core(
         source_regime_name=regime_name,
         koopmans_aggregator=spec.solution.koopmans_aggregator,
+        selection_aggregator=spec.solution.selection_aggregator,
         functions=spec.solution.functions,
         constraints=spec.solution.constraints,
         evaluated_constraint_names=routing.evaluated_names,
@@ -3608,6 +3627,7 @@ def _build_solution_phase(  # noqa: PLR0915
             # through that code's block, which has the state's axis removed.
             co_map_state_names=(*co_map_state_names, *invariant_bindings),
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
+            selection_aggregator=core.selection_aggregator,
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
             value_constraints=value_aware_feasibility.value_constraints,
@@ -4567,6 +4587,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     core = _process_regime_core(
         source_regime_name=regime_name,
         koopmans_aggregator=spec.simulation.koopmans_aggregator,
+        selection_aggregator=spec.simulation.selection_aggregator,
         functions=decision_functions,
         constraints=spec.simulation.constraints,
         evaluated_constraint_names=routing.evaluated_names,
@@ -4796,6 +4817,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             flat_param_names=flat_param_names,
             period_to_regime_v_interp=period_to_regime_v_interp,
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
+            selection_aggregator=core.selection_aggregator,
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
             value_constraints=value_aware_feasibility.value_constraints,
@@ -5308,6 +5330,10 @@ class _CoreResult:
     """The Bellman aggregator with params renamed to qnames; `None` in a
     terminal regime."""
 
+    selection_aggregator: EconFunction | None
+    """The aggregator that selects the action, with params renamed to qnames;
+    `None` when the Bellman aggregator selects."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class _PhaseFunctionPartition:
@@ -5438,6 +5464,7 @@ def _process_regime_core(
     constraints: ProcessedConstraintsMapping,
     evaluated_constraint_names: frozenset[FunctionName],
     koopmans_aggregator: UserFunction | None,
+    selection_aggregator: UserFunction | None,
     state_transitions: Mapping[StateName, _PhaseStateTransition],
     markov_draw_laws: Mapping[StateName, StochasticTransition],
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
@@ -5467,6 +5494,8 @@ def _process_regime_core(
             feasibility kernel after routing.
         koopmans_aggregator: The regime's Bellman aggregator, or `None` in a
             terminal regime.
+        selection_aggregator: The aggregator that selects the action, or
+            `None` when the Bellman aggregator selects.
         state_transitions: This phase's `state_transitions` slice, used to
             detect per-target dicts and stochastic transitions.
         markov_draw_laws: Markov laws declared once for every target, by state;
@@ -5882,6 +5911,15 @@ def _process_regime_core(
             param_key="koopmans_aggregator",
         )
     )
+    processed_selection_aggregator = (
+        None
+        if selection_aggregator is None
+        else _process_one_function(
+            func=selection_aggregator,
+            regime_params_template=regime_params_template,
+            param_key="selection_aggregator",
+        )
+    )
 
     return _CoreResult(
         functions=phase_functions,
@@ -5893,6 +5931,7 @@ def _process_regime_core(
         next_regime_func=next_regime_func,
         next_regime_cells=next_regime_cells,
         koopmans_aggregator=processed_koopmans_aggregator,
+        selection_aggregator=processed_selection_aggregator,
     )
 
 
@@ -8399,6 +8438,7 @@ def _build_Q_and_F_per_period(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[QualifiedName],
     koopmans_aggregator: EconFunction,
+    selection_aggregator: EconFunction | None = None,
     certainty_equivalent: CertaintyEquivalent | None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
@@ -8445,6 +8485,8 @@ def _build_Q_and_F_per_period(
         flat_param_names: Frozenset of flat parameter names for the regime.
         koopmans_aggregator: The regime's Bellman aggregator, with params
             renamed to qnames.
+        selection_aggregator: The aggregator that selects the action, with
+            params renamed, or `None` when the Bellman aggregator selects.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
         stakeholders: Ordered stakeholder names for a collective regime, or
@@ -8625,6 +8667,7 @@ def _build_Q_and_F_per_period(
             regime_to_v_interpolation_info=continuation_info(representative_period),
             co_map_state_names=co_map_state_names,
             koopmans_aggregator=koopmans_aggregator,
+            selection_aggregator=selection_aggregator,
             certainty_equivalent=certainty_equivalent,
             # Resolve the perceived continuation pool at this group's own period.
             # Safe because that pool's per-period signature is part of the group key
@@ -8667,7 +8710,17 @@ def _build_per_subject_decisions_per_period(
     result: dict[int, ArgmaxQOverAFunction] = {}
     for period, Q_and_F in Q_and_F_functions.items():
         q_id = id(Q_and_F)
-        if q_id not in built:
+        if q_id not in built and has_selection_aggregator(Q_and_F=Q_and_F):
+            built[q_id] = cast(
+                "ArgmaxQOverAFunction",
+                get_selection_readout_Q_over_a(
+                    Q_and_F=Q_and_F,
+                    action_names=state_action_space.action_names,
+                    state_names=state_action_space.state_names,
+                    publishes_index=True,
+                ),
+            )
+        elif q_id not in built:
             built[q_id] = get_argmax_and_max_Q_over_a(
                 Q_and_F=Q_and_F,
                 action_names=state_action_space.action_names,
@@ -8779,6 +8832,7 @@ def _build_next_state_vmapped(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     flat_param_names: frozenset[QualifiedName],
     enable_jit: bool,
+    supplied_states: frozenset[StateName] = frozenset(),
 ) -> _NextStateBuild:
     """Build a per-period vmapped next-state function for simulation.
 
@@ -8826,9 +8880,20 @@ def _build_next_state_vmapped(
             transitions=period_transitions,
             transition_plans=transition_plans,
             all_grids=all_grids,
+            supplied_states=supplied_states,
         )
         sig_args = tuple(inspect.signature(next_state).parameters)
-        non_vmap = {"period", "age"} | flat_param_names
+        non_vmap = (
+            {"period", "age"}
+            | flat_param_names
+            | {
+                f"nodes_{target}__next_{state}"
+                for target, grids in all_grids.items()
+                for state, grid in grids.items()
+                if isinstance(grid, _ContinuousStochasticProcess)
+                and grid.simulate_draws == "nodes"
+            }
+        )
         vmap_variables = tuple(arg for arg in sig_args if arg not in non_vmap)
         next_state_vmapped = vmap_1d(func=next_state, variables=vmap_variables)
         next_state_vmapped = with_signature(
