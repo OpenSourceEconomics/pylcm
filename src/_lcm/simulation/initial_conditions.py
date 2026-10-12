@@ -464,6 +464,7 @@ def canonicalize_initial_conditions(
     regimes: MappingProxyType[RegimeName, Regime],
     array_writer: CanonicalArrayWriter | None = None,
     ages: TimeAxis | None = None,
+    unread_names: frozenset[str] = frozenset(),
 ) -> InitialConditions:
     """Cast every initial-conditions array to its canonical pylcm dtype.
 
@@ -479,9 +480,12 @@ def canonicalize_initial_conditions(
             user-supplied arrays of any integer or floating dtype.
         regimes: Immutable mapping of regime names to internal regime
             instances, used to classify each state as discrete or continuous.
+        unread_names: Names removed as transition-only shocks in at least one
+            regime. Drop their supplied columns only when no simulation regime
+            retains the name as a state.
 
     Returns:
-        Mapping of the same keys to JAX arrays at their canonical dtype.
+        Mapping of the remaining keys to JAX arrays at their canonical dtype.
 
     """
     discrete_state_names = {
@@ -497,6 +501,8 @@ def canonicalize_initial_conditions(
     }
     canonical: dict[str, FloatND | IntND] = {}
     for name, value in initial_conditions.items():
+        if name in unread_names and name not in known_state_names:
+            continue
         if (
             name == "regime_id"
             or name in discrete_state_names

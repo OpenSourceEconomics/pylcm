@@ -30,7 +30,7 @@ from typing import Literal, TypedDict, cast, no_type_check
 
 from dags import get_ancestors
 
-from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.fixed_process_laws import StateDeclaration
@@ -324,6 +324,187 @@ def prune_broadcast_variables(
         )
 
     return MappingProxyType(pruned_regimes), MappingProxyType(pruned_variables)
+
+
+def split_transition_only_folds(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
+    koopmans_aggregator: UserFunction,
+    ages: TimeAxis | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+) -> tuple[
+    MappingProxyType[RegimeName, UserRegime],
+    MappingProxyType[RegimeName, MappingProxyType[StateName, _IIDProcess]],
+]:
+    """Take folded IID shocks that only a transition reads out of the state space.
+
+    A `fold=True` IID process without a conditioning state is *transition-only*
+    in a regime when nothing the regime computes within its period reads the
+    shock's current value: not its utility, constraints, regime transition or
+    any law of motion. Only the draw `next_<shock>` is read, by the laws toward
+    the next period. The regime's value then does not depend on the shock, so
+    the shock is no state of the regime: the value stores no axis for it and
+    the period is not evaluated per node. The draw is still taken on every
+    edge whose laws read it, from the process's own nodes and weights, as a
+    transition-local lottery the source's continuation sums over.
+
+    A regime that folds a shock and does read it within its period keeps the
+    ordinary fold: its value is computed per node and averaged. A source law
+    that reads the draw toward such a target is refused, because the draw would
+    then be correlated with the node the target's value was averaged over.
+
+    Args:
+        user_regimes: Mapping of regime names to pruned `Regime` instances.
+        laws: Each regime's law, by regime name.
+        koopmans_aggregator: The model-level Bellman aggregator.
+        ages: The model's time axis, used to resolve age-specialized functions.
+        active_periods_by_regime: The per-regime coverage.
+
+    Returns:
+        Tuple of the regimes without their transition-only shocks and, per
+        regime that has any, its transition-only shocks by state name.
+
+    Raises:
+        ModelInitializationError: If a source law reads the draw of a shock that
+            a target folds and reads within its period.
+
+    """
+    all_regime_names = frozenset(user_regimes)
+    specs = {
+        name: normalize_regime_phases(regime, law=laws[name])
+        for name, regime in user_regimes.items()
+    }
+    reads = _NamesRead(
+        specs=specs,
+        user_regimes=user_regimes,
+        laws=laws,
+        koopmans_aggregator=koopmans_aggregator,
+        ages=ages,
+        active_periods_by_regime=active_periods_by_regime,
+    )
+    targets_by_source = {
+        name: frozenset(
+            target
+            for phase_name in ("solution", "simulation")
+            for target in candidate_targets_from_transition(
+                transition=getattr(spec, phase_name).regime_transition,
+                all_regime_names=all_regime_names,
+            )
+        )
+        & all_regime_names
+        for name, spec in specs.items()
+    }
+    folded_by_regime = {
+        name: {
+            state: grid
+            for state, grid in regime.states.items()
+            if isinstance(grid, _IIDProcess)
+            and grid.fold
+            and grid.state_conditioned is None
+        }
+        for name, regime in user_regimes.items()
+    }
+    transition_only: dict[RegimeName, dict[StateName, _IIDProcess]] = {}
+    for name, folded in folded_by_regime.items():
+        within_period = (
+            reads(regime_name=name, candidate_targets=targets_by_source[name])
+            if folded
+            else set()
+        )
+        transition_only[name] = {
+            state: grid for state, grid in folded.items() if state not in within_period
+        }
+
+    errors: list[str] = []
+    for source_name in sorted(user_regimes):
+        for target_name in sorted(targets_by_source[source_name]):
+            read_folds = sorted(
+                state
+                for state in folded_by_regime[target_name]
+                if state not in transition_only[target_name]
+            )
+            if not read_folds:
+                continue
+            source_reads = reads(
+                regime_name=source_name, candidate_targets=frozenset({target_name})
+            )
+            errors += [
+                f"Regime '{target_name}' folds '{state}' and reads it within its "
+                f"period, so the laws from '{source_name}' toward it cannot read "
+                f"the draw 'next_{state}': the target's stored value is averaged "
+                f"over the shock's nodes, and a draw taken by the source would be "
+                f"correlated with that average. Stop reading '{state}' within "
+                f"'{target_name}', which takes the shock out of its state space, "
+                f"or drop `fold=True`."
+                for state in read_folds
+                if f"next_{state}" in source_reads
+            ]
+    if errors:
+        raise ModelInitializationError(format_messages(errors))
+
+    regimes = {
+        name: regime.replace(
+            states={
+                state: grid
+                for state, grid in regime.states.items()
+                if state not in transition_only[name]
+            }
+        )
+        if transition_only[name]
+        else regime
+        for name, regime in user_regimes.items()
+    }
+    return MappingProxyType(regimes), MappingProxyType(
+        {
+            name: MappingProxyType(shocks)
+            for name, shocks in transition_only.items()
+            if shocks
+        }
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _NamesRead:
+    """Every name a regime's computations read in either phase slice.
+
+    The roots are `root_functions`' plus the laws of motion toward the given
+    candidate targets, so a name in the result is read within the regime's
+    period or by a law it hands to one of those targets.
+    """
+
+    specs: Mapping[RegimeName, PhasedRegimeSpec]
+    user_regimes: Mapping[RegimeName, UserRegime]
+    laws: RegimeLaws
+    koopmans_aggregator: UserFunction
+    ages: TimeAxis | None
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None
+
+    def __call__(
+        self, *, regime_name: RegimeName, candidate_targets: frozenset[RegimeName]
+    ) -> set[str]:
+        every_state_kept = {
+            name: frozenset(regime.states) for name, regime in self.user_regimes.items()
+        }
+        names: set[str] = set()
+        for phase_name in ("solution", "simulation"):
+            names |= _needed_names(
+                phase_slice=getattr(self.specs[regime_name], phase_name),
+                regime_name=regime_name,
+                user_regime=self.user_regimes[regime_name],
+                laws=self.laws,
+                phase_name=phase_name,
+                koopmans_aggregator=self.koopmans_aggregator,
+                candidate_targets=candidate_targets,
+                kept=every_state_kept,
+                ages=self.ages,
+                active_periods=(
+                    None
+                    if self.active_periods_by_regime is None
+                    else self.active_periods_by_regime.get(regime_name, ())
+                ),
+            )
+        return names
 
 
 def root_functions(

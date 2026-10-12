@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "429b2dab8dff337502ea2613af8130feaa1499a2cd21c26d42c1e1cc81ae174d",
+  "source_inventory_sha256": "c2f39281e328db7348a5c2820ff97596e3b0c8dc78741601664785d4efd89130",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -166,7 +166,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "e64981b517f8ee1d499546bb472351341d955d38eef86dd9f34ef3f3a5f05cbc"
+      "sha256": "db23ab13cbdf3662c0dae199ab7437116c61dfc05e477bc12645a9011ec0cf2a"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -242,7 +242,7 @@
     },
     {
       "path": "src/_lcm/simulation/initial_conditions.py",
-      "sha256": "b9c69990cf6dd93505b22f4d572f1c6a4f6ce3a96530f4a28ffc742b77c7fc11"
+      "sha256": "ca146d8fff7f1486b3e9e383f193540825c5b35f35eebcf4dfb90a2c56597c20"
     },
     {
       "path": "src/_lcm/simulation/membership.py",
@@ -374,7 +374,7 @@
     },
     {
       "path": "src/_lcm/solution/fingerprint.py",
-      "sha256": "dd6c2f7cff61557c369140605382c73e52423a19441e4909bd2f0ae7c9fa4b53"
+      "sha256": "072c93e7613b1edf806dd5f5cff2db979c3ef9b96063feeb1766ee931981383b"
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
@@ -478,7 +478,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "fe9484d28663a90f980ccb78248e5cffbf4f9cfcd3e553002966c992f4792f94"
+      "sha256": "588dcbb59770fb4d26fb9868980906bd9bf1a585ef5b077a916ea8a87ff69a14"
     },
     {
       "path": "src/lcm/result.py",
