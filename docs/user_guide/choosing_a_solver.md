@@ -120,6 +120,20 @@ Read [Consumption-saving regimes and margins](../reference/consumption_savings.m
 [Declared non-convex budgets](../methods/nonconvex_budgets.md) before authoring those
 models.
 
+## Values outside the feasible set
+
+Values that functions return in infeasible cells (NaN, ±inf, any finite number) never
+affect V, the policy, or simulated choices. This guarantee applies to every built-in
+solver within its supported model declaration.
+
+Declare economic feasibility rather than clipping utility inputs solely to make
+infeasible cells finite. A consumption minimum that defines the economic feasible set
+still belongs in the model's constraints; removing a numerical utility clamp does not
+remove that constraint or relax an EGM solver's structural domain requirements.
+
+Keep `runtime_checks=True` to detect NaN in feasible cells during solve and simulation.
+See [Debugging](debugging.md) for the diagnostic controls.
+
 ## Pass 2: decide whether specialization pays
 
 Among correct representations, compare:
