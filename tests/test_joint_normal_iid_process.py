@@ -480,3 +480,349 @@ def test_joint_normal_rejects_malformed_physical_inputs(malformed: str) -> None:
             seed=521,
             log_level="off",
         )
+
+
+@pytest.mark.parametrize("runtime", [False, True])
+@pytest.mark.parametrize("fold", [False, True])
+@pytest.mark.parametrize(
+    "cov",
+    [((1.0, -0.4), (-0.4, 2.0)), ((0.0, 0.0), (0.0, 2.0)), ((1.0, 2.0), (2.0, 4.0))],
+)
+def test_joint_normal_validate_transitions_preserves_named_runtime_law(
+    *, runtime: bool, fold: bool, cov: tuple[tuple[float, float], tuple[float, float]]
+) -> None:
+    """Public preflight shares fixed/runtime joint-law validation with native solve."""
+    process = JointNormalIIDProcess(
+        states=("x", "y"),
+        n_points=(3, 5),
+        gauss_hermite=True,
+        mean=None if runtime else (1.0, -2.0),
+        cov=None if runtime else cov,
+        fold=fold,
+    )
+    model = _model(
+        lcm.Regime(states={"wages": process}, functions={"utility": _utility})
+    )
+    params = (
+        {
+            name: {"wages": {"mean": jnp.array([1.0, -2.0]), "cov": jnp.array(cov)}}
+            for name in ("working", "done")
+        }
+        if runtime
+        else {}
+    )
+    assert model.validate_transitions(params=params) is None
+    solution = model.solve(params=params, log_level="off", runtime_checks=True)
+    for regime_to_values in solution.values.values():
+        for values in regime_to_values.values():
+            assert np.isfinite(np.asarray(values)).all()
+
+    if runtime:
+        template = model.get_params_template()
+        for name in ("working", "done"):
+            assert set(template[name]["wages"]) == {"mean", "cov"}
+        # Leave the first regime valid; fail the later regime's named runtime law.
+        # Fresh mapping leaves the valid input untouched for the subsequent call.
+        invalid = {
+            **params,
+            "done": {
+                "wages": {
+                    "mean": jnp.array([1.0, -2.0]),
+                    "cov": jnp.array(((1.0, 2.0), (2.0, 1.0))),
+                }
+            },
+        }
+        with pytest.raises(InvalidParamsError, match=r"wages.*cov") as preflight:
+            model.validate_transitions(params=invalid)
+        with pytest.raises(InvalidParamsError, match=r"wages.*cov") as solve:
+            model.solve(params=invalid, log_level="off", runtime_checks=True)
+        assert str(preflight.value) == str(solve.value)
+        assert model.validate_transitions(params=params) is None
+
+
+@lcm.time_varying_params("wage")
+def _age_profile_joint_utility(
+    *,
+    x: lcm.typing.ContinuousState,
+    y: lcm.typing.ContinuousState,
+    wage: lcm.typing.FloatND,
+) -> lcm.typing.FloatND:
+    return x * y + x * x + wage
+
+
+@pytest.mark.parametrize("fold", [False, True])
+def test_joint_normal_age_profile_alignment_matches_manual(*, fold: bool) -> None:
+    process = JointNormalIIDProcess(
+        states=("x", "y"),
+        n_points=3,
+        gauss_hermite=True,
+        mean=(0.0, 0.0),
+        cov=None,
+        fold=fold,
+    )
+    regime = lcm.Regime(
+        states={"joint": process}, functions={"utility": _age_profile_joint_utility}
+    )
+    model = lcm.Model(
+        ages=lcm.AgeGrid(start=40, inclusive_stop=41, step="Y"),
+        regimes={"working": regime, "done": regime},
+        regime_id_class=RegimeId,
+        initial_nodes=((40, "working"),),
+        edges={"working": {"done": (40,)}},
+        fixed_params={"discount_factor": 0.9},
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
+    )
+    mapped = lcm.TimeVarying.from_profile(
+        values=jnp.array([99.0, 5.0, 3.0]),
+        labels=(39, 42, 41),
+        age_to_label={40: 41, 41: 42},
+    )
+    manual = lcm.TimeVarying(values=jnp.array([3.0, 5.0]), ages=(40, 41))
+    solutions = {}
+    frames = {}
+    for name, profile in (("mapped", mapped), ("manual", manual)):
+        params = {
+            "wage": profile,
+            **{
+                regime_name: {"joint": {"cov": np.array(((1.0, 0.4), (0.4, 2.0)))}}
+                for regime_name in ("working", "done")
+            },
+        }
+        model.validate_transitions(params=params)
+        solution = model.solve(params=params, runtime_checks=True, log_level="off")
+        solutions[name] = solution
+        states = {"x": jnp.array((0.1, 0.5)), "y": jnp.array((0.2, -0.4))}
+        expected = states["x"] * states["y"] + states["x"] ** 2 + 3.0 + 0.9 * 6.4
+        lookup = model.lookup_policy(
+            params=params,
+            solution=solution,
+            regime_name="working",
+            period=0,
+            states=states,
+        )
+        aaae(lookup.value, expected, decimal=DECIMAL_PRECISION)
+        physical = np.asarray(
+            process.compute_gridpoints(cov=jnp.array(((1.0, 0.4), (0.4, 2.0))))
+        )
+        for dimension, state_name in enumerate(("x", "y")):
+            bounds = model.initial_state_bounds(
+                params=params,
+                regime_name="working",
+                state_name=state_name,
+                period=0,
+            )
+            np.testing.assert_allclose(
+                bounds,
+                (physical[:, dimension].min(), physical[:, dimension].max()),
+                rtol=10**-DECIMAL_PRECISION,
+            )
+        frames[name] = model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                **states,
+                "age": jnp.full(2, 40, dtype=jnp.int32),
+                "regime_id": jnp.zeros(2, dtype=jnp.int32),
+            },
+            seed=521,
+            runtime_checks=True,
+            log_level="off",
+        ).to_dataframe()
+    for period, regime_name in ((0, "working"), (1, "done")):
+        np.testing.assert_array_equal(
+            solutions["mapped"].values[period][regime_name],
+            solutions["manual"].values[period][regime_name],
+        )
+    pd.testing.assert_frame_equal(frames["mapped"], frames["manual"], check_exact=True)
+
+
+def test_joint_normal_budgeted_runtime_typed_seed_preserves_physical_frame() -> None:
+    """Typed roots use the native budgeted joint law without exposing latent states."""
+    process = JointNormalIIDProcess(
+        states=("x", "y"),
+        n_points=3,
+        gauss_hermite=True,
+        mean=(0.0, 0.0),
+        cov=None,
+    )
+    model = _model(
+        lcm.Regime(states={"wages": process}, functions={"utility": _utility}),
+        execution_config=lcm.ExecutionConfig(
+            device_memory_bytes=2**30, axis_widths={"subject": 1}
+        ),
+    )
+    params = {
+        name: {"wages": {"cov": np.array(((1.0, 0.4), (0.4, 2.0)))}}
+        for name in ("working", "done")
+    }
+    solution = model.solve(params=params, log_level="off", runtime_checks=True)
+    states = {"x": jnp.array((0.1, 0.5)), "y": jnp.array((0.2, -0.4))}
+    expected = states["x"] * states["y"] + states["x"] ** 2 + 0.9 * 1.4
+    lookup = model.lookup_policy(
+        params=params, solution=solution, period=0, regime_name="working", states=states
+    )
+    aaae(lookup.value, expected, decimal=DECIMAL_PRECISION)
+    parts = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="working",
+        states=states,
+        return_action_values=True,
+    )
+    assert parts.U is not None
+    assert parts.CE is not None
+    assert parts.Q is not None
+    assert parts.F is not None
+    aaae(
+        parts.U, states["x"] * states["y"] + states["x"] ** 2, decimal=DECIMAL_PRECISION
+    )
+    aaae(parts.CE, jnp.full_like(expected, 1.4), decimal=DECIMAL_PRECISION)
+    aaae(parts.Q, expected, decimal=DECIMAL_PRECISION)
+    aaae(parts.value, lookup.value, decimal=DECIMAL_PRECISION)
+    np.testing.assert_array_equal(parts.F, jnp.ones_like(expected, dtype=bool))
+    initial = {
+        **states,
+        "period": jnp.zeros(2, dtype=jnp.int32),
+        "regime_id": jnp.zeros(2, dtype=jnp.int32),
+    }
+    # Keys are created in the test body, after the launcher/worker pre-JAX cache.
+    # Control integer implementation explicitly; don't inherit an unrelated RBG default.
+    with jax.default_prng_impl("threefry2x32"):
+        threefry = jax.random.key(521, impl="threefry2x32")
+        rbg = jax.random.key(521, impl="rbg")
+        integer_result = model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            seed=521,
+            log_level="off",
+            runtime_checks=True,
+        )
+        threefry_result = model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            seed=threefry,
+            log_level="off",
+            runtime_checks=True,
+        )
+        rbg_result = model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            seed=rbg,
+            log_level="off",
+            runtime_checks=True,
+        )
+    integer_frame = integer_result.to_dataframe()
+    threefry_frame = threefry_result.to_dataframe()
+    pd.testing.assert_frame_equal(integer_frame, threefry_frame, check_exact=True)
+    for result in (integer_result, threefry_result, rbg_result):
+        frame = result.to_dataframe()
+        assert {"x", "y"} <= set(frame.columns)
+        assert not any("normal_" in name for name in frame.columns)
+        assert np.isfinite(frame[["x", "y", "value"]].to_numpy()).all()
+        aaae(
+            frame.loc[frame["period"] == 0, "value"],
+            expected,
+            decimal=DECIMAL_PRECISION,
+        )
+        aaae(
+            frame.loc[frame["period"] == 0, ["x", "y"]],
+            np.column_stack((states["x"], states["y"])),
+            decimal=DECIMAL_PRECISION,
+        )
+        assert (frame["period"] == 1).any()
+
+
+def _joint_carried_terminal_utility(
+    *,
+    x: lcm.typing.ContinuousState,
+    y: lcm.typing.ContinuousState,
+    lag: lcm.typing.ContinuousState,
+) -> lcm.typing.FloatND:
+    return x * y + x * x + lag
+
+
+@pytest.mark.parametrize("fold", [False, True])
+def test_joint_normal_keeps_an_ordinary_state_carried_to_reader(*, fold: bool) -> None:
+    process = JointNormalIIDProcess(
+        states=("x", "y"),
+        n_points=3,
+        gauss_hermite=True,
+        mean=(0.0, 0.0),
+        cov=None,
+        fold=fold,
+    )
+    lag_grid = lcm.LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
+    model = lcm.Model(
+        regimes={
+            "working": lcm.Regime(
+                states={"joint": process, "lag": lag_grid},
+                state_transitions={"lag": lcm.fixed_transition("lag")},
+                functions={"utility": _utility},
+            ),
+            "done": lcm.Regime(
+                states={"joint": process, "lag": lag_grid},
+                functions={"utility": _joint_carried_terminal_utility},
+            ),
+        },
+        n_periods=2,
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "working"}),
+        edges={"working": {"done": lcm.Periods(values=(0,))}},
+        fixed_params={"discount_factor": 0.9},
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
+    )
+    params = {
+        name: {"joint": {"cov": np.array(((1.0, 0.4), (0.4, 2.0)))}}
+        for name in ("working", "done")
+    }
+    assert set(model.initial_state_names(regime_name="working")) == {"x", "y", "lag"}
+    assert model.initial_state_bounds(
+        params=params, regime_name="working", state_name="lag", period=0
+    ) == (0.0, 2.0)
+    model.validate_transitions(params=params)
+    solution = model.solve(params=params, runtime_checks=True, log_level="off")
+    states = {
+        "x": jnp.array((0.1, 0.5)),
+        "y": jnp.array((0.2, -0.4)),
+        "lag": jnp.array((0.5, 1.5)),
+    }
+    expected = (
+        states["x"] * states["y"] + states["x"] ** 2 + 0.9 * (1.4 + states["lag"])
+    )
+    lookup = model.lookup_policy(
+        params=params,
+        solution=solution,
+        regime_name="working",
+        period=0,
+        states=states,
+    )
+    aaae(lookup.value, expected, decimal=DECIMAL_PRECISION)
+    frame = (
+        model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                **states,
+                "period": jnp.zeros(2, dtype=jnp.int32),
+                "regime_id": jnp.zeros(2, dtype=jnp.int32),
+            },
+            seed=521,
+            runtime_checks=True,
+            log_level="off",
+        )
+        .to_dataframe(use_labels=False)
+        .sort_values(["subject_id", "period"])
+    )
+    aaae(frame.loc[frame["period"] == 0, "value"], expected, decimal=DECIMAL_PRECISION)
+    for period in (0, 1):
+        aaae(
+            frame.loc[frame["period"] == period, "lag"],
+            states["lag"],
+            decimal=DECIMAL_PRECISION,
+        )
+    assert {"x", "y", "lag"} <= set(frame.columns)
+    assert np.isfinite(frame[["x", "y", "lag", "value"]].to_numpy()).all()

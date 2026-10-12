@@ -131,6 +131,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
+from _lcm.simulation.shock_paths import shock_path_values, supplied_shock_argument_names
 from _lcm.simulation.subject_groups import (
     ComponentValueSource,
     SubjectGroupPlan,
@@ -201,6 +202,7 @@ from lcm.typing import (
     FunctionName,
     Int1D,
     IntND,
+    PRNGKey,
     ReferenceName,
     ScalarFloat,
     ScalarInt,
@@ -227,8 +229,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
-    seed: int | None = None,
-    taste_shock_seed: int | None = None,
+    seed: int | PRNGKey | None = None,
+    taste_shock_seed: int | PRNGKey | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
     period_to_regime_to_dissolution_flags: MappingProxyType[
@@ -238,6 +240,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     retained_footprint: DeviceBufferFootprint | None = None,
     prepared_chunks: PreparedSimulationChunks | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
     call_id: CallId | None = None,
     component_values: ComponentValueSource | None = None,
 ) -> SimulationResult:
@@ -620,6 +623,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         memory=memory,
                         call_inputs=call_inputs,
                         process_grid_resolver=process_grid_resolver,
+                        shock_paths=shock_paths,
                     )
                     if host_device is not None:
                         # `block_until_ready` forces the D2H copy to complete
@@ -764,7 +768,7 @@ def _initialize_chunk_state(
     initial_own_stakeholder: Int1D,
     regimes: MappingProxyType[RegimeName, Regime],
     device_ids: tuple[int, ...],
-    seed: int,
+    seed: int | PRNGKey,
     memory: SimulationMemory | None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
     """Build a chunk's carriers, enrolling completed arrays before the next step."""
@@ -806,7 +810,7 @@ def _simulate_subject_chunk(
     ],
     flat_params: FlatParams,
     ages: TimeAxis,
-    seed: int,
+    seed: int | PRNGKey,
     logger: logging.Logger,
     initial_own_stakeholder: Int1D,
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
@@ -816,11 +820,12 @@ def _simulate_subject_chunk(
     device_ids: tuple[int, ...] = (),
     memory: SimulationMemory | None = None,
     call_inputs: SimulationCallInputs | None = None,
-    taste_shock_seed: int | None = None,
+    taste_shock_seed: int | PRNGKey | None = None,
     taste_addresses: Mapping[
         tuple[int, RegimeName], tuple[int, ...]
     ] = MappingProxyType({}),
     process_grid_resolver: ProcessGridResolver | None = None,
+    shock_paths: Mapping[StateName, np.ndarray] = MappingProxyType({}),
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -1023,6 +1028,15 @@ def _simulate_subject_chunk(
                     n_subjects=n_subjects,
                     subject_slice=subject_slice,
                     original_n_subjects=original_n_subjects,
+                    supplied_shocks=shock_path_values(
+                        paths=shock_paths,
+                        argument_names=supplied_shock_argument_names(
+                            regime=regime, period=period
+                        ),
+                        period=period + 1,
+                        subject_slice=subject_slice,
+                        n_subjects=len(subject_regime_ids),
+                    ),
                     own_stakeholder=own_stakeholder,
                     new_own_stakeholder=new_own_stakeholder,
                     gated_edge_fold_age=(
@@ -1605,6 +1619,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     replay_reader: PreparedReplayReader | ReplayReader | None = None,
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
+    supplied_shocks: Mapping[str, np.ndarray] = MappingProxyType({}),
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D]:
     """Simulate one regime for one period.
 
@@ -2017,6 +2032,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             subjects_in_regime=subject_ids_in_regime,
             n_subjects=n_subjects,
             subject_slice=subject_slice,
+            supplied_shocks=supplied_shocks,
             original_n_subjects=original_n_subjects,
             memory=memory,
         )
