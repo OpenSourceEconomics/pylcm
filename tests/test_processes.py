@@ -138,6 +138,26 @@ def test_model_with_cross_regime_processes(distribution_type: str) -> None:
     assert set(result["regime_name"]) >= {"work", "retire"}
 
 
+def test_multi_regime_reached_states_afford_the_lowest_consumption_node() -> None:
+    """Income counted as spendable is carried forward, so no living row is stranded."""
+    model = get_multi_regime_model(n_periods=6, distribution_type="normal")
+    result = model.simulate(
+        log_level="off",
+        params=get_multi_regime_params("normal"),
+        initial_conditions={
+            "health": jnp.array([0, 1, 0, 1, 0, 1, 0], dtype=jnp.int32),
+            "income": jnp.array([0.0, 0.5, -0.3, 0.2, 0.1, -0.1, 0.4]),
+            "wealth": jnp.array([1.0, 2.0, 3.0, 1.5, 2.5, 4.0, 1.2]),
+            "age": jnp.zeros(7),
+            "regime_id": jnp.full(7, MultiRegimeId.work, dtype=jnp.int32),
+        },
+        seed=42,
+    ).to_dataframe()
+    living = result.loc[result["regime_name"].isin(["work", "retire"])]
+
+    assert (living["wealth"] + np.exp(living["income"]) >= 0.1).all()
+
+
 _GRID_CLASSES_WITH_GH_KWARG = [
     (UniformIIDProcess, {}),
     (NormalIIDProcess, {"gauss_hermite": True}),
