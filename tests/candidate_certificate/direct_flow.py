@@ -426,7 +426,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "8d6e5e05994b1d5f836af4943dd11e1894d45c6f7a10e1017e091aba3fb9ab92",
     SIMULATION_TRANSITIONS_SOURCE: "1b2f18af63637bd0e856df76d9efcf60b9331e2144ae40115f410bfdd5ab37c2",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "934e6a18c015c4ee1f0e96e3f562c0d729fd39786bc4073d9c6e8aa97970eaf3",
+    MODEL_SOURCE: "deb3b068b482a4326577a83c3ff25da5f8f746ef4f9c9348183460956dd67310",
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
     BACKWARD_INDUCTION_SOURCE: "b06a093bc535610add24a808bc8f87953987faea76e13d30e763d00118714190",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
@@ -454,7 +454,7 @@ _SOURCE_SEALS = {
     DTYPES_SOURCE: "1d38a54667166599fd692f8c58b37741f355753138d234b650c54384321bcbb2",
     NAMESPACE_SOURCE: "9a33080663f01a6d65501663e8436b132176be51c8223c28b2e749d8dbf8b570",
     PANDAS_UTILS_SOURCE: "6d62f9b897416aceb89143db4cbe9a691b907d75579f736b830fede239bc199b",
-    MODEL_PROCESSING_SOURCE: "b078ebaaea40133f98616c49c51367a1c08b2d9b92d2094d23c6548f7db47a65",
+    MODEL_PROCESSING_SOURCE: "fea42ce6dd630056b6483977e57cf3fafcf042b6c348bdc1c0fa3bc9bac8eb46",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
@@ -999,7 +999,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_validate_sharded_state_capability": "76a10f69e8f6acb1150617100119e1f61ad7ed4b759f4849c8ee7536f44f3f4c",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "e7cd6cb0b90972363fdbb016421b7b437cbbfc5c09d5014f7b6d4e735ec84f97",
+            "Model.__init__": "010d0912f99362d5263f864bc1b89291f487589689e36a22d7789eafa2aae9f9",
             "Model.simulate": "ccce7497df14c2c278bcee92cf308682fee0fe622000939aafcdf7482ae95e4e",
             "Model._open_entry_allocations": "eef364fb50a07f87d74caf5d7f84b2a3f6ba7e66c3d84b4a25e9bf8d73c4b543",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
@@ -1483,7 +1483,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_PROCESSING_SOURCE: (
-        "206ff6eaa7d28e18aaa0645a9493c3373bb741fb9eb60c116d731fd8c74cdbc7",
+        "e01c6014e75fde68f55f75a8ed83db98596c87b2080573b0a383760f16eeb2f6",
         {
             "build_regimes_and_template": "da8e2ab92d9248698d20e43b0033ae1abdbdbff43f89f70cd2884304990bf1e1",
         },
