@@ -2,7 +2,7 @@
 
 import logging
 import pickle
-from copy import deepcopy
+from copy import copy, deepcopy
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -117,6 +117,39 @@ def test_call_local_logger_preserves_application_filters(
     second = get_logger(log_level="debug", runtime_checks=True)
     second.addFilter(logging.Filter("other"))
     assert logger.filters == parent.filters == [application_filter]
+
+
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("log_level", _LOG_LEVELS)
+def test_logger_reconstruction_refreshes_parent_filter_snapshot(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    log_level: LogLevel,
+    runtime_checks: bool,
+) -> None:
+    """Copies keep call policy while using the parent's current application filter."""
+    old_filter = Mock(spec=logging.Filter)
+    old_filter.filter.return_value = False
+    new_filter = Mock(spec=logging.Filter)
+    new_filter.filter.return_value = True
+    parent = logging.getLogger("lcm")
+    monkeypatch.setattr(parent, "filters", [old_filter])
+    original = get_logger(log_level=log_level, runtime_checks=runtime_checks)
+    serialized = pickle.dumps(original)
+
+    monkeypatch.setattr(parent, "filters", [new_filter])
+    record = logging.LogRecord("lcm", logging.CRITICAL, "", 0, "entry", (), None)
+    assert not original.filter(record)
+    assert original.filters == [old_filter]
+    for restored in (copy(original), deepcopy(original), pickle.loads(serialized)):
+        assert restored is not original
+        assert restored.filter(record)
+        assert restored.filters == [new_filter]
+        assert restored.getEffectiveLevel() == original.getEffectiveLevel()
+        assert validation_enabled(restored) is runtime_checks
+        assert validation_raises(restored) is runtime_checks
+    assert old_filter.filter.call_count == 1
+    assert new_filter.filter.call_count == 3
 
 
 @pytest.mark.parametrize("runtime_checks", [False, True])
