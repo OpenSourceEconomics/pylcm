@@ -477,6 +477,9 @@ df = result.to_dataframe(additional_targets=["utility", "consumption"])
 # All available targets
 df = result.to_dataframe(additional_targets="all")
 
+# The published target tuple can be passed directly
+df = result.to_dataframe(additional_targets=result.available_targets)
+
 # See what's available
 result.available_targets  # ('consumption', 'earnings', 'utility', ...)
 ```
@@ -517,9 +520,9 @@ result.n_subjects  # 1000
 Two keywords select what that Feather table holds; neither affects the other three
 artifacts. `save(directory=..., df_additional_targets=...)` is passed through to
 `to_dataframe`: `None` (the default) writes only the base columns (states, actions,
-regime, period, `V_arr`, and age for age models), a list of target names bakes those DAG
-outputs in, and `"all"` includes every available target --- which can grow the file by
-an order of magnitude on a model with many DAG leaves. `df_use_labels=True` (the
+regime, period, `V_arr`, and age for age models), a sequence of target names bakes those
+DAG outputs in, and `"all"` includes every available target --- which can grow the file
+by an order of magnitude on a model with many DAG leaves. `df_use_labels=True` (the
 default) stores discrete variables as pandas `Categorical` labels; `False` stores
 integer codes.
 
@@ -616,3 +619,36 @@ If you need bitwise-reproducible results for testing or validation, use float64 
   utilities
 - [A Tiny Example](../getting_started/tiny_example.ipynb) — complete walkthrough
 - [Examples](../examples/index.md) — full worked examples
+
+## Given shock paths
+
+Supply realised shocks to the forward simulation without changing the distribution
+agents use when solving:
+
+```python
+result = model.simulate(
+    params=params,
+    solution=solution,
+    initial_conditions=initial_conditions,
+    shock_paths={"income_shock": common_income_path},
+    seed=42,
+    log_level="off",
+)
+```
+
+Each path is a real array shaped `(periods,)` for a common history or
+`(subjects, periods)` for individual histories in the original initial-condition row
+order. Columns are computational periods, beginning at the model's first age or period;
+a subject entering later reads its entry column. The given value overrides that
+subject's initial shock and each subsequent realised draw. Continuous processes accept
+finite values in their distribution's support, including off-node values; lognormal
+levels must be positive and uniform draws must lie inside the declared interval.
+Discrete shocks require exact category codes. Persistent processes consume the supplied
+realised level directly, rather than treating it as an innovation and recursing again.
+
+Paths cover every period where the named shock is declared active in the simulation
+phase. Values outside those periods are ignored. Folded shocks are supported, including
+transition-local draws: a draw affecting the transition into period `p` comes from
+column `p`. A deterministic law reading `next_<shock>` sees the supplied draw before
+computing its own next state. Shocks omitted from the mapping retain the ordinary seeded
+stream, and solve expectations remain stochastic.

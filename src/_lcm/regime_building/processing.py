@@ -8779,6 +8779,7 @@ def _build_next_state_vmapped(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     flat_param_names: frozenset[QualifiedName],
     enable_jit: bool,
+    supplied_states: frozenset[StateName] = frozenset(),
 ) -> _NextStateBuild:
     """Build a per-period vmapped next-state function for simulation.
 
@@ -8826,6 +8827,7 @@ def _build_next_state_vmapped(
             transitions=period_transitions,
             transition_plans=transition_plans,
             all_grids=all_grids,
+            supplied_states=supplied_states,
         )
         sig_args = tuple(inspect.signature(next_state).parameters)
         non_vmap = {"period", "age"} | flat_param_names
