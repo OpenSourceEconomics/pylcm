@@ -727,8 +727,8 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "chunk_profiles:ordinary_taste_dtype_conflated": (
         "src/_lcm/simulation/chunk_profiles.py",
-        'impl="threefry2x32")',
-        "impl=jax.config.jax_default_prng_impl)",
+        "impl=taste_prng_impl)",
+        "impl=prng_impl or jax.config.jax_default_prng_impl)",
     ),
     "chunk_profiles:period_transfer_reservation_omitted": (
         "src/_lcm/simulation/chunk_profiles.py",

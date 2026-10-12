@@ -32,6 +32,7 @@ documentation and tests.
 | [`lcm.liquid_law_from_resources`](consumption_savings.md)                                            | Conventional liquid law                           |
 | [`lcm.liquid_law_from_savings`](consumption_savings.md)                                              | Conventional savings-written liquid law           |
 | [`lcm.ExtremeValueTasteShocks`](model_and_regime.md#api-extreme-value-taste-shocks)                  | EV1 discrete-choice shocks                        |
+| [`lcm.EULER_GAMMA`](model_and_regime.md#api-euler-gamma)                                             | Mean of a standard Gumbel draw                    |
 
 ## Grids, categories, and processes
 
@@ -48,6 +49,7 @@ documentation and tests.
 | [`lcm.PiecewiseLogSpacedGrid`](grids_and_processes.md#api-continuous-grids)             | Piecewise log grid                   |
 | [`lcm.UniformIIDProcess`](grids_and_processes.md#api-stochastic-processes)              | IID uniform process                  |
 | [`lcm.NormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)               | IID normal process                   |
+| [`lcm.JointNormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)          | Named correlated IID normal shocks   |
 | [`lcm.LogNormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)            | IID log-normal process               |
 | [`lcm.NormalMixtureIIDProcess`](grids_and_processes.md#api-stochastic-processes)        | IID normal mixture                   |
 | [`lcm.TauchenAR1Process`](grids_and_processes.md#api-stochastic-processes)              | Tauchen AR(1)                        |

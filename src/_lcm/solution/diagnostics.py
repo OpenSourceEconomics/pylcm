@@ -10,7 +10,9 @@ stats. A healthy solve materialises nothing per row.
 
 import dataclasses
 import logging
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
@@ -21,6 +23,7 @@ import jax.numpy as jnp
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.solution.feasibility import FeasibilityCounts
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
@@ -37,9 +40,9 @@ from lcm.typing import BoolND, FloatND, IntND, StateName
 class _DiagnosticRow:
     """Metadata captured during the backward-induction loop.
 
-    Holds only Python-scalar metadata — no device-array references — so
-    every (regime, period) row stays at a few bytes regardless of grid
-    size. State-action space, next-period V mapping, regime params, and
+    Native scalar counters become host metadata at the period barrier, so
+    completed rows retain no device buffers. State-action space, next-period
+    V mapping, regime params, and
     the `compute_intermediates` closure are reconstructed lazily on the
     failure path from `regimes`, `flat_params`, and the
     partial `solution` built up to that point.
@@ -53,6 +56,45 @@ class _DiagnosticRow:
     """Internal time coordinate, read from exact host values."""
     time_kind: Literal["age", "period"] = "age"
     """Meaning of the coordinate in reports."""
+
+    feasibility_counts: FeasibilityCounts | tuple[int, int] | None = None
+    """Native counts, moved to host metadata at the period's existing barrier."""
+
+
+type FeasibilityWarnings = dict[_DiagnosticRow, tuple[int, int]]
+
+_component_feasibility_warnings: ContextVar[FeasibilityWarnings | None] = ContextVar(
+    "component_feasibility_warnings", default=None
+)
+
+
+@contextmanager
+def collect_component_feasibility_warnings(
+    *,
+    counts: FeasibilityWarnings,
+) -> Generator[None]:
+    """Combine host counts over a block-major schedule without retaining values."""
+    token = _component_feasibility_warnings.set(counts)
+    try:
+        yield
+    finally:
+        _component_feasibility_warnings.reset(token)
+
+
+def emit_component_feasibility_warnings(
+    *, logger: logging.Logger, counts: FeasibilityWarnings
+) -> None:
+    """Report each completed regime-period once, then release host metadata."""
+    if logger.isEnabledFor(logging.WARNING):
+        _warn_inf_rows(
+            logger=logger,
+            diagnostic_rows=[
+                dataclasses.replace(row, feasibility_counts=value)
+                for row, value in counts.items()
+            ],
+            solution=MappingProxyType({}),
+        )
+    counts.clear()
 
 
 def _init_diagnostic_accumulators() -> tuple[
@@ -92,6 +134,7 @@ def _fold_period_diagnostics(
     diagnostic_mean: list[FloatND],
     running_any_nan: BoolND,
     running_any_inf: BoolND,
+    feasibility_counts: FeasibilityCounts | None = None,
 ) -> tuple[BoolND, BoolND]:
     """Fold one regime-period's V array into the diagnostics accumulators.
 
@@ -125,13 +168,20 @@ def _fold_period_diagnostics(
             period=period,
             age=float(ages.exact_values[period]),
             time_kind=coordinate_kind(ages),
+            feasibility_counts=feasibility_counts,
         )
     )
     if not diagnostics_enabled:
         return running_any_nan, running_any_inf
+    observed_inf = v_array_has_inf(V_arr)
+    if feasibility_counts is not None:
+        # Collective dissolution can produce finite fallback values.
+        observed_inf = _fold_flag(
+            running=observed_inf, observed=feasibility_counts[0] > 0
+        )
     return (
         _fold_flag(running=running_any_nan, observed=v_array_has_nan(V_arr)),
-        _fold_flag(running=running_any_inf, observed=v_array_has_inf(V_arr)),
+        _fold_flag(running=running_any_inf, observed=observed_inf),
     )
 
 
@@ -146,6 +196,21 @@ def _fold_flag(*, running: BoolND, observed: BoolND) -> BoolND:
     reduction over the value array itself stays partitioned across its devices.
     """
     return running | _place_like(scalar=observed, running=running)
+
+
+def _materialize_period_feasibility_counts(
+    *, diagnostic_rows: list[_DiagnosticRow], period: int, enabled: bool
+) -> None:
+    """Release native counter roots before starting another period."""
+    for index in range(len(diagnostic_rows) - 1, -1, -1):
+        row = diagnostic_rows[index]
+        if row.period != period:
+            break
+        counts: tuple[int, int] | None = None
+        if row.feasibility_counts is not None and enabled:
+            empty, other = jax.device_get(row.feasibility_counts)
+            counts = int(empty), int(other)
+        diagnostic_rows[index] = dataclasses.replace(row, feasibility_counts=counts)
 
 
 def _place_like(*, scalar: FloatND | BoolND, running: BoolND) -> FloatND | BoolND:
@@ -188,7 +253,7 @@ def _emit_post_loop_diagnostics(
             flat_params=flat_params,
             process_grid_resolver=process_grid_resolver,
         )
-    if running_any_inf.item():
+    if running_any_inf.item() and logger.isEnabledFor(logging.WARNING):
         _warn_inf_rows(
             logger=logger,
             diagnostic_rows=diagnostic_rows,
@@ -376,6 +441,37 @@ def _warn_inf_rows(
     Materialises one host-side bool per row.
     """
     for row in diagnostic_rows:
+        if row.feasibility_counts is not None:
+            empty_count, other_inf_count = (
+                int(count) for count in row.feasibility_counts
+            )
+            collected = _component_feasibility_warnings.get()
+            if collected is not None:
+                key = dataclasses.replace(row, feasibility_counts=None)
+                empty, other = collected.get(key, (0, 0))
+                collected[key] = empty + empty_count, other + other_inf_count
+                continue
+            if empty_count:
+                logger.warning(
+                    "%s state(s) with no feasible action for regime '%s', "
+                    "period %s (%s %s)",
+                    empty_count,
+                    row.regime_name,
+                    row.period,
+                    row.time_kind,
+                    row.age if row.time_kind == "age" else row.period,
+                )
+            if other_inf_count:
+                logger.warning(
+                    "Inf in V_arr for %s other state(s) for regime '%s', "
+                    "period %s (%s %s)",
+                    other_inf_count,
+                    row.regime_name,
+                    row.period,
+                    row.time_kind,
+                    row.age if row.time_kind == "age" else row.period,
+                )
+            continue
         V_arr = solution[row.period][row.regime_name]
         if jnp.any(jnp.isinf(V_arr)).item():
             logger.warning(

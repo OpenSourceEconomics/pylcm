@@ -52,6 +52,7 @@ from _lcm.transition_checks import (
     _SerialValidationRequired,
     _validate_transition_sequence,
     _ValidationSummary,
+    validate_off_grid_transitions,
     validate_transitions,
 )
 from _lcm.typing import (
@@ -74,6 +75,8 @@ from _lcm.utils.logging import raise_or_warn, validation_enabled
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidInitialConditionsError,
+    NoFeasibleActionError,
+    OffGridStateError,
     PyLCMError,
     UnsupportedOperationError,
 )
@@ -117,7 +120,7 @@ class _InitialCohorts:
     periods: tuple[int, ...]
 
 
-def validate_simulation_inputs(
+def validate_simulation_inputs(  # noqa: C901
     *,
     initial_conditions: InitialConditions,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -176,6 +179,20 @@ def validate_simulation_inputs(
                 regime_names_to_ids=regime_names_to_ids,
                 memory=memory,
             )
+            with contextlib.closing(
+                _ValidationSummary(
+                    memory=memory, process_grid_resolver=process_grid_resolver
+                )
+            ) as summary:
+                validate_off_grid_transitions(
+                    regimes=regimes,
+                    flat_params=flat_params,
+                    ages=ages,
+                    logger=logger,
+                    mandatory_only=True,
+                    summary=summary,
+                    process_grid_resolver=process_grid_resolver,
+                )
         finally:
             if memory is not None:
                 memory.close_unit()
@@ -223,7 +240,17 @@ def validate_simulation_inputs(
                     process_grid_resolver=process_grid_resolver,
                 )
                 accepted = summary.valid()
-            except UnsupportedOperationError:
+                if accepted:
+                    validate_off_grid_transitions(
+                        regimes=regimes,
+                        flat_params=flat_params,
+                        ages=ages,
+                        logger=logger,
+                        mandatory_only=True,
+                        summary=summary,
+                        process_grid_resolver=process_grid_resolver,
+                    )
+            except UnsupportedOperationError, OffGridStateError:
                 raise
             except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
                 raise
@@ -257,6 +284,20 @@ def validate_simulation_inputs(
             process_grid_resolver=process_grid_resolver,
             simulation_memory=memory,
         )
+        with contextlib.closing(
+            _ValidationSummary(
+                memory=memory, process_grid_resolver=process_grid_resolver
+            )
+        ) as summary:
+            validate_off_grid_transitions(
+                regimes=regimes,
+                flat_params=flat_params,
+                ages=ages,
+                logger=logger,
+                mandatory_only=True,
+                summary=summary,
+                process_grid_resolver=process_grid_resolver,
+            )
 
 
 def _preflight_memory(
@@ -502,8 +543,9 @@ def canonicalize_initial_conditions(
             user-supplied arrays of any integer or floating dtype.
         regimes: Immutable mapping of regime names to internal regime
             instances, used to classify each state as discrete or continuous.
-        unread_names: Declared states no regime reads at the start of a period,
-            the transition-only shocks. Their entries are dropped.
+        unread_names: Names removed as transition-only shocks in at least one
+            regime. Drop their supplied columns only when no simulation regime
+            retains the name as a state.
 
     Returns:
         Mapping of the remaining keys to JAX arrays at their canonical dtype.
@@ -522,7 +564,7 @@ def canonicalize_initial_conditions(
     }
     canonical: dict[str, FloatND | IntND] = {}
     for name, value in initial_conditions.items():
-        if name in unread_names:
+        if name in unread_names and name not in known_state_names:
             continue
         if (
             name == "regime_id"
@@ -921,7 +963,7 @@ def validate_initial_conditions(
         memory=memory,
     )
     if feasibility_errors:
-        raise InvalidInitialConditionsError(format_messages(feasibility_errors))
+        raise NoFeasibleActionError(format_messages(feasibility_errors))
     # `simulate` demands each collective start's role right after this preflight;
     # asking here keeps the validator's verdict the simulation's.
     _initial_own_stakeholder(
@@ -1885,13 +1927,31 @@ def _check_regime_feasibility(
         memory=memory,
     )
 
-    return _format_infeasibility_message(
+    message = _format_infeasibility_message(
         infeasible_indices=infeasible_indices,
         regime=regime,
         regime_name=regime_name,
         initial_states=initial_states,
         state_names=verdict.state_names,
         per_constraint_admits_any=per_constraint_admits_any,
+    )
+    first = infeasible_indices[0]
+    periods, _ = resolve_initial_periods(
+        ages=ages, initial_ages=np.asarray(initial_states["age"])[[first]]
+    )
+    state = {
+        name: (
+            regime.simulation.discrete_grids[name].categories[
+                int(np.asarray(initial_states[name])[first])
+            ]
+            if name in regime.simulation.discrete_grids
+            else np.asarray(initial_states[name])[first].item()
+        )
+        for name in verdict.state_names
+    }
+    return (
+        f"Regime '{regime_name}', period {int(periods[0])}, state {state} "
+        f"has no feasible action.\n\n{message}"
     )
 
 

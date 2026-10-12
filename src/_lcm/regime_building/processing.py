@@ -1262,7 +1262,23 @@ class _CanonicalRegimeBuilder:
                 solution_reachability=self.reachability.solution,
                 simulation_reachability=self.reachability.simulation,
                 nested_transitions=self.simulate_nested_transitions[regime_name],
-                all_grids=self.all_grids,
+                all_grids=MappingProxyType(
+                    {
+                        name: MappingProxyType(
+                            {
+                                **grids,
+                                **{
+                                    state: grid
+                                    for state, grid in self.phased_specs[
+                                        name
+                                    ].simulation.grid_states.items()
+                                    if isinstance(grid, Grid)
+                                },
+                            }
+                        )
+                        for name, grids in self.all_grids.items()
+                    }
+                ),
                 state_grids=self.state_grids,
                 regime_params_template=regime_params_template,
                 edge_params_template=edge_params_template,
@@ -8816,6 +8832,7 @@ def _build_next_state_vmapped(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     flat_param_names: frozenset[QualifiedName],
     enable_jit: bool,
+    supplied_states: frozenset[StateName] = frozenset(),
 ) -> _NextStateBuild:
     """Build a per-period vmapped next-state function for simulation.
 
@@ -8863,9 +8880,20 @@ def _build_next_state_vmapped(
             transitions=period_transitions,
             transition_plans=transition_plans,
             all_grids=all_grids,
+            supplied_states=supplied_states,
         )
         sig_args = tuple(inspect.signature(next_state).parameters)
-        non_vmap = {"period", "age"} | flat_param_names
+        non_vmap = (
+            {"period", "age"}
+            | flat_param_names
+            | {
+                f"nodes_{target}__next_{state}"
+                for target, grids in all_grids.items()
+                for state, grid in grids.items()
+                if isinstance(grid, _ContinuousStochasticProcess)
+                and grid.simulate_draws == "nodes"
+            }
+        )
         vmap_variables = tuple(arg for arg in sig_args if arg not in non_vmap)
         next_state_vmapped = vmap_1d(func=next_state, variables=vmap_variables)
         next_state_vmapped = with_signature(

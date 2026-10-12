@@ -162,10 +162,26 @@ source label is an error; unused source rows are ignored. The numeric gather pre
 derivatives with respect to the profile's values. The helper assigns neither elapsed
 duration nor biological age to the resulting periods.
 
-`from_profile` returns a period-labelled table, which an age model rejects. In an age
-model, label the profile by age directly. A profile lagged by one year, for example, is
-the profile's values shifted one row and labelled with the model's ages:
+`period_to_label` returns a period-labelled table, which an age model rejects. In an age
+model, map each model age to its source label with `age_to_label` instead. The result is
+labelled by age, and the age keys must be finite numbers. Give exactly one of the two
+mappings.
+
+A parameter the model reads at the next age, with the last age reading its own row:
 
 ```python
-lagged = TimeVarying(values=jnp.concatenate([profile[:1], profile[:-1]]), ages=ages)
+ages = tuple(range(25, 86))
+next_income = TimeVarying.from_profile(
+    values=income_profile.to_numpy(),
+    labels=tuple(income_profile.index),
+    age_to_label={age: min(age + 1, ages[-1]) for age in ages},
+)
 ```
+
+A profile lagged by one year maps each age to the previous year's row,
+`age_to_label={age: age - 1 for age in ages}`, provided the profile has a row for the
+year before the first age.
+
+Both mappings follow the same rules. Several ages may select the same source label, as
+the last two ages do above. A source label that appears more than once in `labels` is an
+error when it is selected and ignored otherwise.

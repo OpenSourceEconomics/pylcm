@@ -363,6 +363,7 @@ def test_lookup_selects_like_simulation(*, return_action_values: bool) -> None:
         states={"wealth": jnp.array([0, 1, 2, 3])},
         return_action_values=return_action_values,
     )
+    assert got.actions is not None
     assert_array_equal(
         got.actions["choice"],
         [Choice.save, Choice.spend, Choice.spend, Choice.spend],

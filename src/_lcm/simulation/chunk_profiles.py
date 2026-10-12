@@ -149,6 +149,8 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     original_population: int,
     widths: Mapping[str, int],
     independent_taste: bool,
+    prng_impl: str | None = None,
+    taste_prng_impl: str = "threefry2x32",
     log_level: LogLevel,
     runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
@@ -223,10 +225,12 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     permanent = payload_bytes(tree=(roles, entry_periods))
     setup = dict(permanent)
     key = _profile_entry_key(
-        inventory=inventory, shared=shared, impl=jax.config.jax_default_prng_impl
+        inventory=inventory,
+        shared=shared,
+        impl=prng_impl or jax.config.jax_default_prng_impl,
     )
     taste_key = (
-        _profile_entry_key(inventory=inventory, shared=shared, impl="threefry2x32")
+        _profile_entry_key(inventory=inventory, shared=shared, impl=taste_prng_impl)
         if independent_taste
         else None
     )

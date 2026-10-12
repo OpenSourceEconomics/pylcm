@@ -53,13 +53,23 @@ from _lcm.engine import (
     StateActionSpace,
     _StochasticStateTransition,
 )
+from _lcm.grids import ContinuousGrid
+from _lcm.off_grid import count_off_grid, report_off_grid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
-from _lcm.regime_building.next_state import get_next_stochastic_weights_function
-from _lcm.regime_building.Q_and_F import _get_feasibility
+from _lcm.regime_building.next_state import (
+    get_next_state_function_for_solution,
+    get_next_stochastic_weights_function,
+)
+from _lcm.regime_building.Q_and_F import (
+    _get_feasibility,
+    _get_interpolator_resolving_draws,
+    _publish_signature,
+)
 from _lcm.regime_building.schedules import Side
 from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
@@ -73,11 +83,13 @@ from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import (
     LotteryLifetime,
+    TargetTransitionPlans,
     TransitionLotteryInfo,
     declared_law_over_codes,
 )
 from _lcm.typing import (
     ArrayTree,
+    ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionArg,
     EconFunctionKwargs,
@@ -93,17 +105,20 @@ from _lcm.typing import (
     TransitionFunction,
     TransitionFunctionName,
 )
+from _lcm.utils.dispatchers import productmap
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidRegimeTransitionProbabilitiesError,
     InvalidStateTransitionProbabilitiesError,
+    OffGridStateError,
     RegimeInitializationError,
 )
 from lcm.typing import (
     Bool1D,
     BoolND,
+    Float1D,
     FloatND,
     FunctionName,
     IntND,
@@ -342,6 +357,13 @@ def validate_transitions(
 
     """
     if not validation_enabled(logger):
+        validate_off_grid_transitions(
+            regimes=regimes,
+            flat_params=flat_params,
+            ages=ages,
+            logger=logger,
+            process_grid_resolver=process_grid_resolver,
+        )
         return
     if summary is not None:
         _validate_transition_sequence(
@@ -382,6 +404,354 @@ def validate_transitions(
             summary=None,
             process_grid_resolver=process_grid_resolver,
         )
+    validate_off_grid_transitions(
+        regimes=regimes,
+        flat_params=flat_params,
+        ages=ages,
+        logger=logger,
+        process_grid_resolver=process_grid_resolver,
+    )
+
+
+def validate_off_grid_transitions(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: TimeAxis,
+    logger: logging.Logger,
+    mandatory_only: bool = False,
+    summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
+) -> None:
+    """Count raw landings, or only enforce mandatory raise policy in preflight."""
+    # Count-only diagnostics can expand simulation-only axes during solve.
+    checked = (
+        validation_enabled(logger)
+        and not mandatory_only
+        and logger.isEnabledFor(logging.WARNING)
+    )
+    for period in range(ages.n_periods - 1):
+        for name, regime in regimes.items():
+            for law, reachability, realized in _regime_laws_at_period(
+                regime=regime, regime_name=name, period=period
+            ):
+                phase = regime.simulation if realized else regime.solution
+                for target in reachability.targets(period=period, source=name):
+                    target_phase = (
+                        regimes[target].simulation
+                        if realized
+                        else regimes[target].solution
+                    )
+                    grids = {
+                        state: grid
+                        for state, grid in target_phase.grids.items()
+                        if state in target_phase.state_names
+                        and isinstance(grid, ContinuousGrid)
+                        and not isinstance(grid, _ContinuousStochasticProcess)
+                        and (checked or grid.off_grid == "raise")
+                    }
+                    if not grids:
+                        continue
+                    plan = phase.transition_plans[target]
+                    grids = {
+                        state: grid
+                        for state, grid in grids.items()
+                        if state in plan.outputs
+                    }
+                    if not grids:
+                        continue
+                    base = regimes[target].solution.state_action_space(
+                        regime_params=regime_kernel_params(
+                            flat_params, regime_name=target
+                        ),
+                        process_grid_resolver=process_grid_resolver,
+                    )
+                    axes = _state_action_space_for_period(
+                        regime=regimes[target], base=base, period=period + 1
+                    ).states
+                    points = {
+                        state: axes[state] if state in axes else grid.to_jax()
+                        for state, grid in grids.items()
+                    }
+                    counts = _off_grid_target_counts(
+                        regime=regime,
+                        phase=phase,
+                        target=target,
+                        law=law,
+                        points=points,
+                        target_axes=axes,
+                        period=period,
+                        flat_params=flat_params,
+                        ages=ages,
+                        summary=summary,
+                        process_grid_resolver=process_grid_resolver,
+                    )
+                    for index, (state, grid) in enumerate(grids.items()):
+                        if grid.off_grid == "raise" and int(counts[index, 1]):
+                            raise OffGridStateError(
+                                f"Invalid next state: regime={name!r}, "
+                                f"target={target!r}, "
+                                f"period={period}, state={state!r}"
+                            )
+                        report_off_grid(
+                            count=int(counts[index, 0]),
+                            rule=grid.off_grid,
+                            regime=name,
+                            target=target,
+                            period=period,
+                            state=state,
+                            phase="simulate" if realized else "solve",
+                            logger=logger,
+                        )
+
+
+def _off_grid_target_counts(
+    *,
+    regime: Regime,
+    phase: SolutionPhase | SimulationPhase,
+    target: RegimeName,
+    law: RegimeTransitionFunction,
+    points: Mapping[StateName, Float1D],
+    target_axes: Mapping[StateName, FloatND | IntND],
+    period: int,
+    flat_params: FlatParams,
+    ages: TimeAxis,
+    summary: _ValidationSummary | None,
+    process_grid_resolver: ProcessGridResolver | None,
+) -> IntND:
+    """Reuse canonical DAG/node resolution and admitted Cartesian-law execution."""
+    params = regime_kernel_params(flat_params, regime_name=regime.name)
+    base = (
+        regime.solution.state_action_space(
+            regime_params=params, process_grid_resolver=process_grid_resolver
+        )
+        if summary is None
+        else summary.state_action_space(regime=regime, params=params)
+    )
+    space = _state_action_space_for_period(regime=regime, base=base, period=period)
+    functions, constraints = phase.feasibility_pools_by_period[period]
+    plan = phase.transition_plans[target]
+    bundle = phase.transitions[target]
+    memory = None if summary is None else summary.memory
+    builder_inputs = {
+        "functions": functions,
+        "constraints": constraints,
+        "bundle": bundle,
+        "transition_plans": phase.transition_plans,
+        "target": target,
+        "law": law,
+        "states": tuple(points),
+    }
+    point_call = (
+        _build_off_grid_cell(**builder_inputs)
+        if memory is None
+        else memory.producers.built(builder=_build_off_grid_cell, **builder_inputs)
+    )
+    available = {**space.states, **space.actions}
+    if phase is regime.simulation:
+        available |= dict(_phase_extra_grids(regime=regime, phase="simulate"))
+    function = partial(
+        _off_grid_counts_law, grid_names=tuple(available), func=point_call
+    )
+    scalar_kwargs = MappingProxyType(
+        {
+            **regime.resolved_fixed_params,
+            **params,
+            "age": ages.values[period],  # noqa: PD011
+            "period": jnp.int32(period),
+            **{f"__off_grid_points_{state}": nodes for state, nodes in points.items()},
+            **{
+                f"__off_grid_nodes_{name}": target_axes[name.removeprefix("next_")]
+                for name, lottery in plan.lotteries.items()
+                if lottery.support_provider_name is None
+            },
+        }
+    )
+    arguments = {"grid_args": available, "scalar_kwargs": scalar_kwargs}
+    return (
+        function(grid_args=available, scalar_kwargs=scalar_kwargs)
+        if memory is None
+        else cast(
+            "IntND",
+            _evaluate_admitted_transition_producer(
+                function=function,
+                arguments=arguments,
+                memory=memory,
+            ),
+        )
+    )
+
+
+def _build_off_grid_cell(
+    *,
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    transition_plans: TargetTransitionPlans,
+    target: RegimeName,
+    law: RegimeTransitionFunction,
+    states: tuple[StateName, ...],
+) -> Callable[..., IntND]:
+    """Compose a model-owned cell while leaving all numerical nodes as operands."""
+    feasibility = _get_feasibility(functions=functions, constraints=constraints)
+    plan = transition_plans[target]
+    lotteries = tuple(plan.lotteries)
+    support_names = MappingProxyType(
+        {
+            name: lottery.support_provider_name
+            for name, lottery in plan.lotteries.items()
+            if lottery.support_provider_name is not None
+        }
+    )
+    raw_reader = _OffGridNode(
+        states=states,
+        lotteries=tuple(
+            (name, lottery.weight_name) for name, lottery in plan.lotteries.items()
+        ),
+    )
+    resolution = _get_interpolator_resolving_draws(
+        next_V_interpolator=raw_reader,
+        bundle=bundle,
+        functions=functions,
+        stochastic_names=lotteries,
+        draw_dependent_names=tuple(f"next_{name}" for name in states),
+        node_values=MappingProxyType({}),
+        support_provider_names=MappingProxyType(
+            {
+                name: support_names.get(name, f"__off_grid_nodes_{name}")
+                for name in lotteries
+            }
+        ),
+    )
+    reader = (
+        productmap(
+            func=resolution.interpolator,
+            variables=lotteries,
+            batch_sizes=dict.fromkeys(lotteries, 0),
+        )
+        if lotteries
+        else resolution.interpolator
+    )
+    next_inputs = get_next_state_function_for_solution(
+        transitions=bundle,
+        functions=functions,
+        targets=[*lotteries, *support_names.values()],
+    )
+    weights = get_next_stochastic_weights_function(
+        regime_name=target,
+        functions=functions,
+        transitions=bundle,
+        transition_plans=transition_plans,
+    )
+    return _OffGridCell(
+        next_inputs=_NamedArgumentsCall(
+            func=next_inputs, names=frozenset(inspect.signature(next_inputs).parameters)
+        ),
+        weights=_NamedArgumentsCall(
+            func=weights, names=frozenset(inspect.signature(weights).parameters)
+        ),
+        feasibility=_NamedArgumentsCall(
+            func=feasibility, names=frozenset(inspect.signature(feasibility).parameters)
+        ),
+        regime_law=_NamedArgumentsCall(
+            func=law, names=frozenset(inspect.signature(law).parameters)
+        ),
+        reader=_NamedArgumentsCall(
+            func=reader, names=frozenset(inspect.signature(reader).parameters)
+        ),
+        target=target,
+        n_lotteries=len(lotteries),
+    )
+
+
+def _off_grid_counts_law(
+    *,
+    grid_args: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: EconFunctionKwargs,
+    grid_names: tuple[StateOrActionName, ...],
+    func: Callable[..., IntND],
+) -> IntND:
+    """Reduce exact integer counts inside the admitted producer, not on the host."""
+    if not grid_names:
+        return func(**scalar_kwargs)
+    mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="ij")
+    rows = jax.vmap(
+        _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
+    )(*(array.ravel() for array in mesh))
+    return jnp.sum(rows, axis=0, dtype=jnp.int32)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _OffGridNode:
+    """Count raw landings at one reached node of the declared lottery product."""
+
+    states: tuple[StateName, ...]
+    lotteries: tuple[tuple[str, str], ...]
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=(
+                *(f"next_{state}" for state in self.states),
+                *(f"__off_grid_points_{state}" for state in self.states),
+                *(name for name, _ in self.lotteries),
+                *(weight for _, weight in self.lotteries),
+                "__off_grid_reached",
+            ),
+            return_annotation="IntND",
+            name="count_raw_grid_landings",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: EconFunctionArg) -> IntND:
+        reached = kwargs["__off_grid_reached"]
+        for name, weight in self.lotteries:
+            reached = reached & (kwargs[weight][kwargs[name].astype(jnp.int32)] > 0)
+        return jnp.stack(
+            [
+                jnp.stack(
+                    [
+                        count_off_grid(
+                            values=kwargs[f"next_{state}"],
+                            points=kwargs[f"__off_grid_points_{state}"],
+                            feasible=reached,
+                        ),
+                        (reached & ~jnp.isfinite(kwargs[f"next_{state}"])).astype(
+                            jnp.int32
+                        ),
+                    ]
+                )
+                for state in self.states
+            ]
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _OffGridCell:
+    """Evaluate one feasible economic cell and reduce its reached raw nodes."""
+
+    next_inputs: Callable[..., Mapping[str, FloatND | IntND]]
+    weights: Callable[..., Mapping[str, FloatND | IntND]]
+    feasibility: Callable[..., BoolND]
+    regime_law: Callable[..., Mapping[RegimeName, FloatND]]
+    reader: Callable[..., IntND]
+    target: RegimeName
+    n_lotteries: int
+
+    @no_type_check
+    def __call__(self, **kwargs: EconFunctionArg) -> IntND:
+        reached = self.feasibility(**kwargs) & (
+            self.regime_law(**kwargs)[self.target] > 0
+        )
+        rows = self.reader(
+            **{
+                **kwargs,
+                **self.next_inputs(**kwargs),
+                **self.weights(**kwargs),
+                "__off_grid_reached": reached,
+            }
+        )
+        return jnp.sum(rows, axis=tuple(range(self.n_lotteries)), dtype=jnp.int32)
 
 
 def _validate_transition_sequence(
@@ -2166,7 +2536,7 @@ def _evaluate_state_probability_law(
 def _evaluate_admitted_transition_producer(
     *,
     function: Callable[..., PytreeValue],
-    arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
+    arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs | HostArray],
     memory: SimulationMemory,
 ) -> PytreeValue:
     """Place, profile, admit, and complete one transition validation producer."""

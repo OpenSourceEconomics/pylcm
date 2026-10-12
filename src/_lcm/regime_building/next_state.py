@@ -5,7 +5,7 @@ import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import no_type_check
+from typing import cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -93,6 +93,7 @@ def get_next_state_function_for_simulation(
     functions: EconFunctionsMapping,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     transition_plans: TargetTransitionPlans,
+    supplied_states: frozenset[StateName] = frozenset(),
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
 
@@ -135,6 +136,23 @@ def get_next_state_function_for_simulation(
             all_grids=all_grids,
             transition_plans=transition_plans,
         )
+        for name in supplied_states:
+            next_name = f"next_{name}"
+            if next_name not in transition_plans[target_regime_name].lotteries:
+                continue
+            grid = all_grids[target_regime_name].get(name)
+            annotation = (
+                "DiscreteState"
+                if isinstance(grid, DiscreteGrid)
+                or transition_plans[target_regime_name]
+                .lotteries[next_name]
+                .node_annotation
+                == "DiscreteState"
+                else "ContinuousState"
+            )
+            extended[next_name] = _GivenNextState(
+                argument=f"supplied_shock__{name}", annotation=annotation
+            )
         per_target_funcs[target_regime_name] = concatenate_functions(
             functions=dict(extended) | dict(functions) | original_weights,
             targets=[
@@ -153,6 +171,27 @@ def get_next_state_function_for_simulation(
         enforce_signature=False,
         set_annotations=True,
     )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _GivenNextState:
+    """Publish a supplied realisation before laws consuming that draw run."""
+
+    argument: ReferenceName
+    """The call-local, subject-varying input of the realisation."""
+    annotation: str
+    """Scalar annotation of the declared shock state."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args={self.argument: self.annotation},
+            return_annotation=self.annotation,
+            name="given_next_state",
+        )
+
+    def __call__(self, **kwargs: FloatND | IntND) -> FloatND | IntND:
+        return kwargs[self.argument]
 
 
 def get_next_stochastic_weights_function(
@@ -505,6 +544,18 @@ def _create_continuous_stochastic_next_func(
     state_name = next_state_name.removeprefix("next_")
     grid: _ContinuousStochasticProcess = all_grids[target_regime_name][state_name]  # ty: ignore [invalid-assignment]
     qname = qname_from_tree_path((target_regime_name, next_state_name))
+
+    if grid.simulate_draws == "nodes":
+        # A process support is an array leaf, unlike a joint lottery's general tree.
+        return cast(
+            "StochasticNextFunction",
+            _RealizedJointNode(
+                qname=qname,
+                support_provider_name=f"nodes_{qname}",
+                support_size=grid.n_points,
+                node_annotation="ContinuousState",
+            ),
+        )
 
     # A state-conditioned process draws with the sigma its conditioning state selects,
     # not the scalar `sigma` that places the nodes, so the simulated law is the one the

@@ -1,15 +1,21 @@
 """Metadata and discrete-output dtypes for `SimulationResult`."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
+import numpy as np
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
+from _lcm.processes.joint_normal import JointNormalIIDProcess
+from _lcm.processes.joint_normal_lowering import (
+    coordinate_names,
+    joint_normal_declarations,
+)
 from _lcm.regime_building.processing import compute_merged_discrete_categories
 from _lcm.time import TimeAxis
-from _lcm.typing import ActionName, RegimeName, RegimeNamesToIds, StateName
+from _lcm.typing import ActionName, ProcessName, RegimeName, RegimeNamesToIds, StateName
 from lcm.regime import Regime as UserRegime
 
 
@@ -86,6 +92,15 @@ class ResultMetadata:
     column is then published as raw codes rather than labels.
     """
 
+    regime_to_joint_normals: MappingProxyType[
+        RegimeName, MappingProxyType[ProcessName, JointNormalIIDProcess]
+    ] = MappingProxyType({})
+    """Physical-output laws, independent of compiled regime workspaces.
+
+    Fixed parameter leaves are frozen into each declaration. Runtime leaves are
+    read from the result's flat parameters. Empty for artifacts predating joint laws.
+    """
+
 
 def _get_output_dtypes(
     *,
@@ -151,7 +166,15 @@ def _compute_metadata(
     for regime_name, regime in regimes.items():
         regime_to_states[regime_name] = regime.simulation.state_names
         regime_to_actions[regime_name] = regime.simulation.action_names
-        all_states.update(regime.simulation.state_names)
+        public_states = set(regime.simulation.state_names)
+        for group, process in joint_normal_declarations(
+            regime.simulation.grids
+        ).items():
+            public_states.difference_update(
+                coordinate_names(group=group, process=process)
+            )
+            public_states.update(process.states)
+        all_states.update(public_states)
         all_actions.update(regime.simulation.action_names)
         regime_to_publishes_nested_policy[regime_name] = (
             regime_name in nested_policy_regimes
@@ -201,7 +224,30 @@ def _compute_metadata(
         regime_discrete_categories=MappingProxyType(regime_discrete_categories),
         regime_to_stakeholders=MappingProxyType(regime_to_stakeholders),
         stakeholder_names_to_ids=stakeholder_names_to_ids,
+        regime_to_joint_normals=MappingProxyType(
+            {name: _output_joint_laws(regime) for name, regime in regimes.items()}
+        ),
     )
+
+
+def _output_joint_laws(
+    regime: Regime,
+) -> MappingProxyType[ProcessName, JointNormalIIDProcess]:
+    """Capture only the physical laws needed after compiled regimes are released."""
+    laws = {}
+    for group, process in joint_normal_declarations(regime.simulation.grids).items():
+        mean = regime.resolved_fixed_params.get(f"{group}__mean")
+        cov = regime.resolved_fixed_params.get(f"{group}__cov")
+        laws[group] = replace(
+            process,
+            mean=tuple(float(value) for value in np.asarray(mean))
+            if mean is not None
+            else process.mean,
+            cov=tuple(tuple(float(value) for value in row) for row in np.asarray(cov))
+            if cov is not None
+            else process.cov,
+        )
+    return MappingProxyType(laws)
 
 
 def _get_n_subjects(
