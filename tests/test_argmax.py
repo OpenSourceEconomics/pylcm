@@ -227,7 +227,6 @@ def _admitted_maximum(*, value: float, feasible: bool, initial: float | None) ->
 
     An infeasible candidate is not admitted; `initial` always is, and a missing
     `initial` stands for minus infinity. A feasible NaN candidate is the result.
-    The cases use the `initial` every caller passes: minus infinity, or none.
     """
     if feasible and math.isnan(value):
         return math.nan
@@ -255,7 +254,7 @@ ONE_CANDIDATE_CASES = list(
     itertools.product(
         [-8.0, -0.0, 0.0, 1.0, 8.0, float("nan")],
         [None, False, True],
-        [None, -math.inf],
+        [None, -math.inf, -2.0, 0.0, 2.0],
     )
 )
 
@@ -294,10 +293,8 @@ def test_argmax_and_max_over_empty_axes_keeps_each_cell_and_broadcasts_where(
     reduce = jitted_argmax if compiled else argmax_and_max
     a = jnp.asarray([[-2.0, 1.0, 4.0], [7.0, float("nan"), -0.0]])
     mask = None if where is None else jnp.asarray(where)
-    index, maximum = reduce(a=a, axis=(), where=mask, initial=-math.inf)
-    expected = _expected_one_candidate_maxima(
-        a=np.asarray(a), where=where, initial=-math.inf
-    )
+    index, maximum = reduce(a=a, axis=(), where=mask, initial=0.0)
+    expected = _expected_one_candidate_maxima(a=np.asarray(a), where=where, initial=0.0)
     assert_array_equal(
         np.stack([np.asarray(index, dtype=float), np.asarray(maximum)]),
         np.stack([np.zeros_like(expected), expected]),
@@ -336,12 +333,19 @@ def test_argmax_and_max_of_mapped_scalar_cells_masks_at_the_feasibility_boundary
 
 @pytest.mark.parametrize(
     ("feasible", "initial", "expected"),
-    [(False, -math.inf, 0.0), (True, -math.inf, 1.0)],
+    [
+        (False, -math.inf, 0.0),
+        (True, -math.inf, 1.0),
+        (False, -7.0, 0.0),
+        (True, -7.0, 1.0),
+        (True, 3.0, 0.0),
+        (True, 1.0, 0.5),
+    ],
 )
 def test_argmax_and_max_of_one_candidate_differentiates_like_jnp_max(
     *, feasible: bool, initial: float, expected: float
 ) -> None:
-    """The value's derivative in the candidate is 1 if admitted, 0 if excluded."""
+    """The candidate's derivative is 1 above `initial`, 0 below, 1/2 at a tie."""
     derivative = grad(
         lambda x: argmax_and_max(a=x, where=jnp.asarray(feasible), initial=initial)[1]
     )

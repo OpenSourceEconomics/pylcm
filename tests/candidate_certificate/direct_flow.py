@@ -402,7 +402,7 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "884bd44a3fc6bc0738102ffbb041f12d68b62bc7feeacaa780970da30d667eda",
     SIMULATION_RUNTIME_SOURCE: "743031ba65c4ab17888b8f593d28f183261678c04bda69c7a76f1b54da76a2de",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "073ed4ab9b25235aa0492df3afe8fd7df4750e9b55d932bec9d3ab909e259631",
+    ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "d3a6aa921d6c7f18763804c328f374b036787c4eda4b6acacbd974aa66789c3c",
     PROCESSING_SOURCE: "db23ab13cbdf3662c0dae199ab7437116c61dfc05e477bc12645a9011ec0cf2a",
@@ -6418,15 +6418,12 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
 elif isinstance(axis, int):
     axis = (axis,)
 if a.ndim == 0 or len(axis) == 0:
-    if where is not None:
-        where = jnp.broadcast_to(where, a.shape)[..., None]
-    a = a[..., None]
-else:
-    a = _move_axes_to_back(a=a, axes=axis)
-    a = _flatten_last_n_axes(a=a, n=len(axis))
-    if where is not None and where.ndim != 0:
-        where = _move_axes_to_back(a=where, axes=axis)
-        where = _flatten_last_n_axes(a=where, n=len(axis))
+    return _argmax_and_max_of_one_candidate(a=a, where=where, initial=initial)
+a = _move_axes_to_back(a=a, axes=axis)
+a = _flatten_last_n_axes(a=a, n=len(axis))
+if where is not None and where.ndim != 0:
+    where = _move_axes_to_back(a=where, axes=axis)
+    where = _flatten_last_n_axes(a=where, n=len(axis))
 where = jnp.ones(a.shape, dtype=bool) if where is None else jnp.broadcast_to(
     where, a.shape
 )

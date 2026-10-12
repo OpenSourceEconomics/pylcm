@@ -47,19 +47,15 @@ def argmax_and_max(
     elif isinstance(axis, int):
         axis = (axis,)
 
-    # A scalar or empty-axis cell still has one candidate. Use the same masked
-    # reduction so feasibility and initial retain their meaning at every rank.
     if a.ndim == 0 or len(axis) == 0:
-        if where is not None:
-            where = jnp.broadcast_to(where, a.shape)[..., None]
-        a = a[..., None]
-    else:
-        a = _move_axes_to_back(a=a, axes=axis)
-        a = _flatten_last_n_axes(a=a, n=len(axis))
+        return _argmax_and_max_of_one_candidate(a=a, where=where, initial=initial)
 
-        if where is not None and where.ndim != 0:
-            where = _move_axes_to_back(a=where, axes=axis)
-            where = _flatten_last_n_axes(a=where, n=len(axis))
+    a = _move_axes_to_back(a=a, axes=axis)
+    a = _flatten_last_n_axes(a=a, n=len(axis))
+
+    if where is not None and where.ndim != 0:
+        where = _move_axes_to_back(a=where, axes=axis)
+        where = _flatten_last_n_axes(a=where, n=len(axis))
 
     where = (
         jnp.ones(a.shape, dtype=bool)
@@ -84,6 +80,32 @@ def argmax_and_max(
     _argmax = jnp.where(any_nan | (_argmax == NO_ID), 0, _argmax)
 
     return _argmax, _max
+
+
+def _argmax_and_max_of_one_candidate(
+    *, a: FloatND | IntND, where: BoolND | None, initial: float | None
+) -> tuple[IntND, FloatND | IntND]:
+    """Return the index and value of each cell of `a` when nothing is reduced.
+
+    Every cell has one candidate, its own value, at index zero. The value is the
+    larger of the candidate and `initial` where `where` admits the candidate, and
+    `initial` elsewhere; without `initial` the dtype's lowest value stands in. A
+    feasible NaN stays NaN, and the derivative splits a tie as `jnp.max` does. No
+    reduction is involved, so a candidate above `initial` keeps its exact bits.
+    """
+    lowest = (
+        -jnp.inf if jnp.issubdtype(a.dtype, jnp.floating) else jnp.iinfo(a.dtype).min
+    )
+    floor = jnp.asarray(lowest if initial is None else initial, dtype=a.dtype)
+    admitted = (
+        jnp.ones(a.shape, dtype=bool)
+        if where is None
+        else jnp.broadcast_to(where, a.shape)
+    )
+    return (
+        jnp.zeros(a.shape, dtype=jnp.int32),
+        jnp.where(admitted, jnp.maximum(a, floor), floor),
+    )
 
 
 def max_and_smallest_id(
