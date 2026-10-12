@@ -829,6 +829,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "shared_logsum:axis_prefix",
         "shared_taste_noise:shared_draw",
         "shared_taste_noise:permuted_draw",
+        "shared_taste_noise:batched_independent_draw",
         "solve:action_names_rebinding",
         "simulate:action_names_rebinding",
         "solve:dormant_certified_reducer",
@@ -1086,15 +1087,15 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     original_names = {
         name for name in names if not name.startswith("simulation_adapter:")
     }
-    assert len(original_names) == 388
+    assert len(original_names) == 389
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "a777f806edb684b976b8da5ba78fe9425439f962a1de60a4508290cff3edb79d"
+        == "1f0a90ab0d1e1ad8f37facf89795fbe92e3ed13b343040b5811db83b41d83cee"
     )
-    assert len(names) == 406
+    assert len(names) == 407
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
+        == "60f4409ab18871f6413f57172303f9629ea88d3ec55bb7df425f6a6c981801f7"
     )
 
 

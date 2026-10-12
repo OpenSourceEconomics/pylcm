@@ -26,7 +26,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
 if TYPE_CHECKING:
-    from tests.candidate_certificate.verify import _VerificationReport
+    from tests.candidate_certificate.verify import _CliVerificationReport
 
 
 class _ProcessOutput(TypedDict):
@@ -35,7 +35,7 @@ class _ProcessOutput(TypedDict):
     errors: NotRequired[list[str]]
 
 
-type _VerifierPayload = _VerificationReport | _ProcessOutput
+type _VerifierPayload = _CliVerificationReport | _ProcessOutput
 
 
 class _PolicyProfile(TypedDict):

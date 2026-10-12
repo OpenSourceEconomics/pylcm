@@ -1519,8 +1519,13 @@ def draw_taste_shock_noise(
     mean-zero — the condition under which the solve's smoothed maximum
     `scale * logsumexp(Qc / scale)` equals the expected realized maximum.
 
+    A key with a trailing length-one axis is an independent taste key whose
+    batched draws would not follow each key, so its draw runs as a scalar
+    computation for every key under any enclosing `jax.vmap`. A scalar key
+    keeps the vectorized draw.
+
     Args:
-        key: JAX PRNG key for the Gumbel draw.
+        key: JAX PRNG key for the Gumbel draw, scalar or of shape `(1,)`.
         shape: Shape of the noise array (one draw per discrete-action cell).
         scale: Taste-shock scale; broadcasts against the draw.
 
@@ -1528,7 +1533,13 @@ def draw_taste_shock_noise(
         Mean-zero additive noise of the given shape.
 
     """
-    return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)
+    if key.shape == (1,):
+        gumbel = jax.custom_batching.sequential_vmap(
+            functools.partial(jax.random.gumbel, shape=shape)
+        )(key[0])
+    else:
+        gumbel = jax.random.gumbel(key, shape)
+    return scale * (gumbel - EULER_GAMMA)
 
 
 def _fail_if_co_map_states_not_leading(
