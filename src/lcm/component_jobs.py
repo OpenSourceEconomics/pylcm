@@ -553,6 +553,7 @@ def collect_component_jobs(
         ages=model._time,  # noqa: SLF001
         logger=log,
         process_grid_resolver=None,
+        memory=model._transition_memory(flat_params=flat_params),  # noqa: SLF001
     )
     preparation = model._prepare_solution(  # noqa: SLF001
         flat_params=flat_params,
@@ -941,6 +942,7 @@ def _solve_job(
         ages=model._time,  # noqa: SLF001
         logger=log,
         process_grid_resolver=None,
+        memory=model._transition_memory(flat_params=flat_params),  # noqa: SLF001
     )
     preparation = model._prepare_solution(  # noqa: SLF001
         flat_params=flat_params,

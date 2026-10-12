@@ -129,6 +129,9 @@ from lcm.typing import (
     ValueND,
 )
 
+# Rows of the state-action product one off-grid count step evaluates at once.
+_OFF_GRID_BLOCK_ROWS = 1 << 14
+
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
 _NO_FUNCTIONS: EconFunctionsMapping = MappingProxyType({})
 _NO_FUNCTION_PARAMS: FlatRegimeParams = MappingProxyType({})
@@ -344,6 +347,7 @@ def validate_transitions(
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Validate regime and state transition probabilities before solve / simulate.
 
@@ -355,10 +359,13 @@ def validate_transitions(
         flat_params: Immutable mapping of regime names to flat parameter mappings.
         ages: Age grid for the model.
         logger: Logger carrying the runtime-validation policy.
+        memory: Budgeted owner that admits every off-grid count producer before
+            dispatch, or `None` for an unbudgeted call.
 
     """
     if not validation_enabled(logger):
-        validate_off_grid_transitions(
+        _validate_off_grid_under(
+            memory=memory,
             regimes=regimes,
             flat_params=flat_params,
             ages=ages,
@@ -405,13 +412,40 @@ def validate_transitions(
             summary=None,
             process_grid_resolver=process_grid_resolver,
         )
-    validate_off_grid_transitions(
+    _validate_off_grid_under(
+        memory=memory,
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
         logger=logger,
         process_grid_resolver=process_grid_resolver,
     )
+
+
+def _validate_off_grid_under(
+    *,
+    memory: SimulationMemory | None,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: TimeAxis,
+    logger: logging.Logger,
+    process_grid_resolver: ProcessGridResolver | None,
+) -> None:
+    """Run every off-grid count through one call-owned summary of `memory`."""
+    summary = _ValidationSummary(
+        memory=memory, process_grid_resolver=process_grid_resolver
+    )
+    try:
+        validate_off_grid_transitions(
+            regimes=regimes,
+            flat_params=flat_params,
+            ages=ages,
+            logger=logger,
+            summary=summary,
+            process_grid_resolver=process_grid_resolver,
+        )
+    finally:
+        summary.close()
 
 
 def validate_off_grid_transitions(
@@ -667,14 +701,53 @@ def _off_grid_counts_law(
     grid_names: tuple[StateOrActionName, ...],
     func: Callable[..., IntND],
 ) -> IntND:
-    """Reduce exact integer counts inside the admitted producer, not on the host."""
+    """Reduce exact integer counts block by block inside one producer.
+
+    The trailing axes whose product fits `_OFF_GRID_BLOCK_ROWS` are evaluated
+    together; a loop walks the remaining leading axes and accumulates the exact
+    integer counts, so no intermediate holds more than one block of rows,
+    however large the state-action product is.
+    """
+    point = _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
     if not grid_names:
-        return func(**scalar_kwargs)
-    mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="ij")
-    rows = jax.vmap(
-        _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
-    )(*(array.ravel() for array in mesh))
-    return jnp.sum(rows, axis=0, dtype=jnp.int32)
+        return point()
+    axes = tuple(jnp.asarray(grid_args[name]) for name in grid_names)
+    split = len(axes)
+    block = 1
+    while split and block * axes[split - 1].shape[0] <= _OFF_GRID_BLOCK_ROWS:
+        split -= 1
+        block *= axes[split].shape[0]
+    outer, inner = axes[:split], axes[split:]
+    outer_shape = tuple(axis.shape[0] for axis in outer)
+
+    def count_block(index: ScalarInt) -> IntND:
+        fixed = tuple(
+            axis[position]
+            for axis, position in zip(
+                outer, jnp.unravel_index(index, outer_shape), strict=True
+            )
+        )
+        if not inner:
+            return point(*fixed)
+        mesh = jnp.meshgrid(*inner, indexing="ij")
+        rows = jax.vmap(partial(point, *fixed))(*(array.ravel() for array in mesh))
+        return jnp.sum(rows, axis=0, dtype=jnp.int32)
+
+    if not outer:
+        return count_block(jnp.int32(0))
+    n_blocks = prod(outer_shape)
+    if n_blocks > np.iinfo(np.int32).max:
+        raise ExecutionPlanningError(
+            f"The off-grid count needs {n_blocks} blocks, more than one int32 "
+            "loop can address."
+        )
+    shape = jax.eval_shape(count_block, jnp.int32(0))
+    return jax.lax.fori_loop(
+        0,
+        n_blocks,
+        lambda index, total: total + count_block(index.astype(jnp.int32)),
+        jnp.zeros(shape.shape, dtype=shape.dtype),
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

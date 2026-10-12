@@ -300,6 +300,33 @@ def validate_simulation_inputs(  # noqa: C901
             )
 
 
+def transition_preflight_memory(
+    *,
+    execution: ResolvedExecution | None,
+    producers: ProfiledSimulationOperations,
+    flat_params: FlatParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    ages: TimeAxis,
+) -> SimulationMemory | None:
+    """Admit transition checks that run before any solution or subject exists.
+
+    The owner charges the parameters and model-owned grids as live inputs and
+    keeps every admitted producer in the model's `producers`, so a retained model
+    reuses them. `None` for an execution without a device budget.
+    """
+    return _preflight_memory(
+        execution=execution,
+        retained_footprint=measure_buffer_footprint(tree=()),
+        producers=producers,
+        initial_conditions={},
+        flat_params=flat_params,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        ages=ages,
+    )
+
+
 def _preflight_memory(
     *,
     execution: ResolvedExecution | None,

@@ -148,6 +148,7 @@ from _lcm.simulation.initial_conditions import (
     initial_conditions_feasibility_mask,
     pad_initial_conditions_to_multiple,
     resolve_initial_periods,
+    transition_preflight_memory,
     validate_simulation_inputs,
 )
 from _lcm.simulation.initial_conditions import (
@@ -1559,7 +1560,19 @@ class Model:
                 ages=self._time,
                 logger=get_logger(log_level="off", runtime_checks=True),
                 process_grid_resolver=None,
+                memory=self._transition_memory(flat_params=flat_params),
             )
+
+    def _transition_memory(self, *, flat_params: FlatParams) -> SimulationMemory | None:
+        """Return the budgeted owner admitting this call's transition checks."""
+        return transition_preflight_memory(
+            execution=self._execution,
+            producers=self._simulate_entry_operations,
+            flat_params=flat_params,
+            regimes=self._regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            ages=self._time,
+        )
 
     @beartype(conf=PARAMS_CONF)
     def solve(
@@ -1635,6 +1648,7 @@ class Model:
                         ages=self._time,
                         logger=log,
                         process_grid_resolver=None,
+                        memory=self._transition_memory(flat_params=flat_params),
                     )
             result = self._solve_from_flat_params(
                 flat_params=flat_params,
@@ -1745,6 +1759,7 @@ class Model:
             ages=self._time,
             logger=log,
             process_grid_resolver=None,
+            memory=self._transition_memory(flat_params=flat_params),
         )
         preparation = self._prepare_solution(
             flat_params=flat_params,

@@ -342,7 +342,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 _SOURCE_SEALS = {
     FEASIBILITY_SOURCE: "cc3119d434cfae994be210439ac7184399e3e1779821b008ea963d1c1648e331",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "81715d71c246134f67a3e659c34908b71e8498290ab4a8032148b5da084d021e",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "58029bd2445fa297515a8f4b78481c9b779084e1c6ad04b841a8eef0d1070fcc",
     SUPPORT_DIAGNOSTICS_SOURCE: "339ae00367fcc387ad640b8cc1c0bda05928ac752b36384fd63316e750351103",
     SUPPORT_PRECONDITIONS_SOURCE: "52c97f5f2f6e9e3b6a7ac7215181874cef52948f613f59c270ef9638a51493ac",
     SUPPORT_AUTHORITY_SOURCE: "32647270dba80b48e33ecc27bb77609bf30d04a5b34b754b8a7340f208a8c9a0",
@@ -429,11 +429,11 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "daf6a5ac77dfc9ccc0dd23810bd02557d4206f9a40f55cb8a383b98be431f24a",
     SIMULATION_TRANSITIONS_SOURCE: "5a037dbba28b1096e39747083413f8ab89507f735cb0e3732a3f02c64021d87f",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "b2892420fcead4cbcb5282a5985ff563ac30cf3ff448df3d0f94a38599157357",
+    MODEL_SOURCE: "d7ec86b5c22772bfa5570d2f3925bc234cf2d3e42b3b795e1dd094ce32bdc819",
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
     BACKWARD_INDUCTION_SOURCE: "844a956a46a68049150a8232957c01b836bae8cc5977673a09a91db226cd8499",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
-    INITIAL_CONDITIONS_SOURCE: "236603e93e569f796dda8756dee28a5eb583837e4b88c18e4a033a49bde5eb44",
+    INITIAL_CONDITIONS_SOURCE: "e71972e4514e9f09f9b65fe20b2ca2885bb162d9d797b564723c02f210d10d21",
     RESULT_SOURCE: "90aef72078273514aab54a02db61791a1644cead6c5d1c5db3a08822996583bf",
     RESULT_DATAFRAME_SOURCE: "88773c4ce66f54feface58198c1785040ba43973f0fc24cab623c699aa400a41",
     RESULT_METADATA_SOURCE: "3f1e299a4c7aa76aedea4d39288c9941a27ba7cb881d83792a44ad63b31f775d",
@@ -536,7 +536,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     INITIAL_CONDITIONS_SOURCE: (
-        "8ab7ddaa7a3ffedc6200ebcddd949822d5205cc9fc4b0894ea8e0939e888cb9f",
+        "d869b0e5b4cbbb936aa1bdcb75aa22fb080908f0b7d5c89cc9e7cf944a2a016f",
         {
             "validate_simulation_inputs": "1b024d99f9d3f19eea0863fd5c24d15535b07496bbe8db990d4511fe2b7118ef",
             "_preflight_memory": "55dcaad31fc350c161a1bfde013381ebe2e9948df1a55cee02044cf51a45c972",
@@ -1004,7 +1004,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "ea0b84452643eb287bdea4a7df5899f425c22850e36a0c138450a2be8363f801",
+        "17990851d4aa83ff6a26f207d3c9f3ba21c06c147abe8457de0d4e40fa8a8af6",
         {
             "_validate_sharded_state_capability": "76a10f69e8f6acb1150617100119e1f61ad7ed4b759f4849c8ee7536f44f3f4c",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -1019,7 +1019,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "Model._snapshot_solution_envelope": "9a4c08dc99912920df4b670212a15313e4e4e79446b8ae6a19a11fe6ba66910a",
             "Model._declared_solution_authority": "606f4c123f2b6593e1e2f212f572a035cdb6b304b185055a08af490bd097a6a9",
             "Model._model_fingerprint": "3b5ede2a24fdb3a9ee1993d3b0ad6a9092e75b82089d341dd7bde349ff458816",
-            "Model.solve": "865f1ed3ff241b1517466538847ea1651b0c1240e6caf35f568052de2a95f78b",
+            "Model.solve": "7d8eb4744ba31981e3aac5029a4ef1ac05bd60dd90b28380b9f4aad3020173d3",
             "Model._solve_from_flat_params": "3216a2a81ff103475c41111f06811d2371e8bbeef1e833f38b5d38b22ada37bd",
             "Model._solve_compiled": "f11ed21e22d3769fa8d19df0ae65dbf0a5103aae400c763da3b266caf55b9b39",
             "Model._consume_owned_solution": "f646cbb48cea6c33227711df6ec93e2d51fe8fca435803069575c0cb0f01da9d",
@@ -1543,10 +1543,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
-        "33f5220a9ce6dca407e92ea1690a6e948376816cd20011241eab3a23ae824d9b",
+        "f30bce613e8c23333b2587d07abbb7691ba73d2ff450e60666664acd7697887e",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
-            "validate_transitions": "4e4b3e3fa1d130184c71272e006c021c314479be16f64618bf493fb6975180a7",
+            "validate_transitions": "d452c135767ba44076c7f3576fb9253e4c5b1d2a783cee05b7ecdbf18a180177",
             "_validate_transition_sequence": "f57042cc6f993861cd755032f35e0edd80916cf9f2cc157ad09ddffa7c63ed72",
             "validate_regime_transition_probs_all_periods": "bd4b49bcb10108dd06f79e01d59ee449cd7db25bfb9e15449561d23655392c02",
             "_validate_regime_transition_single": "689a067b3c00cd24ae46e69c12e1a2a0f8f6f530607b105de2403aee82bd13dd",

@@ -1,10 +1,10 @@
 """Grid policies distinguish value lookup from the economic state handoff."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from fractions import Fraction
 from functools import partial
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -26,6 +26,7 @@ from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.transitions import _clip_next_states
+from _lcm.typing import EconFunctionArg, EconFunctionKwargs
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
@@ -42,6 +43,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import (
+    ExecutionPlanningError,
     GridInitializationError,
     InvalidValueFunctionError,
     OffGridStateError,
@@ -61,6 +63,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    IntND,
     OffGrid,
     Period,
     ScalarInt,
@@ -1090,3 +1093,128 @@ def test_raise_refuses_every_represented_positive_regime_mass(
             params=params, runtime_checks=runtime_checks, log_level="off"
         )
         np.testing.assert_array_equal(result.values[0]["source"], 1.0)
+
+
+def _exterior_sum_point(*, x: FloatND, y: FloatND, z: FloatND, limit: float) -> IntND:
+    return jnp.stack([jnp.stack([(x + y + z > limit).astype(jnp.int32), jnp.int32(0)])])
+
+
+@pytest.mark.parametrize("block_rows", [1, 5, 7, 23 * 5, 1 << 14])
+def test_blocked_off_grid_count_equals_the_exhaustive_count(
+    *, block_rows: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every block split of the product yields the exhaustive exterior count."""
+    monkeypatch.setattr(transition_checks, "_OFF_GRID_BLOCK_ROWS", block_rows)
+    axes = {
+        "x": np.linspace(0.0, 1.0, 37),
+        "y": np.linspace(0.0, 2.0, 23),
+        "z": np.linspace(-1.0, 1.0, 5),
+    }
+    limit = 1.75
+    x, y, z = np.meshgrid(*axes.values(), indexing="ij")
+    expected = int(np.count_nonzero(x + y + z > limit))
+    counts = transition_checks._off_grid_counts_law(
+        grid_args={name: jnp.asarray(values) for name, values in axes.items()},
+        scalar_kwargs=MappingProxyType({"limit": limit}),
+        grid_names=tuple(axes),
+        func=_exterior_sum_point,
+    )
+    np.testing.assert_array_equal(counts, [[expected, 0]])
+
+
+def test_off_grid_count_workspace_is_bounded_by_one_block() -> None:
+    """The compiled count never holds the state-action product it reduces."""
+    n_points = 1 << 12
+    axes = {
+        "x": jnp.linspace(0.0, 1.0, n_points),
+        "y": jnp.linspace(0.0, 1.0, n_points),
+        "z": jnp.zeros(1),
+    }
+    compiled = (
+        jax.jit(
+            partial(
+                transition_checks._off_grid_counts_law,
+                grid_names=tuple(axes),
+                func=_exterior_sum_point,
+            )
+        )
+        .lower(grid_args=axes, scalar_kwargs={"limit": 1.0})
+        .compile()
+    )
+    product_bytes = n_points * n_points * axes["x"].dtype.itemsize
+    stats = compiled.memory_analysis()
+    assert stats is not None
+    assert stats.temp_size_in_bytes < product_bytes // 16
+
+
+def _wide_model(*, device_memory_bytes: int) -> Model:
+    """Budgeted model whose product spans many blocks of the trailing action."""
+    grid = LinSpacedGrid(start=0, stop=2, n_points=2000)
+    return Model(
+        regimes={
+            "alive": Regime(
+                functions={"utility": _utility},
+                states={"wealth": grid},
+                actions={"consumption": LinSpacedGrid(start=0, stop=1, n_points=100)},
+                state_transitions={"wealth": _next_wealth},
+            ),
+            "terminal": Regime(
+                functions={"utility": _terminal}, states={"wealth": grid}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"alive": {"terminal": 0}},
+        initial_nodes={0: "alive"},
+        regime_id_class=RegimeId,
+        execution_config=ExecutionConfig(device_memory_bytes=device_memory_bytes),
+    )
+
+
+def test_budgeted_public_solve_admits_every_off_grid_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each checked count is placed and admitted against the budget first."""
+    admitted = []
+    admit = transition_checks._evaluate_admitted_transition_producer
+
+    def _recording_admit(
+        *,
+        function: partial[IntND],
+        arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
+        memory: SimulationMemory,
+    ) -> IntND:
+        admitted.append(function.keywords["grid_names"])
+        return cast(
+            "IntND", admit(function=function, arguments=arguments, memory=memory)
+        )
+
+    monkeypatch.setattr(
+        transition_checks, "_evaluate_admitted_transition_producer", _recording_admit
+    )
+    _wide_model(device_memory_bytes=2**28).solve(
+        params={"discount_factor": 1.0, "reward": 2.0}, log_level="off"
+    )
+    assert admitted == [("wealth", "consumption")]
+
+
+def test_inadmissible_off_grid_count_fails_before_dispatch() -> None:
+    """A budget holding the inputs but not the count's workspace is refused.
+
+    The budget covers both regimes' wealth grids with about a kilobyte to spare,
+    which admits the resident inputs and leaves no room for the count's workspace.
+    """
+    itemsize = jnp.asarray(0.0).dtype.itemsize
+    model = _wide_model(device_memory_bytes=2 * 2000 * itemsize + 1000)
+    with pytest.raises(ExecutionPlanningError, match="compiler reservation"):
+        model.validate_transitions(params={"discount_factor": 1.0, "reward": 2.0})
+
+
+def test_warm_public_solve_reuses_the_admitted_off_grid_count() -> None:
+    """A retained model compiles nothing new for a repeated checked solve."""
+    model = _wide_model(device_memory_bytes=2**28)
+    params = {"discount_factor": 1.0, "reward": 2.0}
+    with count_compile_requests() as cold:
+        model.solve(params=params, log_level="off")
+    with count_compile_requests() as warm:
+        model.solve(params=params, log_level="off")
+    assert (cold.compile_requests > 0, warm.compile_requests) == (True, 0)
