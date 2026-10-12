@@ -522,7 +522,7 @@ class _ClosureArguments(TypedDict, closed=True):
     ages: AgeGrid
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]]
     visited_periods_by_regime: None
-    targets_by_regime: None
+    targets_by_phase: None
 
 
 def _closure_arguments() -> _ClosureArguments:
@@ -562,7 +562,7 @@ def _closure_arguments() -> _ClosureArguments:
             laws=laws, ages=_CHAIN_AGES
         ).coverage_by_regime,
         "visited_periods_by_regime": None,
-        "targets_by_regime": None,
+        "targets_by_phase": None,
     }
 
 
