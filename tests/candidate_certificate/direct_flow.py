@@ -342,7 +342,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 _SOURCE_SEALS = {
     FEASIBILITY_SOURCE: "cc3119d434cfae994be210439ac7184399e3e1779821b008ea963d1c1648e331",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "11f7a59870e164fc992ab29c043cc3a91b3cd4e099671092ac9bbc8016bcde50",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "6a91496319c8847e2fe7df25acc000d312708cd5b71eae9a30a1daeb5278bb30",
     SUPPORT_DIAGNOSTICS_SOURCE: "ce6d8924504860accdc21a3e81b0cc92029b8e35ee869da4478140a990cf9da0",
     SUPPORT_PRECONDITIONS_SOURCE: "52c97f5f2f6e9e3b6a7ac7215181874cef52948f613f59c270ef9638a51493ac",
     SUPPORT_AUTHORITY_SOURCE: "32647270dba80b48e33ecc27bb77609bf30d04a5b34b754b8a7340f208a8c9a0",
@@ -408,8 +408,8 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "dd7fe6cba6e9aa6e7b42688f294ed91b0fa03016456293865d4fbaea027c03b7",
-    PROCESSING_SOURCE: "62ddc46424f68b2c023f97e2d6e20e77c5426d8d5386bbf077f8f29db2a66172",
-    GRID_SEARCH_SOURCE: "d2072683328d07682147fa21189d19e249bbf67e5d4b32c55d9960d90ae86e12",
+    PROCESSING_SOURCE: "bafd9db8d666848423cff14b302bcc3698b8b7618a89521bbbc6339d03677478",
+    GRID_SEARCH_SOURCE: "26b464af2ebc8c229aacd791e5fb6327db74fb9b5003f0d2614f1b4354eec379",
     CORE_PROGRAM_SOURCE: "21e86cda882a227086aa6550a63daa9492071f7a14a9e56565e751a67ffae2b1",
     OUTPUT_LAYOUT_SOURCE: "1173fe52bc6c9315b328d5ed5bc752f8012614443bd15756e0bf7245595aafbb",
     VALUE_TRANSFER_SOURCE: "c3b8b9df21ea6ebb6d029becdafd4da8905f1a3699d2a1ff5d206af218d097f6",
@@ -424,7 +424,7 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "99fc6b5647425c11e2c15abc9ff49c84d1b1ff3bace3f8e51e593ff8f98ec4ad",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
-    ENGINE_SOURCE: "1a31f2797a8c8f519a5c7ebe0ba5a2fdf8f1dd52b24cd1f6ce33ae1c5fb3ab11",
+    ENGINE_SOURCE: "cc6c650d562cebb9602cf72c0576a5b369b6925824d61eadcd0fb038c7594043",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
     SIMULATION_SOURCE: "8c35c0279038ef0f8163a86e6273f5da668b42422c30f5f1c0795dce8f3dc92e",
     SIMULATION_TRANSITIONS_SOURCE: "5a037dbba28b1096e39747083413f8ab89507f735cb0e3732a3f02c64021d87f",
@@ -1500,7 +1500,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     ENGINE_SOURCE: (
-        "9425be330690fda85804474a11b04243f8a541b7902e9b0aac0efe6315957342",
+        "92f283b2d8491ec65fe3fbc80120e77556c6f6d4a3004f2b0755102148fd70db",
         {
             "SolutionPhase.resolve_process_grids": "700a7c24fe948dd51bb3bf1057504a5d05ff7ea1499fe51f8341623ffe41e34e",
             "SolutionPhase.state_action_space": "582368bba80ec725dffb46af088874dae5dee05c8601290e9fe3e8ab34a68cab",
@@ -1650,11 +1650,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     GRID_SEARCH_SOURCE: (
-        "4259ad3c2aba7f6a0ff8470a303e7b74769a5b889d642fa61bc1af9e56df75ab",
+        "292380f0fecc64725354d5c73328852cb5ee8179ea15c7da3c0272bf6a161bf3",
         {
-            "GridSearch.build_period_kernels": "4f8e2c105f2e218fce3c4b220dacae09349a9fbf375e5d84194556064723a88b",
+            "GridSearch.build_period_kernels": "6918e4df795062dc9013f274003e36ab9944f7e0e258fb8c9507bddab29fb04d",
             "_action_partition_mesh": "cab2381dbe9650e10620db20b6614ccb015eb147ff3356ab66e90cec58bf06fe",
-            "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
+            "_classify_action_streaming": "6e74998d0c469e138f9096dc12ae74acdc709c39dcac1dae80a09617a3f6e911",
             "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
             "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
             "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
@@ -1669,7 +1669,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_GridSearchPeriodKernel.__post_init__": "1e8c230f0845d9b8335c667f38593221a957c34955efe44921763bce6cd24ac7",
             "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
             "_GridSearchPeriodKernel.with_fixed_params": "5f5a26e02b136c760bd242cd91c22b76153adc9828a13d20de7a6a98f5877e14",
-            "_GridSearchPeriodKernel.__call__": "0472e596d20a3918ae6998909e598ba2eb9cdbc27ef572d415b330ee22fac8fa",
+            "_GridSearchPeriodKernel.__call__": "edf46c3a54e14bc7eabc9f6d44b913dc8a6fa01836c4121f5455faeab31a5fac",
         },
     ),
     MAX_Q_SOURCE: (
@@ -4120,6 +4120,7 @@ DENSE_EV1_NONCANONICAL = "deliberately_dense:ev1_canonical_reduction_order"
 DENSE_COLLECTIVE_RESOURCES = "deliberately_dense:collective_resource_regression"
 DENSE_TRIVIAL_ACTION_PRODUCT = "deliberately_dense:trivial_action_product"
 DENSE_CO_MAP_REFERENCE_CHANNEL = "deliberately_dense:co_map_with_separate_reference_channel"
+DENSE_OFF_GRID_RAISE_COUNT = "deliberately_dense:off_grid_raise_count"
 UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
 UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
 UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
@@ -4164,7 +4165,13 @@ def category(self) -> str:
             tree=tree,
             label="solve caller native program graph",
             class_name="_GridSearchPeriodKernel",
-            fields=("_core_programs: Mapping[str, CoreProgram]",),
+            fields=(
+                "_core_programs: Mapping[str, CoreProgram]",
+                (
+                    "landing_checks: tuple[tuple[RegimeName, StateName], ...] = "
+                    "field(default=(), metadata={'fingerprint_omit_if_default': True})"
+                ),
+            ),
             methods=(
                 "__post_init__",
                 "core_programs",

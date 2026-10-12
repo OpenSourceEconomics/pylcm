@@ -32,14 +32,19 @@ from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
     ByAge,
+    CollectiveUtility,
     DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
+    Gate,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
+    ProjectedRegimeValue,
+    StakeholderRoute,
     StochasticTransition,
     Transition,
+    ValueDependentConstraint,
     categorical,
 )
 from lcm.consumption_savings_regime import (
@@ -1331,3 +1336,241 @@ def test_endogenous_grid_solver_keeps_extrapolated_targets(beta: float) -> None:
         log_level="off",
     )
     np.testing.assert_array_equal(solution.values[0]["working"][1], beta)
+
+
+def _pair_flow(*, wealth: ContinuousState, action: ContinuousAction) -> FloatND:
+    return 1.0 - 2.0 * action + 0.0 * wealth
+
+
+def _zero_terminal_wealth(wealth: ContinuousState) -> FloatND:
+    return 0.0 * wealth
+
+
+def _collective_model(
+    *,
+    rule: OffGrid,
+    tail: float,
+    threshold: float,
+    value_dependent: bool,
+    enable_jit: bool = True,
+) -> Model:
+    """Two stakeholders with `Q = 1 - 2a`; action 0 lands at 1, action 1 at `tail`."""
+
+    def landing(action: ContinuousAction) -> FloatND:
+        return jnp.where(action == 0.0, 1.0, tail)
+
+    def participation(Q_alice: FloatND) -> BoolND:
+        return Q_alice >= threshold
+
+    def ordinary(action: ContinuousAction) -> BoolND:
+        return (1.0 - 2.0 * action) >= threshold
+
+    grid = LinSpacedGrid(start=0.0, stop=2.0, n_points=3, off_grid=rule)
+    return Model(
+        regimes={
+            "source": Regime(
+                states={"wealth": grid},
+                actions={"action": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"alice": _pair_flow, "bob": _pair_flow}
+                    )
+                },
+                state_transitions={"wealth": landing},
+                constraints={
+                    "participation": ValueDependentConstraint(predicate=participation)
+                    if value_dependent
+                    else ordinary
+                },
+            ),
+            "terminal": Regime(
+                states={"wealth": grid},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "alice": _zero_terminal_wealth,
+                            "bob": _zero_terminal_wealth,
+                        }
+                    )
+                },
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"source": {"terminal": 0}},
+        initial_nodes={0: "source"},
+        regime_id_class=_PairRegime,
+        enable_jit=enable_jit,
+    )
+
+
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("tail", [-1.0, 3.0])
+@pytest.mark.parametrize("value_dependent", [False, True])
+def test_raise_omits_the_action_excluded_by_any_constraint(
+    *, runtime_checks: bool, enable_jit: bool, tail: float, value_dependent: bool
+) -> None:
+    """Only the participating action lands, on the grid, whatever excludes the other."""
+    solution = _collective_model(
+        rule="raise",
+        tail=tail,
+        threshold=0.0,
+        value_dependent=value_dependent,
+        enable_jit=enable_jit,
+    ).solve(
+        params={"discount_factor": 1.0},
+        runtime_checks=runtime_checks,
+        log_level="off",
+    )
+    np.testing.assert_array_equal(solution.values[0]["source"], np.ones((3, 2)))
+
+
+@pytest.mark.parametrize("tail", [-1.0, 3.0])
+def test_raise_refuses_a_participating_exterior_action(tail: float) -> None:
+    """When both actions participate, the exterior landing is reached."""
+    model = _collective_model(
+        rule="raise", tail=tail, threshold=-2.0, value_dependent=True
+    )
+    with pytest.raises(OffGridStateError, match=r"regime='source'.*state='wealth'"):
+        model.solve(params={"discount_factor": 1.0}, log_level="off")
+
+
+@pytest.mark.parametrize("tail", [0.0, 2.0])
+def test_raise_accepts_participating_landings_on_the_closed_endpoints(
+    tail: float,
+) -> None:
+    """Landings exactly on the grid's endpoints are on the grid."""
+    solution = _collective_model(
+        rule="raise", tail=tail, threshold=-2.0, value_dependent=True
+    ).solve(params={"discount_factor": 1.0}, log_level="off")
+    np.testing.assert_array_equal(solution.values[0]["source"], np.ones((3, 2)))
+
+
+@pytest.mark.parametrize("rule", ["extrapolate", "clip_lookup", "clip_state"])
+def test_checked_counts_never_include_the_value_excluded_action(
+    *, rule: OffGrid, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No reported count for the source includes the action participation excludes."""
+    with caplog.at_level("INFO"):
+        _collective_model(
+            rule=rule, tail=3.0, threshold=0.0, value_dependent=True
+        ).solve(params={"discount_factor": 1.0}, log_level="debug")
+    counts = [
+        int(message.rsplit("count=", maxsplit=1)[1])
+        for record in caplog.records
+        if "Off-grid next states:" in (message := record.getMessage())
+        and "regime='source'" in message
+    ]
+    assert counts == [0] * len(counts)
+
+
+def _certain_target() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _gate_model(*, gate_open: bool, projection: float, enable_jit: bool) -> Model:
+    """A certain nominal landing at 1 whose closed gate projects onto `fallback`."""
+
+    def landing() -> FloatND:
+        return jnp.asarray(1.0)
+
+    def gate(wealth: ContinuousState) -> BoolND:
+        return (wealth >= 0.0) if gate_open else (wealth < 0.0)
+
+    def project(wealth: ContinuousState) -> FloatND:
+        return projection + 0.0 * wealth
+
+    return Model(
+        regimes={
+            "source": Regime(
+                functions={"utility": _zero_source},
+                state_transitions={"wealth": landing},
+            ),
+            "target": Regime(
+                states={"wealth": LinSpacedGrid(start=0.0, stop=2.0, n_points=3)},
+                functions={"utility": _linear_terminal},
+            ),
+            "fallback": Regime(
+                states={
+                    "wealth": LinSpacedGrid(
+                        start=0.0, stop=2.0, n_points=3, off_grid="raise"
+                    )
+                },
+                functions={"utility": _linear_terminal},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        edges={
+            "source": Transition(
+                targets={"target": 0, "fallback": 0},
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection={"wealth": project}
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
+        initial_nodes={0: "source"},
+        regime_id_class=_RoutedRegime,
+        enable_jit=enable_jit,
+    )
+
+
+_GATE_RUNS = pytest.mark.parametrize(
+    ("runtime_checks", "enable_jit"),
+    [(False, False), (False, True), (True, False), (True, True)],
+)
+
+
+@_GATE_RUNS
+def test_closed_gate_refuses_its_exterior_fallback_projection(
+    *, runtime_checks: bool, enable_jit: bool
+) -> None:
+    """The fallback a closed gate routes to is reached although its mass is zero."""
+    model = _gate_model(gate_open=False, projection=3.0, enable_jit=enable_jit)
+    with pytest.raises(OffGridStateError, match=r"target='fallback'.*state='wealth'"):
+        model.solve(
+            params={"discount_factor": 1.0},
+            runtime_checks=runtime_checks,
+            log_level="off",
+        )
+
+
+@_GATE_RUNS
+@pytest.mark.parametrize(
+    ("gate_open", "projection", "expected"),
+    [
+        (False, 0.0, 0.0),
+        (False, 2.0, 2.0),
+        (True, 0.0, 1.0),
+        (True, 2.0, 1.0),
+        (True, 3.0, 1.0),
+    ],
+)
+def test_gate_checks_only_the_branch_it_executes(
+    *,
+    runtime_checks: bool,
+    enable_jit: bool,
+    gate_open: bool,
+    projection: float,
+    expected: float,
+) -> None:
+    """An open gate ignores the fallback; a closed one accepts endpoint projections."""
+    solution = _gate_model(
+        gate_open=gate_open, projection=projection, enable_jit=enable_jit
+    ).solve(
+        params={"discount_factor": 1.0},
+        runtime_checks=runtime_checks,
+        log_level="off",
+    )
+    np.testing.assert_array_equal(solution.values[0]["source"], expected)
