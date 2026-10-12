@@ -308,9 +308,10 @@ def test_typed_ordinary_key_keeps_its_implementation(*, budgeted: bool) -> None:
     pd.testing.assert_frame_equal(actual, expected, check_exact=True)
 
 
+@pytest.mark.parametrize("impl", ["rbg", "unsafe_rbg"])
 @pytest.mark.parametrize("budgeted", [False, True])
 def test_independent_taste_key_keeps_its_implementation(
-    *, budgeted: bool, monkeypatch: pytest.MonkeyPatch
+    *, budgeted: bool, impl: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Addressed taste draws preserve the supplied root's implementation and words."""
 
@@ -323,7 +324,7 @@ def test_independent_taste_key_keeps_its_implementation(
     )
     params = taste_shocks_toy.get_params(scale=0.2)
     solution = model.solve(params=params, log_level="off")
-    root = jax.random.key(17, impl="rbg")
+    root = jax.random.key(17, impl=impl)
     words = _taste_address_words(age=40, domain=(("work", (("off", 0), ("on", 1))),))
     addressed = root
     for word in words:
@@ -348,7 +349,8 @@ def test_independent_taste_key_keeps_its_implementation(
             taste_shock_seed=root,
             log_level="off",
         )
-    actual = np.concatenate(captured)[:7]
+    # A non-Threefry row key carries a trailing length-one axis for its scalar draw.
+    actual = np.concatenate(captured)[:7, 0]
     np.testing.assert_array_equal(actual, expected)
 
 

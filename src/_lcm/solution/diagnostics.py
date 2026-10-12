@@ -82,9 +82,13 @@ def collect_component_feasibility_warnings(
 
 
 def emit_component_feasibility_warnings(
-    *, logger: logging.Logger, counts: FeasibilityWarnings
+    *, logger: logging.Logger, counts: FeasibilityWarnings, scope: str = ""
 ) -> None:
-    """Report each completed regime-period once, then release host metadata."""
+    """Report each completed regime-period once, then release host metadata.
+
+    A non-empty `scope` is appended to every message to name the part of the
+    model the counts cover.
+    """
     if logger.isEnabledFor(logging.WARNING):
         _warn_inf_rows(
             logger=logger,
@@ -93,6 +97,7 @@ def emit_component_feasibility_warnings(
                 for row, value in counts.items()
             ],
             solution=MappingProxyType({}),
+            scope=scope,
         )
     counts.clear()
 
@@ -434,6 +439,7 @@ def _warn_inf_rows(
     logger: logging.Logger,
     diagnostic_rows: list[_DiagnosticRow],
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    scope: str = "",
 ) -> None:
     """Emit a warning per (regime, period) with Inf values.
 
@@ -454,22 +460,24 @@ def _warn_inf_rows(
             if empty_count:
                 logger.warning(
                     "%s state(s) with no feasible action for regime '%s', "
-                    "period %s (%s %s)",
+                    "period %s (%s %s)%s",
                     empty_count,
                     row.regime_name,
                     row.period,
                     row.time_kind,
                     row.age if row.time_kind == "age" else row.period,
+                    scope,
                 )
             if other_inf_count:
                 logger.warning(
                     "Inf in V_arr for %s other state(s) for regime '%s', "
-                    "period %s (%s %s)",
+                    "period %s (%s %s)%s",
                     other_inf_count,
                     row.regime_name,
                     row.period,
                     row.time_kind,
                     row.age if row.time_kind == "age" else row.period,
+                    scope,
                 )
             continue
         V_arr = solution[row.period][row.regime_name]

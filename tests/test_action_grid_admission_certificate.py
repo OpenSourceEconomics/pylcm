@@ -17,10 +17,20 @@ def test_action_grid_controls_preserve_historical_mutation_populations() -> None
     supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
     uniform = direct_flow.uniform_process_mutation_specs(repo_root=root)
     action = direct_flow.action_grid_mutation_specs(repo_root=root)
-    assert len(registered) == 408
+    historical = {
+        name: spec
+        for name, spec in registered.items()
+        if not name.startswith("simulation_adapter:initial_physical_")
+    }
+    assert len(historical) == 409
+    assert (
+        _name_digest(historical)
+        == "3c5fdaf1c4a0eb22ad92ac592d4ca84cef0c97a4b94bc525a7f8592d886880a7"
+    )
+    assert len(registered) == 421
     assert (
         _name_digest(registered)
-        == "d27d7bdcb349eea62f44ad1a559abc676746e025ded98e52b42770564c6807b2"
+        == "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
     )
     assert len(supplemental) == 54
     assert (

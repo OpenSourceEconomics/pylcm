@@ -4,8 +4,10 @@ The lookup publishes, per queried state row and discrete-action combination, the
 conditional value `Qc` (the max of `Q` over the feasible continuous actions), the
 choice probability `softmax(Qc / scale)` over the feasible combinations, and the
 continuous actions attaining `Qc`. The value is the smoothed maximum
-`scale * logsumexp(Qc / scale)` the solve stores, and no single action is
-returned, since the discrete choice is random.
+`scale * logsumexp(Qc / scale)` of the simulation decision's conditional values,
+using the solved continuation, and no single action is returned, since the
+discrete choice is random. The hand model has the same utility in both phases, so
+its grid-row lookup also equals the stored solve value.
 
 The hand model has one decision period and a terminal bequest regime:
 
@@ -16,6 +18,7 @@ The hand model has one decision period and a terminal bequest regime:
 - discount factor `0.9`, taste-shock scale `0.5`.
 """
 
+import math
 from collections.abc import Callable
 
 import jax.numpy as jnp
@@ -31,6 +34,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import InvalidSimulationInputError
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
@@ -77,6 +81,12 @@ def utility_alive(*, consumption: ContinuousAction, work: DiscreteAction) -> Flo
     return jnp.log(consumption) - 0.3 * work
 
 
+def utility_alive_with_work_bonus(
+    *, consumption: ContinuousAction, work: DiscreteAction
+) -> FloatND:
+    return utility_alive(consumption=consumption, work=work) + math.log(3.0) * work
+
+
 def utility_done(wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth + 1.0)
 
@@ -101,10 +111,17 @@ def high_consumption(*, consumption: ContinuousAction) -> BoolND:
     return consumption >= 1.5
 
 
+def work_costs_half_a_unit(
+    *, consumption: ContinuousAction, work: DiscreteAction, wealth: ContinuousState
+) -> BoolND:
+    return consumption <= wealth - 0.5 * work
+
+
 def get_model(
     *,
     extra_constraints: dict[FunctionName, Callable[..., BoolND]] | None = None,
     execution_config: ExecutionConfig | None = None,
+    utility: Callable[..., FloatND] | Phased = utility_alive,
 ) -> Model:
     constraints: dict[FunctionName, Callable[..., BoolND]] = {
         "budget_constraint": budget_constraint,
@@ -118,7 +135,7 @@ def get_model(
             "consumption": LinSpacedGrid(start=0.5, stop=1.5, n_points=3),
         },
         constraints=constraints,
-        functions={"utility": utility_alive},
+        functions={"utility": utility},
         taste_shocks=ExtremeValueTasteShocks(),
     )
     done = UserRegime(
@@ -294,6 +311,85 @@ def test_lookup_with_action_values_has_Qc_as_the_masked_max_of_Q(solved):
     np.testing.assert_array_equal(np.asarray(got.Qc), masked.max(axis=2))
 
 
+def test_lookup_flow_utility_is_the_utility_of_each_action(solved):
+    model, params, solution = solved
+    got = lookup(
+        model=model, params=params, solution=solution, return_action_values=True
+    )
+    expected = np.log(CONSUMPTION)[None, :] - 0.3 * np.array([0.0, 1.0])[:, None]
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.U),
+        np.broadcast_to(expected, (2, 2, 3)),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_lookup_continuation_is_the_terminal_value_at_feasible_actions(solved):
+    model, params, solution = solved
+    got = lookup(
+        model=model, params=params, solution=solution, return_action_values=True
+    )
+    next_wealth_values = (
+        WEALTH[:, None, None]
+        - CONSUMPTION[None, None, :]
+        + np.array([0.0, 1.0])[None, :, None]
+    )
+    feasible = np.asarray(got.F)
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.CE)[feasible],
+        np.log(next_wealth_values + 1.0)[feasible],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_lookup_conditional_consumption_differs_across_discrete_choices():
+    """Working costs half a unit of wealth, so at w = 1 it caps consumption at 0.5."""
+    model = get_model(
+        extra_constraints={"work_costs_half_a_unit": work_costs_half_a_unit}
+    )
+    got = lookup(model=model, params=get_params())
+    np.testing.assert_array_equal(
+        np.asarray(got.conditional_actions["consumption"]),
+        np.array([[1.0, 0.5], [1.5, 1.5]]),
+    )
+
+
+@pytest.fixture(scope="module")
+def phased_solved():
+    """Working pays `log(3)` more in the simulate phase than in the solve phase."""
+    model = get_model(
+        utility=Phased(solve=utility_alive, simulate=utility_alive_with_work_bonus)
+    )
+    params = get_params()
+    solution = model.solve(params=params, log_level="off")
+    return solution, lookup(model=model, params=params, solution=solution)
+
+
+def test_lookup_with_phased_utility_uses_the_simulated_utility(phased_solved):
+    _, got = phased_solved
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.Qc),
+        EXPECTED_QC + np.array([0.0, math.log(3.0)]),
+        decimal=HAND_DECIMALS,
+    )
+
+
+def test_lookup_with_phased_utility_smooths_the_simulated_Qc(phased_solved):
+    _, got = phased_solved
+    simulated_Qc = EXPECTED_QC + np.array([0.0, math.log(3.0)])
+    expected = SCALE * np.log(np.exp(simulated_Qc / SCALE).sum(axis=1))
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.value), expected, decimal=HAND_DECIMALS
+    )
+
+
+def test_solve_with_phased_utility_stores_the_solve_phase_value(phased_solved):
+    solution, _ = phased_solved
+    np.testing.assert_array_almost_equal(
+        np.asarray(solution.values[0]["alive"]), EXPECTED_VALUE, decimal=HAND_DECIMALS
+    )
+
+
 def test_lookup_without_action_values_returns_no_Q(looked_up):
     assert (looked_up.Q, looked_up.F, looked_up.U, looked_up.CE) == (
         None,
@@ -331,6 +427,7 @@ def test_lookup_work_probability_matches_the_toy_reference():
     )
 
 
+@pytest.mark.slow
 def test_lookup_refuses_a_taste_shock_regime_not_solved_by_grid_search():
     model = dcegm_paper_twin.get_model("dcegm")
     params = dcegm_paper_twin.get_params()

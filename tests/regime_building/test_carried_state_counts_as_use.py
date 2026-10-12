@@ -76,6 +76,16 @@ def _carry_skill(skill: ScalarInt) -> ScalarInt:
     return skill
 
 
+def _reset_skill() -> ScalarInt:
+    return jnp.asarray(_Skill.low)
+
+
+def _utility_with_skill_action(
+    *, consumption: ContinuousAction, skill: ScalarInt
+) -> FloatND:
+    return jnp.log(consumption) + 0.1 * skill
+
+
 def _utility_built_from_age_one(age: float) -> Callable[..., FloatND]:
     if age < 1:
         msg = f"no utility before age 1, asked for age {age}"
@@ -88,7 +98,7 @@ def _alive(
     utility: Callable[..., FloatND]
     | Phased[Callable[..., FloatND], AgeSpecializedFunction] = _utility,
     with_skill: bool = True,
-    skill_law: Callable[..., ScalarInt] | None = None,
+    skill_law: StateTransitionEntry | None = None,
 ) -> Regime:
     return Regime(
         actions={"consumption": CONSUMPTION_GRID},
@@ -242,6 +252,61 @@ def test_hand_over_without_an_edge_to_the_reader_is_rejected() -> None:
             regimes=_work_retired_dead(),
             edges={"work": {"gone": 0}, "retired": {"dead": 1}},
         )
+
+
+def test_hand_over_to_a_target_with_a_same_named_action_is_rejected() -> None:
+    retired_with_skill_action = Regime(
+        actions={
+            "consumption": CONSUMPTION_GRID,
+            "skill": DiscreteGrid(category_class=_Skill),
+        },
+        states={"wealth": WEALTH_GRID},
+        state_transitions={"wealth": _next_wealth},
+        functions={"utility": _utility_with_skill_action},
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"never used in regime 'work': state \['skill'\]",
+    ):
+        _model(
+            regimes=_work_retired_dead() | {"retired": retired_with_skill_action},
+            edges=CHAIN_EDGES,
+        )
+
+
+def test_hand_over_in_the_phase_that_misses_the_reader_is_rejected() -> None:
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"never used in regime 'work': state \['skill'\]",
+    ):
+        _model(
+            regimes=_work_retired_dead()
+            | {
+                "work": _alive(
+                    skill_law=Phased(
+                        solve=_reset_skill, simulate=fixed_transition("skill")
+                    )
+                )
+            },
+            edges=Phased(
+                solve={"work": {"retired": 0}, "retired": {"dead": 1}},
+                simulate={"work": {"gone": 0}, "retired": {"dead": 1}},
+            ),
+        )
+
+
+def test_hand_over_in_the_phase_that_reaches_the_reader_is_used() -> None:
+    model = _model(
+        regimes=_work_retired_dead()
+        | {
+            "work": _alive(
+                skill_law=Phased(solve=_reset_skill, simulate=fixed_transition("skill"))
+            )
+        },
+        edges=SIMULATION_ONLY_EDGES,
+    )
+
+    assert "skill" in model.user_regimes["work"].states
 
 
 def test_hand_over_along_an_edge_the_carrier_never_takes_is_rejected() -> None:
