@@ -45,7 +45,7 @@ import time
 from collections.abc import Callable, Mapping
 from enum import Enum
 from types import MappingProxyType
-from typing import Any
+from typing import NotRequired, TypedDict
 
 import jax
 import jaxlib
@@ -57,12 +57,15 @@ from _lcm.execution.hlo_fusions import (  # noqa: F401
 )
 from _lcm.params.edges import flat_namespaces
 from _lcm.solution.fingerprint import _param_shape_signature
+from _lcm.typing import DataclassInstance, JSONValue
+from _lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.utils.logging import LogLevel
 from _lcm.version import __version__ as pylcm_version
 from lcm.exceptions import ExecutionPlanningError
-from lcm.execution import ExecutionConfig
+from lcm.execution import AxisWidth, ExecutionConfig
 from lcm.model import Model
 from lcm.solver_api import ResultRetention
-from lcm.typing import UserParams
+from lcm.typing import RegimeName, UserParams
 
 # The fields a candidate may change; every other `ExecutionConfig` field is the
 # caller's layout, allocation or safety margin and stays at the baseline's.
@@ -177,9 +180,9 @@ class TunedSettings:
     """Whether a candidate replaced the baseline."""
     reason: str
     """Why the winner won, or why nothing changed."""
-    axis_widths: Mapping[str, Any]
+    axis_widths: MappingProxyType[str, AxisWidth]
     """`ExecutionConfig.axis_widths` of the verdict."""
-    axis_width_ceilings: Mapping[str, int]
+    axis_width_ceilings: MappingProxyType[str, int]
     """`ExecutionConfig.axis_width_ceilings` of the verdict."""
     ulp_allowance: int | None
     """Declared ULP allowance; `None` means exact equality was required."""
@@ -209,31 +212,25 @@ class TunedSettings:
     @classmethod
     def from_json(cls, text: str) -> TunedSettings:
         """Rebuild a record from `to_json` output."""
-        raw: dict[str, Any] = json.loads(text)
-        key: dict[str, Any] = {
-            **raw["key"],
-            "sharded_states": tuple(raw["key"]["sharded_states"]),
-            "device_pool_limit_bytes": tuple(raw["key"]["device_pool_limit_bytes"]),
-        }
-        outcomes = []
-        for outcome in raw["outcomes"]:
-            fields: dict[str, Any] = {
-                **outcome,
-                "status": CandidateStatus(outcome["status"]),
-                "resolved_widths": tuple(outcome["resolved_widths"]),
-                "block_gains_seconds": tuple(outcome["block_gains_seconds"]),
-            }
-            outcomes.append(CandidateOutcome(**fields))
-        record: dict[str, Any] = {
-            **raw,
-            "key": SettingsKey(**key),
-            "objective": Objective(raw["objective"]),
-            "axis_widths": _frozen(raw["axis_widths"]),
-            "axis_width_ceilings": _frozen(raw["axis_width_ceilings"]),
-            "baseline_resolved_widths": tuple(raw["baseline_resolved_widths"]),
-            "outcomes": tuple(outcomes),
-        }
-        return cls(**record)
+        raw: _TunedSettingsJSON = json.loads(text)
+        return cls(
+            key=_decode_settings_key(raw["key"]),
+            objective=Objective(raw["objective"]),
+            changed=raw["changed"],
+            reason=raw["reason"],
+            axis_widths=_decode_axis_widths(raw["axis_widths"]),
+            axis_width_ceilings=MappingProxyType(dict(raw["axis_width_ceilings"])),
+            ulp_allowance=raw["ulp_allowance"],
+            baseline_ulp_gap=raw["baseline_ulp_gap"],
+            baseline_resolved_widths=tuple(raw["baseline_resolved_widths"]),
+            outcomes=tuple(
+                _decode_candidate_outcome(outcome) for outcome in raw["outcomes"]
+            ),
+            evaluation_wall_seconds=raw["evaluation_wall_seconds"],
+            baseline_materialised_gather_fusions=raw.get(
+                "baseline_materialised_gather_fusions"
+            ),
+        )
 
 
 def evaluate_execution_settings(
@@ -330,8 +327,10 @@ def evaluate_execution_settings(
         objective=objective,
         changed=winner is not None,
         reason=_reason(outcomes=outcomes, winner=winner),
-        axis_widths=verdict.axis_widths,
-        axis_width_ceilings=verdict.axis_width_ceilings,
+        axis_widths=ensure_containers_are_immutable(verdict.axis_widths),
+        axis_width_ceilings=ensure_containers_are_immutable(
+            verdict.axis_width_ceilings
+        ),
         ulp_allowance=ulp_allowance,
         baseline_ulp_gap=baseline_ulp_gap,
         baseline_resolved_widths=baseline_widths,
@@ -610,7 +609,9 @@ class _CompiledLabels(logging.Handler):
 
 def _prepare(
     *, model: Model, params: UserParams, collect_programs: bool
-) -> tuple[tuple[str, ...], dict[tuple[int, str], np.ndarray], tuple[str, ...]]:
+) -> tuple[
+    tuple[str, ...], MappingProxyType[tuple[int, str], np.ndarray], tuple[str, ...]
+]:
     """Solve once, untimed, returning program labels, values and optimized HLO.
 
     A label names its regime, core, representative age and tile widths. Two
@@ -643,20 +644,22 @@ def _program_text(program: jax.stages.Compiled) -> str:
 
 
 def _solve_values(
-    *, model: Model, params: UserParams, log_level: str = "off"
-) -> dict[tuple[int, str], np.ndarray]:
+    *, model: Model, params: UserParams, log_level: LogLevel = "off"
+) -> MappingProxyType[tuple[int, str], np.ndarray]:
     """Solve, retaining values only, and return them keyed by period and regime."""
     result = model.solve(
         params=params,
-        log_level=log_level,  # ty: ignore[invalid-argument-type]
+        log_level=log_level,
         retention=ResultRetention.VALUES,
     )
     values = result.values
-    return {
-        (period, regime): np.asarray(array)
-        for period in values.keys()  # noqa: SIM118
-        for regime, array in values[period].items()
-    }
+    return MappingProxyType(
+        {
+            (period, regime): np.asarray(array)
+            for period in values.keys()  # noqa: SIM118
+            for regime, array in values[period].items()
+        }
+    )
 
 
 def _ulp_gap(
@@ -737,7 +740,14 @@ def _settings_key(
     )
 
 
-def _jsonable(value: object) -> object:
+# A tuning-record value on its way to JSON: a JSON value, or a dataclass, enum or
+# read-only mapping that `_jsonable` encodes further.
+type _RecordValue = JSONValue | DataclassInstance | Enum | Mapping[str, _RecordValue]
+
+
+def _jsonable(
+    value: DataclassInstance | Enum | Mapping[str, _RecordValue],
+) -> _RecordValue:
     """Encode the record's dataclasses, enums and read-only mappings."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {
@@ -752,8 +762,92 @@ def _jsonable(value: object) -> object:
     raise TypeError(msg)
 
 
-def _frozen(value: object) -> object:
-    """Freeze decoded JSON mappings the way `ExecutionConfig` stores them."""
-    if isinstance(value, dict):
-        return MappingProxyType({key: _frozen(child) for key, child in value.items()})
-    return value
+# The records as `json.loads` returns them: lists and dicts, which `from_json`
+# freezes into the tuples and read-only mappings the dataclasses hold.
+class _SettingsKeyJSON(TypedDict):
+    """A `SettingsKey` as `TunedSettings.to_json` writes it."""
+
+    model_structure: str
+    param_shape_signature: str
+    sharded_states: list[str]
+    device_count: int
+    device_kind: str
+    device_pool_limit_bytes: list[int | None]
+    device_memory_bytes: int | None
+    device_memory_headroom_fraction: float
+    precision: str
+    pylcm_version: str
+    jax_version: str
+    jaxlib_version: str
+    xla_flags: str
+
+
+class _CandidateOutcomeJSON(TypedDict):
+    """A `CandidateOutcome` as `TunedSettings.to_json` writes it."""
+
+    index: int
+    status: str
+    resolved_widths: list[str]
+    ulp_gap: int | None
+    block_gains_seconds: list[float]
+    materialised_gather_fusions: NotRequired[int | None]
+
+
+class _TunedSettingsJSON(TypedDict):
+    """A `TunedSettings` record as `TunedSettings.to_json` writes it."""
+
+    key: _SettingsKeyJSON
+    objective: str
+    changed: bool
+    reason: str
+    axis_widths: dict[str, int | dict[RegimeName, int]]
+    axis_width_ceilings: dict[str, int]
+    ulp_allowance: int | None
+    baseline_ulp_gap: int
+    baseline_resolved_widths: list[str]
+    outcomes: list[_CandidateOutcomeJSON]
+    evaluation_wall_seconds: float
+    baseline_materialised_gather_fusions: NotRequired[int | None]
+
+
+def _decode_settings_key(raw: _SettingsKeyJSON) -> SettingsKey:
+    """Rebuild a `SettingsKey` from its JSON form."""
+    return SettingsKey(
+        model_structure=raw["model_structure"],
+        param_shape_signature=raw["param_shape_signature"],
+        sharded_states=tuple(raw["sharded_states"]),
+        device_count=raw["device_count"],
+        device_kind=raw["device_kind"],
+        device_pool_limit_bytes=tuple(raw["device_pool_limit_bytes"]),
+        device_memory_bytes=raw["device_memory_bytes"],
+        device_memory_headroom_fraction=raw["device_memory_headroom_fraction"],
+        precision=raw["precision"],
+        pylcm_version=raw["pylcm_version"],
+        jax_version=raw["jax_version"],
+        jaxlib_version=raw["jaxlib_version"],
+        xla_flags=raw["xla_flags"],
+    )
+
+
+def _decode_candidate_outcome(raw: _CandidateOutcomeJSON) -> CandidateOutcome:
+    """Rebuild a `CandidateOutcome` from its JSON form."""
+    return CandidateOutcome(
+        index=raw["index"],
+        status=CandidateStatus(raw["status"]),
+        resolved_widths=tuple(raw["resolved_widths"]),
+        ulp_gap=raw["ulp_gap"],
+        block_gains_seconds=tuple(raw["block_gains_seconds"]),
+        materialised_gather_fusions=raw.get("materialised_gather_fusions"),
+    )
+
+
+def _decode_axis_widths(
+    raw: Mapping[str, int | Mapping[RegimeName, int]],
+) -> MappingProxyType[str, AxisWidth]:
+    """Freeze decoded axis widths the way `ExecutionConfig` stores them."""
+    return MappingProxyType(
+        {
+            axis: width if isinstance(width, int) else MappingProxyType(dict(width))
+            for axis, width in raw.items()
+        }
+    )

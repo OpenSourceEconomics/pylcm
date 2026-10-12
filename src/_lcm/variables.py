@@ -25,6 +25,12 @@ from lcm.phased import Phased
 if TYPE_CHECKING:
     from lcm.regime import Regime as UserRegime
 
+    type _RegimeClass = type[UserRegime]
+else:
+    # `lcm.__init__` binds `UserRegime` by calling `_bind_forward_refs`, so the
+    # class is not yet resolvable when that call is checked.
+    type _RegimeClass = object
+
 
 def from_regime(
     *, user_regime: UserRegime, sharded_state_names: frozenset[StateName] = frozenset()
@@ -117,7 +123,7 @@ def carried_state_grids(user_regime: UserRegime) -> dict[StateName, Grid]:
     }
 
 
-def _bind_forward_refs(*, regime_cls: type) -> None:
+def _bind_forward_refs(*, regime_cls: _RegimeClass) -> None:
     """Bind `UserRegime` into this module's globals.
 
     The package claw rewrites string annotations on `from_regime`,

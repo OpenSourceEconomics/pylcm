@@ -21,6 +21,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.transition import AgeSelector
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 
 
@@ -57,7 +58,7 @@ def _model(*, budgeted, promote, reverse, width):
     }
     if reverse:
         regimes = dict(reversed(tuple(regimes.items())))
-    roots: dict[object, str] = {0: "source"}
+    roots: dict[AgeSelector, str] = {0: "source"}
     if promote:
         roots[1] = "perceived"
     execution_config = (

@@ -31,7 +31,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from _lcm.engine import GridRecomputationRoute, Regime
-from _lcm.grids import DiscreteGrid
+from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.reachability import ModelReachability, PhaseReachability
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -45,8 +45,13 @@ from _lcm.regime_law import RegimeLaws
 from _lcm.time import TimeAxis
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
+from lcm.transition import AgeSpecializedGrid, StochasticTransition
+from lcm.typing import UserAge, UserFunction
 
 type Phase = Literal["solve", "simulate"]
+# A law a phase slice declares for a state toward one target, or the marker of
+# the joint kernel that owns the cell.
+type _DeclaredLaw = str | UserFunction | StochasticTransition | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -123,7 +128,7 @@ def analyze_invariant_components(
     laws: RegimeLaws,
     regimes: Mapping[RegimeName, Regime],
     reachability: ModelReachability,
-    initial_nodes: frozenset[tuple[object, RegimeName]],
+    initial_nodes: frozenset[tuple[UserAge, RegimeName]],
     ages: TimeAxis,
     fixed_component_splits: Mapping[StateName, FixedComponentSplit],
 ) -> MappingProxyType[StateName, InvariantComponent]:
@@ -149,7 +154,7 @@ def analyze_invariant_components(
         name: normalize_regime_phases(regime, law=laws[name])
         for name, regime in user_regimes.items()
     }
-    period_of_age: dict[object, int] = {
+    period_of_age: dict[UserAge, int] = {
         age: period for period, age in enumerate(ages.exact_values)
     }
     generated = {
@@ -256,9 +261,11 @@ def fail_if_invariant_blocking_is_unsafe(
         raise ExecutionPlanningError(msg)
 
 
-def _identity_law_states(specs: Mapping[RegimeName, PhasedRegimeSpec]) -> set[str]:
+def _identity_law_states(
+    specs: Mapping[RegimeName, PhasedRegimeSpec],
+) -> frozenset[StateName]:
     """Return every state some phase slice gives the identity law toward a target."""
-    return {
+    return frozenset(
         state_name
         for spec in specs.values()
         for phase_slice in (spec.solution, spec.simulation)
@@ -267,7 +274,7 @@ def _identity_law_states(specs: Mapping[RegimeName, PhasedRegimeSpec]) -> set[st
             isinstance(leaf, _IdentityTransition)
             for leaf in (law.values() if isinstance(law, Mapping) else (law,))
         )
-    }
+    )
 
 
 def _analyze_phase(
@@ -366,7 +373,7 @@ def _grid_refusals(
 
 def _law_toward(
     *, phase_slice: RegimePhaseSpec, state_name: StateName, target: RegimeName
-) -> object:
+) -> _DeclaredLaw:
     """Return the law a slice declares for a state toward one target.
 
     A joint kernel that outputs the state toward the target owns that cell; a
@@ -388,7 +395,7 @@ def _channel_refusals(
     state_name: StateName,
     regimes: Mapping[RegimeName, Regime],
     carriers: frozenset[RegimeName],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Refuse every non-continuation value channel that touches a carrier."""
     refusals = [
         f"same-period reference {name} -> {reference} touches a carrier of "
@@ -415,12 +422,12 @@ def _channel_refusals(
                 GridRecomputationRoute | None,
             )
         ]
-    return refusals
+    return tuple(refusals)
 
 
 def _first_grid(
     *, specs: Mapping[RegimeName, PhasedRegimeSpec], state_name: StateName
-) -> object:
+) -> Grid | AgeSpecializedGrid | None:
     """Return the state's grid in the first carrier, solve phase before simulate."""
     return next(
         (
@@ -447,7 +454,7 @@ def _original_codes_by_group(split: FixedComponentSplit) -> tuple[tuple[int, ...
     )
 
 
-def _describe(law: object) -> str:
+def _describe(law: _DeclaredLaw) -> str:
     """Name a declared law for a refusal message."""
     if law is None:
         return "none"

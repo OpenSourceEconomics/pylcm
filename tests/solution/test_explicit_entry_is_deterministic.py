@@ -38,7 +38,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
-from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts the target's nodes on
@@ -113,7 +113,7 @@ _PARAMS = {
 }
 
 
-def _source_value(*, model: Model, params: dict) -> float:
+def _source_value(*, model: Model, params: UserParams) -> float:
     solution = model.solve(params=params, log_level="debug").values
     last_living = max(period for period in solution if "source" in solution[period])
     return float(np.asarray(solution[last_living]["source"]).ravel()[0])

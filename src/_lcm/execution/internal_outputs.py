@@ -20,7 +20,22 @@ from _lcm.execution.core_program import (
     ResolvedCoreProgram,
     _topological_program_order,
 )
+from _lcm.typing import DataclassInstance, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName
+
+# Shape, dtype name and weak typing of one array leaf: what a consumer traces against.
+type _LeafSignature = tuple[tuple[int, ...], str, bool]
+
+# A published output tree with every array leaf replaced by its signature.
+type _SignatureTree = (
+    _LeafSignature
+    | tuple[_SignatureTree, ...]
+    | list[_SignatureTree]
+    | Mapping[str, _SignatureTree]
+    | DataclassInstance
+    | None
+)
 
 
 # The ordering lives beside the graph validation that needs it, and `core_program`
@@ -49,36 +64,30 @@ class ResolvedProducer:
     name: str
     """Graph key of the program this record describes."""
 
-    function: Callable[..., object]
+    function: Callable[..., PytreeValue]
     """The exact callable the engine lowers for this program."""
 
-    internal_input_templates: Mapping[str, object]
+    internal_input_templates: MappingProxyType[ReferenceName, ShapeDtypePytree]
     """Abstract subtrees the program reads from its own producers."""
 
-    static_kwargs: Mapping[str, int]
+    static_kwargs: MappingProxyType[str, int]
     """Planner-owned width bindings, passed to JAX as static keyword arguments."""
 
     internal_outputs: tuple[InternalOutputSpec, ...]
     """Outputs another program of the same graph may name as an input."""
 
-    abstract_output: object
+    abstract_output: ShapeDtypePytree
     """The complete invocation's `jax.eval_shape`, traced once."""
 
     def __post_init__(self) -> None:
-        """Snapshot the caller-owned invocation mappings and declarations."""
-        object.__setattr__(
-            self,
-            "internal_input_templates",
-            MappingProxyType(dict(self.internal_input_templates)),
-        )
-        object.__setattr__(
-            self, "static_kwargs", MappingProxyType(dict(self.static_kwargs))
-        )
+        """Snapshot the caller-owned output declarations."""
         object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
 
 
 def resolve_producer(
-    *, program: ResolvedCoreProgram, templates: Mapping[str, object]
+    *,
+    program: ResolvedCoreProgram,
+    templates: Mapping[ReferenceName, ShapeDtypePytree],
 ) -> ResolvedProducer:
     """Trace one resolved program's complete invocation and keep its output.
 
@@ -95,8 +104,8 @@ def resolve_producer(
     return ResolvedProducer(
         name=program.name,
         function=program.function,
-        internal_input_templates=templates,
-        static_kwargs=program.static_kwargs,
+        internal_input_templates=MappingProxyType(dict(templates)),
+        static_kwargs=MappingProxyType(dict(program.static_kwargs)),
         internal_outputs=program.internal_outputs,
         abstract_output=jax.eval_shape(invocation, **program.arguments, **templates),
     )
@@ -106,7 +115,7 @@ def internal_input_templates(
     *,
     program: MaterializedCoreProgram,
     producers: Mapping[str, Mapping[Hashable, ResolvedProducer]],
-) -> MappingProxyType[str, object]:
+) -> MappingProxyType[ReferenceName, ShapeDtypePytree]:
     """Return abstract templates for one program's internal inputs.
 
     Each template is the subtree of the producer's abstract output that the
@@ -119,7 +128,7 @@ def internal_input_templates(
     not also be declared as an internal input: the two would silently disagree at
     dispatch.
     """
-    templates: dict[str, object] = {}
+    templates: dict[ReferenceName, ShapeDtypePytree] = {}
     for name, ref in program.requirements.internal_inputs.items():
         if name in program.arguments:
             msg = (
@@ -141,7 +150,10 @@ def internal_input_templates(
 
 
 def assert_internal_inputs(
-    *, arguments: Mapping[str, object], templates: Mapping[str, object], label: str
+    *,
+    arguments: Mapping[ReferenceName, PytreeValue],
+    templates: Mapping[ReferenceName, ShapeDtypePytree],
+    label: str,
 ) -> None:
     """Fail when a handed-over internal input departs from its declared template."""
     for name, template in templates.items():
@@ -223,7 +235,7 @@ def _declared_output(
 
 def _published_signature(
     *, record: ResolvedProducer, spec: InternalOutputSpec
-) -> object:
+) -> _SignatureTree:
     """Return the tracing-relevant array metadata tree a label publishes."""
     return jax.tree.map(
         _leaf_signature,
@@ -236,7 +248,7 @@ def _published_signature(
     )
 
 
-def _leaf_signature(leaf: object) -> tuple[tuple[int, ...], str, bool]:
+def _leaf_signature(leaf: PytreeValue | ShapeDtypePytree) -> _LeafSignature:
     """Return shape, dtype and weak typing, which govern consumer tracing.
 
     Weak typing is not decoration: a weakly typed leaf takes the other operand's
@@ -256,13 +268,17 @@ def _leaf_signature(leaf: object) -> tuple[tuple[int, ...], str, bool]:
 
 
 def _select_path(
-    *, tree: object, path: tuple[int | str, ...], producer_name: str, label: str
-) -> object:
+    *,
+    tree: ShapeDtypePytree,
+    path: tuple[int | str, ...],
+    producer_name: str,
+    label: str,
+) -> ShapeDtypePytree:
     """Index one abstract output tree down to the published subtree."""
     node = tree
     for step in path:
         try:
-            node = node[step]  # ty: ignore[not-subscriptable]
+            node = node[step]  # ty: ignore[not-subscriptable, invalid-argument-type]
         except (IndexError, KeyError, TypeError) as error:
             msg = (
                 f"Internal output {label!r} of core program {producer_name!r} declares "

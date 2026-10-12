@@ -14,7 +14,7 @@ from _lcm.constraints.dispositions import (
     Reject,
 )
 from _lcm.constraints.ir import Const, Ref
-from _lcm.constraints.processed import normalize_constraints
+from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.constraints.routes import BoundConstraint, ConstraintSite
 from _lcm.egm.nbegm_constraint_boundaries import (
     NBEGMFeasibilityBoundaryProgram,
@@ -22,17 +22,15 @@ from _lcm.egm.nbegm_constraint_boundaries import (
     feasibility_axis_boundaries,
 )
 from lcm import Condition, implies, ref
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, FloatND, ParameterName
 
 
 def _compile(
     *,
-    declaration: Condition | object,
-    param_names: frozenset[str] = frozenset({"limit"}),
+    declaration: ConstraintLike,
+    param_names: frozenset[ParameterName] = frozenset({"limit"}),
 ) -> CompileBoundary | Reject:
-    constraints = normalize_constraints(
-        constraints={"eligible": declaration}  # ty: ignore[invalid-argument-type]
-    )
+    constraints = normalize_constraints(constraints={"eligible": declaration})
     site = ConstraintSite(
         stage="savings_stage",
         function_pool=MappingProxyType({}),

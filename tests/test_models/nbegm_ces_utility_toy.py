@@ -31,7 +31,7 @@ import jax.numpy as jnp
 
 import lcm
 from lcm import LinSpacedGrid, Model
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, UserParamsNode
 from tests.test_models.nbegm_common import (
     crra_utility,
     feasible,
@@ -191,7 +191,7 @@ def build_params(
     subsidy_high: float = 3.0,
     subsidy_slope: float = 0.4,
     fpl_cliff: float = 15.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the CES-utility ride-along toy.
 
     The CES consumption weight and equivalence scale are deliberately away from one,
@@ -211,7 +211,7 @@ def build_params(
             "subsidy_high": subsidy_high,
             "fpl_cliff": fpl_cliff,
         }
-    alive_params: dict = {
+    alive_params: dict[str, UserParamsNode] = {
         "utility": {
             "crra": crra,
             "consumption_weight": consumption_weight,

@@ -8,15 +8,15 @@ when/otherwise piece sets, piecewise-affine schedules — and validates coverage
 the solver resolves the collected registry into its per-case specification.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
 
 from _lcm.typing import FunctionName
 from lcm.case_piece import CaseBoundary, PieceMeta, PiecewiseAffineMeta
 from lcm.exceptions import NBEGMCaseError
 from lcm.phased import Phased
+from lcm.typing import UserFunction
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ class NBEGMRegistry:
 
 def collect_nbegm_metadata(
     *,
-    functions: Mapping[FunctionName, object],
+    functions: Mapping[FunctionName, UserFunction | Phased | None],
 ) -> NBEGMRegistry:
     """Collect and validate the case-piece metadata of a function pool.
 
@@ -81,8 +81,8 @@ def collect_nbegm_metadata(
 
 def resolve_declaration_pool(
     *,
-    functions: Mapping[FunctionName, object],
-) -> dict[FunctionName, Callable[..., object]]:
+    functions: Mapping[FunctionName, UserFunction | Phased | None],
+) -> dict[FunctionName, UserFunction]:
     """Return the callable solve-phase pool the NB-EGM declarations live on.
 
     `Regime.functions` legitimately holds `Phased` entries (a solve/simulate
@@ -103,7 +103,7 @@ def resolve_declaration_pool(
             callable, so its declarations cannot be read.
 
     """
-    resolved: dict[FunctionName, Callable[..., object]] = {}
+    resolved: dict[FunctionName, UserFunction] = {}
     for name, func in functions.items():
         entry = func.solve if isinstance(func, Phased) else func
         if entry is None:
@@ -115,12 +115,12 @@ def resolve_declaration_pool(
                 "declarations. Provide a callable (or a `Phased` pair of them)."
             )
             raise NBEGMCaseError(msg)
-        resolved[name] = cast("Callable[..., object]", entry)
+        resolved[name] = entry
     return resolved
 
 
 def _collect_piecewise_affine_schedules(
-    functions: Mapping[FunctionName, Callable[..., object]],
+    functions: Mapping[FunctionName, UserFunction],
 ) -> tuple[PiecewiseAffineMeta, ...]:
     """Read every declared piecewise-affine schedule, one per schedule output."""
     schedules: list[PiecewiseAffineMeta] = []
@@ -154,7 +154,7 @@ def _collect_piecewise_affine_schedules(
 
 
 def _collect_boundaries(
-    functions: Mapping[FunctionName, Callable[..., object]],
+    functions: Mapping[FunctionName, UserFunction],
 ) -> dict[FunctionName, CaseBoundary]:
     """Read every structured case boundary in the function pool."""
     boundaries: dict[FunctionName, CaseBoundary] = {}
@@ -171,7 +171,7 @@ def _collect_boundaries(
 
 def _collect_piece_sets(
     *,
-    functions: Mapping[FunctionName, Callable[..., object]],
+    functions: Mapping[FunctionName, UserFunction],
     boundaries: Mapping[FunctionName, CaseBoundary],
 ) -> tuple[PieceSet, ...]:
     """Group pieces by (output, predicate) and require both sides exactly once."""

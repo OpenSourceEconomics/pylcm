@@ -21,6 +21,7 @@ from collections.abc import Mapping
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from typing_extensions import TypedDict
 
 from _lcm.egm.carry import EGMCarry
 from lcm import (
@@ -46,12 +47,21 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    FunctionName,
     ScalarInt,
+    UserFunction,
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+
+
+class _Params(TypedDict, closed=True):
+    discount_factor: float
+    final_age_alive: int
+    working_life: dict[str, dict[str, float]]
+
 
 N_PERIODS = 4
 N_INCOME_NODES = 5
@@ -181,7 +191,7 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
-def _shared_functions() -> dict:
+def _shared_functions() -> dict[FunctionName, UserFunction]:
     return {
         "utility": utility,
         "labor_income": labor_income,
@@ -266,7 +276,7 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
     )
 
 
-def _params() -> dict:
+def _params() -> _Params:
     final_age_alive = 40 + (N_PERIODS - 2) * 10
     return {
         "discount_factor": 0.95,
@@ -394,7 +404,7 @@ def death_prob_share(
     )
 
 
-def _means_test_intermediates() -> dict:
+def _means_test_intermediates() -> dict[FunctionName, UserFunction]:
     return {
         "capital_income": capital_income,
         "countable_income": countable_income,
@@ -486,7 +496,7 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
     )
 
 
-def _means_test_params(*, rate_is_fixed: bool) -> dict:
+def _means_test_params(*, rate_is_fixed: bool) -> _Params:
     params = _params()
     if not rate_is_fixed:
         params["working_life"]["capital_income"] = {"rate_of_return": RATE_OF_RETURN}

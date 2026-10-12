@@ -94,8 +94,16 @@ from _lcm.solution.negm import _BoundNEGM
 from _lcm.typing import FunctionName, RegimeName, TransitionFunctionName
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateTransitionEntry
 from lcm.solvers import NEGM
-from lcm.typing import FloatND, IntND, ScalarFloat, UserFunction
+from lcm.typing import (
+    FloatND,
+    IntND,
+    ReferenceName,
+    ScalarFloat,
+    ScalarInt,
+    UserFunction,
+)
 
 # A cross-difference needs two distinct points on each margin: the check varies
 # consumption and the durable independently and compares the mixed second
@@ -440,10 +448,10 @@ def _fail_if_outer_law_reads_the_inner_margin(
 
 def _ancestors_through_sibling_laws(
     *,
-    functions: dict[FunctionName, UserFunction],
+    functions: Mapping[FunctionName, UserFunction],
     target_func: UserFunction,
-    sibling_laws: Mapping[TransitionFunctionName, object],
-) -> set[str]:
+    sibling_laws: Mapping[TransitionFunctionName, StateTransitionEntry],
+) -> frozenset[str]:
     """Ancestors of a law of motion, following the other laws it reads.
 
     A chained transition is supported — one law may consume another law's
@@ -572,7 +580,7 @@ def _fail_if_utility_couples_action_and_outer_margin(
 def _utility_at_action_and_outer(
     *,
     utility_func: UserFunction,
-    fixed: dict[str, object],
+    fixed: Mapping[ReferenceName, ScalarFloat | ScalarInt],
     action_name: FunctionName,
     outer_name: FunctionName,
     consumption: ScalarFloat,

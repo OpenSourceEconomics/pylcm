@@ -42,6 +42,7 @@ from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
 )
+from _lcm.regime_law import RegimeLawDeclaration
 from _lcm.simulation.gated_routing import (
     _per_row_leg_outcomes,
     substitute_gated_edge_continuations,
@@ -68,7 +69,14 @@ from lcm import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import StochasticTransition
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    RegimeName,
+    ScalarInt,
+)
 from tests.conftest import bind_laws
 from tests.regime_building.test_collective_regime_simulate import (
     _dissolution_laws,
@@ -253,7 +261,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
     }
 
 
-def _shared_fallback_laws() -> dict[str, object]:
+def _shared_fallback_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """The regimes' laws, as `Model(edges=...)` would bind them."""
     return {
         "married": Transition(
@@ -467,7 +475,7 @@ def _make_all_collective_regimes() -> dict[str, Regime]:
     return {"couple": couple, "couple_terminal": couple_terminal}
 
 
-def _all_collective_laws() -> dict[str, object]:
+def _all_collective_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """The regimes' laws, as `Model(edges=...)` would bind them."""
     return {
         "couple": ByAge(
@@ -576,7 +584,7 @@ def _make_stateless_collective_regime() -> dict[str, Regime]:
     return {"stateless_couple": regime}
 
 
-def _stateless_collective_laws() -> dict[str, object]:
+def _stateless_collective_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """The regimes' laws, as `Model(edges=...)` would bind them."""
     return {
         "stateless_couple": None,

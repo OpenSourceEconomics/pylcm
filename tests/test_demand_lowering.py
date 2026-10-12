@@ -7,14 +7,15 @@ parameter of its own branch. Every declared case keeps its parameter slots at
 which undemanded cases exist.
 """
 
-from collections.abc import Mapping
-from typing import Any, cast
+from collections.abc import Callable, Mapping
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import _lcm.regime_building.schedules as schedules_module
+from _lcm.regime_building.schedules import EnginePhaseLaw, PhaseLaw
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -32,7 +33,14 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from lcm.initial_nodes import UserInitialNodes
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    FloatND,
+    RegimeName,
+    ScalarInt,
+)
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 
@@ -90,7 +98,7 @@ def _working_law() -> ByAge:
 
 def _model(
     *,
-    initial_nodes: Any,
+    initial_nodes: UserInitialNodes,
     retirement_exit_ages: tuple[int, ...] = (55, 65),
 ) -> Model:
     return Model(
@@ -120,7 +128,10 @@ def _model(
     )
 
 
-def _leaves(*, tree: Any, prefix: str = "") -> frozenset[str]:
+type TemplateBranch = str | Mapping[str, TemplateBranch]
+
+
+def _leaves(*, tree: TemplateBranch, prefix: str = "") -> frozenset[str]:
     if not isinstance(tree, dict):
         return frozenset({prefix})
     return frozenset(
@@ -130,7 +141,7 @@ def _leaves(*, tree: Any, prefix: str = "") -> frozenset[str]:
     )
 
 
-def _param_names(*, tree: Any) -> frozenset[str]:
+def _param_names(*, tree: TemplateBranch) -> frozenset[str]:
     return frozenset(path.rsplit("/", 1)[-1] for path in _leaves(tree=tree) if path)
 
 
@@ -146,7 +157,7 @@ def _param_names(*, tree: Any) -> frozenset[str]:
     ids=["both-cases", "late-case-only", "zero-node", "terminal-root", "late-root"],
 )
 def test_params_template_holds_only_the_parameters_demand_reads(
-    *, initial_nodes: Any, regime: str, expected: set[str]
+    *, initial_nodes: UserInitialNodes, regime: RegimeName, expected: set[str]
 ) -> None:
     """A regime's own branch lists exactly the parameters its demanded problems read."""
     template = _model(initial_nodes=initial_nodes).get_params_template()
@@ -159,7 +170,7 @@ def test_params_template_holds_only_the_parameters_demand_reads(
     ids=["both-cases", "late-case-only", "terminal-root"],
 )
 def test_edge_template_holds_the_parameters_of_every_declared_case(
-    *, initial_nodes: Any
+    *, initial_nodes: UserInitialNodes
 ) -> None:
     """`working`'s edge branch lists both cases' rates whichever ages are demanded."""
     template = _model(initial_nodes=initial_nodes).get_params_template()
@@ -226,8 +237,10 @@ def test_zero_node_regime_keeps_a_declared_law_without_period_dispatch() -> None
     assert cell.func is _early_stay
 
 
-def _age_specialized_model(*, built_ages: list[float], initial_nodes: Any) -> Model:
-    def build_utility(age: float) -> Any:
+def _age_specialized_model(
+    *, built_ages: list[float], initial_nodes: UserInitialNodes
+) -> Model:
+    def build_utility(age: float) -> Callable[..., FloatND]:
         built_ages.append(float(age))
         return _utility
 
@@ -281,7 +294,7 @@ def _health_die(*, health: ContinuousState, early_rate: float) -> FloatND:
     return 1 - jnp.asarray(early_rate) + 0 * health
 
 
-def _broadcast_health_model(initial_nodes: Any) -> Model:
+def _broadcast_health_model(initial_nodes: UserInitialNodes) -> Model:
     return Model(
         regimes={
             "working": Regime(
@@ -332,7 +345,7 @@ class _WorkingDeadId:
     ids=["early-case-demanded", "early-case-undemanded"],
 )
 def test_a_state_read_only_by_an_undemanded_case_is_not_live(
-    *, initial_nodes: Any, expected: bool
+    *, initial_nodes: UserInitialNodes, expected: bool
 ) -> None:
     """Liveness counts only the laws of demanded cases."""
     model = _broadcast_health_model(initial_nodes)
@@ -341,7 +354,7 @@ def test_a_state_read_only_by_an_undemanded_case_is_not_live(
 
 def _gated_fold_model(
     *,
-    initial_nodes: Any,
+    initial_nodes: UserInitialNodes,
     fallback_at_45: bool = False,
 ) -> Model:
     fallback = ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
@@ -449,16 +462,18 @@ def test_a_gated_target_solved_where_its_source_never_stands_solves() -> None:
 
 def test_an_undemanded_case_is_never_lowered(monkeypatch: pytest.MonkeyPatch) -> None:
     """Model construction lowers only the laws a required problem selects."""
-    lowered: list[object] = []
+    lowered: list[PhaseLaw] = []
     original = schedules_module._lower_side
 
-    def recording_lower_side(**kwargs: Any) -> object:
-        lowered.extend(kwargs["law_by_period"].values())
-        return original(**kwargs)
+    def recording_lower_side(
+        *, law_by_period: Mapping[int, PhaseLaw], code_by_name: Mapping[RegimeName, int]
+    ) -> EnginePhaseLaw:
+        lowered.extend(law_by_period.values())
+        return original(law_by_period=law_by_period, code_by_name=code_by_name)
 
     monkeypatch.setattr(schedules_module, "_lower_side", recording_lower_side)
     model = _model(initial_nodes={55: "working"})
-    declared = cast("Mapping[str, Transition]", model.edges)["working"].law
+    declared = cast("Mapping[RegimeName, Transition]", model.edges)["working"].law
     early = cast("ByAge", declared).laws[0]
     assert all(law is not early for law in lowered)
 

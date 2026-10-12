@@ -4,9 +4,9 @@ import inspect
 import sys
 from collections.abc import Callable
 from dataclasses import replace
-from functools import partial, partialmethod
+from functools import partialmethod
 from pathlib import Path
-from typing import Any
+from typing import NotRequired, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -15,6 +15,7 @@ import pytest
 
 from _lcm.simulation import host_operations, process_grids
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
+from _lcm.typing import FootprintTree
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -36,19 +37,46 @@ from tests.simulation.test_process_grid_entry_admission import (
 )
 
 
+class _HostCompilation(TypedDict):
+    key: host_operations.Hashable
+    function: host_operations.Callable[..., host_operations.PytreeValue]
+    arguments: host_operations.Mapping[
+        host_operations.ReferenceName, host_operations.ShapeDtypePytree
+    ]
+    static_arguments: host_operations.Mapping[
+        host_operations.ReferenceName, host_operations.StaticArgument
+    ]
+    output_sharding: NotRequired[host_operations.jax.sharding.Sharding | None]
+
+
+class _ProcessStage(TypedDict):
+    parameters: process_grids.Mapping[
+        process_grids.ParameterName, process_grids.ProcessValue
+    ]
+    n_points: int
+    required: process_grids.jax.sharding.Sharding
+    stage: NotRequired[process_grids._GridStage]
+    exponent: NotRequired[int]
+    dtype: NotRequired[str]
+    weak_type: NotRequired[bool]
+    process_stage: NotRequired[bool]
+
+
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _inject_support_reservation(
+def _inject_support_reservation[Result: host_operations._ProfiledOperation](
     self: host_operations.ProfiledSimulationOperations,
     *,
-    original: Callable[..., Any],
+    original: Callable[..., Result],
     profiled: list[jax.stages.Compiled],
     stages: list[str],
     refuse_at: int,
-    **kwargs: Any,
-) -> Any:
+    **kwargs: Unpack[_HostCompilation],
+) -> Result:
     result = original(self, **kwargs)
     if kwargs["function"].__module__ == process_grids.__name__:
-        stages.append(kwargs["static_arguments"].get("stage", "uniform"))
+        stage = kwargs["static_arguments"].get("stage", "uniform")
+        assert isinstance(stage, str)
+        stages.append(stage)
         if len(stages) == refuse_at:
             profiled.append(result.executable)
             return replace(result, memory=synthetic_memory(2**30))
@@ -103,16 +131,21 @@ def _inputs(
     )
 
 
-def _guard_normal_linspace(
-    *args: Any, original: Callable[..., Any], attempts: list[int], **kwargs: Any
-) -> Any:
-    if (
-        sys._getframe(1).f_code
-        is inspect.unwrap(NormalIIDProcess.compute_gridpoints).__code__
-    ):
-        attempts.append(kwargs["num"])
-        raise AssertionError("Normal support allocated before admission")
-    return original(*args, **kwargs)
+def _guard_normal_linspace[**P, Result](
+    *, original: Callable[P, Result], attempts: list[int]
+) -> Callable[P, Result]:
+    def call(*args: P.args, **kwargs: P.kwargs) -> Result:
+        if (
+            sys._getframe(1).f_code
+            is inspect.unwrap(NormalIIDProcess.compute_gridpoints).__code__
+        ):
+            n_points = kwargs["num"]
+            assert isinstance(n_points, int)
+            attempts.append(n_points)
+            raise AssertionError("Normal support allocated before admission")
+        return original(*args, **kwargs)
+
+    return call
 
 
 @pytest.mark.parametrize("supplied", [False, True])
@@ -130,7 +163,7 @@ def test_normal_support_refuses_low_budget_before_grid_dispatch(
     monkeypatch.setattr(
         jnp,
         "linspace",
-        partial(_guard_normal_linspace, original=jnp.linspace, attempts=attempts),
+        _guard_normal_linspace(original=jnp.linspace, attempts=attempts),
     )
     monkeypatch.setattr(
         host_operations.ProfiledSimulationOperations,
@@ -195,7 +228,7 @@ def test_normal_support_preserves_saved_identity_value_and_policy(
     )
 
 
-def _owner(*, parameters: object) -> process_grids.SimulationProcessGrids:
+def _owner(*, parameters: FootprintTree) -> process_grids.SimulationProcessGrids:
     return process_grids.SimulationProcessGrids(
         live_footprint=lambda: measure_buffer_footprint(tree=parameters),
         devices=(jax.devices()[0],),
@@ -224,7 +257,7 @@ def test_normal_support_matches_eager_bytes_across_generated_parameters(
         )
     ]
     spec = NormalIIDProcess(n_points=n_points, gauss_hermite=False)
-    owner = _owner(parameters=parameters)
+    owner = _owner(parameters=tuple(parameters))
     required = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     for operands in parameters:
         eager = np.asarray(spec.compute_gridpoints(**operands))
@@ -300,7 +333,7 @@ def _observe_stages(
     *,
     original: Callable[..., ValueND],
     produced: list[ValueND],
-    **kwargs: Any,
+    **kwargs: Unpack[_ProcessStage],
 ) -> ValueND:
     for result in produced:
         missing = resident_bytes_by_device(

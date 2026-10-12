@@ -14,11 +14,12 @@ import pytest
 
 import lcm
 import lcm.solvers
+from _lcm.typing import JSONValue
 from lcm import AgeGrid, DiscreteGrid, Model, PolicyLookup, Regime, categorical
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.persistence import load_solution, save_solution
 from lcm.solver_api import SolutionSource, ValueStore
-from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from lcm.typing import DiscreteAction, FloatND, ScalarInt, StateName
 from lcm_examples.mortality import LaborSupply
 from tests.test_models.deterministic.discrete import get_model as get_discrete_model
 from tests.test_models.deterministic.discrete import (
@@ -260,7 +261,7 @@ def test_lookup_policy_takes_discrete_state_codes_of_any_integer_dtype():
     params = get_discrete_params(n_periods=4)
     solution = model.solve(params=params, log_level="off")
 
-    def rows(codes: jax.Array) -> dict:
+    def rows(codes: jax.Array) -> dict[str, list[int | float]]:
         got = model.lookup_policy(
             params=params,
             solution=solution,
@@ -327,7 +328,9 @@ def test_state_grid_scales_shock_nodes_with_runtime_sigma(sigma):
     model = build_shock_model()
     params = build_shock_params()
     unit = model.state_grid(params=params, regime_name="alive", state_name="income")
-    params["alive"]["income"] = {"mu": 0.0, "sigma": sigma}
+    alive = params["alive"]
+    assert isinstance(alive, dict)
+    alive["income"] = {"mu": 0.0, "sigma": sigma}
     got = model.state_grid(params=params, regime_name="alive", state_name="income")
     np.testing.assert_allclose(got, sigma * np.asarray(unit), rtol=1e-6)
 
@@ -445,7 +448,7 @@ def test_restored_budgeted_lookup_has_analytic_last_decision_policy(
     *,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
-    record_property: Callable[[str, object], None],
+    record_property: Callable[[str, JSONValue], None],
 ):
     """Restored public lookup owns its live inputs under the real device budget."""
     assert jax.default_backend() == "gpu"
@@ -587,7 +590,7 @@ _OWNER_PERIODS = 16
 _OWNER_POINTS = 32768
 
 
-def _restored_owner_fixture(*, tmp_path: Path, archive_state: str):
+def _restored_owner_fixture(*, tmp_path: Path, archive_state: StateName):
     """Solve unbudgeted, save, release the producer and reload the archive.
 
     Returns the restored result, its parameters, a budgeted-consumer factory and
@@ -636,7 +639,7 @@ def _final_decision_lookup(*, model, params, restored):
 
 @pytest.mark.parametrize("archive_state", ["cold", "warm"])
 def test_restored_budgeted_lookup_refuses_when_cache_and_view_exceed_budget(
-    *, tmp_path: Path, archive_state: str
+    *, tmp_path: Path, archive_state: StateName
 ):
     """A budget below archive cache plus resolved view refuses the lookup.
 
@@ -691,7 +694,7 @@ def test_restored_budgeted_lookup_refuses_after_other_consumers_add_views(
 
 @pytest.mark.parametrize("archive_state", ["cold", "warm"])
 def test_restored_lookup_under_a_generous_budget_has_analytic_policy_on_repeat(
-    *, tmp_path: Path, archive_state: str
+    *, tmp_path: Path, archive_state: StateName
 ):
     """A budget far above every retained owner returns the analytic policy twice.
 

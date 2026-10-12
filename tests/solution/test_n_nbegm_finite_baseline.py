@@ -16,7 +16,7 @@ compared against the same capture.
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Unpack
 
 import jax
 import numpy as np
@@ -27,6 +27,7 @@ import _lcm.solution.nnbegm as solvers_mod
 from lcm import ExecutionConfig
 from lcm.solver_api import EGM_CONTINUATION
 from lcm.typing import FloatND
+from tests.solution.test_nbegm_retention_specialization import _NativeKernelKwargs
 from tests.test_models import n_nbegm_toy as toy
 
 if TYPE_CHECKING:
@@ -71,10 +72,10 @@ def _solve_recording_kernel_results(
 
     def recording_call(
         self: solvers_mod._NNBEGMPeriodKernel,
-        **kwargs: object,
+        **kwargs: Unpack[_NativeKernelKwargs],
     ) -> KernelOutput:
-        result = original_call(self, **kwargs)  # ty: ignore[invalid-argument-type]
-        recorded[cast("int", kwargs["period"])] = _host_copy(result=result)
+        result = original_call(self, **kwargs)
+        recorded[kwargs["period"]] = _host_copy(result=result)
         return result
 
     monkeypatch.setattr(

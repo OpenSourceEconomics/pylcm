@@ -11,8 +11,10 @@ halving disabled:
 """
 
 import functools
-from typing import Any
+from collections.abc import Callable, Mapping
+from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -20,6 +22,8 @@ import pytest
 
 from _lcm.solution import backward_induction
 from lcm import ExecutionConfig, Model
+from lcm.solver_api import SolutionResult
+from lcm.typing import RegimeName
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution.test_collective_cell_ceiling import _published_arrays
 from tests.solution.test_grid_search_cell_axis import (
@@ -30,6 +34,11 @@ from tests.solution.test_grid_search_cell_axis import (
     _RegimeId,
 )
 from tests.test_models.initial_nodes import initial_nodes_of
+
+type _GroupedCores = MappingProxyType[
+    tuple[RegimeName, int], MappingProxyType[str, backward_induction.PlannedCore]
+]
+
 
 _KINDS = ("singleton", "ev1", "collective")
 _BUDGET = 10**8
@@ -55,30 +64,42 @@ def _model(*, kind: str, enabled: bool, budget: int | None) -> Model:
 
 # keyword-only-exempt: library-callback=_group_cores_by_regime_period
 def _capture_grouping(
-    cores_by_triple: Any, *, original: Any, sink: dict[Any, int]
-) -> Any:
+    cores_by_triple: Mapping[
+        backward_induction._CoreTriple, backward_induction.PlannedCore
+    ],
+    *,
+    original: Callable[
+        [Mapping[backward_induction._CoreTriple, backward_induction.PlannedCore]],
+        _GroupedCores,
+    ],
+    sink: dict[backward_induction._CoreTriple, int],
+) -> _GroupedCores:
     for triple, core in cores_by_triple.items():
         if "cell" in core.tile_widths:
             sink[triple] = core.tile_widths["cell"]
     return original(cores_by_triple)
 
 
-def _materialised_while_wider_than_one(*, compiled: object, widths: Any) -> str | None:
+def _materialised_while_wider_than_one(
+    *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
+) -> str | None:
     del compiled
     return "controlled_materialised_gather" if widths.get("cell", 1) > 1 else None
 
 
-def _never_materialised(*, compiled: object, widths: Any) -> str | None:
+def _never_materialised(
+    *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
+) -> str | None:
     del compiled, widths
 
 
 @functools.cache
 def _solve(
     *, kind: str, enabled: bool, firing: bool, budget: int | None
-) -> tuple[Model, Any, dict[Any, int]]:
+) -> tuple[Model, SolutionResult, dict[backward_induction._CoreTriple, int]]:
     """Solve one arm; return its model, solution and dispatched cell widths."""
     model = _model(kind=kind, enabled=enabled, budget=budget)
-    widths: dict[Any, int] = {}
+    widths: dict[backward_induction._CoreTriple, int] = {}
     check = _materialised_while_wider_than_one if firing else _never_materialised
     with pytest.MonkeyPatch.context() as patcher:
         patcher.setattr(
@@ -95,17 +116,21 @@ def _solve(
     return model, solution, widths
 
 
-def _reference(*, kind: str, budget: int | None = None) -> tuple[Model, Any, Any]:
+def _reference(
+    *, kind: str, budget: int | None = None
+) -> tuple[Model, SolutionResult, dict[backward_induction._CoreTriple, int]]:
     return _solve(kind=kind, enabled=False, firing=False, budget=budget)
 
 
 def _candidate(
     *, kind: str, firing: bool, budget: int | None = None
-) -> tuple[Model, Any, Any]:
+) -> tuple[Model, SolutionResult, dict[backward_induction._CoreTriple, int]]:
     return _solve(kind=kind, enabled=True, firing=firing, budget=budget)
 
 
-def _publication_mismatches(*, got: Any, expected: Any, firing: bool) -> list[str]:
+def _publication_mismatches(
+    *, got: SolutionResult, expected: SolutionResult, firing: bool
+) -> list[str]:
     """Name every published array that breaks the arm's comparison contract."""
     actual, reference = _published_arrays(got), _published_arrays(expected)
     if not reference or actual.keys() != reference.keys():
@@ -130,7 +155,7 @@ def _publication_mismatches(*, got: Any, expected: Any, firing: bool) -> list[st
     return mismatches
 
 
-def _choices(*, model: Model, solution: Any) -> pd.DataFrame:
+def _choices(*, model: Model, solution: SolutionResult) -> pd.DataFrame:
     """Simulate every state of the six-cell grid in the acting regime."""
     first, second = np.meshgrid(np.array([1.0, 3.0]), np.array([2.0, 4.0, 6.0]))
     n_subjects = first.size

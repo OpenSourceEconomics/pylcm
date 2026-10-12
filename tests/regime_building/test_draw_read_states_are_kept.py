@@ -24,7 +24,13 @@ import pytest
 from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.processes import NormalIIDProcess, RouwenhorstAR1Process
 from lcm.regime import Regime
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+    UserParamsNode,
+)
 from tests.conftest import X64_ENABLED
 
 DISCOUNT_FACTOR = 0.9
@@ -93,7 +99,7 @@ def _model(*, declared_at: Literal["model", "regime"]) -> Model:
     )
 
 
-def _params() -> dict:
+def _params() -> dict[str, UserParamsNode]:
     return {"discount_factor": DISCOUNT_FACTOR}
 
 

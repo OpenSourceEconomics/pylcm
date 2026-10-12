@@ -1,6 +1,7 @@
 """Model-authoritative preflight for built-in simulation-policy artifacts."""
 
 from collections.abc import Mapping, Sequence
+from fractions import Fraction
 
 import numpy as np
 from jax import Array
@@ -13,9 +14,13 @@ from _lcm.egm.outer_inversion import (
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead
+from lcm.typing import ActionName, StateName
+
+# Replay metadata compared exactly: names, numbers and `None`, nested in tuples.
+type _ReplayMetadata = str | int | float | Fraction | tuple[_ReplayMetadata, ...] | None
 
 
-def _same_exactly_typed(*, actual: object, expected: object) -> bool:
+def _same_exactly_typed(*, actual: _ReplayMetadata, expected: _ReplayMetadata) -> bool:
     """Compare replay metadata without admitting equal values of another type."""
     if type(actual) is not type(expected):
         return False
@@ -157,9 +162,9 @@ def validate_nested_egm_sim_policy(  # noqa: PLR0911
 def _validate_egm_payload(
     *,
     policy: EGMSimPolicy,
-    expected_discrete_state_names: tuple[str, ...],
-    expected_passive_state_names: tuple[str, ...],
-    expected_discrete_action_names: tuple[str, ...],
+    expected_discrete_state_names: tuple[StateName, ...],
+    expected_passive_state_names: tuple[StateName, ...],
+    expected_discrete_action_names: tuple[ActionName, ...],
     expected_axis_lengths: tuple[int, ...],
     expected_node_count: int,
     expected_float_dtype: str,
@@ -516,7 +521,7 @@ def _validate_nested_static_fields(
 
 def _validate_replay_capability(  # noqa: PLR0911
     *,
-    capability: object,
+    capability: OuterReplayCapability,
     policy_read: NNBEGMPolicyRead,
     period: int,
     expected: OuterReplayCapability,

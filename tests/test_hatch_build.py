@@ -16,8 +16,10 @@ Two properties the build owes its caller:
 
 import subprocess
 from pathlib import Path
+from typing import Unpack
 
 import pytest
+from typing_extensions import TypedDict
 
 import hatch_build
 from _lcm.egm.upper_envelope._exact_affine import ffi
@@ -441,10 +443,10 @@ def test_tool_version_preserves_report_and_absent_tool(
     *, monkeypatch: pytest.MonkeyPatch, executable: str | None
 ) -> None:
     """Preserve the exact version report and avoid probing an absent tool."""
-    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    calls: list[tuple[tuple[list[str]], _ToolProbeKwargs]] = []
 
     def record_run(
-        command: list[str], **kwargs: object
+        command: list[str], **kwargs: Unpack[_ToolProbeKwargs]
     ) -> subprocess.CompletedProcess[str]:
         calls.append(((command,), kwargs))
         return subprocess.CompletedProcess(
@@ -481,10 +483,10 @@ def test_tool_version_propagates_timeout(monkeypatch: pytest.MonkeyPatch) -> Non
     """Propagate a timed-out probe instead of reporting unavailable metadata."""
     command = ["/owned/example/compiler", "--version"]
     timeout = subprocess.TimeoutExpired(cmd=command, timeout=10)
-    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    calls: list[tuple[tuple[list[str]], _ToolProbeKwargs]] = []
 
     def record_run(
-        command: list[str], **kwargs: object
+        command: list[str], **kwargs: Unpack[_ToolProbeKwargs]
     ) -> subprocess.CompletedProcess[str]:
         calls.append(((command,), kwargs))
         raise timeout
@@ -501,3 +503,10 @@ def test_tool_version_propagates_timeout(monkeypatch: pytest.MonkeyPatch) -> Non
             {"capture_output": True, "text": True, "check": False, "timeout": 10},
         )
     ]
+
+
+class _ToolProbeKwargs(TypedDict, closed=True):
+    capture_output: bool
+    text: bool
+    check: bool
+    timeout: int

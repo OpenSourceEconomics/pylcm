@@ -1,13 +1,17 @@
 """Tests for lazy NaN diagnostic enrichment in validate_V."""
 
+from collections.abc import Mapping
 from types import MappingProxyType
+from typing import NoReturn, cast
 
 import jax.numpy as jnp
 import pytest
+from typing_extensions import TypedDict
 
 from _lcm.engine import StateActionSpace
 from _lcm.grids import LinSpacedGrid
-from _lcm.solution.validate_V import validate_V
+from _lcm.solution.validate_V import _Reductions, validate_V
+from _lcm.typing import JSONValue
 from lcm import Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
@@ -18,6 +22,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParams,
 )
 
 
@@ -49,7 +54,7 @@ def test_diagnostic_arrays_have_state_action_grid_shape():
     n_wealth, n_consumption = 3, 2
     sas = _make_state_action_space(n_wealth=n_wealth, n_consumption=n_consumption)
 
-    def mock_compute_intermediates(**kwargs: jnp.ndarray) -> dict:  # noqa: ARG001
+    def mock_compute_intermediates(**kwargs: jnp.ndarray) -> _Reductions:  # noqa: ARG001
         # Return the fused-reduction dict the real closure produces after
         # productmap-wrapping + on-device reduction.
         return {
@@ -84,15 +89,15 @@ def test_diagnostic_arrays_have_state_action_grid_shape():
 
     exc = exc_info.value
     assert exc.diagnostics is not None
-    diagnostics: dict = exc.diagnostics  # ty: ignore[invalid-assignment]
-    u_by_dim = diagnostics["U_nan_fraction"]["by_dim"]
+    diagnostics: Mapping[str, JSONValue] = exc.diagnostics
+    u_by_dim = cast("_MetricSummary", diagnostics["U_nan_fraction"])["by_dim"]
     assert "wealth" in u_by_dim, f"Expected 'wealth' in by_dim, got: {u_by_dim}"
     assert "consumption" in u_by_dim, (
         f"Expected 'consumption' in by_dim, got: {u_by_dim}"
     )
 
 
-def _build_nan_model() -> tuple[Model, dict]:
+def _build_nan_model() -> tuple[Model, UserParams]:
     """Build a minimal model that produces NaN in V during backward induction."""
 
     @categorical(ordered=False)
@@ -142,7 +147,7 @@ def _build_nan_model() -> tuple[Model, dict]:
     return model, params
 
 
-def _build_always_nan_model() -> tuple[Model, dict]:
+def _build_always_nan_model() -> tuple[Model, UserParams]:
     """Build a model whose utility is unconditionally NaN.
 
     Used to test that the NaN/Inf validation in `simulate` honours `log_level`.
@@ -253,9 +258,9 @@ def test_nan_diagnostics_end_to_end() -> None:
         "Likely cause: compute_intermediates closure returns a tuple but "
         "_summarize_diagnostics expects a dict — see _wrap_with_reduction."
     )
-    diagnostics: dict = exc.diagnostics  # ty: ignore[invalid-assignment]
+    diagnostics: Mapping[str, JSONValue] = exc.diagnostics
     assert "U_nan_fraction" in diagnostics
-    by_dim = diagnostics["U_nan_fraction"]["by_dim"]
+    by_dim = cast("_MetricSummary", diagnostics["U_nan_fraction"])["by_dim"]
     assert "wealth" in by_dim
     assert "consumption" in by_dim
 
@@ -264,7 +269,7 @@ def test_diagnostic_failure_preserves_original_error():
     """If diagnostics crash, the original InvalidValueFunctionError survives."""
     sas = _make_state_action_space()
 
-    def broken_compute_intermediates(**kwargs: jnp.ndarray) -> None:  # noqa: ARG001
+    def broken_compute_intermediates(**kwargs: jnp.ndarray) -> NoReturn:  # noqa: ARG001
         msg = "intentional diagnostic failure"
         raise RuntimeError(msg)
 
@@ -281,3 +286,8 @@ def test_diagnostic_failure_preserves_original_error():
             ),
             flat_params=MappingProxyType({}),
         )
+
+
+class _MetricSummary(TypedDict):
+    overall: float
+    by_dim: dict[str, list[float]]

@@ -30,7 +30,7 @@ from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.transition_plans import InterpolationBasisInfo
 from _lcm.typing import FlatParams, RegimeName
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, FloatND, IntND, StateName
 
 
 @dataclass(frozen=True)
@@ -309,7 +309,7 @@ def _raise_at(
 
 def _states_for_period(
     *, regime: Regime, state_action_space: StateActionSpace, period: int
-) -> Mapping[str, object]:
+) -> Mapping[StateName, FloatND | IntND]:
     """Current-period state axes, overriding age-varying states with period-t nodes.
 
     For a regime with `AgeSpecializedGrid` states, replace the representative base

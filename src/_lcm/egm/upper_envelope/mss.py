@@ -94,7 +94,7 @@ batched over a leading dimension of the candidate arrays.
 import functools
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -107,6 +107,7 @@ from _lcm.egm.upper_envelope._exact_affine import (
     exact_query_winner_batched,
 )
 from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
+from _lcm.typing import PytreeChild
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarInt
 
 
@@ -1115,12 +1116,14 @@ _CROSSING_ROW_FIELDS = (
 )
 
 
-def _flatten_crossing_row(row: _CrossingRow) -> tuple[tuple[Any, ...], None]:
+def _flatten_crossing_row(row: _CrossingRow) -> tuple[tuple[PytreeChild, ...], None]:
     return tuple(getattr(row, name) for name in _CROSSING_ROW_FIELDS), None
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-def _unflatten_crossing_row(_aux: None, children: Sequence[Any]) -> _CrossingRow:
+def _unflatten_crossing_row(
+    _aux: None, children: Sequence[PytreeChild]
+) -> _CrossingRow:
     row = object.__new__(_CrossingRow)
     for name, child in zip(_CROSSING_ROW_FIELDS, children, strict=True):
         object.__setattr__(row, name, child)

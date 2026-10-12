@@ -4,7 +4,7 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -17,7 +17,10 @@ from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
 from _lcm.typing import (
+    ArtifactPayload,
     FlatParams,
+    HostArray,
+    ParamsLeaf,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
@@ -46,12 +49,12 @@ if TYPE_CHECKING:
 else:
     # The block-major retention imports the solve engine, which imports this
     # module; the runtime check of this private bridge accepts any owner.
-    RetainedComponentValues = Any
+    type RetainedComponentValues = object
     # The beartype import claw resolves annotations at runtime. Importing the
     # concrete type here would close the artifacts -> authority -> artifacts cycle;
     # static checking keeps the precise type above while runtime checks the rest of
     # this private bridge's fully concrete signature.
-    SolutionAuthority = Any
+    type SolutionAuthority = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -76,11 +79,11 @@ class OwnedSolutionView:
     """The published replay policies consumed by a declared route."""
     dissolution_flags: PeriodToRegimeToDissolutionFlags
     """The retained per-period, per-collective-regime dissolution flags."""
-    replay_artifacts: Mapping[ArtifactRef, object]
+    replay_artifacts: MappingProxyType[ArtifactRef, ArtifactPayload]
     """Every retained replay-channel payload, by reference, for plugin routes."""
     authority: SolutionAuthority
     """The solution authority bound to this solve."""
-    component_values: object | None = None
+    component_values: RetainedComponentValues | None = None
     """The host retention behind a block-major result's values, else `None`.
 
     A block-major result keeps no complete value on a device: `values` is
@@ -117,12 +120,14 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         if component_values is None
         else component_values.coordinates
     )
-    replay: dict[ArtifactRef, object] = dict(internal_result.replay_artifacts)
-    retained_continuations: dict[ArtifactRef, object] = dict(
+    replay: dict[ArtifactRef, ArtifactPayload] = dict(internal_result.replay_artifacts)
+    retained_continuations: dict[ArtifactRef, ArtifactPayload] = dict(
         internal_result.retained_continuations
     )
-    auxiliary: dict[ArtifactRef, object] = dict(internal_result.auxiliary_artifacts)
-    diagnostics: dict[ArtifactRef, object] = {}
+    auxiliary: dict[ArtifactRef, ArtifactPayload] = dict(
+        internal_result.auxiliary_artifacts
+    )
+    diagnostics: dict[ArtifactRef, ArtifactPayload] = {}
     omissions: dict[ArtifactRef, OmissionReason] = {}
     declared_replay_policies: PeriodToRegimeToSimulationPolicy = MappingProxyType(
         {
@@ -371,7 +376,14 @@ def fingerprint_flat_params(flat_params: FlatParams) -> str:
     return digest.hexdigest()
 
 
-def _update_digest_token(*, digest: Any, chunk: str | bytes) -> None:  # noqa: ANN401
+@runtime_checkable
+class _Digest(Protocol):
+    """A running `hashlib` digest; the module exposes no public class for one."""
+
+    def update(self, data: bytes, /) -> None: ...
+
+
+def _update_digest_token(*, digest: _Digest, chunk: str | bytes) -> None:
     """Feed one length-prefixed token into the digest."""
     payload = chunk.encode() if isinstance(chunk, str) else chunk
     digest.update(len(payload).to_bytes(8, byteorder="big"))
@@ -380,8 +392,8 @@ def _update_digest_token(*, digest: Any, chunk: str | bytes) -> None:  # noqa: A
 
 def _update_digest_value(
     *,
-    digest: Any,  # noqa: ANN401
-    value: Any,  # noqa: ANN401
+    digest: _Digest,
+    value: ParamsLeaf | HostArray,
     path: tuple[str, ...],
 ) -> None:
     """Feed one parameter leaf, with its tree path and container boundaries."""
@@ -431,10 +443,10 @@ def _graph_publishes_replay(*, regime: Regime, period: int) -> bool:
     return any(program.scope is ProgramScope.REPLAY for program in graph.values())
 
 
-def _add_nested_artifacts(
+def _add_nested_artifacts[Payload](
     *,
-    target: dict[ArtifactRef, object],
-    nested: Mapping[int, Mapping[RegimeName, object]],
+    target: dict[ArtifactRef, Payload],
+    nested: Mapping[int, Mapping[RegimeName, Payload]],
     key: ArtifactKey,
 ) -> None:
     """Flatten one existing period/regime mapping into addressed artifacts."""

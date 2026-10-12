@@ -11,7 +11,7 @@ continuation leaf.
 import dataclasses
 import logging
 from types import MappingProxyType
-from typing import cast
+from typing import Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -46,6 +46,7 @@ from tests.regime_building.test_gated_edges_collective_solve import (
     _make_full_topology_regimes,
     _with_full_topology_laws,
 )
+from tests.solution._callback_types import ConsumeOutputKwargs
 
 
 def _params() -> dict[str, float]:
@@ -327,8 +328,10 @@ def test_a_replay_payload_sharing_a_continuation_leaf_survives_the_solve(
     published: list[FloatND] = []
     consume = backward_induction.consume_kernel_output
 
-    def _also_publish_on_replay(**kwargs: object) -> ConsumedKernelOutput:
-        result = consume(**kwargs)  # ty: ignore[invalid-argument-type]
+    def _also_publish_on_replay(
+        **kwargs: Unpack[ConsumeOutputKwargs],
+    ) -> ConsumedKernelOutput:
+        result = consume(**kwargs)
         if result.continuation is None:
             return result
         leaf = jax.tree.leaves(result.continuation)[0]
@@ -396,8 +399,10 @@ def test_a_diagnostic_payload_sharing_a_continuation_leaf_survives_the_solve(
     published: list[FloatND] = []
     consume = backward_induction.consume_kernel_output
 
-    def _also_publish_as_diagnostics(**kwargs: object) -> ConsumedKernelOutput:
-        result = consume(**kwargs)  # ty: ignore[invalid-argument-type]
+    def _also_publish_as_diagnostics(
+        **kwargs: Unpack[ConsumeOutputKwargs],
+    ) -> ConsumedKernelOutput:
+        result = consume(**kwargs)
         if result.continuation is None:
             return result
         leaf = jax.tree.leaves(result.continuation)[0]
@@ -421,8 +426,10 @@ def test_a_replay_payload_sharing_a_continuation_leaf_keeps_its_values(
     published: list[tuple[FloatND, np.ndarray]] = []
     consume = backward_induction.consume_kernel_output
 
-    def _also_publish_on_replay(**kwargs: object) -> ConsumedKernelOutput:
-        result = consume(**kwargs)  # ty: ignore[invalid-argument-type]
+    def _also_publish_on_replay(
+        **kwargs: Unpack[ConsumeOutputKwargs],
+    ) -> ConsumedKernelOutput:
+        result = consume(**kwargs)
         if result.continuation is None:
             return result
         leaf = jax.tree.leaves(result.continuation)[0]

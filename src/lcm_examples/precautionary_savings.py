@@ -35,10 +35,11 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 
-ShockType = Literal["normal_gh", "rouwenhorst", "tauchen"]
-WealthGridType = Literal["lin", "log", "irreg"]
+type ShockType = Literal["normal_gh", "rouwenhorst", "tauchen"]
+type WealthGridType = Literal["lin", "log", "irreg"]
 
 _SHOCK_GRID_CLASSES = {
     "normal_gh": NormalIIDProcess,
@@ -213,7 +214,7 @@ def get_params(
     rho: float = 0.0,
     interest_rate: float = 0.0,
     discount_factor: float = 0.95,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the precautionary savings model.
 
     Args:

@@ -21,7 +21,7 @@ import jax
 
 from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.value_transfer import TransferCost, TransferOperationClass
-from _lcm.typing import RegimeName, StateName
+from _lcm.typing import JSONValue, RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import (
     AxisWidth,
@@ -650,6 +650,19 @@ def execution_over_visible_devices() -> ResolvedExecution:
 
 type AxisDispatch = Literal["dense", "streamed"]
 
+# A plan record field as `to_json` reads it: plain data, tuples, and mappings keyed
+# by names or device ids.
+type _RecordField = (
+    bool
+    | int
+    | float
+    | str
+    | tuple[_RecordField, ...]
+    | Mapping[str, _RecordField]
+    | Mapping[int, _RecordField]
+    | None
+)
+
 # Optimized-HLO opcodes that move data between devices, with their asynchronous
 # start halves; the matching `-done` halves are not counted a second time.
 _HLO_COLLECTIVE = re.compile(
@@ -874,7 +887,7 @@ def count_hlo_collectives(*, hlo_text: str | None) -> MappingProxyType[str, int]
     return MappingProxyType(dict(sorted(counts.items())))
 
 
-def _jsonable(value: object) -> object:
+def _jsonable(value: _RecordField) -> JSONValue:
     """Convert a record field into JSON-serializable plain data."""
     if isinstance(value, Mapping):
         return {str(key): _jsonable(item) for key, item in value.items()}

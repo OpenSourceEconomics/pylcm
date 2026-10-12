@@ -4,7 +4,7 @@ import jax
 
 
 def runtime_shardings_match(
-    *, actual: object, expected: jax.sharding.Sharding, ndim: int
+    *, actual: jax.sharding.Sharding | None, expected: jax.sharding.Sharding, ndim: int
 ) -> bool:
     """Accept equivalent Named placement, preserving mesh shape and device order.
 

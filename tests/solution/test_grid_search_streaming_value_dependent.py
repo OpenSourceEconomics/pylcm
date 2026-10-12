@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -41,7 +41,9 @@ from _lcm.solution.grid_search import (
     _GridSearchPeriodKernel,
     _value_reads,
 )
+from _lcm.typing import ArgumentTree, PytreeValue
 from lcm import Model
+from lcm.typing import BoolND, FloatND, RegimeName, UserParams
 from tests.simulation.test_aot_collective_and_gated import _make_consent_model
 from tests.simulation.test_aot_same_period_refs import _make_participation_model
 
@@ -49,8 +51,8 @@ from tests.simulation.test_aot_same_period_refs import _make_participation_model
 def _materialize_program(
     *,
     model: Model,
-    regime_name: str,
-    params: Mapping[str, Any],
+    regime_name: RegimeName,
+    params: UserParams,
 ) -> tuple[_GridSearchArgumentBuilder, MaterializedCoreProgram]:
     """Build exactly the program arguments used by backward induction."""
     flat_params = model._process_params(params)
@@ -59,13 +61,10 @@ def _materialize_program(
         flat_params=flat_params,
     )
     regime = model._regimes[regime_name]
-    edge_kwargs = cast(
-        "dict[str, Any]",
-        _edge_kwargs(
-            regime=regime,
-            regime_name=regime_name,
-            next_edge_to_V_arr=next_edges,
-        ),
+    edge_kwargs = _edge_kwargs(
+        regime=regime,
+        regime_name=regime_name,
+        next_edge_to_V_arr=next_edges,
     )
     kernel = regime.solution.period_kernels[0]
     assert isinstance(kernel, _GridSearchPeriodKernel)
@@ -85,7 +84,7 @@ def _materialize_program(
     return builder, materialize_core_program(program=program, context=context)
 
 
-def _assert_tree_equal(*, actual: object, expected: object) -> None:
+def _assert_tree_equal(*, actual: PytreeValue, expected: PytreeValue) -> None:
     """Compare every numerical output leaf exactly."""
     assert jax.tree.structure(actual) == jax.tree.structure(expected)
     for actual_leaf, expected_leaf in zip(
@@ -100,9 +99,10 @@ def _aligned_transfer_plan(
     """Resolve identity adapters for this test's already local JAX arrays."""
     result: list[ResolvedValueTransfer] = []
     for access in program.requirements.value_reads:
-        leaf: object = program.arguments[access.source.channel.value]
+        leaf: ArgumentTree = program.arguments[access.source.channel.value]
         for segment in access.source.path:
             assert isinstance(leaf, Mapping)
+            assert isinstance(segment, str)
             leaf = leaf[segment]
         assert isinstance(leaf, jax.Array)
         result.append(
@@ -169,8 +169,8 @@ def _consent_case() -> Model:
 def test_value_dependent_model_declares_its_required_program_disposition(
     *,
     model_factory: Callable[[], Model],
-    regime_name: str,
-    params: Mapping[str, Any],
+    regime_name: RegimeName,
+    params: UserParams,
     expected_channels: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]],
     expected_disposition: CoreExecutionDisposition,
     expected_reason: str | None,
@@ -213,11 +213,11 @@ def test_value_dependent_model_declares_its_required_program_disposition(
 def _observable_Q_and_F(
     *,
     choice: jax.Array,
-    next_regime_to_V_arr: Mapping[str, jax.Array],
-    same_period_regime_to_V_arr: Mapping[str, jax.Array],
-    same_period_regime_to_params: Mapping[str, Mapping[str, jax.Array]],
-    edge_reference_regime_to_V_arr: Mapping[str, jax.Array],
-    edge_reference_regime_to_params: Mapping[str, Mapping[str, jax.Array]],
+    next_regime_to_V_arr: Mapping[RegimeName, jax.Array],
+    same_period_regime_to_V_arr: Mapping[RegimeName, jax.Array],
+    same_period_regime_to_params: Mapping[RegimeName, Mapping[str, jax.Array]],
+    edge_reference_regime_to_V_arr: Mapping[RegimeName, jax.Array],
+    edge_reference_regime_to_params: Mapping[RegimeName, Mapping[str, jax.Array]],
 ) -> tuple[jax.Array, jax.Array]:
     """Make every value-dependent input observable in candidate values."""
     value = (
@@ -231,7 +231,9 @@ def _observable_Q_and_F(
     return value, choice != 1.0
 
 
-def _observable_route() -> tuple[Callable[..., object], MaterializedCoreProgram]:
+def _observable_route() -> tuple[
+    Callable[..., FloatND | tuple[FloatND, BoolND]], MaterializedCoreProgram
+]:
     """Build a dense oracle and a non-production streamed reference program."""
     dense = get_max_Q_over_a(
         Q_and_F=_observable_Q_and_F,
@@ -245,7 +247,7 @@ def _observable_route() -> tuple[Callable[..., object], MaterializedCoreProgram]
         action_names=("choice",),
         state_names=(),
     )
-    arguments: Mapping[str, object] = MappingProxyType(
+    arguments: Mapping[str, PytreeValue] = MappingProxyType(
         {
             "choice": jnp.asarray([0.0, 1.0, 2.0]),
             "next_regime_to_V_arr": {"target": jnp.asarray([10.0])},
@@ -289,12 +291,12 @@ def _observable_route() -> tuple[Callable[..., object], MaterializedCoreProgram]
     program = materialize_core_program(
         program=declaration,
         context=CoreBuildContext(
-            state_action_space=object(),
+            state_action_space=None,
             next_regime_to_V_arr={},
             next_regime_to_continuation={},
             flat_params={},
             period=0,
-            ages=object(),
+            ages=None,
         ),
     )
     return dense, program
@@ -322,3 +324,36 @@ def test_value_dependent_reference_matches_dense_eager_jit_and_aot(width: int) -
 
     for actual in (eager, jitted, aot):
         _assert_tree_equal(actual=actual, expected=dense)
+
+
+def _consent_edge_kwargs() -> Mapping[str, Mapping[str, jax.Array]]:
+    """Build the gated-edge kernel argument of the consent fixture's source regime."""
+    model = _make_consent_model()
+    flat_params = model._process_params({"discount_factor": 0.95})
+    _next_V, _next_continuation, next_edges = _build_continuation_templates(
+        regimes=model._regimes,
+        flat_params=flat_params,
+    )
+    return _edge_kwargs(
+        regime=model._regimes["single"],
+        regime_name="single",
+        next_edge_to_V_arr=next_edges,
+    )
+
+
+def test_edge_kwargs_are_a_read_only_mapping() -> None:
+    """A source kernel's gated-edge argument bundle is a read-only view."""
+    assert type(_consent_edge_kwargs()) is MappingProxyType
+
+
+def test_edge_kwargs_round_trip_through_jax_tree_utilities() -> None:
+    """The gated-edge argument bundle rebuilds as a read-only view of its targets."""
+    edge_kwargs = _consent_edge_kwargs()
+    leaves, treedef = jax.tree_util.tree_flatten(edge_kwargs)
+
+    rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+
+    assert (type(rebuilt), {name: tuple(value) for name, value in rebuilt.items()}) == (
+        MappingProxyType,
+        {name: tuple(value) for name, value in edge_kwargs.items()},
+    )

@@ -31,6 +31,7 @@ from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
+    QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
@@ -54,7 +55,7 @@ def _find_unsupported_feature(
     transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
     own_discrete_state_names: tuple[StateName, ...],
     own_passive_state_names: tuple[StateName, ...],
@@ -125,7 +126,7 @@ def _find_unsupported_target_feature(
     own_discrete_state_names: tuple[StateName, ...],
     euler_state_name: StateName,
     own_passive_state_names: tuple[StateName, ...],
-    allowed_param_names: frozenset[str],
+    allowed_param_names: frozenset[QualifiedName],
 ) -> str | None:
     """Return a message naming the first unsupported feature of one target.
 
@@ -314,7 +315,7 @@ def _find_unsupported_function_args(
     stateful_targets: tuple[RegimeName, ...],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     own_discrete_state_names: tuple[StateName, ...],
     own_passive_state_names: tuple[StateName, ...],
     own_discrete_action_names: tuple[ActionName, ...],

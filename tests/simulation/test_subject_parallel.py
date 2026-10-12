@@ -27,7 +27,7 @@ def _mesh(*, devices: tuple[jax.Device, ...]) -> jax.sharding.Mesh:
     )
 
 
-def _cell(*, state: jax.Array, key: jax.Array, grid: jax.Array) -> object:
+def _cell(*, state: jax.Array, key: jax.Array, grid: jax.Array) -> dict[str, jax.Array]:
     value = jnp.sum((state + grid) ** 2)
     return {
         "value": value,

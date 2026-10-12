@@ -58,6 +58,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 from tests.conftest import bind_laws, build_prepared_structure
@@ -826,7 +827,7 @@ def _full_topology_transitions() -> dict[str, Transition]:
     """
 
     def _consent_leg(
-        *, fallback_regime: str, stakeholder: str
+        *, fallback_regime: RegimeName, stakeholder: str
     ) -> dict[str, StakeholderRoute]:
         return {
             stakeholder: StakeholderRoute(
@@ -846,7 +847,9 @@ def _full_topology_transitions() -> dict[str, Transition]:
         ),
     }
 
-    def _consent_transition(*, fallback_regime: str, stakeholder: str) -> Transition:
+    def _consent_transition(
+        *, fallback_regime: RegimeName, stakeholder: str
+    ) -> Transition:
         return Transition(
             law=ByAge(
                 cases={
@@ -1015,7 +1018,9 @@ def _always_open_gate(V_target_f: FloatND) -> BoolND:
     return jnp.ones_like(V_target_f, dtype=bool)
 
 
-def _edge_with_refs(*, fallback_regime: str, gate_ref_regime: str) -> GatedEdge:
+def _edge_with_refs(
+    *, fallback_regime: RegimeName, gate_ref_regime: RegimeName
+) -> GatedEdge:
     """A one-leg gated edge whose fallback and gate reference name given regimes.
 
     The co-activity guard reads only `.legs[*].fallback.regime` and
@@ -1025,20 +1030,24 @@ def _edge_with_refs(*, fallback_regime: str, gate_ref_regime: str) -> GatedEdge:
     """
     return GatedEdge(
         gate=_always_open_gate,
-        legs={
-            "f": StakeholderRoute(
-                fallback=ProjectedRegimeValue(
-                    regime=fallback_regime,
+        legs=MappingProxyType(
+            {
+                "f": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime=fallback_regime,
+                        projection={"wage": _identity_wage},
+                    )
+                )
+            }
+        ),
+        gate_refs=MappingProxyType(
+            {
+                "g": ProjectedRegimeValue(
+                    regime=gate_ref_regime,
                     projection={"wage": _identity_wage},
                 )
-            )
-        },
-        gate_refs={
-            "g": ProjectedRegimeValue(
-                regime=gate_ref_regime,
-                projection={"wage": _identity_wage},
-            )
-        },
+            }
+        ),
     )
 
 
@@ -1133,3 +1142,16 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
         regimes_to_active_periods=regimes_to_active_periods,
         gated_periods=(0, 1),
     )
+
+
+@pytest.mark.parametrize("field_name", ["legs", "gate_refs"])
+def test_gated_edge_refuses_a_plain_dict_for_its_mappings(field_name: str) -> None:
+    """A gated edge holds read-only mappings; a plain dict is refused."""
+    edge = _edge_with_refs(fallback_regime="single", gate_ref_regime="single")
+    arguments = {
+        "legs": edge.legs,
+        "gate_refs": edge.gate_refs,
+        field_name: dict(getattr(edge, field_name)),
+    }
+    with pytest.raises(RegimeInitializationError, match=field_name):
+        GatedEdge(gate=_always_open_gate, **arguments)  # ty: ignore[invalid-argument-type]

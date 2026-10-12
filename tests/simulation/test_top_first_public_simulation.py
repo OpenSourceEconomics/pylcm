@@ -1,6 +1,6 @@
 """A supported-stack integration witness for one-profile independent admission."""
 
-from typing import Any
+from typing import Unpack
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +8,13 @@ import pytest
 
 import _lcm.simulation.chunk_admission as admission
 import _lcm.simulation.simulate as simulation
+from _lcm.simulation.chunk_planning import SimulationChunkProfile
 from lcm import ExecutionConfig, Model
+from tests.simulation._callback_types import (
+    ChunkResults,
+    SimulationChunkInputs,
+    WidthProfileInputs,
+)
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
@@ -39,11 +45,13 @@ def test_full_cohort_is_profiled_once_before_dispatch_on_each_public_call(
     profile_widths = admission._ChunkProfiler.profile_widths
     run_chunk = simulation._simulate_subject_chunk
 
-    def observe_profile(self: Any, **kwargs: Any) -> Any:
+    def observe_profile(
+        self: admission._ChunkProfiler, **kwargs: Unpack[WidthProfileInputs]
+    ) -> SimulationChunkProfile:
         profiles.append(kwargs["n_subjects"])
         return profile_widths(self, **kwargs)
 
-    def observe_chunk(**kwargs: Any) -> Any:
+    def observe_chunk(**kwargs: Unpack[SimulationChunkInputs]) -> ChunkResults:
         # A whole-shape profile must finish before this numerical execution starts.
         assert len(profiles) == len(chunks) + 1
         chunks.append(int(kwargs["initial_regime_ids"].shape[0]))

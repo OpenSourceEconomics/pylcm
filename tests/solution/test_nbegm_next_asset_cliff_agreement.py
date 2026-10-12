@@ -12,6 +12,7 @@ from collections.abc import Mapping
 
 import numpy as np
 
+from lcm.typing import FloatND, RegimeName
 from tests.test_models import nbegm_next_asset_cliff_toy as toy
 
 _MEDICAID_LIMIT = 12.0
@@ -30,7 +31,7 @@ def _solve(
     n_consumption: int = 120,
     savings_floor: float = 0.0,
     discount_factor: float = 0.95,
-) -> Mapping[int, Mapping]:
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the next-asset-cliff toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,

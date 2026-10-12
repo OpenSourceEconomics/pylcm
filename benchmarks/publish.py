@@ -14,9 +14,13 @@ import logging
 import shutil
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from benchmarks.asv_machine import stable_ram
 from benchmarks.pr_comment import display_names, display_sort_key
+
+if TYPE_CHECKING:
+    from _lcm.typing import JSONValue
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +177,7 @@ def _normalise_results(results_dir: Path) -> None:
             _write_json_if_changed(path=result_file, data=data)
 
 
-def _write_json_if_changed(*, path: Path, data: dict) -> None:
+def _write_json_if_changed(*, path: Path, data: dict[str, JSONValue]) -> None:
     """Write `data` to `path` as ASV formats JSON, unless the content is unchanged."""
     if json.loads(path.read_text(encoding="utf-8")) != data:
         path.write_text(json.dumps(data, indent=4, sort_keys=True), encoding="utf-8")

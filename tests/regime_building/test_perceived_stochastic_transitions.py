@@ -10,7 +10,8 @@ belief law the agent must choose `stay`, and the world must nevertheless realize
 state the TRUE law dictates.
 """
 
-from typing import Any
+from collections.abc import Mapping
+from typing import TypedDict
 
 import jax.numpy as jnp
 import pandas as pd
@@ -32,7 +33,21 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
-from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from lcm.regime import ActionEntry, FunctionEntry, StateEntry, StateTransitionEntry
+from lcm.typing import (
+    ActionName,
+    DiscreteAction,
+    FloatND,
+    FunctionName,
+    ScalarInt,
+    StateName,
+)
+
+
+class _CommonKwargs(TypedDict):
+    states: Mapping[StateName, StateEntry]
+    actions: Mapping[ActionName, ActionEntry]
+    functions: Mapping[FunctionName, FunctionEntry]
 
 
 @categorical(ordered=True)
@@ -79,8 +94,8 @@ def _next_regime(period):
     return jnp.where(period >= 1, RegimeId.last, RegimeId.live)
 
 
-def _model(law: Any) -> Model:
-    common: dict[str, Any] = {
+def _model(law: StateTransitionEntry) -> Model:
+    common: _CommonKwargs = {
         "states": {"good": DiscreteGrid(category_class=Good)},
         "actions": {"move": DiscreteGrid(category_class=Move)},
         "functions": {"utility": utility},
@@ -109,7 +124,7 @@ PARAMS = {"discount_factor": 0.95, "live": {}, "last": {}}
 IC = pd.DataFrame({"regime_name": "live", "age": 0, "good": ["bad"] * 8})
 
 
-def _simulate(law: Any) -> pd.DataFrame:
+def _simulate(law: StateTransitionEntry) -> pd.DataFrame:
     model = _model(law)
     V = model.solve(params=PARAMS, log_level="debug")
     res = model.simulate(
@@ -209,7 +224,7 @@ def test_markov_and_process_states_coexist():
     ) -> FloatND:
         return 1.0 * good + 0.0 * move + 0.0 * shock
 
-    common: dict[str, Any] = {
+    common: _CommonKwargs = {
         "states": {
             "good": DiscreteGrid(category_class=Good),
             "shock": NormalIIDProcess(n_points=3, gauss_hermite=True),
@@ -286,7 +301,7 @@ def test_continuation_helper_resolves_from_the_solve_phase():
         to_good = jnp.where(move == Move.stay, stay_target, 1.0 - stay_target)
         return _point_mass(to_good)
 
-    common: dict[str, Any] = {
+    common: _CommonKwargs = {
         "states": {"good": DiscreteGrid(category_class=Good)},
         "actions": {"move": DiscreteGrid(category_class=Move)},
         "functions": {

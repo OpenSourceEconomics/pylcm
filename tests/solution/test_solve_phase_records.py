@@ -2,7 +2,8 @@
 
 import logging
 import re
-from typing import Any, cast
+from types import MappingProxyType
+from typing import Never
 
 import jax.numpy as jnp
 import pytest
@@ -22,7 +23,8 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import FloatND, ScalarInt, UserParams
+from tests.solution._callback_types import filled_toy_params
 
 _PHASES = (
     "params_validation",
@@ -109,10 +111,20 @@ def get_model(*, budget_bytes: int | None = None) -> Model:
     )
 
 
-def get_params(*, model: Model) -> dict[str, Any]:
+def get_params(*, model: Model) -> UserParams:
     """Return solvable parameters of the fixture model."""
-    params = cast("dict[str, Any]", model.get_params_template())
-    params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
+    template = model.get_params_template()
+    aggregator = template["acting"]["koopmans_aggregator"]
+    assert isinstance(aggregator, dict)
+    params = {
+        regime: (
+            {**functions, "koopmans_aggregator": {**aggregator, "discount_factor": 0.5}}
+            if regime == "acting"
+            else functions
+        )
+        for regime, functions in template.items()
+    }
+    assert filled_toy_params(params)
     return params
 
 
@@ -193,7 +205,16 @@ def test_a_raising_phase_ends_with_status_error(
 ) -> None:
     """The phase whose body raised closes with `error`."""
 
-    def boom(**_kwargs: object) -> None:
+    def boom(
+        *,
+        regimes: MappingProxyType[
+            backward_induction.RegimeName, backward_induction.Regime
+        ],
+        flat_params: backward_induction.FlatParams,
+        device_ids: tuple[int, ...] = (),
+        process_grid_resolver: backward_induction.ProcessGridResolver | None = None,
+    ) -> Never:
+        del regimes, flat_params, device_ids, process_grid_resolver
         raise ExecutionPlanningError("forced")
 
     monkeypatch.setattr(backward_induction, "_build_continuation_templates", boom)

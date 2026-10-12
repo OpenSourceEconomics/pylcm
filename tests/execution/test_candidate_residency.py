@@ -2,6 +2,7 @@
 
 from collections.abc import Hashable, Mapping
 from dataclasses import replace
+from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
@@ -18,6 +19,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.footprint import ArtifactFootprint, ScheduledUnit
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.solution import backward_induction
+from _lcm.typing import PytreeValue
 
 
 @pytest.mark.parametrize(
@@ -99,11 +101,11 @@ def test_fixed_and_reserved_storage_sum_per_device_before_the_maximum() -> None:
         live={},
         peer_bytes={0: 3, 1: 0},
         declared_inputs=(),
-        fixed_bytes={0: 100, 1: 20},
+        fixed_bytes=MappingProxyType({0: 100, 1: 20}),
         internal_bytes=11,
-        shared_copies={
-            "shared": ArtifactFootprint(bytes_per_device=80, device_ids=(1,))
-        },
+        shared_copies=MappingProxyType(
+            {"shared": ArtifactFootprint(bytes_per_device=80, device_ids=(1,))}
+        ),
     )
     assert inventory.resident_bytes(consumes=()) == 114  # max(100+3+11,20+80+11)
     assert inventory.resident_bytes(consumes=(), temporary_bytes={1: 9}) == 120
@@ -112,7 +114,7 @@ def test_fixed_and_reserved_storage_sum_per_device_before_the_maximum() -> None:
         inventory.resident_bytes(consumes=(), consumed_copies=frozenset({"shared"}))
         == 114
     )
-    smaller_fixed = replace(inventory, fixed_bytes={0: 0, 1: 20})
+    smaller_fixed = replace(inventory, fixed_bytes=MappingProxyType({0: 0, 1: 20}))
     assert smaller_fixed.resident_bytes(consumes=()) == 111
     assert (
         smaller_fixed.resident_bytes(consumes=(), consumed_copies=frozenset({"shared"}))
@@ -128,7 +130,7 @@ def _inventory_with_fixed_only_device() -> footprint.ResidentInventory:
         live={},
         peer_bytes={1: 3},
         declared_inputs=(),
-        fixed_bytes={0: 500, 1: 20, 2: 0},
+        fixed_bytes=MappingProxyType({0: 500, 1: 20, 2: 0}),
         internal_bytes=11,
     )
 
@@ -142,11 +144,11 @@ def test_fixed_only_device_is_charged_its_owners_without_peer_or_internal() -> N
     """The fixed-only device carries 500 bytes; the workspace carries 20+3+11."""
     inventory = _inventory_with_fixed_only_device()
     assert inventory.resident_bytes(consumes=()) == 500
-    smaller = replace(inventory, fixed_bytes={0: 30, 1: 20})
+    smaller = replace(inventory, fixed_bytes=MappingProxyType({0: 30, 1: 20}))
     assert smaller.resident_bytes(consumes=()) == 34
 
 
-def _internal_pair(*, first: object, second: object) -> object:
+def _internal_pair(*, first: PytreeValue, second: PytreeValue) -> PytreeValue:
     return first, second
 
 
@@ -161,13 +163,13 @@ def test_internal_reservation_uses_producer_identity_and_candidate_maximum() -> 
     program = ResolvedCoreProgram(
         name="consumer",
         function=_internal_pair,
-        arguments={},
-        static_kwargs={},
+        arguments=MappingProxyType({}),
+        static_kwargs=MappingProxyType({}),
         requirements=requirements,
         output_roles=("internal", "internal"),
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         specialization_key=(),
         input_transfer_plan=(),
     )
@@ -178,7 +180,9 @@ def test_internal_reservation_uses_producer_identity_and_candidate_maximum() -> 
     large = jax.ShapeDtypeStruct((8,), jnp.int32)
     # Identical representative object under two labels sizes two future outputs.
     # Another consumer of those same labels adds no third allocation.
-    templates: dict[backward_induction._CoreCandidate, Mapping[str, object]] = {
+    templates: dict[
+        backward_induction._CoreCandidate, Mapping[str, jax.ShapeDtypeStruct]
+    ] = {
         narrow: {"first": small, "second": small},
         wide: {"first": large, "second": small},
         duplicate: {"first": large, "second": small},
@@ -188,4 +192,4 @@ def test_internal_reservation_uses_producer_identity_and_candidate_maximum() -> 
         templates=templates,
     )
     assert actual == {("acting", 0): (8 + 4) * 4}
-    assert footprint.concrete_device_bytes(tree=templates) == {}
+    assert footprint.concrete_device_bytes(tree=tuple(templates.values())) == {}

@@ -33,7 +33,7 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from lcm.typing import BoolND, ContinuousState, FloatND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
 _DISCOUNT_FACTOR = 0.5
@@ -74,7 +74,7 @@ class _RegimeId:
 
 @pytest.mark.parametrize("reference_regime", ["account", "mirror"])
 def test_gate_ref_is_read_at_its_own_period_axes_whichever_regime_it_names(
-    reference_regime: str,
+    reference_regime: RegimeName,
 ) -> None:
     """The saver is worth the same whether its gate reference names target or twin.
 
@@ -97,7 +97,7 @@ def test_gate_ref_is_read_at_its_own_period_axes_whichever_regime_it_names(
 
 @pytest.mark.parametrize("reference_regime", ["account", "mirror"])
 def test_the_saver_is_priced_at_the_continuation_it_actually_receives(
-    reference_regime: str,
+    reference_regime: RegimeName,
 ) -> None:
     """The saver's value is the discounted value of the regime it lands in.
 
@@ -144,7 +144,7 @@ def test_a_self_referencing_gate_ref_splits_the_fold_by_target_grid() -> None:
     assert len({id(fold) for fold in edge.folds_by_period.values()}) == 2
 
 
-def _build_model(*, reference_regime: str) -> Model:
+def _build_model(*, reference_regime: RegimeName) -> Model:
     """Build a saver whose gated edge consults `reference_regime` at its gate.
 
     Topology over ages 0-2: `saver` stays put at age 0 and opens the account at

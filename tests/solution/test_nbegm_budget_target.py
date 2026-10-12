@@ -12,13 +12,16 @@ from collections.abc import Mapping
 
 import numpy as np
 
+from lcm.typing import FloatND, RegimeName
 from tests.test_models import nbegm_tax_toy as toy
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 
-def _solve(*, variant: str, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(
+    *, variant: str, n_consumption: int = 120
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the tax toy whose budget node is named `cash_on_hand`."""
     model = toy.build_model(
         variant=variant,

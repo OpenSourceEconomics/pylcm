@@ -28,8 +28,6 @@ source-contract lane, whose authority is the source bytes and the Python
 version rather than the runner's OS.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from shutil import copyfile
 
@@ -42,14 +40,16 @@ _REPO_ROOT = Path(__file__).parents[1]
 
 
 @pytest.fixture(scope="module")
-def clean_corridor_sources() -> tuple[str, ...]:
+def clean_corridor_sources() -> tuple[RepositoryRelativePath, ...]:
     """Check the frozen checkout once and retain its corridor path tuple."""
     clean = direct_flow.verify_direct_candidate_flow(repo_root=_REPO_ROOT)
     assert clean["ok"], clean["errors"]
     return tuple(clean["certified_corridor_sources"])
 
 
-def _copy_corridor(*, sources: tuple[str, ...], destination_root: Path) -> None:
+def _copy_corridor(
+    *, sources: tuple[RepositoryRelativePath, ...], destination_root: Path
+) -> None:
     """Copy every corridor source into a private tree under `destination_root`."""
     for relative in sources:
         destination = destination_root / relative
@@ -78,7 +78,7 @@ def test_source_hashing_is_canonical_across_line_endings(*, tmp_path: Path) -> N
 
 def test_corridor_resolves_inside_a_nested_repository_checkout(
     *,
-    clean_corridor_sources: tuple[str, ...],
+    clean_corridor_sources: tuple[RepositoryRelativePath, ...],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -123,7 +123,7 @@ def test_actual_corridor_is_accepted_clean() -> None:
 
 def test_one_resealed_actual_corridor_mutation_is_still_rejected(
     *,
-    clean_corridor_sources: tuple[str, ...],
+    clean_corridor_sources: tuple[RepositoryRelativePath, ...],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -152,3 +152,6 @@ def test_one_resealed_actual_corridor_mutation_is_still_rejected(
 
     assert not result["ok"]
     assert result["offending_paths"] == [spec["path"]], result["errors"]
+
+
+type RepositoryRelativePath = str

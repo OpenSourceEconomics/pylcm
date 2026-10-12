@@ -37,9 +37,15 @@ from dags import concatenate_functions
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
-from _lcm.typing import EconFunctionsMapping, EGMCarryProducer, StateName
+from _lcm.typing import (
+    EconFunctionArg,
+    EconFunctionKwargs,
+    EconFunctionsMapping,
+    EGMCarryProducer,
+    StateName,
+)
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import FloatND, IntND, ScalarFloat
+from lcm.typing import FloatND, IntND, ReferenceName, ScalarFloat
 
 # Static row count of a stateless terminal carry: two grid slots suffice to
 # represent a constant function under linear interpolation.
@@ -60,7 +66,7 @@ def get_stateless_terminal_carry_producer() -> EGMCarryProducer:
 def _produce_stateless_carry(
     *,
     V_arr: FloatND,
-    **kwargs: object,  # noqa: ARG001
+    **kwargs: EconFunctionArg,  # noqa: ARG001
 ) -> EGMCarry:
     """Broadcast the scalar terminal value into constant carry rows."""
     dtype = canonical_float_dtype()
@@ -150,7 +156,7 @@ class _TerminalWealthCarryProducer:
     utility_func: Callable[..., ScalarFloat]
     """The terminal regime's concatenated utility DAG."""
 
-    utility_extra_arg_names: tuple[str, ...]
+    utility_extra_arg_names: tuple[ReferenceName, ...]
     """Arguments of `utility_func` beyond the regime's states (its params)."""
 
     state_name: StateName
@@ -165,14 +171,18 @@ class _TerminalWealthCarryProducer:
     continuous_state_order: tuple[StateName, ...]
     """The value-function array's continuous-axis order."""
 
-    def __call__(self, *, V_arr: FloatND, **kwargs: object) -> EGMCarry:
+    def __call__(self, *, V_arr: FloatND, **kwargs: EconFunctionArg) -> EGMCarry:
         """Evaluate the terminal value and its Euler-state gradient on the grid."""
         dtype = canonical_float_dtype()
         euler_grid = jnp.asarray(kwargs[self.state_name], dtype=dtype)
         passive_grids = tuple(
             jnp.asarray(kwargs[name], dtype=dtype) for name in self.passive_state_names
         )
-        extra = {name: kwargs[name] for name in self.utility_extra_arg_names}
+        # The utility's further arguments are flat params, `period` and `age`.
+        extra = cast(
+            "EconFunctionKwargs",
+            {name: kwargs[name] for name in self.utility_extra_arg_names},
+        )
         discrete_grids = tuple(
             cast("FloatND | IntND", kwargs[name]) for name in self.discrete_state_names
         )
@@ -216,7 +226,7 @@ def _euler_gradient_at_combo(
     state_name: StateName,
     discrete_state_names: tuple[StateName, ...],
     passive_state_names: tuple[StateName, ...],
-    extra: dict[str, object],
+    extra: EconFunctionKwargs,
     passive_grids: tuple[FloatND, ...],
     euler_grid: FloatND,
 ) -> FloatND:
@@ -252,7 +262,7 @@ def _terminal_utility_at_point(
     state_name: StateName,
     passive_state_names: tuple[StateName, ...],
     discrete_kwargs: dict[StateName, IntND],
-    extra: dict[str, object],
+    extra: EconFunctionKwargs,
 ) -> ScalarFloat:
     """Terminal utility at one Euler-state value and one passive node tuple."""
     passive_kwargs = dict(zip(passive_state_names, passive_values, strict=True))
@@ -347,7 +357,7 @@ class _BruteChildCarryProducer:
     continuous_state_order: tuple[StateName, ...]
     """The value-function array's continuous-axis order."""
 
-    def __call__(self, *, V_arr: FloatND, **kwargs: object) -> EGMCarry:
+    def __call__(self, *, V_arr: FloatND, **kwargs: EconFunctionArg) -> EGMCarry:
         """Carry the solved value array and its Euler-state gradient."""
         dtype = canonical_float_dtype()
         euler_grid = jnp.asarray(kwargs[self.state_name], dtype=dtype)

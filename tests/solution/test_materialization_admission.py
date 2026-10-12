@@ -40,6 +40,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 
@@ -287,14 +288,14 @@ def test_bulk_materialization_accounts_for_source_and_copy(
 
     # keyword-only-exempt: library-callback=pytest.MonkeyPatch.setattr
     def observe_assembly(
-        self: block_major.RetainedComponentValues, *, period: int, regime: str
+        self: block_major.RetainedComponentValues, *, period: int, regime: RegimeName
     ) -> np.ndarray:
         nonlocal assembly_count
         assembly_count += 1
         return original_assembly(self, period=period, regime=regime)
 
     def observe_copy(
-        *, leaf: object, label: str, array_copier: _ArrayCopier | None = None
+        *, leaf: jax.Array, label: str, array_copier: _ArrayCopier | None = None
     ) -> jax.Array:
         nonlocal retained_output_bytes
         copied = original_copy(leaf=leaf, label=label, array_copier=array_copier)

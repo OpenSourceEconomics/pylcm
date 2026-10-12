@@ -42,6 +42,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -143,7 +144,7 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
-def _params() -> dict:
+def _params() -> dict[str, UserParamsNode]:
     return {
         "discount_factor": 0.95,
         "final_age_alive": 40 + (N_PERIODS - 2) * 10,

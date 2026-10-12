@@ -119,7 +119,11 @@ from _lcm.typing import (
     EconFunctionArg,
     EconFunctionsMapping,
     FlatParams,
+    FlatRegimeParams,
+    PytreeValue,
+    ReferenceName,
     RegimeName,
+    ShapeDtypePytree,
     SimulationPolicy,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
@@ -512,7 +516,9 @@ class NNBEGM(TwoMarginSolver):
         keeper_by_period: dict[int, _RideAlongNBEGMPeriodKernel] = {}
         period_group_keys: dict[int, Hashable] = {}
         resolved_by_period: dict[int, SolverBuildContext] = {}
-        outer_target_function_by_period: dict[int, Callable] = {}
+        outer_target_function_by_period: dict[
+            int, Callable[..., Mapping[str, FloatND]]
+        ] = {}
         grouped_param_checks = []
         keeper_continuation_spec = None
         for group_key, periods in grouped_periods.items():
@@ -886,7 +892,9 @@ class _NestedArgumentBuilder:
     outer_node: _OuterNodeBinding | None
     """The node bound into the flat params, or `None` for the keeper."""
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the inner program's arguments for the (possibly bound) context."""
         if self.outer_node is None:
             return self.inner(context)
@@ -948,7 +956,7 @@ class _NNBEGMPeriodKernel:
     outer_post_decision: FunctionName
     """Name of the outer post-decision function bound per outer-grid node."""
 
-    outer_target_function: Callable
+    outer_target_function: Callable[..., Mapping[str, FloatND]]
     """Resolved solve-phase DAG used to recover the outer action bank."""
 
     outer_dispatch_width: int | None
@@ -1047,7 +1055,7 @@ class _NNBEGMPeriodKernel:
     own graph key.
     """
 
-    _core_programs: Mapping[str, CoreProgram] = field(
+    _core_programs: MappingProxyType[str, CoreProgram] = field(
         init=False, repr=False, compare=False
     )
     """The republished graph, the keeper's programs then the adjuster's, each
@@ -1132,7 +1140,7 @@ class _NNBEGMPeriodKernel:
         object.__setattr__(self, "_core_programs", MappingProxyType(programs))
 
     @property
-    def _published_policy_type(self) -> type[object]:
+    def _published_policy_type(self) -> type[NNBEGMSimPolicy | NestedEGMSimPolicy]:
         """Return the final policy type assembled by this composite kernel."""
         raise NotImplementedError
 
@@ -1157,7 +1165,7 @@ class _NNBEGMPeriodKernel:
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1219,7 +1227,7 @@ class _NNBEGMPeriodKernel:
         replay_capability: OuterReplayCapability,
         keeper_result: KernelOutput,
         retain_replay: bool,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1234,7 +1242,7 @@ class _NNBEGMPeriodKernel:
     def _solve_keeper(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1259,7 +1267,7 @@ class _NNBEGMPeriodKernel:
         self,
         *,
         node: FloatND,
-        adjuster_cores: Mapping[str, Callable],
+        adjuster_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1315,7 +1323,7 @@ class _NNBEGMPeriodKernel:
         params = dict(regime_kernel_params(flat_params, regime_name=self.regime_name))
         accepted = inspect.signature(self.outer_target_function).parameters
         scalar = jnp.zeros(())
-        pool: dict[str, object] = {
+        pool: dict[ReferenceName, EconFunctionArg] = {
             **params,
             **{
                 name: jnp.asarray(values)
@@ -1590,7 +1598,7 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
     """The finite outer-grid search whose candidate set is collapsed exactly."""
 
     @property
-    def _published_policy_type(self) -> type[object]:
+    def _published_policy_type(self) -> type[NNBEGMSimPolicy]:
         """Return the finite candidate-bank payload published after composition."""
         return NNBEGMSimPolicy
 
@@ -1600,7 +1608,7 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         replay_capability: OuterReplayCapability,
         keeper_result: KernelOutput,
         retain_replay: bool,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1763,7 +1771,7 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
     """The adaptive mesh search whose refinement and collapse settings apply."""
 
     @property
-    def _published_policy_type(self) -> type[object]:
+    def _published_policy_type(self) -> type[NestedEGMSimPolicy]:
         """Return the nested policy payload published after composition."""
         return NestedEGMSimPolicy
 
@@ -1773,7 +1781,7 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         replay_capability: OuterReplayCapability,
         keeper_result: KernelOutput,
         retain_replay: bool,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1940,8 +1948,10 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                 value_atol=config.value_atol,
                 value_rtol=config.value_rtol,
             )
-        auxiliary: dict[ArtifactKey, object] = {SOLVER_DIAGNOSTICS: diagnostics}
-        replay: dict[ArtifactKey, object] = {}
+        auxiliary: dict[ArtifactKey, SolverDiagnostics | GeneratedReplayAuthority] = {
+            SOLVER_DIAGNOSTICS: diagnostics
+        }
+        replay: dict[ArtifactKey, NestedEGMSimPolicy] = {}
         if sim_policy is not None:
             replay[SIMULATION_POLICY] = sim_policy
             auxiliary[GENERATED_REPLAY_AUTHORITY] = GeneratedReplayAuthority(
@@ -2055,7 +2065,7 @@ class _AdaptiveNodeSolver:
     kernel: _AdaptiveNNBEGMPeriodKernel
     """The period kernel whose adjuster branch each node is solved through."""
 
-    adjuster_cores: Mapping[str, Callable]
+    adjuster_cores: Mapping[str, Callable[..., PytreeValue]]
     """Immutable mapping of the adjuster's compiled core programs."""
 
     cache: dict[float, OuterCandidateResult]
@@ -2252,8 +2262,8 @@ def _fail_if_the_outer_search_leaves_the_outer_state_domain(
 
 
 def _subcores(
-    *, compiled_cores: Mapping[str, Callable], role: str
-) -> Mapping[str, Callable]:
+    *, compiled_cores: Mapping[str, Callable[..., PytreeValue]], role: str
+) -> Mapping[str, Callable[..., PytreeValue]]:
     """Select one role's inner cores, stripping the `role:` prefix."""
     token = f"{role}:"
     return MappingProxyType(
@@ -2556,7 +2566,7 @@ def _fail_if_branch_scale_outside_support(
     branch_aggregation_by_period: Mapping[
         int, tuple[UniformObservedFixedCost | None, Callable[..., FloatND] | None]
     ],
-    regime_params: Mapping[str, object],
+    regime_params: FlatRegimeParams,
     ages: TimeAxis,
 ) -> None:
     """Reject a fixed-cost scale outside the closed form's support.
@@ -2592,7 +2602,7 @@ def _fail_if_branch_scale_outside_support(
 def _resolve_branch_scale(
     *,
     scale_function: Callable[..., FloatND] | None,
-    regime_params: Mapping[str, object],
+    regime_params: FlatRegimeParams,
     period: int,
     ages: TimeAxis,
 ) -> FloatND:
@@ -2602,7 +2612,7 @@ def _resolve_branch_scale(
     if scale_function is None:  # pragma: no cover - guarded at build time
         msg = "branch_fixed_cost set without a resolved scale function"
         raise RegimeInitializationError(msg)
-    kwargs: dict[str, object] = {}
+    kwargs: dict[ReferenceName, EconFunctionArg] = {}
     for name in inspect.signature(scale_function).parameters:
         if name == "period":
             kwargs[name] = jnp.asarray(period)
@@ -2632,7 +2642,8 @@ def _ride_along_inner_kernel(
     return kernel
 
 
-def _fail_if_inner_is_not_nbegm(inner: object) -> None:
+@beartype(conf=REGIME_CONF)
+def _fail_if_inner_is_not_nbegm(inner: NBEGM) -> None:
     """Enforce the public NNBEGM composition despite inert type stubs.
 
     The planned DCEGM-or-NBEGM inner unification belongs to the follow-on NEGM

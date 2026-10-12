@@ -32,6 +32,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     bequest,
@@ -235,7 +236,7 @@ def build_params(
     tax_exemption: float = 12.0,
     old_discrete_action: bool = False,
     wage: float = 3.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the young→old→dead toy.
 
     `base_income` is a length-2 array indexed by the `kind` code (`lo`, `hi`), so

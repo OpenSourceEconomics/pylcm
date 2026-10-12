@@ -34,9 +34,11 @@ def _record(*, start: int) -> PeriodRegimeSimulationData:
     )
 
 
-def _leaves(record: PeriodRegimeSimulationData) -> list[jax.Array]:
-    return jax.tree.leaves(
-        tuple(getattr(record, f.name) for f in dataclasses.fields(record))
+def _leaves(record: PeriodRegimeSimulationData) -> tuple[jax.Array, ...]:
+    return tuple(
+        jax.tree.leaves(
+            tuple(getattr(record, f.name) for f in dataclasses.fields(record))
+        )
     )
 
 

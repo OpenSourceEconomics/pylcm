@@ -241,7 +241,7 @@ def test_function_marker_build_receives_float_age_on_integer_age_grid() -> None:
     calling the user's factory, so the same age is never seen as two different
     Python types across call sites.
     """
-    age_types: list[type] = []
+    age_types: list[type[int | float]] = []
 
     def build(age: float):
         age_types.append(type(age))
@@ -267,7 +267,7 @@ def test_function_marker_build_receives_float_age_on_integer_age_grid() -> None:
 
 def test_grid_marker_build_receives_float_age_on_integer_age_grid() -> None:
     """`AgeSpecializedGrid.build(age)`/`signature(age)` always see a `float`."""
-    age_types: list[type] = []
+    age_types: list[type[int | float]] = []
 
     def build(age: float) -> LinSpacedGrid:
         age_types.append(type(age))

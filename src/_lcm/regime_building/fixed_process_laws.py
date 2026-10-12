@@ -21,9 +21,9 @@ specified — and entry into a process requires its law to be fixed *here*.
 """
 
 import dataclasses
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast, overload
 
 import jax.numpy as jnp
 from dags.tree import qname_from_tree_path, tree_path_from_qname
@@ -34,19 +34,29 @@ from _lcm.params.processing import (
     find_param_candidates,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.typing import FlatParams, RegimeName, StateName
+from _lcm.typing import (
+    FlatParams,
+    FlatRegimeParams,
+    ParamsLeaf,
+    QualifiedName,
+    RegimeName,
+    StateName,
+)
 from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateEntry
 from lcm.transition import AgeSpecializedGrid
-from lcm.typing import UserParams
+from lcm.typing import UserFunction, UserParams, UserParamsLeaf, UserParamsNode
 
 # A state as the user declares it on a `Regime`, or one member of a `Phased`
 # declaration. The two are one type because a carried state is
 # `Phased(solve=callable, simulate=Grid)`, so a member may be a plain function
 # where the outer slot may not.
-type StateDeclaration = Grid | Phased | AgeSpecializedGrid | Callable[..., Any] | None
+type StateDeclaration = Grid | Phased | AgeSpecializedGrid | UserFunction | None
+# A process distribution field as baked into the process: a Python scalar.
+type _ProcessField = float | int | bool
 
 
 def bind_fixed_process_laws(
@@ -110,8 +120,8 @@ def bind_fixed_process_laws(
 def _resolve_process_law_params(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
-    params_flat: Mapping[str, Any],
-) -> tuple[dict[RegimeName, dict[StateName, dict[str, Any]]], set[str]]:
+    params_flat: Mapping[QualifiedName, UserParamsLeaf],
+) -> tuple[dict[RegimeName, dict[StateName, dict[str, _ProcessField]]], set[str]]:
     """Resolve every runtime process parameter against the user's `fixed_params`.
 
     The slots come from the regimes as declared, before any binding: binding only
@@ -132,7 +142,9 @@ def _resolve_process_law_params(
             leaf type the canonical boundary cast rejects.
 
     """
-    raw: dict[RegimeName, dict[str, Any]] = {name: {} for name in user_regimes}
+    raw: dict[RegimeName, dict[QualifiedName, UserParamsLeaf]] = {
+        name: {} for name in user_regimes
+    }
     slot_owner: dict[tuple[RegimeName, str], tuple[StateName, str]] = {}
     consumed: set[str] = set()
     for regime_name, user_regime in user_regimes.items():
@@ -170,9 +182,10 @@ def _resolve_process_law_params(
         )
     )
 
-    resolved: dict[RegimeName, dict[StateName, dict[str, Any]]] = {}
+    resolved: dict[RegimeName, dict[StateName, dict[str, _ProcessField]]] = {}
     for regime_name, regime_slots in canonical.items():
-        for slot, value in regime_slots.items():
+        # The cast input holds regime levels only, so no edge level comes back.
+        for slot, value in cast("FlatRegimeParams", regime_slots).items():
             state_name, param_name = slot_owner[regime_name, slot]
             resolved.setdefault(regime_name, {}).setdefault(state_name, {})[
                 param_name
@@ -208,7 +221,7 @@ def _processes_in(declaration: StateDeclaration) -> list[_ContinuousStochasticPr
 
 def _fail_if_any_process_law_field_varies(
     *,
-    raw: Mapping[RegimeName, Mapping[str, Any]],
+    raw: Mapping[RegimeName, Mapping[QualifiedName, UserParamsLeaf]],
     slot_owner: Mapping[tuple[RegimeName, str], tuple[StateName, str]],
 ) -> None:
     """Reject every process law field that was given more than one number.
@@ -230,7 +243,9 @@ def _fail_if_any_process_law_field_varies(
             )
 
 
-def _fail_if_a_process_law_field_varies(*, value: Any, qname: str) -> None:  # noqa: ANN401
+def _fail_if_a_process_law_field_varies(
+    *, value: UserParamsLeaf | ParamsLeaf, qname: QualifiedName
+) -> None:
     """Reject a process law field given more than one number.
 
     Args:
@@ -257,7 +272,7 @@ def _fail_if_a_process_law_field_varies(*, value: Any, qname: str) -> None:  # n
     raise InvalidParamsError(msg)
 
 
-def _as_process_field(*, value: Any, qname: str) -> float | int | bool:  # noqa: ANN401
+def _as_process_field(*, value: ParamsLeaf, qname: QualifiedName) -> _ProcessField:
     """Return a canonically cast leaf as the Python scalar a process field takes.
 
     A process's distribution fields are Python scalars, and it computes its nodes
@@ -288,7 +303,7 @@ def _as_process_field(*, value: Any, qname: str) -> float | int | bool:  # noqa:
 def _bind_regime(
     *,
     user_regime: UserRegime,
-    regime_values: Mapping[StateName, Mapping[str, Any]],
+    regime_values: Mapping[StateName, Mapping[str, _ProcessField]],
 ) -> UserRegime:
     """Return one regime with every resolved process law baked into its grids.
 
@@ -303,7 +318,7 @@ def _bind_regime(
     """
     if not regime_values:
         return user_regime
-    states: dict[StateName, StateDeclaration] = dict(user_regime.states)
+    states: dict[StateName, StateEntry] = dict(user_regime.states)
     for state_name, values in regime_values.items():
         states[state_name] = _bind_declaration(
             declaration=states[state_name], values=values
@@ -311,8 +326,16 @@ def _bind_regime(
     return user_regime.replace(states=MappingProxyType(states))
 
 
+@overload
 def _bind_declaration(
-    *, declaration: StateDeclaration, values: Mapping[str, Any]
+    *, declaration: StateEntry, values: Mapping[str, _ProcessField]
+) -> StateEntry: ...
+@overload
+def _bind_declaration(
+    *, declaration: StateDeclaration, values: Mapping[str, _ProcessField]
+) -> StateDeclaration: ...
+def _bind_declaration(
+    *, declaration: StateDeclaration, values: Mapping[str, _ProcessField]
 ) -> StateDeclaration:
     """Bind a state declaration, which may be `Phased` over two grids.
 
@@ -364,18 +387,16 @@ def _drop_flat_keys(*, params: UserParams, drop: set[str]) -> UserParams:
 
 
 def _prune_flat_keys(
-    *, branch: Mapping[str, Any], prefix: tuple[str, ...], drop: set[str]
-) -> dict[str, Any]:
+    *, branch: Mapping[str, UserParamsNode], prefix: tuple[str, ...], drop: set[str]
+) -> dict[str, UserParamsNode]:
     """Copy `branch` without the leaves whose qualified name is in `drop`."""
-    kept: dict[str, Any] = {}
+    kept: dict[str, UserParamsNode] = {}
     for key, value in branch.items():
         path = (*prefix, key)
         if qname_from_tree_path(path) in drop:
             continue
         if isinstance(value, Mapping):
-            inner = _prune_flat_keys(
-                branch=cast("Mapping[str, Any]", value), prefix=path, drop=drop
-            )
+            inner = _prune_flat_keys(branch=value, prefix=path, drop=drop)
             if inner:
                 kept[key] = inner
             continue

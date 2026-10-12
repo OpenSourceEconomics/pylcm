@@ -41,6 +41,7 @@ from lcm.typing import (
     FloatND,
     RegimeName,
     ScalarInt,
+    UserParamsNode,
 )
 
 
@@ -333,7 +334,7 @@ def get_params(
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
     wage: float = 10.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the retirement model.
 
     The paper's analytical-solution parametrization is `discount_factor=0.98`,

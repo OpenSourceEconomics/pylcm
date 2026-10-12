@@ -75,3 +75,68 @@ prose hides cases.
 # `"warning"` / `"progress"` ⇒ NaN/Inf only, `"debug"` ⇒ adds the
 # min/max/mean trio. `"off"` skips even the NaN fail-fast.
 ```
+
+## Precise Annotations
+
+**Annotate with the narrowest type that has a name.** In order of preference: the
+constructor union the value is built from (`Transition | Phased`), a Protocol from
+`_lcm.typing` for a callable (`EconFunction`, `RegimeTransitionFunction`), a type
+parameter when the output has the input's type, and a recursive alias for a tree
+(`Params`, `UserParams`). A string that names a regime, state, action, function or
+parameter carries its alias from `lcm.typing` (`RegimeName`, `StateName`, `ActionName`,
+`FunctionName`, `ParameterName`), and a `__`-joined path through the params or function
+namespace carries `QualifiedName` from `_lcm.typing`, never a bare `str`. Every alias is
+a `type X = ...` statement.
+
+```python
+# Good — the constructor union and the label alias
+def resolve_law(*, transition: Transition | Phased, regime_name: RegimeName) -> Law: ...
+
+
+# Bad — `object` hides the union, `str` hides which label the string is
+def resolve_law(*, transition: object, regime_name: str) -> Law: ...
+```
+
+`object` and `Any` are for slots that genuinely hold unrelated types. The
+`precise-annotations` hook (`tests/ci/precise_annotations.py`) checks every annotation
+under `src/`, `tests/`, `benchmarks/` and in the `docs/` notebooks, string
+annotations and `cast` targets
+included:
+
+- `PAN001` / `PAN002` ⇒ `object` / `Any` in an annotation
+- `PAN003` ⇒ a bare `str` on a regime, state, action, function, qualified or parameter
+  name; on a target, source or argument name it asks for a domain alias picked by hand
+- `PAN006` ⇒ a generic without its type arguments (`Callable`, `dict`, `type`, ...),
+  which leaves them `Any`
+- `PAN007` ⇒ an alias not written as a `type X = ...` statement
+- `PAN008` ⇒ a `# noqa: PANxxx` on a line that reports no `PANxxx`
+
+Two placements are exempt by rule:
+
+- `object` in a parameter whose type the data model fixes: every parameter of a
+  comparison or containment dunder (`__eq__`, `__contains__`, ...), `__setattr__`'s
+  `value` and `__deepcopy__`'s `memo`
+- `object` or `Any` in an alias of the `else:` branch of `if TYPE_CHECKING:`, the
+  runtime fallback the beartype claw sees, when a comment directly above it, or above
+  the run of fallbacks it belongs to, gives the reason
+
+```python
+if TYPE_CHECKING:
+    from _lcm.solution.model_authority import SolutionAuthority
+else:
+    # The authority imports this module, so the claw sees a wide fallback.
+    type SolutionAuthority = object
+```
+
+Write the fallback as `object`, not `Any`: beartype cannot build a check for a union
+holding a `type` alias of `Any` (`SolutionAuthority | None`), and the claw then
+leaves the whole function unchecked with a `BeartypeClawDecorWarning`.
+`tests/test_beartype_claw.py` fails on any such warning.
+
+Any other deliberate finding carries `# noqa: PANxxx - <reason>` on the line the hook
+reports. A code without a reason suppresses nothing.
+
+```python
+def hash_user_object(*, value: object) -> str:  # noqa: PAN001 - any user object
+    ...
+```

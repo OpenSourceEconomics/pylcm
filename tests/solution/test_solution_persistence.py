@@ -7,19 +7,21 @@ import json
 import os
 from pathlib import Path
 from types import MappingProxyType
-from typing import ClassVar, cast
+from typing import ClassVar, Literal, cast
 
 import h5py
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.typing import ArrayLike
 
 import lcm.solver_api as solver_api_module
 from _lcm.persistence import solution as solution_persistence
 from _lcm.solution.result_snapshot import (
     snapshot_artifact_template_declaration,
 )
+from _lcm.typing import ArtifactPayload, PytreeChild
 from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
 from lcm.persistence import load_solution, save_solution
 from lcm.solver_api import (
@@ -48,6 +50,20 @@ from lcm.solver_api import (
     ValueArraySchema,
     ValueStore,
 )
+from lcm.typing import FloatND, RegimeName
+
+type _MutableJSONValue = (
+    bool
+    | int
+    | float
+    | str
+    | list[_MutableJSONValue]
+    | dict[str, _MutableJSONValue]
+    | None
+)
+type _TreeSource = Literal[
+    "supplied-payload", "declared-template", "canonical-template"
+]
 
 _REGIME = "working"
 _REPLAY_KEY = ArtifactKey(type_id="example.static_policy", schema_version=1)
@@ -66,15 +82,15 @@ _EMPLOYMENT_DOMAIN = CategoryDomain(
 
 @jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
-class _StatefulPersistenceTree:
+class _StatefulPersistenceTree[Value]:
     """Custom PyTree that exposes every flatten and can fail either callback."""
 
-    value: object
-    source: str
-    flatten_sources: ClassVar[list[str]] = []
+    value: Value
+    source: _TreeSource
+    flatten_sources: ClassVar[list[_TreeSource]] = []
     emitted_leaves: ClassVar[list[jax.Array]] = []
     unflatten_count: ClassVar[int] = 0
-    fail_flatten_source: ClassVar[str | None] = None
+    fail_flatten_source: ClassVar[_TreeSource | None] = None
     fail_unflatten: ClassVar[bool] = False
 
     @classmethod
@@ -86,7 +102,7 @@ class _StatefulPersistenceTree:
         cls.fail_flatten_source = None
         cls.fail_unflatten = False
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[jax.Array], None]:
         """Emit a call-dependent leaf so repeated observations are visible."""
         cls = type(self)
         cls.flatten_sources.append(self.source)
@@ -104,8 +120,8 @@ class _StatefulPersistenceTree:
     def tree_unflatten(
         cls,
         _metadata: None,
-        children: tuple[object, ...],
-    ) -> _StatefulPersistenceTree:
+        children: tuple[Value],
+    ) -> _StatefulPersistenceTree[Value]:
         """Rebuild the tree while making later flatten observations identifiable."""
         cls.unflatten_count += 1
         if cls.fail_unflatten:
@@ -129,7 +145,7 @@ class _SharedZeroLeafTemplate:
         cls.unflatten_count = 0
         cls.singleton = cls()
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[()], None]:
         """Expose no numerical children."""
         type(self).flatten_count += 1
         return (), None
@@ -139,7 +155,7 @@ class _SharedZeroLeafTemplate:
     def tree_unflatten(
         cls,
         _metadata: None,
-        _children: tuple[object, ...],
+        _children: tuple[()],
     ) -> _SharedZeroLeafTemplate:
         """Return shared state if an unsafe materializer reaches this callback."""
         cls.unflatten_count += 1
@@ -150,15 +166,15 @@ class _SharedZeroLeafTemplate:
 
 @jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
-class _RawPersistenceTree:
+class _RawPersistenceTree[Value]:
     """Compatible raw template whose plan has distinguishable static state."""
 
-    value: object
+    value: Value
     marker: str
     flatten_count: ClassVar[int] = 0
     unflatten_count: ClassVar[int] = 0
 
-    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+    def tree_flatten(self) -> tuple[tuple[Value], None]:
         type(self).flatten_count += 1
         return (self.value,), None
 
@@ -167,8 +183,8 @@ class _RawPersistenceTree:
     def tree_unflatten(
         cls,
         _metadata: None,
-        children: tuple[object, ...],
-    ) -> _RawPersistenceTree:
+        children: tuple[Value],
+    ) -> _RawPersistenceTree[Value]:
         cls.unflatten_count += 1
         return cls(children[0], marker="raw-plan")
 
@@ -176,7 +192,9 @@ class _RawPersistenceTree:
 class _ArtifactMutatingLazyEntry(solver_api_module._LazyEntry):
     """Mutate a retained eager artifact while one value is loading."""
 
-    def __init__(self, *, target: _StatefulPersistenceTree, value: object) -> None:
+    def __init__(
+        self, *, target: _StatefulPersistenceTree[jax.Array], value: ArtifactPayload
+    ) -> None:
         self.target = target
         self.value = value
         self.materialization_count = 0
@@ -185,10 +203,12 @@ class _ArtifactMutatingLazyEntry(solver_api_module._LazyEntry):
     def load_state(self) -> LoadState:
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
         del template
         self.materialization_count += 1
-        target_leaf = cast("jax.Array", self.target.value)
+        target_leaf = self.target.value
         target_leaf.delete()
         object.__setattr__(
             self.target,
@@ -205,7 +225,9 @@ class _ObjectDtypeLazyEntry(solver_api_module._LazyEntry):
     def load_state(self) -> LoadState:
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
         del template
         return np.asarray([object()], dtype=object)
 
@@ -213,7 +235,7 @@ class _ObjectDtypeLazyEntry(solver_api_module._LazyEntry):
 class _SaveEnvelopeMutatingLazyEntry(solver_api_module._LazyEntry):
     """Mutate caller envelope fields and nested wrappers during one lazy read."""
 
-    def __init__(self, *, value: object) -> None:
+    def __init__(self, *, value: ArtifactPayload) -> None:
         self._value = value
         self.solution: SolutionResult | None = None
         self.materialization_count = 0
@@ -223,8 +245,11 @@ class _SaveEnvelopeMutatingLazyEntry(solver_api_module._LazyEntry):
         """Report an unloaded adversarial value."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
         """Replace caller fields after the save envelope should be owned."""
+        del template
         if self.solution is None:
             raise AssertionError("The adversarial entry has no owning solution.")
         self.materialization_count += 1
@@ -253,12 +278,22 @@ class _SaveEnvelopeMutatingLazyEntry(solver_api_module._LazyEntry):
         return self._value
 
 
-def _read_manifest(archive: h5py.File) -> dict[str, object]:
+def _eager_fixture_value(value: FloatND | solver_api_module._LazyEntry) -> FloatND:
+    """Require the constructed persistence fixture to hold an eager value."""
+    assert isinstance(value, jax.Array)
+    return value
+
+
+def _read_manifest(archive: h5py.File) -> dict[str, _MutableJSONValue]:
     """Read the test archive's JSON manifest."""
-    return cast("dict[str, object]", json.loads(bytes(archive["manifest"][()])))
+    return cast(
+        "dict[str, _MutableJSONValue]", json.loads(bytes(archive["manifest"][()]))
+    )
 
 
-def _replace_manifest(*, archive: h5py.File, manifest: dict[str, object]) -> None:
+def _replace_manifest(
+    *, archive: h5py.File, manifest: dict[str, _MutableJSONValue]
+) -> None:
     """Replace a test manifest together with its outer checksum."""
     manifest_bytes = json.dumps(
         manifest,
@@ -504,7 +539,9 @@ def _make_optional_omission_solution(
     return result
 
 
-def _make_values_only_solution(*, value: object, dtype: str) -> SolutionResult:
+def _make_values_only_solution(
+    *, value: ArrayLike | jax.Array, dtype: str
+) -> SolutionResult:
     """Build one authority-free result for value transport edge cases."""
     array = jnp.asarray(value, dtype=dtype)
     return SolutionResult(
@@ -624,7 +661,7 @@ def test_save_extracts_custom_pytree_from_sealed_plan_without_callbacks(
 
         with h5py.File(path, "r") as archive:
             manifest = _read_manifest(archive)
-            entries = cast("list[dict[str, object]]", manifest["artifacts"])
+            entries = cast("list[dict[str, _MutableJSONValue]]", manifest["artifacts"])
             entry = next(
                 candidate
                 for candidate in entries
@@ -633,7 +670,7 @@ def test_save_extracts_custom_pytree_from_sealed_plan_without_callbacks(
                 and candidate["type_id"] == ref.key.type_id
                 and candidate["schema_version"] == ref.key.schema_version
             )
-            leaves = cast("list[dict[str, object]]", entry["leaves"])
+            leaves = cast("list[dict[str, _MutableJSONValue]]", entry["leaves"])
             written = np.asarray(archive[str(leaves[0]["dataset"])][()])
 
         np.testing.assert_array_equal(
@@ -874,7 +911,7 @@ def test_safe_zero_leaf_nodes_survive_lazy_persistence_roundtrip(
 
 @pytest.mark.parametrize("zero_node", [[], {}], ids=["list", "dict"])
 def test_public_raw_materialize_rejects_mutable_zero_leaf_templates(
-    *, tmp_path: Path, zero_node: object
+    *, tmp_path: Path, zero_node: ArtifactPayload
 ) -> None:
     """The public compatibility route validates hidden zero-node containers."""
     solution, ref = _make_stateful_pytree_solution()
@@ -1030,7 +1067,7 @@ def test_load_rejects_noncanonical_single_leaf_pytree_kind(tmp_path: Path) -> No
     )
     with h5py.File(path, "r+") as archive:
         manifest = _read_manifest(archive)
-        value_entries = cast("list[dict[str, object]]", manifest["values"])
+        value_entries = cast("list[dict[str, _MutableJSONValue]]", manifest["values"])
         value_entries[0]["payload_kind"] = "pytree"
         _replace_manifest(archive=archive, manifest=manifest)
 
@@ -1047,9 +1084,11 @@ def test_payload_checksum_mismatch_is_rejected_on_materialization(
         path=tmp_path / "solution.lcm",
     )
     with h5py.File(path, "r+") as archive:
-        manifest = cast("dict[str, object]", json.loads(bytes(archive["manifest"][()])))
-        value_entries = cast("list[dict[str, object]]", manifest["values"])
-        leaves = cast("list[dict[str, object]]", value_entries[0]["leaves"])
+        manifest = cast(
+            "dict[str, _MutableJSONValue]", json.loads(bytes(archive["manifest"][()]))
+        )
+        value_entries = cast("list[dict[str, _MutableJSONValue]]", manifest["values"])
+        leaves = cast("list[dict[str, _MutableJSONValue]]", value_entries[0]["leaves"])
         dataset = archive[str(leaves[0]["dataset"])]
         dataset[...] = np.asarray(dataset[()]) + 1
 
@@ -1117,7 +1156,7 @@ def test_incompatible_metadata_pylcm_version_is_rejected(tmp_path: Path) -> None
     )
     with h5py.File(path, "r+") as archive:
         manifest = _read_manifest(archive)
-        metadata = cast("dict[str, object]", manifest["metadata"])
+        metadata = cast("dict[str, _MutableJSONValue]", manifest["metadata"])
         metadata["pylcm_version"] = f"{metadata['pylcm_version']}.incompatible"
         _replace_manifest(archive=archive, manifest=manifest)
 
@@ -1133,8 +1172,10 @@ def test_load_rejects_value_schema_at_the_horizon(tmp_path: Path) -> None:
     )
     with h5py.File(path, "r+") as archive:
         manifest = _read_manifest(archive)
-        metadata = cast("dict[str, object]", manifest["metadata"])
-        value_schemas = cast("list[dict[str, object]]", metadata["value_schemas"])
+        metadata = cast("dict[str, _MutableJSONValue]", manifest["metadata"])
+        value_schemas = cast(
+            "list[dict[str, _MutableJSONValue]]", metadata["value_schemas"]
+        )
         value_schemas[0]["period"] = metadata["n_periods"]
         _replace_manifest(archive=archive, manifest=manifest)
 
@@ -1150,8 +1191,8 @@ def test_load_rejects_value_payload_at_the_horizon(tmp_path: Path) -> None:
     )
     with h5py.File(path, "r+") as archive:
         manifest = _read_manifest(archive)
-        metadata = cast("dict[str, object]", manifest["metadata"])
-        value_entries = cast("list[dict[str, object]]", manifest["values"])
+        metadata = cast("dict[str, _MutableJSONValue]", manifest["metadata"])
+        value_entries = cast("list[dict[str, _MutableJSONValue]]", manifest["values"])
         value_entries[0]["period"] = metadata["n_periods"]
         _replace_manifest(archive=archive, manifest=manifest)
 
@@ -1167,7 +1208,7 @@ def test_failed_save_leaves_existing_archive_unchanged(tmp_path: Path) -> None:
     )
     original_bytes = path.read_bytes()
     source = _make_solution()
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         coordinate: source.value(period=coordinate[0], regime=coordinate[1])
         for coordinate in _VALUE_COORDINATES
     }
@@ -1238,7 +1279,10 @@ class _HostileComparisonInt(int):
     ],
 )
 def test_save_rejects_weakly_typed_compatibility_versions(
-    *, tmp_path: Path, field_name: str, invalid: object
+    *,
+    tmp_path: Path,
+    field_name: str,
+    invalid: np.int64 | _CompatibilityVersionSubclass,
 ) -> None:
     """Reject equality-compatible versions before decoding or creating state."""
     source = _make_solution()
@@ -1247,12 +1291,12 @@ def test_save_rejects_weakly_typed_compatibility_versions(
     assert invalid == current
     assert type(invalid) is not int
     object.__setattr__(metadata, field_name, invalid)
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime): source.value(period=period, regime=regime)
         for period, regime in _VALUE_COORDINATES
     }
     lazy_value = _SaveEnvelopeMutatingLazyEntry(
-        value=value_entries[_VALUE_COORDINATES[0]]
+        value=_eager_fixture_value(value_entries[_VALUE_COORDINATES[0]])
     )
     value_entries[_VALUE_COORDINATES[0]] = lazy_value
     malformed = dataclasses.replace(
@@ -1279,16 +1323,16 @@ def test_save_rejects_incompatible_version_before_pytree_callbacks(
 
     @dataclasses.dataclass(frozen=True)
     class _CountingPyTree:
-        value: object
+        value: PytreeChild
 
     callback_counts = {"flatten": 0, "unflatten": 0}
 
-    def flatten(payload: _CountingPyTree) -> tuple[tuple[object, ...], None]:
+    def flatten(payload: _CountingPyTree) -> tuple[tuple[PytreeChild], None]:
         callback_counts["flatten"] += 1
         return (payload.value,), None
 
     # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-    def unflatten(_aux: None, children: tuple[object, ...]) -> _CountingPyTree:
+    def unflatten(_aux: None, children: tuple[PytreeChild]) -> _CountingPyTree:
         callback_counts["unflatten"] += 1
         return _CountingPyTree(children[0])
 
@@ -1323,12 +1367,12 @@ def test_save_rejects_armed_metadata_key_before_hashing(tmp_path: Path) -> None:
     hostile_key.armed = True
     metadata = dataclasses.replace(source.metadata)
     object.__setattr__(metadata, "solver_types", MappingProxyType(solver_types))
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         coordinate: source.value(period=coordinate[0], regime=coordinate[1])
         for coordinate in _VALUE_COORDINATES
     }
     lazy_value = _SaveEnvelopeMutatingLazyEntry(
-        value=value_entries[_VALUE_COORDINATES[0]]
+        value=_eager_fixture_value(value_entries[_VALUE_COORDINATES[0]])
     )
     value_entries[_VALUE_COORDINATES[0]] = lazy_value
     malformed = dataclasses.replace(
@@ -1360,11 +1404,13 @@ def test_save_rejects_nonexact_value_schema_shape_before_comparison(
     schemas[coordinate] = schema
     metadata = dataclasses.replace(source.metadata)
     object.__setattr__(metadata, "value_schemas", MappingProxyType(schemas))
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         item: source.value(period=item[0], regime=item[1])
         for item in _VALUE_COORDINATES
     }
-    lazy_value = _SaveEnvelopeMutatingLazyEntry(value=value_entries[coordinate])
+    lazy_value = _SaveEnvelopeMutatingLazyEntry(
+        value=_eager_fixture_value(value_entries[coordinate])
+    )
     value_entries[coordinate] = lazy_value
     malformed = dataclasses.replace(
         source,
@@ -1393,7 +1439,7 @@ def test_save_rejects_nonexact_value_coordinate_before_hashing(
         value=source.value(period=coordinate[0], regime=coordinate[1])
     )
     hostile_regime = _ArmedHashString(_REGIME)
-    entries: dict[object, object] = {
+    entries: dict[tuple[int, RegimeName], FloatND | _SaveEnvelopeMutatingLazyEntry] = {
         (
             (period, hostile_regime)
             if (period, regime) == coordinate
@@ -1567,12 +1613,14 @@ def test_save_owns_the_complete_envelope_before_lazy_materialization(
 ) -> None:
     """A lazy value cannot mix caller mutations into the written ledger."""
     source = _make_solution()
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime): source.values[period][regime]
         for period, regime in _VALUE_COORDINATES
     }
     coordinate = _VALUE_COORDINATES[0]
-    adversarial = _SaveEnvelopeMutatingLazyEntry(value=value_entries[coordinate])
+    adversarial = _SaveEnvelopeMutatingLazyEntry(
+        value=_eager_fixture_value(value_entries[coordinate])
+    )
     value_entries[coordinate] = adversarial
     stateful = dataclasses.replace(source, values=ValueStore(value_entries))
     object.__setattr__(
@@ -1614,14 +1662,14 @@ def test_save_detaches_eager_artifact_before_lazy_value_mutates_it(
         "_StatefulPersistenceTree",
         source.replay_artifacts._raw(ref),
     )
-    value_entries: dict[object, object] = {
+    value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime): source.values[period][regime]
         for period, regime in _VALUE_COORDINATES
     }
     coordinate = _VALUE_COORDINATES[0]
     adversarial = _ArtifactMutatingLazyEntry(
         target=target,
-        value=value_entries[coordinate],
+        value=_eager_fixture_value(value_entries[coordinate]),
     )
     value_entries[coordinate] = adversarial
     stateful = dataclasses.replace(source, values=ValueStore(value_entries))
@@ -1670,7 +1718,7 @@ def test_result_construction_rejects_noncanonical_omission_reason() -> None:
             replay_artifacts=ArtifactStore(
                 {_REPLAY_REFS[0]: source.replay_artifacts[_REPLAY_REFS[0]]}
             ),
-            omissions={_REPLAY_REFS[1]: cast("object", "not_requested")},
+            omissions={_REPLAY_REFS[1]: "not_requested"},
         )
 
 
@@ -1688,7 +1736,7 @@ def test_save_preflight_rejects_noncanonical_omission_reason(tmp_path: Path) -> 
     object.__setattr__(
         malformed,
         "omissions",
-        MappingProxyType({_REPLAY_REFS[1]: cast("object", "not_requested")}),
+        MappingProxyType({_REPLAY_REFS[1]: "not_requested"}),
     )
     object.__setattr__(
         malformed,
@@ -1741,7 +1789,7 @@ def test_load_rejects_undescribed_continuation_omission(tmp_path: Path) -> None:
     )
     with h5py.File(path, "r+") as archive:
         manifest = _read_manifest(archive)
-        omissions = cast("list[dict[str, object]]", manifest["omissions"])
+        omissions = cast("list[dict[str, _MutableJSONValue]]", manifest["omissions"])
         omissions.append(
             {
                 "period": 0,
@@ -1765,7 +1813,9 @@ def test_load_rejects_descriptor_without_payload_or_omission(tmp_path: Path) -> 
     )
     with h5py.File(path, "r+") as archive:
         manifest = _read_manifest(archive)
-        artifact_entries = cast("list[dict[str, object]]", manifest["artifacts"])
+        artifact_entries = cast(
+            "list[dict[str, _MutableJSONValue]]", manifest["artifacts"]
+        )
         artifact_entries.pop()
         _replace_manifest(archive=archive, manifest=manifest)
 
@@ -1783,7 +1833,7 @@ def test_load_rejects_present_replay_artifact_under_values_retention(
     )
     with h5py.File(path, "r+") as archive:
         manifest = _read_manifest(archive)
-        metadata = cast("dict[str, object]", manifest["metadata"])
+        metadata = cast("dict[str, _MutableJSONValue]", manifest["metadata"])
         metadata["retention"] = ResultRetention.VALUES.value
         _replace_manifest(archive=archive, manifest=manifest)
 
@@ -1801,9 +1851,11 @@ def test_load_rejects_unsupported_omission_for_required_artifact(
     )
     with h5py.File(path, "r+") as archive:
         manifest = _read_manifest(archive)
-        artifact_entries = cast("list[dict[str, object]]", manifest["artifacts"])
+        artifact_entries = cast(
+            "list[dict[str, _MutableJSONValue]]", manifest["artifacts"]
+        )
         removed = artifact_entries.pop()
-        cast("list[object]", manifest["omissions"]).append(
+        cast("list[_MutableJSONValue]", manifest["omissions"]).append(
             {
                 "period": removed["period"],
                 "regime": removed["regime"],
@@ -1843,9 +1895,13 @@ def test_load_rejects_artifact_leaf_path_mismatch(tmp_path: Path) -> None:
     )
     with h5py.File(path, "r+") as archive:
         manifest = _read_manifest(archive)
-        metadata = cast("dict[str, object]", manifest["metadata"])
-        descriptors = cast("list[dict[str, object]]", metadata["artifact_descriptors"])
-        leaves = cast("list[dict[str, object]]", descriptors[0]["leaf_descriptors"])
+        metadata = cast("dict[str, _MutableJSONValue]", manifest["metadata"])
+        descriptors = cast(
+            "list[dict[str, _MutableJSONValue]]", metadata["artifact_descriptors"]
+        )
+        leaves = cast(
+            "list[dict[str, _MutableJSONValue]]", descriptors[0]["leaf_descriptors"]
+        )
         leaves[0]["path"] = ["attribute:wrong"]
         _replace_manifest(archive=archive, manifest=manifest)
 
@@ -1877,22 +1933,27 @@ def test_load_rejects_malformed_rich_artifact_descriptor(
     )
     with h5py.File(path, "r+") as archive:
         manifest = _read_manifest(archive)
-        metadata = cast("dict[str, object]", manifest["metadata"])
-        descriptors = cast("list[dict[str, object]]", metadata["artifact_descriptors"])
+        metadata = cast("dict[str, _MutableJSONValue]", manifest["metadata"])
+        descriptors = cast(
+            "list[dict[str, _MutableJSONValue]]", metadata["artifact_descriptors"]
+        )
         descriptor = descriptors[0]
         if field == "payload_version":
             descriptor["payload_version"] = True
         elif field == "leaf_shape":
-            leaves = cast("list[dict[str, object]]", descriptor["leaf_descriptors"])
+            leaves = cast(
+                "list[dict[str, _MutableJSONValue]]", descriptor["leaf_descriptors"]
+            )
             leaves[0]["shape"] = [3]
         elif field == "axis_coordinates":
-            axes = cast("list[dict[str, object]]", descriptor["named_axes"])
+            axes = cast("list[dict[str, _MutableJSONValue]]", descriptor["named_axes"])
             axes[0]["coordinates"] = [0]
         elif field in {"state_roles", "action_roles"}:
             descriptor[field] = ["candidate"]
         elif field.startswith("categorical_"):
             domains = cast(
-                "dict[str, dict[str, object]]", descriptor["categorical_domains"]
+                "dict[str, dict[str, _MutableJSONValue]]",
+                descriptor["categorical_domains"],
             )
             domain = domains["employment"]
             if field == "categorical_labels":
@@ -1902,7 +1963,9 @@ def test_load_rejects_malformed_rich_artifact_descriptor(
             else:
                 domain["ordered"] = 0
         else:
-            routes = cast("list[dict[str, object]]", descriptor["required_for"])
+            routes = cast(
+                "list[dict[str, _MutableJSONValue]]", descriptor["required_for"]
+            )
             routes.append(dict(routes[0]))
         _replace_manifest(archive=archive, manifest=manifest)
 
@@ -1921,7 +1984,9 @@ def test_load_rejects_malformed_omission_entry(
     )
     with h5py.File(path, "r+") as archive:
         manifest = _read_manifest(archive)
-        artifact_entries = cast("list[dict[str, object]]", manifest["artifacts"])
+        artifact_entries = cast(
+            "list[dict[str, _MutableJSONValue]]", manifest["artifacts"]
+        )
         removed = artifact_entries.pop()
         omission = {
             "period": removed["period"],
@@ -1934,7 +1999,7 @@ def test_load_rejects_malformed_omission_entry(
             omission["unexpected"] = True
         else:
             omission["reason"] = "not-a-reason"
-        cast("list[object]", manifest["omissions"]).append(omission)
+        cast("list[_MutableJSONValue]", manifest["omissions"]).append(omission)
         _replace_manifest(archive=archive, manifest=manifest)
 
     with pytest.raises(SolutionIntegrityError, match=r"[Oo]mission"):
@@ -2039,3 +2104,11 @@ def test_unsupported_numpy_dtype_is_normalized_and_stays_unloaded(
     with pytest.raises(IncompatibleSolutionError, match="cannot materialize"):
         restored.value(period=0, regime=_REGIME)
     assert values.load_state(period=0, regime=_REGIME) is LoadState.UNLOADED
+
+
+def test_persisted_categorical_domains_decode_to_a_read_only_mapping() -> None:
+    """Decoded categorical domains of an artifact are a read-only mapping."""
+    domains = solution_persistence._categorical_domains_from_manifest(
+        {"health": {"labels": ["bad", "good"], "codes": [0, 1], "ordered": True}}
+    )
+    assert type(domains) is MappingProxyType

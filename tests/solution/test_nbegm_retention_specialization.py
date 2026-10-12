@@ -14,8 +14,8 @@ the finite bank but skips the non-persistable adaptive policy and generated
 authority. Solver diagnostics keep following `log_level` alone.
 """
 
-from collections.abc import Callable
-from typing import Any, cast
+from collections.abc import Callable, Mapping
+from typing import Literal, TypedDict, Unpack, cast
 
 import numpy as np
 import pytest
@@ -26,46 +26,76 @@ from _lcm.solution import nbegm as nbegm_module
 from _lcm.solution import nnbegm as nnbegm_module
 from _lcm.solution.contract import GENERATED_REPLAY_AUTHORITY
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
+from _lcm.typing import PytreeValue
+from lcm import Model
 from lcm.solver_api import (
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
+    KernelOutput,
     OmissionReason,
 )
 from lcm.solver_api import ResultRetention as Retention
+from lcm.typing import ActionName, FloatND, IntND, RegimeName, StateName, UserParams
 from tests.conftest import assert_agrees_to_ulp
 from tests.simulation.test_nnbegm_split_workflow_parity import _MESH, _PARAMS
+from tests.solution.test_solution_result import _KernelKwargs
 from tests.test_models import n_nbegm_toy, nbegm_ride_along_toy
+
+
+class _NativeKernelKwargs(TypedDict):
+    compiled_cores: Mapping[str, Callable[..., PytreeValue]]
+    state_action_space: nbegm_module.StateActionSpace
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    next_regime_to_continuation: Mapping[RegimeName, nbegm_module.ContinuationPayload]
+    flat_params: nbegm_module.FlatParams
+    period: int
+    ages: nbegm_module.TimeAxis
+    logger: nbegm_module.logging.Logger
+
+
+class _BanksKwargs(TypedDict):
+    policy: NBEGMGridPolicy
+    collapsed_value: FloatND
+    state_names: tuple[StateName, ...]
+    discrete_action_names: tuple[ActionName, ...]
+    branch_codes: IntND | None
+
 
 _ROUTES = {"finite": None, "adaptive": _MESH}
 
 
-def _standalone() -> tuple[Any, Any]:
+def _standalone() -> tuple[Model, UserParams]:
     model = nbegm_ride_along_toy.build_model(
         variant="nbegm", n_periods=3, n_liquid=12, n_savings=16
     )
     return model, nbegm_ride_along_toy.build_params()
 
 
-def _nested(route: str) -> tuple[Any, Any]:
+def _nested(route: str) -> tuple[Model, UserParams]:
     model = n_nbegm_toy.build_model(
         variant="n_nbegm", n_periods=3, outer_search=_ROUTES[route]
     )
     return model, _PARAMS
 
 
-_MODELS: dict[str, Callable[[], tuple[Any, Any]]] = {
+_MODELS: dict[str, Callable[[], tuple[Model, UserParams]]] = {
     "standalone": _standalone,
     "nested-finite": lambda: _nested("finite"),
     "nested-adaptive": lambda: _nested("adaptive"),
 }
 
 
-def _record_dispatched_programs(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
-    recorded: list[tuple] = []
+def _record_dispatched_programs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[str, ...]]:
+    recorded: list[tuple[str, ...]] = []
     original = nbegm_module._RideAlongNBEGMPeriodKernel.__call__
 
-    def recording_call(self: Any, **kwargs: Any) -> Any:
+    def recording_call(
+        self: nbegm_module._RideAlongNBEGMPeriodKernel,
+        **kwargs: Unpack[_NativeKernelKwargs],
+    ) -> KernelOutput:
         recorded.append(tuple(kwargs["compiled_cores"]))
         return original(self, **kwargs)
 
@@ -176,7 +206,7 @@ def test_a_values_only_finite_nested_solve_never_assembles_candidate_banks(
     calls: list[int] = []
     original = nnbegm_module._conditional_nnbegm_banks
 
-    def counting(**kwargs: Any) -> Any:
+    def counting(**kwargs: Unpack[_BanksKwargs]) -> tuple[FloatND, FloatND]:
         calls.append(1)
         return original(**kwargs)
 
@@ -198,10 +228,10 @@ def test_a_values_only_finite_nested_solve_never_assembles_candidate_banks(
 def test_a_values_only_adaptive_nested_solve_publishes_no_policy_or_authority(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    results: list[Any] = []
+    results: list[KernelOutput] = []
     original = backward_induction._run_period_kernel
 
-    def recording(**kwargs: Any) -> Any:
+    def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
         result = original(**kwargs)
         results.append(result)
         return result
@@ -221,7 +251,7 @@ def test_a_values_only_adaptive_nested_solve_publishes_no_policy_or_authority(
     ("log_level", "expects_diagnostics"), [("warning", True), ("off", False)]
 )
 def test_diagnostics_follow_log_level_under_a_values_only_retention(
-    *, log_level: str, expects_diagnostics: bool
+    *, log_level: Literal["warning", "off"], expects_diagnostics: bool
 ):
     model, params = _nested("adaptive")
 

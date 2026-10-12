@@ -5,15 +5,69 @@ import ctypes
 import json
 import os
 import subprocess
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Literal, NotRequired, Protocol
 from uuid import UUID
 
 import jax
+from typing_extensions import TypedDict
 
+from _lcm.typing import JSONValue
 from lcm import ExecutionConfig, Model
 from lcm_examples.mahler_yum_2024 import create_model
+
+
+class _DeviceMetadata(Protocol):
+    """Selected-device identity and raw allocator counters."""
+
+    @property
+    def id(self) -> int: ...
+    @property
+    def local_hardware_id(self) -> int: ...
+    @property
+    def platform(self) -> str: ...
+    @property
+    def device_kind(self) -> str: ...
+    def memory_stats(self) -> Mapping[str, JSONValue] | None: ...
+
+
+class _DeviceObservation(TypedDict, closed=True):
+    id: int
+    local_hardware_id: int
+    platform: str
+    device_kind: str
+    observed_at: str
+    memory_stats: NotRequired[Mapping[str, JSONValue] | None]
+    uuid: NotRequired[str]
+    physical_total_bytes: NotRequired[int]
+    physical_free_bytes: NotRequired[int]
+    allocator_limit_bytes: NotRequired[int]
+    allocator_used_bytes: NotRequired[int]
+
+
+class _NvidiaObservation(TypedDict, closed=True):
+    command: list[str]
+    observed_at: str
+    stdout: NotRequired[str]
+    stderr: NotRequired[str]
+    returncode: NotRequired[int]
+
+
+class _CapacityReceipt(TypedDict, closed=True):
+    status: Literal["collecting", "accepted", "refused"]
+    started_at: str
+    formula: str
+    headroom_divisor: int
+    units: dict[str, str]
+    environment: dict[str, str | None]
+    precision: Literal["32", "64"]
+    devices: list[_DeviceObservation]
+    finished_at: NotRequired[str]
+    error: NotRequired[str]
+    budget_bytes: NotRequired[int | Literal["device"] | None]
+    nvidia_smi: NotRequired[_NvidiaObservation]
 
 
 def create_mahler_gpu_model(*, report_path: Path) -> Model:
@@ -25,7 +79,7 @@ def create_mahler_gpu_model(*, report_path: Path) -> Model:
 
 
 def create_mahler_execution_config(
-    *, devices: tuple[jax.Device, ...], report_path: Path
+    *, devices: tuple[_DeviceMetadata, ...], report_path: Path
 ) -> ExecutionConfig:
     """Record selected-device capacity and reserve half its available headroom.
 
@@ -33,8 +87,8 @@ def create_mahler_execution_config(
     accounts for represented storage and retained residency; additional runtime
     allocations still require headroom and measured acceptance.
     """
-    observations: list[dict[str, Any]] = []
-    receipt: dict[str, Any] = {
+    observations: list[_DeviceObservation] = []
+    receipt: _CapacityReceipt = {
         "status": "collecting",
         "started_at": _timestamp(),
         "formula": (
@@ -81,15 +135,15 @@ def create_mahler_execution_config(
 
 def _configure_observed_devices(
     *,
-    devices: tuple[jax.Device, ...],
-    observations: list[dict[str, Any]],
-    receipt: dict[str, Any],
+    devices: tuple[_DeviceMetadata, ...],
+    observations: list[_DeviceObservation],
+    receipt: _CapacityReceipt,
 ) -> ExecutionConfig:
     """Collect selected observations and apply the workload's headroom policy."""
     if not devices:
         raise ValueError("The workload must select at least one GPU.")
     for device in devices:
-        observation = {
+        observation: _DeviceObservation = {
             "id": device.id,
             "local_hardware_id": device.local_hardware_id,
             "platform": device.platform,
@@ -123,7 +177,7 @@ def _configure_observed_devices(
 
 
 def _available_device_bytes(
-    *, observation: dict[str, Any], rows: list[list[str]], driver: ctypes.CDLL
+    *, observation: _DeviceObservation, rows: list[list[str]], driver: ctypes.CDLL
 ) -> tuple[int, str, int]:
     """Match one selected UUID and validate its independent capacity limits."""
     device_id = _nonnegative_integer(value=observation["id"], name="JAX id")
@@ -163,14 +217,14 @@ def _timestamp() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _read_nvidia_metadata(*, receipt: dict[str, Any]) -> list[list[str]]:
+def _read_nvidia_metadata(*, receipt: _CapacityReceipt) -> list[list[str]]:
     """Preserve the physical memory query before interpreting selected rows."""
     command = [
         "nvidia-smi",
         "--query-gpu=uuid,name,driver_version,memory.total,memory.free",
         "--format=csv,noheader,nounits",
     ]
-    observation: dict[str, Any] = {"command": command, "observed_at": _timestamp()}
+    observation: _NvidiaObservation = {"command": command, "observed_at": _timestamp()}
     receipt["nvidia_smi"] = observation
     result = subprocess.run(  # noqa: S603
         command, capture_output=True, text=True, timeout=10, check=False
@@ -211,7 +265,7 @@ def _get_cuda_uuid(*, driver: ctypes.CDLL, ordinal: int) -> str:
     return f"GPU-{UUID(bytes=bytes(raw_uuid))}"
 
 
-def _nonnegative_integer(*, value: object, name: str) -> int:
+def _nonnegative_integer[Value](*, value: Value, name: str) -> int:
     """Require a complete integral memory count or device identifier."""
     if type(value) is not int or value < 0:
         raise ValueError(f"{name} must be a nonnegative integer, got {value!r}.")

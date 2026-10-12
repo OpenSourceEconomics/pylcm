@@ -8,7 +8,7 @@ from identical inputs reach one executable.
 """
 
 from collections.abc import Callable, Hashable
-from typing import Any
+from typing import Never, Unpack
 
 import pytest
 
@@ -26,6 +26,14 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import GridSearch
 from lcm.typing import RegimeName
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.solution._callback_types import (
+    AbstractArgumentsKwargs,
+    CoreCandidatesKwargs,
+    ExecutionMetadataKwargs,
+    ExecutionMetadataResult,
+    PlanningKwargs,
+    PlanningResult,
+)
 from tests.solution.test_dcegm_age_specialized_function import _twin
 from tests.test_models import n_nbegm_toy, nbegm_ride_along_toy
 from tests.test_models.dcegm_paper_twin import get_params as twin_params
@@ -126,10 +134,7 @@ def _capture_lowering_keys(
     captured: list[dict[Hashable, Hashable]] = []
     original = backward_induction._resolve_output_layouts_and_lowering_keys
 
-    # `Any` rather than `object`: the spy forwards its keywords untouched to a
-    # strictly typed function, so narrowing them here would be a claim it does
-    # not make.
-    def _spy(**kwargs: Any) -> tuple:
+    def _spy(**kwargs: Unpack[PlanningKwargs]) -> PlanningResult:
         result = original(**kwargs)
         captured.append(dict(result[1]))
         return result
@@ -153,19 +158,21 @@ def test_candidate_frontier_describes_dynamic_arguments_once(
     frontier_count = 0
     candidate_count = 0
     argument_key_count = 0
-    captured: list[tuple[tuple, dict[str, Any]]] = []
+    captured: list[tuple[PlanningResult, PlanningKwargs]] = []
     original_frontier = backward_induction.resolve_core_program_candidates
     original_argument_key = backward_induction._abstract_arguments_key
     original_planning = backward_induction._resolve_output_layouts_and_lowering_keys
 
-    def count_frontier(**kwargs: Any) -> tuple:
+    def count_frontier(
+        **kwargs: Unpack[CoreCandidatesKwargs],
+    ) -> tuple[backward_induction.ResolvedCoreProgram, ...]:
         nonlocal frontier_count, candidate_count
         widths = kwargs["tile_widths"]
         frontier_count += 1
         candidate_count += len(widths)
         return original_frontier(**kwargs)
 
-    def count_argument_key(**kwargs: Any) -> Hashable:
+    def count_argument_key(**kwargs: Unpack[AbstractArgumentsKwargs]) -> Hashable:
         nonlocal argument_key_count
         argument_key_count += 1
         return original_argument_key(**kwargs)
@@ -173,7 +180,7 @@ def test_candidate_frontier_describes_dynamic_arguments_once(
     class PlanningObservedError(Exception):
         """Stop before lowering or compiling the resolved candidate frontier."""
 
-    def observe_planning(**kwargs: Any) -> tuple:
+    def observe_planning(**kwargs: Unpack[PlanningKwargs]) -> Never:
         result = original_planning(**kwargs)
         captured.append((result, kwargs))
         raise PlanningObservedError
@@ -510,10 +517,7 @@ def test_execution_metadata_is_derived_once_per_program_group(
     calls: list[int] = []
     original = backward_induction._execution_metadata
 
-    # `Any` rather than `object`: the counter forwards its keywords untouched to
-    # a strictly typed function, so narrowing them here would be a claim it does
-    # not make.
-    def _counting(**kwargs: Any) -> Any:
+    def _counting(**kwargs: Unpack[ExecutionMetadataKwargs]) -> ExecutionMetadataResult:
         calls.append(1)
         return original(**kwargs)
 

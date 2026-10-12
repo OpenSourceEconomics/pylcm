@@ -26,10 +26,18 @@ from _lcm.regime_building.broadcast import merge_model_slots
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from _lcm.transition_plans import OriginalLotteryLayout, signature_with_state
-from _lcm.typing import RegimeNamesToIds
+from _lcm.typing import DataclassInstance, EconFunctionArg, RegimeNamesToIds
+from lcm.collective import CollectiveUtility
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.regime import Regime
+from lcm.regime import (
+    ActionEntry,
+    ConstraintEntry,
+    FunctionEntry,
+    Regime,
+    StateEntry,
+    StateTransitionEntry,
+)
 from lcm.transition import (
     AgeSpecializedFunction,
     JointTransition,
@@ -37,12 +45,31 @@ from lcm.transition import (
     fixed_transition,
 )
 from lcm.typing import (
+    ActionName,
     DiscreteState,
     FloatND,
+    FunctionName,
     IntND,
+    RegimeName,
     ScalarInt,
+    StateName,
+    UserFunction,
     UserInitialConditions,
     UserParams,
+    UserParamsNode,
+)
+
+# A declaration `_lower_next_output_reads` walks: a law or helper, a `Phased`
+# pair, or a mapping of declarations by name.
+type _DeclarationNode = (
+    UserFunction
+    | StochasticTransition
+    | JointTransition
+    | AgeSpecializedFunction
+    | CollectiveUtility
+    | Phased
+    | Mapping[str, _DeclarationNode]
+    | None
 )
 
 
@@ -50,7 +77,7 @@ from lcm.typing import (
 class FixedComponentSplit:
     """A code bijection and the original observation domains of its carriers."""
 
-    grids: Mapping[str, DiscreteGrid]
+    grids: MappingProxyType[RegimeName, DiscreteGrid]
     """Original simulation grids by regime, before broadcast pruning."""
 
     rest_grid: DiscreteGrid
@@ -74,7 +101,7 @@ class FixedComponentLaw:
     original_layout: OriginalLotteryLayout
 
     @no_type_check
-    def __call__(self, *args: object, **kwargs: object) -> FloatND:
+    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
         return self.restricted(*args, **kwargs)
 
 
@@ -148,21 +175,24 @@ def factor_fixed_components(
     regimes: Mapping[str, Regime],
     laws: RegimeLaws,
     fixed_params: UserParams,
-    states: Mapping[str, object],
-    state_transitions: Mapping[str, object],
-    functions: Mapping[str, object],
-    constraints: Mapping[str, object],
-    actions: Mapping[str, object],
-    derived_categoricals: Mapping[str, object],
+    states: Mapping[StateName, StateEntry],
+    state_transitions: Mapping[StateName, StateTransitionEntry],
+    functions: Mapping[FunctionName, FunctionEntry],
+    constraints: Mapping[FunctionName, ConstraintEntry],
+    actions: Mapping[ActionName, ActionEntry],
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
 ) -> tuple[
     Mapping[str, Regime],
     UserParams,
-    Mapping[str, object],
-    Mapping[str, object],
-    Mapping[str, object],
-    Mapping[str, FixedComponentSplit],
+    Mapping[StateName, StateEntry],
+    Mapping[StateName, StateTransitionEntry],
+    Mapping[FunctionName, FunctionEntry],
+    MappingProxyType[StateName, FixedComponentSplit],
 ]:
-    """Inventory declarations, then lower each grid and law in its original slot."""
+    """Inventory declarations, then lower each grid and law in its original slot.
+
+    Without a fixed component the model's own declarations pass through as given.
+    """
     groups = _collect_groups(regimes=regimes, state_transitions=state_transitions)
     if not groups:
         return (
@@ -257,32 +287,40 @@ def factor_fixed_components(
         rename_split_params(params=fixed_params, splits=splits),
         MappingProxyType(model_states),
         MappingProxyType(model_laws),
-        MappingProxyType(
-            {
-                name: _lower_next_output_reads(node=func, next_outputs=next_outputs)
-                for name, func in functions.items()
-            }
+        # Lowering keeps each declaration's kind and replaces only its leaves.
+        cast(
+            "Mapping[FunctionName, FunctionEntry]",
+            MappingProxyType(
+                {
+                    name: _lower_next_output_reads(node=func, next_outputs=next_outputs)
+                    for name, func in functions.items()
+                }
+            ),
         ),
-        MappingProxyType(splits),
+        splits,
     )
 
 
 def _lower_state_laws(
     *,
-    laws: Mapping[str, object],
+    laws: Mapping[StateName, StateTransitionEntry],
     splits: Mapping[str, FixedComponentSplit],
     parts: Mapping[str, np.ndarray],
     next_outputs: Mapping[str, Callable[..., DiscreteState]],
-) -> dict[str, object]:
+) -> dict[StateName, StateTransitionEntry]:
     """Normalize the original graph before decomposing any annotated producer.
 
     Both the restricted law and its original-lottery descriptor must inherit
     the same normalized callable. Annotation determines storage, not whether
     a transition is allowed to consume an original next-state output.
     """
-    lowered: dict[str, object] = {}
+    lowered: dict[StateName, StateTransitionEntry] = {}
     for name, law in laws.items():
-        normalized = _lower_next_output_reads(node=law, next_outputs=next_outputs)
+        # Lowering keeps each declaration container and replaces only its leaves.
+        normalized = cast(
+            "StateTransitionEntry",
+            _lower_next_output_reads(node=law, next_outputs=next_outputs),
+        )
         lowered[f"{name}_rest" if name in splits else name] = (
             _lower_law(
                 law=normalized,
@@ -297,8 +335,8 @@ def _lower_state_laws(
 
 
 def _lower_next_output_reads(  # noqa: PLR0911 — one return per declaration kind
-    *, node: object, next_outputs: Mapping[str, Callable[..., DiscreteState]]
-) -> object:
+    *, node: _DeclarationNode, next_outputs: Mapping[str, Callable[..., DiscreteState]]
+) -> _DeclarationNode:
     """Substitute original next-state reads with their deterministic decode DAG.
 
     The lowered arguments name the same target's realized transition outputs.
@@ -360,11 +398,15 @@ def _lower_next_output_reads(  # noqa: PLR0911 — one return per declaration ki
 def _build_with_next_outputs(
     age: float,
     *,
-    build: Callable[[float], object],
+    build: Callable[[float], UserFunction],
     next_outputs: Mapping[str, Callable[..., DiscreteState]],
-) -> object:
+) -> UserFunction:
     """Decode next-state reads in an age-specialized helper's concrete DAG."""
-    return _lower_next_output_reads(node=build(age), next_outputs=next_outputs)
+    # Lowering a function yields a function.
+    return cast(
+        "UserFunction",
+        _lower_next_output_reads(node=build(age), next_outputs=next_outputs),
+    )
 
 
 def rename_split_params(
@@ -374,7 +416,7 @@ def rename_split_params(
     if not splits:
         return params
     regime_names = {regime for split in splits.values() for regime in split.grids}
-    renamed: dict[str, object] = dict(params)
+    renamed: dict[str, UserParamsNode] = dict(params)
     for regime_name in regime_names & params.keys():
         block = params[regime_name]
         if not isinstance(block, Mapping):
@@ -391,8 +433,8 @@ def rename_split_params(
 
 
 def _rename_law_params(
-    *, params: Mapping[str, object], splits: Mapping[str, FixedComponentSplit]
-) -> dict[str, object]:
+    *, params: Mapping[str, UserParamsNode], splits: Mapping[str, FixedComponentSplit]
+) -> dict[str, UserParamsNode]:
     """Rename function slots without inspecting their parameter payloads."""
     renamed = dict(params)
     for name in splits:
@@ -406,8 +448,10 @@ def _rename_law_params(
 
 
 def _collect_groups(
-    *, regimes: Mapping[str, Regime], state_transitions: Mapping[str, object]
-) -> dict[str, tuple[int, ...]]:
+    *,
+    regimes: Mapping[str, Regime],
+    state_transitions: Mapping[StateName, StateTransitionEntry],
+) -> MappingProxyType[StateName, tuple[int, ...]]:
     """Require one declared grouping across all law leaves."""
     groups: dict[str, tuple[int, ...]] = {}
     for laws in (
@@ -427,7 +471,7 @@ def _collect_groups(
                             "differs "
                             "between declarations; one state needs one grouping."
                         )
-    return groups
+    return MappingProxyType(groups)
 
 
 def _create_splits(
@@ -435,7 +479,10 @@ def _create_splits(
     regimes: Mapping[str, Regime],
     groups: Mapping[str, tuple[int, ...]],
     occupied: set[str],
-) -> tuple[dict[str, FixedComponentSplit], dict[str, np.ndarray]]:
+) -> tuple[
+    MappingProxyType[StateName, FixedComponentSplit],
+    MappingProxyType[StateName, np.ndarray],
+]:
     """Resolve every original carrier before replacing any grid or law."""
     splits: dict[str, FixedComponentSplit] = {}
     parts: dict[str, np.ndarray] = {}
@@ -481,7 +528,7 @@ def _create_splits(
             rest_of_code=tuple(int(code) for code in rest_of_code),
             fixed_of_code=grouping,
         )
-    return splits, parts
+    return MappingProxyType(splits), MappingProxyType(parts)
 
 
 def _read_initial_codes(
@@ -490,7 +537,7 @@ def _read_initial_codes(
     rows: np.ndarray,
     name: str,
     grid: DiscreteGrid,
-    regime_name: str,
+    regime_name: RegimeName,
 ) -> np.ndarray:
     """Read only meaningful observations using their original regime's domain."""
     if not rows.any():
@@ -517,7 +564,9 @@ def _read_initial_codes(
     return values.astype(np.int32)
 
 
-def _law_leaves(law: object) -> tuple[object, ...]:
+def _law_leaves(
+    law: StateTransitionEntry,
+) -> tuple[UserFunction | StochasticTransition | None, ...]:
     """Flatten declaration containers without changing phase or target ownership."""
     if isinstance(law, Phased):
         return _law_leaves(law.solve) + _law_leaves(law.simulate)
@@ -527,8 +576,12 @@ def _law_leaves(law: object) -> tuple[object, ...]:
 
 
 def _lower_law(
-    *, law: object, name: str, split: FixedComponentSplit, code_by_parts: np.ndarray
-) -> object:
+    *,
+    law: StateTransitionEntry,
+    name: str,
+    split: FixedComponentSplit,
+    code_by_parts: np.ndarray,
+) -> StateTransitionEntry:
     """Restrict every supported leaf, preserving its phase and target containers."""
     if isinstance(law, Phased):
         return Phased(
@@ -540,13 +593,17 @@ def _lower_law(
             ),
         )
     if isinstance(law, Mapping):
-        return MappingProxyType(
-            {
-                target: _lower_law(
-                    law=leaf, name=name, split=split, code_by_parts=code_by_parts
-                )
-                for target, leaf in law.items()
-            }
+        # Each per-target leaf lowers to a leaf, so the mapping stays per-target.
+        return cast(
+            "StateTransitionEntry",
+            MappingProxyType(
+                {
+                    target: _lower_law(
+                        law=leaf, name=name, split=split, code_by_parts=code_by_parts
+                    )
+                    for target, leaf in law.items()
+                }
+            ),
         )
     if law is None:
         return None
@@ -591,7 +648,7 @@ def _publish_fixed_component_law(
     bound = provenance.__call__
 
     @no_type_check
-    def forwarded(*args: object, **kwargs: object) -> FloatND:
+    def forwarded(*args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
         return bound(*args, **kwargs)
 
     forwarded.__wrapped__ = bound  # ty: ignore[unresolved-attribute]
@@ -635,7 +692,7 @@ def _group_codes(
 def _restricted_law(
     *,
     func: Callable[..., FloatND],
-    state_name: str,
+    state_name: StateName,
     fixed_of_code: np.ndarray,
     code_by_parts: np.ndarray,
 ) -> Callable[..., FloatND]:
@@ -654,7 +711,7 @@ def _restricted_law(
     # Generated per model, so the claw must not wrap it: model fingerprinting reads
     # a plain closure, but refuses a beartype wrapper it did not capture at import.
     @no_type_check
-    def restricted(*args: object, **kwargs: object) -> FloatND:
+    def restricted(*args: EconFunctionArg, **kwargs: EconFunctionArg) -> FloatND:
         arguments = dict(zip(names, args, strict=False)) | kwargs
         call_arguments = (
             arguments
@@ -711,9 +768,12 @@ def _gather_codes(*, table: IntND, index: IntND) -> IntND:
     return jnp.squeeze(gathered, axis=-1)
 
 
-def _labels(*, prefix: str, n: int) -> type:
-    return categorical(ordered=False)(
+def _labels(*, prefix: str, n: int) -> type[DataclassInstance]:
+    # `make_dataclass` is typed as returning a bare `type`.
+    labels = cast(
+        "type[DataclassInstance]",
         make_dataclass(
             prefix.title().replace("_", ""), [(f"c{i}", ScalarInt) for i in range(n)]
-        )
+        ),
     )
+    return categorical(ordered=False)(labels)

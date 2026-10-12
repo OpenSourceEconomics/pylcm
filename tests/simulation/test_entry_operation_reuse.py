@@ -5,14 +5,14 @@ import json
 import sys
 import weakref
 from types import MappingProxyType
-from typing import Any
+from typing import NotRequired, TypedDict, Unpack
 
 import cloudpickle
 import jax
 import numpy as np
 import pytest
 
-from _lcm.simulation import chunk_admission
+from _lcm.simulation import chunk_admission, host_operations
 from _lcm.simulation.entry_allocations import (
     SimulationEntryAllocations,
     _pad_initial_leaf,
@@ -22,6 +22,18 @@ from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm.exceptions import ExecutionPlanningError
 from tests.simulation.test_independent_outer_cohorts import _model
+
+
+class _HostCompilation(TypedDict):
+    key: host_operations.Hashable
+    function: host_operations.Callable[..., host_operations.PytreeValue]
+    arguments: host_operations.Mapping[
+        host_operations.ReferenceName, host_operations.ShapeDtypePytree
+    ]
+    static_arguments: host_operations.Mapping[
+        host_operations.ReferenceName, host_operations.StaticArgument
+    ]
+    output_sharding: NotRequired[host_operations.jax.sharding.Sharding | None]
 
 
 def _initial(*, count: int, shift: float = 0.0) -> dict[str, np.ndarray]:
@@ -43,14 +55,22 @@ def test_padded_public_calls_reuse_entry_code_and_accept_new_shapes(
     solution = model.solve(params=params, log_level="off")
     frontier = chunk_admission._independent_outer_candidates
 
-    def force_anchor(**call: Any) -> tuple[int, ...]:
-        return (frontier(**call)[0],)
+    def force_anchor(
+        *, population: int, alignment: int, subject_width: int
+    ) -> tuple[int, ...]:
+        return (
+            frontier(
+                population=population, alignment=alignment, subject_width=subject_width
+            )[0],
+        )
 
     monkeypatch.setattr(chunk_admission, "_independent_outer_candidates", force_anchor)
     compile_candidate = ProfiledSimulationOperations.compile_candidate
     misses = []
 
-    def observe_compile(self: ProfiledSimulationOperations, **call: Any) -> Any:
+    def observe_compile(
+        self: ProfiledSimulationOperations, **call: Unpack[_HostCompilation]
+    ) -> host_operations._ProfiledOperation:
         if call["function"] is _pad_initial_leaf and call["key"] not in self.cache:
             misses.append(
                 {

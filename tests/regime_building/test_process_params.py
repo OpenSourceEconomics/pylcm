@@ -1,5 +1,6 @@
 """Tests for process_params function."""
 
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import cast
 
@@ -14,8 +15,10 @@ from _lcm.typing import ParamsTemplate
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 
+type _TemplateNode = str | Mapping[str, _TemplateNode]
 
-def _as_template(plain: dict) -> ParamsTemplate:
+
+def _as_template(plain: Mapping[str, _TemplateNode]) -> ParamsTemplate:
     """Deep-freeze a plain nested dict into a `ParamsTemplate` for tests."""
     return cast("ParamsTemplate", ensure_containers_are_immutable(plain))
 
@@ -186,7 +189,7 @@ class MockRegime(Regime):
 
     """
 
-    def __init__(self, regime_params_template: dict) -> None:
+    def __init__(self, regime_params_template: Mapping[str, _TemplateNode]) -> None:
         object.__setattr__(
             self,
             "regime_params_template",
@@ -199,7 +202,7 @@ def test_function_params_no_qname_separator():
     """Function parameters should not contain the qname separator."""
     regimes = {
         "regime_0": MockRegime(
-            {"fun_0": {"arg__0": float}}  # Invalid: contains '__'
+            {"fun_0": {"arg__0": "float"}}  # Invalid: contains '__'
         ),
     }
     with pytest.raises(InvalidNameError):
@@ -210,7 +213,7 @@ def test_regime_name_no_qname_separator():
     """Regime names should not contain the qname separator."""
     regimes = {
         "regime__0": MockRegime(  # Invalid: contains '__'
-            {"fun_0": {"arg_0": float}}
+            {"fun_0": {"arg_0": "float"}}
         ),
     }
     with pytest.raises(InvalidNameError):
@@ -221,7 +224,7 @@ def test_function_name_no_qname_separator():
     """Function names should not contain the qname separator."""
     regimes = {
         "regime_0": MockRegime(
-            {"fun__0": {"arg_0": float}}  # Invalid: contains '__'
+            {"fun__0": {"arg_0": "float"}}  # Invalid: contains '__'
         ),
     }
     with pytest.raises(InvalidNameError):
@@ -233,7 +236,7 @@ def test_regime_function_names_disjoint():
     # Case: function name same as regime name
     regimes = {
         "regime_0": MockRegime(
-            {"regime_0": {"arg_0": float}}  # Invalid: function name = regime name
+            {"regime_0": {"arg_0": "float"}}  # Invalid: function name = regime name
         ),
     }
     with pytest.raises(InvalidNameError):
@@ -245,7 +248,7 @@ def test_regime_argument_names_disjoint():
     # Case: argument name same as regime name
     regimes = {
         "regime_0": MockRegime(
-            {"fun_0": {"regime_0": float}}  # Invalid: arg name = regime name
+            {"fun_0": {"regime_0": "float"}}  # Invalid: arg name = regime name
         ),
     }
     with pytest.raises(InvalidNameError):

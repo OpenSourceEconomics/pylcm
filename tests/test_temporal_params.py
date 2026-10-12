@@ -3,7 +3,7 @@
 import inspect
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import NotRequired
 
 import jax
 import jax.numpy as jnp
@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 from beartype import beartype
 from dags.tree import flatten_to_qnames
+from typing_extensions import TypedDict
 
 import lcm
 import lcm.exceptions
@@ -21,6 +22,7 @@ from _lcm.solution.preconditions import check_solver_params
 from _lcm.time import ModelTime
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
+from lcm.regime import FunctionEntry
 from lcm.solvers import EGM, NBEGM
 from lcm.typing import (
     BoolND,
@@ -73,7 +75,7 @@ def _model(
         if flow is not None
         else (_manual if manual else lcm.time_varying_params("wage")(_flow))
     )
-    clock: dict[str, Any] = (
+    clock: _ClockKwargs = (
         {"ages": lcm.AgeGrid(start=40, inclusive_stop=42, step="Y")}
         if age
         else {"n_periods": 3}
@@ -147,7 +149,8 @@ def test_temporal_invalid_inputs_fail_before_solving(*, kind: str, fixed: bool) 
             values=jnp.array([1.0, 2.0]), ages=(0, 1)
         ),
         "fractional": lambda: lcm.TimeVarying(
-            values=jnp.array([1.0, 2.0, 3.0]), periods=(0, 1, 9.5)
+            values=jnp.array([1.0, 2.0, 3.0]),
+            periods=(0, 1, 9.5),  # ty: ignore[invalid-argument-type]
         ),
         "boolean": lambda: lcm.TimeVarying(
             values=jnp.array([1.0, 2.0]), periods=(False, True)
@@ -654,12 +657,10 @@ def test_managed_parameter_rejects_a_nested_container(kind: str) -> None:
 
 
 def test_temporal_age_labels_reject_numpy_booleans() -> None:
-    with pytest.raises(lcm.exceptions.InvalidParamsError, match="age coordinates"):
-        align_time_varying(
-            value=lcm.TimeVarying(values=jnp.array([1.0]), ages=(np.bool_(1),)),
-            ages=lcm.AgeGrid(start=1, inclusive_stop=2, step="Y"),
-            required_periods=(0,),
-            name="wage",
+    with pytest.raises(lcm.exceptions.InvalidParamsError, match="ages"):
+        lcm.TimeVarying(
+            values=jnp.array([1.0]),
+            ages=(np.bool_(1),),  # ty: ignore[invalid-argument-type]
         )
 
 
@@ -1128,8 +1129,12 @@ def _egm_time_model(
     source_periods: tuple[int, ...] = (0,),
     resources: UserFunction | lcm.PeriodSpecializedFunction = _wealth_resources,
     ride_along: bool = False,
-    case_functions: dict[str, Any] | None = None,
-) -> tuple[lcm.Model, dict[str, Any], lcm.LinSpacedGrid]:
+    case_functions: dict[str, FunctionEntry] | None = None,
+) -> tuple[
+    lcm.Model,
+    dict[str, float | lcm.TimeVarying | dict[str, dict[str, float | lcm.TimeVarying]]],
+    lcm.LinSpacedGrid,
+]:
     """Build a two-period weighted-log model with one temporal consumer."""
     savings_grid = lcm.LinSpacedGrid(start=0.0, stop=20.0, n_points=400)
     solver = (
@@ -1210,9 +1215,11 @@ def _egm_time_model(
     return model, params, wealth_grid
 
 
-def _case_subsidy_functions(*, temporal: bool, piece_first: bool) -> dict[str, Any]:
+def _case_subsidy_functions(
+    *, temporal: bool, piece_first: bool
+) -> dict[str, FunctionEntry]:
     boundary = lcm.case_boundary(condition=lcm.ref("liquid") < 11.0, kind="jump")
-    functions: dict[str, Any] = {"eligible": boundary}
+    functions: dict[str, FunctionEntry] = {"eligible": boundary}
     for name, declare_piece in (
         ("below", lcm.piece(output="subsidy", when=boundary)),
         ("above", lcm.piece(output="subsidy", otherwise=boundary)),
@@ -1392,3 +1399,8 @@ def test_nbegm_temporal_probe_respects_specialized_period_groups(
     check_solver_params(
         regimes=model._regimes, flat_params=model._process_params(params)
     )
+
+
+class _ClockKwargs(TypedDict):
+    ages: NotRequired[lcm.AgeGrid]
+    n_periods: NotRequired[int]

@@ -27,6 +27,7 @@ from lcm.typing import (
     FloatND,
     Period,
     ScalarInt,
+    UserParamsNode,
 )
 
 
@@ -223,7 +224,7 @@ def get_params(
     interest_rate: float = 0.05,
     wage: float = 10.0,
     survival_probs: FloatND | None = None,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get default parameters for the mortality model.
 
     Args:

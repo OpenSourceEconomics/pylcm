@@ -14,11 +14,13 @@ from typing import cast
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from _lcm.params.edges import regime_kernel_params
 from _lcm.solution.negm import _with_outer_post_decision
 from _lcm.typing import FlatParams
 from lcm.solvers import AdaptiveOuterMesh
+from lcm.typing import FloatND, ParameterName, RegimeName
 from tests.test_models import n_nbegm_toy as toy
 
 _EDGE_BRANCHES = [
@@ -100,7 +102,7 @@ def test_free_regime_law_parameter_solves_like_the_fixed_one(*, variant, outer_s
     assert _value_fingerprints(free.values) == _value_fingerprints(fixed.values)
 
 
-def _flat_params(*, edge_branch: Mapping[str, object]) -> FlatParams:
+def _flat_params(*, edge_branch: Mapping[ParameterName, FloatND]) -> FlatParams:
     """Flat params of a nested source `alive` and a second source `retired`."""
     return cast(
         "FlatParams",
@@ -130,10 +132,12 @@ def _bind_outer_node(*, flat_params: FlatParams) -> FlatParams:
 
 
 def _value_fingerprints(
-    values: Mapping[int, Mapping[str, object]],
-) -> dict[tuple[int, str], tuple[tuple[int, ...], str, bytes]]:
+    values: Mapping[
+        int, Mapping[RegimeName, FloatND | NDArray[np.float32 | np.float64]]
+    ],
+) -> dict[tuple[int, RegimeName], tuple[tuple[int, ...], str, bytes]]:
     """Return each value array's shape, dtype and C-order bytes by period and regime."""
-    fingerprints: dict[tuple[int, str], tuple[tuple[int, ...], str, bytes]] = {}
+    fingerprints: dict[tuple[int, RegimeName], tuple[tuple[int, ...], str, bytes]] = {}
     for period, by_regime in values.items():
         for regime_name, value in by_regime.items():
             array = np.asarray(value)

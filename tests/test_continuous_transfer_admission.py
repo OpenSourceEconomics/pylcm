@@ -11,7 +11,7 @@ import gc
 import weakref
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import Unpack
 
 import jax
 import jax.numpy as jnp
@@ -42,11 +42,14 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
 )
 from _lcm.execution.workspace_planning import (
+    WorkspacePlan,
     compiler_memory_reservation,
     plan_workspace,
 )
 from _lcm.solution import backward_induction
+from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
+from tests.conftest import ApplyValueTransferKwargs
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -124,8 +127,8 @@ def _case(*, shared: bool) -> _Case:
     program = ResolvedCoreProgram(
         name="main",
         function=_shape_only,
-        arguments=arguments,
-        static_kwargs={},
+        arguments=MappingProxyType(dict(arguments)),
+        static_kwargs=MappingProxyType({}),
         requirements=CoreExecutionRequirements(
             value_reads=tuple(
                 ValueRead(target=address, source=transfer.source)
@@ -135,7 +138,7 @@ def _case(*, shared: bool) -> _Case:
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         specialization_key=(),
         input_transfer_plan=transfers,
     )
@@ -221,7 +224,7 @@ def _core(*, case: _Case, owner: PendingSolveWork, shared: bool) -> PlannedCore:
     return PlannedCore(
         compiled=case.executable,
         name="main",
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         layout=resolve_output_layout(
             core_key="main",
             value_template=case.source,
@@ -251,7 +254,7 @@ def test_pruned_full_replicas_and_scratch_have_an_exact_admission_threshold(
         "second": case.source_snapshot - 1,
     }
 
-    def observe_copy(**kwargs: Any) -> jax.Array:
+    def observe_copy(**kwargs: Unpack[ApplyValueTransferKwargs]) -> jax.Array:
         copied = apply(**kwargs)
         transfer = kwargs["transfer"]
         assert transfer.kind is ValueTransferKind.ALL_GATHER
@@ -260,13 +263,15 @@ def test_pruned_full_replicas_and_scratch_have_an_exact_admission_threshold(
         assert all(
             shard.data.shape == case.source.shape for shard in copied.addressable_shards
         )
-        np.testing.assert_array_equal(copied, snapshots[transfer.source.path[0]])
+        key = transfer.source.path[0]
+        assert isinstance(key, str)
+        np.testing.assert_array_equal(copied, snapshots[key])
         copies.append(copied)
         return copied
 
     def observe_dispatch(
-        executable: jax.stages.Compiled, *args: Any, **kwargs: Any
-    ) -> Any:
+        executable: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         if executable is case.executable:
             dispatches.append(True)
         return call(executable, *args, **kwargs)
@@ -274,7 +279,9 @@ def test_pruned_full_replicas_and_scratch_have_an_exact_admission_threshold(
     monkeypatch.setattr(value_transfer, "apply_value_transfer", observe_copy)
     monkeypatch.setattr(jax.stages.Compiled, "__call__", observe_dispatch)
 
-    def plan(*, budget: int, inventory: ResidentInventory) -> Any:
+    def plan(
+        *, budget: int, inventory: ResidentInventory
+    ) -> WorkspacePlan[jax.stages.Compiled]:
         return plan_workspace(
             axes=(),
             compile_candidate=lambda _widths: case.executable,
@@ -292,7 +299,9 @@ def test_pruned_full_replicas_and_scratch_have_an_exact_admission_threshold(
     assert admitted.compiled is case.executable
     # Negative control: the SAME just-below ceiling wrongly admits when only
     # operator scratch is omitted. No rejected/mutated candidate is dispatched.
-    omitted = dataclasses.replace(case.inventory, transfer_scratch_bytes={})
+    omitted = dataclasses.replace(
+        case.inventory, transfer_scratch_bytes=MappingProxyType({})
+    )
     assert plan(budget=ceiling - 1, inventory=omitted).compiled is case.executable
     assert copies == []
     assert dispatches == []
@@ -342,7 +351,7 @@ def test_interrupted_all_gather_materialization_keeps_copy_until_owner_close(
     references = []
     apply = value_transfer.apply_value_transfer
 
-    def observe_copy(**kwargs: Any) -> jax.Array:
+    def observe_copy(**kwargs: Unpack[ApplyValueTransferKwargs]) -> jax.Array:
         copied = apply(**kwargs)
         assert kwargs["transfer"].kind is ValueTransferKind.ALL_GATHER
         assert copied.is_fully_replicated

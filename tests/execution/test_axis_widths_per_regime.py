@@ -6,15 +6,19 @@ leaves the planner free everywhere else.
 """
 
 import functools
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any
 
 import numpy as np
 import pytest
 
+from _lcm.execution.output_layout import PlannedCore
 from _lcm.solution import backward_induction
+from _lcm.typing import PeriodToRegimeToVArr
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError
+from lcm.solver_api import SolutionResult
+from lcm.typing import FloatND, RegimeName
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
 )
@@ -24,6 +28,10 @@ from tests.test_models.processes import (
     get_multi_regime_model,
     get_multi_regime_params,
 )
+
+type GroupedCores = MappingProxyType[
+    tuple[RegimeName, int], MappingProxyType[str, PlannedCore]
+]
 
 _N_PERIODS = 6
 _CELL_AXIS = "cell"
@@ -50,11 +58,13 @@ def _model_with(config: ExecutionConfig) -> Model:
 
 # keyword-only-exempt: library-callback=_group_cores_by_regime_period
 def _capture_grouping(
-    cores_by_triple: Any,
+    cores_by_triple: Mapping[backward_induction._CoreTriple, PlannedCore],
     *,
-    original: Any,
+    original: Callable[
+        [Mapping[backward_induction._CoreTriple, PlannedCore]], GroupedCores
+    ],
     sink: dict[tuple[str, int, str], dict[str, int]],
-) -> Any:
+) -> GroupedCores:
     """Record each compiled core's lowering widths under its (regime, period, core)."""
     for triple, core in cores_by_triple.items():
         sink[triple] = dict(core.tile_widths)
@@ -63,7 +73,7 @@ def _capture_grouping(
 
 def _solve_and_collect_widths(
     *, config: ExecutionConfig
-) -> tuple[dict[tuple[str, int, str], dict[str, int]], Any]:
+) -> tuple[dict[tuple[str, int, str], dict[str, int]], SolutionResult]:
     """Solve the two-regime model and return the widths every core was lowered at."""
     model = _model_with(config)
     observed: dict[tuple[str, int, str], dict[str, int]] = {}
@@ -88,7 +98,7 @@ def _cell_widths_by_regime(
     widths: dict[tuple[str, int, str], dict[str, int]],
 ) -> dict[str, set[int]]:
     """Collapse the per-core record to the cell widths each regime was lowered at."""
-    by_regime: dict[str, set[int]] = {}
+    by_regime: dict[RegimeName, set[int]] = {}
     for (regime_name, _period, _core), core_widths in widths.items():
         if _CELL_AXIS in core_widths:
             by_regime.setdefault(regime_name, set()).add(core_widths[_CELL_AXIS])
@@ -126,6 +136,8 @@ def test_a_per_regime_width_preserves_the_solved_values() -> None:
         config=ExecutionConfig(axis_widths={_CELL_AXIS: {"retire": 2}}),
     )
 
+    assert planned_solution._engine_view is not None
+    assert pinned_solution._engine_view is not None
     planned_values = planned_solution._engine_view.values
     pinned_values = pinned_solution._engine_view.values
     assert set(pinned_values) == set(planned_values)
@@ -151,7 +163,9 @@ def test_a_per_regime_width_preserves_the_solved_values() -> None:
                 )
 
 
-def _bellman_operands(*, values: Any, period: int) -> tuple[np.ndarray, np.ndarray]:
+def _bellman_operands(
+    *, values: PeriodToRegimeToVArr, period: int
+) -> tuple[np.ndarray, np.ndarray]:
     """Return the two terms whose sum is each work-regime value at `period`.
 
     The work regime's last period continues into retirement, so its value is
@@ -211,8 +225,8 @@ def _interpolate(*, x: float, grid: np.ndarray, values: np.ndarray) -> float:
 
 def _assert_within_operand_rounding_bound(
     *,
-    got: Any,
-    expected: Any,
+    got: FloatND,
+    expected: FloatND,
     flow: np.ndarray,
     continuation: np.ndarray,
     n_ulp: int,
@@ -263,7 +277,7 @@ def test_a_mapping_and_an_integer_may_share_one_declaration() -> None:
 
 def test_per_regime_widths_are_read_only_after_construction() -> None:
     """The caller's nested dict cannot be mutated into the stored configuration."""
-    widths: dict[str, Any] = {_CELL_AXIS: {"retire": 2}}
+    widths: dict[str, dict[RegimeName, int]] = {_CELL_AXIS: {"retire": 2}}
     config = ExecutionConfig(axis_widths=widths)
 
     widths[_CELL_AXIS]["retire"] = 8

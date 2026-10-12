@@ -34,7 +34,7 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
-  "beartype>=0.22",
+  "beartype>=0.23",
   "cloudpickle>=3.1.2",
   "dags>=0.6",
   "h5py>=3.12",
@@ -147,7 +147,7 @@ grid-search-pair = "python -m benchmarks.grid_search_pair"
 [tool.pixi.feature.benchmarks.pypi-dependencies]
 # ACA model on the edges-params API: law arguments live under params["edges"].
 # Keep an exact revision so benchmark model construction is reproducible.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "e2b17fb23df8d6e7622485e9130b89e2fbb9e66a" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "98ebb477b7b418f47bba7480ec762ff1a1cafeae" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
@@ -261,6 +261,7 @@ known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 [tool.ruff.lint]
 select = [ "ALL" ]
 extend-ignore = [
+  "ANN401",  # Dynamically typed expressions (Any); PAN002 in tests/ci/precise_annotations.py covers Any everywhere
   "COM812",  # Conflicts with ruff-format
   "CPY001",  # Missing copyright notice
   "D",       # Docstrings
@@ -323,9 +324,6 @@ per-file-ignores."explanations/*" = [
 ]
 per-file-ignores."src/_lcm/**/*[A-Z]*.py" = [
   "N999", # Module name mixing uppercase and lowercase (Q_and_F.py, V.py, max_Q_over_a.py)
-]
-per-file-ignores."src/_lcm/utils/functools.py" = [
-  "ANN401", # Dynamically typed expressions (Any)
 ]
 per-file-ignores."src/lcm_examples/mahler_yum_2024/**" = [
   "PD008", # false positive on JAX `.at[].set()` immutable updates
@@ -403,6 +401,9 @@ per-file-ignores."tests/test_Q_and_F.py" = [
 per-file-ignores."tests/test_temporal_aggregation.py" = [
   "ARG001", # Unused function argument (x64_enabled fixture)
 ]
+# `tests/ci/precise_annotations.py` reads `# noqa: PANxxx - <reason>`; ruff keeps
+# those codes when it rewrites a `noqa` comment.
+external = [ "PAN" ]
 pydocstyle.convention = "google"
 
 # codespell passes most econ/numerics jargon, but not all of it: `statics`

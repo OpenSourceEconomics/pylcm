@@ -1,5 +1,5 @@
 import functools
-from typing import Any, Literal
+from typing import Literal
 
 from jax import numpy as jnp
 
@@ -29,22 +29,10 @@ from lcm.typing import (
 
 _SHOCK_GRID_CLASSES = {
     "uniform": UniformIIDProcess,
-    "normal": NormalIIDProcess,
-    "lognormal": LogNormalIIDProcess,
-    "tauchen": TauchenAR1Process,
+    "normal": functools.partial(NormalIIDProcess, gauss_hermite=True),
+    "lognormal": functools.partial(LogNormalIIDProcess, gauss_hermite=True),
+    "tauchen": functools.partial(TauchenAR1Process, gauss_hermite=True),
     "rouwenhorst": RouwenhorstAR1Process,
-}
-
-# Heterogeneous per-class constructor kwargs, splatted with `**`, so the value type
-# is genuinely `Any`: a checker must assume any key of the target class could receive
-# one. (It typed as `bool` only by luck — every param used to accept a bool, since
-# `bool` is an `int`.)
-_SHOCK_GRID_KWARGS: dict[str, dict[str, Any]] = {
-    "uniform": {},
-    "normal": {"gauss_hermite": True},
-    "lognormal": {"gauss_hermite": True},
-    "tauchen": {"gauss_hermite": True},
-    "rouwenhorst": {},
 }
 
 
@@ -106,9 +94,7 @@ def get_model(
     alive = UserRegime(
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
-            "income": _SHOCK_GRID_CLASSES[distribution_type](
-                n_points=5, **_SHOCK_GRID_KWARGS[distribution_type]
-            ),
+            "income": _SHOCK_GRID_CLASSES[distribution_type](n_points=5),
             "health": DiscreteGrid(category_class=Health),
         },
         state_transitions={
@@ -171,7 +157,6 @@ def get_multi_regime_model(
     retire_final_age = n_periods - 2
 
     shock_grid_cls = _SHOCK_GRID_CLASSES[distribution_type]
-    shock_kwargs = _SHOCK_GRID_KWARGS[distribution_type]
 
     # `work` and `retire` share one declaration but are built separately, so the
     # two regimes hold distinct regime and grid objects across the shock handoff.
@@ -179,7 +164,7 @@ def get_multi_regime_model(
         name: UserRegime(
             states={
                 "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
-                "income": shock_grid_cls(n_points=5, **shock_kwargs),
+                "income": shock_grid_cls(n_points=5),
                 "health": DiscreteGrid(category_class=Health),
             },
             state_transitions={

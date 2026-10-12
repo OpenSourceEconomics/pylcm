@@ -17,10 +17,11 @@ being a vmap width and nothing else.
 
 import functools
 import logging
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import replace
+from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import NoReturn, cast
 
 import jax
 import jax.numpy as jnp
@@ -32,8 +33,11 @@ from _lcm.egm.outer_envelope import build_stacked_outer_carry
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
+    CoreProgram,
+    CoreProgramGraphAware,
     InternalInputRef,
     InternalOutputSpec,
+    MaterializedCoreProgram,
     ProgramScope,
     _value_read_argument_leaf,
     core_program_graph,
@@ -53,17 +57,19 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
 )
 from _lcm.solution import backward_induction, period_replay
+from _lcm.solution.contract import PeriodKernel
 from _lcm.solution.negm import (
     _COH_SHIFTS,
     _KEEPER_CARRY,
     _KEEPER_VALUE,
     _OUTER_NODES,
+    _NEGMPeriodKernel,
     _NodeSolver,
     _OuterCostAtCell,
     _with_outer_post_decision,
 )
 from _lcm.solution.period_replay import replay_period
-from _lcm.typing import FlatParams
+from _lcm.typing import ArgumentTree, FlatParams, PytreeValue
 from lcm import ExecutionConfig
 from lcm.solver_api import EGM_CONTINUATION, KernelOutput
 from lcm.solvers import (
@@ -72,13 +78,14 @@ from lcm.solvers import (
     OUTER_CANDIDATE_AXIS,
     SAVINGS_POINT_AXIS,
 )
+from lcm.typing import FloatND, UserParams
 from tests.conftest import X64_ENABLED, assert_agrees_to_ulp
-from tests.solution._nbegm_direct_oracle import ride_along_kernel
+from tests.solution._nbegm_direct_oracle import OracleContext, ride_along_kernel
 from tests.test_models import negm_kinked_toy
 
 _REGIME = "alive"
 _PERIOD = 1
-_PARAMS: dict[str, Any] = {"discount_factor": 0.95, "alive": {}}
+_PARAMS: UserParams = {"discount_factor": 0.95, "alive": {}}
 _LOGGER = logging.getLogger(__name__)
 _N_OUTER = negm_kinked_toy.N_AZ
 # The sweep's block width only reschedules the `lax.map` over the outer nodes,
@@ -89,17 +96,19 @@ _INVARIANCE_ULP = 16
 
 
 @pytest.fixture(scope="module")
-def captured() -> tuple[Any, dict[str, Any]]:
+def captured() -> tuple[_NEGMPeriodKernel, OracleContext]:
     """The kinked toy's NEGM kernel at one period and the solve's inputs to it."""
-    return ride_along_kernel(
+    kernel, context = ride_along_kernel(
         model=negm_kinked_toy.build_model(),
         params=_PARAMS,
         regime_name=_REGIME,
         period=_PERIOD,
     )
+    assert isinstance(kernel, _NEGMPeriodKernel)
+    return kernel, context
 
 
-def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
+def _build_context(context: OracleContext) -> CoreBuildContext:
     return CoreBuildContext(
         state_action_space=context["state_action_space"],
         next_regime_to_V_arr=context["next_regime_to_V_arr"],
@@ -110,7 +119,9 @@ def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
     )
 
 
-def _aligned_transfer_plan(*, program: Any) -> tuple[ResolvedValueTransfer, ...]:
+def _aligned_transfer_plan(
+    *, program: MaterializedCoreProgram
+) -> tuple[ResolvedValueTransfer, ...]:
     """Resolve every declared read as the aligned transfer of a one-device solve."""
     sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     return tuple(
@@ -132,8 +143,8 @@ def _aligned_transfer_plan(*, program: Any) -> tuple[ResolvedValueTransfer, ...]
 
 
 def _compiled_cores(
-    *, kernel: Any, context: Mapping[str, Any], width: int
-) -> dict[str, Any]:
+    *, kernel: _NEGMPeriodKernel, context: OracleContext, width: int
+) -> dict[str, jax.stages.Compiled]:
     """Compile every program of the graph the way the solve loop does.
 
     Programs are visited so every producer precedes its consumers, and each
@@ -142,8 +153,8 @@ def _compiled_cores(
     """
     build_context = _build_context(context)
     graph = core_program_graph(kernel=kernel)
-    compiled: dict[str, Any] = {}
-    producers: dict[str, MappingProxyType[Any, ResolvedProducer]] = {}
+    compiled: dict[str, jax.stages.Compiled] = {}
+    producers: dict[str, MappingProxyType[Hashable, ResolvedProducer]] = {}
     consumed = consumed_producer_names(graph=graph)
     for name in topological_program_order(graph=graph):
         materialized = materialize_core_program(
@@ -178,21 +189,18 @@ def _compiled_cores(
 
 
 def _call(
-    *, kernel: Any, context: Mapping[str, Any], width: int = _N_OUTER
+    *, kernel: _NEGMPeriodKernel, context: OracleContext, width: int = _N_OUTER
 ) -> KernelOutput:
-    return cast(
-        "KernelOutput",
-        kernel(
-            compiled_cores=_compiled_cores(kernel=kernel, context=context, width=width),
-            logger=_LOGGER,
-            **context,
-        ),
+    return kernel(
+        compiled_cores=_compiled_cores(kernel=kernel, context=context, width=width),
+        logger=_LOGGER,
+        **context,
     )
 
 
 def _keeper_then_per_node_loop(
-    *, kernel: Any, context: Mapping[str, Any]
-) -> tuple[Any, EGMCarry]:
+    *, kernel: _NEGMPeriodKernel, context: OracleContext
+) -> tuple[FloatND, EGMCarry]:
     """The keeper followed by one adjuster solve per outer node.
 
     The reference the compiled sweep replaces: the keeper program, then the
@@ -239,7 +247,9 @@ def _keeper_then_per_node_loop(
     return V_arr, carry
 
 
-def test_the_graph_publishes_the_keeper_and_the_outer_sweep(*, captured):
+def test_the_graph_publishes_the_keeper_and_the_outer_sweep(
+    *, captured: tuple[_NEGMPeriodKernel, OracleContext]
+):
     kernel, _ = captured
     graph = core_program_graph(kernel=kernel)
 
@@ -265,7 +275,9 @@ def test_the_graph_publishes_the_keeper_and_the_outer_sweep(*, captured):
     }
 
 
-def test_the_keeper_program_is_the_inner_keepers_program_under_a_new_name(*, captured):
+def test_the_keeper_program_is_the_inner_keepers_program_under_a_new_name(
+    *, captured: tuple[_NEGMPeriodKernel, OracleContext]
+):
     kernel, _ = captured
     keeper = core_program_graph(kernel=kernel)["keeper"]
     inner = core_program_graph(kernel=kernel.keeper_kernel)["main"]
@@ -277,12 +289,13 @@ def test_the_keeper_program_is_the_inner_keepers_program_under_a_new_name(*, cap
 
 
 def test_the_sweep_publishes_the_value_and_the_stacked_carry_on_the_durable_axis(
-    *, captured
+    *, captured: tuple[_NEGMPeriodKernel, OracleContext]
 ):
     """Every carry row leads with the durable axis; the candidate axis replicates."""
     kernel, _ = captured
     value_role, carry_roles = cast(
-        "tuple[Any, Any]", core_program_graph(kernel=kernel)["outer_sweep"].output_roles
+        "tuple[PytreeValue, PytreeValue]",
+        core_program_graph(kernel=kernel)["outer_sweep"].output_roles,
     )
 
     row = StateAxesLeading(state_names=("illiquid",))
@@ -298,7 +311,9 @@ def test_the_sweep_publishes_the_value_and_the_stacked_carry_on_the_durable_axis
     ) == (row, row, row, StateAxesLeading(state_names=(), shape=()), None, None)
 
 
-def test_the_sweep_declares_the_keepers_value_and_carry_as_internal_inputs(*, captured):
+def test_the_sweep_declares_the_keepers_value_and_carry_as_internal_inputs(
+    *, captured: tuple[_NEGMPeriodKernel, OracleContext]
+):
     """The sweep names the keeper's outputs; the keeper publishes them by label."""
     kernel, _ = captured
     graph = core_program_graph(kernel=kernel)
@@ -313,11 +328,13 @@ def test_the_sweep_declares_the_keepers_value_and_carry_as_internal_inputs(*, ca
     }
 
 
-def test_the_sweep_builder_binds_the_first_node_and_the_sweeps_own_inputs(*, captured):
+def test_the_sweep_builder_binds_the_first_node_and_the_sweeps_own_inputs(
+    *, captured: tuple[_NEGMPeriodKernel, OracleContext]
+):
     """Keeper outputs reach the sweep only through the declared internal edge."""
     kernel, context = captured
     arguments = cast(
-        "Mapping[str, Any]",
+        "Mapping[str, PytreeValue]",
         materialize_core_program(
             program=core_program_graph(kernel=kernel)["outer_sweep"],
             context=_build_context(context),
@@ -329,7 +346,9 @@ def test_the_sweep_builder_binds_the_first_node_and_the_sweeps_own_inputs(*, cap
     assert "next_regime_to_V_arr" not in arguments
     np.testing.assert_array_equal(arguments[_OUTER_NODES], kernel.outer_grid_values)
     assert arguments[kernel.outer_post_decision] == kernel.outer_grid_values[0]
-    assert arguments[_COH_SHIFTS].shape == (
+    shifts = arguments[_COH_SHIFTS]
+    assert isinstance(shifts, jax.Array)
+    assert shifts.shape == (
         kernel.durable_grid_values.shape[0],
         _N_OUTER,
     )
@@ -348,7 +367,9 @@ def test_the_sweep_transport_keys_live_in_an_engine_only_namespace():
     assert len(keys) == 4
 
 
-def test_the_kernel_returns_a_public_output_with_the_stacked_continuation(*, captured):
+def test_the_kernel_returns_a_public_output_with_the_stacked_continuation(
+    *, captured: tuple[_NEGMPeriodKernel, OracleContext]
+):
     kernel, context = captured
     output = _call(kernel=kernel, context=context)
 
@@ -359,7 +380,7 @@ def test_the_kernel_returns_a_public_output_with_the_stacked_continuation(*, cap
     assert carry.endog_grid.shape[-2] == _N_OUTER + 1
 
 
-def _carry_leaves_with_paths(carry: EGMCarry) -> list[tuple[str, Any]]:
+def _carry_leaves_with_paths(carry: EGMCarry) -> list[tuple[str, jax.Array]]:
     paths = jax.tree.leaves(
         jax.tree.map_with_path(lambda path, _leaf: str(path), carry)
     )
@@ -478,17 +499,23 @@ def test_block_width_leaves_every_periods_solved_values_within_ulp(*, width: int
 def _fixed_flat_params() -> FlatParams:
     return cast(
         "FlatParams",
-        MappingProxyType({_REGIME: MappingProxyType({"final_age_alive": 30.0})}),
+        MappingProxyType(
+            {_REGIME: MappingProxyType({"final_age_alive": jnp.asarray(30.0)})}
+        ),
     )
 
 
-def test_fixed_params_bind_into_the_sweep_the_keeper_and_the_shift(*, captured):
+def test_fixed_params_bind_into_the_sweep_the_keeper_and_the_shift(
+    *, captured: tuple[_NEGMPeriodKernel, OracleContext]
+):
     kernel, _ = captured
     bound = kernel.with_fixed_params(fixed_flat_params=_fixed_flat_params())
     graph = core_program_graph(kernel=bound)
 
-    def keywords(name: str) -> Mapping[str, Any]:
-        return cast("functools.partial[Any]", graph[name].function).keywords
+    def keywords(name: str) -> Mapping[str, ArgumentTree]:
+        function = graph[name].function
+        assert isinstance(function, functools.partial)
+        return function.keywords
 
     assert keywords("outer_sweep")["final_age_alive"] == 30.0
     assert keywords("keeper")["final_age_alive"] == 30.0
@@ -508,7 +535,7 @@ def test_periods_sharing_one_inner_core_share_one_sweep_callable():
     first, second = (kernels[period] for period in sorted(kernels)[:2])
     fixed = _fixed_flat_params()
 
-    def key(kernel: Any) -> Any:
+    def key(kernel: PeriodKernel) -> Hashable:
         return backward_induction._func_dedup_key(
             func=core_program_graph(kernel=kernel)["outer_sweep"].function
         )
@@ -519,15 +546,19 @@ def test_periods_sharing_one_inner_core_share_one_sweep_callable():
     )
 
 
-def test_a_replay_lowers_the_same_programs_the_solve_ran(*, monkeypatch, tmp_path):
+def test_a_replay_lowers_the_same_programs_the_solve_ran(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", f"{_REGIME}@{_PERIOD}")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     solution = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="off")
     dispositions: list[CoreExecutionDisposition] = []
     original = period_replay.core_program_graph
 
-    def record_graph(**kwargs: Any) -> Any:
-        graph = original(**kwargs)
+    def record_graph(
+        *, kernel: PeriodKernel | CoreProgramGraphAware
+    ) -> MappingProxyType[str, CoreProgram]:
+        graph = original(kernel=kernel)
         dispositions.extend(program.disposition for program in graph.values())
         return graph
 
@@ -593,11 +624,11 @@ def test_the_outer_cost_cell_compares_by_identity_when_a_param_is_an_array() -> 
     assert first != second
 
 
-def _unused_inner_core(**kwargs: object) -> tuple[Any, Any]:
+def _unused_inner_core(**kwargs: ArgumentTree) -> NoReturn:
     """Stand in for the adjuster program; the comparison tests never call it."""
     raise AssertionError(kwargs)
 
 
-def _unused_cost_func(**kwargs: object) -> Any:
+def _unused_cost_func(**kwargs: ArgumentTree) -> NoReturn:
     """Stand in for the cost DAG; the comparison tests never call it."""
     raise AssertionError(kwargs)

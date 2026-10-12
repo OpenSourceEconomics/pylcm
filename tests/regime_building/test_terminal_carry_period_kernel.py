@@ -10,6 +10,7 @@ kernel that already publishes that key is refused rather than overwritten.
 
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import Unpack, cast
 
 import jax.numpy as jnp
 import pytest
@@ -24,6 +25,8 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE
 from _lcm.regime_building.processing import _TerminalCarryPeriodKernel
+from _lcm.solution.period_capture import PeriodKernelKwargs
+from _lcm.typing import ArtifactPayload, FlatParams
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
 from lcm.solver_api import (
@@ -48,13 +51,13 @@ def _carry() -> EGMCarry:
 class _StubKernel:
     """Period kernel returning a fixed output."""
 
-    def __init__(self, output: object) -> None:
+    def __init__(self, output: object) -> None:  # noqa: PAN001 - rejection witness accepts an unrelated object
         self.output = output
 
-    def with_fixed_params(self, *, fixed_flat_params: object) -> _StubKernel:  # noqa: ARG002
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _StubKernel:  # noqa: ARG002
         return self
 
-    def __call__(self, **kwargs: object) -> object:  # noqa: ARG002
+    def __call__(self, **kwargs: Unpack[PeriodKernelKwargs]) -> object:  # noqa: ARG002, PAN001 - rejection witness returns an unrelated object
         return self.output
 
 
@@ -68,7 +71,7 @@ class _CoreProgramProvider:
         return MappingProxyType({"main": self.program})
 
 
-def _call(kernel: _TerminalCarryPeriodKernel) -> object:
+def _call(kernel: _TerminalCarryPeriodKernel) -> KernelOutput:
     return kernel(
         compiled_cores=MappingProxyType({}),
         state_action_space=StateActionSpace(
@@ -86,7 +89,7 @@ def _call(kernel: _TerminalCarryPeriodKernel) -> object:
     )
 
 
-def _wrap(output: object) -> _TerminalCarryPeriodKernel:
+def _wrap(output: object) -> _TerminalCarryPeriodKernel:  # noqa: PAN001 - rejection witness wraps an unrelated object
     return _TerminalCarryPeriodKernel(
         base=_StubKernel(output),  # ty: ignore[invalid-argument-type]
         carry_producer=lambda **kwargs: _carry(),  # noqa: ARG005
@@ -135,7 +138,7 @@ def test_the_decorator_adds_the_carry_and_forwards_every_channel():
     )
     flag = jnp.zeros(4, dtype=jnp.bool_)
     auxiliary_key = ArtifactKey(type_id="example.auxiliary")
-    auxiliary = object()
+    auxiliary = cast("ArtifactPayload", object())
     base_output = KernelOutput(
         value=jnp.zeros(4),
         solve_time_artifacts={DISSOLUTION_FLAG: flag},
@@ -156,7 +159,7 @@ def test_the_decorator_adds_the_carry_and_forwards_every_channel():
 
 def test_the_decorator_keeps_a_base_continuation_under_another_key():
     other = ArtifactKey(type_id="example.continuation")
-    payload = object()
+    payload = cast("ArtifactPayload", object())
     base_output = KernelOutput(value=jnp.zeros(4), continuations={other: payload})
 
     output = _call(_wrap(base_output))

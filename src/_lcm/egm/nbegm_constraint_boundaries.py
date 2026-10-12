@@ -18,7 +18,7 @@ from _lcm.constraints.dispositions import (
 )
 from _lcm.constraints.ir import Compare, Const, Ref
 from _lcm.constraints.routes import BoundaryCompiler, BoundConstraint
-from _lcm.typing import FunctionName
+from _lcm.typing import FunctionName, QualifiedName
 from lcm.typing import BoolND, FloatND, IntND, StateName
 
 
@@ -120,7 +120,7 @@ def _compile_surface(
     surface: Compare,
     constraint_name: FunctionName,
     liquid_state: StateName,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
 ) -> NBEGMFeasibilitySurface | str:
     """Compile one ordered comparison or return its diagnostic detail."""
     if surface.op not in {"<", "<=", ">", ">="}:

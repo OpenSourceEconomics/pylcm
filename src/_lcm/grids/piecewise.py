@@ -3,7 +3,7 @@
 import dataclasses
 import operator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 from beartype import beartype
@@ -18,12 +18,12 @@ from lcm.exceptions import GridInitializationError
 from lcm.typing import Float1D, FloatND, Int1D, ScalarFloat, ScalarInt
 
 if TYPE_CHECKING:
-    PiecewisePointCounts: TypeAlias = tuple[int | ScalarInt, ...]  # noqa: UP040
+    type PiecewisePointCounts = tuple[int | ScalarInt, ...]
 else:
     # The constructor's validator owns element errors and maps them to the
     # public GridInitializationError. The runtime alias keeps the package claw
     # from sampling an invalid tuple element before that validator runs.
-    PiecewisePointCounts = tuple[Any, ...]
+    type PiecewisePointCounts = tuple[Any, ...]
 
 
 @beartype(conf=GRID_CONF)

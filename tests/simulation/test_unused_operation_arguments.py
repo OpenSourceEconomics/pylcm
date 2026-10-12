@@ -3,7 +3,6 @@
 import dataclasses
 from collections.abc import Callable
 from functools import partialmethod
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,6 +11,7 @@ import pytest
 
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
+from _lcm.typing import FootprintTree, PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 
 _SUBJECT_COUNT = 262_144
@@ -41,14 +41,14 @@ def _input() -> _RetainedInput:
     )
 
 
-def _payload_bytes(*, tree: object, device: jax.Device) -> int:
+def _payload_bytes(*, tree: FootprintTree, device: jax.Device) -> int:
     footprint = measure_buffer_footprint(tree=tree)
     return sum(stop - start for start, stop in footprint.spans.get(device, ()))
 
 
 def _dispatch(
     *, owner: _RetainedInput, operations: ProfiledSimulationOperations, budget: int
-) -> object:
+) -> PytreeValue:
     devices = tuple(owner.state.sharding.device_set)
     return operations.dispatch(
         function=_empty_membership,
@@ -90,14 +90,14 @@ def test_shape_only_operation_preserves_distinct_retained_input_and_output() -> 
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _refuse_operation_execution(
+def _refuse_operation_execution[Result](
     self: jax.stages.Compiled,
-    *args: Any,
-    original: Callable[..., object],
+    *args: PytreeValue,
+    original: Callable[..., Result],
     operations: ProfiledSimulationOperations,
     attempted: list[bool],
-    **kwargs: Any,
-) -> object:
+    **kwargs: PytreeValue,
+) -> Result:
     """Observe the real compiled boundary without fabricating a memory report."""
     if any(self is profile.executable for profile in operations.cache.values()):
         attempted.append(True)

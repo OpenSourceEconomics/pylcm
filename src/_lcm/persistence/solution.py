@@ -16,11 +16,11 @@ import math
 import os
 import tempfile
 import threading
-from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from enum import Enum, auto
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, TypeAlias, cast
+from typing import TYPE_CHECKING, Final, Literal, cast
 
 import h5py
 import jax
@@ -39,6 +39,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_value_store,
 )
 from _lcm.solution.solver_diagnostics import diagnostics_template_snapshot
+from _lcm.typing import ArtifactPayload, HostArray, JSONValue, ValueND
 from lcm._solver_api.authority import _ArrayCopier
 from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
 from lcm.solver_api import (
@@ -77,47 +78,50 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
     _snapshot_artifact_template_once,
 )
+from lcm.typing import FloatND, RegimeName
 
 if TYPE_CHECKING:
-    _SolutionResultBoundary: TypeAlias = SolutionResult  # noqa: UP040
-    _ValueStoreBoundary: TypeAlias = ValueStore  # noqa: UP040
-    _ArtifactStoreBoundary: TypeAlias = ArtifactStore  # noqa: UP040
-    _OmissionsBoundary: TypeAlias = MappingProxyType[  # noqa: UP040
-        ArtifactRef, OmissionReason
-    ]
-    _AuthoritiesBoundary: TypeAlias = MappingProxyType[  # noqa: UP040
-        ArtifactRef, ArtifactAuthority
-    ]
-    _StoreTupleBoundary: TypeAlias = tuple[  # noqa: UP040
+    type _SolutionResultBoundary = SolutionResult
+    type _ValueStoreBoundary = ValueStore
+    type _ArtifactStoreBoundary = ArtifactStore
+    type _OmissionsBoundary = MappingProxyType[ArtifactRef, OmissionReason]
+    type _AuthoritiesBoundary = MappingProxyType[ArtifactRef, ArtifactAuthority]
+    type _StoreTupleBoundary = tuple[
         tuple[ArtifactChannel, _ArtifactStoreBoundary], ...
     ]
 else:
     # Persistence bodies own exact-type and lazy-materialization checks. Runtime
     # annotation traversal must not inspect caller or decoder-controlled stores first.
-    _SolutionResultBoundary = object
-    _ValueStoreBoundary = object
-    _ArtifactStoreBoundary = object
-    _OmissionsBoundary = object
-    _AuthoritiesBoundary = object
-    _StoreTupleBoundary = object
+    type _SolutionResultBoundary = object
+    type _ValueStoreBoundary = object
+    type _ArtifactStoreBoundary = object
+    type _OmissionsBoundary = object
+    type _AuthoritiesBoundary = object
+    type _StoreTupleBoundary = object
+
+
+class _Unloaded(Enum):
+    """Marks a lazy entry whose payload has not been read yet."""
+
+    UNLOADED = auto()
 
 
 _MANIFEST_DATASET: Final = "manifest"
 _PAYLOAD_GROUP: Final = "payloads"
-_UNLOADED: Final = object()
+_UNLOADED: Final = _Unloaded.UNLOADED
 _PAYLOAD_ADDRESS_LENGTH: Final = 8
 _SHA256_HEX_LENGTH: Final = 64
 PYLCM_VERSION: Final = _version.__version__
 
 
-def _require_exact_str(*, value: object, label: str) -> str:
+def _require_exact_str(*, value: JSONValue, label: str) -> str:
     """Return one exact JSON string or raise an archive-integrity error."""
     if type(value) is not str:
         raise SolutionIntegrityError(f"Persisted {label} is not an exact string.")
     return value
 
 
-def _require_nonempty_exact_str(*, value: object, label: str) -> str:
+def _require_nonempty_exact_str(*, value: JSONValue, label: str) -> str:
     """Return one nonempty exact JSON string."""
     result = _require_exact_str(value=value, label=label)
     if not result:
@@ -125,14 +129,14 @@ def _require_nonempty_exact_str(*, value: object, label: str) -> str:
     return result
 
 
-def _require_exact_list(*, value: object, label: str) -> list[object]:
+def _require_exact_list(*, value: JSONValue, label: str) -> list[JSONValue]:
     """Return one exact JSON list."""
     if type(value) is not list:
         raise SolutionIntegrityError(f"Persisted {label} is not an exact list.")
-    return cast("list[object]", value)
+    return cast("list[JSONValue]", value)
 
 
-def _require_nonnegative_exact_int(*, value: object, label: str) -> int:
+def _require_nonnegative_exact_int(*, value: JSONValue, label: str) -> int:
     """Return one nonnegative exact JSON integer."""
     if type(value) is not int or value < 0:
         raise SolutionIntegrityError(
@@ -141,7 +145,7 @@ def _require_nonnegative_exact_int(*, value: object, label: str) -> int:
     return value
 
 
-def _require_positive_exact_int(*, value: object, label: str) -> int:
+def _require_positive_exact_int(*, value: JSONValue, label: str) -> int:
     """Return one positive exact JSON integer."""
     result = _require_nonnegative_exact_int(value=value, label=label)
     if result == 0:
@@ -149,7 +153,7 @@ def _require_positive_exact_int(*, value: object, label: str) -> int:
     return result
 
 
-def _require_exact_bool(*, value: object, label: str) -> bool:
+def _require_exact_bool(*, value: JSONValue, label: str) -> bool:
     """Return one exact JSON Boolean."""
     if type(value) is not bool:
         raise SolutionIntegrityError(f"Persisted {label} is not an exact Boolean.")
@@ -157,7 +161,7 @@ def _require_exact_bool(*, value: object, label: str) -> bool:
 
 
 def _require_exact_json_scalar(
-    *, value: object, label: str
+    *, value: JSONValue, label: str
 ) -> bool | int | float | str:
     """Return one finite exact JSON scalar without truthy-type coercion."""
     if not any(type(value) is allowed for allowed in (bool, int, float, str)):
@@ -167,14 +171,14 @@ def _require_exact_json_scalar(
     return cast("bool | int | float | str", value)
 
 
-def _require_exact_dict(*, value: object, label: str) -> dict[str, object]:
+def _require_exact_dict(*, value: JSONValue, label: str) -> dict[str, JSONValue]:
     """Return one exact JSON object with exact string keys."""
     if type(value) is not dict or any(type(key) is not str for key in value):
         raise SolutionIntegrityError(f"Persisted {label} is not an exact object.")
-    return cast("dict[str, object]", value)
+    return cast("dict[str, JSONValue]", value)
 
 
-def _require_exact_str_mapping(*, value: object, label: str) -> dict[str, str]:
+def _require_exact_str_mapping(*, value: JSONValue, label: str) -> dict[str, str]:
     """Return one exact JSON string-to-string mapping."""
     raw = _require_exact_dict(value=value, label=label)
     if any(type(item) is not str for item in raw.values()):
@@ -184,7 +188,7 @@ def _require_exact_str_mapping(*, value: object, label: str) -> dict[str, str]:
     return cast("dict[str, str]", raw)
 
 
-def _exact_shape(*, value: object, label: str) -> tuple[int, ...]:
+def _exact_shape(*, value: JSONValue, label: str) -> tuple[int, ...]:
     """Return one exact nonnegative JSON shape."""
     raw = _require_exact_list(value=value, label=label)
     if any(type(size) is not int or size < 0 for size in raw):
@@ -194,7 +198,7 @@ def _exact_shape(*, value: object, label: str) -> tuple[int, ...]:
     return tuple(cast("list[int]", raw))
 
 
-def _require_numeric_dtype(*, value: object, label: str) -> str:
+def _require_numeric_dtype(*, value: JSONValue, label: str) -> str:
     """Return one exact numerical-or-Boolean NumPy dtype string."""
     dtype_string = _require_nonempty_exact_str(value=value, label=label)
     try:
@@ -208,7 +212,7 @@ def _require_numeric_dtype(*, value: object, label: str) -> str:
     return dtype_string
 
 
-def _require_sha256(*, value: object, label: str) -> str:
+def _require_sha256(*, value: JSONValue, label: str) -> str:
     """Return one exact lowercase SHA-256 hex digest."""
     digest = _require_exact_str(value=value, label=label)
     if len(digest) != _SHA256_HEX_LENGTH or any(
@@ -219,26 +223,15 @@ def _require_sha256(*, value: object, label: str) -> str:
 
 
 def _json_object_without_duplicate_keys(
-    pairs: list[tuple[str, object]],
-) -> dict[str, object]:
+    pairs: list[tuple[str, JSONValue]],
+) -> dict[str, JSONValue]:
     """Build one JSON object while rejecting duplicate names."""
-    result: dict[str, object] = {}
+    result: dict[str, JSONValue] = {}
     for key, value in pairs:
         if key in result:
             raise ValueError(f"duplicate JSON object field {key!r}")
         result[key] = value
     return result
-
-
-@dataclass
-class _EntryCache:
-    """Mutable synchronization state hidden behind one frozen lazy handle."""
-
-    value: object = _UNLOADED
-    lock: threading.Lock = field(default_factory=threading.Lock)
-    """Brief cache peek/publication lock; never spans admission or allocation."""
-    materialization_lock: threading.Lock = field(default_factory=threading.Lock)
-    """Serialize first materialization while leaving cache observation available."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -249,11 +242,22 @@ class _LoadedEntryPayload:
     template_snapshot: _CanonicalArtifactTemplate | None
 
 
+@dataclass
+class _EntryCache:
+    """Mutable synchronization state hidden behind one frozen lazy handle."""
+
+    value: _LoadedEntryPayload | Literal[_Unloaded.UNLOADED] = _UNLOADED
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    """Brief cache peek/publication lock; never spans admission or allocation."""
+    materialization_lock: threading.Lock = field(default_factory=threading.Lock)
+    """Serialize first materialization while leaving cache observation available."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class _PreparedPayload:
     """One payload copied into a stable numerical representation before writing."""
 
-    identity: MappingProxyType[str, object]
+    identity: MappingProxyType[str, JSONValue]
     payload_kind: str
     leaf_paths: tuple[tuple[str, ...], ...]
     leaves: tuple[np.ndarray, ...]
@@ -263,7 +267,7 @@ class _PreparedPayload:
 class _SaveSnapshot:
     """Complete immutable-by-ownership snapshot consumed by the archive writer."""
 
-    metadata: MappingProxyType[str, object]
+    metadata: MappingProxyType[str, JSONValue]
     values: tuple[_PreparedPayload, ...]
     artifacts: tuple[_PreparedPayload, ...]
     omissions: tuple[tuple[ArtifactRef, OmissionReason], ...]
@@ -288,8 +292,8 @@ class _LazyHdf5Entry(_LazyEntry):
     address: str
     label: str
     payload_kind: str
-    identity: MappingProxyType[str, object]
-    leaves: tuple[MappingProxyType[str, object], ...]
+    identity: MappingProxyType[str, JSONValue]
+    leaves: tuple[MappingProxyType[str, JSONValue], ...]
     standard_template_snapshot: _CanonicalArtifactTemplate | None = None
     """Reconstruction plan of a pylcm-owned payload whose layout its descriptor
     fixes completely, so it reads back without a model; `None` for every
@@ -303,7 +307,9 @@ class _LazyHdf5Entry(_LazyEntry):
             LoadState.UNLOADED if self._cache.value is _UNLOADED else LoadState.LOADED
         )
 
-    def materialize(self, *, template: object | None = None) -> object:
+    def materialize(
+        self, *, template: ArtifactPayload | None = None
+    ) -> ArtifactPayload:
         """Load through the compatibility path that accepts a template object."""
         if template is None and self.standard_template_snapshot is not None:
             return self._materialize(
@@ -315,8 +321,8 @@ class _LazyHdf5Entry(_LazyEntry):
     def materialize_from_template_snapshot(
         self,
         *,
-        template_snapshot: object,
-    ) -> object:
+        template_snapshot: _CanonicalArtifactTemplate,
+    ) -> ArtifactPayload:
         """Load a PyTree directly from its model-authoritative cached declaration."""
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
             raise TypeError("Lazy materialization requires an exact template snapshot.")
@@ -328,11 +334,11 @@ class _LazyHdf5Entry(_LazyEntry):
     def _materialize(  # noqa: C901
         self,
         *,
-        template: object | None,
+        template: ArtifactPayload | None,
         template_snapshot: _CanonicalArtifactTemplate | None,
         array_writer: CanonicalArrayWriter | None = None,
         array_copier: _ArrayCopier | None = None,
-    ) -> object:
+    ) -> ArtifactPayload:
         """Cache private numerical state and return a fresh detached graph.
 
         Admission may snapshot every native cache. Hold only the separate load
@@ -448,7 +454,7 @@ class _LazyHdf5Entry(_LazyEntry):
         self,
         *,
         template_snapshot: _CanonicalArtifactTemplate,
-        arrays: tuple[object, ...] | list[np.ndarray],
+        arrays: tuple[ValueND, ...] | tuple[HostArray, ...],
     ) -> None:
         """Validate one requested plan against persisted or privately cached leaves."""
         persisted_paths = tuple(
@@ -576,7 +582,13 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
                 value=manifest_dataset.attrs["sha256"],
                 label="manifest checksum",
             )
-        except (KeyError, OSError, TypeError, ValueError) as error:
+        except (
+            BeartypeCallHintViolation,
+            KeyError,
+            OSError,
+            TypeError,
+            ValueError,
+        ) as error:
             raise SolutionIntegrityError(
                 f"Solution archive {path} has no valid manifest."
             ) from error
@@ -603,7 +615,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         raise SolutionIntegrityError(
             f"Solution archive {path} manifest must be a JSON object."
         )
-    typed_manifest = cast("dict[str, object]", manifest)
+    typed_manifest = cast("dict[str, JSONValue]", manifest)
     _check_archive_versions(manifest=typed_manifest)
     if set(typed_manifest) != {
         "format_version",
@@ -624,21 +636,21 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         raise SolutionIntegrityError(
             f"Solution archive {path} metadata is not an object."
         )
-    metadata = _metadata_from_manifest(cast("dict[str, object]", raw_metadata))
+    metadata = _metadata_from_manifest(cast("dict[str, JSONValue]", raw_metadata))
     if metadata.pylcm_version != PYLCM_VERSION:
         raise IncompatibleSolutionError(
             "Solution archive metadata uses incompatible pylcm_version="
             f"{metadata.pylcm_version!r} (expected {PYLCM_VERSION!r})."
         )
 
-    value_entries: dict[tuple[int, str], object] = {}
+    value_entries: dict[tuple[int, RegimeName], _LazyHdf5Entry] = {}
     addresses: set[str] = set()
     for raw_entry in _require_exact_list(
         value=typed_manifest.get("values"), label="value manifest"
     ):
         if type(raw_entry) is not dict:
             raise SolutionIntegrityError("Value manifest entry is not an object.")
-        entry = cast("dict[str, object]", raw_entry)
+        entry = cast("dict[str, JSONValue]", raw_entry)
         period = _require_nonnegative_exact_int(
             value=entry.get("period"), label="value period"
         )
@@ -654,7 +666,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
             raise SolutionIntegrityError(
                 f"Solution archive contains duplicate value coordinate {coordinate!r}."
             )
-        identity: dict[str, object] = {
+        identity: dict[str, JSONValue] = {
             "kind": "value",
             "period": period,
             "regime": regime,
@@ -685,9 +697,9 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
         raise SolutionIntegrityError(
             "Solution archive value entries do not match its value schemas."
         )
-    values = ValueStore(cast("Mapping[object, object]", value_entries))
+    values = ValueStore(value_entries)
 
-    stores: dict[ArtifactChannel, dict[ArtifactRef, object]] = {
+    stores: dict[ArtifactChannel, dict[ArtifactRef, _LazyHdf5Entry]] = {
         channel: {} for channel in ArtifactChannel
     }
     artifact_refs: set[ArtifactRef] = set()
@@ -696,7 +708,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
     ):
         if type(raw_entry) is not dict:
             raise SolutionIntegrityError("Artifact manifest entry is not an object.")
-        entry = cast("dict[str, object]", raw_entry)
+        entry = cast("dict[str, JSONValue]", raw_entry)
         ref = _artifact_ref_from_manifest(entry)
         _validate_persisted_ref(ref=ref, metadata=metadata, label="artifact")
         if ref in artifact_refs:
@@ -777,7 +789,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
     ):
         if type(raw_entry) is not dict:
             raise SolutionIntegrityError("Omission manifest entry is not an object.")
-        entry = cast("dict[str, object]", raw_entry)
+        entry = cast("dict[str, JSONValue]", raw_entry)
         if set(entry) != {
             "period",
             "regime",
@@ -836,12 +848,8 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
     )
     _validate_archive_structure(
         path=path,
-        entries=tuple(cast("_LazyHdf5Entry", entry) for entry in value_entries.values())
-        + tuple(
-            cast("_LazyHdf5Entry", entry)
-            for store in stores.values()
-            for entry in store.values()
-        ),
+        entries=tuple(value_entries.values())
+        + tuple(entry for store in stores.values() for entry in store.values()),
     )
     if verify_checksums:
         _verify_result_entries(result=result)
@@ -920,7 +928,7 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
     prepared_values: list[_PreparedPayload] = []
     for period, regime in sorted(value_coordinates):
         schema = metadata.value_schemas[(period, regime)]
-        identity: dict[str, object] = {
+        identity: dict[str, JSONValue] = {
             "kind": "value",
             "period": period,
             "regime": regime,
@@ -1326,7 +1334,7 @@ def _require_save_compatibility(*, metadata: SolutionMetadata) -> None:
 
 
 def _prepare_payload(
-    *, payload: object, identity: dict[str, object]
+    *, payload: FloatND | HostArray, identity: dict[str, JSONValue]
 ) -> _PreparedPayload:
     """Copy a numerical PyTree into independent contiguous NumPy arrays."""
     with_paths, tree = jax.tree_util.tree_flatten_with_path(payload)
@@ -1361,7 +1369,7 @@ def _prepare_payload(
 def _prepare_canonical_artifact_payload(
     *,
     canonical: _CanonicalArtifactPayload,
-    identity: dict[str, object],
+    identity: dict[str, JSONValue],
 ) -> _PreparedPayload:
     """Copy exactly the leaves returned by artifact canonicalization."""
     if not canonical.leaves:
@@ -1526,7 +1534,7 @@ def _retention_selects_artifact(
 
 def _write_archive(*, snapshot: _SaveSnapshot, path: Path) -> None:
     """Write one preflighted complete archive to a path that is not yet public."""
-    manifest: dict[str, object] = {
+    manifest: dict[str, JSONValue] = {
         "format_version": SOLUTION_FORMAT_VERSION,
         "pylcm_version": PYLCM_VERSION,
         "solver_api_version": SOLVER_API_VERSION,
@@ -1539,7 +1547,7 @@ def _write_archive(*, snapshot: _SaveSnapshot, path: Path) -> None:
     with h5py.File(path, "w") as archive:
         payloads = archive.create_group(_PAYLOAD_GROUP)
         counter = 0
-        value_entries = cast("list[object]", manifest["values"])
+        value_entries = cast("list[JSONValue]", manifest["values"])
         for prepared in snapshot.values:
             address = f"{counter:08d}"
             counter += 1
@@ -1551,7 +1559,7 @@ def _write_archive(*, snapshot: _SaveSnapshot, path: Path) -> None:
                 )
             )
 
-        artifact_entries = cast("list[object]", manifest["artifacts"])
+        artifact_entries = cast("list[JSONValue]", manifest["artifacts"])
         for prepared in snapshot.artifacts:
             address = f"{counter:08d}"
             counter += 1
@@ -1593,11 +1601,11 @@ def _write_payload_entry(
     payloads: h5py.Group,
     address: str,
     prepared: _PreparedPayload,
-) -> dict[str, object]:
+) -> dict[str, JSONValue]:
     """Write one preflighted payload and return its non-executable manifest entry."""
     identity = dict(prepared.identity)
     group = payloads.create_group(address)
-    leaf_entries: list[dict[str, object]] = []
+    leaf_entries: list[dict[str, JSONValue]] = []
     for index, array in enumerate(prepared.leaves):
         dataset_name = f"leaf_{index:04d}"
         group.create_dataset(dataset_name, data=array)
@@ -1627,9 +1635,9 @@ def _write_payload_entry(
 def _lazy_entry(  # noqa: C901, PLR0912
     *,
     path: Path,
-    entry: dict[str, object],
+    entry: dict[str, JSONValue],
     label: str,
-    identity: dict[str, object],
+    identity: dict[str, JSONValue],
 ) -> _LazyHdf5Entry:
     """Construct one checked lazy handle from manifest metadata."""
     try:
@@ -1657,17 +1665,17 @@ def _lazy_entry(  # noqa: C901, PLR0912
         raw_leaves = _require_exact_list(
             value=entry.get("leaves"), label=f"{label} leaves"
         )
-        leaves: list[MappingProxyType[str, object]] = []
+        leaves: list[MappingProxyType[str, JSONValue]] = []
         for index, raw_leaf in enumerate(raw_leaves):
             if type(raw_leaf) is not dict:
                 raise TypeError("leaf is not an object")
-            leaf = cast("dict[str, object]", raw_leaf)
+            leaf = cast("dict[str, JSONValue]", raw_leaf)
             leaf_path = tuple(
                 _require_nonempty_exact_str(
                     value=component, label=f"{label} leaf {index} path component"
                 )
                 for component in _require_exact_list(
-                    value=cast("dict[str, object]", raw_leaf).get("path"),
+                    value=cast("dict[str, JSONValue]", raw_leaf).get("path"),
                     label=f"{label} leaf {index} path",
                 )
             )
@@ -1751,8 +1759,8 @@ def _read_and_verify_leaves(
     path: Path,
     label: str,
     address: str,
-    identity: MappingProxyType[str, object],
-    leaves: tuple[MappingProxyType[str, object], ...],
+    identity: MappingProxyType[str, JSONValue],
+    leaves: tuple[MappingProxyType[str, JSONValue], ...],
 ) -> tuple[np.ndarray, ...]:
     """Read and verify all leaves of one independently addressed payload."""
     arrays: list[np.ndarray] = []
@@ -1803,7 +1811,7 @@ def _read_and_verify_leaves(
             }
             if (
                 dataset_name != expected_dataset
-                or dict(cast("MappingProxyType[str, object]", leaf["identity"]))
+                or dict(cast("MappingProxyType[str, JSONValue]", leaf["identity"]))
                 != expected_identity
             ):
                 raise SolutionIntegrityError(
@@ -1980,7 +1988,7 @@ def _to_jax_without_narrowing(
     return result
 
 
-def _array_checksum(*, identity: dict[str, object], array: np.ndarray) -> str:
+def _array_checksum(*, identity: dict[str, JSONValue], array: np.ndarray) -> str:
     """Hash one array together with its logical address and representation."""
     digest = hashlib.sha256()
     framed_identity = json.dumps(
@@ -1998,10 +2006,10 @@ def _array_checksum(*, identity: dict[str, object], array: np.ndarray) -> str:
 
 
 def _array_checksum_from_leaf_metadata(
-    *, leaf: MappingProxyType[str, object], array: np.ndarray
+    *, leaf: MappingProxyType[str, JSONValue], array: np.ndarray
 ) -> str:
     """Recompute a leaf checksum from the identity stored in its manifest entry."""
-    identity = dict(cast("MappingProxyType[str, object]", leaf["identity"]))
+    identity = dict(cast("MappingProxyType[str, JSONValue]", leaf["identity"]))
     return _array_checksum(identity=identity, array=array)
 
 
@@ -2030,7 +2038,7 @@ def _verify_result_entries(*, result: _SolutionResultBoundary) -> None:
                 raw.verify()
 
 
-def _metadata_to_manifest(metadata: SolutionMetadata) -> dict[str, object]:
+def _metadata_to_manifest(metadata: SolutionMetadata) -> dict[str, JSONValue]:
     """Encode descriptive metadata without serializing Python implementations."""
     return {
         "pylcm_version": metadata.pylcm_version,
@@ -2122,7 +2130,7 @@ def _metadata_to_manifest(metadata: SolutionMetadata) -> dict[str, object]:
     }
 
 
-def _leaf_descriptors_from_manifest(value: object) -> tuple[LeafDescriptor, ...]:
+def _leaf_descriptors_from_manifest(value: JSONValue) -> tuple[LeafDescriptor, ...]:
     """Decode one exact ordered artifact-leaf schema."""
     result: list[LeafDescriptor] = []
     for index, raw_leaf in enumerate(
@@ -2170,7 +2178,7 @@ def _leaf_descriptors_from_manifest(value: object) -> tuple[LeafDescriptor, ...]
     return tuple(result)
 
 
-def _axis_descriptors_from_manifest(value: object) -> tuple[AxisDescriptor, ...]:
+def _axis_descriptors_from_manifest(value: JSONValue) -> tuple[AxisDescriptor, ...]:
     """Decode one exact ordered named-axis schema."""
     result: list[AxisDescriptor] = []
     for index, raw_axis in enumerate(
@@ -2212,8 +2220,8 @@ def _axis_descriptors_from_manifest(value: object) -> tuple[AxisDescriptor, ...]
 
 
 def _categorical_domains_from_manifest(
-    value: object,
-) -> dict[str, CategoryDomain]:
+    value: JSONValue,
+) -> MappingProxyType[str, CategoryDomain]:
     """Decode exact categorical labels, integer codes, and order."""
     result: dict[str, CategoryDomain] = {}
     for name, raw_domain in _require_exact_dict(
@@ -2253,10 +2261,10 @@ def _categorical_domains_from_manifest(
                 label=f"artifact categorical domain {name!r} ordering",
             ),
         )
-    return result
+    return MappingProxyType(result)
 
 
-def _required_routes_from_manifest(value: object) -> frozenset[ReplayRouteIdentity]:
+def _required_routes_from_manifest(value: JSONValue) -> frozenset[ReplayRouteIdentity]:
     """Decode an exact set of route identities requiring one artifact."""
     raw_routes = _require_exact_list(value=value, label="artifact required routes")
     routes: list[ReplayRouteIdentity] = []
@@ -2286,7 +2294,7 @@ def _required_routes_from_manifest(value: object) -> frozenset[ReplayRouteIdenti
 
 
 def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
-    raw: dict[str, object],
+    raw: dict[str, JSONValue],
 ) -> SolutionMetadata:
     """Decode descriptive solution metadata into exact immutable public types."""
     try:
@@ -2320,7 +2328,7 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
         ):
             if type(item) is not dict:
                 raise TypeError("value schema is not an object")
-            entry = cast("dict[str, object]", item)
+            entry = cast("dict[str, JSONValue]", item)
             if set(entry) != {"period", "regime", "shape", "dtype", "axis_names"}:
                 raise ValueError("invalid value schema fields")
             coordinate = (
@@ -2360,7 +2368,7 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
         ):
             if type(item) is not dict:
                 raise TypeError("artifact descriptor is not an object")
-            entry = cast("dict[str, object]", item)
+            entry = cast("dict[str, JSONValue]", item)
             if set(entry) != {
                 "period",
                 "regime",
@@ -2534,7 +2542,7 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
         ) from error
 
 
-def _artifact_ref_from_manifest(entry: dict[str, object]) -> ArtifactRef:
+def _artifact_ref_from_manifest(entry: dict[str, JSONValue]) -> ArtifactRef:
     """Decode one exact artifact address from an archive manifest entry."""
     try:
         return ArtifactRef(
@@ -2623,7 +2631,7 @@ def _validate_persisted_omission_semantics(
         )
 
 
-def _check_archive_versions(*, manifest: dict[str, object]) -> None:
+def _check_archive_versions(*, manifest: dict[str, JSONValue]) -> None:
     """Reject unsupported archive, solver, and solution schema versions exactly."""
     expected_ints = {
         "format_version": SOLUTION_FORMAT_VERSION,

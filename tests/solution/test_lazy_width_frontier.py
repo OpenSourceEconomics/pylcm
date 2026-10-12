@@ -13,17 +13,28 @@ and the refusal a core that fits at no width reports.
 
 import dataclasses
 import math
-from collections.abc import Mapping
-from typing import Any, cast
+from collections.abc import Hashable, Mapping
+from typing import Unpack
 
 import jax
 import jax.numpy as jnp
 import pytest
 
+from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from _lcm.execution.workspace_planning import workspace_width_candidates
 from _lcm.solution import backward_induction
 from lcm import ExecutionConfig
 from lcm.exceptions import ExecutionPlanningError
+from lcm.solver_api import ValueStore
+from lcm.typing import FloatND, RegimeName
+from tests.solution._callback_types import (
+    AbstractArgumentsKwargs,
+    CompileFunctionsKwargs,
+    CoreCandidatesKwargs,
+    PlanningKwargs,
+    PlanningResult,
+    filled_toy_params,
+)
 from tests.solution.test_footprint_width_selection import (
     _ACTION_EXTENT,
     _FULL_WIDTH_PRODUCT,
@@ -43,25 +54,28 @@ class _SolveObservation:
     resolutions: int
     argument_keys: int
     selected_widths: dict[tuple[str, int], tuple[tuple[str, int], ...]]
-    axes_by_triple: dict[tuple[str, int, str], tuple[Any, ...]]
-    values: Any
+    axes_by_triple: dict[
+        tuple[str, int, str], tuple[ReducedAxis | TiledOutputAxis, ...]
+    ]
+    values: ValueStore | Mapping[int, Mapping[RegimeName, FloatND]]
 
 
+# keyword-only-exempt: primary-argument=frontier
 def _bind_whole_frontier(
-    frontier: backward_induction._LazyCandidateFrontier, /, **asked: Any
+    frontier: backward_induction._LazyCandidateFrontier,
+    /,
+    *,
+    triple: backward_induction._CoreTriple,
+    position: int,
 ) -> tuple[tuple[str, int, str], tuple[tuple[str, int], ...]]:
     """Bind every candidate of a core before admission sees the first one.
 
-    This is the binding the planner performed before the frontier became lazy,
-    installed over `_LazyCandidateFrontier.candidate` as the arm the lazy one is
-    held against. It takes that method's arguments as `**asked` because it is a
-    method body, not a callable of this module.
+    The replacement candidate method receives its frontier instance positionally.
     """
-    triple = asked["triple"]
     bound = frontier.candidates_by_triple[triple]
     while len(bound) < frontier.frontier_lengths[triple]:
         frontier._bind_next(triple=triple)
-    return bound[asked["position"]]
+    return bound[position]
 
 
 def _observe_solve(
@@ -80,22 +94,26 @@ def _observe_solve(
     original_argument_key = backward_induction._abstract_arguments_key
     original_compile = backward_induction._compile_all_functions
 
-    def capture_compiled(**kwargs: Any) -> backward_induction._CompiledPrograms:
+    def capture_compiled(
+        **kwargs: Unpack[CompileFunctionsKwargs],
+    ) -> backward_induction._CompiledPrograms:
         result = original_compile(**kwargs)
         compiled.append(result)
         return result
 
-    def observe_planning(**kwargs: Any) -> tuple:
+    def observe_planning(**kwargs: Unpack[PlanningKwargs]) -> PlanningResult:
         result = original_planning(**kwargs)
         frontiers.append(result[7])
         return result
 
-    def count_candidates(**kwargs: Any) -> tuple:
+    def count_candidates(
+        **kwargs: Unpack[CoreCandidatesKwargs],
+    ) -> tuple[backward_induction.ResolvedCoreProgram, ...]:
         nonlocal resolutions
         resolutions += len(kwargs["tile_widths"])
         return original_candidates(**kwargs)
 
-    def count_argument_keys(**kwargs: Any) -> Any:
+    def count_argument_keys(**kwargs: Unpack[AbstractArgumentsKwargs]) -> Hashable:
         nonlocal argument_keys
         argument_keys += 1
         return original_argument_key(**kwargs)
@@ -123,8 +141,18 @@ def _observe_solve(
     model = _build_model(
         execution_config=ExecutionConfig(device_memory_bytes=budget_bytes)
     )
-    params = cast("dict[str, Any]", model.get_params_template())
-    params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
+    template = model.get_params_template()
+    params = {
+        **template,
+        "acting": {
+            **template["acting"],
+            "koopmans_aggregator": {
+                **template["acting"]["koopmans_aggregator"],
+                "discount_factor": 0.5,
+            },
+        },
+    }
+    assert filled_toy_params(params)
     solution = model.solve(params=params, log_level="off")
     (frontier,) = frontiers
     (programs,) = compiled

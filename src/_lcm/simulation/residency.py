@@ -28,6 +28,7 @@ from types import MappingProxyType
 
 import jax
 
+from _lcm.typing import FootprintTree, PytreeByPeriod
 from lcm.exceptions import ExecutionPlanningError
 
 type _Spans = tuple[tuple[int, int], ...]
@@ -37,11 +38,11 @@ type _Spans = tuple[tuple[int, int], ...]
 class DeviceBufferFootprint:
     """A union of half-open payload address intervals on each actual device."""
 
-    spans: Mapping[jax.Device, _Spans]
+    spans: MappingProxyType[jax.Device, _Spans]
     """Merged address intervals; CPU0 and GPU0 remain different device keys."""
 
     def __post_init__(self) -> None:
-        """Own normalized immutable interval metadata without retaining arrays."""
+        """Merge each device's caller intervals into normalized spans."""
         object.__setattr__(
             self,
             "spans",
@@ -54,7 +55,7 @@ class DeviceBufferFootprint:
         )
 
 
-def measure_buffer_footprint(*, tree: object) -> DeviceBufferFootprint:
+def measure_buffer_footprint(*, tree: FootprintTree) -> DeviceBufferFootprint:
     """Measure every live addressable JAX payload in an explicitly supplied tree.
 
     Plain Python and NumPy leaves occupy no JAX device storage until placed. Opaque
@@ -81,7 +82,9 @@ def measure_buffer_footprint(*, tree: object) -> DeviceBufferFootprint:
                     (start, start + size)
                 )
     return DeviceBufferFootprint(
-        spans={device: tuple(spans) for device, spans in spans_by_device.items()}
+        spans=MappingProxyType(
+            {device: tuple(spans) for device, spans in spans_by_device.items()}
+        )
     )
 
 
@@ -103,7 +106,9 @@ def union_buffer_footprints(
             spans = footprint.spans.get(device, ())
             spans_by_device.setdefault(device, []).extend(spans)
     return DeviceBufferFootprint(
-        spans={device: tuple(spans) for device, spans in spans_by_device.items()}
+        spans=MappingProxyType(
+            {device: tuple(spans) for device, spans in spans_by_device.items()}
+        )
     )
 
 
@@ -136,7 +141,7 @@ def resident_bytes_by_device(
     live: DeviceBufferFootprint,
     arguments: DeviceBufferFootprint,
     devices: tuple[jax.Device, ...],
-) -> Mapping[jax.Device, int]:
+) -> MappingProxyType[jax.Device, int]:
     """Count live bytes outside the actual arguments already in compiler peaks.
 
     Subtract only each argument's covered address range on the same actual device.
@@ -183,7 +188,9 @@ def require_transfer_headroom(
                 "Transfer destination and scratch bytes must be nonnegative integers."
             )
     resident = resident_bytes_by_device(
-        live=live, arguments=DeviceBufferFootprint(spans={}), devices=devices
+        live=live,
+        arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
+        devices=devices,
     )
     for device in devices:
         required = (
@@ -277,7 +284,7 @@ class OwnerLedger:
         self._bindings[owner] = footprint
         self._extend(footprint=footprint)
 
-    def measure(self, *, owner: str, tree: object) -> None:
+    def measure(self, *, owner: str, tree: PytreeByPeriod) -> None:
         """Await and measure one owner tree exactly once, at its placement.
 
         The readiness barrier moves to the binding instead of repeating on every

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from types import MappingProxyType
-from typing import Any
+from typing import Unpack
 
 import jax
 import jax.numpy as jnp
@@ -21,6 +21,7 @@ from _lcm.execution.core_program import (
     CoreProgram,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
+from _lcm.execution.workspace_planning import WorkspacePlan
 from _lcm.simulation.program_types import (
     SUBJECT_WIDTH_KEYWORD,
     SimulationBuildContext,
@@ -28,6 +29,7 @@ from _lcm.simulation.program_types import (
 )
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.runtime import CompiledSimulationProgram, SimulationRuntime
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm import (
     AgeGrid,
@@ -46,9 +48,11 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    ReferenceName,
     ScalarInt,
     UserParams,
 )
+from tests.simulation._callback_types import WorkspacePlanning
 from tests.test_models import independent_types
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import MultiRegimeId
@@ -263,7 +267,7 @@ def test_simulate_dispatches_the_declared_program_body(
     reached = []
     original = _SubjectTiled.__call__
 
-    def record(self: _SubjectTiled, **kwargs: Any) -> object:
+    def record(self: _SubjectTiled, **kwargs: PytreeValue) -> PytreeValue:
         if id(self) in body_ids:
             reached.append(id(self))
         return original(self, **kwargs)
@@ -305,7 +309,7 @@ def test_public_widths_reach_the_live_subject_and_action_loops(
     observed = []
     original = _SubjectTiled.__call__
 
-    def record(self: _SubjectTiled, **kwargs: Any) -> object:
+    def record(self: _SubjectTiled, **kwargs: PytreeValue) -> PytreeValue:
         if id(self) in body_widths:
             expected = body_widths[id(self)]
             observed.append({name: kwargs[name] for name in expected} == expected)
@@ -389,7 +393,9 @@ def test_unbudgeted_simulation_uses_the_subject_specific_inner_width(
     selected: list[tuple[dict[str, int], int]] = []
     original = runtime_module.plan_workspace
 
-    def observe(**kwargs: Any) -> Any:
+    def observe(
+        **kwargs: Unpack[WorkspacePlanning[CompiledSimulationProgram]],
+    ) -> WorkspacePlan[CompiledSimulationProgram]:
         plan = original(**kwargs)
         selected.append((dict(plan.widths), kwargs["axes"][0].extent))
         return plan
@@ -413,9 +419,11 @@ class _RecordingArguments:
     """Record materializations while declaring the exact subject operand."""
 
     calls: list[int]
-    subject_arg_names: tuple[str, ...] = ("state",)
+    subject_arg_names: tuple[ReferenceName, ...] = ("state",)
 
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
         if not isinstance(context, SimulationBuildContext):
             raise TypeError("This test builder requires simulation arguments.")
         self.calls.append(context.period)
@@ -465,12 +473,14 @@ def test_dispatch_executes_the_exact_planner_selection(
     calls = []
     original = runtime_module.plan_workspace
 
-    def select(**kwargs: Any) -> object:
+    def select(
+        **kwargs: Unpack[WorkspacePlanning[CompiledSimulationProgram]],
+    ) -> WorkspacePlan[CompiledSimulationProgram]:
         plan = original(**kwargs)
         marker = object()
         selections.append(marker)
 
-        def execute(**arguments: object) -> object:
+        def execute(**arguments: PytreeValue) -> PytreeValue:
             calls.append(marker)
             return plan.compiled(**arguments)
 

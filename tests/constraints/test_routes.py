@@ -14,6 +14,8 @@ than off the constraint's surface, so two spellings of the same requirement are
 disposed of alike.
 """
 
+# A compiled payload the planner carries without reading it.
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
@@ -32,15 +34,22 @@ from _lcm.constraints.ir import Compare, Condition, Const
 from _lcm.constraints.materialize import transitive_arg_names
 from _lcm.constraints.processed import ProcessedConstraint, normalize_constraints
 from _lcm.constraints.routes import (
+    BoundaryCompiler,
     BoundConstraint,
     ConstraintPlan,
     ConstraintRoute,
     ConstraintRouteKey,
     ConstraintSite,
+    StructuralProof,
     plan_constraints,
 )
+from _lcm.egm.nbegm_constraint_boundaries import NBEGMFeasibilityBoundaryProgram
 from lcm import ref
-from lcm.typing import FloatND
+from lcm.typing import FloatND, FunctionName
+
+_PAYLOAD = NBEGMFeasibilityBoundaryProgram(
+    constraint_name="borrowing", liquid_state="wealth", surfaces=()
+)
 
 
 def _spendable(*, wealth: FloatND, consumption: FloatND) -> FloatND:
@@ -48,7 +57,7 @@ def _spendable(*, wealth: FloatND, consumption: FloatND) -> FloatND:
     return wealth - consumption
 
 
-def _pool() -> MappingProxyType[str, object]:
+def _pool() -> MappingProxyType[FunctionName, Callable[..., FloatND]]:
     return MappingProxyType({"spendable": _spendable})
 
 
@@ -56,16 +65,16 @@ def _site(
     *,
     stage: str = "state_action",
     available_names: frozenset[str] | None = None,
-    pool: MappingProxyType[str, object] | None = None,
-    structural_proofs: tuple[object, ...] = (),
-    boundary_compilers: tuple[object, ...] = (),
+    pool: MappingProxyType[FunctionName, Callable[..., FloatND]] | None = None,
+    structural_proofs: tuple[StructuralProof, ...] = (),
+    boundary_compilers: tuple[BoundaryCompiler, ...] = (),
 ) -> ConstraintSite:
     return ConstraintSite(
         stage=stage,  # ty: ignore[invalid-argument-type]
-        function_pool=_pool() if pool is None else pool,  # ty: ignore[invalid-argument-type]
+        function_pool=_pool() if pool is None else pool,
         available_names=available_names,
-        structural_proofs=structural_proofs,  # ty: ignore[invalid-argument-type]
-        boundary_compilers=boundary_compilers,  # ty: ignore[invalid-argument-type]
+        structural_proofs=structural_proofs,
+        boundary_compilers=boundary_compilers,
     )
 
 
@@ -236,7 +245,7 @@ def test_a_plan_exposes_only_its_compiled_boundary_dispositions() -> None:
     ) -> CompileBoundary:
         return CompileBoundary(
             constraint=bound.constraint,
-            program=BoundaryProgram(surfaces=(), payload=None),
+            program=BoundaryProgram(surfaces=(), payload=_PAYLOAD),
         )
 
     compiled = _route(_site(boundary_compilers=(compiler,)), path="compiled")
@@ -278,7 +287,7 @@ def test_a_boundary_compiler_at_a_site_compiles_the_constraint() -> None:
     ) -> CompileBoundary:
         return CompileBoundary(
             constraint=bound.constraint,
-            program=BoundaryProgram(surfaces=(), payload=None),
+            program=BoundaryProgram(surfaces=(), payload=_PAYLOAD),
         )
 
     route = _route(_site(boundary_compilers=(compiler,)))
@@ -298,7 +307,7 @@ def test_a_capability_answering_outside_its_contract_is_refused() -> None:
     ) -> Evaluate:
         return Evaluate(constraint=bound.constraint, stage="state_action")
 
-    route = _route(_site(structural_proofs=(rogue,)))
+    route = _route(_site(structural_proofs=(rogue,)))  # ty: ignore[invalid-argument-type]
 
     with pytest.raises(TypeError, match="may only"):
         plan_constraints(constraints=_borrowing(), routes=(route,), context=_context())
@@ -406,7 +415,7 @@ def test_a_proof_is_consulted_before_a_boundary_compiler() -> None:
     ) -> CompileBoundary:
         return CompileBoundary(
             constraint=bound.constraint,
-            program=BoundaryProgram(surfaces=(), payload=None),
+            program=BoundaryProgram(surfaces=(), payload=_PAYLOAD),
         )
 
     route = _route(

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType, ModuleType
-from typing import cast
+from typing import NoReturn, NotRequired, TypedDict, Unpack, cast
 
 import cloudpickle
 import jax
@@ -21,11 +21,13 @@ import lcm.solver_api as solver_api_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.regime_building import processing as regime_processing
+from _lcm.simulation import simulate as simulation_module
 from _lcm.solution import artifacts as private_artifacts
 from _lcm.solution import backward_induction
 from _lcm.solution.contract import GENERATED_REPLAY_AUTHORITY
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
+    ArtifactPayload,
     FlatParams,
 )
 from lcm import ExecutionConfig, LinSpacedGrid, Model
@@ -54,7 +56,7 @@ from lcm.solver_api import (
     ValueStore,
 )
 from lcm.solvers import MSSEnvelope
-from lcm.typing import UserInitialConditions, UserParams
+from lcm.typing import FloatND, UserInitialConditions, UserParams
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
     _make_dissolution_model,
@@ -78,6 +80,68 @@ from tests.test_models.deterministic.regression import (
 )
 
 
+class _ArtifactKeyKwargs(TypedDict):
+    type_id: str
+    schema_version: int
+
+
+class _KernelKwargs(TypedDict):
+    regime: backward_induction.Regime
+    regime_name: backward_induction.RegimeName
+    period: int
+    compiled_cores: MappingProxyType[str, backward_induction.PlannedCore]
+    capture_target: backward_induction.PeriodCaptureTarget | None
+    state_action_space: backward_induction.StateActionSpace
+    flat_params: FlatParams
+    ages: backward_induction.TimeAxis
+    next_regime_to_V_arr: MappingProxyType[backward_induction.RegimeName, FloatND]
+    next_regime_to_continuation: MappingProxyType[
+        backward_induction.RegimeName, backward_induction.ContinuationPayload
+    ]
+    logger: backward_induction.logging.Logger
+    next_edge_to_V_arr: MappingProxyType[backward_induction._EdgeKey, FloatND]
+    period_solution: Mapping[backward_induction.RegimeName, FloatND]
+    retain_replay: bool
+    selected_artifact_keys: frozenset[ArtifactKey]
+    period_capture: NotRequired[backward_induction.CaptureContext | None]
+    captured_admission: NotRequired[Mapping[str, Mapping[str, int | None]]]
+
+
+class _SimulationKwargs(TypedDict):
+    flat_params: FlatParams
+    initial_conditions: simulation_module.InitialConditions
+    regimes: MappingProxyType[simulation_module.RegimeName, simulation_module.Regime]
+    regime_names_to_ids: simulation_module.RegimeNamesToIds
+    logger: simulation_module.logging.Logger
+    period_to_regime_to_V_arr: MappingProxyType[
+        int, MappingProxyType[simulation_module.RegimeName, FloatND]
+    ]
+    ages: simulation_module.TimeAxis
+    simulation_output_dtypes: Mapping[str, simulation_module.pd.CategoricalDtype]
+    period_to_regime_to_sim_policy: NotRequired[
+        simulation_module.PeriodToRegimeToSimulationPolicy | None
+    ]
+    period_to_regime_to_replay_reader: NotRequired[
+        simulation_module._PeriodToRegimeToReplayReader
+    ]
+    seed: NotRequired[int | None]
+    taste_shock_seed: NotRequired[int | None]
+    subject_batch_size: NotRequired[int]
+    original_n_subjects: NotRequired[int | None]
+    period_to_regime_to_dissolution_flags: NotRequired[
+        MappingProxyType[
+            int,
+            MappingProxyType[simulation_module.RegimeName, simulation_module.BoolND],
+        ]
+    ]
+    device_ids: NotRequired[tuple[int, ...]]
+    retained_footprint: NotRequired[simulation_module.DeviceBufferFootprint | None]
+    prepared_chunks: NotRequired[simulation_module.PreparedSimulationChunks | None]
+    process_grid_resolver: NotRequired[simulation_module.ProcessGridResolver | None]
+    call_id: NotRequired[simulation_module.CallId | None]
+    component_values: NotRequired[simulation_module.ComponentValueSource | None]
+
+
 class _RaisingLazyValueEntry(solver_api_module._LazyEntry):
     """Raise one chosen decoder exception when the value is materialized."""
 
@@ -89,22 +153,40 @@ class _RaisingLazyValueEntry(solver_api_module._LazyEntry):
         """Report that the adversarial entry has not materialized."""
         return LoadState.UNLOADED
 
-    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+    def materialize(
+        self,
+        *,
+        template: ArtifactPayload | None = None,  # noqa: ARG002
+    ) -> ArtifactPayload:
         """Raise the configured decoder exception."""
         raise self._error
 
 
-def _imported_module_names(module: ModuleType) -> set[str]:
-    """Return every module name the given module's source imports."""
-    tree = ast.parse(inspect.getsource(module))
+type PythonSource = str
+
+
+def _imported_module_names(source: PythonSource) -> set[str]:
+    """Return every module name `source` imports when it runs.
+
+    Imports under `if TYPE_CHECKING:` exist only for type checkers and are skipped.
+    """
+    tree = ast.parse(source)
+    static_only = {
+        id(inner)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "TYPE_CHECKING"
+        for statement in node.body
+        for inner in ast.walk(statement)
+    }
+    runtime = [node for node in ast.walk(tree) if id(node) not in static_only]
     return {
         alias.name
-        for node in ast.walk(tree)
+        for node in runtime
         if isinstance(node, ast.Import)
         for alias in node.names
-    } | {
-        node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
-    }
+    } | {node.module or "" for node in runtime if isinstance(node, ast.ImportFrom)}
 
 
 def _solver_api_modules() -> list[ModuleType]:
@@ -124,9 +206,23 @@ def _solver_api_modules() -> list[ModuleType]:
 )
 def test_solver_api_has_no_private_lcm_imports(*, module: ModuleType) -> None:
     """An installed solver can import the result spine without importing `_lcm`."""
-    imported = _imported_module_names(module)
+    imported = _imported_module_names(inspect.getsource(module))
 
     assert not any(name == "_lcm" or name.startswith("_lcm.") for name in imported)
+
+
+def test_imported_module_names_skips_only_type_checking_imports() -> None:
+    """Runtime imports count, including ones beside a `TYPE_CHECKING` block."""
+    source = (
+        "import json\n"
+        "from _lcm.grids import Grid\n"
+        "if TYPE_CHECKING:\n"
+        "    from _lcm.solution.artifacts import OwnedSolutionView\n"
+        "else:\n"
+        "    from _lcm.typing import PytreeValue\n"
+    )
+
+    assert _imported_module_names(source) == {"json", "_lcm.grids", "_lcm.typing"}
 
 
 def test_artifact_identity_includes_schema_version() -> None:
@@ -147,10 +243,10 @@ def test_artifact_identity_includes_schema_version() -> None:
     ],
 )
 def test_invalid_artifact_key_is_rejected(
-    *, kwargs: dict[str, object], match: str
+    *, kwargs: _ArtifactKeyKwargs, match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
-        ArtifactKey(**kwargs)  # ty: ignore[invalid-argument-type]
+        ArtifactKey(**kwargs)
 
 
 def test_artifact_store_is_immutable_and_projects_one_artifact_type() -> None:
@@ -161,7 +257,7 @@ def test_artifact_store_is_immutable_and_projects_one_artifact_type() -> None:
         ArtifactRef(period=0, regime="alive", key=policy): "p0",
         ArtifactRef(period=0, regime="alive", key=diagnostic): "d0",
     }
-    store = ArtifactStore(refs)
+    store = ArtifactStore(cast("Mapping[ArtifactRef, ArtifactPayload]", refs))
 
     assert dict(store) == refs
     projected = store.project(policy)
@@ -239,7 +335,7 @@ def test_store_lookups_reject_nonexact_coordinates_before_hashing() -> None:
 
     key = ArtifactKey(type_id="example.policy")
     ref = ArtifactRef(period=0, regime="alive", key=key)
-    artifacts = ArtifactStore({ref: object()})
+    artifacts = ArtifactStore({ref: cast("ArtifactPayload", object())})
     hostile_ref = replace(ref)
     object.__setattr__(hostile_ref, "regime", hostile_regime)
 
@@ -339,7 +435,7 @@ def test_model_rejects_a_present_inapplicable_artifact() -> None:
     )
     malformed = replace(
         solution,
-        replay_artifacts=ArtifactStore({policy_ref: object()}),
+        replay_artifacts=ArtifactStore({policy_ref: cast("ArtifactPayload", object())}),
         omissions={
             ref: reason
             for ref, reason in solution.omissions.items()
@@ -386,8 +482,10 @@ def test_solve_does_not_host_copy_policy_without_replay_route(
     original_device_put = backward_induction.jax.device_put
 
     def _reject_policy_host_copy(
-        value: object, *args: object, **kwargs: object
-    ) -> object:
+        value: object,  # noqa: PAN001 - JAX device_put accepts arbitrary registered PyTrees.
+        *args: object,  # noqa: PAN001 - JAX device_put accepts arbitrary placement prefix trees.
+        **kwargs: object,  # noqa: PAN001 - JAX device_put accepts arbitrary option prefix trees.
+    ) -> object:  # noqa: PAN001 - JAX device_put preserves arbitrary registered PyTrees.
         if isinstance(value, EGMSimPolicy):
             raise TypeError("policy without a replay route was copied to host")
         return original_device_put(value, *args, **kwargs)
@@ -448,8 +546,10 @@ def test_solve_retains_kernel_diagnostics_only_when_log_level_enables_them(
 ) -> None:
     original = backward_induction._run_period_kernel
 
-    def _with_diagnostics(**kwargs: object):
-        output = original(**kwargs)  # ty: ignore[invalid-argument-type]
+    def _with_diagnostics(
+        **kwargs: Unpack[_KernelKwargs],
+    ) -> backward_induction.KernelOutput:
+        output = original(**kwargs)
         scalar = jnp.asarray(0.0)
         flag = jnp.zeros((), dtype=jnp.bool_)
         diagnostics = SolverDiagnostics(
@@ -590,6 +690,18 @@ def test_legacy_model_pickle_backfills_solution_instance_id() -> None:
     assert solution.metadata.model_instance_id == restored._solution_model_instance_id
 
 
+def test_model_archive_with_dict_fixed_component_splits_restores_them_read_only() -> (
+    None
+):
+    """An archive holding the fixed-component splits as a dict restores them frozen."""
+    model, _, _ = _small_grid_search_inputs()
+    model._fixed_component_splits = dict(model._fixed_component_splits)  # ty: ignore[invalid-assignment]
+
+    restored = cloudpickle.loads(cloudpickle.dumps(model))
+
+    assert isinstance(restored._fixed_component_splits, MappingProxyType)
+
+
 def test_retained_finite_nnbegm_result_replay_matches_automatic_solve() -> None:
     model = _build("finite")
     solution = model.solve(params=_PARAMS, log_level="off")
@@ -719,7 +831,10 @@ def test_obsolete_solve_and_simulate_interfaces_are_absent() -> None:
     assert "period_to_regime_to_dissolution_flags" not in simulate_parameters
 
 
-def _refuse_unadmitted_compiled_dispatch(*_args: object, **_kwargs: object) -> None:
+def _refuse_unadmitted_compiled_dispatch(
+    *_args: object,  # noqa: PAN001 - Rejects arbitrary compiled-core argument trees.
+    **_kwargs: object,  # noqa: PAN001 - Rejects arbitrary compiled-core argument trees.
+) -> NoReturn:
     raise AssertionError("A one-byte budget reached compiled core dispatch")
 
 
@@ -849,7 +964,7 @@ def test_lazy_value_decoder_errors_cross_the_public_boundary(
     """Normalize decoder mechanics without hiding archive-domain exceptions."""
     model, params, initial_conditions = _small_grid_search_inputs()
     solution = model.solve(params=params, log_level="off")
-    entries: dict[object, object] = {
+    entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
         (period, regime_name): value
         for period, regime_to_value in solution.values.items()
         for regime_name, value in regime_to_value.items()
@@ -874,7 +989,7 @@ def test_solution_result_from_another_model_instance_is_refused_at_log_off(
     target, _, initial_conditions = _small_grid_search_inputs()
     solution = source.solve(params=params, log_level="off")
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before identity preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -894,7 +1009,7 @@ def test_solution_result_with_changed_canonical_params_is_refused_before_forward
     solution = model.solve(params=params, log_level="off")
     changed_params = get_params(n_periods=2, discount_factor=0.9)
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before params preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -945,7 +1060,7 @@ def test_solution_result_value_schema_is_checked_before_forward(
         values[period][regime_name] = replacement
         malformed = replace(solution, values=values)
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before value-schema preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1010,7 +1125,7 @@ def test_solution_result_rejects_unexpected_artifact_coordinates_before_forward(
             ref=unexpected_ref,
         )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before artifact preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1049,7 +1164,7 @@ def test_solution_result_rejects_present_and_omitted_artifacts_before_forward(
         omissions=dict(with_artifact.omissions) | {ref: OmissionReason.NOT_REQUESTED},
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before artifact preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1083,7 +1198,7 @@ def test_solution_result_rejects_one_ref_in_multiple_artifact_stores_before_forw
         ref=ref,
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before artifact preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1106,7 +1221,7 @@ def test_values_only_finite_nnbegm_result_is_refused_before_forward_simulation(
         retention=ResultRetention.VALUES,
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before replay preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1184,7 +1299,7 @@ def test_malformed_finite_nnbegm_payload_is_refused_before_forward(
     entries[policy_ref] = malformed_policy
     malformed = replace(solution, replay_artifacts=ArtifactStore(entries))
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before replay-payload preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1238,7 +1353,7 @@ def test_declared_egm_policy_read_requires_a_valid_egm_payload_before_forward(
         )
     solution = replace(solution, replay_artifacts=ArtifactStore(entries))
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before EGM replay preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1273,8 +1388,10 @@ def test_adaptive_policy_omission_is_derived_from_model_authority(
 
     original = backward_induction._run_period_kernel
 
-    def _without_policy(**kwargs: object):
-        output = original(**kwargs)  # ty: ignore[invalid-argument-type]
+    def _without_policy(
+        **kwargs: Unpack[_KernelKwargs],
+    ) -> backward_induction.KernelOutput:
+        output = original(**kwargs)
         return replace(
             output,
             replay={
@@ -1319,7 +1436,7 @@ def test_nested_egm_payload_is_validated_recursively_before_forward(
     entries[policy_ref] = malformed_policy
     malformed = replace(solution, replay_artifacts=ArtifactStore(entries))
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before nested replay preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1361,7 +1478,7 @@ def test_policy_at_an_undeclared_coordinate_is_refused_before_forward(
         ),
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before replay-route preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1387,7 +1504,7 @@ def test_values_only_dissolution_result_is_refused_before_forward_simulation(
         retention=ResultRetention.VALUES,
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before dissolution preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1423,7 +1540,7 @@ def test_malformed_dissolution_flag_is_refused_before_forward(
     entries[flag_ref] = malformed_flag
     malformed = replace(solution, replay_artifacts=ArtifactStore(entries))
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before dissolution preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1457,7 +1574,7 @@ def test_dissolution_flag_is_refused_from_the_wrong_artifact_channel(
         ),
     )
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+    def _forward_loop_must_not_run(**_kwargs: Unpack[_SimulationKwargs]) -> NoReturn:
         raise AssertionError("forward simulation ran before dissolution preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
@@ -1494,7 +1611,7 @@ def _with_artifact(
 ) -> SolutionResult:
     """Return a result with one test artifact added to the named store."""
     store = cast("ArtifactStore", getattr(solution, channel))
-    replacement = ArtifactStore(dict(store) | {ref: object()})
+    replacement = ArtifactStore(dict(store) | {ref: cast("ArtifactPayload", object())})
     return replace(
         solution,
         **{channel: replacement},

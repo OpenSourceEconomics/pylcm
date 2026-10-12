@@ -4,7 +4,9 @@ Run in a fresh eight-CPU-device process to cover actual one/three/eight-device
 subsets. This module never changes JAX topology or imports topology-pinning tests.
 """
 
-from typing import Any
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -15,9 +17,12 @@ import pytest
 import _lcm.simulation.runtime as simulation_runtime
 import _lcm.simulation.simulate as simulation
 from _lcm.simulation import chunk_admission
+from _lcm.simulation.chunk_planning import SimulationChunkPlan, SimulationChunkProfile
+from _lcm.simulation.operand_placement import _OperandValue
 from _lcm.simulation.random import _generate_windowed_simulation_keys
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.taste_stream import prepare_decision_taste_keys
+from _lcm.typing import DataclassInstance, PytreeValue, ShapeDtypePytree
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -30,8 +35,33 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.typing import ScalarInt
+from lcm.result import SimulationResult
+from lcm.typing import RegimeName, ScalarInt
+from tests.simulation._callback_types import (
+    OperandPlacement,
+    RuntimeDispatch,
+    RuntimePreparation,
+    SimulationChunkInputs,
+    WidthProfileInputs,
+)
 from tests.test_models import n_nbegm_toy as toy
+
+type ProfileShapes = (
+    tuple[tuple[int, ...], str]
+    | tuple[ProfileShapes, ...]
+    | list[ProfileShapes]
+    | Mapping[str, ProfileShapes]
+    | DataclassInstance
+    | None
+)
+
+
+class _BuildRecord(TypedDict):
+    declaration: tuple[int, int, int, int]
+    executable: int
+    shapes: ProfileShapes
+    layouts: tuple[jax.sharding.Sharding | None, ...]
+    widths: dict[str, int]
 
 
 @categorical(ordered=False)
@@ -91,11 +121,11 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
     )
 
 
-def _shape_tree(tree: object) -> object:
+def _shape_tree(tree: PytreeValue | ShapeDtypePytree) -> ProfileShapes:
     return jax.tree.map(lambda leaf: (leaf.shape, str(leaf.dtype)), tree)
 
 
-def _assert_raw_equal(*, actual: Any, expected: Any) -> None:
+def _assert_raw_equal(*, actual: SimulationResult, expected: SimulationResult) -> None:
     """Compare original raw row order, masks, values and every published field."""
     assert jax.tree.structure(actual.raw_results) == jax.tree.structure(
         expected.raw_results
@@ -116,10 +146,10 @@ def _assert_raw_equal(*, actual: Any, expected: Any) -> None:
 def _install_profile_observers(
     *,
     monkeypatch: pytest.MonkeyPatch,
-    profiled_programs: set,
-    profile_shapes: dict,
-    profile_layouts: dict,
-    profile_widths: list,
+    profiled_programs: set[tuple[int, int, int, int]],
+    profile_shapes: dict[int, ProfileShapes],
+    profile_layouts: dict[int, tuple[jax.sharding.Sharding | None, ...]],
+    profile_widths: list[dict[str, int]],
 ) -> None:
     """Record every declared body of the chunk profile each call selects.
 
@@ -132,22 +162,26 @@ def _install_profile_observers(
     """
     prepare = SimulationRuntime.prepare_abstract
     profile_chunk = chunk_admission._ChunkProfiler.profile_widths
-    build_records: list[dict[str, Any]] = []
+    build_records: list[_BuildRecord] = []
     building: list[bool] = []
-    profile_builds: dict[int, tuple[Any, tuple[dict[str, Any], ...]]] = {}
+    profile_builds: dict[
+        int, tuple[SimulationChunkProfile, tuple[_BuildRecord, ...]]
+    ] = {}
 
-    def apply_records(records: tuple[dict[str, Any], ...]) -> None:
+    def apply_records(records: tuple[_BuildRecord, ...]) -> None:
         for record in records:
             profiled_programs.add(record["declaration"])
             profile_shapes[record["executable"]] = record["shapes"]
             profile_layouts[record["executable"]] = record["layouts"]
             profile_widths.append(record["widths"])
 
-    def record_profile(self: SimulationRuntime, **call: Any) -> Any:
+    def record_profile(
+        self: SimulationRuntime, **call: Unpack[RuntimePreparation]
+    ) -> simulation_runtime.CompiledSimulationProgram:
         prepared = prepare(self, **call)
         executable = prepared.executable
         assert isinstance(executable, jax.stages.Compiled)
-        record = {
+        record: _BuildRecord = {
             "declaration": (
                 id(self),
                 id(call["program"].function),
@@ -167,7 +201,9 @@ def _install_profile_observers(
             apply_records((record,))
         return prepared
 
-    def record_chunk_profile(self: Any, **call: Any) -> Any:
+    def record_chunk_profile(
+        self: chunk_admission._ChunkProfiler, **call: Unpack[WidthProfileInputs]
+    ) -> SimulationChunkProfile:
         build_records.clear()
         building.append(True)
         try:
@@ -193,7 +229,7 @@ def _observe_execution(
     *, monkeypatch: pytest.MonkeyPatch, device_count: int
 ) -> tuple[list[dict[str, int]], list[tuple[slice, int, int]]]:
     """Check required subject inputs and compiler-profiled output layouts."""
-    profile_shapes: dict[int, object] = {}
+    profile_shapes: dict[int, ProfileShapes] = {}
     profiled_programs = set()
     profile_layouts = {}
     profile_widths = []
@@ -211,7 +247,9 @@ def _observe_execution(
         profile_widths=profile_widths,
     )
 
-    def record_dispatch(self: SimulationRuntime, **call: Any) -> Any:
+    def record_dispatch(
+        self: SimulationRuntime, **call: Unpack[RuntimeDispatch]
+    ) -> PytreeValue:
         declaration = (
             id(self),
             id(call["program"].function),
@@ -224,8 +262,9 @@ def _observe_execution(
         return dispatch(self, **call)
 
     def record_compiled(
-        self: simulation_runtime.CompiledSimulationProgram, **call: Any
-    ) -> Any:
+        self: simulation_runtime.CompiledSimulationProgram,
+        **call: PytreeValue | ShapeDtypePytree,
+    ) -> PytreeValue:
         # Generic program names repeat across regimes. The exact selected
         # executable also identifies its width/layout specialization.
         key = id(self.executable)
@@ -235,7 +274,9 @@ def _observe_execution(
         _assert_output_shardings(result=result, expected=profile_layouts[key])
         return result
 
-    def record_placement(**call: Any) -> Any:
+    def record_placement[Operand: _OperandValue](
+        **call: Unpack[OperandPlacement[Operand]],
+    ) -> MappingProxyType[str, Operand]:
         placed = place(**call)
         for name in call["subject_arg_names"]:
             for value in jax.tree.leaves(placed.get(name, ())):
@@ -244,7 +285,11 @@ def _observe_execution(
                     placed_subjects.append(value.shape[0])
         return placed
 
-    def record_chunk(**call: Any) -> Any:
+    def record_chunk(
+        **call: Unpack[SimulationChunkInputs],
+    ) -> dict[RegimeName, dict[int, simulation.PeriodRegimeSimulationData]]:
+        assert isinstance(call["subject_slice"], slice)
+        assert call["original_n_subjects"] is not None
         chunks.append(
             (call["subject_slice"], call["n_subjects"], call["original_n_subjects"])
         )
@@ -274,7 +319,9 @@ def _observe_execution(
     return profile_widths, chunks
 
 
-def _assert_output_shardings(*, result: object, expected: tuple) -> None:
+def _assert_output_shardings(
+    *, result: PytreeValue, expected: tuple[jax.sharding.Sharding | None, ...]
+) -> None:
     for value, sharding in zip(jax.tree.leaves(result), expected, strict=True):
         assert sharding is not None
         assert value.sharding.is_equivalent_to(sharding, value.ndim)
@@ -331,8 +378,16 @@ def test_independent_outer_cohorts_preserve_profiled_shapes_and_real_rows(
         chunks.clear()
         profile_widths.clear()
 
-        def force_candidate(*, index: int = arm, **call: Any) -> tuple[int, ...]:
-            return (frontier(**call)[index],)
+        def force_candidate(
+            *, index: int = arm, population: int, alignment: int, subject_width: int
+        ) -> tuple[int, ...]:
+            return (
+                frontier(
+                    population=population,
+                    alignment=alignment,
+                    subject_width=subject_width,
+                )[index],
+            )
 
         with monkeypatch.context() as forced:
             forced.setattr(
@@ -392,8 +447,10 @@ def test_scalar_anchor_preserves_subject_pin_for_larger_outer_candidate(
     receipts = []
     original_plan = chunk_admission._plan_independent_chunks
 
-    def record_plan(**call: Any) -> Any:
-        plan = original_plan(**call)
+    def record_plan(
+        *, profiler: chunk_admission._ChunkProfiler, alignment: int
+    ) -> SimulationChunkPlan:
+        plan = original_plan(profiler=profiler, alignment=alignment)
         receipts.append(plan.receipt)
         return plan
 
@@ -541,7 +598,9 @@ def test_finite_replay_outer_extent_matches_profile_without_changing_candidates(
     prepare = SimulationRuntime.prepare_abstract
     dispatch = SimulationRuntime.dispatch
 
-    def record_profile(self: SimulationRuntime, **call: Any) -> Any:
+    def record_profile(
+        self: SimulationRuntime, **call: Unpack[RuntimePreparation]
+    ) -> simulation_runtime.CompiledSimulationProgram:
         result = prepare(self, **call)
         assert isinstance(result.executable, jax.stages.Compiled)
         profiles[(id(call["program"].function), call["period"], call["n_subjects"])] = (
@@ -549,10 +608,13 @@ def test_finite_replay_outer_extent_matches_profile_without_changing_candidates(
         )
         return result
 
-    def record_dispatch(self: SimulationRuntime, **call: Any) -> Any:
+    def record_dispatch(
+        self: SimulationRuntime, **call: Unpack[RuntimeDispatch]
+    ) -> PytreeValue:
         result = dispatch(self, **call)
         name = call["program"].name
         if name in {"simulate_policy_prepare", "simulate_policy_rank"}:
+            assert call["residency"] is not None
             assert call["residency"].axis_widths["subject"] == 1
             assert (
                 _shape_tree(result)
@@ -569,8 +631,16 @@ def test_finite_replay_outer_extent_matches_profile_without_changing_candidates(
     results = []
     for arm in (0, -1):
 
-        def force_candidate(*, index: int = arm, **call: Any) -> tuple[int, ...]:
-            return (frontier(**call)[index],)
+        def force_candidate(
+            *, index: int = arm, population: int, alignment: int, subject_width: int
+        ) -> tuple[int, ...]:
+            return (
+                frontier(
+                    population=population,
+                    alignment=alignment,
+                    subject_width=subject_width,
+                )[index],
+            )
 
         with monkeypatch.context() as forced:
             forced.setattr(
@@ -601,8 +671,10 @@ def test_auto_anchor_admits_a_budgeted_call_without_an_explicit_subject_pin(
     receipts = []
     original_plan = chunk_admission._plan_independent_chunks
 
-    def record_plan(**call: Any) -> Any:
-        plan = original_plan(**call)
+    def record_plan(
+        *, profiler: chunk_admission._ChunkProfiler, alignment: int
+    ) -> SimulationChunkPlan:
+        plan = original_plan(profiler=profiler, alignment=alignment)
         receipts.append(plan.receipt)
         return plan
 

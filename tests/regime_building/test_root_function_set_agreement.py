@@ -7,7 +7,8 @@ is a read for the other. This module pins that agreement by recording what each
 consumer asks for while a model exercising every root slot is built.
 """
 
-from collections.abc import Mapping
+# Which regime is asked for its roots, in which phase.
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Literal
 
@@ -41,6 +42,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    FunctionName,
     IntND,
     RegimeName,
     ScalarInt,
@@ -48,7 +50,6 @@ from lcm.typing import (
 )
 from tests.conftest import bind_laws
 
-# Which regime is asked for its roots, in which phase.
 type RootCallKey = tuple[str, str]
 
 
@@ -179,7 +180,9 @@ def _record_root_calls(
         "usage": {},
     }
 
-    def make_spy(consumer: str) -> object:
+    def make_spy(
+        consumer: str,
+    ) -> Callable[..., MappingProxyType[FunctionName, UserFunction]]:
         def spy(
             *,
             regime_name: RegimeName,

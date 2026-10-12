@@ -4,11 +4,28 @@ from collections.abc import Mapping
 
 import jax
 
+from _lcm.params.mapping_leaf import MappingLeaf
+from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.typing import ArgumentTree, DataclassInstance
 from lcm.exceptions import ExecutionPlanningError
+
+# What `Compiled.input_shardings` returns: the positional and keyword input trees
+# laid out again inside the same containers, with a sharding for each kept leaf and
+# `None` for each eliminated one.
+type _InputShardingTree = (
+    jax.sharding.Sharding
+    | MappingLeaf
+    | SequenceLeaf
+    | DataclassInstance
+    | tuple[_InputShardingTree, ...]
+    | list[_InputShardingTree]
+    | Mapping[str, _InputShardingTree]
+    | None
+)
 
 
 def compiler_input_paths(
-    *, compiled: jax.stages.Compiled, arguments: Mapping[str, object]
+    *, compiled: jax.stages.Compiled, arguments: Mapping[str, ArgumentTree]
 ) -> frozenset[jax.tree_util.KeyPath]:
     """Return keyword-tree paths retained by the exact compiled specialization.
 
@@ -44,6 +61,10 @@ def compiler_input_paths(
     return frozenset(path for path, sharding in with_paths if sharding is not None)
 
 
-def _is_none(value: object) -> bool:
-    """Preserve omitted input slots when comparing the original pytrees."""
+def _is_none(value: ArgumentTree | _InputShardingTree) -> bool:
+    """Preserve omitted input slots when comparing the original pytrees.
+
+    JAX hands the predicate every node of the argument tree and of the compiled
+    input-sharding tree.
+    """
     return value is None

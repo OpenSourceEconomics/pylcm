@@ -17,29 +17,56 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 import jax
 
+from _lcm.continuation import ContinuationPayload
 from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
+    StoredValueTemplate,
     ValueArtifactAddress,
     ValueConsumerAddress,
+    ValueInputChannel,
     ValueViewDescriptor,
     apply_value_transfer_plan,
 )
-from _lcm.typing import ActionName, StateName
+from _lcm.time import TimeAxis
+from _lcm.typing import (
+    ActionName,
+    ArgumentTree,
+    ArtifactPayload,
+    FlatEdgeParams,
+    FlatRegimeParams,
+    PytreeValue,
+    ShapeDtypePytree,
+    StateName,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
+from lcm.typing import FloatND, ReferenceName, RegimeName
 
 _CORE_PROGRAM_VERSION = 7
 _INT32_MAX = 2_147_483_647
 
 if TYPE_CHECKING:
+    from _lcm.engine import StateActionSpace
+    from _lcm.execution.output_layout import OutputRoleTree
+    from _lcm.solution.contract import PeriodKernel
+
     type _RetainedArtifactKeys = tuple[ArtifactKey, ...]
-    type _RetainedArtifactPayloadTypes = Mapping[ArtifactKey, type[object]]
+    type _RetainedArtifactPayloadTypes = Mapping[ArtifactKey, type[ArtifactPayload]]
 else:
     # Runtime construction deliberately reaches CoreProgram's exact, deterministic
     # validation instead of a decorator-generated annotation error.
     type _RetainedArtifactKeys = object
     type _RetainedArtifactPayloadTypes = object
+    # The output layout module imports this one; as there, the claw checks no
+    # role tree.
+    type OutputRoleTree = object
+    # The solver contract reaches this module through the engine at import time,
+    # so a kernel is checked as the graph publisher the body requires.
+    type PeriodKernel = CoreProgramGraphAware
+    # The engine imports this module through the simulation program types, so
+    # the claw checks no state-action space.
+    type StateActionSpace = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -123,15 +150,6 @@ class InvariantBinding:
         if self.start < 0:
             msg = f"An invariant binding's position must be non-negative: {self.start}."
             raise ValueError(msg)
-
-
-@runtime_checkable
-class _TransferArgumentLeaf(Protocol):
-    """Array-like dynamic leaf validated before transfer planning."""
-
-    shape: tuple[int, ...]
-    dtype: object
-    sharding: object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -394,14 +412,18 @@ class ProgramScope(StrEnum):
 class CoreBuildContext:
     """Immutable inputs from which a core builds its dynamic argument mapping."""
 
-    state_action_space: object
-    next_regime_to_V_arr: Mapping[str, object]
-    next_regime_to_continuation: Mapping[str, object]
-    flat_params: Mapping[str, object]
+    state_action_space: StateActionSpace | None
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct]
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
+    flat_params: Mapping[RegimeName, FlatRegimeParams | FlatEdgeParams]
     period: int
-    ages: object
-    edge_regime_to_V_arr: Mapping[str, object] | None = None
-    same_period_regime_to_V_arr: Mapping[str, object] | None = None
+    ages: TimeAxis | None
+    edge_regime_to_V_arr: Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None = (
+        None
+    )
+    same_period_regime_to_V_arr: (
+        Mapping[RegimeName, FloatND | jax.ShapeDtypeStruct] | None
+    ) = None
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned mappings and reject ambiguous period values."""
@@ -435,7 +457,11 @@ class CoreBuildContext:
             )
 
 
-type CoreArgumentBuilder = Callable[[CoreBuildContext], Mapping[str, object]]
+# Builds a core's dynamic argument tree: concrete operands at dispatch, shape
+# descriptors when the engine lowers against abstract inputs.
+type CoreArgumentBuilder = Callable[
+    [CoreBuildContext], Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
+]
 
 _COMPILER_OPTION_ARITY = 2
 
@@ -462,10 +488,10 @@ class CoreProgram:
     """One authoritative, unmaterialized program in a period kernel's graph."""
 
     name: str
-    function: Callable[..., object]
+    function: Callable[..., PytreeValue]
     argument_builder: CoreArgumentBuilder
     requirements: CoreExecutionRequirements
-    output_roles: object
+    output_roles: OutputRoleTree
     disposition: CoreExecutionDisposition
     disposition_reason: str | None = None
     donation_candidates: tuple[str, ...] = ()
@@ -505,10 +531,10 @@ class MaterializedCoreProgram:
     """A declared core paired with exact dynamic arguments for one graph node."""
 
     name: str
-    function: Callable[..., object]
-    arguments: Mapping[str, object]
+    function: Callable[..., PytreeValue]
+    arguments: MappingProxyType[ReferenceName, PytreeValue | ShapeDtypePytree]
     requirements: CoreExecutionRequirements
-    output_roles: object
+    output_roles: OutputRoleTree
     disposition: CoreExecutionDisposition
     donation_candidates: tuple[str, ...]
     disposition_reason: str | None = None
@@ -523,9 +549,8 @@ class MaterializedCoreProgram:
     """The invariant code this program evaluates, inherited from the declaration."""
 
     def __post_init__(self) -> None:
-        """Snapshot the exact dynamic argument tree."""
+        """Snapshot the planning containers."""
         _validate_compiler_options(self.compiler_options)
-        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
         object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
         object.__setattr__(
@@ -542,7 +567,9 @@ class CoreProgramGraphAware(Protocol):
         ...
 
 
-def core_program_graph(*, kernel: object) -> MappingProxyType[str, CoreProgram]:
+def core_program_graph(
+    *, kernel: PeriodKernel | CoreProgramGraphAware
+) -> MappingProxyType[str, CoreProgram]:
     """Return one kernel's validated native graph.
 
     This is the only engine seam that reads ``core_programs()``. A kernel without a
@@ -561,7 +588,7 @@ def core_program_graph(*, kernel: object) -> MappingProxyType[str, CoreProgram]:
 
 def retained_artifact_payload_type(
     *, graph: Mapping[str, CoreProgram], key: ArtifactKey
-) -> type[object] | None:
+) -> type[ArtifactPayload] | None:
     """Return the unique producer-declared payload type for one retained artifact.
 
     ``None`` means no program retains ``key``. A retained key without a type is
@@ -692,7 +719,7 @@ def _validate_selected_internal_edges(
             raise ValueError(msg)
 
 
-def _reject_native_duplicate_authorities(*, kernel: object) -> None:
+def _reject_native_duplicate_authorities(*, kernel: CoreProgramGraphAware) -> None:
     """Fail when a native graph publisher retains any parallel declaration seam."""
     duplicate_names = tuple(
         name
@@ -985,7 +1012,8 @@ def materialize_core_program(
     materialized = MaterializedCoreProgram(
         name=program.name,
         function=program.function,
-        arguments=arguments,
+        # A solver's argument builder may return any mapping; freeze a copy here.
+        arguments=MappingProxyType(dict(arguments)),
         requirements=program.requirements,
         output_roles=program.output_roles,
         disposition=program.disposition,
@@ -1015,14 +1043,14 @@ class ResolvedCoreProgram:
     """A core with planner-owned choices bound into its compilation identity."""
 
     name: str
-    function: Callable[..., object]
-    arguments: Mapping[str, object]
-    static_kwargs: Mapping[str, int]
+    function: Callable[..., PytreeValue]
+    arguments: MappingProxyType[str, ArgumentTree]
+    static_kwargs: MappingProxyType[str, int]
     requirements: CoreExecutionRequirements
-    output_roles: object
+    output_roles: OutputRoleTree
     disposition: CoreExecutionDisposition
     donation_candidates: tuple[str, ...]
-    tile_widths: Mapping[str, int]
+    tile_widths: MappingProxyType[str, int]
     specialization_key: Hashable
     """Static program fragment composed into the engine's full lowering key."""
     input_transfer_plan: tuple[ResolvedValueTransfer, ...]
@@ -1038,20 +1066,9 @@ class ResolvedCoreProgram:
     """The invariant code this program evaluates; its code is a runtime operand."""
 
     def __post_init__(self) -> None:
-        """Snapshot the materialized argument and planning containers."""
+        """Snapshot the planning containers."""
         _validate_compiler_options(self.compiler_options)
-        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
         object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
-        object.__setattr__(
-            self,
-            "static_kwargs",
-            MappingProxyType(dict(self.static_kwargs)),
-        )
-        object.__setattr__(
-            self,
-            "tile_widths",
-            MappingProxyType(dict(self.tile_widths)),
-        )
         object.__setattr__(
             self, "retained_artifact_keys", tuple(self.retained_artifact_keys)
         )
@@ -1062,7 +1079,7 @@ class ResolvedCoreProgram:
 def resolve_core_program(
     *,
     program: MaterializedCoreProgram,
-    tile_widths: Mapping[str, object] | None = None,
+    tile_widths: Mapping[str, int] | None = None,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
     abstract_inputs: bool = False,
 ) -> ResolvedCoreProgram:
@@ -1092,7 +1109,7 @@ def resolve_core_program(
 def resolve_core_program_candidates(
     *,
     program: MaterializedCoreProgram,
-    tile_widths: tuple[Mapping[str, object] | None, ...],
+    tile_widths: tuple[Mapping[str, int] | None, ...],
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
     abstract_inputs: bool = False,
 ) -> tuple[ResolvedCoreProgram, ...]:
@@ -1123,7 +1140,7 @@ def resolve_core_program_candidates(
 def _resolve_core_program(
     *,
     program: MaterializedCoreProgram,
-    tile_widths: Mapping[str, object] | None,
+    tile_widths: Mapping[str, int] | None,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...],
     abstract_inputs: bool,
 ) -> ResolvedCoreProgram:
@@ -1158,7 +1175,7 @@ def _resolve_core_program(
         raise ValueError(msg)
 
     resolved_widths: dict[str, int] = {}
-    width_bindings: dict[str, int] = {}
+    widths_by_keyword: dict[str, int] = {}
     compilation_axes: list[Hashable] = []
     for axis in axes:
         width = _validate_tile_width(
@@ -1166,7 +1183,7 @@ def _resolve_core_program(
             width=requested_widths[axis.name],
         )
         resolved_widths[axis.name] = width
-        width_bindings[axis.width_keyword] = width
+        widths_by_keyword[axis.width_keyword] = width
         compilation_axes.append(
             (
                 axis.name,
@@ -1180,6 +1197,8 @@ def _resolve_core_program(
             if isinstance(axis, ReducedAxis)
             else (axis.name, axis.extent, axis.width_keyword, width)
         )
+
+    width_bindings = MappingProxyType(widths_by_keyword)
 
     return ResolvedCoreProgram(
         name=program.name,
@@ -1204,7 +1223,7 @@ def _resolve_core_program(
         internal_outputs=program.internal_outputs,
         compiler_options=program.compiler_options,
         invariant_binding=program.invariant_binding,
-        tile_widths=resolved_widths,
+        tile_widths=MappingProxyType(resolved_widths),
         input_transfer_plan=resolved_input_transfer_plan,
         specialization_key=(
             "core-program",
@@ -1373,7 +1392,9 @@ def _resolve_input_transfer_plan(
 
 def _validate_value_reads(*, program: MaterializedCoreProgram) -> None:
     """Validate exact core-input locators without constraining artifact fan-out."""
-    locators: set[tuple[object, tuple[str | int, ...], str | None]] = set()
+    locators: set[
+        tuple[ValueInputChannel, tuple[str | int, ...], ReferenceName | None]
+    ] = set()
     source_node: tuple[int, str, str] | None = None
     for read in program.requirements.value_reads:
         if not isinstance(read, ValueRead):
@@ -1404,19 +1425,19 @@ def _validate_value_reads(*, program: MaterializedCoreProgram) -> None:
 
 def _value_read_argument_leaf(
     *, program: MaterializedCoreProgram, read: ValueRead
-) -> _TransferArgumentLeaf:
+) -> StoredValueTemplate:
     """Resolve one declared consumer path to an array-like lowering leaf."""
     root = read.source.argument or read.source.channel.value
     if root not in program.arguments:
         msg = f"Value-read argument {root!r} is missing from program arguments."
         raise ValueError(msg)
 
-    value: object = program.arguments[root]
+    value: PytreeValue | ShapeDtypePytree = program.arguments[root]
     traversed: list[str | int] = []
     for segment in read.source.path:
         traversed.append(segment)
         if isinstance(value, Mapping):
-            if segment not in value:
+            if type(segment) is not str or segment not in value:
                 msg = f"Value-read argument path {(root, *traversed)!r} is missing."
                 raise ValueError(msg)
             value = value[segment]
@@ -1445,7 +1466,7 @@ def _value_read_argument_leaf(
             "an array-like leaf with shape and dtype."
         )
         raise TypeError(msg)
-    return cast("_TransferArgumentLeaf", value)
+    return cast("StoredValueTemplate", value)
 
 
 def _validate_transfer_argument_metadata(
@@ -1513,7 +1534,7 @@ def _validate_abstract_inputs(*, program: MaterializedCoreProgram) -> None:
         )
 
 
-def _fail_if_axis_name_invalid(*, name: object) -> None:
+def _fail_if_axis_name_invalid(*, name: str) -> None:
     """Require an exact, non-empty spelling for a planner-visible axis name."""
     if type(name) is not str or not name:
         msg = "An execution axis name must be a non-empty string."
@@ -1521,7 +1542,7 @@ def _fail_if_axis_name_invalid(*, name: object) -> None:
 
 
 def _fail_if_width_policy_invalid(
-    *, name: str, extent: int, minimum_width: object, alignment: object
+    *, name: str, extent: int, minimum_width: int, alignment: int
 ) -> None:
     """Require a width floor and an alignment the axis extent can actually serve.
 
@@ -1546,7 +1567,7 @@ def _fail_if_width_policy_invalid(
 def _validate_reduced_axis(
     *,
     axis: ReducedAxis,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
 ) -> None:
     """Fail closed for product declarations outside the supported contract."""
     _validate_coordinate_declaration(axis=axis)
@@ -1612,7 +1633,9 @@ def _validate_reduction_declaration(*, axis: ReducedAxis) -> None:
 
 
 def _validate_axis_width_keyword(
-    *, axis: ReducedAxis | TiledOutputAxis, arguments: Mapping[str, object]
+    *,
+    axis: ReducedAxis | TiledOutputAxis,
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
 ) -> None:
     """Keep the planner-owned width distinct from dynamic arguments."""
     if not axis.width_keyword:
@@ -1626,7 +1649,7 @@ def _validate_axis_width_keyword(
         raise ValueError(msg)
 
 
-def _validate_tile_width(*, axis: ReducedAxis | TiledOutputAxis, width: object) -> int:
+def _validate_tile_width(*, axis: ReducedAxis | TiledOutputAxis, width: int) -> int:
     """Validate one planner-selected width against its declared product."""
     if isinstance(width, bool) or not isinstance(width, int):
         msg = f"Tile width for axis {axis.name!r} must be an integer."
@@ -1648,7 +1671,7 @@ def _validate_coordinate_argument(
     axis_name: str,
     coordinate_name: ActionName,
     coordinate_extent: int,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
 ) -> None:
     """Tie one declared coordinate to the exact dynamic lowering grid."""
     if coordinate_name not in arguments:

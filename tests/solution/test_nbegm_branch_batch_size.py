@@ -12,6 +12,7 @@ import numpy as np
 
 from lcm import ExecutionConfig
 from lcm.solvers import BRANCH_AXIS
+from lcm.typing import FloatND, RegimeName
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import nbegm_ride_discrete_toy as toy
 
@@ -25,7 +26,7 @@ from tests.test_models import nbegm_ride_discrete_toy as toy
 _PARTITION_ULP = 64
 
 
-def _solve(*, branch_width: int) -> Mapping[int, Mapping]:
+def _solve(*, branch_width: int) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     model = toy.build_model(
         variant="nbegm",
         n_liquid=40,

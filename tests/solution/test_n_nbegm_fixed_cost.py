@@ -7,7 +7,7 @@ deterministic hard maximum wherever the cutoff is interior, with the
 analytic adjustment probability published through the solver diagnostics.
 """
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Unpack, cast
 
 import numpy as np
 import pytest
@@ -17,6 +17,7 @@ import _lcm.solution.nnbegm as solvers_mod
 from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
 from lcm.solver_api import EGM_CONTINUATION, SIMULATION_POLICY, SOLVER_DIAGNOSTICS
 from lcm.solvers import AdaptiveOuterMesh, UniformObservedFixedCost
+from tests.solution.test_nbegm_retention_specialization import _NativeKernelKwargs
 from tests.test_models import n_nbegm_toy as toy
 
 if TYPE_CHECKING:
@@ -96,10 +97,10 @@ def _solve_recorded(
 
     def recording_call(
         self: solvers_mod._NNBEGMPeriodKernel,
-        **kwargs: object,
+        **kwargs: Unpack[_NativeKernelKwargs],
     ) -> KernelOutput:
-        result = _ORIGINAL_KERNEL_CALL(self, **kwargs)  # ty: ignore[invalid-argument-type]
-        recorded[cast("int", kwargs["period"])] = result
+        result = _ORIGINAL_KERNEL_CALL(self, **kwargs)
+        recorded[kwargs["period"]] = result
         return result
 
     monkeypatch.setattr(solvers_mod._NNBEGMPeriodKernel, "__call__", recording_call)

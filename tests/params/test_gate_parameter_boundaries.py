@@ -30,6 +30,8 @@ from lcm import (
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 
+type TemplateNode = str | Mapping[str, TemplateNode]
+
 
 @categorical(ordered=False)
 class RegimeId:
@@ -83,7 +85,7 @@ def routes() -> dict[str, StakeholderRoute]:
 
 
 def leaf_paths(
-    *, tree: Mapping[str, object] | object, prefix: tuple[str, ...] = ()
+    *, tree: TemplateNode, prefix: tuple[str, ...] = ()
 ) -> set[tuple[str, ...]]:
     if isinstance(tree, Mapping):
         return {

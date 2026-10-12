@@ -4,17 +4,19 @@ On one device every wave holds one regime, so the dispatch order is today's:
 same-period references first, declaration order among independent regimes.
 """
 
-from typing import Any
+from typing import Unpack
 
 import pytest
 
 from _lcm.solution import backward_induction
 from lcm import AgeGrid, Model
+from lcm.typing import RegimeName
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
     _with_full_topology_laws,
 )
+from tests.solution._callback_types import RunPeriodKernelKwargs, RunPeriodKernelResult
 
 
 def _model() -> Model:
@@ -45,12 +47,12 @@ def _params() -> dict[str, float]:
 
 def _record_dispatch_order(
     *, monkeypatch: pytest.MonkeyPatch
-) -> tuple[list[tuple[int, str]], Model]:
+) -> tuple[list[tuple[int, RegimeName]], Model]:
     """Solve `_model()` while recording each kernel dispatch's (period, regime)."""
-    order: list[tuple[int, str]] = []
+    order: list[tuple[int, RegimeName]] = []
     real = backward_induction._run_period_kernel
 
-    def record(**kwargs: Any) -> object:
+    def record(**kwargs: Unpack[RunPeriodKernelKwargs]) -> RunPeriodKernelResult:
         order.append((kwargs["period"], kwargs["regime_name"]))
         return real(**kwargs)
 
@@ -61,8 +63,8 @@ def _record_dispatch_order(
 
 
 def _same_period_reference_pairs(
-    *, order: list[tuple[int, str]], model: Model
-) -> list[tuple[int, str, str]]:
+    *, order: list[tuple[int, RegimeName]], model: Model
+) -> list[tuple[int, RegimeName, RegimeName]]:
     """Return every (period, reader, reference) pair dispatched within `order`."""
     positions = {key: index for index, key in enumerate(order)}
     return [
@@ -109,7 +111,7 @@ def test_periods_are_dispatched_strictly_backward(
     order: list[int] = []
     real = backward_induction._run_period_kernel
 
-    def record(**kwargs: Any) -> object:
+    def record(**kwargs: Unpack[RunPeriodKernelKwargs]) -> RunPeriodKernelResult:
         order.append(kwargs["period"])
         return real(**kwargs)
 

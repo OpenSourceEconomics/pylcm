@@ -7,11 +7,12 @@ can address every regime's parameters.
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import overload
 
 from dags.tree import flatten_to_qnames, unflatten_from_qnames
 
-from _lcm.typing import RegimeName
+from _lcm.typing import ParamsTemplate, QualifiedName, RegimeName
+from lcm.typing import UserParams, UserParamsLeaf
 
 
 class ParamsQnameDepth:
@@ -28,8 +29,30 @@ class ParamsQnameDepth:
     TARGETREGIME__FUNC__PARAM = 3  # within-regime (regime prefix stripped)
 
 
-def flatten_regime_namespace(d: Mapping[RegimeName, Any]) -> MappingProxyType[str, Any]:
+@overload
+def flatten_regime_namespace(
+    d: ParamsTemplate,
+) -> MappingProxyType[QualifiedName, str]: ...
+@overload
+def flatten_regime_namespace(
+    d: UserParams,
+) -> MappingProxyType[QualifiedName, UserParamsLeaf]: ...
+@overload
+def flatten_regime_namespace[Leaf](
+    d: Mapping[RegimeName, Mapping[str, Leaf]],
+) -> MappingProxyType[QualifiedName, Leaf]: ...
+def flatten_regime_namespace[Leaf](
+    d: ParamsTemplate | UserParams | Mapping[RegimeName, Mapping[str, Leaf]],
+) -> (
+    MappingProxyType[QualifiedName, str]
+    | MappingProxyType[QualifiedName, UserParamsLeaf]
+    | MappingProxyType[QualifiedName, Leaf]
+):
     """Flatten a nested regime-keyed mapping to qualified names.
+
+    A params template flattens to its type strings and a params tree to its
+    leaves, at any depth. Any other namespace is two levels deep: regime names
+    over names of grids or functions.
 
     Args:
         d: Mapping of regime names to nested values.
@@ -41,14 +64,17 @@ def flatten_regime_namespace(d: Mapping[RegimeName, Any]) -> MappingProxyType[st
     return MappingProxyType(flatten_to_qnames(d))
 
 
-def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
-    """Unflatten qualified names back to a nested regime-keyed dict.
+def unflatten_regime_namespace[Leaf](
+    d: dict[QualifiedName, Leaf],
+) -> dict[RegimeName, dict[str, Leaf]]:
+    """Unflatten two-part qualified names back to a regime-keyed dict.
 
     Args:
-        d: Flat mapping with keys like `"regime__variable"`.
+        d: Flat mapping with keys like `"regime__variable"`, each a regime name
+            and one name below it.
 
     Returns:
-        Nested dict keyed by regime name.
+        Dict keyed by regime name, each value keyed by the name below it.
 
     """
     return unflatten_from_qnames(d)  # ty: ignore[invalid-return-type]

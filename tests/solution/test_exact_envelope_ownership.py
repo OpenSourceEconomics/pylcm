@@ -22,7 +22,7 @@ from tests.conftest import EXACT_KERNEL_SKIP_REASON
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
-def _active_dtype() -> type:
+def _active_dtype() -> type[np.float32 | np.float64]:
     """Return the numpy dtype matching the precision the suite runs at."""
     return np.float64 if jnp.zeros(()).dtype == jnp.float64 else np.float32
 

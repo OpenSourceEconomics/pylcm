@@ -3,7 +3,7 @@
 import dataclasses
 import importlib
 from types import MappingProxyType
-from typing import Any
+from typing import Unpack
 
 import jax
 import jax._src.core
@@ -11,9 +11,17 @@ import jax.numpy as jnp
 import pytest
 
 import _lcm.simulation.simulate as simulation
+from _lcm.engine import PeriodRegimeSimulationData
 from _lcm.params.edges import regime_kernel_params
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.typing import PytreeValue
+from lcm.typing import RegimeName
+from tests.simulation._callback_types import (
+    HostDispatch,
+    RuntimeDispatch,
+    SimulationChunkInputs,
+)
 from tests.simulation.test_abstract_simulation_profiles import (
     _ConcreteAllocationError,
     _forbid_allocation,
@@ -45,20 +53,28 @@ def test_complete_profile_covers_actual_stages_and_retained_records_without_allo
     chunk_dispatch = simulation._simulate_subject_chunk
     inside_chunk = [False]
 
-    def observe_chunk(**call: Any) -> object:
+    def observe_chunk(
+        **call: Unpack[SimulationChunkInputs],
+    ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
         inside_chunk[0] = True
         try:
             return chunk_dispatch(**call)
         finally:
             inside_chunk[0] = False
 
-    def observe_host(self: ProfiledSimulationOperations, **call: Any) -> object:
+    def observe_host(
+        self: ProfiledSimulationOperations, **call: Unpack[HostDispatch]
+    ) -> PytreeValue:
         result = host_dispatch(self, **call)
         if inside_chunk[0]:
-            stages.add(call["function"].__name__)
+            name = getattr(call["function"], "__name__", None)
+            assert isinstance(name, str)
+            stages.add(name)
         return result
 
-    def observe_core(self: SimulationRuntime, **call: Any) -> object:
+    def observe_core(
+        self: SimulationRuntime, **call: Unpack[RuntimeDispatch]
+    ) -> PytreeValue:
         if not runtimes:
             runtimes.append(self)
         return core_dispatch(self, **call)

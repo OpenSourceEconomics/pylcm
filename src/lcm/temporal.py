@@ -4,15 +4,28 @@ import inspect
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, cast, no_type_check
+from typing import TYPE_CHECKING, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from beartype import beartype
 
-from lcm.typing import ValueND
+from _lcm.beartype_conf import PARAMS_CONF
+from lcm.typing import AgeLabel, PeriodLabel, ValueND
+
+if TYPE_CHECKING:
+    from _lcm.typing import EconFunctionArg
+else:
+    # The engine's typing module imports `lcm.typing`, which imports this module
+    # before the engine's aliases exist; the wrapper's arguments are not checked.
+    type EconFunctionArg = object
+
+# The static labels of a `TimeVarying`: its periods and its ages, one of them set.
+type _Labels = tuple[tuple[PeriodLabel, ...] | None, tuple[AgeLabel, ...] | None]
 
 
+@beartype(conf=PARAMS_CONF)
 @dataclass(frozen=True, kw_only=True)
 class TimeVarying:
     """Values with a leading time axis and exactly one set of static labels.
@@ -26,11 +39,11 @@ class TimeVarying:
     """Numeric values whose leading dimension matches the supplied coordinates."""
 
     # Coordinates are validated deterministically in preflight, including rows
-    # outside the model grid; probabilistic container type checks are insufficient.
-    periods: tuple[object, ...] | None = None
+    # outside the model grid; the type check samples one entry of each tuple.
+    periods: tuple[PeriodLabel, ...] | None = None
     """Integer computational coordinates, mutually exclusive with ages."""
 
-    ages: tuple[object, ...] | None = None
+    ages: tuple[AgeLabel, ...] | None = None
     """Finite numeric age coordinates, mutually exclusive with periods."""
 
     def __post_init__(self) -> None:
@@ -38,7 +51,11 @@ class TimeVarying:
             raise ValueError(
                 "TimeVarying requires exactly one of periods and ages coordinates."
             )
-        labels = self.periods if self.periods is not None else cast("tuple", self.ages)
+        labels = (
+            self.periods
+            if self.periods is not None
+            else cast("tuple[AgeLabel, ...]", self.ages)
+        )
         if self.values.ndim == 0 or self.values.shape[0] != len(labels):
             raise ValueError(
                 "TimeVarying leading axis length must match its coordinate labels."
@@ -89,12 +106,12 @@ class UnlabelledTimeParameterWarning(UserWarning):
     """A manually indexed array has no labels with which to check its mapping."""
 
 
-def _flatten(value: TimeVarying) -> tuple[tuple[ValueND | np.ndarray], tuple]:
+def _flatten(value: TimeVarying) -> tuple[tuple[ValueND | np.ndarray], _Labels]:
     return (value.values,), (value.periods, value.ages)
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-def _unflatten(labels: tuple, values: Sequence[Any]) -> TimeVarying:
+def _unflatten(labels: _Labels, values: Sequence[ValueND | np.ndarray]) -> TimeVarying:
     return TimeVarying(values=values[0], periods=labels[0], ages=labels[1])
 
 
@@ -105,7 +122,7 @@ jax.tree_util.register_pytree_node(TimeVarying, _flatten, _unflatten)
 class _TemporalDecorator:
     names: tuple[str, ...]
 
-    def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
+    def __call__[R](self, func: Callable[..., R]) -> Callable[..., R]:
         from lcm.typing import Period  # noqa: PLC0415
 
         original = inspect.signature(func)
@@ -141,7 +158,7 @@ class _TemporalDecorator:
         # Outer instrumentation binds away callable-object metadata; keep a function.
         @no_type_check
         @wraps(func)
-        def consume(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        def consume(*args: EconFunctionArg, **kwargs: EconFunctionArg) -> R:
             arguments = dict(defaults)
             arguments.update(zip(parameter_names[: len(args)], args, strict=True))
             arguments.update(kwargs)
@@ -168,9 +185,7 @@ class _TemporalDecorator:
         return consume
 
 
-def time_varying_params(
-    *names: str,
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def time_varying_params(*names: str) -> _TemporalDecorator:
     """Declare temporal parameter slots before DAG compilation.
 
     Supply ``TimeVarying`` or a Series with named time coordinates. The consumer

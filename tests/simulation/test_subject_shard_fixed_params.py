@@ -25,6 +25,7 @@ from typing import cast
 import pytest
 
 from _lcm.simulation.subject_parallel import declared_subject_shard_arg_names
+from _lcm.typing import PytreeValue
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -160,7 +161,7 @@ class _Declared:
     def subject_shard_arg_names(self) -> tuple[str, ...]:
         return self.names
 
-    def __call__(self, **kwargs: object) -> object:
+    def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
         return kwargs
 
 
@@ -176,17 +177,17 @@ def test_a_keyword_binding_does_not_hide_the_declaration() -> None:
 
 def test_a_bound_subject_argument_is_no_longer_offered_for_partitioning() -> None:
     """A name a binding already supplies is not a per-dispatch operand."""
-    bound = functools.partial(_Declared(names=("states", "keys")), keys=object())
+    bound = functools.partial(_Declared(names=("states", "keys")), keys=None)
     assert declared_subject_shard_arg_names(function=bound) == ("states",)
 
 
 def test_an_undeclared_body_and_a_positional_binding_are_both_refused() -> None:
     """Absent capability and positional binding both report no declaration."""
 
-    def plain(**kwargs: object) -> object:
+    def plain(**kwargs: PytreeValue) -> PytreeValue:
         return kwargs
 
-    declared = cast("Callable[..., object]", _Declared(names=("states",)))
+    declared = cast("Callable[..., PytreeValue]", _Declared(names=("states",)))
     positional = functools.partial(declared, object())
     assert declared_subject_shard_arg_names(function=plain) is None
     assert declared_subject_shard_arg_names(function=positional) is None

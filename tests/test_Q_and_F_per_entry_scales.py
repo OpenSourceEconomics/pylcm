@@ -25,7 +25,7 @@ from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.probability import scaled_exact_product
 from _lcm.regime_building.Q_and_F import _aggregate_joint_lottery, _as_lottery
 from _lcm.regime_building.zero_safe import zero_safe_average
-from _lcm.typing import Float1D, Int1D
+from _lcm.typing import Float1D, FloatND, Int1D, IntND
 from _lcm.zero_safe import scaled_joint_weight
 from tests.conftest import DECIMAL_PRECISION
 
@@ -41,7 +41,7 @@ class _InheritedLinearExpectation(LinearExpectation):
 
 @pytest.mark.parametrize("consumer", [zero_safe_average, _as_lottery])
 def test_a_coefficient_cannot_be_supplied_without_its_scale(
-    consumer: Callable[..., object],
+    consumer: Callable[..., FloatND | tuple[FloatND, FloatND, IntND]],
 ) -> None:
     """Neither consumer of a scaled weight can be called without the shift.
 

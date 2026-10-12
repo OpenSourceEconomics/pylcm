@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 
-def capture_native_tool_identity(*, command: object) -> tuple[str, str, str, str]:
+def capture_native_tool_identity(*, command: str) -> tuple[str, str, str, str]:
     """Bind the declared command, PATH-selected origin, real file and its bytes."""
     assert isinstance(command, str), "Native tool command must be a string"
     assert command, "Native tool command must not be empty"

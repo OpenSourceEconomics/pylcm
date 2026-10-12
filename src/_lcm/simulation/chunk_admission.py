@@ -6,7 +6,7 @@ candidate uses the same actual completed grids and retained solution owners.
 """
 
 import math
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, replace
 from functools import partial
 from time import perf_counter
@@ -45,7 +45,7 @@ from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_groups import grouped_extent
 from _lcm.solution.backward_induction import _abstract_value_key, _hashable_metadata
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
+from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, SimulationPolicy
 from _lcm.utils.logging import LogLevel
 from lcm.exceptions import ExecutionPlanningError
 
@@ -74,7 +74,7 @@ class PreparedSimulationChunks:
         """
         profile = self.plan.profile
         setup = resident_bytes_by_device(
-            live=DeviceBufferFootprint(spans={})
+            live=DeviceBufferFootprint(spans=MappingProxyType({}))
             if completed_setup is None
             else completed_setup,
             arguments=self.admitted_inputs,
@@ -82,29 +82,33 @@ class PreparedSimulationChunks:
         )
         outputs = resident_bytes_by_device(
             live=memory.outputs,
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=memory.devices,
         )
         remaining = replace(
             profile,
-            fixed_reservation={
-                device: value
-                - min(
-                    value,
-                    profile.setup_reservation.get(device, 0),
-                    setup.get(device, 0),
-                )
-                for device, value in profile.fixed_reservation.items()
-            },
-            output_reservation={
-                device: value - min(value, outputs.get(device, 0))
-                for device, value in profile.output_reservation.items()
-            },
-            setup_reservation={},
+            fixed_reservation=MappingProxyType(
+                {
+                    device: value
+                    - min(
+                        value,
+                        profile.setup_reservation.get(device, 0),
+                        setup.get(device, 0),
+                    )
+                    for device, value in profile.fixed_reservation.items()
+                }
+            ),
+            output_reservation=MappingProxyType(
+                {
+                    device: value - min(value, outputs.get(device, 0))
+                    for device, value in profile.output_reservation.items()
+                }
+            ),
+            setup_reservation=MappingProxyType({}),
         )
         resident = resident_bytes_by_device(
             live=memory.snapshot(),
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=memory.devices,
         )
         required = _required_bytes(
@@ -130,7 +134,7 @@ def prepare_simulation_chunks(
     retained_footprint: DeviceBufferFootprint,
     independent_taste: bool,
     log_level: LogLevel,
-    policies: Mapping[int, Mapping[str, object]] | None = None,
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
@@ -198,7 +202,9 @@ def prepare_simulation_chunks(
     population = initial_conditions["regime_id"].shape[0]
     alignment = len(runtime.subject_devices)
     resident = resident_bytes_by_device(
-        live=memory.inputs, arguments=DeviceBufferFootprint(spans={}), devices=devices
+        live=memory.inputs,
+        arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
+        devices=devices,
     )
     profiler = _ChunkProfiler(
         runtime=runtime,
@@ -235,7 +241,7 @@ def _simulation_chunk_profile_key(
     call_inputs: SimulationCallInputs,
     values: Mapping[int, Mapping[str, jax.Array]],
     flags: Mapping[int, Mapping[str, jax.Array]],
-    policies: Mapping[int, Mapping[str, object]] | None,
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -246,7 +252,7 @@ def _simulation_chunk_profile_key(
     independent_taste: bool,
     log_level: LogLevel,
     group_sizes: tuple[int, ...] | None = None,
-) -> tuple[object, ...]:
+) -> tuple[Hashable, ...]:
     """Return the canonical, versioned cache key for `profile_simulation_chunk`.
 
     Every component is either immutable static identity or an abstract
@@ -346,7 +352,7 @@ class _ChunkProfiler:
     log_level: LogLevel
     resident: Mapping[jax.Device, int]
     devices: tuple[jax.Device, ...]
-    policies: Mapping[int, Mapping[str, object]] | None = None
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None
     max_compilation_workers: int | None = None
     group_sizes: tuple[int, ...] | None = None
 

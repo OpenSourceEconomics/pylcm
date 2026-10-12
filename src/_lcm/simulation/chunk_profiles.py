@@ -110,13 +110,25 @@ from _lcm.transition_checks import (
     regime_probability_flags,
     regime_probability_inactive_indices,
 )
-from _lcm.typing import FlatParams, RegimeNamesToIds
+from _lcm.typing import (
+    FlatParams,
+    RegimeName,
+    RegimeNamesToIds,
+    ShapeDtypePytree,
+    SimulationPolicy,
+)
 from _lcm.utils.logging import LogLevel, get_logger
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY
 
 type _FiniteRankOutput = tuple[
     Mapping[str, jax.ShapeDtypeStruct], jax.ShapeDtypeStruct, jax.ShapeDtypeStruct
+]
+
+# Output descriptors of a gate route: the per-regime state delta, the routed regime
+# ids and the routed stakeholder roles.
+type _GateRouteOutput = tuple[
+    Mapping[str, ShapeDtypePytree], jax.ShapeDtypeStruct, jax.ShapeDtypeStruct
 ]
 
 
@@ -138,7 +150,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     widths: Mapping[str, int],
     independent_taste: bool,
     log_level: LogLevel,
-    policies: Mapping[int, Mapping[str, object]] | None = None,
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
 ) -> SimulationChunkProfile:
@@ -272,7 +284,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     )
     inventory.close_unit()
     published: dict[jax.Device, int] = {}
-    records: list[object] = []
+    records: list[ShapeDtypePytree] = []
     maximum_period: dict[jax.Device, int] = {}
     for period in range(ages.n_periods):
         period_values: list[jax.ShapeDtypeStruct] = []
@@ -500,11 +512,11 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             else grouped_rows(sizes=group_sizes, width=n_subjects)
         ),
         stages=tuple(inventory.stages),
-        fixed_reservation=permanent,
-        output_reservation=output_bank,
+        fixed_reservation=MappingProxyType(permanent),
+        output_reservation=MappingProxyType(output_bank),
         host_stages=host_stages,
-        axis_widths=widths,
-        setup_reservation=setup,
+        axis_widths=MappingProxyType(dict(widths)),
+        setup_reservation=MappingProxyType(setup),
     )
 
 
@@ -578,7 +590,9 @@ def _profile_next_subjects(
     )
     next_states = {
         target: {label.removeprefix("next_"): leaf for label, leaf in outputs.items()}
-        for target, outputs in cast("Mapping[str, Mapping[str, object]]", raw).items()
+        for target, outputs in cast(
+            "Mapping[str, Mapping[str, ShapeDtypePytree]]", raw
+        ).items()
     }
     advanced = inventory.operation(
         function=_advance_states_for_subjects,
@@ -697,7 +711,7 @@ def _profile_next_subjects(
             widths=widths,
         )
         route_delta, new_ids, own_roles = cast(
-            "tuple[Mapping[str, object], jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
+            "_GateRouteOutput",
             _record_core(
                 inventory=inventory,
                 profile=gate_profile,
@@ -768,7 +782,7 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
     *,
     inventory: ChunkProfileInventory,
     initial_conditions: Mapping[str, jax.Array],
-    records: list[object],
+    records: list[ShapeDtypePytree],
     published: Mapping[jax.Device, int],
     population: int,
     original_population: int,
@@ -915,7 +929,7 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
 
 def _record_core(
     *, inventory: ChunkProfileInventory, profile: ForwardProgramProfile, family: str
-) -> object:
+) -> ShapeDtypePytree:
     """Use the actual resolved core's compiler output metadata."""
     return inventory.compiled(
         name=f"core:{family}",
@@ -1055,7 +1069,7 @@ def _period_copy_reservation(
     flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     period: int,
     devices: tuple[jax.Device, ...],
-    policies: Mapping[int, Mapping[str, object]] | None = None,
+    policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
 ) -> dict[jax.Device, int]:
     """Reserve declared nonaligned copies once per period/address/ordered layout."""
     policy_sources = _policy_read_sources(
@@ -1148,7 +1162,7 @@ def _host_outside_device_ceiling(
 
 
 def _policy_read_sources(
-    *, policies: Mapping[str, object], period: int
+    *, policies: Mapping[RegimeName, SimulationPolicy], period: int
 ) -> dict[ValueArtifactAddress, jax.Array]:
     """Index canonical retained finite leaves by the actual period-owner addresses."""
     sources = {}

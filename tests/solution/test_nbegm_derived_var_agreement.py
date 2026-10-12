@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lcm.typing import FloatND, RegimeName
 from tests.test_models import nbegm_derived_var_toy as toy
 
 _LIQUID = jnp.linspace(0.1, 30.0, 120)
@@ -21,7 +22,7 @@ _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 def _solve(
     *, variant: str, n_consumption: int = 120, tax_kink: float = 15.0
-) -> Mapping[int, Mapping]:
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the derived-income tax toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,

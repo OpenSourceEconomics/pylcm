@@ -14,6 +14,8 @@ The two models here differ in exactly one respect — whether the source's gate
 declares `D_target` — so a difference between them is attributable to that.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -43,7 +45,9 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    RegimeName,
     ScalarInt,
+    UserParams,
 )
 
 _BETA = 0.95
@@ -155,7 +159,7 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def _make_consent_model() -> tuple[Model, dict]:
+def _make_consent_model() -> tuple[Model, UserParams]:
     """A collective TARGET reached by a gate that reads only value operands.
 
     `single_f` consents into the collective `married_terminal`, whose kernel
@@ -232,7 +236,7 @@ def _make_consent_model() -> tuple[Model, dict]:
     return model, {"discount_factor": _BETA}
 
 
-def _make_dissolution_model() -> tuple[Model, dict]:
+def _make_dissolution_model() -> tuple[Model, UserParams]:
     """A collective SOURCE whose gate reads the target's dissolution flag."""
     married = Regime(
         states={"wage": _WAGE},
@@ -351,7 +355,7 @@ def _make_dissolution_model() -> tuple[Model, dict]:
 def _solve_internal(
     *,
     model: Model,
-    params: dict,
+    params: UserParams,
     retain_dissolution_flags: bool = False,
 ):
     """Run the engine solve behind `Model.solve` and return its full result.
@@ -374,7 +378,9 @@ def _solve_internal(
     )
 
 
-def _retained_flag_arrays(dissolution_flags) -> list:
+def _retained_flag_arrays(
+    dissolution_flags: Mapping[int, Mapping[RegimeName, BoolND]],
+) -> list[BoolND]:
     """Every flag array the backward induction kept, across all periods."""
     return [
         array

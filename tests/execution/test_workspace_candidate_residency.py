@@ -3,7 +3,6 @@
 import dataclasses
 from collections.abc import Mapping
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
@@ -86,7 +85,9 @@ def test_unbudgeted_plan_does_not_request_candidate_residency() -> None:
 
 
 @pytest.mark.parametrize("invalid", [True, -1, 1.5, None])
-def test_candidate_residency_requires_nonnegative_integer_bytes(invalid: Any) -> None:
+def test_candidate_residency_requires_nonnegative_integer_bytes(
+    invalid: float | None,
+) -> None:
     candidate = _Candidate(width=8, raw_peak=1, resident=0)
     compiler = _Compiler(candidates={8: candidate})
     with pytest.raises(ExecutionPlanningError, match="residen"):
@@ -94,7 +95,7 @@ def test_candidate_residency_requires_nonnegative_integer_bytes(invalid: Any) ->
             axes=(_axis(),),
             compile_candidate=compiler,
             budget_bytes=100,
-            resident_bytes_for=lambda _candidate: invalid,
+            resident_bytes_for=lambda _candidate: invalid,  # ty: ignore[invalid-argument-type]
         )
     assert compiler.calls == [candidate]
 

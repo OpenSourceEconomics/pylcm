@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Literal, cast
 
 import jax
@@ -33,6 +34,8 @@ from _lcm.execution.value_transfer import (
     resolve_value_transfer,
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
+from _lcm.typing import PytreeValue, ShapeDtypePytree
+from lcm.typing import RegimeName
 
 _WIDTH_KEYWORD = "_test_action_tile_width"
 
@@ -104,10 +107,10 @@ class _NonWeakrefableCore:
 
 def _program(
     *,
-    arguments: Mapping[str, object] | None = None,
+    arguments: Mapping[str, PytreeValue | ShapeDtypePytree] | None = None,
     coordinate_extent: int = 2,
     reduction: ReductionDeclaration = HARD_MAX_REDUCTION,
-    function: Callable[..., object] = _core,
+    function: Callable[..., jax.Array] = _core,
 ) -> MaterializedCoreProgram:
     """Build one canonical action-product declaration for resolver tests."""
     if arguments is None:
@@ -115,7 +118,7 @@ def _program(
     return MaterializedCoreProgram(
         name="main",
         function=function,
-        arguments=arguments,
+        arguments=MappingProxyType(dict(arguments)),
         requirements=CoreExecutionRequirements(
             reduced_axes=(
                 ReducedAxis(
@@ -134,11 +137,11 @@ def _program(
     )
 
 
-def _core_with_values(
+def _core_with_values[Ignored](
     *,
     choice: jax.Array,
     _test_action_tile_width: int,
-    **_value_inputs: object,
+    **_value_inputs: Ignored,
 ) -> jax.Array:
     """Keep transfer inputs dynamic while reusing the scalar test core."""
     return _core(
@@ -149,14 +152,14 @@ def _core_with_values(
 
 def _value_program(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, PytreeValue | ShapeDtypePytree],
     accesses: tuple[ValueRead, ...],
 ) -> MaterializedCoreProgram:
     """Build a program with one canonical axis and exact value reads."""
     return MaterializedCoreProgram(
         name="main",
         function=_core_with_values,
-        arguments=arguments,
+        arguments=MappingProxyType(dict(arguments)),
         requirements=CoreExecutionRequirements(
             reduced_axes=(
                 ReducedAxis(
@@ -180,8 +183,8 @@ def _access_and_transfer(
     *,
     value: jax.Array,
     source_period: int = 0,
-    source_regime: str = "source",
-    target_regime: str = "target",
+    source_regime: RegimeName = "source",
+    target_regime: RegimeName = "target",
     channel: ValueInputChannel = ValueInputChannel.NEXT_REGIME_VALUE,
     path: tuple[str | int, ...] = ("target",),
     source_sharding: jax.sharding.Sharding | None = None,
@@ -242,7 +245,7 @@ def test_exact_value_reads_belong_to_program_and_allow_artifact_fan_out() -> Non
     assert program.requirements.value_reads == accesses
     assert resolved.input_transfer_plan == (next_transfer, edge_transfer)
     resolved_values = cast(
-        "Mapping[str, object]",
+        "Mapping[str, jax.Array]",
         resolved.arguments[ValueInputChannel.NEXT_REGIME_VALUE.value],
     )
     assert resolved_values["target"] is value
@@ -277,7 +280,7 @@ def test_duplicate_target_value_argument_path_is_rejected() -> None:
     ids=["missing-channel", "missing-path"],
 )
 def test_value_read_path_must_exist_in_dynamic_arguments(
-    *, value_arguments: Mapping[str, object], message: str
+    *, value_arguments: Mapping[str, PytreeValue | ShapeDtypePytree], message: str
 ) -> None:
     value = jnp.asarray([3.0, 4.0])
     access, _transfer = _access_and_transfer(value=value)
@@ -361,10 +364,10 @@ def test_transfer_specialization_reuses_periods_but_distinguishes_representation
     assert first.specialization_key == later.specialization_key
     assert first.specialization_key != copied.specialization_key
     copied_values = cast(
-        "Mapping[str, object]",
+        "Mapping[str, jax.Array]",
         copied.arguments[ValueInputChannel.NEXT_REGIME_VALUE.value],
     )
-    assert cast("jax.Array", copied_values["target"]).sharding == source_sharding
+    assert copied_values["target"].sharding == source_sharding
 
 
 def test_resolver_rejects_stale_transfer_metadata() -> None:
@@ -422,16 +425,16 @@ def test_planned_core_applies_and_retains_its_absolute_input_transfer_plan() -> 
         output_roles=VALUE,
     )
 
-    def compiled(**kwargs: object) -> object:
+    def compiled(**kwargs: PytreeValue) -> jax.Array:
         values = cast(
-            "Mapping[str, object]", kwargs[ValueInputChannel.NEXT_REGIME_VALUE.value]
+            "Mapping[str, jax.Array]", kwargs[ValueInputChannel.NEXT_REGIME_VALUE.value]
         )
         return values["target"]
 
     planned = PlannedCore(
         compiled=compiled,
         layout=layout,
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         input_transfer_plan=(transfer,),
         name="main",
     )
@@ -542,7 +545,7 @@ def test_core_program_requires_a_weakrefable_raw_callable() -> None:
 )
 def test_coordinate_arguments_match_the_declared_product(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, PytreeValue | ShapeDtypePytree],
     coordinate_extent: int,
     message: str,
 ) -> None:

@@ -1,14 +1,16 @@
 """NB-EGM widths belong to the execution planner, not solver configuration."""
 
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from functools import partial
 from types import MappingProxyType
-from typing import Any
+from typing import TypedDict
 
 import jax
 import numpy as np
 import pytest
 
+from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.execution.core_program import (
@@ -21,6 +23,8 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueTransferKind
 from _lcm.execution.workspace_planning import bootstrap_width
+from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
+from _lcm.typing import PytreeValue
 from lcm import ExecutionConfig, LinSpacedGrid, Model, Regime
 from lcm.exceptions import ExecutionPlanningError, RegimeInitializationError
 from lcm.solver_api import SolutionResult
@@ -31,6 +35,7 @@ from lcm.solvers import (
     NBEGM,
     STOCHASTIC_NODE_AXIS,
 )
+from lcm.typing import UserParams
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.test_models import (
@@ -54,9 +59,9 @@ from tests.test_models import (
 )
 def test_nbegm_has_no_width_field(field: str) -> None:
     """A solver constructor refuses every removed execution-width field."""
-    invalid: dict[str, Any] = {field: 2}
+    invalid: dict[str, int] = {field: 2}
     with pytest.raises(TypeError, match=field):
-        NBEGM(savings_grid=LinSpacedGrid(start=0, stop=5, n_points=8), **invalid)
+        NBEGM(savings_grid=LinSpacedGrid(start=0, stop=5, n_points=8), **invalid)  # ty: ignore[invalid-argument-type]
 
 
 def test_ride_along_program_declares_the_cell_mesh() -> None:
@@ -137,7 +142,7 @@ def _small_model(
     route: str,
     arithmetic: ComparisonArithmetic,
     widths: dict[str, int],
-) -> tuple[Model, dict]:
+) -> tuple[Model, UserParams]:
     """Build small real routes with the same planner interface as a user model."""
     config = ExecutionConfig(axis_widths=widths)
     if route == CELL_AXIS:
@@ -190,7 +195,7 @@ def _small_model(
     )
 
 
-def _assert_arrays_agree(*, actual: object, expected: object) -> None:
+def _assert_arrays_agree(*, actual: PytreeValue, expected: PytreeValue) -> None:
     """Keep topology, dtypes, masks, and discrete decisions exact; bound levels."""
     assert jax.tree.structure(actual) == jax.tree.structure(expected)
     for (path, got), want in zip(
@@ -315,6 +320,7 @@ def test_width_changes_the_lowered_computation(axis: str) -> None:
     """A declared width changes executable work, beyond the planner's metadata."""
     model, params = _small_model(route=axis, arithmetic="ordinary", widths={})
     kernel, context = ride_along_kernel(model=model, params=params, period=0)
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     materialized = materialize_core_program(
         program=core_program_graph(kernel=kernel)["replay"],
         context=CoreBuildContext(**context),
@@ -356,6 +362,11 @@ def _aligned_transfer_plan(
     return tuple(transfers)
 
 
+class _ReservedDeclarations(TypedDict, total=False):
+    states: Mapping[str, LinSpacedGrid]
+    functions: Mapping[str, Callable[[], float]]
+
+
 def _constant_one() -> float:
     return 1.0
 
@@ -368,12 +379,13 @@ def test_planner_width_names_cannot_be_user_names(*, route: str, slot: str) -> N
     kernel = model._regimes["alive"].solution.period_kernels[0]
     program = core_program_graph(kernel=kernel)["replay"]
     for axis in program.requirements.axes:
-        value = (
-            LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
-            if slot == "states"
-            else _constant_one
-        )
-        declarations: dict[str, Any] = {slot: {axis.width_keyword: value}}
+        declarations: _ReservedDeclarations = {}
+        if slot == "states":
+            declarations["states"] = {
+                axis.width_keyword: LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
+            }
+        else:
+            declarations["functions"] = {axis.width_keyword: _constant_one}
         with pytest.raises(RegimeInitializationError, match="reserved separator"):
             Regime(**declarations)
 
@@ -385,17 +397,16 @@ def test_interval_coordinates_do_not_replace_a_legal_user_state() -> None:
     Regime(states={name: grid})
     model, params = _small_model(route=INTERVAL_AXIS, arithmetic="ordinary", widths={})
     kernel, context = ride_along_kernel(model=model, params=params, period=0)
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     points = grid.to_jax()
     space = context["state_action_space"]
     materialized = materialize_core_program(
         program=core_program_graph(kernel=kernel)["replay"],
-        context=CoreBuildContext(
-            **{
-                **context,
-                "state_action_space": replace(
-                    space, states=MappingProxyType({**space.states, name: points})
-                ),
-            }
+        context=replace(
+            CoreBuildContext(**context),
+            state_action_space=replace(
+                space, states=MappingProxyType({**space.states, name: points})
+            ),
         ),
     )
     assert materialized.arguments[name] is points
@@ -438,8 +449,10 @@ def test_default_interval_stream_preserves_the_dense_period(
     """Default streaming agrees with the preserved one-shot step on one carry."""
     model, params = _small_model(route=INTERVAL_AXIS, arithmetic=arithmetic, widths={})
     kernel, context = ride_along_kernel(model=model, params=params, period=0)
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     assert kernel.cliff_candidates
     child = context["next_regime_to_continuation"]["alive"]
+    assert isinstance(child, EGMCarry)
     assert child.breakpoints is not None
     assert np.isfinite(np.asarray(child.breakpoints)).any()
     materialized = materialize_core_program(

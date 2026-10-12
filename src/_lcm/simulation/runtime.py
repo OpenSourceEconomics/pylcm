@@ -69,7 +69,9 @@ from _lcm.solution.backward_induction import (
     _trace_settings_key,
 )
 from _lcm.solution.solve_phase_records import nested_phase
+from _lcm.typing import ArgumentTree, HostArray, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName
 
 # Narrowest inner tile an unbudgeted subject axis is lowered at, and the width it
 # keeps when one subject is too heavy for the byte cap below to afford more.
@@ -91,7 +93,7 @@ _UNBUDGETED_SUBJECT_BLOCK_BYTES = 16 * 1024 * 1024
 _MIN_SUBJECT_ARGUMENT_BYTES = 64
 
 
-def _empty_widths() -> Mapping[str, int]:
+def _empty_widths() -> MappingProxyType[str, int]:
     """Supply an immutable empty specialization for an unbound compiler result."""
     return MappingProxyType({})
 
@@ -100,13 +102,15 @@ def _empty_widths() -> Mapping[str, int]:
 class CompiledSimulationProgram:
     """One selected executable and its static argument bindings."""
 
-    executable: Callable[..., object]
+    executable: Callable[..., PytreeValue]
     """The exact executable selected by workspace planning."""
 
-    static_kwargs: Mapping[str, int]
+    static_kwargs: MappingProxyType[str, int]
     """Bindings used only by eager execution; compiled programs already bind them."""
 
-    widths: Mapping[str, int] = dataclasses.field(default_factory=_empty_widths)
+    widths: MappingProxyType[str, int] = dataclasses.field(
+        default_factory=_empty_widths
+    )
     """Concrete compiler specialization, never a cached budget admission."""
 
     memory: CompilerMemoryReservation | None = None
@@ -114,7 +118,7 @@ class CompiledSimulationProgram:
     compilation. `None` for an eager or host-driven callable, which never
     reaches budgeted dispatch."""
 
-    def __call__(self, **arguments: object) -> object:
+    def __call__(self, **arguments: PytreeValue | ShapeDtypePytree) -> PytreeValue:
         """Execute with live arrays; retain no call arguments on the cache entry."""
         return self.executable(**arguments, **self.static_kwargs)
 
@@ -129,11 +133,13 @@ class SimulationDispatchContext:
 
     live_footprint: Callable[[], DeviceBufferFootprint]
     budget_devices: tuple[jax.Device, ...]
-    axis_widths: Mapping[str, int] = dataclasses.field(default_factory=_empty_widths)
+    axis_widths: MappingProxyType[str, int] = dataclasses.field(
+        default_factory=_empty_widths
+    )
     """One common chunk specialization, clamped to each program's own extent."""
 
     def __post_init__(self) -> None:
-        """Keep selected widths immutable and separate from cached code identity."""
+        """Require named positive widths, separate from cached code identity."""
         if any(
             type(name) is not str or not name or type(width) is not int or width <= 0
             for name, width in self.axis_widths.items()
@@ -141,9 +147,6 @@ class SimulationDispatchContext:
             raise ExecutionPlanningError(
                 "Reserved simulation widths must be positive integers with axis names."
             )
-        object.__setattr__(
-            self, "axis_widths", MappingProxyType(dict(self.axis_widths))
-        )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
@@ -220,11 +223,11 @@ class SimulationRuntime:
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
         residency: SimulationDispatchContext | None = None,
-    ) -> object:
+    ) -> PytreeValue:
         """Invoke the selected executable with this call's dynamic arguments.
 
         An unbudgeted repeat of an exact abstract signature takes the prepared
@@ -277,9 +280,15 @@ class SimulationRuntime:
         *,
         key: Hashable,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
-    ) -> tuple[CompiledSimulationProgram, Mapping[str, object]] | None:
+    ) -> (
+        tuple[
+            CompiledSimulationProgram,
+            Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+        ]
+        | None
+    ):
         """Bind this call's live leaves onto a cached static preparation.
 
         Returns the selected executable together with freshly built and freshly
@@ -350,7 +359,7 @@ class SimulationRuntime:
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
     ) -> CompiledSimulationProgram:
@@ -376,7 +385,7 @@ class SimulationRuntime:
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
         residency: SimulationDispatchContext | None = None,
@@ -416,7 +425,7 @@ class SimulationRuntime:
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
         widths: Mapping[str, int],
@@ -444,14 +453,14 @@ class SimulationRuntime:
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
         widths: Mapping[str, int],
         wave: CompilationWave,
         label: str,
         wait: bool = False,
-    ) -> object:
+    ) -> ShapeDtypePytree:
         """Lower an abstract candidate into `wave` and return its output descriptors.
 
         The wave compiles it off the calling thread and publishes the executable
@@ -666,13 +675,13 @@ class _PreparedRoute:
     argument_builder: CoreArgumentBuilder
     """The declared binder invoked afresh on every call; it owns no arrays."""
 
-    subject_arg_names: tuple[str, ...]
+    subject_arg_names: tuple[ReferenceName, ...]
     """Operands partitioned across subjects, as the builder declares them."""
 
     requirements: CoreExecutionRequirements
     """Subject-extent descriptor: planner axes and addressed value reads."""
 
-    widths: Mapping[str, int]
+    widths: MappingProxyType[str, int]
     """The selected candidate's width map, reused instead of re-derived.
 
     Pinned from the compiled candidate itself, so an explicit `ExecutionConfig`
@@ -687,7 +696,9 @@ class _PreparedRoute:
     """The selected executable, already owned by the shared compiler cache."""
 
 
-def _operand_signature(*, arguments: Mapping[str, object]) -> Hashable | None:
+def _operand_signature(
+    *, arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
+) -> Hashable | None:
     """Return one argument tree's complete abstract identity.
 
     Tree structure — which also pins the argument names, so an added or dropped
@@ -708,7 +719,7 @@ def _operand_signature(*, arguments: Mapping[str, object]) -> Hashable | None:
 def _prepared_route_key(
     *,
     program: CoreProgram,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
     n_subjects: int,
 ) -> Hashable | None:
@@ -771,7 +782,7 @@ def _materialize_abstract(
     *,
     runtime: SimulationRuntime,
     program: CoreProgram,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
     n_subjects: int,
 ) -> MaterializedCoreProgram:
@@ -843,9 +854,9 @@ def _unbudgeted_subject_width(
     return _admissible_width(axis=axis, width=min(proposal, axis.extent))
 
 
-def _subject_slice_bytes(*, leaf: object) -> int:
+def _subject_slice_bytes(*, leaf: jax.Array | HostArray | jax.ShapeDtypeStruct) -> int:
     """Size one subject's share of a leading-axis operand, extended dtypes included."""
-    shape = tuple(leaf.shape)  # ty: ignore[unresolved-attribute]
+    shape = tuple(leaf.shape)
     count = math.prod(shape)
     if isinstance(leaf, jax.Array):
         # nbytes also sizes extended PRNG-key dtypes, which are not NumPy dtypes.
@@ -861,7 +872,7 @@ def _dispatch_widths(
     configured: Mapping[str, int],
     residency: SimulationDispatchContext | None,
     width_ceilings: Mapping[str, int] = MappingProxyType({}),
-) -> Mapping[str, int]:
+) -> MappingProxyType[str, int]:
     """Resolve explicit, budgeted, or derived inner simulation widths.
 
     An unbudgeted simulation keeps the complete population in one outer chunk.
@@ -942,7 +953,9 @@ def _simulation_memory(
     return compiled.memory
 
 
-def _require_abstract_arguments(*, arguments: Mapping[str, object]) -> None:
+def _require_abstract_arguments(
+    *, arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
+) -> None:
     """Require shape-only leaves with explicit layouts before abstract lowering."""
     if any(
         not isinstance(leaf, jax.ShapeDtypeStruct)
@@ -960,7 +973,7 @@ class _SimulationResidentBytes:
     """Call-owned inventory outside this candidate's compiler-counted operands."""
 
     live: DeviceBufferFootprint
-    arguments: Mapping[str, object]
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     devices: tuple[jax.Device, ...]
 
     def __call__(self, compiled: CompiledSimulationProgram) -> int:
@@ -985,9 +998,9 @@ def execute_simulation_program(
     programs: SimulationPrograms,
     family: str,
     period: int,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     n_subjects: int,
-) -> object:
+) -> PytreeValue:
     """Dispatch one family's published program for the current period.
 
     The `"decision"` family is the decision forward simulation dispatches,
@@ -1074,7 +1087,7 @@ class _SimulationCandidateCompiler:
 
     def _bound(
         self, widths: Mapping[str, int]
-    ) -> tuple[Callable[..., object], Mapping[str, object], dict[str, int]]:
+    ) -> tuple[Callable[..., PytreeValue], Mapping[str, ArgumentTree], dict[str, int]]:
         """Return the callable, its dynamic arguments and its static keywords."""
         if (
             self.shard_subjects
@@ -1103,7 +1116,7 @@ class _SimulationCandidateCompiler:
                             program=self.program, read=read
                         )
                     ),
-                    source_sharding=cast("jax.sharding.Sharding", leaf.sharding),
+                    source_sharding=leaf.sharding,
                 )
                 for read in self.program.requirements.value_reads
             )
@@ -1162,7 +1175,7 @@ def _with_subject_extent(*, program: CoreProgram, n_subjects: int) -> CoreProgra
 
 
 def _build_context(
-    *, arguments: Mapping[str, object], period: int
+    *, arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree], period: int
 ) -> SimulationBuildContext:
     """Carry complete invocation operands without retaining a simulated population."""
     return SimulationBuildContext(
@@ -1172,5 +1185,5 @@ def _build_context(
         flat_params={},
         period=period,
         ages=None,
-        call_arguments=dict(sorted(arguments.items())),
+        call_arguments=MappingProxyType(dict(sorted(arguments.items()))),
     )

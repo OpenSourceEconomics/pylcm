@@ -12,6 +12,8 @@ from _lcm.execution.core_program import (
     _value_read_argument_leaf,
 )
 from _lcm.execution.value_transfer import ResolvedValueTransfer
+from _lcm.typing import PytreeValue, ShapeDtypePytree
+from lcm.typing import ReferenceName
 
 
 def abstract_program_inputs(
@@ -64,7 +66,7 @@ def abstract_program_inputs(
             ),
             sharding=transfer.source_sharding,
         )
-    required: Mapping[str, object] = jax.tree.map(
+    required: Mapping[ReferenceName, ShapeDtypePytree] = jax.tree.map(
         lambda leaf: replacements.get(id(leaf), leaf), arguments
     )
     return replace(program, arguments=required)
@@ -77,7 +79,7 @@ class _OperandDescriptor:
     default_sharding: jax.sharding.Sharding
     """Execution layout used only when an operand declares no committed layout."""
 
-    def __call__(self, value: object) -> jax.ShapeDtypeStruct:
+    def __call__(self, value: PytreeValue | ShapeDtypePytree) -> jax.ShapeDtypeStruct:
         """Preserve one operand's numerical metadata and authoritative placement."""
         abstract = (
             value
@@ -101,6 +103,6 @@ class _OperandDescriptor:
         )
 
 
-def _identity(value: object) -> object:
+def _identity(value: PytreeValue) -> PytreeValue:
     """Canonicalize host scalar/NumPy metadata through one stable JAX trace."""
     return value

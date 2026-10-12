@@ -25,7 +25,13 @@ from _lcm.egm import branch_aggregation as _branch_aggregation
 from _lcm.grids import ContinuousGrid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.solution.contract import _BoundLiquidMargin, _BoundOuterContinuousMargin
-from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
+from _lcm.typing import (
+    ActionName,
+    EconFunctionArg,
+    FunctionName,
+    RegimeName,
+    StateName,
+)
 from _lcm.utils.containers import find_duplicates
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
@@ -625,6 +631,6 @@ class _DirectResources:
         object.__setattr__(self, "__name__", "direct_resources")
         object.__setattr__(self, "__qualname__", "direct_resources")
 
-    def __call__(self, **kwargs: object) -> object:
+    def __call__(self, **kwargs: EconFunctionArg) -> EconFunctionArg:
         """Return the liquid state's value."""
         return kwargs[self.state]

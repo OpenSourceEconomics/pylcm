@@ -23,6 +23,9 @@ from dataclasses import dataclass
 from fractions import Fraction
 
 import jax
+from jax.extend.core import Jaxpr, JaxprEqn, Literal, Var
+
+from lcm.typing import ActionName, FloatND, FunctionName, ReferenceName, ValueND
 
 __all__ = ["OuterAffineCertificate", "certify_outer_coefficient"]
 
@@ -68,17 +71,18 @@ class OuterAffineCertificate:
 
 def certify_outer_coefficient(
     *,
-    func: Callable[..., object],
-    outer_action_name: str,
-    abstract_args: Iterable[object],
-    arg_names: tuple[str, ...],
+    func: Callable[..., FloatND],
+    outer_action_name: ActionName,
+    abstract_args: Iterable[jax.ShapeDtypeStruct | ValueND],
+    arg_names: tuple[ReferenceName, ...],
 ) -> OuterAffineCertificate:
     """Return the exact coefficient of `outer_action_name` in `func`.
 
     Args:
         func: The traced outer post-decision map.
         outer_action_name: The argument whose coefficient is certified.
-        abstract_args: Positional sample arguments to trace `func` against.
+        abstract_args: Positional sample arguments to trace `func` against, as
+            shapes and dtypes or as concrete arrays.
         arg_names: Positional names of `func`'s arguments, aligned with
             `abstract_args`, used to locate the outer action's input variable.
 
@@ -120,7 +124,7 @@ def certify_outer_coefficient(
             ),
         )
 
-    seed: dict[object, Fraction] = {jaxpr.invars[position]: Fraction(1)}
+    seed: dict[Var, Fraction] = {jaxpr.invars[position]: Fraction(1)}
     try:
         coefficients = _walk(jaxpr=jaxpr, tainted=seed, func_name=name)
     except _RefusedError as refusal:
@@ -141,7 +145,7 @@ def certify_outer_coefficient(
 
 
 def _coefficient_of(
-    *, var: object, carried: Mapping[object, Fraction]
+    *, var: Var | Literal, carried: Mapping[Var, Fraction]
 ) -> Fraction | None:
     """Return a variable's coefficient, treating a jaxpr `Literal` as untainted.
 
@@ -158,12 +162,12 @@ class _RefusedError(Exception):
 
 
 def _walk(
-    *, jaxpr: object, tainted: Mapping[object, Fraction], func_name: str
-) -> dict[object, Fraction]:
+    *, jaxpr: Jaxpr, tainted: Mapping[Var, Fraction], func_name: FunctionName
+) -> dict[Var, Fraction]:
     """Propagate exact coefficients forward through one jaxpr's equations."""
-    carried: dict[object, Fraction] = dict(tainted)
+    carried: dict[Var, Fraction] = dict(tainted)
 
-    for eqn in jaxpr.eqns:  # ty: ignore[unresolved-attribute]
+    for eqn in jaxpr.eqns:
         prim = eqn.primitive.name
         operands = [_coefficient_of(var=var, carried=carried) for var in eqn.invars]
         if all(coefficient is None for coefficient in operands):
@@ -188,9 +192,9 @@ def _walk(
 def _apply(
     *,
     prim: str,
-    eqn: object,
+    eqn: JaxprEqn,
     operands: list[Fraction | None],
-    func_name: str,
+    func_name: FunctionName,
 ) -> Fraction | None:
     """Return the outgoing coefficient for one equation, or `None` to refuse."""
     if prim in _ADD_PRIMS:
@@ -215,9 +219,9 @@ def _apply(
 def _apply_structural(
     *,
     prim: str,
-    eqn: object,
+    eqn: JaxprEqn,
     operands: list[Fraction | None],
-    func_name: str,
+    func_name: FunctionName,
 ) -> Fraction | None:
     """Handle the primitives whose rule needs the equation's own structure."""
     if prim in {"mul", "div"}:
@@ -228,7 +232,7 @@ def _apply_structural(
 
 
 def _scale(
-    *, prim: str, eqn: object, operands: list[Fraction | None]
+    *, prim: str, eqn: JaxprEqn, operands: list[Fraction | None]
 ) -> Fraction | None:
     """Scale a tainted operand by a literal, refusing a non-literal factor.
 
@@ -252,9 +256,9 @@ def _scale(
     return coefficient * factor
 
 
-def _literal_factor(*, eqn: object, position: int) -> Fraction | None:
+def _literal_factor(*, eqn: JaxprEqn, position: int) -> Fraction | None:
     """Return the exact rational value of an equation's literal operand."""
-    literal = _literal_value(eqn.invars[position])  # ty: ignore[unresolved-attribute]
+    literal = _literal_value(eqn.invars[position])
     if literal is None:
         return None
     try:
@@ -263,7 +267,7 @@ def _literal_factor(*, eqn: object, position: int) -> Fraction | None:
         return None
 
 
-def _literal_value(var: object) -> float | int | None:
+def _literal_value(var: Var | Literal) -> float | int | None:
     """Return a jaxpr `Literal`'s Python value, or `None` if it is not one."""
     value = getattr(var, "val", None)
     if value is None:
@@ -276,12 +280,12 @@ def _literal_value(var: object) -> float | int | None:
 
 
 def _descend(
-    *, eqn: object, operands: list[Fraction | None], func_name: str
+    *, eqn: JaxprEqn, operands: list[Fraction | None], func_name: FunctionName
 ) -> Fraction | None:
     """Walk a nested call's body, threading coefficients across its inputs."""
     body = None
     for key in _SUB_JAXPR_PARAM_KEYS:
-        candidate = eqn.params.get(key)  # ty: ignore[unresolved-attribute]
+        candidate = eqn.params.get(key)
         if candidate is not None:
             body = getattr(candidate, "jaxpr", candidate)
             break

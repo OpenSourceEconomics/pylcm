@@ -20,7 +20,7 @@ import functools
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -31,6 +31,7 @@ from _lcm.egm.interp import (
     interp_on_prepared_grid,
     prepare_padded_grid,
 )
+from _lcm.grids import Grid
 from lcm.solver_api import (
     EGM_CONTINUATION,
     EGM_ENDOGENOUS_COORDINATE,
@@ -47,6 +48,15 @@ from lcm.typing import (
     StateName,
     StateOrActionName,
 )
+
+if TYPE_CHECKING:
+    from _lcm.execution.output_layout import OutputRoleLeaf
+    from _lcm.typing import PytreeChild
+else:
+    # `_lcm.typing` imports this module, and `_lcm.execution.output_layout` imports
+    # `_lcm.typing`, so neither alias is importable here at runtime.
+    type OutputRoleLeaf = object
+    type PytreeChild = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -202,13 +212,13 @@ _EGM_CARRY_FIELDS = (
 )
 
 
-def _flatten_egm_carry(carry: EGMCarry) -> tuple[tuple[Any, ...], None]:
+def _flatten_egm_carry(carry: EGMCarry) -> tuple[tuple[PytreeChild, ...], None]:
     return tuple(getattr(carry, name) for name in _EGM_CARRY_FIELDS), None
 
 
 def _flatten_egm_carry_with_keys(
     carry: EGMCarry,
-) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, Any], ...], None]:
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
     """Flatten with field-named keys so a leaf path reads `.endog_grid`."""
     return (
         tuple(
@@ -220,7 +230,14 @@ def _flatten_egm_carry_with_keys(
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
-def _unflatten_egm_carry(_aux: None, children: Iterable[Any]) -> EGMCarry:
+def _unflatten_egm_carry(_aux: None, children: Iterable[PytreeChild]) -> EGMCarry:
+    return _assemble_egm_carry(children=children)
+
+
+def _assemble_egm_carry(
+    *, children: Iterable[PytreeChild | OutputRoleLeaf]
+) -> EGMCarry:
+    """Set the carry's fields in flatten order, bypassing its checked constructor."""
     carry = object.__new__(EGMCarry)
     for name, child in zip(_EGM_CARRY_FIELDS, children, strict=True):
         object.__setattr__(carry, name, child)
@@ -321,10 +338,10 @@ class _EGMRowArguments:
 
 def egm_carry_role_tree(
     *,
-    row: object,
-    scalar: object,
-    breakpoints: object | None,
-    policy: object | None,
+    row: OutputRoleLeaf,
+    scalar: OutputRoleLeaf,
+    breakpoints: OutputRoleLeaf | None,
+    policy: OutputRoleLeaf | None,
 ) -> EGMCarry:
     """Build an `EGMCarry`-shaped tree of output roles.
 
@@ -332,9 +349,9 @@ def egm_carry_role_tree(
     carry it publishes: one role for each of the three grid rows, one for the
     0-d taste-shock scale, and `None` for a row it does not publish. The leaves
     are role declarations rather than arrays, so the tree is assembled through
-    the pytree unflatten rather than the runtime-checked constructor.
+    the field-by-field assembly rather than the runtime-checked constructor.
     """
-    return _unflatten_egm_carry(None, (row, row, row, scalar, breakpoints, policy))
+    return _assemble_egm_carry(children=(row, row, row, scalar, breakpoints, policy))
 
 
 def build_template_egm_carry(
@@ -374,7 +391,7 @@ def build_template_egm_carry(
 def shard_carry_template(
     *,
     template: EGMCarry,
-    grids: Mapping[StateOrActionName, Any],
+    grids: Mapping[StateOrActionName, Grid],
     sharded_state_names: frozenset[StateName],
     leading_axis_names: tuple[StateName, ...],
     devices: tuple[jax.Device, ...],

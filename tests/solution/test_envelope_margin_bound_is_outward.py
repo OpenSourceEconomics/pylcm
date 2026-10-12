@@ -16,16 +16,43 @@ are least separable.
 """
 
 from fractions import Fraction
+from typing import TypedDict
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.random import Generator as RandomGenerator
 
 from _lcm.egm.upper_envelope.certified_sign import (
+    QuotientMargin,
     backend_flushes_subnormals,
     certified_quotient_margin,
 )
+from _lcm.egm.upper_envelope.double_double import DoubleDouble
 from _lcm.egm.upper_envelope.query import _value_quotient
+
+
+class _Link(TypedDict):
+    x0: float
+    x1: float
+    v0: float
+    v1: float
+
+
+class _LinkDraw(TypedDict):
+    x0: float
+    x1: float
+    level: float
+    scale: float | np.float64
+    rng: RandomGenerator
+
+
+class _MarginOperands(TypedDict):
+    left_numerator: DoubleDouble
+    left_divisor: DoubleDouble
+    right_numerator: DoubleDouble
+    right_divisor: DoubleDouble
+
 
 _N_CASES = 400
 _SEED = 20260731
@@ -43,7 +70,9 @@ def _exact_quotient(
     return (Fraction(v0) * (hi - query) + Fraction(v1) * (query - lo)) / (hi - lo)
 
 
-def _certified(*, left: dict, right: dict, query: float, level: float):
+def _certified(
+    *, left: _Link, right: _Link, query: float, level: float
+) -> QuotientMargin:
     """The production margin of `left` over `right` at `query`, above `level`."""
     pair = {}
     for name, link in (("left", left), ("right", right)):
@@ -70,8 +99,13 @@ def _stored(value: float) -> float:
 
 
 def _link(
-    *, x0: float, x1: float, level: float, scale: float, rng: np.random.Generator
-) -> dict:
+    *,
+    x0: float,
+    x1: float,
+    level: float,
+    scale: float | np.float64,
+    rng: RandomGenerator,
+) -> _Link:
     """One link spanning `[x0, x1]`, its values scattered around `level`."""
     return {
         "x0": x0,
@@ -81,7 +115,7 @@ def _link(
     }
 
 
-def _cases() -> list[tuple[dict, dict, float, float]]:
+def _cases() -> list[tuple[_Link, _Link, float, float]]:
     """Random link pairs, the query they are compared at, and a common level."""
     rng = np.random.default_rng(seed=_SEED)
     cases = []
@@ -93,7 +127,13 @@ def _cases() -> list[tuple[dict, dict, float, float]]:
             continue
         scale = 10.0 ** rng.uniform(-2.0, 4.0)
         level = _stored(float(0.0 if index % 2 else 10.0 ** rng.uniform(3.0, 7.0)))
-        draw = {"x0": x0, "x1": x1, "level": level, "scale": scale, "rng": rng}
+        draw: _LinkDraw = {
+            "x0": x0,
+            "x1": x1,
+            "level": level,
+            "scale": scale,
+            "rng": rng,
+        }
 
         share = (0.0, 1.0, float(rng.uniform(0.0, 1.0)))[index % 3]
         query = _stored(x0 + share * (x1 - x0))
@@ -104,7 +144,7 @@ def _cases() -> list[tuple[dict, dict, float, float]]:
 
 @pytest.mark.parametrize(("left", "right", "query", "level"), _cases())
 def test_the_exact_margin_lies_inside_the_certified_interval(
-    *, left: dict, right: dict, query: float, level: float
+    *, left: _Link, right: _Link, query: float, level: float
 ):
     """The exact margin between two links is within the bound the margin reports."""
     margin = _certified(left=left, right=right, query=query, level=level)
@@ -119,14 +159,14 @@ def test_the_exact_margin_lies_inside_the_certified_interval(
 
 def test_a_link_compared_with_itself_certifies_an_exact_zero():
     """Comparing a link with itself is exactly zero, with nothing left over."""
-    link = {"x0": 100.0, "x1": 1100.0, "v0": -3.5, "v1": 7.25}
+    link: _Link = {"x0": 100.0, "x1": 1100.0, "v0": -3.5, "v1": 7.25}
 
     margin = _certified(left=link, right=link, query=434.0, level=0.0)
 
     assert (float(margin.value), float(margin.bound)) == (0.0, 0.0)
 
 
-def _underflowing_cross_product_operands() -> dict:
+def _underflowing_cross_product_operands() -> _MarginOperands:
     """Return numerator/divisor pairs whose cross product cannot be represented.
 
     One numerator sits at the bottom of the normal range and is multiplied by the

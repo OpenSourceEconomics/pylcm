@@ -7,7 +7,7 @@ consumer — the target's own nodes, a source's entry weights, diagnostics, and
 simulation — reads one resolved process object.
 """
 
-from typing import Any, cast
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -23,11 +23,12 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import InvalidParamsError
-from lcm.typing import ScalarFloat, ScalarInt, UserParams
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts equidistant nodes on
 # `(0, 1, 2)`, so the unconditional mean is `mu` and a dropped continuation
 # would publish `0.0` instead.
+from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserParams
+
 _MU = 1.0
 _PROCESS_LAW = {"mu": _MU, "sigma": 0.5, "n_std": 2.0}
 
@@ -161,7 +162,7 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
     )
 
 
-def _model_with_law_value(value: Any) -> Model:
+def _model_with_law_value(value: FloatND | pd.Series) -> Model:
     """Build the entered-process model with one law field set to `value`."""
     return Model(
         regimes={
@@ -192,7 +193,9 @@ def _model_with_law_value(value: Any) -> Model:
         pytest.param(pd.Series([0.5, 1.0], index=[20, 21]), id="age_indexed_series"),
     ],
 )
-def test_a_varying_law_field_names_the_supported_spelling(value: Any) -> None:
+def test_a_varying_law_field_names_the_supported_spelling(
+    value: FloatND | pd.Series,
+) -> None:
     """An array-valued process law field is rejected, naming `AgeSpecializedGrid`."""
     with pytest.raises(InvalidParamsError, match="AgeSpecializedGrid"):
         _model_with_law_value(value)

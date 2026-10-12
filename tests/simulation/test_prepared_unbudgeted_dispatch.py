@@ -23,8 +23,16 @@ enforces exactly that boundary.
 
 import contextlib
 import dataclasses
+
+# Operations whose repetition AC4 is about, named at the module attribute each
+# caller actually reads, so a rename or a re-import cannot silently stop
+# counting. `static_descriptor` and `subject_extent` are the static program
+# construction, `width_frontier` the actual frontier function, `planner` the
+# workspace preparation, `memory_report` the backend memory request, and
+# `placement` the per-call binding whose *presence* the repeat must still show.
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import Unpack
 
 import jax
 import jax.numpy as jnp
@@ -40,24 +48,29 @@ from _lcm.execution.core_program import (
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.simulation import chunk_admission
 from _lcm.simulation import runtime as runtime_module
-from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
+from _lcm.simulation.chunk_admission import PreparedSimulationChunks
+from _lcm.simulation.entry_inputs import (
+    SimulationEntryInputs,
+    capture_simulation_entry_inputs,
+)
 from _lcm.simulation.program_types import subject_axis
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
-from _lcm.simulation.residency import measure_buffer_footprint
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    FootprintTree,
+    measure_buffer_footprint,
+)
 from _lcm.simulation.runtime import (
+    CompiledSimulationProgram,
     SimulationRuntime,
     _SimulationCandidateCompiler,
 )
+from _lcm.typing import PytreeValue
 from benchmarks.asv._simulation_witnesses import multi_regime
 from lcm.execution import ExecutionConfig
-from lcm.typing import FloatND
+from lcm.typing import FloatND, ReferenceName
+from tests.simulation._callback_types import ChunkPreparation, EntryCapture
 
-# Operations whose repetition AC4 is about, named at the module attribute each
-# caller actually reads, so a rename or a re-import cannot silently stop
-# counting. `static_descriptor` and `subject_extent` are the static program
-# construction, `width_frontier` the actual frontier function, `planner` the
-# workspace preparation, `memory_report` the backend memory request, and
-# `placement` the per-call binding whose *presence* the repeat must still show.
 _INSTRUMENTED_SITES = (
     ("static_descriptor", runtime_module, "materialize_core_program"),
     ("subject_extent", runtime_module, "_with_subject_extent"),
@@ -85,19 +98,25 @@ def _install_counters(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     for name, module, attribute in _INSTRUMENTED_SITES:
         original = getattr(module, attribute)
 
-        def counted(
-            *args: Any, _name: str = name, _original: Any = original, **kwargs: Any
-        ) -> Any:
-            counts[_name] += 1
-            return _original(*args, **kwargs)
+        def wrap[**P, Result](
+            *, original: Callable[P, Result], name: str
+        ) -> Callable[P, Result]:
+            def counted(*args: P.args, **kwargs: P.kwargs) -> Result:
+                counts[name] += 1
+                return original(*args, **kwargs)
 
-        monkeypatch.setattr(module, attribute, counted)
+            return counted
+
+        monkeypatch.setattr(module, attribute, wrap(original=original, name=name))
 
     original_call = _SimulationCandidateCompiler.__call__
 
-    def counted_call(*args: Any, **kwargs: Any) -> Any:
+    # keyword-only-exempt: library-callback=_SimulationCandidateCompiler.__call__
+    def counted_call(
+        self: _SimulationCandidateCompiler, widths: Mapping[str, int]
+    ) -> CompiledSimulationProgram:
         counts["lowering"] += 1
-        return original_call(*args, **kwargs)
+        return original_call(self, widths)
 
     monkeypatch.setattr(_SimulationCandidateCompiler, "__call__", counted_call)
     return counts
@@ -169,9 +188,9 @@ def _unit_runtime(*, width: int | None = None) -> SimulationRuntime:
 _UNIT_SUBJECTS = 64
 
 
-def _unit_arguments(**overrides: object) -> dict[str, object]:
+def _unit_arguments(**overrides: PytreeValue) -> dict[ReferenceName, PytreeValue]:
     """Bind one call's complete operands for the unit-level witness program."""
-    arguments: dict[str, object] = {
+    arguments: dict[ReferenceName, PytreeValue] = {
         "state": jnp.arange(_UNIT_SUBJECTS, dtype=jnp.result_type(float))
     }
     arguments.update(overrides)
@@ -188,23 +207,25 @@ def test_unbudgeted_path_admits_no_residency_or_chunk_accounting(
     entry_calls = []
     real_entry = capture_simulation_entry_inputs
 
-    def counting_entry(**kwargs: Any) -> Any:
+    def counting_entry(**kwargs: Unpack[EntryCapture]) -> SimulationEntryInputs | None:
         entry_calls.append(kwargs)
         return real_entry(**kwargs)
 
     chunk_calls = []
     real_chunks = chunk_admission.prepare_simulation_chunks
 
-    def counting_chunks(**kwargs: Any) -> Any:
+    def counting_chunks(
+        **kwargs: Unpack[ChunkPreparation],
+    ) -> PreparedSimulationChunks:
         chunk_calls.append(kwargs)
         return real_chunks(**kwargs)
 
     residency_calls = []
     real_footprint = measure_buffer_footprint
 
-    def counting_footprint(**kwargs: Any) -> Any:
-        residency_calls.append(kwargs)
-        return real_footprint(**kwargs)
+    def counting_footprint(*, tree: FootprintTree) -> DeviceBufferFootprint:
+        residency_calls.append(tree)
+        return real_footprint(tree=tree)
 
     monkeypatch.setattr(
         "_lcm.simulation.entry_inputs.capture_simulation_entry_inputs",
@@ -313,29 +334,29 @@ def test_a_repeat_binds_this_call_s_own_values(
     np.testing.assert_array_equal(np.asarray(result), np.asarray(shifted + 1))
 
 
-def _changed_dtype() -> dict[str, object]:
+def _changed_dtype() -> dict[ReferenceName, PytreeValue]:
     """Same population and shape, a different floating-point dtype."""
     return _unit_arguments(state=jnp.arange(_UNIT_SUBJECTS, dtype=jnp.float16))
 
 
-def _weak_typed() -> dict[str, object]:
+def _weak_typed() -> dict[ReferenceName, PytreeValue]:
     """Same shape and dtype as the working precision, but a weakly typed leaf."""
     return _unit_arguments(state=jnp.full(_UNIT_SUBJECTS, 1.0))
 
 
-def _extra_column() -> dict[str, object]:
+def _extra_column() -> dict[ReferenceName, PytreeValue]:
     """An additional optional argument column the previous call did not carry."""
     return _unit_arguments(
         spare=jnp.zeros(_UNIT_SUBJECTS, dtype=jnp.result_type(float))
     )
 
 
-def _typed_static_value() -> dict[str, object]:
+def _typed_static_value() -> dict[ReferenceName, PytreeValue]:
     """A typed static leaf whose value, not shape, changed."""
     return _unit_arguments(replay_address=1)
 
 
-def _prng_key() -> dict[str, object]:
+def _prng_key() -> dict[ReferenceName, PytreeValue]:
     """A leaf carrying an extended PRNG-key dtype."""
     return _unit_arguments(state=jax.random.key(0))
 
@@ -346,7 +367,9 @@ def _prng_key() -> dict[str, object]:
     ids=["dtype", "weak_type", "optional_column", "typed_static_value", "prng_config"],
 )
 def test_a_changed_signature_re_enters_the_validated_route(
-    *, monkeypatch: pytest.MonkeyPatch, changed: Any
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    changed: Callable[[], dict[ReferenceName, PytreeValue]],
 ) -> None:
     """Any abstract change other than a value falls back, never reusing the record."""
     program = _unit_program()

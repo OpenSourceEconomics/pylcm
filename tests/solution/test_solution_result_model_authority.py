@@ -1,6 +1,7 @@
 """Regressions for the model authority over labelled solution results."""
 
 from dataclasses import replace
+from types import MappingProxyType
 from typing import cast
 
 import jax.numpy as jnp
@@ -8,6 +9,7 @@ import pytest
 
 import lcm.model as model_module
 from _lcm.egm.published_policy import NNBEGMSimPolicy
+from _lcm.solution import model_authority
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.solver_api import SIMULATION_POLICY, ArtifactStore
 from tests.solution.test_solution_result import _small_grid_search_inputs
@@ -23,7 +25,7 @@ _INITIAL = {
 }
 
 
-def _forward_loop_must_not_run(**_kwargs: object) -> None:
+def _forward_loop_must_not_run[Argument](**_kwargs: Argument) -> None:
     raise AssertionError("forward simulation ran before model-authority preflight")
 
 
@@ -183,3 +185,11 @@ def test_nnbegm_co_mutated_float_payload_dtype_is_rejected_before_forward(
             solution=malformed,
             log_level="off",
         )
+
+
+def test_layout_without_a_policy_read_names_no_leaf_axes_read_only() -> None:
+    """A cell without a built-in policy read has a read-only, empty leaf-axis map."""
+    layout = model_authority._policy_artifact_layout(
+        policy_read=None, template_snapshot=None, period=0
+    )
+    assert type(layout.leaf_axis_names) is MappingProxyType

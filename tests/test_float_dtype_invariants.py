@@ -18,6 +18,7 @@ from _lcm.simulation.initial_conditions import (
 from _lcm.typing import ParamsTemplate
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.params import MappingLeaf
+from lcm.typing import StateName
 from tests.test_models.deterministic.regression import (
     RegimeId,
     get_model,
@@ -25,7 +26,7 @@ from tests.test_models.deterministic.regression import (
 )
 
 
-def _as_template(plain: dict) -> ParamsTemplate:
+def _as_template(plain: dict[str, dict[str, dict[str, str]]]) -> ParamsTemplate:
     """Deep-freeze a plain nested dict into a `ParamsTemplate` for tests."""
     return cast("ParamsTemplate", ensure_containers_are_immutable(plain))
 
@@ -184,7 +185,7 @@ def test_simulate_state_pool_dtype_stable_across_periods(x64_disabled: None):
         initial_conditions=initial,
     )
 
-    seen: dict[str, set] = {}
+    seen: dict[StateName, set[np.dtype]] = {}
     for period_data in result.raw_results.values():
         for snap in period_data.values():
             for state_name, arr in snap.states.items():

@@ -14,9 +14,22 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from typing import TypedDict
 
 import jax
 import pytest
+
+from lcm.typing import ReferenceName
+
+
+class LookupReport(TypedDict, total=False):
+    outcome: str
+    rows: int
+    within_budget: bool
+    value_copies: int
+    values: list[float]
+    actions: list[int]
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -381,8 +394,8 @@ def _lookup_on_devices(
     n_devices: int,
     return_action_values: bool,
     script: str = _SCRIPT,
-    extra_args: tuple[str, ...] = (),
-) -> dict:
+    extra_args: tuple[ReferenceName, ...] = (),
+) -> LookupReport:
     env = {
         **os.environ,
         "XLA_FLAGS": f"--xla_force_host_platform_device_count={n_devices}",
@@ -516,7 +529,7 @@ def test_budgeted_lookup_reads_values_in_place_on_one_device(
     ],
 )
 def test_budgeted_lookup_admits_trimming_padded_rows_within_the_budget(
-    *, n_rows: int, expected: dict
+    *, n_rows: int, expected: LookupReport
 ) -> None:
     """Returned action values fit the per-device budget, or the lookup refuses.
 

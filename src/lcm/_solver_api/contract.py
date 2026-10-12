@@ -4,11 +4,12 @@ comparison."""
 import dataclasses
 import struct
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from fractions import Fraction
 from types import MappingProxyType
 from typing import (
+    TYPE_CHECKING,
     cast,
 )
 
@@ -22,10 +23,13 @@ from lcm._solver_api.identity import (
     SOLVER_API_VERSION,
     ArtifactChannel,
     ArtifactKey,
+    ArtifactRecord,
+    ArtifactValue,
     AxisAuthority,
     AxisDescriptor,
     AxisRole,
     CategoryDomain,
+    InertMetadata,
     LeafAuthority,
     LeafDescriptor,
     LoadState,
@@ -34,10 +38,40 @@ from lcm._solver_api.identity import (
     ResultRetention,
     SolutionSource,
     SolverIdentity,
+    TreePath,
 )
 from lcm.typing import RegimeName
 
-_TRUSTED_ARTIFACT_STATIC_DATACLASSES: list[tuple[type[object], tuple[str, ...]]] = []
+if TYPE_CHECKING:
+    # A value of the closed artifact contract: a scalar, an enumeration member, a
+    # class, a contract record, or a tuple, frozenset or mapping of these.
+    type ArtifactContractValue = (
+        bool
+        | int
+        | float
+        | complex
+        | str
+        | bytes
+        | Fraction
+        | type[ArtifactValue]
+        | ArtifactContractDataclass
+        | tuple[ArtifactContractValue, ...]
+        | frozenset[ArtifactContractValue]
+        | Mapping[str, ArtifactContractValue]
+        | Mapping[TreePath, ArtifactContractValue]
+        | Mapping[tuple[int, str], ArtifactContractValue]
+        | Mapping[ArtifactRef, ArtifactContractValue]
+        | None
+    )
+else:
+    # The comparison answers `False` for any value outside the closed contract,
+    # including plugin objects, without running their code; the claw checks nothing
+    # here.
+    type ArtifactContractValue = object
+
+_TRUSTED_ARTIFACT_STATIC_DATACLASSES: list[
+    tuple[type[ArtifactRecord], tuple[str, ...]]
+] = []
 _INERT_ARTIFACT_STATIC_SCALAR_TYPES = (
     type(None),
     bool,
@@ -50,7 +84,7 @@ _INERT_ARTIFACT_STATIC_SCALAR_TYPES = (
 
 
 def _artifact_static_metadata_field_names(
-    cls: type[object],
+    cls: type[ArtifactValue],
 ) -> tuple[str, ...] | None:
     """Look up a trusted class by identity without invoking metaclass equality."""
     for registered, field_names in _TRUSTED_ARTIFACT_STATIC_DATACLASSES:
@@ -60,7 +94,7 @@ def _artifact_static_metadata_field_names(
 
 
 def _register_artifact_static_metadata_dataclass(
-    *, cls: type[object], field_names: tuple[str, ...]
+    *, cls: type[ArtifactRecord], field_names: tuple[str, ...]
 ) -> None:
     """Register one engine-owned frozen dataclass for inert metadata snapshots."""
     params = getattr(cls, "__dataclass_params__", None)
@@ -87,12 +121,12 @@ def _register_artifact_static_metadata_dataclass(
 
 
 def _snapshot_inert_pytree_metadata(  # noqa: C901
-    *, value: object, active_ids: set[int] | None = None
-) -> object:
+    *, value: ArtifactValue, active_ids: set[int] | None = None
+) -> InertMetadata:
     """Own one closed-grammar static value without reducers or user constructors."""
     value_type = type(value)
     if any(value_type is allowed for allowed in _INERT_ARTIFACT_STATIC_SCALAR_TYPES):
-        return value
+        return cast("InertMetadata", value)
     if value_type is Fraction:
         fraction = cast("Fraction", value)
         numerator = fraction.numerator
@@ -126,12 +160,12 @@ def _snapshot_inert_pytree_metadata(  # noqa: C901
         if value_type is tuple:
             return tuple(
                 _snapshot_inert_pytree_metadata(value=item, active_ids=active_ids)
-                for item in cast("tuple[object, ...]", value)
+                for item in cast("tuple[ArtifactValue, ...]", value)
             )
         if value_type is frozenset:
             return frozenset(
                 _snapshot_inert_pytree_metadata(value=item, active_ids=active_ids)
-                for item in cast("frozenset[object]", value)
+                for item in cast("frozenset[ArtifactValue]", value)
             )
         if field_names is None:
             raise TypeError("Artifact static metadata registration disappeared.")
@@ -145,13 +179,13 @@ def _snapshot_inert_pytree_metadata(  # noqa: C901
                     active_ids=active_ids,
                 ),
             )
-        return owned
+        return cast("ArtifactRecord", owned)
     finally:
         active_ids.remove(marker)
 
 
 def _same_inert_pytree_metadata(  # noqa: C901, PLR0911
-    *, actual: object, expected: object
+    *, actual: ArtifactValue, expected: InertMetadata
 ) -> bool:
     """Compare validated static values with exact types and no custom equality."""
     actual_type = type(actual)
@@ -177,8 +211,8 @@ def _same_inert_pytree_metadata(  # noqa: C901, PLR0911
             and actual_fraction.denominator == expected_fraction.denominator
         )
     if actual_type is tuple:
-        actual_tuple = cast("tuple[object, ...]", actual)
-        expected_tuple = cast("tuple[object, ...]", expected)
+        actual_tuple = cast("tuple[ArtifactValue, ...]", actual)
+        expected_tuple = cast("tuple[InertMetadata, ...]", expected)
         return len(actual_tuple) == len(expected_tuple) and all(
             _same_inert_pytree_metadata(
                 actual=actual_item,
@@ -189,8 +223,8 @@ def _same_inert_pytree_metadata(  # noqa: C901, PLR0911
             )
         )
     if actual_type is frozenset:
-        unmatched = list(cast("frozenset[object]", expected))
-        for actual_item in cast("frozenset[object]", actual):
+        unmatched = list(cast("frozenset[InertMetadata]", expected))
+        for actual_item in cast("frozenset[ArtifactValue]", actual):
             for index, expected_item in enumerate(unmatched):
                 if _same_inert_pytree_metadata(
                     actual=actual_item,
@@ -306,6 +340,7 @@ class SolutionMetadata:
     """Number of periods in the model's lifecycle."""
     regime_names: tuple[RegimeName, ...]
     """Names of every regime, in model order."""
+    # Callers pass any mappings; `__post_init__` stores read-only copies of them.
     solver_types: Mapping[RegimeName, str]
     """Qualified class name of each regime's solver."""
     model_instance_id: str
@@ -318,14 +353,14 @@ class SolutionMetadata:
     """Model identity digest; durable results may use it after restoration."""
     durable_identity: bool = True
     """Whether this result has a persistable semantic model identity."""
-    solver_identities: Mapping[RegimeName, SolverIdentity] = field(default_factory=dict)
+    solver_identities: Mapping[RegimeName, SolverIdentity] = MappingProxyType({})
     """Package-owned identity of each regime's solver."""
-    replay_routes: Mapping[RegimeName, ReplayRouteIdentity | None] = field(
-        default_factory=dict
+    replay_routes: Mapping[RegimeName, ReplayRouteIdentity | None] = MappingProxyType(
+        {}
     )
     """Durable identity of each regime's replay route."""
-    artifact_descriptors: Mapping[ArtifactRef, ArtifactDescriptor] = field(
-        default_factory=dict
+    artifact_descriptors: Mapping[ArtifactRef, ArtifactDescriptor] = MappingProxyType(
+        {}
     )
     """Descriptor of every artifact the solve accounted for, present or omitted."""
     source: SolutionSource = SolutionSource.IN_MEMORY
@@ -437,8 +472,24 @@ _ARTIFACT_CONTRACT_ENUM_TYPES = (
     ReplayMode,
     OmissionReason,
 )
+# A record of the closed artifact contract, compared field by field.
+type ArtifactContractDataclass = (
+    ArtifactKey
+    | SolverIdentity
+    | ReplayRouteIdentity
+    | CategoryDomain
+    | AxisDescriptor
+    | AxisAuthority
+    | LeafDescriptor
+    | LeafAuthority
+    | ArtifactDescriptor
+    | ArtifactRef
+    | ValueArraySchema
+    | SolutionMetadata
+)
+
 _ARTIFACT_CONTRACT_DATACLASS_FIELDS: tuple[
-    tuple[type[object], tuple[str, ...]], ...
+    tuple[type[ArtifactContractDataclass], tuple[str, ...]], ...
 ] = (
     (ArtifactKey, ("type_id", "schema_version")),
     (
@@ -498,7 +549,7 @@ _ARTIFACT_CONTRACT_DATACLASS_FIELDS: tuple[
 
 
 def _artifact_contract_dataclass_fields(
-    cls: type[object],
+    cls: type[ArtifactContractValue],
 ) -> tuple[str, ...] | None:
     """Look up one contract wrapper by class identity."""
     for registered, field_names in _ARTIFACT_CONTRACT_DATACLASS_FIELDS:
@@ -509,8 +560,8 @@ def _artifact_contract_dataclass_fields(
 
 def _same_exact_artifact_contract(  # noqa: C901, PLR0911, PLR0912
     *,
-    actual: object,
-    expected: object,
+    actual: ArtifactContractValue,
+    expected: ArtifactContractValue,
     _active_pairs: set[tuple[int, int]] | None = None,
 ) -> bool:
     """Compare the closed artifact contract without weak or user-defined equality."""
@@ -543,8 +594,12 @@ def _same_exact_artifact_contract(  # noqa: C901, PLR0911, PLR0912
         return actual is expected
     if actual_type is Fraction:
         try:
-            actual_fraction = _snapshot_inert_pytree_metadata(value=actual)
-            expected_fraction = _snapshot_inert_pytree_metadata(value=expected)
+            actual_fraction = _snapshot_inert_pytree_metadata(
+                value=cast("Fraction", actual)
+            )
+            expected_fraction = _snapshot_inert_pytree_metadata(
+                value=cast("Fraction", expected)
+            )
         except TypeError:
             return False
         return _same_inert_pytree_metadata(
@@ -568,8 +623,16 @@ def _same_exact_artifact_contract(  # noqa: C901, PLR0911, PLR0912
     _active_pairs.add(marker)
     try:
         if actual_is_mapping:
-            actual_items = tuple(cast("Mapping[object, object]", actual).items())
-            unmatched = list(cast("Mapping[object, object]", expected).items())
+            actual_items = tuple(
+                cast(
+                    "Mapping[ArtifactContractValue, ArtifactContractValue]", actual
+                ).items()
+            )
+            unmatched = list(
+                cast(
+                    "Mapping[ArtifactContractValue, ArtifactContractValue]", expected
+                ).items()
+            )
             if len(actual_items) != len(unmatched):
                 return False
             for actual_key, actual_value in actual_items:
@@ -589,8 +652,8 @@ def _same_exact_artifact_contract(  # noqa: C901, PLR0911, PLR0912
                     return False
             return not unmatched
         if actual_type is tuple:
-            actual_tuple = cast("tuple[object, ...]", actual)
-            expected_tuple = cast("tuple[object, ...]", expected)
+            actual_tuple = cast("tuple[ArtifactContractValue, ...]", actual)
+            expected_tuple = cast("tuple[ArtifactContractValue, ...]", expected)
             return len(actual_tuple) == len(expected_tuple) and all(
                 _same_exact_artifact_contract(
                     actual=actual_item,
@@ -604,8 +667,8 @@ def _same_exact_artifact_contract(  # noqa: C901, PLR0911, PLR0912
                 )
             )
         if actual_type is frozenset:
-            unmatched = list(cast("frozenset[object]", expected))
-            for actual_item in cast("frozenset[object]", actual):
+            unmatched = list(cast("frozenset[ArtifactContractValue]", expected))
+            for actual_item in cast("frozenset[ArtifactContractValue]", actual):
                 for index, expected_item in enumerate(unmatched):
                     if _same_exact_artifact_contract(
                         actual=actual_item,

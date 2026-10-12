@@ -38,14 +38,16 @@ def test_unrelated_retained_input_does_not_fulfill_future_setup() -> None:
         n_subjects=32,
         padded_population=32,
         stages=(stage,),
-        fixed_reservation={device: source.nbytes},
-        setup_reservation={device: source.nbytes},
-        output_reservation={},
+        fixed_reservation=MappingProxyType({device: source.nbytes}),
+        setup_reservation=MappingProxyType({device: source.nbytes}),
+        output_reservation=MappingProxyType({}),
     )
     original = measure_buffer_footprint(tree=source)
     budget = source.nbytes + source.nbytes + stage.peak_bytes
     prepared = PreparedSimulationChunks(
-        plan=SimulationChunkPlan(profile=profile, required_bytes={device: budget}),
+        plan=SimulationChunkPlan(
+            profile=profile, required_bytes=MappingProxyType({device: budget})
+        ),
         call_inputs=SimulationCallInputs(
             devices=(device,),
             flat_params=MappingProxyType({}),

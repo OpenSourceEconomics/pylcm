@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TypedDict, cast
 
 import h5py
 import jax
@@ -47,6 +47,7 @@ from lcm.solver_api import (
     ValueStore,
 )
 from lcm.solvers import EGMContinuationSpec
+from lcm.typing import RegimeName
 from tests.collective_fixtures import (
     ParamsDict,
     make_couple_initial_conditions,
@@ -64,6 +65,37 @@ from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.deterministic.dcegm_variants import (
     get_graph_only_retirement_params,
 )
+
+
+class _OmissionRecord(TypedDict):
+    period: int
+    regime: RegimeName
+    type_id: str
+    schema_version: str
+    reason: str
+
+
+class _NamedAxisRecord(TypedDict):
+    role: str
+    coordinates: list[float | int] | None
+    length: int
+
+
+class _DescriptorRecord(TypedDict):
+    period: int
+    regime: RegimeName
+    type_id: str
+    schema_version: str
+    named_axes: list[_NamedAxisRecord]
+
+
+class _MetadataRecord(TypedDict):
+    artifact_descriptors: list[_DescriptorRecord]
+
+
+class _ArchiveManifest(TypedDict):
+    omissions: list[_OmissionRecord]
+    metadata: _MetadataRecord
 
 
 def _build(
@@ -110,19 +142,28 @@ def _solve_without_optional_dissolution_flags(
     model, params = make_two_stakeholder_model()
     original_solve = model._solve_compiled
 
-    def solve_without_dissolution_flags(**kwargs: Any) -> BackwardInductionResult:
-        internal_result = original_solve(**kwargs)
-        return dataclasses.replace(
-            internal_result,
-            dissolution_flags=MappingProxyType(
-                {
-                    period: MappingProxyType({})
-                    for period in internal_result.dissolution_flags
-                }
-            ),
-        )
+    def without_optional_flags[**P](
+        original_solve: Callable[P, BackwardInductionResult],
+    ) -> Callable[P, BackwardInductionResult]:
+        def solve_without_dissolution_flags(
+            *args: P.args, **kwargs: P.kwargs
+        ) -> BackwardInductionResult:
+            internal_result = original_solve(*args, **kwargs)
+            return dataclasses.replace(
+                internal_result,
+                dissolution_flags=MappingProxyType(
+                    {
+                        period: MappingProxyType({})
+                        for period in internal_result.dissolution_flags
+                    }
+                ),
+            )
 
-    monkeypatch.setattr(model, "_solve_compiled", solve_without_dissolution_flags)
+        return solve_without_dissolution_flags
+
+    monkeypatch.setattr(
+        model, "_solve_compiled", without_optional_flags(original_solve)
+    )
 
     solution = model.solve(
         params=params,
@@ -141,10 +182,10 @@ def _replace_manifest_omission_reason(
     """Mutate one omission reason while preserving the manifest checksum."""
     with h5py.File(path, "r+") as archive:
         manifest = cast(
-            "dict[str, object]",
+            "_ArchiveManifest",
             json.loads(bytes(archive["manifest"][()])),
         )
-        omissions = cast("list[dict[str, object]]", manifest["omissions"])
+        omissions = manifest["omissions"]
         entry = next(
             entry
             for entry in omissions
@@ -367,11 +408,13 @@ def _candidate_axis(descriptor: ArtifactDescriptor) -> AxisDescriptor:
     )
 
 
-def _rewrite_manifest(*, path: Path, mutate: Callable[[dict[str, Any]], None]) -> None:
+def _rewrite_manifest(
+    *, path: Path, mutate: Callable[[_ArchiveManifest], None]
+) -> None:
     """Apply one in-place manifest edit while keeping the manifest checksum valid."""
     with h5py.File(path, "r+") as archive:
         manifest = cast(
-            "dict[str, Any]",
+            "_ArchiveManifest",
             json.loads(bytes(archive["manifest"][()])),
         )
         mutate(manifest)
@@ -390,11 +433,11 @@ def _rewrite_manifest(*, path: Path, mutate: Callable[[dict[str, Any]], None]) -
 
 
 def _rewrite_candidate_axis(
-    *, path: Path, ref: ArtifactRef, coordinates: list[object]
+    *, path: Path, ref: ArtifactRef, coordinates: list[float | int]
 ) -> None:
     """Replace one nested policy's declared outer nodes inside an archive."""
 
-    def mutate(manifest: dict[str, Any]) -> None:
+    def mutate(manifest: _ArchiveManifest) -> None:
         descriptor = next(
             entry
             for entry in manifest["metadata"]["artifact_descriptors"]
@@ -472,7 +515,7 @@ def test_adaptive_nnbegm_policy_roundtrips_into_a_fresh_model(
 def test_declared_outer_nodes_that_no_mesh_could_produce_are_refused(
     *,
     tmp_path: Path,
-    tamper: Callable[[list[float]], list[object]],
+    tamper: Callable[[list[float]], list[float | int]],
     match: str,
 ) -> None:
     """A consumer admits a result's outer nodes only when they are what a
@@ -598,7 +641,7 @@ def test_mixed_route_persistence_is_addressed_by_artifact_ref(
                 for regime in ("finite", "adaptive")
             },
             artifact_descriptors=cast(
-                "Mapping",
+                "Mapping[ArtifactRef, ArtifactDescriptor]",
                 {
                     finite_ref: finite_descriptor,
                     adaptive_ref: adaptive_descriptor,
@@ -676,7 +719,9 @@ def _diagnostics_refs(solution: SolutionResult) -> tuple[ArtifactRef, ...]:
     return tuple(ref for ref in solution.diagnostics if ref.key == SOLVER_DIAGNOSTICS)
 
 
-def _assert_same_diagnostics(*, actual: object, expected: object) -> None:
+def _assert_same_diagnostics[Actual, Expected](
+    *, actual: Actual, expected: Expected
+) -> None:
     """Compare two diagnostics payloads field by field, `None` included."""
     assert type(actual) is SolverDiagnostics
     assert type(expected) is SolverDiagnostics

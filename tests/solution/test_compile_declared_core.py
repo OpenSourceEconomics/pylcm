@@ -8,19 +8,23 @@ compiles nothing else.
 """
 
 import re
-from types import MappingProxyType, SimpleNamespace
+from types import MappingProxyType
+from typing import Never
 
 import jax
 import pytest
 
 from _lcm.execution.core_program import (
+    CoreExecutionDisposition,
     CoreExecutionRequirements,
+    MaterializedCoreProgram,
     ReducedAxis,
     TiledOutputAxis,
 )
 from _lcm.execution.workspace_planning import bootstrap_width, bootstrap_widths
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.period_replay import _project_axis_widths
+from _lcm.typing import PytreeValue
 from lcm import Model
 from tests.test_models.deterministic.discrete import get_model, get_params
 
@@ -44,6 +48,19 @@ def _tiled_axis() -> TiledOutputAxis:
         state_names=("wealth",),
         extent=4096,
         width_keyword="_lcm_cell_width",
+    )
+
+
+def _program(*, requirements: CoreExecutionRequirements) -> MaterializedCoreProgram:
+    """A dense program declaring `requirements` and nothing a width projection reads."""
+    return MaterializedCoreProgram(
+        name="main",
+        function=lambda: None,
+        arguments=MappingProxyType({}),
+        requirements=requirements,
+        output_roles=None,
+        disposition=CoreExecutionDisposition.DENSE,
+        donation_candidates=(),
     )
 
 
@@ -113,7 +130,10 @@ def test_compiling_a_declared_position_dispatches_nothing(
 ) -> None:
     """An abstract compilation must never become a runtime claim."""
 
-    def refuse(self: object, *args: object, **kwargs: object) -> object:  # noqa: ARG001
+    def refuse(
+        _self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> Never:
+        del args, kwargs
         pytest.fail("A compile-only call reached numerical dispatch.")
 
     monkeypatch.setattr(jax.stages.Compiled, "__call__", refuse)
@@ -162,8 +182,7 @@ def test_a_width_that_binds_no_axis_is_refused(model: Model) -> None:
 def test_an_omitted_axis_takes_its_bootstrap_width() -> None:
     """An axis the caller leaves out is bound where the unbudgeted route binds it."""
     axes = (_reduced_axis(), _tiled_axis())
-    program = SimpleNamespace(
-        name="main",
+    program = _program(
         requirements=CoreExecutionRequirements(
             reduced_axes=(axes[0],), tiled_axes=(axes[1],)
         ),
@@ -177,8 +196,7 @@ def test_an_omitted_axis_takes_its_bootstrap_width() -> None:
 def test_a_named_axis_overrides_its_bootstrap_width() -> None:
     """A fixed width is bound as given while its neighbours stay at bootstrap."""
     reduced, tiled = _reduced_axis(), _tiled_axis()
-    program = SimpleNamespace(
-        name="main",
+    program = _program(
         requirements=CoreExecutionRequirements(
             reduced_axes=(reduced,), tiled_axes=(tiled,)
         ),

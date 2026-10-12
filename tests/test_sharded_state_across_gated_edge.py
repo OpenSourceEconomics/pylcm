@@ -28,7 +28,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Literal, NotRequired, TypedDict, Unpack
 
 import jax.numpy as jnp
 import numpy as np
@@ -58,7 +58,9 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
+    StateName,
 )
 
 _REPO_ROOT = Path(__file__).parent.parent
@@ -170,8 +172,8 @@ def _projected_x_from_wealth(wealth: ContinuousState) -> DiscreteState:
 def build_model(
     *,
     devices: tuple[int, ...],
-    sharded: tuple[str, ...],
-    projection_reads: str = "level",
+    sharded: tuple[StateName, ...],
+    projection_reads: Literal["level", "wealth"] = "level",
     gated: bool = True,
 ) -> Model:
     """Build the solo/pair/mate/dead topology whose gated edge falls back into `solo`.
@@ -290,7 +292,7 @@ def build_model(
     )
 
 
-def _stay_until_age_two(*, regime: str) -> ByAge:
+def _stay_until_age_two(*, regime: RegimeName) -> ByAge:
     """Stay in `regime` at ages 0 and 1, then leave for `dead` at age 2."""
     dying = StochasticTransition(func=_none_before_age_two)
     return ByAge(
@@ -304,9 +306,24 @@ def _stay_until_age_two(*, regime: str) -> ByAge:
     )
 
 
+class PlacementVariant(TypedDict):
+    sharded: tuple[StateName, ...]
+    projection_reads: NotRequired[Literal["level", "wealth"]]
+    gated: NotRequired[bool]
+
+
+class PlacementReport(TypedDict):
+    pruned_variables: dict[RegimeName, list[StateName]]
+    devices: dict[RegimeName, list[int]]
+    solution_matches_reference: bool
+    solution_mismatches: list[str]
+    simulation_matches_reference: bool
+    simulation_mismatch: str
+
+
 def _report(
-    *, decimal: int, devices: tuple[int, ...], **variant: Any
-) -> dict[str, Any]:
+    *, decimal: int, devices: tuple[int, ...], **variant: Unpack[PlacementVariant]
+) -> PlacementReport:
     """Solve and simulate one placement against its single-device reference."""
     model = build_model(devices=devices, **variant)
     reference = build_model(
@@ -319,7 +336,7 @@ def _report(
     solution = model.solve(params=_PARAMS, log_level="off")
     reference_solution = reference.solve(params=_PARAMS, log_level="off")
 
-    devices_by_regime: dict[str, list[int]] = {}
+    devices_by_regime: dict[RegimeName, list[int]] = {}
     mismatches: list[str] = []
     for period, values in solution.values.items():
         for regime_name, value in values.items():
@@ -372,19 +389,19 @@ def _report(
     }
 
 
-def report_one_device(*, decimal: int) -> dict[str, Any]:
+def report_one_device(*, decimal: int) -> PlacementReport:
     """Report the declaration alone: `level` sharded with nothing to spread over."""
     return _report(decimal=decimal, devices=(0,), sharded=("level",))
 
 
-def report_spread(*, decimal: int) -> dict[str, Any]:
+def report_spread(*, decimal: int) -> PlacementReport:
     """Report the same solve partitioned one device per `level` category."""
     return _report(
         decimal=decimal, devices=tuple(range(_N_DEVICES)), sharded=("level",)
     )
 
 
-def report_projection_reads_wealth(*, decimal: int) -> dict[str, Any]:
+def report_projection_reads_wealth(*, decimal: int) -> PlacementReport:
     """Report the control whose projection never reads the co-mapped state."""
     return _report(
         decimal=decimal,
@@ -394,7 +411,7 @@ def report_projection_reads_wealth(*, decimal: int) -> dict[str, Any]:
     )
 
 
-def report_ungated(*, decimal: int) -> dict[str, Any]:
+def report_ungated(*, decimal: int) -> PlacementReport:
     """Report the control whose sharded self-loop carries no gate at all."""
     return _report(
         decimal=decimal,
@@ -404,7 +421,7 @@ def report_ungated(*, decimal: int) -> dict[str, Any]:
     )
 
 
-def _run_in_child_process(*, entry_point: str, n_devices: int) -> dict[str, Any]:
+def _run_in_child_process(*, entry_point: str, n_devices: int) -> PlacementReport:
     """Run one module-level report function on `n_devices` and return its report.
 
     The child carries this run's float policy — `jax_enable_x64`, the matmul
@@ -446,19 +463,19 @@ def _run_in_child_process(*, entry_point: str, n_devices: int) -> dict[str, Any]
 
 
 @pytest.fixture(scope="module")
-def one_device() -> dict[str, Any]:
+def one_device() -> PlacementReport:
     """Return the single-device report from one one-device child process."""
     return _run_in_child_process(entry_point="report_one_device", n_devices=1)
 
 
 @pytest.fixture(scope="module")
-def spread() -> dict[str, Any]:
+def spread() -> PlacementReport:
     """Return the spread report from one four-device child process."""
     return _run_in_child_process(entry_point="report_spread", n_devices=_N_DEVICES)
 
 
 @pytest.fixture(scope="module")
-def projection_reads_wealth() -> dict[str, Any]:
+def projection_reads_wealth() -> PlacementReport:
     """Return the wealth-projection control from one four-device child process."""
     return _run_in_child_process(
         entry_point="report_projection_reads_wealth", n_devices=_N_DEVICES
@@ -466,20 +483,20 @@ def projection_reads_wealth() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def ungated() -> dict[str, Any]:
+def ungated() -> PlacementReport:
     """Return the ungated control from one four-device child process."""
     return _run_in_child_process(entry_point="report_ungated", n_devices=_N_DEVICES)
 
 
 def test_the_regimes_reading_the_sharded_state_retain_it(
-    spread: dict[str, Any],
+    spread: PlacementReport,
 ) -> None:
     """Only the regimes whose DAG reads `level` keep it, so `solo` drops it."""
     assert spread["pruned_variables"]["solo"] == ["level"]
 
 
 def test_the_retaining_regimes_span_one_device_per_category(
-    spread: dict[str, Any],
+    spread: PlacementReport,
 ) -> None:
     """Each regime retaining `level` takes a mesh one device wide per category."""
     assert (spread["devices"]["pair"], spread["devices"]["mate"]) == (
@@ -489,56 +506,56 @@ def test_the_retaining_regimes_span_one_device_per_category(
 
 
 def test_the_single_device_solution_equals_the_unsharded_solution(
-    one_device: dict[str, Any],
+    one_device: PlacementReport,
 ) -> None:
     """Declaring a state sharded never changes the values published."""
     assert one_device["solution_matches_reference"] is True
 
 
 def test_the_single_device_simulation_equals_the_unsharded_simulation(
-    one_device: dict[str, Any],
+    one_device: PlacementReport,
 ) -> None:
     """Declaring a state sharded never changes the simulated frame."""
     assert one_device["simulation_matches_reference"] is True
 
 
 def test_the_spread_solution_equals_the_unsharded_solution(
-    spread: dict[str, Any],
+    spread: PlacementReport,
 ) -> None:
     """Placement partitions the solve; it never changes the values published."""
     assert spread["solution_matches_reference"] is True
 
 
 def test_the_spread_simulation_equals_the_unsharded_simulation(
-    spread: dict[str, Any],
+    spread: PlacementReport,
 ) -> None:
     """The simulated frames agree with the unsharded reference model's."""
     assert spread["simulation_matches_reference"] is True
 
 
 def test_a_projection_reading_only_wealth_equals_the_unsharded_solution(
-    projection_reads_wealth: dict[str, Any],
+    projection_reads_wealth: PlacementReport,
 ) -> None:
     """A gated edge whose projection skips the sharded state publishes the same."""
     assert projection_reads_wealth["solution_matches_reference"] is True
 
 
 def test_a_projection_reading_only_wealth_equals_the_unsharded_simulation(
-    projection_reads_wealth: dict[str, Any],
+    projection_reads_wealth: PlacementReport,
 ) -> None:
     """A gated edge whose projection skips the sharded state simulates the same."""
     assert projection_reads_wealth["simulation_matches_reference"] is True
 
 
 def test_an_ungated_sharded_loop_equals_the_unsharded_solution(
-    ungated: dict[str, Any],
+    ungated: PlacementReport,
 ) -> None:
     """An ordinary edge out of a sharded regime publishes the reference's values."""
     assert ungated["solution_matches_reference"] is True
 
 
 def test_an_ungated_sharded_loop_equals_the_unsharded_simulation(
-    ungated: dict[str, Any],
+    ungated: PlacementReport,
 ) -> None:
     """An ordinary edge out of a sharded regime simulates the reference's frames."""
     assert ungated["simulation_matches_reference"] is True

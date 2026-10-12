@@ -9,6 +9,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import StateName
 
 
 def _reduced(*, minimum_width: int = 1, alignment: int = 1) -> ReducedAxis:
@@ -28,7 +29,7 @@ def _tiled(
     *,
     name: str = "cell",
     extent: int = 40,
-    state_names: tuple[str, ...] = ("wealth",),
+    state_names: tuple[StateName, ...] = ("wealth",),
     minimum_width: int = 1,
     alignment: int = 1,
 ) -> TiledOutputAxis:

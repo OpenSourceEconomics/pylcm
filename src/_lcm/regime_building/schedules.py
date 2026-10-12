@@ -39,7 +39,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal, cast, no_type_check
+from typing import TYPE_CHECKING, Literal, NoReturn, cast, no_type_check
 
 import jax.numpy as jnp
 
@@ -49,30 +49,42 @@ from _lcm.regime_building.transition_support import (
     _SupportedStochasticTransition,
 )
 from _lcm.time import TimeAxis, coordinate_kind
-from _lcm.typing import RegimeName
+from _lcm.typing import AnnotationForm, EconFunctionArg, RegimeName
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.initial_nodes import InitialNodes
+from lcm.initial_nodes import InitialNodes, UserInitialNodes
 from lcm.phased import Phased
 from lcm.transition import (
     AgeRange,
+    AgeSelector,
     ByAge,
     DeterministicTransition,
     PeriodRange,
     Periods,
+    PeriodSelector,
     StochasticTransition,
     _fail_if_invalid_age_selector,
+    _period_by_age,
     _select_periods,
 )
-from lcm.typing import Period, UserFunction
+from lcm.typing import FloatND, IntND, Period, UserAge, UserFunction
+
+if TYPE_CHECKING:
+    from _lcm.regime_law import RegimeLaw
+
+    # One `initial_nodes` entry's coordinate selector, and one legacy exact pair.
+    type _InitialSelector = AgeSelector | PeriodSelector
+    type _InitialPair = tuple[UserAge | float, RegimeName]
+else:
+    # `_lcm.regime_law` imports this module, so `RegimeLaw` is not importable here
+    # at runtime; the law's own constructor checks its fields.
+    type RegimeLaw = object
+    # A malformed `initial_nodes` entry reaches the normalizers, whose checks
+    # refuse it with a model error naming it rather than a type violation.
+    type _InitialSelector = object
+    type _InitialPair = object
 
 type PhaseKey = str
 type Side = Literal["solve", "simulate"]
-# A declared nonterminal regime law: a regime name, a deterministic selector,
-# a stochastic vector with targets, a per-target mapping, or a Phased of those.
-type NonterminalLaw = (
-    str | DeterministicTransition | StochasticTransition | Mapping[str, Any] | Phased
-)
-
 # One per-target probability cell, as declared or bound.
 type ProbabilityCell = StochasticTransition | UserFunction | Phased
 # One phase's law at one source age: a regime name, a function or
@@ -90,6 +102,14 @@ type CaseLaw = PhaseLaw | Phased[PhaseLaw, PhaseLaw]
 # A source's whole regime-transition law: a case law, an age schedule of case
 # laws, or `None` for a terminal regime.
 type RegimeTransitionLaw = CaseLaw | ByAge | None
+# One phase's law in the engine vocabulary: a callable returning a regime code or
+# a probability vector, a vector `StochasticTransition`, or a per-target mapping
+# of probability cells.
+type EnginePhaseLaw = (
+    UserFunction | StochasticTransition | Mapping[RegimeName, ProbabilityCell]
+)
+# A law in the engine vocabulary: one law for both phases, or a `Phased` pair.
+type EngineLaw = EnginePhaseLaw | Phased[EnginePhaseLaw, EnginePhaseLaw]
 
 
 _PHASES: tuple[PhaseKey, PhaseKey] = ("solution", "simulation")
@@ -129,12 +149,12 @@ class RegimeSchedules:
     """The visited pairs H."""
 
     law_by_period_by_regime: MappingProxyType[
-        RegimeName, MappingProxyType[int, NonterminalLaw]
+        RegimeName, MappingProxyType[int, CaseLaw]
     ] = MappingProxyType({})
     """Per nonterminal regime, the declared law at each available period."""
 
     gated_edges_by_regime: MappingProxyType[
-        RegimeName, Mapping[RegimeName, GatedEdge]
+        RegimeName, MappingProxyType[RegimeName, GatedEdge]
     ] = MappingProxyType({})
     """Per source regime, its gated edges by gated target."""
 
@@ -166,7 +186,7 @@ class RegimeSchedules:
         )
 
 
-def uses_declaration_vocabulary(transition: object) -> bool:
+def uses_declaration_vocabulary(transition: RegimeTransitionLaw) -> bool:
     """Whether a regime transition has a form the engine cannot read directly."""
     if isinstance(transition, ByAge | DeterministicTransition | str):
         return True
@@ -180,7 +200,7 @@ def uses_declaration_vocabulary(transition: object) -> bool:
     return False
 
 
-def declaration_view(transition: object) -> object:
+def declaration_view(transition: RegimeTransitionLaw) -> EngineLaw | None:
     """Return a period-independent law in the engine vocabulary, for validation.
 
     A `ByAge` is replaced by the union of its laws: every cell each case declares
@@ -190,22 +210,28 @@ def declaration_view(transition: object) -> object:
     the declared grammar, gates and state handoffs, never for evaluation.
     """
     if isinstance(transition, ByAge):
-        return _union_law(laws=transition.laws, code_by_name=None, mask=None)
+        return _union_law(
+            laws=cast("tuple[CaseLaw, ...]", transition.laws),
+            code_by_name=None,
+            mask=None,
+        )
     if isinstance(transition, Phased):
         return Phased(
             solve=_plain_law(law=transition.solve, code_by_name=None),
             simulate=_plain_law(law=transition.simulate, code_by_name=None),
         )
+    if transition is None:
+        return None
     return _plain_law(law=transition, code_by_name=None)
 
 
 def resolve_regime_schedules(
     *,
-    # `RegimeLaw` values; `_lcm.regime_law` imports this module, so it cannot be
-    # imported here.
-    laws: Mapping[RegimeName, Any],
+    laws: Mapping[RegimeName, RegimeLaw],
     ages: TimeAxis,
-    source_ages_by_phase: Mapping[str, Mapping[str, Mapping[str, frozenset[object]]]]
+    source_ages_by_phase: Mapping[
+        PhaseKey, Mapping[RegimeName, Mapping[RegimeName, frozenset[UserAge]]]
+    ]
     | None = None,
 ) -> RegimeSchedules:
     """Resolve every regime's available periods, support and value reads.
@@ -222,18 +248,20 @@ def resolve_regime_schedules(
         PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[str, ...]]]
     ] = {phase: {} for phase in _PHASES}
     landings: dict[RegimeName, MappingProxyType[int, tuple[str, ...]]] = {}
-    law_by_period_by_regime: dict[
-        RegimeName, MappingProxyType[int, NonterminalLaw]
-    ] = {}
+    law_by_period_by_regime: dict[RegimeName, MappingProxyType[int, CaseLaw]] = {}
     for name, regime_law in laws.items():
         transition = regime_law.transition
         if transition is None:
             coverage[name] = all_periods
             continue
         if isinstance(transition, ByAge):
+            # A schedule's cases are case laws; `ByAge` itself refuses any other.
+            resolved = cast(
+                "Mapping[int, CaseLaw]", transition.resolve(ages=ages).law_by_period
+            )
             law_by_period = {
                 period: law
-                for period, law in transition.resolve(ages=ages).law_by_period.items()
+                for period, law in resolved.items()
                 if period < ages.n_periods - 1
             }
         else:
@@ -299,10 +327,7 @@ def resolve_regime_schedules(
                 for period, targets in simulation_support.items()
             }
         )
-        # The support check above rejected every other form.
-        law_by_period_by_regime[name] = MappingProxyType(
-            cast("dict[int, NonterminalLaw]", law_by_period)
-        )
+        law_by_period_by_regime[name] = MappingProxyType(law_by_period)
 
     return RegimeSchedules(
         coverage_by_regime=MappingProxyType(coverage),
@@ -326,9 +351,9 @@ def resolve_regime_schedules(
 def lower_demanded_transitions(
     *,
     schedules: RegimeSchedules,
-    declared_transitions: Mapping[RegimeName, object],
+    declared_transitions: Mapping[RegimeName, RegimeTransitionLaw],
     code_by_name: Mapping[str, int],
-) -> MappingProxyType[RegimeName, object]:
+) -> MappingProxyType[RegimeName, EngineLaw | None]:
     """Lower each regime's law over the periods demand requires, only.
 
     The solve side is lowered over the regime's valued periods and the
@@ -343,7 +368,7 @@ def lower_demanded_transitions(
     `edges` parameter template is read off the declarations, not off the
     lowered laws.
     """
-    lowered: dict[RegimeName, object] = {}
+    lowered: dict[RegimeName, EngineLaw | None] = {}
     visited_periods = schedules.visited_periods_by_regime
     for name, declared in declared_transitions.items():
         if declared is None:
@@ -353,8 +378,12 @@ def lower_demanded_transitions(
         solve_periods = schedules.coverage_by_regime[name]
         if not solve_periods:
             if not law_by_period:
+                # A declared nonterminal law is a case law or a schedule of them.
                 law_by_period = {
-                    0: declared.laws[0] if isinstance(declared, ByAge) else declared
+                    0: cast(
+                        "CaseLaw",
+                        declared.laws[0] if isinstance(declared, ByAge) else declared,
+                    )
                 }
             solve_periods = (min(law_by_period),)
         else:
@@ -380,10 +409,10 @@ def lower_demanded_transitions(
 
 
 def _fail_if_conflicting_annotations(
-    *, regime_name: RegimeName, laws: tuple[object, ...]
+    *, regime_name: RegimeName, laws: tuple[PhaseLaw, ...]
 ) -> None:
     """Refuse one argument name annotated differently by two required laws."""
-    annotations: dict[str, object] = {}
+    annotations: dict[str, AnnotationForm] = {}
     for func in _distinct(func for law in laws for func in _law_functions(law)):
         for name, parameter in inspect.signature(func).parameters.items():
             annotation = parameter.annotation
@@ -399,7 +428,7 @@ def _fail_if_conflicting_annotations(
                 )
 
 
-def _law_functions(law: object) -> tuple[Callable[..., Any], ...]:
+def _law_functions(law: PhaseLaw | ProbabilityCell) -> tuple[UserFunction, ...]:
     """The user callables a regime law evaluates to select targets."""
     if isinstance(law, Phased):
         return (*_law_functions(law.solve), *_law_functions(law.simulate))
@@ -410,17 +439,17 @@ def _law_functions(law: object) -> tuple[Callable[..., Any], ...]:
     return ()
 
 
-def _annotation_name(annotation: object) -> str:
+def _annotation_name(annotation: AnnotationForm) -> str:
     return getattr(annotation, "__name__", repr(annotation))
 
 
 def _lower(
     *,
-    law_by_period: Mapping[int, object],
+    law_by_period: Mapping[int, CaseLaw],
     solve_periods: tuple[int, ...],
     simulate_periods: tuple[int, ...],
     code_by_name: Mapping[str, int],
-) -> object:
+) -> EngineLaw:
     """One engine law from the per-period laws at the given periods."""
     solve_side = {
         period: _phase_side(law=law_by_period[period], side="solve")
@@ -446,7 +475,7 @@ def _lower(
 def resolve_demand(
     *,
     schedules: RegimeSchedules,
-    initial_nodes: frozenset[tuple[object, RegimeName]],
+    initial_nodes: frozenset[tuple[UserAge, RegimeName]],
     same_period_refs_by_regime: Mapping[RegimeName, tuple[RegimeName, ...]],
     terminal_regimes: frozenset[RegimeName],
     ages: TimeAxis,
@@ -471,9 +500,7 @@ def resolve_demand(
             where no problem is available.
 
     """
-    period_by_age: dict[object, int] = {
-        age: period for period, age in enumerate(ages.exact_values)
-    }
+    period_by_age = _period_by_age(ages)
     available = {
         name: frozenset(periods)
         for name, periods in schedules.coverage_by_regime.items()
@@ -666,10 +693,10 @@ def _fallbacks(
 
 def resolve_initial_nodes(
     *,
-    initial_nodes: object,
+    initial_nodes: UserInitialNodes,
     regime_names: Sequence[RegimeName],
     ages: TimeAxis,
-) -> frozenset[tuple[object, RegimeName]]:
+) -> frozenset[tuple[UserAge, RegimeName]]:
     """Normalize `Model(initial_nodes=...)` to the exact admissible start pairs.
 
     `InitialNodes` explicitly names the model's age or period coordinate.
@@ -681,10 +708,8 @@ def resolve_initial_nodes(
     entries = _initial_node_entries(
         initial_nodes=initial_nodes, kind=coordinate_kind(ages)
     )
-    period_by_age: dict[object, int] = {
-        age: period for period, age in enumerate(ages.exact_values)
-    }
-    permitted: set[tuple[object, RegimeName]] = set()
+    period_by_age = _period_by_age(ages)
+    permitted: set[tuple[UserAge, RegimeName]] = set()
     for selector, value in entries:
         names = _entry_names(value)
         _fail_if_unknown_entry_regimes(names=names, regime_names=regime_names)
@@ -713,8 +738,8 @@ _INITIAL_NODE_ARITY = 2
 
 
 def _initial_node_entries(
-    *, initial_nodes: object, kind: str = "age"
-) -> list[tuple[object, object]]:
+    *, initial_nodes: UserInitialNodes, kind: str = "age"
+) -> tuple[tuple[_InitialSelector, RegimeName | Sequence[RegimeName]], ...]:
     """Normalize exact-pair or selector-mapping entries before grid selection."""
     if isinstance(initial_nodes, InitialNodes):
         selected = initial_nodes.by_age if kind == "age" else initial_nodes.by_period
@@ -722,7 +747,7 @@ def _initial_node_entries(
             raise ModelInitializationError(
                 f"This model requires InitialNodes(by_{kind}=...)."
             )
-        return list(selected.items())
+        return tuple(selected.items())
     if kind == "period":
         raise ModelInitializationError(
             "Period models require InitialNodes(by_period=...)."
@@ -734,9 +759,9 @@ def _initial_node_entries(
             raise ModelInitializationError(
                 "`initial_nodes` must name at least one starting pair."
             )
-        entries = [_initial_node_pair(pair) for pair in initial_nodes]
+        entries = tuple(_initial_node_pair(pair) for pair in initial_nodes)
     elif isinstance(initial_nodes, Mapping) and initial_nodes:
-        entries = list(initial_nodes.items())
+        entries = tuple(initial_nodes.items())
         if any(isinstance(selector, PeriodRange | Periods) for selector, _ in entries):
             raise ModelInitializationError(
                 "Age initial-node mappings cannot use period selectors."
@@ -750,7 +775,7 @@ def _initial_node_entries(
     return entries
 
 
-def _initial_node_pair(pair: object) -> tuple[object, object]:
+def _initial_node_pair(pair: _InitialPair) -> tuple[_InitialSelector, RegimeName]:
     """Normalize one legacy exact age pair."""
     if (
         not isinstance(pair, Sequence)
@@ -772,7 +797,7 @@ def _initial_node_pair(pair: object) -> tuple[object, object]:
     return age, name
 
 
-def _entry_names(value: object) -> tuple[str, ...]:
+def _entry_names(value: str | Sequence[str]) -> tuple[str, ...]:
     if isinstance(value, str):
         return (value,)
     if (
@@ -799,12 +824,12 @@ def _fail_if_unknown_entry_regimes(
 
 
 # keyword-only-exempt: primary-argument=func
-def _with_signature(
-    func: Callable[..., Any],
+def _with_signature[F: UserFunction](
+    func: F,
     *,
     names: tuple[str, ...],
-    sources: tuple[Callable[..., Any], ...],
-) -> Callable[..., Any]:
+    sources: tuple[UserFunction, ...],
+) -> F:
     """Expose `names` as keyword-only arguments annotated as in `sources`.
 
     The DAG machinery requires one annotation per argument name across a
@@ -814,7 +839,7 @@ def _with_signature(
     The `sources` are kept on the wrapper so parameter-indexing inspection
     reads the laws the user wrote rather than the wrapper's body.
     """
-    annotations: dict[str, Any] = {"period": Period}
+    annotations: dict[str, AnnotationForm] = {"period": Period}
     for source in sources:
         for name, parameter in inspect.signature(source).parameters.items():
             if parameter.annotation is not inspect.Parameter.empty:
@@ -864,7 +889,7 @@ class _Constant:
         object.__setattr__(self, "__name__", "constant")
 
     @no_type_check
-    def __call__(self) -> Any:  # noqa: ANN401
+    def __call__(self) -> FloatND | IntND:
         return jnp.asarray(self.value)
 
 
@@ -876,7 +901,7 @@ class _DeclaredExit:
     target's name rather than a code, and evaluating it is an error.
     """
 
-    target: str
+    target: RegimeName
     """The regime the exit names."""
 
     def __post_init__(self) -> None:
@@ -885,7 +910,7 @@ class _DeclaredExit:
         object.__setattr__(self, "__name__", "declared_exit")
 
     @no_type_check
-    def __call__(self) -> Any:  # noqa: ANN401
+    def __call__(self) -> NoReturn:
         raise RuntimeError(
             f"The declaration view of an exit into {self.target!r} is for "
             "construction-time checks only and is never evaluated."
@@ -893,8 +918,8 @@ class _DeclaredExit:
 
 
 def _indicator(
-    *, selector: Callable[..., Any], code: int | None, names: tuple[str, ...]
-) -> Callable[..., Any]:
+    *, selector: UserFunction, code: int | None, names: tuple[str, ...]
+) -> Callable[..., FloatND]:
     """Probability one where a deterministic selector returns `code`."""
     return _with_signature(
         _Indicator(selector=selector, code=code, names=names),
@@ -907,7 +932,7 @@ def _indicator(
 class _Indicator:
     """Probability one where `selector` returns `code`, zero elsewhere."""
 
-    selector: Callable[..., Any]
+    selector: UserFunction
     """The deterministic regime selector."""
     code: int | None
     """The regime code whose selection has probability one, or `None` in a
@@ -916,7 +941,7 @@ class _Indicator:
     """The arguments `selector` reads."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: EconFunctionArg) -> FloatND:
         if self.code is None:
             raise RuntimeError(
                 "A declaration view is for construction-time checks only and is "
@@ -927,8 +952,8 @@ class _Indicator:
 
 
 def _period_masked(
-    *, cell: Callable[..., Any], periods: tuple[int, ...], names: tuple[str, ...]
-) -> Callable[..., Any]:
+    *, cell: UserFunction, periods: tuple[int, ...], names: tuple[str, ...]
+) -> Callable[..., FloatND]:
     """A probability cell that is exactly zero outside `periods`."""
     return _with_signature(
         _PeriodMasked(cell=cell, periods=periods, names=names),
@@ -941,7 +966,7 @@ def _period_masked(
 class _PeriodMasked:
     """`cell` at `periods`, exactly zero at every other period."""
 
-    cell: Callable[..., Any]
+    cell: UserFunction
     """The probability cell."""
     periods: tuple[int, ...]
     """The periods at which the cell applies."""
@@ -949,7 +974,7 @@ class _PeriodMasked:
     """The arguments `cell` reads."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: EconFunctionArg) -> FloatND:
         value = self.cell(**{name: kwargs[name] for name in self.names})
         selected = jnp.isin(kwargs["period"], jnp.asarray(self.periods))
         return jnp.where(selected, value, jnp.zeros_like(value))
@@ -957,10 +982,10 @@ class _PeriodMasked:
 
 def _period_dispatch(
     *,
-    cases: tuple[Callable[..., Any], ...],
+    cases: tuple[UserFunction, ...],
     case_names: tuple[tuple[str, ...], ...],
     case_by_period: tuple[int, ...],
-) -> Callable[..., Any]:
+) -> Callable[..., FloatND | IntND]:
     """Evaluate the case callable selected for the current period."""
     names = tuple(sorted({name for names in case_names for name in names}))
     return _with_signature(
@@ -976,7 +1001,7 @@ def _period_dispatch(
 class _PeriodDispatch:
     """Evaluate the case `case_by_period` selects for the current period."""
 
-    cases: tuple[Callable[..., Any], ...]
+    cases: tuple[UserFunction, ...]
     """The case callables."""
     case_names: tuple[tuple[str, ...], ...]
     """The arguments each case reads."""
@@ -984,7 +1009,7 @@ class _PeriodDispatch:
     """The position in `cases` selected at each period."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: EconFunctionArg) -> FloatND | IntND:
         # Every case is evaluated and the selected one kept. Each case is a
         # declared law of this regime evaluated on the same arguments, so an
         # unselected case can at worst produce a value that is discarded. The
@@ -1005,11 +1030,11 @@ def _with_period(names: tuple[str, ...]) -> tuple[str, ...]:
     return ("period", *(name for name in names if name != "period"))
 
 
-def _argument_names(func: Callable[..., Any]) -> tuple[str, ...]:
+def _argument_names(func: UserFunction) -> tuple[str, ...]:
     return tuple(inspect.signature(func).parameters)
 
 
-def _phase_side(*, law: object, side: Side) -> object:
+def _phase_side[L](*, law: L | Phased[L, L], side: Side) -> L:
     if not isinstance(law, Phased):
         return law
     return law.solve if side == "solve" else law.simulate
@@ -1017,12 +1042,12 @@ def _phase_side(*, law: object, side: Side) -> object:
 
 def _edge_support(
     *,
-    law: object,
+    law: PhaseLaw,
     source: RegimeName,
     period: int,
     ages: TimeAxis,
     regime_names: tuple[RegimeName, ...],
-    source_ages: Mapping[str, Mapping[str, frozenset[object]]] | None,
+    source_ages: Mapping[RegimeName, Mapping[RegimeName, frozenset[UserAge]]] | None,
 ) -> tuple[str, ...]:
     """The targets one phase side of a law declares that an edge admits.
 
@@ -1039,7 +1064,7 @@ def _edge_support(
 
 
 def _declared_support(
-    *, law: object, regime_names: tuple[RegimeName, ...]
+    *, law: PhaseLaw, regime_names: tuple[RegimeName, ...]
 ) -> tuple[str, ...]:
     """The targets one nonterminal law declares."""
     if isinstance(law, str):
@@ -1057,7 +1082,7 @@ def _declared_support(
 
 
 def _fail_if_unknown_targets(
-    *, targets: tuple[str, ...], regime_names: tuple[RegimeName, ...]
+    *, targets: tuple[RegimeName, ...], regime_names: tuple[RegimeName, ...]
 ) -> None:
     unknown = sorted(set(targets) - set(regime_names))
     if unknown:
@@ -1068,13 +1093,13 @@ def _fail_if_unknown_targets(
 
 
 def _lower_side(
-    *, law_by_period: Mapping[int, object], code_by_name: Mapping[str, int]
-) -> object:
+    *, law_by_period: Mapping[int, PhaseLaw], code_by_name: Mapping[str, int]
+) -> EnginePhaseLaw:
     """One phase's law as a single period-independent engine law."""
     distinct = _distinct(law_by_period.values())
     if len(distinct) == 1:
         return _plain_law(law=distinct[0], code_by_name=code_by_name)
-    return _union_law(
+    return _union_phase_law(
         laws=distinct,
         code_by_name=code_by_name,
         mask={
@@ -1085,7 +1110,9 @@ def _lower_side(
     )
 
 
-def _plain_law(*, law: object, code_by_name: Mapping[str, int] | None) -> object:
+def _plain_law(
+    *, law: PhaseLaw, code_by_name: Mapping[str, int] | None
+) -> EnginePhaseLaw:
     """A single nonterminal law in the engine vocabulary.
 
     Without `code_by_name` (a declaration view) a regime name becomes an exit
@@ -1102,24 +1129,35 @@ def _plain_law(*, law: object, code_by_name: Mapping[str, int] | None) -> object
 
 def _union_law(
     *,
-    laws: tuple[object, ...],
+    laws: tuple[CaseLaw, ...],
     code_by_name: Mapping[str, int] | None,
     mask: Mapping[int, tuple[int, ...]] | None,
-    law_by_period: Mapping[int, object] | None = None,
-) -> object:
-    """Several laws as one: dispatch deterministic laws, merge stochastic cells."""
-    if any(isinstance(law, Phased) for law in laws):
-        solve = _union_law(
-            laws=_distinct(_phase_side(law=law, side="solve") for law in laws),
-            code_by_name=code_by_name,
-            mask=None,
-        )
-        simulate = _union_law(
-            laws=_distinct(_phase_side(law=law, side="simulate") for law in laws),
-            code_by_name=code_by_name,
-            mask=None,
-        )
-        return Phased(solve=solve, simulate=simulate)
+) -> EngineLaw:
+    """Several laws as one, each phase side separately where any is `Phased`."""
+    phase_laws = tuple(law for law in laws if not isinstance(law, Phased))
+    if len(phase_laws) == len(laws):
+        return _union_phase_law(laws=phase_laws, code_by_name=code_by_name, mask=mask)
+    solve = _union_phase_law(
+        laws=_distinct(_phase_side(law=law, side="solve") for law in laws),
+        code_by_name=code_by_name,
+        mask=None,
+    )
+    simulate = _union_phase_law(
+        laws=_distinct(_phase_side(law=law, side="simulate") for law in laws),
+        code_by_name=code_by_name,
+        mask=None,
+    )
+    return Phased(solve=solve, simulate=simulate)
+
+
+def _union_phase_law(
+    *,
+    laws: tuple[PhaseLaw, ...],
+    code_by_name: Mapping[str, int] | None,
+    mask: Mapping[int, tuple[int, ...]] | None,
+    law_by_period: Mapping[int, PhaseLaw] | None = None,
+) -> EnginePhaseLaw:
+    """One phase's laws as one: dispatch deterministic laws, merge stochastic cells."""
     stochastic = [
         law for law in laws if isinstance(law, Mapping | StochasticTransition)
     ]
@@ -1136,22 +1174,28 @@ def _union_law(
 
 def _deterministic_dispatch(
     *,
-    laws: tuple[object, ...],
+    laws: tuple[PhaseLaw, ...],
     code_by_name: Mapping[str, int] | None,
-    law_by_period: Mapping[int, object] | None,
-) -> object:
+    law_by_period: Mapping[int, PhaseLaw] | None,
+) -> EnginePhaseLaw:
     cases = tuple(_plain_law(law=law, code_by_name=code_by_name) for law in laws)
     if law_by_period is None:
         return cases[0]
-    return _dispatch(cases=cases, laws=laws, law_by_period=law_by_period)
+    # A deterministic law lowers to a callable: a regime name to a constant code,
+    # a `DeterministicTransition` to its function.
+    return _dispatch(
+        cases=cast("tuple[UserFunction, ...]", cases),
+        laws=laws,
+        law_by_period=law_by_period,
+    )
 
 
 def _dispatch(
     *,
-    cases: tuple[Any, ...],
-    laws: tuple[object, ...],
-    law_by_period: Mapping[int, object],
-) -> Callable[..., Any]:
+    cases: tuple[UserFunction, ...],
+    laws: tuple[PhaseLaw, ...],
+    law_by_period: Mapping[int, PhaseLaw],
+) -> Callable[..., FloatND | IntND]:
     n_periods = max(law_by_period) + 2
     position = {id(law): index for index, law in enumerate(laws)}
     return _period_dispatch(
@@ -1166,10 +1210,10 @@ def _dispatch(
 
 def _vector_union(
     *,
-    laws: tuple[object, ...],
+    laws: tuple[PhaseLaw, ...],
     code_by_name: Mapping[str, int] | None,
-    law_by_period: Mapping[int, object] | None,
-) -> object:
+    law_by_period: Mapping[int, PhaseLaw] | None,
+) -> StochasticTransition:
     """Several vector laws and exits as one vector `StochasticTransition`."""
     if any(isinstance(law, Mapping) for law in laws):
         raise ModelInitializationError(
@@ -1194,8 +1238,8 @@ def _vector_union(
 
 
 def _vector_case(
-    *, law: object, n_regimes: int, code_by_name: Mapping[str, int]
-) -> Callable[..., Any]:
+    *, law: PhaseLaw, n_regimes: int, code_by_name: Mapping[str, int]
+) -> UserFunction:
     if isinstance(law, StochasticTransition):
         return law.func
     if not isinstance(law, str):
@@ -1211,16 +1255,16 @@ def _vector_case(
 
 def _mapping_union(
     *,
-    laws: tuple[object, ...],
+    laws: tuple[PhaseLaw, ...],
     code_by_name: Mapping[str, int] | None,
     mask: Mapping[int, tuple[int, ...]] | None,
-) -> MappingProxyType[str, object]:
+) -> MappingProxyType[RegimeName, ProbabilityCell]:
     """Per-target mappings and exits merged; each target keeps one cell."""
-    cells_by_target: dict[str, list[tuple[object, object]]] = {}
+    cells_by_target: dict[RegimeName, list[tuple[PhaseLaw, ProbabilityCell]]] = {}
     for law in laws:
         for target, cell in _law_cells(law=law, code_by_name=code_by_name).items():
             cells_by_target.setdefault(target, []).append((law, cell))
-    merged: dict[str, object] = {}
+    merged: dict[RegimeName, ProbabilityCell] = {}
     all_covered = (
         None
         if mask is None
@@ -1263,14 +1307,21 @@ def _mapping_union(
     return MappingProxyType(merged)
 
 
-def _masked(*, cell: Any, periods: tuple[int, ...]) -> Callable[..., Any]:  # noqa: ANN401
-    func = cell.func if isinstance(cell, StochasticTransition) else cell
+def _masked(
+    *, cell: ProbabilityCell, periods: tuple[int, ...]
+) -> Callable[..., FloatND]:
+    # Validation admits `Phased` only around a whole law, never as one target's cell.
+    func = (
+        cell.func
+        if isinstance(cell, StochasticTransition)
+        else cast("UserFunction", cell)
+    )
     return _period_masked(
         cell=func, periods=tuple(sorted(periods)), names=_argument_names(func)
     )
 
 
-def _period_sum(parts: tuple[Callable[..., Any], ...]) -> Callable[..., Any]:
+def _period_sum(parts: tuple[UserFunction, ...]) -> Callable[..., FloatND]:
     """Sum of period-masked cells whose periods never overlap."""
     part_names = tuple(_argument_names(part) for part in parts)
     names = tuple(sorted({name for names in part_names for name in names}))
@@ -1285,13 +1336,13 @@ def _period_sum(parts: tuple[Callable[..., Any], ...]) -> Callable[..., Any]:
 class _PeriodSum:
     """Sum of `parts`, each called with the arguments it reads."""
 
-    parts: tuple[Callable[..., Any], ...]
+    parts: tuple[UserFunction, ...]
     """The period-masked cells."""
     part_names: tuple[tuple[str, ...], ...]
     """The arguments each part reads."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: EconFunctionArg) -> FloatND:
         values = [
             part(**{name: kwargs[name] for name in names})
             for part, names in zip(self.parts, self.part_names, strict=True)
@@ -1299,34 +1350,39 @@ class _PeriodSum:
         return sum(values[1:], values[0])
 
 
-def _masked_cell(*, cell: object, periods: tuple[int, ...]) -> object:
+def _masked_cell(
+    *, cell: ProbabilityCell, periods: tuple[int, ...]
+) -> StochasticTransition:
     """Zero a cell outside `periods`."""
     return StochasticTransition(func=_masked(cell=cell, periods=periods))
 
 
 def _law_cells(
-    *, law: object, code_by_name: Mapping[str, int] | None
-) -> Mapping[str, object]:
+    *, law: PhaseLaw, code_by_name: Mapping[str, int] | None
+) -> Mapping[RegimeName, ProbabilityCell]:
+    # A per-target law arrives as the author declared it.
     if isinstance(law, Mapping):
         return law
     if isinstance(law, str):
-        return {law: StochasticTransition(func=_Constant(value=1.0))}
+        return MappingProxyType({law: StochasticTransition(func=_Constant(value=1.0))})
     if isinstance(law, DeterministicTransition):
         names = _argument_names(law.func)
-        return {
-            target: StochasticTransition(
-                func=_indicator(
-                    selector=law.func,
-                    code=(
-                        None
-                        if code_by_name is None
-                        else _code(name=target, code_by_name=code_by_name)
-                    ),
-                    names=names,
+        return MappingProxyType(
+            {
+                target: StochasticTransition(
+                    func=_indicator(
+                        selector=law.func,
+                        code=(
+                            None
+                            if code_by_name is None
+                            else _code(name=target, code_by_name=code_by_name)
+                        ),
+                        names=names,
+                    )
                 )
-            )
-            for target in _law_targets(law)
-        }
+                for target in _law_targets(law)
+            }
+        )
     raise ModelInitializationError(
         f"A schedule case {law!r} is not a nonterminal regime law. Use a regime "
         "name, a `DeterministicTransition` or a per-target mapping, and declare "
@@ -1334,7 +1390,7 @@ def _law_cells(
     )
 
 
-def _law_targets(law: object) -> tuple[str, ...]:
+def _law_targets(law: PhaseLaw) -> tuple[str, ...]:
     if isinstance(law, str):
         return (law,)
     if isinstance(

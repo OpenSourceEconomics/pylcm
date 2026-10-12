@@ -569,7 +569,7 @@ def _r2_exact_root(*, grid: np.ndarray, value: np.ndarray) -> Fraction:
     return (v0 - slope_a * x0 - v2 + slope_b * x2) / (slope_b - slope_a)
 
 
-def _r2_ceil(*, root: Fraction, dtype: type) -> np.floating:
+def _r2_ceil(*, root: Fraction, dtype: type[np.float32 | np.float64]) -> np.floating:
     """Find the least representable state at/above a rational (oracle only)."""
     candidate = dtype(float(root))
     while Fraction(float(candidate)) < root:
@@ -582,7 +582,11 @@ def _r2_ceil(*, root: Fraction, dtype: type) -> np.floating:
 
 
 def _r2_assert_event(
-    *, out: tuple, root: Fraction, dtype: type, policies: tuple = (8.0, 2.0)
+    *,
+    out: tuple[jax.Array, jax.Array, jax.Array, jax.Array],
+    root: Fraction,
+    dtype: type[np.float32 | np.float64],
+    policies: tuple[float, float] = (8.0, 2.0),
 ) -> None:
     """Assert counts/order and actual policy reads at adjacent stored states."""
     kept = int(out[3])

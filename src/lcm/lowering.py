@@ -7,6 +7,7 @@ from types import MappingProxyType
 from beartype import beartype
 
 from _lcm.beartype_conf import MODEL_CONF
+from _lcm.typing import JSONValue, LoweringDescriptor
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import RegimeName
 
@@ -45,8 +46,11 @@ class LoweredPeriodCandidate:
     Current preparation may initialize a backend and allocate zero templates.
     """
 
-    manifest: MappingProxyType[str, object]
-    """Copied descriptor facts, including explicit unavailable measurements."""
+    manifest: MappingProxyType[str, LoweringDescriptor | JSONValue]
+    """Copied descriptor facts, including explicit unavailable measurements.
+
+    Construction freezes every value into a read-only `LoweringDescriptor`.
+    """
     stablehlo: bytes
     """Exact UTF-8 StableHLO text, with no normalization of source locations."""
 
@@ -62,9 +66,11 @@ class LoweredPeriodCandidate:
             raise ExecutionPlanningError("StableHLO must be owned immutable bytes.")
 
 
-def _freeze_descriptor(value: object) -> object:
+def _freeze_descriptor(value: LoweringDescriptor | JSONValue) -> LoweringDescriptor:
     """Copy immutable descriptor containers and reject every live payload type."""
-    if value is None or type(value) in (str, bool, int, bytes):
+    if value is None or (
+        isinstance(value, str | int | bytes) and type(value) in (str, bool, int, bytes)
+    ):
         return value
     if isinstance(value, Mapping):
         return MappingProxyType(

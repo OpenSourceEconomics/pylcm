@@ -14,13 +14,17 @@ lazily; this module also hosts the grid shape-invariance traits (`_grid_traits` 
 
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
-from typing import Any, Final, cast
+from typing import Final, cast
 
 import numpy as np
 
 from _lcm.grids.continuous import ContinuousGrid
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import Float1D
+from lcm.typing import Float1D, UserFunction
+
+# A string-keyed mapping nesting `L` leaves to any depth, such as a regime's
+# transitions keyed by target regime and then by name.
+type NodeTree[L] = Mapping[str, L | NodeTree[L]]
 
 
 class _Invariant:
@@ -35,14 +39,18 @@ class _Invariant:
 INVARIANT: Final[Hashable] = _Invariant()
 
 
-def resolve_node(*, node: object, age: float) -> object:
+def resolve_node(
+    *, node: UserFunction | AgeSpecializedFunction, age: float
+) -> UserFunction:
     """Return the concrete function for `age`, or the node if age-invariant."""
     if isinstance(node, AgeSpecializedFunction):
         return node.build(age)
     return node
 
 
-def node_signature(*, node: object, age: float) -> Hashable:
+def node_signature(
+    *, node: UserFunction | AgeSpecializedFunction, age: float
+) -> Hashable:
     """Fingerprint `node`'s closure at `age`.
 
     `INVARIANT` for a plain callable; `node.signature(age)` for a specialized node.
@@ -52,8 +60,8 @@ def node_signature(*, node: object, age: float) -> Hashable:
     return INVARIANT
 
 
-def _tree_signature(
-    *, tree: Mapping[str, object], leaf_signature: Callable[[object], Hashable]
+def _tree_signature[L](
+    *, tree: NodeTree[L], leaf_signature: Callable[[L], Hashable]
 ) -> Hashable:
     """Fingerprint a (possibly nested) mapping of nodes via `leaf_signature`.
 
@@ -65,7 +73,7 @@ def _tree_signature(
         value = tree[key]
         signature = (
             _tree_signature(
-                tree=cast("Mapping[str, object]", value), leaf_signature=leaf_signature
+                tree=cast("NodeTree[L]", value), leaf_signature=leaf_signature
             )
             if isinstance(value, Mapping)
             else leaf_signature(value)
@@ -74,7 +82,7 @@ def _tree_signature(
     return tuple(pairs)
 
 
-def tree_signature(*, tree: Mapping[str, object], age: float) -> Hashable:
+def tree_signature(*, tree: NodeTree[UserFunction], age: float) -> Hashable:
     """Fingerprint a (possibly nested) mapping of nodes at `age`.
 
     Recurse into `Mapping` values and emit sorted `(path, signature)` pairs, so a
@@ -90,7 +98,7 @@ class _NodeSignatureAtAge:
     age: int | float
     """The age every node is fingerprinted at."""
 
-    def __call__(self, node: object) -> Hashable:
+    def __call__(self, node: UserFunction | AgeSpecializedFunction) -> Hashable:
         return node_signature(node=node, age=self.age)
 
 
@@ -112,11 +120,11 @@ class _GridTraits:
     shape-invariance violation.
     """
 
-    cls: type
+    cls: type[ContinuousGrid]
     pass_points_at_runtime: bool
     n_points: int
     shape: tuple[int, ...] | None
-    dtype: np.dtype[Any] | None
+    dtype: np.dtype[np.generic] | None
     weak_type: bool | None
 
 

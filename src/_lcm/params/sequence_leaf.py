@@ -1,13 +1,20 @@
 """A Sequence wrapper that is a JAX pytree but not itself a Sequence."""
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import jax
 
+from _lcm.params.mapping_leaf import LeafEntry
+
 if TYPE_CHECKING:
-    from _lcm.typing import _ParamsLeaf
-    from lcm.typing import _UserParamsLeaf
+    from _lcm.typing import ParamsLeaf, PytreeChild
+    from lcm.typing import UserParamsLeaf
+else:
+    # `_lcm.typing` and `lcm.typing` import this module, so their aliases are not
+    # importable here at runtime; the claw admits any value in these slots.
+    type PytreeChild = object
+    type UserParamsLeaf = object
 
 
 class UserSequenceLeaf:
@@ -22,19 +29,14 @@ class UserSequenceLeaf:
     allowing JAX to trace through array values. Data is frozen to
     immutable containers on construction.
 
-    The constructor accepts `Sequence[Any]` at runtime so beartype's
-    O(n) per-leaf check doesn't fire on user-supplied scalars or arrays;
-    the precise leaf-type contract is enforced statically through the
-    `data` class-attribute annotation.
-
     """
 
     __slots__ = ("data",)
 
     if TYPE_CHECKING:
-        data: tuple[_UserParamsLeaf, ...]
+        data: tuple[LeafEntry, ...]
 
-    def __init__(self, data: Sequence[Any]) -> None:
+    def __init__(self, data: Sequence[LeafEntry]) -> None:
         from _lcm.utils.containers import _make_immutable  # noqa: PLC0415
 
         self.data = tuple(_make_immutable(v) for v in data)
@@ -68,20 +70,20 @@ class SequenceLeaf(UserSequenceLeaf):
     __slots__ = ()
 
     if TYPE_CHECKING:
-        data: tuple[_ParamsLeaf, ...]
+        data: tuple[ParamsLeaf, ...]
 
 
-def _user_flatten(leaf: UserSequenceLeaf) -> tuple[list[Any], None]:
-    return list(leaf.data), None
+def _user_flatten(leaf: UserSequenceLeaf) -> tuple[tuple[LeafEntry, ...], None]:
+    return leaf.data, None
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-def _user_unflatten(_aux: None, values: Sequence[Any]) -> UserSequenceLeaf:
+def _user_unflatten(_aux: None, values: Sequence[LeafEntry]) -> UserSequenceLeaf:
     return UserSequenceLeaf(values)
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-def _canonical_unflatten(_aux: None, values: Sequence[Any]) -> SequenceLeaf:
+def _canonical_unflatten(_aux: None, values: Sequence[LeafEntry]) -> SequenceLeaf:
     return SequenceLeaf(values)
 
 

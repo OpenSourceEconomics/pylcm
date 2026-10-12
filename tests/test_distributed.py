@@ -49,6 +49,7 @@ from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
 )
+from _lcm.typing import ArgumentTree
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
 from lcm import (
     AgeRange,
@@ -64,7 +65,7 @@ from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
 from lcm.solver_api import DISSOLUTION_FLAG
-from lcm.typing import ScalarFloat, ScalarInt
+from lcm.typing import RegimeName, ScalarFloat, ScalarInt
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
 )
@@ -541,7 +542,7 @@ def test_distributed_solve_matches_single_device_per_type():
 
 
 def _compiled_solve_kernel_hlo(
-    *, model: Model, regime_name: str, period: int, cell_width: int | None = None
+    *, model: Model, regime_name: RegimeName, period: int, cell_width: int | None = None
 ) -> str:
     """Lower and compile a regime's period kernel exactly as backward induction does.
 
@@ -1602,7 +1603,7 @@ def _make_two_source_partially_distributed_model() -> Model:
 
 
 @pytest.fixture(scope="module")
-def shared_transfer_executions() -> list[tuple[int, object]]:
+def shared_transfer_executions() -> list[tuple[int, ValueArtifactAddress]]:
     """Solve the partially distributed model once, recording each shared-transfer copy.
 
     Module-scoped so the two tests reading this fixture's result do not each
@@ -1610,12 +1611,12 @@ def shared_transfer_executions() -> list[tuple[int, object]]:
     """
     from _lcm.execution import value_transfer  # noqa: PLC0415
 
-    executed: list[tuple[int, object]] = []
+    executed: list[tuple[int, ValueArtifactAddress]] = []
     real = value_transfer.apply_value_transfer
 
     def count(
         *,
-        value: object,
+        value: ArgumentTree,
         transfer: value_transfer.ResolvedValueTransfer,
         on_materialized: MaterializedTransferObserver | None = None,
     ) -> jax.Array:
@@ -1633,7 +1634,7 @@ def shared_transfer_executions() -> list[tuple[int, object]]:
 
 @_skip_pytest_parallel
 def test_a_shared_transfer_is_copied_for_at_least_one_dispatch(
-    shared_transfer_executions: list[tuple[int, object]],
+    shared_transfer_executions: list[tuple[int, ValueArtifactAddress]],
 ) -> None:
     """The `retirement` value two sources share is copied at least once."""
     assert shared_transfer_executions
@@ -1641,14 +1642,17 @@ def test_a_shared_transfer_is_copied_for_at_least_one_dispatch(
 
 @_skip_pytest_parallel
 def test_a_transfer_two_sources_share_is_copied_once_per_period(
-    shared_transfer_executions: list[tuple[int, object]],
+    shared_transfer_executions: list[tuple[int, ValueArtifactAddress]],
 ) -> None:
     """The shared copy of `retirement`'s value is made once, not once per source."""
     assert len(shared_transfer_executions) == len(set(shared_transfer_executions))
 
 
 def _disjoint_device_shared_transfer() -> tuple[
-    BufferRegistry, PeriodTransferCache, tuple[object, object], jax.Array
+    BufferRegistry,
+    PeriodTransferCache,
+    tuple[ValueArtifactAddress, jax.sharding.Sharding],
+    jax.Array,
 ]:
     """Drive a two-consumer shared transfer whose copy shares no source buffer.
 

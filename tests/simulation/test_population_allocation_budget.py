@@ -1,7 +1,8 @@
 """Full-population setup must admit its concrete operations before dispatch."""
 
+from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any
+from typing import Never
 
 import jax
 import jax._src.core
@@ -14,6 +15,7 @@ from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.simulate import _compute_starting_periods, _initial_own_stakeholder
+from _lcm.typing import FootprintTree
 from lcm import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from tests.simulation.test_budget_lifecycle import (
@@ -27,11 +29,11 @@ class _UnadmittedAllocationError(AssertionError):
     """A concrete numerical dispatch occurred before a budget refusal."""
 
 
-def _forbid_concrete(*_args: object, **_kwargs: object) -> object:
+def _forbid_concrete[Ignored](*_args: Ignored, **_kwargs: Ignored) -> Never:
     raise _UnadmittedAllocationError("Population setup allocated before admission")
 
 
-def _memory(*, inputs: object, budget: int) -> SimulationMemory:
+def _memory(*, inputs: FootprintTree, budget: int) -> SimulationMemory:
     devices = (jax.devices()[0],)
     return SimulationMemory(
         budget_bytes=budget,
@@ -108,13 +110,18 @@ def test_public_population_setup_uses_its_admitted_pure_bodies(
     original = getattr(jnp, operation)
     traced: list[str] = []
 
-    def guard(first: object, *args: Any, **kwargs: Any) -> object:
-        if not isinstance(first, jax.core.Tracer):
-            raise _UnadmittedAllocationError(f"Unprofiled {operation} population setup")
-        traced.append(operation)
-        return original(first, *args, **kwargs)
+    def guarded[**P, R](original: Callable[P, R]) -> Callable[P, R]:
+        def guard(*args: P.args, **kwargs: P.kwargs) -> R:
+            if not isinstance(args[0], jax.core.Tracer):
+                raise _UnadmittedAllocationError(
+                    f"Unprofiled {operation} population setup"
+                )
+            traced.append(operation)
+            return original(*args, **kwargs)
 
-    monkeypatch.setattr(jnp, operation, guard)
+        return guard
+
+    monkeypatch.setattr(jnp, operation, guarded(original))
     assert model.ages is not None
     sentinel_args = (
         (initial["regime_id"], -1)

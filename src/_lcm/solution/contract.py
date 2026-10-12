@@ -34,7 +34,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, cast, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.processed import ProcessedConstraintsMapping
@@ -73,7 +73,9 @@ from _lcm.typing import (
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
+    PytreeValue,
     QAndFFunction,
+    QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
@@ -124,14 +126,10 @@ if TYPE_CHECKING:
     from _lcm.regime_building.V import VInterpolationInfo
     from _lcm.regime_law import RegimeLaw
 
-    RegimeLawsMapping: TypeAlias = Mapping[RegimeName, RegimeLaw]  # noqa: UP040
+    type RegimeLawsMapping = Mapping[RegimeName, RegimeLaw]
 
-    UserRegimesMapping: TypeAlias = Mapping[  # noqa: UP040
-        RegimeName, FinalizedUserRegime
-    ]
-    RegimeToVInterpolationInfo: TypeAlias = MappingProxyType[  # noqa: UP040
-        RegimeName, VInterpolationInfo
-    ]
+    type UserRegimesMapping = Mapping[RegimeName, FinalizedUserRegime]
+    type RegimeToVInterpolationInfo = MappingProxyType[RegimeName, VInterpolationInfo]
 else:
     # Resolving the element types closes a cycle via the `lcm.solvers` façade,
     # which re-exports `Solver` from this module. ty reads the precise types
@@ -195,7 +193,7 @@ class ConstraintRouteContext:
     variables: Variables
     """The phase's states and actions, with kind and topology tags."""
 
-    flat_param_names: frozenset[str]
+    flat_param_names: frozenset[QualifiedName]
     """Names supplied as parameters rather than computed."""
 
     active_periods: tuple[int, ...]
@@ -391,7 +389,7 @@ class SolverBuildContext:
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]]
     """Immutable mapping of regime names to their active period tuples."""
 
-    flat_param_names: frozenset[str]
+    flat_param_names: frozenset[QualifiedName]
     """Frozenset of flat parameter names for the regime."""
 
     regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]]
@@ -639,7 +637,7 @@ class PeriodKernel(Protocol):
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1089,10 +1087,15 @@ class TwoMarginSolver(Solver):
         """Return an immutable solver copy bound to both margins."""
 
 
-_BOUND_TYPES: dict[tuple[type, type], type] = {}
+_BOUND_TYPES: dict[tuple[type[Solver], type[Solver]], type[Solver]] = {}
 
 
-def bind_roles(*, solver: Solver, role_type: type, **roles: object) -> Solver:
+def bind_roles(
+    *,
+    solver: Solver,
+    role_type: type[Solver],
+    **roles: StateOrActionName | FunctionName | Solver | None,
+) -> Solver:
     """Return a copy of `solver` carrying `roles`, keeping its own type.
 
     The regime resolves a solver's DAG role names and hands them back to the

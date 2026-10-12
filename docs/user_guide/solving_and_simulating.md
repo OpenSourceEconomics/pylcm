@@ -472,8 +472,11 @@ df = result.to_dataframe(additional_targets=["utility", "consumption"])
 # All available targets
 df = result.to_dataframe(additional_targets="all")
 
+# The published target tuple can be passed directly
+df = result.to_dataframe(additional_targets=result.available_targets)
+
 # See what's available
-result.available_targets  # ['consumption', 'earnings', 'utility', ...]
+result.available_targets  # ('consumption', 'earnings', 'utility', ...)
 ```
 
 Each target is computed for regimes where it exists; rows from other regimes get NaN.
@@ -489,9 +492,9 @@ Returns discrete variables as raw integer codes instead of categorical labels.
 ### Metadata
 
 ```python
-result.regime_names  # ['retirement', 'working_life']
-result.state_names  # ['health', 'wealth']
-result.action_names  # ['consumption', 'work']
+result.regime_names  # ('retirement', 'working_life')
+result.state_names  # ('health', 'wealth')
+result.action_names  # ('consumption', 'work')
 result.n_periods  # 50
 result.n_subjects  # 1000
 ```
@@ -512,9 +515,9 @@ result.n_subjects  # 1000
 Two keywords select what that Feather table holds; neither affects the other three
 artifacts. `save(directory=..., df_additional_targets=...)` is passed through to
 `to_dataframe`: `None` (the default) writes only the base columns (states, actions,
-regime, period, `V_arr`, and age for age models), a list of target names bakes those DAG
-outputs in, and `"all"` includes every available target --- which can grow the file by
-an order of magnitude on a model with many DAG leaves. `df_use_labels=True` (the
+regime, period, `V_arr`, and age for age models), a sequence of target names bakes those
+DAG outputs in, and `"all"` includes every available target --- which can grow the file
+by an order of magnitude on a model with many DAG leaves. `df_use_labels=True` (the
 default) stores discrete variables as pandas `Categorical` labels; `False` stores
 integer codes.
 

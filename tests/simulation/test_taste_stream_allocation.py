@@ -4,7 +4,6 @@ import gc
 import weakref
 from collections.abc import Callable
 from functools import partialmethod
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -21,11 +20,14 @@ from _lcm.simulation.taste_stream import (
     create_taste_shock_key,
     generate_taste_shock_keys,
 )
+from _lcm.typing import FootprintTree, PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 
 
 def _memory(
-    *, roots: object = (), operations: ProfiledSimulationOperations | None = None
+    *,
+    roots: FootprintTree = (),
+    operations: ProfiledSimulationOperations | None = None,
 ) -> SimulationMemory:
     devices = (jax.devices()[0],)
     return SimulationMemory(
@@ -58,13 +60,13 @@ def _invoke(
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _record_dispatch(
+def _record_dispatch[Result](
     self: jax.stages.Compiled,
     *,
-    original: Callable[..., object],
+    original: Callable[..., Result],
     calls: list[jax.stages.Compiled],
-    **arguments: Any,
-) -> object:
+    **arguments: PytreeValue,
+) -> Result:
     calls.append(self)
     return original(self, **arguments)
 

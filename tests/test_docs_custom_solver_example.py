@@ -10,7 +10,7 @@ is executed here instead of read.
 import ast
 import re
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -26,6 +26,7 @@ from lcm import (
     Transition,
     categorical,
 )
+from lcm.solvers import Solver
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
 
 _PAGE = Path(__file__).parents[1] / "docs" / "reference" / "custom_solvers.md"
@@ -54,9 +55,9 @@ def _documented_solver_source() -> str:
 
 
 @pytest.fixture(scope="module")
-def documented() -> dict[str, Any]:
+def documented() -> DocumentationNamespace:
     """Execute the documented example and return the names it defines."""
-    namespace: dict[str, Any] = {}
+    namespace: DocumentationNamespace = {}
     exec(compile(_documented_solver_source(), str(_PAGE), "exec"), namespace)  # noqa: S102
     return namespace
 
@@ -94,14 +95,14 @@ def test_the_documented_fence_imports_nothing_private() -> None:
 
 
 def test_the_documented_page_defines_the_solver_it_describes(
-    documented: dict[str, Any],
+    documented: DocumentationNamespace,
 ) -> None:
     """The example defines `WealthSolver` and the kernel it dispatches."""
     assert {"WealthSolver", "WealthKernel", "wealth_value"} <= set(documented)
 
 
 def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
-    documented: dict[str, Any],
+    documented: DocumentationNamespace,
 ) -> None:
     """Every alive period's value equals the regime's own wealth grid."""
     model = Model(
@@ -110,7 +111,7 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _next_wealth},
                 functions={"utility": _utility},
-                solver=documented["WealthSolver"](),
+                solver=cast("type[Solver]", documented["WealthSolver"])(),
             ),
             "dead": Regime(
                 states={"wealth": _WEALTH},
@@ -137,3 +138,6 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
         np.testing.assert_array_equal(
             np.asarray(solution.values[period]["alive"]), expected
         )
+
+
+type DocumentationNamespace = dict[str, object]  # noqa: PAN001 - exec creates modules, classes, functions and builtins in one namespace

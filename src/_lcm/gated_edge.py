@@ -8,7 +8,6 @@ off-grid contract. It lives here rather than in the public package because
 nothing constructs it — it is derived.
 """
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
@@ -33,8 +32,8 @@ def gated_edge_from_gate(gate: Gate) -> GatedEdge:
     """
     return GatedEdge(
         gate=gate.predicate,
-        legs=gate.routes,
-        gate_refs=gate.references,
+        legs=ensure_containers_are_immutable(gate.routes),
+        gate_refs=ensure_containers_are_immutable(gate.references),
         off_grid=gate.off_grid,
     )
 
@@ -103,13 +102,13 @@ class GatedEdge:
     gate: UserFunction
     """Boolean gate on the target grid, evaluated in the target fold's context."""
 
-    legs: Mapping[str, StakeholderRoute]
+    legs: MappingProxyType[str, StakeholderRoute]
     """One `StakeholderRoute` per source stakeholder.
 
     A singleton source declares exactly one, under any key.
     """
 
-    gate_refs: Mapping[str, ProjectedRegimeValue] = field(
+    gate_refs: MappingProxyType[str, ProjectedRegimeValue] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Same-period reference values the `gate` reads (projected from the target
@@ -128,12 +127,6 @@ class GatedEdge:
       continuous state. Declare it where a straddled gate would be an economic
       error rather than an approximation.
     """
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "legs", ensure_containers_are_immutable(self.legs))
-        object.__setattr__(
-            self, "gate_refs", ensure_containers_are_immutable(self.gate_refs)
-        )
 
     def reference_regimes(
         self, *, phases: tuple[Literal["solve", "simulate"], ...]
