@@ -879,7 +879,8 @@ def test_unmeetable_execution_budget_fails_closed_before_solving(
         jax.stages.Compiled, "__call__", _refuse_unadmitted_compiled_dispatch
     )
     with pytest.raises(
-        ExecutionPlanningError, match=r"keeps \d+ bytes resident.*1-byte budget"
+        ExecutionPlanningError,
+        match=r"requires \d+ bytes on .* against a 1-byte budget",
     ):
         model.solve(params=params, log_level="off")
 
