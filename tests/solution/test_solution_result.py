@@ -3,7 +3,7 @@
 import ast
 import hashlib
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType, ModuleType
@@ -13,7 +13,9 @@ import cloudpickle
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
+import xarray as xr
 from pandas.testing import assert_frame_equal
 
 import lcm.model as model_module
@@ -72,6 +74,7 @@ from lcm.typing import (
     ActionName,
     FloatND,
     IntND,
+    RegimeName,
     ScalarInt,
     UserInitialConditions,
     UserParams,
@@ -2171,3 +2174,179 @@ def test_value_frame_categorical_state_named_stakeholder_keeps_its_domain(
         assert frame["stakeholder"].cat.ordered is ordered
         codes = candidate.value_frame(period=0, regime="alive", use_labels=False)
         assert codes.to_dict("list") == {"stakeholder": [0, 1], "V": [1.0, 3.0]}
+
+
+def _reference_value_frame(
+    *, result: SolutionResult, period: int, regime: RegimeName, use_labels: bool
+) -> pd.DataFrame:
+    """Build the long value frame directly from the stored array and schema."""
+    value = np.asarray(result.value(period=period, regime=regime))
+    schema = result.metadata.value_schemas[period, regime]
+    frame = pd.DataFrame(index=pd.RangeIndex(value.size))
+    for index, axis in enumerate(schema.named_axes):
+        repeats = int(np.prod(value.shape[index + 1 :], dtype=np.int64))
+        tiles = int(np.prod(value.shape[:index], dtype=np.int64))
+        coordinates = np.tile(np.repeat(axis.coordinates, repeats), tiles)
+        frame[axis.name] = coordinates
+        domain = schema.categorical_domains.get(axis.name)
+        if use_labels and domain is not None:
+            frame[axis.name] = pd.Categorical.from_codes(
+                pd.Index(domain.codes).get_indexer(pd.Index(coordinates)),
+                categories=pd.Index(domain.labels),
+                ordered=domain.ordered,
+            )
+    frame["V"] = value.reshape(-1).copy()
+    return frame
+
+
+def _solve_labelled_model() -> SolutionResult:
+    @categorical(ordered=True)
+    class Kind:
+        low: ScalarInt
+        high: ScalarInt
+
+    @categorical(ordered=False)
+    class Alive:
+        alive: ScalarInt
+
+    def utility(*, wealth: FloatND, kind: ScalarInt) -> FloatND:
+        return wealth + 10 * kind
+
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={
+                    "wealth": LinSpacedGrid(start=1, stop=3, n_points=3),
+                    "kind": DiscreteGrid(Kind),
+                },
+                functions={"utility": utility},
+            )
+        },
+        ages=AgeGrid(exact_values=(18,)),
+        edges={},
+        initial_nodes=((18, "alive"),),
+        regime_id_class=Alive,
+    )
+    return model.solve(params={}, log_level="off")
+
+
+def _solve_scalar_and_collective_model() -> SolutionResult:
+    @categorical(ordered=False)
+    class Household:
+        alone: ScalarInt
+        couple: ScalarInt
+
+    model = Model(
+        regimes={
+            "alone": Regime(functions={"utility": lambda: 7.0}),
+            "couple": Regime(
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": lambda: 3.0, "m": lambda: 5.0}
+                    )
+                }
+            ),
+        },
+        ages=AgeGrid(exact_values=(18,)),
+        edges={},
+        initial_nodes=((18, "alone"), (18, "couple")),
+        regime_id_class=Household,
+    )
+    return model.solve(params={}, log_level="off")
+
+
+def test_value_array_labels_dimensions_with_state_names() -> None:
+    """Dimensions are the stored value axes, in schema order."""
+    result = _solve_labelled_model()
+    array = result.value_array(period=0, regime="alive")
+    assert array.dims == result.metadata.value_schemas[0, "alive"].axis_names
+
+
+def test_value_array_carries_grid_nodes_as_coordinates() -> None:
+    """Continuous states carry the resolved grid nodes as coordinates."""
+    result = _solve_labelled_model()
+    array = result.value_array(period=0, regime="alive")
+    np.testing.assert_array_equal(array["wealth"], [1.0, 2.0, 3.0])
+
+
+@pytest.mark.parametrize(
+    ("use_labels", "expected"), [(True, ["low", "high"]), (False, [0, 1])]
+)
+def test_value_array_categorical_coordinates(
+    *, use_labels: bool, expected: list[str] | list[int]
+) -> None:
+    """Discrete states carry labels in declaration order, or integer codes."""
+    result = _solve_labelled_model()
+    array = result.value_array(period=0, regime="alive", use_labels=use_labels)
+    assert array["kind"].to_numpy().tolist() == expected
+
+
+def test_value_array_categorical_coordinate_keeps_ordering() -> None:
+    """A labelled discrete coordinate is an ordered categorical when declared so."""
+    result = _solve_labelled_model()
+    index = result.value_array(period=0, regime="alive").indexes["kind"]
+    assert isinstance(index, pd.CategoricalIndex)
+    assert index.ordered
+
+
+def test_value_array_selects_a_curve_by_label() -> None:
+    """Selecting a discrete label returns the value curve over the other states."""
+    result = _solve_labelled_model()
+    curve = result.value_array(period=0, regime="alive").sel(kind="high")
+    np.testing.assert_array_equal(curve, [11.0, 12.0, 13.0])
+
+
+def test_value_array_is_backed_by_the_stored_value() -> None:
+    """The labelled array keeps the solution's JAX value instead of a host copy."""
+    result = _solve_labelled_model()
+    array = result.value_array(period=0, regime="alive")
+    assert isinstance(array.data, jax.Array)
+
+
+def test_value_array_scalar_regime_has_no_dimensions() -> None:
+    """A regime without states yields a zero-dimensional array."""
+    result = _solve_scalar_and_collective_model()
+    array = result.value_array(period=0, regime="alone")
+    assert (array.dims, float(array)) == ((), 7.0)
+
+
+def test_value_array_collective_regime_labels_stakeholders() -> None:
+    """A collective regime's trailing dimension is labelled by stakeholder."""
+    result = _solve_scalar_and_collective_model()
+    curve = result.value_array(period=0, regime="couple").sel(stakeholder="m")
+    assert float(curve) == 5.0
+
+
+@pytest.mark.parametrize("use_labels", [True, False])
+def test_value_array_survives_save_and_load(
+    *, use_labels: bool, tmp_path: Path
+) -> None:
+    """A loaded result yields an identical labelled array."""
+    result = _solve_labelled_model()
+    restored = load_solution(path=result.save(path=tmp_path / "labelled"))
+    xr.testing.assert_identical(
+        result.value_array(period=0, regime="alive", use_labels=use_labels),
+        restored.value_array(period=0, regime="alive", use_labels=use_labels),
+    )
+
+
+@pytest.mark.parametrize(
+    ("solve", "regime"),
+    [
+        (_solve_labelled_model, "alive"),
+        (_solve_scalar_and_collective_model, "alone"),
+        (_solve_scalar_and_collective_model, "couple"),
+    ],
+)
+@pytest.mark.parametrize("use_labels", [True, False])
+def test_value_frame_matches_direct_construction(
+    *, solve: Callable[[], SolutionResult], regime: RegimeName, use_labels: bool
+) -> None:
+    """The long frame equals one built directly from the array and its schema."""
+    result = solve()
+    assert_frame_equal(
+        result.value_frame(period=0, regime=regime, use_labels=use_labels),
+        _reference_value_frame(
+            result=result, period=0, regime=regime, use_labels=use_labels
+        ),
+    )
