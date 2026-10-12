@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "0adb89e679c7473cedc826faedc6152695f392588cbda7a7815f7e2eb2dd1ec3",
+  "source_inventory_sha256": "9fbd3d623111916c208218ab853b392e2deefcae282b12eb560f3702a4805e36",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -230,7 +230,7 @@
     },
     {
       "path": "src/_lcm/simulation/forward_program_profiles.py",
-      "sha256": "3815a4dea8b98951910c5a5cde224edf5493bd540776ad93e48ee34aca8893cb"
+      "sha256": "8ff060d5b48b2387e8c4ed417345f74d362ed6d880f1b2a330f93495d73bcb29"
     },
     {
       "path": "src/_lcm/simulation/gated_routing.py",
