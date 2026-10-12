@@ -8,7 +8,14 @@ import jax
 
 from _lcm.engine import StateActionSpace
 from _lcm.typing import PRNGKeyND, PytreeValue, QualifiedName, ShapeDtypePytree
-from lcm.typing import ReferenceName, ScalarFloat, ScalarInt, StateName
+from lcm.typing import (
+    ContinuousState,
+    DiscreteState,
+    ReferenceName,
+    ScalarFloat,
+    ScalarInt,
+    StateName,
+)
 
 
 def decision_arguments(
@@ -39,8 +46,8 @@ def decision_arguments(
 
 def process_node_arguments(
     *, base_spaces: Mapping[str, StateActionSpace]
-) -> dict[ReferenceName, PytreeValue]:
-    """Supply the already-resolved solve axes; transition signatures select users."""
+) -> dict[ReferenceName, ContinuousState | DiscreteState]:
+    """Supply the already-resolved solve axes as shared transition operands."""
     return {
         f"nodes_{target}__next_{state}": nodes
         for target, space in base_spaces.items()

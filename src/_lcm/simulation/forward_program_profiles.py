@@ -446,10 +446,12 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             states=states,
             carried=carried,
             process_nodes=(
-                _shared_tree(
-                    tree=process_node_arguments(base_spaces=base_spaces),
-                    devices=devices,
-                )
+                {
+                    key: _placed_abstract(leaf=nodes, sharding=shared)
+                    for key, nodes in process_node_arguments(
+                        base_spaces=base_spaces
+                    ).items()
+                }
                 if family == "transition"
                 else None
             ),
