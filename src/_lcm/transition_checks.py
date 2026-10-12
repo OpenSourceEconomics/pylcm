@@ -421,7 +421,8 @@ def validate_off_grid_transitions(
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Count raw continuous landings on feasible, positive-support grid cells."""
-    checked = validation_enabled(logger)
+    # Count-only diagnostics can expand simulation-only axes during solve.
+    checked = validation_enabled(logger) and logger.isEnabledFor(logging.WARNING)
     for period in range(ages.n_periods - 1):
         for name, regime in regimes.items():
             for law, reachability, realized in _regime_laws_at_period(

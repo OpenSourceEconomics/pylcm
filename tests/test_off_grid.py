@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm import transition_checks
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.off_grid import count_off_grid
 from _lcm.regime_building.shock_average import average_over_shock
@@ -405,6 +406,26 @@ def test_explicit_raise_is_mandatory_at_every_runtime_and_output_setting(
             log_level=log_level,
             runtime_checks=runtime_checks,
         )
+
+
+@pytest.mark.parametrize("off_grid", ["extrapolate", "clip_lookup", "clip_state"])
+def test_silent_solve_does_not_materialize_unreportable_off_grid_counts(
+    *, off_grid: OffGrid, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hidden count diagnostics must not allocate a full phase Cartesian grid."""
+
+    def reject_count_sweep(**_kwargs) -> None:
+        pytest.fail("Silent solve expanded an optional off-grid diagnostic grid")
+
+    monkeypatch.setattr(
+        transition_checks, "_off_grid_target_counts", reject_count_sweep
+    )
+    solution = _model(off_grid=off_grid).solve(
+        params={"discount_factor": 1.0, "reward": 2.0},
+        log_level="off",
+        runtime_checks=True,
+    )
+    assert np.isfinite(solution.values[0]["alive"]).all()
 
 
 @pytest.mark.parametrize("off_grid", ["extrapolate", "clip_lookup", "clip_state"])
