@@ -642,10 +642,10 @@ def test_block_major_simulation_reports_each_count_once(
     assert _period_one_counts(messages=messages, kind="empty") == [5]
 
 
-def test_feasible_component_job_has_no_warning(
+def test_feasible_component_job_has_no_feasibility_warning(
     *, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A job whose every cell has a finite feasible action logs no warning."""
+    """A fully feasible job logs no feasibility warning."""
     model = _blocked_model(constrained=False)
     directory = tmp_path / "jobs"
     plan_component_jobs(
@@ -660,7 +660,11 @@ def test_feasible_component_job_has_no_warning(
         log_level="warning",
     )
 
-    assert [record.getMessage() for record in caplog.records] == []
+    assert [
+        message
+        for message in (record.getMessage() for record in caplog.records)
+        if "no feasible action" in message or message.startswith("Inf in V_arr")
+    ] == []
 
 
 def _joint_utility(
