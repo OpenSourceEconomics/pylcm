@@ -15,12 +15,14 @@ from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    LinSpacedGrid,
     Model,
     NormalIIDProcess,
     Phased,
     Regime,
     StateConditioned,
     TauchenAR1Process,
+    UniformIIDProcess,
     fixed_transition,
 )
 from lcm.exceptions import (
@@ -28,7 +30,7 @@ from lcm.exceptions import (
     PyLCMError,
     RegimeInitializationError,
 )
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND, UserParams
 from tests.test_models.processes import Health, RegimeId
 
 
@@ -380,3 +382,165 @@ def test_nonfinite_simulation_law_fails_with_output_disabled() -> None:
             log_level="off",
             runtime_checks=True,
         )
+
+
+def _local_draw_utility(z: ContinuousState) -> FloatND:
+    return z**2
+
+
+def _terminal_utility(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _wealth_from_draw(next_z: ContinuousState) -> FloatND:
+    return next_z
+
+
+def _drawn_z(next_z: ContinuousState) -> FloatND:
+    return next_z
+
+
+def _wealth_from_helper(drawn_z: FloatND) -> FloatND:
+    return drawn_z
+
+
+def _local_draw_model(
+    *, process: UniformIIDProcess | Phased, via_helper: bool = False
+) -> Model:
+    """Build a model whose terminal edge consumes `next_z` but drops `z`."""
+    functions = {"utility": _local_draw_utility}
+    if via_helper:
+        functions["drawn_z"] = _drawn_z
+    return Model(
+        regimes={
+            "alive": Regime(
+                states={"z": process},
+                functions=functions,
+                state_transitions={
+                    "wealth": _wealth_from_helper if via_helper else _wealth_from_draw
+                },
+            ),
+            "dead": Regime(
+                states={"wealth": LinSpacedGrid(start=0.0, stop=12.0, n_points=13)},
+                functions={"utility": _terminal_utility},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
+        regime_id_class=RegimeId,
+        fixed_params={"discount_factor": 0.9},
+    )
+
+
+def _local_draw_terminal_wealth(*, model: Model, params: UserParams) -> np.ndarray:
+    frame = model.simulate(
+        params=params,
+        initial_conditions={
+            "z": jnp.array([0.25, 0.5, 1.0, 1.75]),
+            "age": jnp.zeros(4),
+            "regime_id": jnp.full(4, RegimeId.alive, dtype=jnp.int32),
+        },
+        seed=537,
+        log_level="off",
+    ).to_dataframe(use_labels=False)
+    wealth = frame.loc[frame["period"] == 1, "wealth"].to_numpy()
+    assert wealth.shape == (4,)
+    return wealth
+
+
+def test_ordinary_local_draw_stays_on_the_process_support() -> None:
+    """A draw consumed on an edge dropping the process lands on its nodes."""
+    process = UniformIIDProcess(n_points=3, start=0.0, stop=2.0)
+    got = _local_draw_terminal_wealth(
+        model=_local_draw_model(process=process), params={}
+    )
+    assert np.isin(got, np.asarray(process.get_gridpoints())).all()
+
+
+def test_phased_local_draw_solves_with_the_solve_law() -> None:
+    """Value functions of a phased model equal those of its solve law alone."""
+    solve = UniformIIDProcess(n_points=3, start=0.0, stop=2.0)
+    simulate = UniformIIDProcess(n_points=3, start=10.0, stop=12.0)
+    ordinary = _local_draw_model(process=solve).solve(params={}, log_level="off")
+    phased = _local_draw_model(process=Phased(solve=solve, simulate=simulate)).solve(
+        params={}, log_level="off"
+    )
+    assert all(
+        np.array_equal(values, phased.values[period][name])
+        for period, regimes in ordinary.values.items()
+        for name, values in regimes.items()
+    )
+
+
+@pytest.mark.parametrize("via_helper", [False, True])
+@pytest.mark.parametrize(
+    ("solve_size", "simulate_size", "start", "stop"),
+    [
+        (3, 3, 10.0, 12.0),
+        (3, 2, 10.0, 12.0),
+        (3, 4, 10.0, 12.0),
+        (2, 2, 4.0, 6.0),
+        (4, 2, 4.0, 12.0),
+    ],
+)
+def test_phased_local_draw_lands_on_the_simulation_support(
+    *, solve_size: int, simulate_size: int, start: float, stop: float, via_helper: bool
+) -> None:
+    """A transition-local draw follows `Phased.simulate`, whatever its size."""
+    solve = UniformIIDProcess(n_points=solve_size, start=0.0, stop=2.0)
+    simulate = UniformIIDProcess(n_points=simulate_size, start=start, stop=stop)
+    model = _local_draw_model(
+        process=Phased(solve=solve, simulate=simulate), via_helper=via_helper
+    )
+    got = _local_draw_terminal_wealth(model=model, params={})
+    assert np.isin(got, np.asarray(simulate.get_gridpoints())).all()
+
+
+@pytest.mark.parametrize(("start", "stop"), [(10.0, 12.0), (4.0, 6.0)])
+def test_local_draw_uses_simulation_only_runtime_support(
+    *, start: float, stop: float
+) -> None:
+    """Runtime parameters of the simulation law set the local draw's support."""
+    solve = UniformIIDProcess(n_points=2, start=0.0, stop=2.0)
+    model = _local_draw_model(
+        process=Phased(solve=solve, simulate=UniformIIDProcess(n_points=2))
+    )
+    got = _local_draw_terminal_wealth(
+        model=model, params={"alive": {"z": {"start": start, "stop": stop}}}
+    )
+    assert np.isin(got, np.array([start, stop])).all()
+
+
+def test_retained_model_local_draw_follows_new_runtime_parameters() -> None:
+    """Re-simulating one model with shifted runtime bounds shifts every draw."""
+    solve = UniformIIDProcess(n_points=2, start=0.0, stop=2.0)
+    model = _local_draw_model(
+        process=Phased(solve=solve, simulate=UniformIIDProcess(n_points=2))
+    )
+    first = _local_draw_terminal_wealth(
+        model=model, params={"alive": {"z": {"start": 10.0, "stop": 12.0}}}
+    )
+    second = _local_draw_terminal_wealth(
+        model=model, params={"alive": {"z": {"start": 4.0, "stop": 6.0}}}
+    )
+    np.testing.assert_array_equal(second, first - 6.0)
+
+
+def test_simulation_only_runtime_parameters_leave_solve_values_unchanged() -> None:
+    """Parameters bound only by `Phased.simulate` do not move the solution."""
+    solve = UniformIIDProcess(n_points=2, start=0.0, stop=2.0)
+    model = _local_draw_model(
+        process=Phased(solve=solve, simulate=UniformIIDProcess(n_points=2))
+    )
+    first = model.solve(
+        params={"alive": {"z": {"start": 10.0, "stop": 12.0}}}, log_level="off"
+    )
+    second = model.solve(
+        params={"alive": {"z": {"start": 4.0, "stop": 6.0}}}, log_level="off"
+    )
+    assert all(
+        np.array_equal(values, second.values[period][name])
+        for period, regimes in first.values.items()
+        for name, values in regimes.items()
+    )

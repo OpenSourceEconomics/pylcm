@@ -5774,8 +5774,10 @@ def _process_regime_core(
     source_draw_grids = _source_draws_read_by_target_laws(
         flat_nested_transitions=flat_nested_transitions,
         reads_by_law=reads_by_law,
+        # `state_grids` only enumerates the source's states; the law comes from
+        # `all_grids`, which carries the active phase's declaration of each one.
         source_random_grids={
-            state: grid
+            state: all_grids[source_regime_name][state]
             for state, grid in state_grids[source_regime_name].items()
             if (
                 state in carried_processes
