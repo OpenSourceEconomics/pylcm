@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType, NoneType
-from typing import TypedDict, TypeGuard
+from typing import TypedDict, TypeGuard, get_args
 
 import jax
 import numpy as np
@@ -42,7 +42,7 @@ from _lcm.solution.public_period_capture import (
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, HostArray, JSONValue, RegimeName
-from _lcm.utils.logging import get_logger
+from _lcm.utils.logging import LogLevel, RunPolicy, get_logger
 from lcm.period_capture import CapturedPeriodReplay
 
 
@@ -140,6 +140,7 @@ class _CaptureMetadata(TypedDict):
     admission: dict[str, _AdmissionRecord]
     optimized_hlo: dict[str, dict[str, str]]
     retain_replay: bool
+    call_policy: RunPolicy
 
 
 type _EntryCheck = Callable[[JSONValue], bool]
@@ -157,6 +158,7 @@ def replay_public_period(
     model_fingerprint: str,
     params_fingerprint: str,
     require_reference: bool,
+    validate_selection: Callable[[], None],
 ) -> CapturedPeriodReplay:
     """Bind, compile and validate one captured period before dispatching it."""
     record = load_period_capture(directory=directory)
@@ -188,6 +190,10 @@ def replay_public_period(
     entry_metadata, arrays, _ = read_period_archive(path=directory / "entry.h5")
     if entry_metadata != metadata:
         raise ValueError("Period capture changed while being read.")
+    # Parameter structure was checked by Model. Defer only optional numerical
+    # selection checks until the checksummed capture identity and policy bind.
+    if metadata["call_policy"]["runtime_checks"]:
+        validate_selection()
     layouts = _decode_layouts(metadata["layouts"])
     devices = placed_devices_for_ids(
         submesh_device_ids=layouts.device_ids, visible_device_ids=execution.device_ids
@@ -201,6 +207,7 @@ def replay_public_period(
         period=period,
         ages=ages,
         retain_replay=metadata["retain_replay"],
+        call_policy=metadata["call_policy"],
     )
     kernel_kwargs = _restore_array_leaves(
         kernel_kwargs=kernel_kwargs,
@@ -281,6 +288,7 @@ def _restore_public_inputs(
     period: int,
     ages: TimeAxis,
     retain_replay: bool,
+    call_policy: RunPolicy,
 ) -> _HostKernelKwargs:
     """Validate persisted values against fresh topology and rebuild adapter inputs."""
     topology = _get_regime_V_shapes_and_shardings(
@@ -320,7 +328,10 @@ def _restore_public_inputs(
         "next_regime_to_continuation": MappingProxyType({}),
         "next_edge_to_V_arr": MappingProxyType({}),
         "period_solution": values["period_solution"],
-        "logger": get_logger(log_level="off"),
+        "logger": get_logger(
+            log_level=call_policy["log_level"],
+            runtime_checks=call_policy["runtime_checks"],
+        ),
         "retain_replay": retain_replay,
         "selected_artifact_keys": frozenset(),
     }
@@ -428,6 +439,28 @@ def _is_capture_metadata(raw: JSONValue, /) -> TypeGuard[_CaptureMetadata]:
             "admission": _dict_of(value=_is_admission_record),
             "optimized_hlo": _dict_of(value=_dict_of(value=_exact(str))),
             "retain_replay": _exact(bool),
+            "call_policy": _is_run_policy,
+        },
+    )
+
+
+def _is_run_policy(raw: JSONValue, /) -> TypeGuard[RunPolicy]:
+    """Whether `raw` is a call policy; a missing, extra or malformed entry is refused.
+
+    A capture without an explicit policy is refused rather than given a default.
+    """
+    if isinstance(raw, dict) and (extra := set(raw) - set(RunPolicy.__annotations__)):
+        unknown = sorted(str(key) for key in extra)
+        msg = f"The period capture's call_policy record holds unknown {unknown}."
+        raise ValueError(msg)
+    return _has_entries(
+        raw=raw,
+        record="call_policy",
+        checks={
+            "log_level": lambda value: (
+                type(value) is str and value in get_args(LogLevel.__value__)
+            ),
+            "runtime_checks": _exact(bool),
         },
     )
 
