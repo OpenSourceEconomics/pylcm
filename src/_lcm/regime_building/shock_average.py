@@ -32,7 +32,7 @@ from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
 from _lcm.additive_shock_transition import AdditiveShockTransition
-from _lcm.grids.continuous import IrregSpacedGrid
+from _lcm.grids.continuous import IrregSpacedGrid, LinSpacedGrid
 from _lcm.probability import is_represented_zero
 from _lcm.regime_building.V import (
     VInterpolationInfo,
@@ -249,8 +249,9 @@ def plan_shock_average(
         co_map_state_names: States whose axes are sliced off the value array.
 
     Returns:
-        The plan, or `None` when no law of the bundle is an additive shock
-        transition.
+        The plan, or `None` when no law is an additive shock transition or the
+        target's coordinate map has no established physical piecewise-linear
+        interpolation and end-segment extrapolation contract.
 
     Raises:
         ModelInitializationError: If the declaration cannot be averaged exactly.
@@ -337,6 +338,17 @@ def plan_shock_average(
                 f"{sorted(conditioner_reads & set(lottery_variables))}"
             ),
         )
+    # Merged physical knots preserve the ordinary reader only when the complete
+    # coordinate geometry is linear between these nodes and uses the endpoint
+    # segments outside them. LogSpacedGrid has further virtual geometric cells;
+    # arbitrary subclasses can change coordinate semantics as well. Keep the
+    # ordinary law/draw reader for every grid outside this explicit contract.
+    # All declaration/dependency validation above still runs before fallback.
+    if type(v_interpolation_info.continuous_states[state_name]) not in (
+        LinSpacedGrid,
+        IrregSpacedGrid,
+    ):
+        return None
     return ShockAveragePlan(
         law=law,
         law_name=law_name,
