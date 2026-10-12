@@ -11,13 +11,18 @@ runs it unchanged, and a solver that needs structure refuses it rather than
 accepting and ignoring it.
 """
 
+import inspect
+from collections.abc import Callable
+from typing import Annotated, Literal
+
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
 
+from _lcm.typing import AnnotationForm
 from lcm import ref
 from lcm.condition import Condition, implies
-from lcm.typing import FloatND
+from lcm.typing import BoolND, FloatND
 
 
 def test_ref_comparison_reads_back_as_the_declaration_written() -> None:
@@ -124,6 +129,46 @@ def test_an_opaque_callable_becomes_a_condition_that_still_evaluates() -> None:
     )
 
     assert_array_equal(got, jnp.array([True, False]))
+
+
+# Each probe has one annotated parameter and no return annotation, so the
+# annotation it carries is the only value a runtime type check can sample.
+def _predicate_with_annotated_wealth(wealth: Annotated[FloatND, "wealth"]):
+    return wealth > 0
+
+
+def _predicate_with_literal_wealth(wealth: Literal[0, 1]):
+    return wealth > 0
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [_predicate_with_annotated_wealth, _predicate_with_literal_wealth],
+    ids=["annotated", "literal"],
+)
+def test_an_opaque_callable_keeps_any_parameter_annotation(
+    predicate: Callable[[FloatND], BoolND],
+) -> None:
+    """A predicate with metadata or literal annotations still becomes a condition."""
+    condition = Condition.from_callable(predicate)
+
+    got = condition.evaluate(wealth=jnp.array([-1.0, 0.0, 1.0]))
+
+    assert_array_equal(got, jnp.array([False, False, True]))
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [_predicate_with_annotated_wealth, _predicate_with_literal_wealth],
+    ids=["annotated", "literal"],
+)
+def test_annotation_form_admits_metadata_and_literal_annotations(
+    predicate: Callable[[FloatND], BoolND],
+) -> None:
+    """The declared annotation carrier admits every annotation a condition copies."""
+    annotation = inspect.signature(predicate).parameters["wealth"].annotation
+
+    assert isinstance(annotation, AnnotationForm.__value__)
 
 
 def test_an_opaque_callable_reports_its_signature_as_dependencies() -> None:

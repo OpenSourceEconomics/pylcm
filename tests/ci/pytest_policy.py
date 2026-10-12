@@ -14,6 +14,7 @@ from tests.ci.execution_policy import (
     DispositionKind,
     ExecutionContract,
     Policy,
+    Precision,
     Profile,
     classify,
     contract_from_marker_kwargs,
@@ -27,7 +28,7 @@ class _SelectionRecord(TypedDict):
     disposition: str
     reason: str
     profile: str
-    precision: int
+    precision: Precision
     policy: str
 
 
