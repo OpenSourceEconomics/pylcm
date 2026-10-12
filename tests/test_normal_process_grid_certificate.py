@@ -38,8 +38,24 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         "feasibility_summary:empty_count_reversed",
     }
     assert added_feasibility_controls <= historical
-    assert len(historical) == 558
-    assert len(historical - added_feasibility_controls) == 556
+    added_initial_controls = {
+        "simulation_adapter:initial_physical_admission_bypassed",
+        "simulation_adapter:initial_physical_cov_forwarding_omitted",
+        "simulation_adapter:initial_physical_cov_operand_changed",
+        "simulation_adapter:initial_physical_fixed_law_selection_changed",
+        "simulation_adapter:initial_physical_internal_columns_retained",
+        "simulation_adapter:initial_physical_mean_forwarding_omitted",
+        "simulation_adapter:initial_physical_mean_operand_changed",
+        "simulation_adapter:initial_physical_output_hold_omitted",
+        "simulation_adapter:initial_physical_prefix_changed",
+        "simulation_adapter:initial_physical_subject_order_changed",
+        "simulation_adapter:initial_physical_table_column_changed",
+        "simulation_adapter:initial_physical_transform_changed",
+    }
+    assert added_initial_controls <= historical
+    assert len(historical) == 570
+    assert len(historical - added_initial_controls) == 558
+    assert len(historical - added_initial_controls - added_feasibility_controls) == 556
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
     assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 118
     original_corridor_sources = tuple(

@@ -259,12 +259,19 @@ def utility(*, consumption, work, kappa, taste_shock_scale):
 Pass `taste_shock_scale` with the same value as the regime's `taste_shocks` scale.
 `lcm.EULER_GAMMA` equals `numpy.euler_gamma`.
 
-The recipe reproduces the location-0 model exactly, values and choice probabilities,
-when the Koopmans aggregator is additive in utility with unit slope, as
-`LinearAggregator` (the default) is. pylcm adds the shock to the choice-specific value
-after aggregation, so under any other aggregator, such as `CESAggregator`, the constant
-moves each action's value by a different amount and the result differs from the
-location-0 model.
+Apply the shift only to the Bellman utility. Keep feasibility, transition laws, and
+other consumers of the original utility unchanged. If `utility` also feeds a constraint
+or another DAG node, factor the original expression into `base_utility`, point those
+consumers at `base_utility`, and add the shift in the `utility` wrapper. For example,
+`base_utility >= 0` must not become `base_utility + scale * EULER_GAMMA >= 0`.
+
+With these other uses preserved, the recipe reproduces the location-0 model, including
+solved values and choice probabilities, when the Koopmans aggregator satisfies
+`W(u + c, CE, ...) = W(u, CE, ...) + c` for `c = scale * EULER_GAMMA`.
+`LinearAggregator` (the default) and custom aggregators additive in utility with unit
+slope have this property. pylcm adds the shock to the choice-specific value after
+aggregation; for aggregators without this property, such as `CESAggregator` in general,
+shifting utility does not reproduce location-0 shocks.
 
 ## Derived categoricals
 

@@ -6706,10 +6706,14 @@ def _rename_params_to_qnames(
     # that takes none of its own must not be stamped with one the other phase
     # contributed.
     own_args = get_union_of_args([func])
-    param_names = [p for p in branch if p in own_args]
+    # A generated function may bind a public field to a private argument.
+    arguments = getattr(func, "_lcm_law_arguments", {})
+    param_names = [p for p in branch if arguments.get(p, p) in own_args]
     if not param_names:
         return cast("EconFunction", func)
-    mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
+    mapper = {
+        arguments.get(p, p): qname_from_tree_path((param_key, p)) for p in param_names
+    }
     return cast("EconFunction", rename_arguments(func, mapper=mapper))
 
 

@@ -91,6 +91,12 @@ changes the economic handoff and therefore requires an economic reason. Clipping
 preserves non-finite values so a broken law cannot become a finite endpoint.
 Stochastic-process support admission remains a separate contract.
 
+The clipped rules are honoured by `GridSearch`. The endogenous-grid solvers (`EGM`,
+`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) read their continuation and policy on their own
+endogenous grids, so a model whose endogenous-grid regime, or any regime it transitions
+into, declares `clip_lookup` or `clip_state` is rejected at construction with
+`OffGridPolicyError`; declare `"raise"` or `"extrapolate"` there instead.
+
 For an age-dependent grid, the bounds belong to the target period. For a grid whose
 points arrive at runtime, those supplied points define the closed endpoints. Interior
 piecewise boundary ownership is unchanged. Numerical grid rules do not replace a tax,

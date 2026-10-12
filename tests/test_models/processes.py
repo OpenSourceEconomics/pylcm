@@ -40,8 +40,11 @@ def next_health(*, health: DiscreteState, probs_array: FloatND) -> FloatND:
     return probs_array[health]
 
 
-def next_wealth(*, consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
-    return wealth - consumption
+def next_wealth(
+    *, consumption: ContinuousAction, wealth: ContinuousState, income: ContinuousState
+) -> FloatND:
+    """Carry forward unspent wealth plus income, as `wealth_constraint` counts it."""
+    return wealth - consumption + jnp.exp(income)
 
 
 def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:

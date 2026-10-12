@@ -19,13 +19,13 @@ from dataclasses import dataclass
 import jax
 import jax._src.monitoring
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import lcm.model
 from _lcm.utils.logging import LogLevel
 from benchmarks.asv._compile_counters import COMPILE_EVENT, count_compile_requests
 from benchmarks.asv._simulation_witnesses import (
-    MULTI_INITIAL_CONDITIONS,
     WITNESSES,
 )
 from lcm import ExecutionConfig, Model
@@ -39,8 +39,6 @@ from tests.ci.simulation_timings import (
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import (
     MultiRegimeId,
-    get_multi_regime_model,
-    get_multi_regime_params,
 )
 
 LOG_LEVELS: tuple[LogLevel, ...] = ("off", "warning", "progress", "debug")
@@ -206,9 +204,28 @@ def _refuse_listener_removal(_listener: Callable[..., None]) -> None:
     raise AssertionError("listener remains registered")
 
 
+def test_multi_regime_witness_retains_feasible_full_horizon() -> None:
+    """The timed workload reaches all regimes with genuine feasible native actions."""
+    model, params, initial_conditions = WITNESSES["multi_regime"]()
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        seed=0,
+        log_level="off",
+        runtime_checks=True,
+    ).to_dataframe()
+    assert set(result["regime_name"]) == {"work", "retire", "dead"}
+    assert (result.groupby("subject_id")["period"].count() == 6).all()
+    assert np.isfinite(result["value"]).all()
+    living = result[result["regime_name"] != "dead"]
+    assert np.isfinite(living[["wealth", "income", "consumption"]]).all().all()
+    assert (living["wealth"] >= 0.25).all()
+    assert living["consumption"].between(0.1, 0.15).all()
+
+
 def test_cold_simulate_call_compiles() -> None:
     """A simulate call on a freshly built model issues backend compilations."""
-    base = get_multi_regime_model(n_periods=6, distribution_type="normal")
+    base, params, initial_conditions = WITNESSES["multi_regime"]()
     model = Model(
         edges=base.edges,
         regimes=dict(base.user_regimes),
@@ -217,12 +234,11 @@ def test_cold_simulate_call_compiles() -> None:
         fixed_params=dict(base.fixed_params),
         initial_nodes=initial_nodes_of(model=base),
     )
-    params = get_multi_regime_params("normal")
     solution = model.solve(params=params, log_level="off")
     with count_compile_requests() as counts:
         model.simulate(
             params=params,
-            initial_conditions=MULTI_INITIAL_CONDITIONS,
+            initial_conditions=initial_conditions,
             solution=solution,
             log_level="off",
             seed=0,

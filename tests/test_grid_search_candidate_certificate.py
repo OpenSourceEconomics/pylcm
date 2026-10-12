@@ -759,6 +759,73 @@ def test_structural_blueprint_mutation_is_rejected(*, tmp_path: Path, mutation: 
     assert result["offending_paths"] == [_STRUCTURAL_BLUEPRINT_SOURCE]
 
 
+_MAX_Q_SOURCE = "src/_lcm/regime_building/max_Q_over_a.py"
+_FOLDED_BODY_MUTATIONS = {
+    "width_forwarding_filtered": (
+        (
+            "        out = self.mapped(\n"
+            "            next_regime_to_V_arr=next_regime_to_V_arr, "
+            "**states_actions_params\n"
+            "        )"
+        ),
+        (
+            "        out = self.mapped(\n"
+            "            next_regime_to_V_arr=next_regime_to_V_arr,\n"
+            "            **{\n"
+            "                name: value\n"
+            "                for name, value in states_actions_params.items()\n"
+            "                if name != '_lcm_action_block_width'\n"
+            "            },\n"
+            "        )"
+        ),
+    ),
+    "published_value_changed": (
+        "return V_arr if empty is None else (V_arr, empty)",
+        "return -V_arr if empty is None else (-V_arr, empty)",
+    ),
+    "empty_support_dropped": (
+        "empty = jnp.any(empty & support, axis=axis)",
+        "empty = jnp.any(empty, axis=axis)",
+    ),
+}
+
+
+@pytest.mark.parametrize("mutation", tuple(_FOLDED_BODY_MUTATIONS))
+def test_folded_kernel_mutation_is_rejected_after_byte_reseal(
+    *, mutation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resealing the source bytes cannot hide a changed folded-kernel body."""
+    root = _SRC_ROOT.parent
+    marker, replacement = _FOLDED_BODY_MUTATIONS[mutation]
+    source = (root / _MAX_Q_SOURCE).read_text(encoding="utf-8")
+    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
+    for relative in sources:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            source.replace(marker, replacement, 1)
+            if relative == _MAX_Q_SOURCE
+            else (root / relative).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(
+        "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
+        {
+            relative: hashlib.sha256((tmp_path / relative).read_bytes()).hexdigest()
+            for relative in sources
+        },
+    )
+
+    result = verify_direct_candidate_flow(repo_root=tmp_path)
+
+    assert (
+        source.count(marker),
+        any("source seal mismatch" in error for error in result["errors"]),
+        result["offending_paths"],
+        any("streamed max-Q builder" in error for error in result["errors"]),
+    ) == (1, False, [_MAX_Q_SOURCE], True)
+
+
 def test_streamed_reducer_sources_are_literal_certificate_obligations():
     """The generated inventory owns every live streamed transport helper."""
     assert isinstance(_parse("src/_lcm/execution/core_program.py"), ast.Module)
@@ -851,6 +918,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "shared_logsum:axis_prefix",
         "shared_taste_noise:shared_draw",
         "shared_taste_noise:permuted_draw",
+        "shared_taste_noise:batched_independent_draw",
         "solve:action_names_rebinding",
         "simulate:action_names_rebinding",
         "solve:dormant_certified_reducer",
@@ -1108,15 +1176,27 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     original_names = {
         name for name in names if not name.startswith("simulation_adapter:")
     }
-    assert len(original_names) == 390
+    assert len(original_names) == 391
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "627c3198444ea515832c472808901a28793487a1b2ccfbebef9be312e151263b"
+        == "e98342d0cc2f4c7f98d4b3140dc437e1262eed7065612bc965fbf3edfb3a3180"
     )
-    assert len(names) == 408
+    historical_names = {
+        name
+        for name in names
+        if not name.startswith("simulation_adapter:initial_physical_")
+    }
+    assert len(historical_names) == 409
+    assert (
+        hashlib.sha256(
+            ("\n".join(sorted(historical_names)) + "\n").encode()
+        ).hexdigest()
+        == "3c5fdaf1c4a0eb22ad92ac592d4ca84cef0c97a4b94bc525a7f8592d886880a7"
+    )
+    assert len(names) == 421
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "d27d7bdcb349eea62f44ad1a559abc676746e025ded98e52b42770564c6807b2"
+        == "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
     )
 
 

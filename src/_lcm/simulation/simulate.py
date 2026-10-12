@@ -47,11 +47,6 @@ from _lcm.engine import (
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.processes.joint_normal import JointNormalIIDProcess
-from _lcm.processes.joint_normal_lowering import (
-    coordinate_names,
-    joint_normal_declarations,
-)
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
@@ -82,6 +77,7 @@ from _lcm.simulation.gated_routing import (
 from _lcm.simulation.initial_conditions import (
     _initial_own_stakeholder,
     build_initial_states,
+    physical_state_at_row,
     trim_pad_from_raw_results,
 )
 from _lcm.simulation.membership import (
@@ -157,14 +153,12 @@ from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
-from _lcm.transition_checks import _evaluate_admitted_transition_producer
 from _lcm.typing import (
     ActionName,
     ArrayTree,
     EconFunctionArg,
     FlatParams,
     FlatRegimeParams,
-    HostArray,
     InitialConditions,
     PeriodToRegimeToSimulationPolicy,
     PRNGKeyND,
@@ -1901,61 +1895,16 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             subject_arg_names=("indices", "in_regime"),
         ).item()
         if empty_row >= 0 and sim_policy is None:
-            state = {
-                name: (
-                    regime.simulation.discrete_grids[name].categories[
-                        int(np.asarray(values)[empty_row])
-                    ]
-                    if name in regime.simulation.discrete_grids
-                    else np.asarray(values)[empty_row].item()
-                )
-                for name, values in state_action_space.states.items()
-            }
-            for group, process in joint_normal_declarations(
-                regime.simulation.grids
-            ).items():
-                names = coordinate_names(group=group, process=process)
-                arguments: dict[str, FloatND | HostArray] = {
-                    "standard": np.stack(
-                        [
-                            np.asarray(state_action_space.states[name])[empty_row]
-                            for name in names
-                        ]
-                    )
-                }
-                law_params = {
+            state = physical_state_at_row(
+                regime=regime,
+                states=state_action_space.states,
+                row=empty_row,
+                regime_params={
                     **regime.resolved_fixed_params,
                     **regime_kernel_params(flat_params, regime_name=regime_name),
-                }
-                if process.mean is None:
-                    arguments["mean"] = cast("FloatND", law_params[f"{group}__mean"])
-                if process.cov is None:
-                    arguments["cov"] = cast("FloatND", law_params[f"{group}__cov"])
-                transform = cast(
-                    "Callable[..., FloatND]",
-                    functools.partial(JointNormalIIDProcess.transform, self=process),
-                )
-                if memory is None:
-                    physical = transform(
-                        **{
-                            name: jnp.asarray(value)
-                            for name, value in arguments.items()
-                        }
-                    )
-                else:
-                    physical = _evaluate_admitted_transition_producer(
-                        function=transform, arguments=arguments, memory=memory
-                    )
-                    memory.hold(tree=physical)
-                host_physical = np.asarray(physical)
-                state.update(
-                    {
-                        name: host_physical[dimension].item()
-                        for dimension, name in enumerate(process.states)
-                    }
-                )
-                for name in names:
-                    del state[name]
+                },
+                memory=memory,
+            )
             raise NoFeasibleActionError(
                 f"Regime '{regime_name}', period {period}, state {state} "
                 "has no feasible action."
@@ -2138,6 +2087,12 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             regime_ids=regime_names_to_ids,
             logger=logger,
             subjects=subject_ids_in_regime,
+            genuine=_genuine_rows(
+                subject_slice=subject_slice,
+                n_real=n_subjects
+                if original_n_subjects is None
+                else original_n_subjects,
+            ),
             memory=memory,
         )
 
@@ -4272,6 +4227,18 @@ def _resources_at_subjects(
         ),
         (n_subjects,),
     )
+
+
+def _genuine_rows(*, subject_slice: slice | SubjectRows, n_real: int) -> np.ndarray:
+    """Mark the chunk rows that stand for a distinct real subject.
+
+    An ungrouped chunk's rows at or past `n_real` are alignment copies of the
+    last subject; a grouped chunk's short tail repeats its last original row.
+    """
+    if isinstance(subject_slice, SubjectRows):
+        rows = subject_slice.rows
+        return np.concatenate(([True], rows[1:] != rows[:-1]))
+    return np.arange(subject_slice.start, subject_slice.stop) < n_real
 
 
 def _first_empty_action_row(*, indices: IntND, in_regime: BoolND) -> IntND:

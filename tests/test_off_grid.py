@@ -1,9 +1,10 @@
 """Grid policies distinguish value lookup from the economic state handoff."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from fractions import Fraction
 from functools import partial
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -25,10 +26,12 @@ from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.transitions import _clip_next_states
+from _lcm.typing import EconFunctionArg, EconFunctionKwargs
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
@@ -39,9 +42,16 @@ from lcm import (
     Transition,
     categorical,
 )
+from lcm.consumption_savings_regime import (
+    ConsumptionSavingsRegime,
+    LiquidMargin,
+    post_decision_lower_bound,
+)
 from lcm.exceptions import (
+    ExecutionPlanningError,
     GridInitializationError,
     InvalidValueFunctionError,
+    OffGridPolicyError,
     OffGridStateError,
 )
 from lcm.grids import (
@@ -53,14 +63,17 @@ from lcm.grids import (
     PiecewiseLogSpacedGrid,
 )
 from lcm.regime import Regime
+from lcm.solvers import EGM
 from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteState,
     FloatND,
+    IntND,
     OffGrid,
     Period,
+    RegimeName,
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
@@ -808,3 +821,533 @@ def test_budgeted_counts_read_changed_node_operands_on_the_same_model() -> None:
             np.testing.assert_array_equal(counts, [[expected, 0]])
         finally:
             summary.close()
+
+
+def _advance_one(x: ContinuousState) -> FloatND:
+    return x + 1.0
+
+
+def _zero_utility(x: ContinuousState) -> FloatND:
+    return 0.0 * x
+
+
+_SUBJECT_LAYOUTS = pytest.mark.parametrize(
+    ("n_subjects", "subject_width"),
+    [
+        pytest.param(1, 2, id="one-subject-width-clamps"),
+        pytest.param(2, 1, id="two-subjects-unit-width"),
+        pytest.param(2, 3, id="two-subjects-width-clamps"),
+        pytest.param(3, 2, id="three-subjects-one-pad-row"),
+        pytest.param(4, 2, id="four-subjects-exact-multiple"),
+        pytest.param(5, 4, id="five-subjects-three-pad-rows"),
+        pytest.param(6, 4, id="six-subjects-two-pad-rows"),
+        pytest.param(7, 3, id="seven-subjects-two-pad-rows"),
+        pytest.param(8, 3, id="eight-subjects-one-pad-row"),
+        pytest.param(8, 4, id="eight-subjects-exact-multiple"),
+        pytest.param(3, 0, id="three-subjects-unbatched"),
+        pytest.param(8, 0, id="eight-subjects-unbatched"),
+    ],
+)
+
+
+def _simulate_every_subject_off_grid(
+    *, n_subjects: int, subject_width: int, caplog: pytest.LogCaptureFixture
+) -> tuple[pd.DataFrame, list[int]]:
+    """Simulate distinct dyadic subjects that all leave `[0, 1]` once.
+
+    Returns the public panel and the realized `alive -> terminal` counts.
+    """
+    grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"x": grid},
+                functions={"utility": _zero_utility},
+                state_transitions={"x": _advance_one},
+            ),
+            "terminal": Regime(states={"x": grid}, functions={"utility": _terminal_x}),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
+        regime_id_class=RegimeId,
+        execution_config=ExecutionConfig(
+            device_memory_bytes=None,
+            axis_widths={} if subject_width == 0 else {"subject": subject_width},
+        ),
+    )
+    params = {"discount_factor": 1.0}
+    solution = model.solve(params=params, log_level="off")
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        frame = model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "age": jnp.zeros(n_subjects),
+                "regime_id": jnp.full(n_subjects, RegimeId.alive),
+                "x": jnp.arange(1, n_subjects + 1) / 8.0,
+            },
+            runtime_checks=True,
+            log_level="warning",
+            seed=0,
+        ).to_dataframe(use_labels=False)
+    counts = [
+        int(message.rsplit("count=", 1)[1])
+        for record in caplog.records
+        if "Off-grid next states:" in (message := record.getMessage())
+        and "phase='realized'" in message
+        and "target='terminal'" in message
+    ]
+    return frame, counts
+
+
+def _terminal_x(x: ContinuousState) -> FloatND:
+    return x**2
+
+
+@_SUBJECT_LAYOUTS
+def test_realized_off_grid_count_includes_each_genuine_subject_once(
+    *, n_subjects: int, subject_width: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Synthetic alignment rows never add to the realized exterior count."""
+    _, counts = _simulate_every_subject_off_grid(
+        n_subjects=n_subjects, subject_width=subject_width, caplog=caplog
+    )
+    assert sum(counts) == n_subjects
+
+
+@_SUBJECT_LAYOUTS
+def test_realized_off_grid_panel_keeps_raw_states_in_subject_order(
+    *, n_subjects: int, subject_width: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The public panel holds every genuine subject's raw exterior handoff once."""
+    frame, _ = _simulate_every_subject_off_grid(
+        n_subjects=n_subjects, subject_width=subject_width, caplog=caplog
+    )
+    initial = np.arange(1, n_subjects + 1) / 8.0
+    expected = pd.DataFrame(
+        {
+            "subject_id": np.repeat(np.arange(n_subjects), 2),
+            "period": np.tile([0, 1], n_subjects),
+            "x": np.column_stack((initial, initial + 1.0)).reshape(-1),
+        }
+    )
+    pd.testing.assert_frame_equal(
+        frame[["subject_id", "period", "x"]].reset_index(drop=True),
+        expected,
+        check_dtype=False,
+        check_exact=True,
+    )
+
+
+@categorical(ordered=False)
+class _PairRegime:
+    source: ScalarInt
+    terminal: ScalarInt
+
+
+@categorical(ordered=False)
+class _Rarity:
+    ordinary: ScalarInt
+    rare: ScalarInt
+
+
+@categorical(ordered=False)
+class _RoutedRegime:
+    source: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+
+
+def _zero_source() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _lottery_weights(weights: FloatND) -> FloatND:
+    return weights
+
+
+def _rarity_landing(next_rarity: DiscreteState) -> FloatND:
+    return jnp.where(next_rarity == _Rarity.rare, 3.0, 1.0)
+
+
+def _rarity_terminal(*, wealth: ContinuousState, rarity: DiscreteState) -> FloatND:
+    return wealth + 0.0 * rarity
+
+
+def _rare_regime_probability(mass: FloatND) -> FloatND:
+    return mass
+
+
+def _common_regime_probability(mass: FloatND) -> FloatND:
+    return 1.0 - mass
+
+
+def _safe_wealth() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _exterior_wealth() -> FloatND:
+    return jnp.asarray(3.0)
+
+
+def _linear_terminal(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _represented_mass(kind: str) -> tuple[jax.Array, bool]:
+    """Build an exact IEEE probability from its bits and its exact liveness.
+
+    The bit pattern is checked after conversion, so a witness flushed before the
+    solve cannot stand in for the subnormal operand. Liveness is decided by
+    rational arithmetic on the represented value, not by a device comparison.
+    """
+    dtype = np.dtype(jnp.asarray(0.0).dtype)
+    uint = np.dtype(np.uint64 if dtype.itemsize == 8 else np.uint32)
+    fraction_bits = 52 if dtype.itemsize == 8 else 23
+    bits = {
+        "zero": 0,
+        "smallest_subnormal": 1,
+        "largest_subnormal": (1 << fraction_bits) - 1,
+        "smallest_normal": 1 << fraction_bits,
+    }[kind]
+    host_value = np.array(bits, dtype=uint).view(dtype)
+    value = jnp.asarray(host_value, dtype=dtype)
+    assert int(np.asarray(value).view(uint)) == bits
+    return value, Fraction(float(host_value)) > 0
+
+
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize(
+    "kind", ["zero", "smallest_subnormal", "largest_subnormal", "smallest_normal"]
+)
+def test_raise_refuses_every_represented_positive_lottery_tail(
+    *, runtime_checks: bool, enable_jit: bool, kind: str
+) -> None:
+    """A lottery node with any represented positive mass is reached support."""
+    mass, live = _represented_mass(kind)
+    model = Model(
+        regimes={
+            "source": Regime(
+                functions={"utility": _zero_source},
+                state_transitions={
+                    "rarity": {"terminal": StochasticTransition(func=_lottery_weights)},
+                    "wealth": {"terminal": _rarity_landing},
+                },
+            ),
+            "terminal": Regime(
+                states={
+                    "rarity": DiscreteGrid(category_class=_Rarity),
+                    "wealth": LinSpacedGrid(
+                        start=0.0, stop=2.0, n_points=3, off_grid="raise"
+                    ),
+                },
+                functions={"utility": _rarity_terminal},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"source": {"terminal": 0}},
+        initial_nodes={0: "source"},
+        regime_id_class=_PairRegime,
+        enable_jit=enable_jit,
+    )
+    weights = jnp.stack((1.0 - mass, mass))
+    assert np.asarray(weights)[1].tobytes() == np.asarray(mass).tobytes()
+    params = {"discount_factor": 1.0, "weights": weights}
+    if live:
+        with pytest.raises(OffGridStateError, match="state='wealth'"):
+            model.solve(params=params, runtime_checks=runtime_checks, log_level="off")
+    else:
+        result = model.solve(
+            params=params, runtime_checks=runtime_checks, log_level="off"
+        )
+        np.testing.assert_array_equal(result.values[0]["source"], 1.0)
+
+
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("kind", ["zero", "smallest_subnormal", "smallest_normal"])
+def test_raise_refuses_every_represented_positive_regime_mass(
+    *, runtime_checks: bool, enable_jit: bool, kind: str
+) -> None:
+    """A target regime with any represented positive mass is reached."""
+    mass, live = _represented_mass(kind)
+    grid = LinSpacedGrid(start=0.0, stop=2.0, n_points=3, off_grid="raise")
+    model = Model(
+        regimes={
+            "source": Regime(
+                functions={"utility": _zero_source},
+                state_transitions={
+                    "wealth": {"target": _exterior_wealth, "fallback": _safe_wealth}
+                },
+            ),
+            "target": Regime(
+                states={"wealth": grid}, functions={"utility": _linear_terminal}
+            ),
+            "fallback": Regime(
+                states={"wealth": grid}, functions={"utility": _linear_terminal}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={
+            "source": Transition(
+                targets={"target": 0, "fallback": 0},
+                law=ByAge(
+                    cases={
+                        0: {
+                            "target": StochasticTransition(
+                                func=_rare_regime_probability
+                            ),
+                            "fallback": StochasticTransition(
+                                func=_common_regime_probability
+                            ),
+                        }
+                    }
+                ),
+            )
+        },
+        initial_nodes={0: "source"},
+        regime_id_class=_RoutedRegime,
+        enable_jit=enable_jit,
+    )
+    params = {"discount_factor": 1.0, "mass": mass}
+    if live:
+        with pytest.raises(OffGridStateError, match="target='target'"):
+            model.solve(params=params, runtime_checks=runtime_checks, log_level="off")
+    else:
+        result = model.solve(
+            params=params, runtime_checks=runtime_checks, log_level="off"
+        )
+        np.testing.assert_array_equal(result.values[0]["source"], 1.0)
+
+
+def _exterior_sum_point(*, x: FloatND, y: FloatND, z: FloatND, limit: float) -> IntND:
+    return jnp.stack([jnp.stack([(x + y + z > limit).astype(jnp.int32), jnp.int32(0)])])
+
+
+@pytest.mark.parametrize("block_rows", [1, 5, 7, 23 * 5, 1 << 14])
+def test_blocked_off_grid_count_equals_the_exhaustive_count(
+    *, block_rows: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every block split of the product yields the exhaustive exterior count."""
+    monkeypatch.setattr(transition_checks, "_OFF_GRID_BLOCK_ROWS", block_rows)
+    axes = {
+        "x": np.linspace(0.0, 1.0, 37),
+        "y": np.linspace(0.0, 2.0, 23),
+        "z": np.linspace(-1.0, 1.0, 5),
+    }
+    limit = 1.75
+    x, y, z = np.meshgrid(*axes.values(), indexing="ij")
+    expected = int(np.count_nonzero(x + y + z > limit))
+    counts = transition_checks._off_grid_counts_law(
+        grid_args={name: jnp.asarray(values) for name, values in axes.items()},
+        scalar_kwargs=MappingProxyType({"limit": limit}),
+        grid_names=tuple(axes),
+        func=_exterior_sum_point,
+    )
+    np.testing.assert_array_equal(counts, [[expected, 0]])
+
+
+def test_off_grid_count_workspace_is_bounded_by_one_block() -> None:
+    """The compiled count never holds the state-action product it reduces."""
+    n_points = 1 << 12
+    axes = {
+        "x": jnp.linspace(0.0, 1.0, n_points),
+        "y": jnp.linspace(0.0, 1.0, n_points),
+        "z": jnp.zeros(1),
+    }
+    compiled = (
+        jax.jit(
+            partial(
+                transition_checks._off_grid_counts_law,
+                grid_names=tuple(axes),
+                func=_exterior_sum_point,
+            )
+        )
+        .lower(grid_args=axes, scalar_kwargs={"limit": 1.0})
+        .compile()
+    )
+    product_bytes = n_points * n_points * axes["x"].dtype.itemsize
+    stats = compiled.memory_analysis()
+    assert stats is not None
+    assert stats.temp_size_in_bytes < product_bytes // 16
+
+
+def _wide_model(*, device_memory_bytes: int) -> Model:
+    """Budgeted model whose product spans many blocks of the trailing action."""
+    grid = LinSpacedGrid(start=0, stop=2, n_points=2000)
+    return Model(
+        regimes={
+            "alive": Regime(
+                functions={"utility": _utility},
+                states={"wealth": grid},
+                actions={"consumption": LinSpacedGrid(start=0, stop=1, n_points=100)},
+                state_transitions={"wealth": _next_wealth},
+            ),
+            "terminal": Regime(
+                functions={"utility": _terminal}, states={"wealth": grid}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"alive": {"terminal": 0}},
+        initial_nodes={0: "alive"},
+        regime_id_class=RegimeId,
+        execution_config=ExecutionConfig(device_memory_bytes=device_memory_bytes),
+    )
+
+
+def test_budgeted_public_solve_admits_every_off_grid_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each checked count is placed and admitted against the budget first."""
+    admitted = []
+    admit = transition_checks._evaluate_admitted_transition_producer
+
+    def _recording_admit(
+        *,
+        function: partial[IntND],
+        arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
+        memory: SimulationMemory,
+    ) -> IntND:
+        admitted.append(function.keywords["grid_names"])
+        return cast(
+            "IntND", admit(function=function, arguments=arguments, memory=memory)
+        )
+
+    monkeypatch.setattr(
+        transition_checks, "_evaluate_admitted_transition_producer", _recording_admit
+    )
+    _wide_model(device_memory_bytes=2**28).solve(
+        params={"discount_factor": 1.0, "reward": 2.0}, log_level="off"
+    )
+    assert admitted == [("wealth", "consumption")]
+
+
+def test_inadmissible_off_grid_count_fails_before_dispatch() -> None:
+    """A budget holding the inputs but not the count's workspace is refused.
+
+    The budget covers both regimes' wealth grids with about a kilobyte to spare,
+    which admits the resident inputs and leaves no room for the count's workspace.
+    """
+    itemsize = jnp.asarray(0.0).dtype.itemsize
+    model = _wide_model(device_memory_bytes=2 * 2000 * itemsize + 1000)
+    with pytest.raises(ExecutionPlanningError, match="compiler reservation"):
+        model.validate_transitions(params={"discount_factor": 1.0, "reward": 2.0})
+
+
+def test_warm_public_solve_reuses_the_admitted_off_grid_count() -> None:
+    """A retained model compiles nothing new for a repeated checked solve."""
+    model = _wide_model(device_memory_bytes=2**28)
+    params = {"discount_factor": 1.0, "reward": 2.0}
+    with count_compile_requests() as cold:
+        model.solve(params=params, log_level="off")
+    with count_compile_requests() as warm:
+        model.solve(params=params, log_level="off")
+    assert (cold.compile_requests > 0, warm.compile_requests) == (True, 0)
+
+
+@categorical(ordered=False)
+class _EGMRegimeId:
+    working: ScalarInt
+    dead: ScalarInt
+
+
+def _log_utility(consumption: ContinuousAction) -> FloatND:
+    return jnp.log(consumption)
+
+
+def _inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+    return 1.0 / marginal_continuation
+
+
+def _affine_terminal(wealth: ContinuousState) -> FloatND:
+    return 1.0 + wealth
+
+
+def _savings(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption
+
+
+def _wealth_from_savings(savings: ContinuousState) -> ContinuousState:
+    return savings
+
+
+def _egm_model(*, own_rule: OffGrid, target_rule: OffGrid) -> Model:
+    """One-margin EGM regime whose savings all land below the terminal grid."""
+    margin = LiquidMargin(
+        state="wealth",
+        action="consumption",
+        resources="wealth",
+        post_decision_state="savings",
+    )
+    working = ConsumptionSavingsRegime(
+        states={
+            "wealth": LinSpacedGrid(start=0.5, stop=1.0, n_points=2, off_grid=own_rule)
+        },
+        actions={"consumption": LinSpacedGrid(start=0.5, stop=1.0, n_points=2)},
+        state_transitions={"wealth": _wealth_from_savings},
+        functions={
+            "utility": _log_utility,
+            "inverse_marginal_utility": _inverse_marginal_utility,
+            "savings": _savings,
+        },
+        constraints={
+            "borrowing_limit": post_decision_lower_bound(margin=margin, lower=0.0)
+        },
+        liquid=margin,
+        solver=EGM(savings_grid=LinSpacedGrid(start=0.0, stop=0.5, n_points=2)),
+    )
+    dead = Regime(
+        states={
+            "wealth": LinSpacedGrid(
+                start=1.0, stop=2.0, n_points=2, off_grid=target_rule
+            )
+        },
+        functions={"utility": _affine_terminal},
+    )
+    return Model(
+        edges={"working": {"dead": 0}},
+        regimes={"working": working, "dead": dead},
+        regime_id_class=_EGMRegimeId,
+        initial_nodes={0: "working"},
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("own_rule", "target_rule", "regime"),
+    [
+        ("extrapolate", "clip_lookup", "dead"),
+        ("extrapolate", "clip_state", "dead"),
+        ("clip_lookup", "extrapolate", "working"),
+        ("clip_state", "raise", "working"),
+    ],
+)
+def test_endogenous_grid_solver_refuses_a_clipped_grid_it_reads(
+    *, own_rule: OffGrid, target_rule: OffGrid, regime: RegimeName
+) -> None:
+    """A clipped grid read by an EGM carry or policy bank fails at construction."""
+    with pytest.raises(
+        OffGridPolicyError,
+        match=rf"EGM solver of regime 'working' reads regime {regime!r}, "
+        r"whose state 'wealth'.*'raise'",
+    ):
+        _egm_model(own_rule=own_rule, target_rule=target_rule)
+
+
+@pytest.mark.parametrize("beta", [0.125, 0.25, 0.5])
+def test_endogenous_grid_solver_keeps_extrapolated_targets(beta: float) -> None:
+    """Without clipping the EGM continuation reads the affine terminal at savings."""
+    solution = _egm_model(own_rule="extrapolate", target_rule="extrapolate").solve(
+        params={
+            "working": {"koopmans_aggregator": {"discount_factor": beta}},
+            "dead": {},
+        },
+        runtime_checks=False,
+        log_level="off",
+    )
+    np.testing.assert_array_equal(solution.values[0]["working"][1], beta)

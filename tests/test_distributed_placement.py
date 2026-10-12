@@ -2174,3 +2174,67 @@ def test_solve_admission_covers_code_owners_held_off_the_execution_device(
         )
         for inventory in inventories
     } == {(admitted, True, True)}
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("execution_device", [0, 1])
+def test_solve_counter_reservation_keeps_every_original_fixed_owner(
+    *, execution_device: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counter reserves add to execution devices and keep every original owner.
+
+    Each predicted inventory charges every original fixed owner its original
+    bytes, adds two int32 feasibility counters per active regime plus one merge
+    pair on each execution device only, and admits every nonzero owner together
+    with the execution devices. The model keeps 8 bytes of codes on device 0.
+    """
+    from tests.test_transition_checks import (  # noqa: PLC0415
+        _health_probs_reading_effort,
+        _model_with_function_reading_health_probs,
+    )
+
+    with jax.default_device(jax.devices()[0]):
+        model = _model_with_function_reading_health_probs(
+            next_health_func=_health_probs_reading_effort,
+            execution_config=ExecutionConfig(
+                devices=(execution_device,), device_memory_bytes=2**28
+            ),
+        )
+    observed: list[tuple[dict[int, int], tuple[int, ...]]] = []
+    expected: list[tuple[dict[int, int], tuple[int, ...]]] = []
+    original = backward_induction._resident_inventory_by_triple
+
+    def record(
+        **kwargs: Unpack[ResidentInventoryKwargs],
+    ) -> Mapping[backward_induction._CoreTriple, ResidentInventory]:
+        inventories = original(**kwargs)
+        original_fixed = dict(kwargs.get("fixed_bytes", {}))
+        execution = set(kwargs["device_ids"])
+        owners = {device for device, nbytes in original_fixed.items() if nbytes > 0}
+        for (_, period, _), inventory in inventories.items():
+            n_active = sum(
+                period in regime.active_periods for regime in kwargs["regimes"].values()
+            )
+            reserve = 2 * np.dtype(np.int32).itemsize * (n_active + 1)
+            expected.append(
+                (
+                    {
+                        device: original_fixed.get(device, 0)
+                        + (reserve if device in execution else 0)
+                        for device in set(original_fixed) | execution
+                    },
+                    tuple(sorted(owners | execution)),
+                )
+            )
+            observed.append(
+                (dict(inventory.fixed_bytes), inventory.admission_device_ids)
+            )
+        return inventories
+
+    monkeypatch.setattr(backward_induction, "_resident_inventory_by_triple", record)
+    model.solve(params={"discount_factor": 0.95}, log_level="off")
+
+    assert (
+        any(fixed.get(0, 0) >= 8 for fixed, _ in expected),
+        observed,
+    ) == (True, expected)

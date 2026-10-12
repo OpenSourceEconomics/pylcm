@@ -69,6 +69,7 @@ from lcm.solver_api import (
 )
 from lcm.solvers import MSSEnvelope
 from lcm.typing import (
+    ActionName,
     FloatND,
     IntND,
     ScalarInt,
@@ -84,6 +85,7 @@ from tests.simulation.test_nnbegm_split_workflow_parity import (
     _PARAMS,
     _build,
 )
+from tests.solution._value_frame_axis_roles_oracle import expected_collective_rows
 from tests.solution.test_egm_published_policy import _two_period_bequest_model
 from tests.test_models.deterministic import base as deterministic_base
 from tests.test_models.deterministic.dcegm_variants import (
@@ -1957,3 +1959,215 @@ def test_value_frame_uses_resolved_grid_coordinates(*, grid_kind: str) -> None:
                 params=params, regime_name="alive", state_name="wealth", period=period
             ),
         )
+
+
+def test_value_frame_keeps_stakeholders_beside_an_action_named_stakeholder() -> None:
+    """A maximized-out action named `stakeholder` leaves the role labels intact."""
+
+    @categorical(ordered=False)
+    class Choice:
+        low: ScalarInt
+        high: ScalarInt
+
+    @categorical(ordered=False)
+    class Alive:
+        alive: ScalarInt
+
+    def utility_f(*, stakeholder: ScalarInt) -> FloatND:
+        return 3.0 + stakeholder
+
+    def utility_m(*, stakeholder: ScalarInt) -> FloatND:
+        return 5.0 + stakeholder
+
+    model = Model(
+        regimes={
+            "alive": Regime(
+                actions={"stakeholder": DiscreteGrid(Choice)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": utility_f, "m": utility_m}
+                    )
+                },
+            )
+        },
+        ages=AgeGrid(exact_values=(18,)),
+        regime_id_class=Alive,
+        edges={},
+        initial_nodes=((18, "alive"),),
+    )
+    result = model.solve(params={}, log_level="off")
+    # Household means are 4 and 5, so action 1 wins with payoffs 4 and 6.
+    assert result.value_frame(period=0, regime="alive").to_dict("list") == {
+        "stakeholder": ["f", "m"],
+        "V": [4.0, 6.0],
+    }
+
+
+def _choice_from_action(*, choice: ScalarInt) -> ScalarInt:
+    return choice
+
+
+def _choice_from_stakeholder(*, stakeholder: ScalarInt) -> ScalarInt:
+    return stakeholder
+
+
+def _collective_utility_f(*, wealth: FloatND, selected: ScalarInt) -> FloatND:
+    return wealth + 3.0 * selected
+
+
+def _collective_utility_m(*, wealth: FloatND, selected: ScalarInt) -> FloatND:
+    return 2.0 * wealth + 5.0 * selected
+
+
+def _assert_collective_frame_matches_reference(
+    *, result: SolutionResult, stakeholder_names: tuple[str, ...]
+) -> None:
+    expected = expected_collective_rows(stakeholder_names=stakeholder_names)
+    schema = result.metadata.value_schemas[0, "alive"]
+    assert schema.axis_names == ("wealth", "stakeholder")
+    assert tuple(axis.role for axis in schema.named_axes) == (
+        AxisRole.STATE,
+        AxisRole.STAKEHOLDER,
+    )
+    assert dict(schema.categorical_domains) == {}
+    np.testing.assert_array_equal(
+        result.value(period=0, regime="alive"),
+        np.asarray([row[2] for row in expected]).reshape(2, 2),
+    )
+    for use_labels in (False, True):
+        frame = result.value_frame(period=0, regime="alive", use_labels=use_labels)
+        assert frame.to_dict("list") == {
+            "wealth": [row[0] for row in expected],
+            "stakeholder": [row[1] for row in expected],
+            "V": [row[2] for row in expected],
+        }
+
+
+@pytest.mark.parametrize(
+    ("action_name", "ordered", "retention", "stakeholder_names"),
+    [
+        pytest.param(
+            "choice", False, ResultRetention.VALUES, ("f", "m"), id="ordinary-action"
+        ),
+        pytest.param(
+            "stakeholder",
+            False,
+            ResultRetention.VALUES,
+            ("f", "m"),
+            id="colliding-action-unordered-values",
+        ),
+        pytest.param(
+            "stakeholder",
+            True,
+            ResultRetention.VALUES_AND_REPLAY,
+            ("m", "f"),
+            id="colliding-action-ordered-replay-reversed-roles",
+        ),
+        pytest.param(
+            "stakeholder",
+            False,
+            ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+            ("f", "m"),
+            id="colliding-action-persistable",
+        ),
+    ],
+)
+def test_value_frame_categorical_action_does_not_relabel_stakeholders(
+    *,
+    action_name: ActionName,
+    ordered: bool,
+    retention: ResultRetention,
+    stakeholder_names: tuple[str, ...],
+    tmp_path: Path,
+) -> None:
+    """Rows match a scalar reference whatever the action's name, order or retention."""
+
+    @categorical(ordered=ordered)
+    class Choice:
+        low: ScalarInt
+        high: ScalarInt
+
+    @categorical(ordered=False)
+    class Alive:
+        alive: ScalarInt
+
+    utilities = {"f": _collective_utility_f, "m": _collective_utility_m}
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
+                actions={action_name: DiscreteGrid(Choice)},
+                functions={
+                    "selected": (
+                        _choice_from_stakeholder
+                        if action_name == "stakeholder"
+                        else _choice_from_action
+                    ),
+                    "utility": CollectiveUtility(
+                        utilities={name: utilities[name] for name in stakeholder_names}
+                    ),
+                },
+            )
+        },
+        ages=AgeGrid(exact_values=(18,)),
+        regime_id_class=Alive,
+        edges={},
+        initial_nodes=((18, "alive"),),
+    )
+    result = model.solve(params={}, retention=retention, log_level="off")
+    restored = load_solution(path=result.save(path=tmp_path / "collective"))
+    for candidate in (result, restored):
+        _assert_collective_frame_matches_reference(
+            result=candidate, stakeholder_names=stakeholder_names
+        )
+    assert_frame_equal(
+        result.value_frame(period=0, regime="alive"),
+        restored.value_frame(period=0, regime="alive"),
+    )
+
+
+@pytest.mark.parametrize("ordered", [False, True])
+def test_value_frame_categorical_state_named_stakeholder_keeps_its_domain(
+    *, ordered: bool, tmp_path: Path
+) -> None:
+    """An ordinary state called `stakeholder` retains labels, codes and ordering."""
+
+    @categorical(ordered=ordered)
+    class Kind:
+        low: ScalarInt
+        high: ScalarInt
+
+    @categorical(ordered=False)
+    class Alive:
+        alive: ScalarInt
+
+    def utility(*, stakeholder: ScalarInt) -> FloatND:
+        return 1.0 + 2.0 * stakeholder
+
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"stakeholder": DiscreteGrid(Kind)},
+                functions={"utility": utility},
+            )
+        },
+        ages=AgeGrid(exact_values=(18,)),
+        regime_id_class=Alive,
+        edges={},
+        initial_nodes=((18, "alive"),),
+    )
+    result = model.solve(params={}, log_level="off")
+    restored = load_solution(path=result.save(path=tmp_path / "ordinary-state"))
+    for candidate in (result, restored):
+        schema = candidate.metadata.value_schemas[0, "alive"]
+        assert schema.named_axes[0].role is AxisRole.STATE
+        assert set(schema.categorical_domains) == {"stakeholder"}
+        frame = candidate.value_frame(period=0, regime="alive")
+        assert frame.to_dict("list") == {
+            "stakeholder": ["low", "high"],
+            "V": [1.0, 3.0],
+        }
+        assert tuple(frame["stakeholder"].cat.categories) == ("low", "high")
+        assert frame["stakeholder"].cat.ordered is ordered
+        codes = candidate.value_frame(period=0, regime="alive", use_labels=False)
+        assert codes.to_dict("list") == {"stakeholder": [0, 1], "V": [1.0, 3.0]}

@@ -21,10 +21,12 @@ single definition of its root computations. The pruning walk here runs it over
 the broadcast variables, and the variable-usage check in `_lcm.model_processing`
 over the variables a regime does not read itself. Both count a state as used
 where it is read, and where the regime hands it to a reachable target that keeps
-it. They differ in two ways: pruning takes every candidate target of a regime's
-transition as reachable, where the usage check takes the model graph's targets;
-and the usage check also counts, within the regime, every law of motion that is
-not a `fixed_transition` identity.
+it. They differ in two ways. Pruning takes every candidate target of a regime's
+transition as reachable and lets any kept name of the target count, where the
+usage check takes the targets the model graph reaches in the law's own phase and
+counts only a target that keeps the name as a state. And the usage check also
+counts, within the regime, every law of motion that is not a `fixed_transition`
+identity.
 """
 
 import inspect
@@ -313,7 +315,8 @@ def compute_kept_variables(
     ages: TimeAxis | None = None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
-    targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]] | None = None,
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]]
+    | None = None,
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Close each regime's kept states and actions under use.
 
@@ -343,10 +346,13 @@ def compute_kept_variables(
             it. The simulation slice is resolved at the first of them, since it
             runs only where subjects are; a regime without any falls back to its
             coverage. `None` resolves both slices on the coverage.
-        targets_by_regime: Per regime, the targets the model graph reaches at
-            the demanded periods. A law toward any other target is no use.
-            `None` takes every candidate target of the lowered regime
-            transition, which for a callable law is every regime.
+        targets_by_phase: Per phase slice and regime, the targets the model
+            graph reaches from it at the demanded periods. A law of motion of
+            that slice is a use only toward one of them that keeps the law's
+            output as a state; a same-named action of the target does not count.
+            `None` takes every candidate target of the lowered regime transition,
+            which for a callable law is every regime, and lets any kept name of
+            the target count.
 
     Returns:
         Per regime, the kept state and action names: every non-candidate
@@ -379,7 +385,7 @@ def compute_kept_variables(
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
         visited_periods_by_regime=visited_periods_by_regime,
-        targets_by_regime=targets_by_regime,
+        targets_by_phase=targets_by_phase,
     )
 
 
@@ -792,7 +798,8 @@ def _joint_phase_closure(
     ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
-    targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]] | None,
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]]
+    | None,
     phase_order: tuple[PhaseName, ...] = ("solution", "simulation"),
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to the least fixed point of both phase operators.
@@ -824,7 +831,7 @@ def _joint_phase_closure(
                 ages=ages,
                 active_periods_by_regime=active_periods_by_regime,
                 visited_periods_by_regime=visited_periods_by_regime,
-                targets_by_regime=targets_by_regime,
+                targets_by_phase=targets_by_phase,
             )
         if grown == before:
             return grown
@@ -843,7 +850,8 @@ def _phase_fixed_point(
     ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
-    targets_by_regime: Mapping[RegimeName, frozenset[RegimeName]] | None,
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]]
+    | None,
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to this phase slice's least fixed point.
 
@@ -862,8 +870,8 @@ def _phase_fixed_point(
         )
         & (
             all_regime_names
-            if targets_by_regime is None
-            else targets_by_regime.get(regime_name, frozenset())
+            if targets_by_phase is None
+            else targets_by_phase[phase_name].get(regime_name, frozenset())
         )
         for regime_name, spec in specs.items()
     }
@@ -871,6 +879,14 @@ def _phase_fixed_point(
     grown = dict(kept)
     while True:
         changed = False
+        handed_to = (
+            grown
+            if targets_by_phase is None
+            else {
+                name: names & frozenset(user_regimes[name].states)
+                for name, names in grown.items()
+            }
+        )
         for regime_name, user_regime in user_regimes.items():
             open_candidates = candidates[regime_name] - grown[regime_name]
             if not open_candidates:
@@ -884,7 +900,7 @@ def _phase_fixed_point(
                 phase_name=phase_name,
                 koopmans_aggregator=koopmans_aggregator,
                 candidate_targets=candidates_by_source[regime_name],
-                kept=grown,
+                kept=handed_to,
                 ages=ages,
                 active_periods=_representative_periods(
                     regime_name=regime_name,
