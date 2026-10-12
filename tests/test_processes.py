@@ -230,31 +230,61 @@ def test_process_grid_fully_specified_with_all_params(*, grid_cls, kwargs):
     assert result.shape == (3,)
 
 
+type _AR1GridClass = type[
+    TauchenAR1Process | RouwenhorstAR1Process | TauchenNormalMixtureAR1Process
+]
+
 _AR1_GRID_CLASSES = [TauchenAR1Process, RouwenhorstAR1Process]
 
+_STATIONARY_GRID_CLASSES: list[_AR1GridClass] = [
+    TauchenAR1Process,
+    RouwenhorstAR1Process,
+    TauchenNormalMixtureAR1Process,
+]
 
-@pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
+
+def _make_ar1_grid(
+    *, grid_cls: _AR1GridClass, rho: float
+) -> TauchenAR1Process | RouwenhorstAR1Process | TauchenNormalMixtureAR1Process:
+    if grid_cls is TauchenAR1Process:
+        return TauchenAR1Process(
+            n_points=5, rho=rho, sigma=0.5, mu=0.0, gauss_hermite=True
+        )
+    if grid_cls is RouwenhorstAR1Process:
+        return RouwenhorstAR1Process(n_points=5, rho=rho, sigma=0.5, mu=0.0)
+    return TauchenNormalMixtureAR1Process(
+        n_points=5,
+        rho=rho,
+        mu=0.0,
+        n_std=3.0,
+        p1=0.7,
+        mu1=0.0,
+        sigma1=0.2,
+        mu2=0.1,
+        sigma2=0.3,
+    )
+
+
+@pytest.mark.parametrize("grid_cls", _STATIONARY_GRID_CLASSES)
 @pytest.mark.parametrize("rho", [1.0, 1.2, -1.0, -1.2])
 def test_ar1_rejects_nonstationary_persistence(
-    *, grid_cls: type[TauchenAR1Process | RouwenhorstAR1Process], rho: float
+    *, grid_cls: _AR1GridClass, rho: float
 ) -> None:
     """A stationary grid cannot represent a unit-root or explosive process."""
-    kwargs = {"gauss_hermite": True} if grid_cls is TauchenAR1Process else {}
     with pytest.raises(
         GridInitializationError,
         match=rf"{grid_cls.__name__}.*rho={rho}.*no stationary distribution",
     ):
-        grid_cls(n_points=5, rho=rho, sigma=0.5, mu=0.0, **kwargs)
+        _make_ar1_grid(grid_cls=grid_cls, rho=rho)
 
 
-@pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
+@pytest.mark.parametrize("grid_cls", _STATIONARY_GRID_CLASSES)
 @pytest.mark.parametrize("rho", [-0.9, 0.0, 0.9])
 def test_ar1_stationary_nodes_are_finite(
-    *, grid_cls: type[TauchenAR1Process | RouwenhorstAR1Process], rho: float
+    *, grid_cls: _AR1GridClass, rho: float
 ) -> None:
     """Stationary persistence gives finite grid nodes."""
-    kwargs = {"gauss_hermite": True} if grid_cls is TauchenAR1Process else {}
-    grid = grid_cls(n_points=5, rho=rho, sigma=0.5, mu=0.0, **kwargs)
+    grid = _make_ar1_grid(grid_cls=grid_cls, rho=rho)
     assert jnp.isfinite(grid.get_gridpoints()).all()
 
 
