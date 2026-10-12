@@ -108,6 +108,14 @@ def get_model(
     consumption = LinSpacedGrid(
         start=WEALTH_MIN, stop=2.0 * WEALTH_MAX, n_points=consumption_n_points
     )
+    # Each partner consumes half of the household's choice, so the couple's grid
+    # is the singles' grid doubled: a partner then chooses from exactly the
+    # options she or he would have alone, and the household's value differs
+    # from the outside option by the marriage premium rather than by where the
+    # two consumption grids happen to fall.
+    couple_consumption = LinSpacedGrid(
+        start=2.0 * WEALTH_MIN, stop=4.0 * WEALTH_MAX, n_points=consumption_n_points
+    )
     last_age = n_periods - 1
     probability = _transition_probabilities(last_age=last_age)
 
@@ -145,7 +153,7 @@ def get_model(
     couple = Regime(
         states={"wealth": couple_wealth},
         state_transitions={"wealth": _next_couple_wealth},
-        actions={"consumption": consumption},
+        actions={"consumption": couple_consumption},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _couple_utility_f, "m": _couple_utility_m}
@@ -175,7 +183,7 @@ def get_model(
     )
     couple_terminal = Regime(
         states={"wealth": couple_wealth},
-        actions={"consumption": consumption},
+        actions={"consumption": couple_consumption},
         functions={
             "utility": CollectiveUtility(
                 utilities={
