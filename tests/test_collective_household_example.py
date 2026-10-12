@@ -86,3 +86,11 @@ def test_every_subject_ends_in_a_terminal_regime(simulated):
 
     assert len(last) == _N_SUBJECTS
     assert last["regime_name"].str.endswith("terminal").all()
+
+
+def test_every_reached_state_affords_the_lowest_consumption_node(simulated):
+    """Wealth never falls below the cheapest consumption, so no row is stranded."""
+    couple_rows = simulated["regime_name"].str.startswith("couple")
+    floor = np.where(couple_rows, 2.0 * household.WEALTH_MIN, household.WEALTH_MIN)
+
+    assert (simulated["wealth"].to_numpy() >= floor).all()
