@@ -31,6 +31,11 @@ from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.processes.joint_normal import JointNormalIIDProcess
+from _lcm.processes.joint_normal_lowering import (
+    coordinate_names,
+    joint_normal_declarations,
+)
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.Q_and_F import _get_feasibility
@@ -49,6 +54,7 @@ from _lcm.simulation.residency import (
 from _lcm.simulation.subject_devices import simulation_subject_devices
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.transition_checks import (
+    _evaluate_admitted_transition_producer,
     _SerialValidationRequired,
     _validate_transition_sequence,
     _ValidationSummary,
@@ -57,6 +63,7 @@ from _lcm.transition_checks import (
 from _lcm.typing import (
     ActionName,
     FlatParams,
+    HostArray,
     InitialConditions,
     ParamsLeaf,
     PytreeValue,
@@ -1899,20 +1906,86 @@ def _check_regime_feasibility(
     periods, _ = resolve_initial_periods(
         ages=ages, initial_ages=np.asarray(initial_states["age"])[[first]]
     )
-    state = {
-        name: (
-            regime.simulation.discrete_grids[name].categories[
-                int(np.asarray(initial_states[name])[first])
-            ]
-            if name in regime.simulation.discrete_grids
-            else np.asarray(initial_states[name])[first].item()
-        )
-        for name in verdict.state_names
-    }
+    state = physical_state_at_row(
+        regime=regime,
+        states={name: initial_states[name] for name in verdict.state_names},
+        row=first,
+        regime_params=regime_params,
+        memory=memory,
+    )
     return (
         f"Regime '{regime_name}', period {int(periods[0])}, state {state} "
         f"has no feasible action.\n\n{message}"
     )
+
+
+def physical_state_at_row(
+    *,
+    regime: Regime,
+    states: Mapping[StateName, FloatND | IntND | HostArray],
+    row: int,
+    regime_params: Mapping[QualifiedName, ParamsLeaf],
+    memory: SimulationMemory | None,
+) -> dict[StateName, float | str]:
+    """Name one subject's state in the coordinates the user declared.
+
+    Discrete codes become category labels. Each joint-normal group's internal
+    standard coordinates are replaced by its declared physical states, mapped
+    through the law bound by the regime's current merged parameters.
+
+    Args:
+        regime: The internal regime instance.
+        states: Internal state arrays of the regime, one entry per subject row.
+        row: Row of the subject to describe.
+        regime_params: Merged fixed and runtime parameters for this regime.
+        memory: Simulation memory budget of the budgeted route.
+
+    Returns:
+        Mapping of declared state names to the subject's values.
+
+    """
+    state: dict[StateName, float | str] = {
+        name: (
+            regime.simulation.discrete_grids[name].categories[
+                int(np.asarray(values)[row])
+            ]
+            if name in regime.simulation.discrete_grids
+            else np.asarray(values)[row].item()
+        )
+        for name, values in states.items()
+    }
+    for group, process in joint_normal_declarations(regime.simulation.grids).items():
+        names = coordinate_names(group=group, process=process)
+        arguments: dict[str, FloatND | HostArray] = {
+            "standard": np.stack([np.asarray(states[name])[row] for name in names])
+        }
+        if process.mean is None:
+            arguments["mean"] = cast("FloatND", regime_params[f"{group}__mean"])
+        if process.cov is None:
+            arguments["cov"] = cast("FloatND", regime_params[f"{group}__cov"])
+        transform = cast(
+            "Callable[..., FloatND]",
+            functools.partial(JointNormalIIDProcess.transform, self=process),
+        )
+        if memory is None:
+            physical = transform(
+                **{name: jnp.asarray(value) for name, value in arguments.items()}
+            )
+        else:
+            physical = _evaluate_admitted_transition_producer(
+                function=transform, arguments=arguments, memory=memory
+            )
+            memory.hold(tree=physical)
+        host_physical = np.asarray(physical)
+        for name in names:
+            del state[name]
+        state.update(
+            {
+                name: host_physical[dimension].item()
+                for dimension, name in enumerate(process.states)
+            }
+        )
+    return state
 
 
 def _regime_feasibility_mask(  # noqa: C901, PLR0912

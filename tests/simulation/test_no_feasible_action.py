@@ -1,7 +1,9 @@
 """Report empty action sets without confusing them with feasible infinite values."""
 
 import ast
+import re
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Literal
 
 import jax.numpy as jnp
@@ -22,6 +24,7 @@ from lcm import (
     exceptions,
     fixed_transition,
 )
+from lcm.component_jobs import plan_component_jobs, run_component_job
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -369,16 +372,31 @@ def test_feasible_simulation_keeps_the_optimal_action(*, enable_jit: bool) -> No
     )
 
 
-@pytest.mark.parametrize(
-    "schedule",
-    [InvariantBlockSchedule.PERIOD_MAJOR, InvariantBlockSchedule.BLOCK_MAJOR],
-)
-def test_blocked_solve_counts_the_complete_regime_period(
-    *, schedule: InvariantBlockSchedule, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Empty sets are counted across invariant components, rather than per block."""
+def _second_type_infinite_utility(
+    *,
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+    pref_type: DiscreteState,
+) -> FloatND:
+    return jnp.where(
+        (wealth == 1) & (pref_type == PreferenceType.second), -jnp.inf, consumption
+    )
+
+
+def _blocked_model(
+    *,
+    schedule: InvariantBlockSchedule = InvariantBlockSchedule.BLOCK_MAJOR,
+    constrained: bool = True,
+    infinite_utility: bool = False,
+) -> Model:
+    """Block the preference type; working period 1 has 3 + 1 + 1 empty cells.
+
+    Every wealth cell of the empty type and wealth zero of the other two types
+    have no feasible action. With the infinite utility, wealth one of the
+    second type is feasible with value negative infinity.
+    """
     types = DiscreteGrid(category_class=PreferenceType)
-    model = Model(
+    return Model(
         regimes={
             "working": Regime(
                 states={
@@ -386,8 +404,12 @@ def test_blocked_solve_counts_the_complete_regime_period(
                     "pref_type": types,
                 },
                 actions={"consumption": LinSpacedGrid(start=1, stop=2, n_points=2)},
-                functions={"utility": _utility},
-                constraints={"affordable": _type_affordable},
+                functions={
+                    "utility": _second_type_infinite_utility
+                    if infinite_utility
+                    else _utility
+                },
+                constraints={"affordable": _type_affordable} if constrained else {},
                 state_transitions={
                     "wealth": _next_wealth,
                     "pref_type": fixed_transition("pref_type"),
@@ -407,14 +429,148 @@ def test_blocked_solve_counts_the_complete_regime_period(
             invariant_block_schedule=schedule,
         ),
     )
-    model.solve(params={"discount_factor": 0.5}, log_level="warning")
-    messages = [record.getMessage() for record in caplog.records]
-    assert any(
-        "5 state(s) with no feasible action" in message
-        and "working" in message
-        and "period 1" in message
+
+
+_BLOCKED_PARAMS: UserParams = {"discount_factor": 0.5}
+_BLOCKED_SUBJECT: UserInitialConditions = {
+    "age": jnp.asarray([0.0]),
+    "wealth": jnp.asarray([2.0]),
+    "pref_type": jnp.asarray([PreferenceType.first], dtype=jnp.int32),
+    "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
+}
+_COUNT_PATTERNS = {
+    "empty": re.compile(
+        r"(\d+) state\(s\) with no feasible action for regime 'working', period 1 "
+    ),
+    "other_inf": re.compile(
+        r"Inf in V_arr for (\d+) other state\(s\) for regime 'working', period 1 "
+    ),
+}
+
+
+def _period_one_counts(*, messages: list[str], kind: str) -> list[int]:
+    """Return the counts of every working period-1 warning of one kind."""
+    return [
+        int(match.group(1))
         for message in messages
+        if (match := _COUNT_PATTERNS[kind].match(message)) is not None
+    ]
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [InvariantBlockSchedule.PERIOD_MAJOR, InvariantBlockSchedule.BLOCK_MAJOR],
+)
+def test_blocked_solve_counts_the_complete_regime_period(
+    *, schedule: InvariantBlockSchedule, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Empty sets are counted once across invariant components, not per block."""
+    _blocked_model(schedule=schedule).solve(params=_BLOCKED_PARAMS, log_level="warning")
+    messages = [record.getMessage() for record in caplog.records]
+
+    assert _period_one_counts(messages=messages, kind="empty") == [5]
+
+
+@pytest.mark.parametrize(("kind", "total"), [("empty", 5), ("other_inf", 1)])
+@pytest.mark.parametrize("n_jobs", [1, 3])
+def test_component_solve_jobs_report_each_count_once(
+    *,
+    kind: str,
+    total: int,
+    n_jobs: int,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each job warns once for its codes; the jobs' counts add up to the solve's."""
+    model = _blocked_model(infinite_utility=True)
+    directory = tmp_path / "jobs"
+    plan_component_jobs(
+        model=model, params=_BLOCKED_PARAMS, directory=directory, n_jobs=n_jobs
     )
+    counts = []
+    for job in range(n_jobs):
+        caplog.clear()
+        run_component_job(
+            model=model,
+            params=_BLOCKED_PARAMS,
+            directory=directory,
+            job=job,
+            log_level="warning",
+        )
+        counts.append(
+            _period_one_counts(
+                messages=[record.getMessage() for record in caplog.records], kind=kind
+            )
+        )
+
+    assert (
+        sum(sum(job_counts) for job_counts in counts),
+        max(len(job_counts) for job_counts in counts),
+    ) == (total, 1)
+
+
+def test_component_simulation_job_reports_each_count_once(
+    *, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A simulating job warns once with the counts of the codes it solved."""
+    model = _blocked_model()
+    directory = tmp_path / "jobs"
+    plan_component_jobs(
+        model=model,
+        params=_BLOCKED_PARAMS,
+        directory=directory,
+        n_jobs=1,
+        initial_conditions=_BLOCKED_SUBJECT,
+        seed=0,
+    )
+    caplog.clear()
+    run_component_job(
+        model=model,
+        params=_BLOCKED_PARAMS,
+        directory=directory,
+        job=0,
+        log_level="warning",
+        initial_conditions=_BLOCKED_SUBJECT,
+    )
+    messages = [record.getMessage() for record in caplog.records]
+
+    assert _period_one_counts(messages=messages, kind="empty") == [5]
+
+
+def test_block_major_simulation_reports_each_count_once(
+    *, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Solving every component while simulating warns once per regime-period."""
+    _blocked_model().simulate(
+        params=_BLOCKED_PARAMS,
+        initial_conditions=_BLOCKED_SUBJECT,
+        seed=0,
+        log_level="warning",
+    )
+    messages = [record.getMessage() for record in caplog.records]
+
+    assert _period_one_counts(messages=messages, kind="empty") == [5]
+
+
+def test_feasible_component_job_has_no_warning(
+    *, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A job whose every cell has a finite feasible action logs no warning."""
+    model = _blocked_model(constrained=False)
+    directory = tmp_path / "jobs"
+    plan_component_jobs(
+        model=model, params=_BLOCKED_PARAMS, directory=directory, n_jobs=1
+    )
+    caplog.clear()
+    run_component_job(
+        model=model,
+        params=_BLOCKED_PARAMS,
+        directory=directory,
+        job=0,
+        log_level="warning",
+    )
+
+    assert [record.getMessage() for record in caplog.records] == []
 
 
 def _joint_utility(
@@ -631,3 +787,141 @@ def test_reached_joint_empty_state_uses_each_current_runtime_law(*, fold: bool) 
     np.testing.assert_array_almost_equal(
         reached_states[2], reached_states[0], decimal=DECIMAL_PRECISION
     )
+
+
+_ORIGINAL_JOINT_LAW = {
+    "mean": jnp.asarray((2.0, -1.0)),
+    "cov": jnp.asarray(((1.0, 0.4), (0.4, 2.0))),
+}
+
+
+def _initial_joint_states(
+    *,
+    control: Model,
+    model: Model,
+    params: UserParams,
+    x: float,
+    y: float,
+    checks: bool,
+) -> tuple[dict[str, float | str], dict[str, float]]:
+    """Return the empty-set error's state and the control's entered state.
+
+    Both models start one subject at wealth zero; only the constrained model
+    rejects every action there, so the unconstrained control enters the same
+    physical state and records it.
+    """
+    initial = {
+        "age": jnp.asarray([0.0]),
+        "wealth": jnp.asarray([0.0]),
+        "x": jnp.asarray([x]),
+        "y": jnp.asarray([y]),
+        "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
+    }
+    entered = (
+        control.simulate(
+            params=params,
+            initial_conditions=initial,
+            seed=531,
+            log_level="off",
+            runtime_checks=checks,
+        )
+        .to_dataframe()
+        .loc[lambda frame: frame["period"] == 0]
+        .iloc[0]
+    )
+    with pytest.raises(exceptions.NoFeasibleActionError) as caught:
+        model.simulate(
+            params=params,
+            initial_conditions=initial,
+            seed=531,
+            log_level="off",
+            runtime_checks=checks,
+        )
+    message = str(caught.value)
+    prefix = "Regime 'working', period 0, state "
+    state = ast.literal_eval(
+        message.split(prefix, 1)[1].split(" has no feasible action.", 1)[0]
+    )
+    return state, {name: float(entered[name]) for name in ("wealth", "x", "y")}
+
+
+@pytest.mark.parametrize("checks", [True, False])
+@pytest.mark.parametrize("fold", [False, True])
+@pytest.mark.parametrize("memory_budget", [None, 64 * 1024**2])
+def test_initial_joint_empty_state_reports_physical_values(
+    *, checks: bool, fold: bool, memory_budget: int | None
+) -> None:
+    """An initial empty-set error names the physical state the subject entered."""
+    state, entered = _initial_joint_states(
+        control=_joint_empty_model(
+            constrained=False, runtime=False, fold=fold, memory_budget=memory_budget
+        ),
+        model=_joint_empty_model(
+            constrained=True, runtime=False, fold=fold, memory_budget=memory_budget
+        ),
+        params={},
+        x=2.0,
+        y=-1.0,
+        checks=checks,
+    )
+
+    assert state == pytest.approx(entered, abs=10.0**-DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("law", ["declared", "runtime", "fixed"])
+@pytest.mark.parametrize(("x", "y"), [(2.0, -1.0), (3.0, 0.5)])
+@pytest.mark.parametrize("fold", [False, True])
+def test_initial_joint_empty_state_uses_the_current_law(
+    *, law: Literal["declared", "runtime", "fixed"], x: float, y: float, fold: bool
+) -> None:
+    """Declared, runtime and fixed laws all report the entered physical state."""
+    models = [
+        _joint_empty_model(
+            constrained=constrained,
+            runtime=law != "declared",
+            fold=fold,
+            memory_budget=64 * 1024**2,
+            fixed_law=law == "fixed",
+        )
+        for constrained in (False, True)
+    ]
+    state, entered = _initial_joint_states(
+        control=models[0],
+        model=models[1],
+        params={"working": {"shocks": _ORIGINAL_JOINT_LAW}} if law == "runtime" else {},
+        x=x,
+        y=y,
+        checks=True,
+    )
+
+    assert state == pytest.approx(entered, abs=10.0**-DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("fold", [False, True])
+def test_initial_joint_empty_state_uses_each_current_runtime_law(*, fold: bool) -> None:
+    """Changed then original laws on the same Models report each entered state."""
+    control, model = (
+        _joint_empty_model(
+            constrained=constrained, runtime=True, fold=fold, memory_budget=None
+        )
+        for constrained in (False, True)
+    )
+    changed = {
+        "mean": jnp.asarray((4.0, 3.0)),
+        "cov": jnp.asarray(((2.0, 0.2), (0.2, 1.0))),
+    }
+    observed = [
+        _initial_joint_states(
+            control=control,
+            model=model,
+            params={"working": {"shocks": law}},
+            x=3.0,
+            y=0.5,
+            checks=True,
+        )
+        for law in (_ORIGINAL_JOINT_LAW, changed, _ORIGINAL_JOINT_LAW)
+    ]
+
+    assert [state for state, _ in observed] == [
+        pytest.approx(entered, abs=10.0**-DECIMAL_PRECISION) for _, entered in observed
+    ]

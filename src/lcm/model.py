@@ -3837,6 +3837,8 @@ class Model:
                 call_id=call_id,
                 component_values=component_values,
             )
+            if isinstance(component_values, SolvingComponentValues):
+                component_values.flush_feasibility_warnings()
             if (
                 isinstance(component_values, SolvingComponentValues)
                 and component_values.subject_codes is None

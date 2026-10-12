@@ -858,6 +858,18 @@ class ComponentSchedule:
             self.retain_component(code=component.code, blocks=blocks)
         return self.finish()
 
+    def flush_feasibility_warnings(self) -> None:
+        """Log the empty-set and other-Inf counts of the components solved so far.
+
+        The counts are released once logged, so each is logged exactly once:
+        a later flush, including the one `finish` runs, logs only components
+        solved since. A selection of the codes logs the counts of its own
+        components, without requiring every code to be retained.
+        """
+        emit_component_feasibility_warnings(
+            logger=self._logger, counts=self._feasibility_warnings
+        )
+
     def finish(self) -> RetainedComponentValues:
         """Return the complete retention after logging its record.
 
@@ -866,9 +878,7 @@ class ComponentSchedule:
 
         """
         self._retained.coverage.fail_if_incomplete()
-        emit_component_feasibility_warnings(
-            logger=self._logger, counts=self._feasibility_warnings
-        )
+        self.flush_feasibility_warnings()
         if self._logger.isEnabledFor(logging.DEBUG):
             record = self._retained.retention_record()
             self._logger.debug(
@@ -934,6 +944,10 @@ class SolvingComponentValues:
         live = self._live.pop(code, None)
         if live is not None:
             delete_blocks(blocks=live)
+
+    def flush_feasibility_warnings(self) -> None:
+        """Log the counts of the components solved so far, each exactly once."""
+        self._schedule.flush_feasibility_warnings()
 
     def values(self) -> _ValueStoreBoundary:
         """Return the complete logical value store once every code is retained."""
