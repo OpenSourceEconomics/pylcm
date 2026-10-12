@@ -1912,6 +1912,50 @@ def _check_regime_feasibility(
     )
 
 
+def physical_state_at_row(
+    *,
+    regime: Regime,
+    states: Mapping[StateName, FloatND | IntND | HostArray],
+    row: int,
+    regime_params: Mapping[QualifiedName, ParamsLeaf],
+    memory: SimulationMemory | None,
+) -> dict[StateName, float | str]:
+    """Name one subject's state in the coordinates the user declared.
+
+    Discrete codes become category labels. Each joint-normal group's internal
+    standard coordinates are replaced by its declared physical states, mapped
+    through the law bound by the regime's current merged parameters.
+
+    Args:
+        regime: The internal regime instance.
+        states: Internal state arrays of the regime, one entry per subject row.
+        row: Row of the subject to describe.
+        regime_params: Merged fixed and runtime parameters for this regime.
+        memory: Simulation memory budget of the budgeted route.
+
+    Returns:
+        Mapping of declared state names to the subject's values.
+
+    """
+    state_df = _replace_joint_coordinates(
+        state_df=pd.DataFrame(
+            {name: np.asarray(values)[[row]] for name, values in states.items()}
+        ),
+        regime=regime,
+        regime_params=regime_params,
+        memory=memory,
+    )
+    state: dict[StateName, float | str] = {}
+    for column, values in state_df.items():
+        name = cast("StateName", column)
+        state[name] = (
+            regime.simulation.discrete_grids[name].categories[int(values.iloc[0])]
+            if name in regime.simulation.discrete_grids
+            else values.iloc[0].item()
+        )
+    return state
+
+
 def _regime_feasibility_mask(  # noqa: C901, PLR0912
     *,
     regime: Regime,
@@ -2368,7 +2412,55 @@ def _initial_physical_joint_states(
     )
 
 
-def _format_infeasibility_message(  # noqa: C901
+def _replace_joint_coordinates(
+    *,
+    state_df: pd.DataFrame,
+    regime: Regime,
+    regime_params: Mapping[QualifiedName, ParamsLeaf],
+    memory: SimulationMemory | None,
+) -> pd.DataFrame:
+    """Replace each joint-normal group's standard coordinates by physical states.
+
+    Args:
+        state_df: One row per subject, one column per internal state.
+        regime: The internal regime instance.
+        regime_params: Current merged fixed and runtime regime parameters.
+        memory: Admission owner for the physical projection.
+
+    Returns:
+        The frame with every group's declared physical states in place of its
+        internal standard coordinates.
+
+    """
+    for group, process in joint_normal_declarations(regime.simulation.grids).items():
+        names = coordinate_names(group=group, process=process)
+        arguments: dict[str, FloatND | HostArray] = {
+            "standard": state_df[list(names)].to_numpy()
+        }
+        if process.mean is None:
+            arguments["mean"] = cast("FloatND", regime_params[f"{group}__mean"])
+        if process.cov is None:
+            arguments["cov"] = cast("FloatND", regime_params[f"{group}__cov"])
+        transform = cast(
+            "Callable[..., Float2D]",
+            functools.partial(_initial_physical_joint_states, process=process),
+        )
+        if memory is None:
+            physical = transform(
+                **{name: jnp.asarray(value) for name, value in arguments.items()}
+            )
+        else:
+            physical = _evaluate_admitted_transition_producer(
+                function=transform, arguments=arguments, memory=memory
+            )
+            memory.hold(tree=physical)
+        for dimension, name in enumerate(process.states):
+            state_df[name] = np.asarray(physical)[:, dimension]
+        state_df = state_df.drop(columns=list(names))
+    return state_df
+
+
+def _format_infeasibility_message(
     *,
     infeasible_indices: Sequence[int],
     regime: Regime,
@@ -2413,31 +2505,9 @@ def _format_infeasibility_message(  # noqa: C901
     )
     state_df.index.name = "subject"
 
-    for group, process in joint_normal_declarations(regime.simulation.grids).items():
-        names = coordinate_names(group=group, process=process)
-        arguments: dict[str, FloatND | HostArray] = {
-            "standard": state_df[list(names)].to_numpy()
-        }
-        if process.mean is None:
-            arguments["mean"] = cast("FloatND", regime_params[f"{group}__mean"])
-        if process.cov is None:
-            arguments["cov"] = cast("FloatND", regime_params[f"{group}__cov"])
-        transform = cast(
-            "Callable[..., Float2D]",
-            functools.partial(_initial_physical_joint_states, process=process),
-        )
-        if memory is None:
-            physical = transform(
-                **{name: jnp.asarray(value) for name, value in arguments.items()}
-            )
-        else:
-            physical = _evaluate_admitted_transition_producer(
-                function=transform, arguments=arguments, memory=memory
-            )
-            memory.hold(tree=physical)
-        for dimension, name in enumerate(process.states):
-            state_df[name] = np.asarray(physical)[:, dimension]
-        state_df = state_df.drop(columns=list(names))
+    state_df = _replace_joint_coordinates(
+        state_df=state_df, regime=regime, regime_params=regime_params, memory=memory
+    )
 
     # Convert discrete codes to labels
     for name, grid in regime.simulation.discrete_grids.items():
