@@ -253,12 +253,23 @@ class JointNormalIIDProcess:
 def covariance_factor(cov: FloatND) -> Float2D:
     """Return a lower-triangular factor of an already validated PSD covariance.
 
+    Elimination runs on the diagonal congruence `C = D^{-1} cov D^{-1}`, where the
+    power-of-two scales `D` place every positive diagonal entry of `C` in `[1, 4)`
+    and a zero diagonal keeps scale one. Power-of-two scaling is exact, and every
+    entry of the PSD matrix `C` is below 4 in magnitude, so no product of two
+    entries overflows and a product underflows only where it is negligible against
+    the residual it updates. The factor of `cov` is `D` times the factor of `C`.
+
     A zero pivot contributes no remaining column. Clipping diagonal residuals only
     removes arithmetic roundoff after the exact host-side PSD validation.
     """
     cov = cov.astype(jnp.result_type(cov, 0.0))
+    diagonal = jnp.diagonal(cov)
+    _, exponent = jnp.frexp(diagonal)
+    # A diagonal m * 2**e with m in [1/2, 1) has 4**shift <= diagonal < 4**(shift+1).
+    shift = jnp.where(diagonal > 0, (exponent - 1) // 2, 0)
+    residual = jnp.ldexp(cov, -(shift[:, None] + shift[None, :]))
     factor = jnp.zeros_like(cov)
-    residual = cov
     for column in range(cov.shape[0]):
         pivot = jnp.maximum(residual[column, column], 0.0)
         denominator = jnp.where(pivot > 0, pivot, 1.0)
@@ -278,4 +289,8 @@ def covariance_factor(cov: FloatND) -> Float2D:
                 residual = residual.at[row, other].set(
                     sealed(residual[row, other] - correction)
                 )
-    return factor
+    return jnp.ldexp(factor, shift[:, None])
+
+
+# Host consumers share the forward map's compiled factor, and so its rank.
+compiled_covariance_factor = jax.jit(covariance_factor)

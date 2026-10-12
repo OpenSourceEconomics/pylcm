@@ -15,7 +15,10 @@ from jaxtyping import Bool, Float
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import Grid
 from _lcm.processes.iid import NormalIIDProcess
-from _lcm.processes.joint_normal import JointNormalIIDProcess
+from _lcm.processes.joint_normal import (
+    JointNormalIIDProcess,
+    compiled_covariance_factor,
+)
 from _lcm.typing import FlatRegimeParams, RegimeNamesToIds
 from lcm.collective import CollectiveUtility
 from lcm.exceptions import (
@@ -162,6 +165,12 @@ def lower_joint_normal_initial_conditions(
     }
     if not any(declarations.values()):
         return initial_conditions
+    ordinary_state_names = {
+        name
+        for grids in grids_by_regime.values()
+        for name, grid in grids.items()
+        if not isinstance(grid, _JointNormalCoordinate)
+    }
     is_frame = isinstance(initial_conditions, pd.DataFrame)
     regime_column = np.asarray(
         initial_conditions["regime_name" if is_frame else "regime_id"]
@@ -174,15 +183,18 @@ def lower_joint_normal_initial_conditions(
         )
         for group, process in groups.items():
             names = coordinate_names(group=group, process=process)
-            if any(name in initial_conditions for name in names):
-                raise InvalidInitialConditionsError(
-                    f"Joint normal process '{group}' requires physical shocks "
-                    f"{process.states}, not internal coordinates."
-                )
             present = set(process.states) & set(initial_conditions)
             consumed |= present
             if not rows.any():
                 continue
+            if any(
+                name in initial_conditions and name not in ordinary_state_names
+                for name in names
+            ):
+                raise InvalidInitialConditionsError(
+                    f"Joint normal process '{group}' requires physical shocks "
+                    f"{process.states}, not internal coordinates."
+                )
             if present != set(process.states):
                 raise InvalidInitialConditionsError(
                     f"Joint normal process '{group}' requires initial shocks "
@@ -207,7 +219,9 @@ def lower_joint_normal_initial_conditions(
                 group=group,
                 physical=physical.astype(float),
                 mean=mean.astype(float),
-                cov=cov.astype(float),
+                factor=np.asarray(
+                    compiled_covariance_factor(jnp.asarray(cov)), dtype=float
+                ),
                 precision=float(np.finfo(cov.dtype).eps),
             )
             for dimension, name in enumerate(names):
@@ -249,28 +263,18 @@ def _physical_to_standard(
     group: ProcessName,
     physical: HostFloatArray,
     mean: HostFloatArray,
-    cov: HostFloatArray,
+    factor: HostFloatArray,
     precision: float,
 ) -> HostFloatArray:
-    """Invert the triangular Gaussian map, including zero-variance coordinates."""
+    """Invert the triangular Gaussian map, including zero-variance coordinates.
+
+    `factor` is the active-precision factor the forward map uses, so both
+    directions share one factor and one rank.
+    """
     if not np.isfinite(physical).all():
         raise InvalidInitialConditionsError(
             f"Joint normal process '{group}' initial shocks must be finite."
         )
-    # Forward elimination preserves singular laws without independent noise.
-    factor = np.zeros_like(cov)
-    residual_cov = cov.copy()
-    for column in range(len(mean)):
-        pivot = max(residual_cov[column, column], 0.0)
-        if pivot > 0:
-            factor[column:, column] = residual_cov[column:, column] / np.sqrt(pivot)
-            residual_cov[column + 1 :, column + 1 :] -= (
-                np.outer(
-                    residual_cov[column + 1 :, column],
-                    residual_cov[column + 1 :, column],
-                )
-                / pivot
-            )
     standard = np.zeros_like(physical)
     for dimension in range(len(mean)):
         residual = (
@@ -301,6 +305,9 @@ def _physical_to_standard(
     return standard
 
 
+_LAW_ARGUMENTS = MappingProxyType({"mean": "_law_mean", "cov": "_law_cov"})
+
+
 @dataclass(frozen=True, kw_only=True)
 class _JointNormalCoordinate(NormalIIDProcess):
     """One independent standard-normal axis belonging to a joint declaration."""
@@ -319,10 +326,17 @@ def _joint_function(
     *, group: ProcessName, process: JointNormalIIDProcess
 ) -> UserFunction:
     names = coordinate_names(group=group, process=process)
+    # Runtime law fields are owned by `(regime, group, field)`. Their arguments
+    # start with `_`, which no state, action, function or parameter may, so no
+    # economic name can capture them; `_lcm_law_arguments` binds each public
+    # field to its argument for parameter discovery and renaming.
+    law_arguments = {
+        field: argument
+        for field, argument in _LAW_ARGUMENTS.items()
+        if getattr(process, field) is None
+    }
     arguments = dict.fromkeys(names, "ContinuousState")
-    arguments.update(
-        {name: "FloatND" for name in ("mean", "cov") if getattr(process, name) is None}
-    )
+    arguments.update(dict.fromkeys(law_arguments.values(), "FloatND"))
 
     # The DAG publishes the precise scalar-coordinate signature on this variadic body.
     @no_type_check
@@ -330,11 +344,12 @@ def _joint_function(
     def joint_function(**kwargs: FloatND) -> FloatND:
         return process.transform(
             standard=jnp.stack([kwargs[name] for name in names]),
-            mean=kwargs.get("mean"),
-            cov=kwargs.get("cov"),
+            mean=kwargs.get(_LAW_ARGUMENTS["mean"]),
+            cov=kwargs.get(_LAW_ARGUMENTS["cov"]),
         )
 
     setattr(joint_function, "_lcm_joint_normal_output", True)  # noqa: B010 - function metadata marker
+    setattr(joint_function, "_lcm_law_arguments", MappingProxyType(law_arguments))  # noqa: B010 - parameter binding metadata
     return cast("UserFunction", joint_function)
 
 
