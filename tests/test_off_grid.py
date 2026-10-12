@@ -729,10 +729,10 @@ def _wealth_from_next_shock(next_z: ContinuousState) -> FloatND:
     return 1 + next_z
 
 
-def test_budgeted_counts_read_changed_runtime_nodes_on_the_same_model() -> None:
-    """Changing same-shaped process support changes raw counts, not cached code."""
+def test_budgeted_counts_read_changed_node_operands_on_the_same_model() -> None:
+    """The admitted producer reads fresh supplied nodes, not captured arrays."""
     grid = LinSpacedGrid(start=0, stop=2, n_points=3, off_grid="raise")
-    shock = NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0)
+    shock = NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)
     model = Model(
         regimes={
             "alive": Regime(
@@ -763,19 +763,11 @@ def test_budgeted_counts_read_changed_runtime_nodes_on_the_same_model() -> None:
     law = transition_checks._regime_laws_at_period(
         regime=source, regime_name="alive", period=0
     )[0][0]
-    for sigma, expected in ((0.1, 0), (1.0, 18)):
-        params = model._process_params(
-            {
-                "alive": {
-                    "z": {"sigma": sigma},
-                    "koopmans_aggregator": {"discount_factor": 1.0},
-                },
-                "terminal": {"z": {"sigma": sigma}},
-            }
-        )
-        axes = target.solution.state_action_space(
-            regime_params=regime_kernel_params(params, regime_name="terminal")
-        ).states
+    params = model._process_params({"discount_factor": 1.0})
+    axes = target.solution.state_action_space(
+        regime_params=regime_kernel_params(params, regime_name="terminal")
+    ).states
+    for node_scale, expected in ((0.1, 0), (1.0, 18)):
         summary = transition_checks._ValidationSummary(memory=memory)
         try:
             counts = transition_checks._off_grid_target_counts(
@@ -784,7 +776,9 @@ def test_budgeted_counts_read_changed_runtime_nodes_on_the_same_model() -> None:
                 target="terminal",
                 law=law,
                 points={"wealth": grid.to_jax()},
-                target_axes=axes,
+                target_axes=MappingProxyType(
+                    dict(axes) | {"z": node_scale * axes["z"]}
+                ),
                 period=0,
                 flat_params=params,
                 ages=model._time,
