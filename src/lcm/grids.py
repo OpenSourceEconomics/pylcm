@@ -2,15 +2,15 @@
 
 Leaf classes users instantiate to declare state and action grids on a
 `Regime`, plus `@categorical` for declaring the category enumeration whose
-fields become a `DiscreteGrid`'s codes, `characteristic_columns` and
-`find_code` for categories that are combinations of characteristics, and the
+fields become a `DiscreteGrid`'s codes, `characteristics` and
+`category_with` for categories that are combinations of characteristics, and the
 `ContinuousGrid` base class a solver names when it accepts any continuous
 grid. The internal `Grid` / `UniformContinuousGrid` ABCs and the validators /
 coordinate helpers live in `_lcm.grids`.
 """
 
 from _lcm.grids.categorical import categorical
-from _lcm.grids.characteristics import characteristic_columns, find_code
+from _lcm.grids.characteristics import category_with, characteristics
 from _lcm.grids.continuous import (
     ContinuousGrid,
     IrregSpacedGrid,
@@ -34,6 +34,6 @@ __all__ = [
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "categorical",
-    "characteristic_columns",
-    "find_code",
+    "category_with",
+    "characteristics",
 ]

@@ -21,11 +21,11 @@ This page shows how to connect the two with a single table that pylcm checks.
 ## Declare each category's characteristics once
 
 Declare the categories as usual, and next to them a table that lists every category's
-characteristics, keyed by category name. `characteristic_columns` checks the table
-against the class and returns one array per characteristic, indexed by code.
+characteristics, keyed by category name. `characteristics` checks the table against the
+class and returns one array per characteristic, indexed by code.
 
 ```python
-from lcm import categorical, characteristic_columns
+from lcm import categorical, characteristics
 from lcm.typing import ScalarInt
 
 
@@ -45,15 +45,16 @@ LABOUR_STATUS_CASES = {
     "di_1": {"has_job": False, "is_applicant": False, "di_years": 1},
     "di_2": {"has_job": False, "is_applicant": False, "di_years": 2},
 }
-LABOUR_STATUS = characteristic_columns(
-    category_class=LabourStatus, cases=LABOUR_STATUS_CASES
+LABOUR_STATUS = characteristics(
+    category_class=LabourStatus, by_category=LABOUR_STATUS_CASES
 )
 ```
 
 The check raises when the table and the class disagree:
 
 - the table lists the categories of the class, in declaration order;
-- every category sets the same characteristics, each a Python `int` or `bool`;
+- every category sets the same characteristics, in any order, each a Python `int` within
+  int32 or a `bool`;
 - no two categories share all characteristics.
 
 The last rule makes each category equal to its combination of characteristics. Two
@@ -93,10 +94,10 @@ def earnings(*, wage: FloatND, labour_status_has_job: BoolND) -> FloatND:
 ## Map characteristics back to a category
 
 A deterministic transition can describe the next category by its characteristics.
-`find_code` returns the code of the category with the given characteristics:
+`category_with` returns the code of the category with the given characteristics:
 
 ```python
-from lcm import find_code
+from lcm import category_with
 
 
 @categorical(ordered=False)
@@ -106,7 +107,7 @@ class Work:
 
 
 def next_labour_status(*, labour_status_di_years: IntND, work: DiscreteAction) -> IntND:
-    on_di = find_code(
+    on_di = category_with(
         LABOUR_STATUS,
         has_job=False,
         is_applicant=False,
@@ -116,11 +117,13 @@ def next_labour_status(*, labour_status_di_years: IntND, work: DiscreteAction) -
 ```
 
 - The characteristics you pass must tell all categories apart. A subset is enough when
-  no two categories share it; otherwise `find_code` raises before reading any value.
-- Values may be Python scalars or JAX arrays, also inside `jit` and `vmap`, and
-  broadcast against each other.
+  no two categories share it; otherwise `category_with` raises before reading any value.
+- Values are Python ints or bools, or JAX arrays of bool or signed-integer dtype, also
+  inside `jit` and `vmap`, and broadcast against each other. Unsigned and float arrays
+  raise, because JAX can compare them with int32 characteristics in a way that matches
+  the wrong category.
 - A combination that no category has returns the missing-category code, the int32
-  minimum.
+  minimum. So does any Python int outside int32.
 
 Codes and class constants are the same kind of value, so branches can mix them freely.
 

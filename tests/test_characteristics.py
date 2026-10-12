@@ -15,12 +15,13 @@ from lcm import (
     Model,
     Transition,
     categorical,
-    characteristic_columns,
-    find_code,
+    category_with,
+    characteristics,
 )
 from lcm.exceptions import CategoricalDefinitionError
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, IntND, ScalarInt
+from tests.conftest import X64_ENABLED
 
 
 @categorical(ordered=False)
@@ -31,9 +32,9 @@ class Status:
     di_2: ScalarInt
 
 
-STATUS = characteristic_columns(
+STATUS = characteristics(
     category_class=Status,
-    cases={
+    by_category={
         "employed": {"has_job": True, "on_di": False, "di_years": 0},
         "unemployed": {"has_job": False, "on_di": False, "di_years": 0},
         "di_1": {"has_job": False, "on_di": True, "di_years": 1},
@@ -42,7 +43,7 @@ STATUS = characteristic_columns(
 )
 
 
-def test_characteristic_columns_hold_each_characteristic_by_code():
+def test_characteristics_hold_each_characteristic_by_code():
     """`columns[name][code]` is the characteristic of the category with `code`."""
     np.testing.assert_array_equal(STATUS["di_years"], np.array([0, 0, 1, 2]))
 
@@ -51,17 +52,17 @@ def test_characteristic_columns_hold_each_characteristic_by_code():
     ("name", "dtype"),
     [("has_job", np.dtype(bool)), ("di_years", np.dtype(np.int32))],
 )
-def test_characteristic_columns_use_bool_and_int32_dtypes(*, name, dtype):
+def test_characteristics_use_bool_and_int32_dtypes(*, name, dtype):
     """Bool characteristics stay boolean; integer ones share the code dtype."""
     assert STATUS[name].dtype == dtype
 
 
-def test_characteristic_columns_list_characteristics_in_row_order():
+def test_characteristics_list_characteristics_in_row_order():
     """The columns appear in the order the first row lists them."""
     assert tuple(STATUS) == ("has_job", "on_di", "di_years")
 
 
-def test_characteristic_columns_are_read_only():
+def test_characteristics_are_read_only():
     """Neither the mapping nor its arrays can be changed after the check."""
     with pytest.raises(ValueError, match="read-only"):
         STATUS["di_years"][0] = 5
@@ -74,61 +75,71 @@ class _Two:
 
 
 def _columns_missing_category():
-    characteristic_columns(category_class=_Two, cases={"a": {"x": 1}})
+    characteristics(category_class=_Two, by_category={"a": {"x": 1}})
 
 
 def _columns_extra_category():
-    characteristic_columns(
-        category_class=_Two, cases={"a": {"x": 1}, "b": {"x": 2}, "c": {"x": 3}}
+    characteristics(
+        category_class=_Two, by_category={"a": {"x": 1}, "b": {"x": 2}, "c": {"x": 3}}
     )
 
 
 def _columns_in_wrong_order():
-    characteristic_columns(category_class=_Two, cases={"b": {"x": 1}, "a": {"x": 2}})
+    characteristics(category_class=_Two, by_category={"b": {"x": 1}, "a": {"x": 2}})
 
 
 def _columns_with_differing_characteristics():
-    characteristic_columns(category_class=_Two, cases={"a": {"x": 1}, "b": {"y": 2}})
+    characteristics(category_class=_Two, by_category={"a": {"x": 1}, "b": {"y": 2}})
 
 
 def _columns_without_characteristics():
-    characteristic_columns(category_class=_Two, cases={"a": {}, "b": {}})
+    characteristics(category_class=_Two, by_category={"a": {}, "b": {}})
 
 
 def _columns_with_a_float():
-    characteristic_columns(
+    characteristics(
         category_class=_Two,
-        cases={"a": {"x": 0.5}, "b": {"x": 1.0}},  # ty: ignore[invalid-argument-type]
+        by_category={"a": {"x": 0.5}, "b": {"x": 1.0}},  # ty: ignore[invalid-argument-type]
     )
 
 
 def _columns_with_a_float_in_a_later_row():
-    characteristic_columns(
+    characteristics(
         category_class=_Two,
-        cases={"a": {"x": 0}, "b": {"x": 1.5}},  # ty: ignore[invalid-argument-type]
+        by_category={"a": {"x": 0}, "b": {"x": 1.5}},  # ty: ignore[invalid-argument-type]
     )
 
 
 def _columns_with_a_string_in_a_later_row():
-    characteristic_columns(
+    characteristics(
         category_class=_Two,
-        cases={"a": {"x": 0}, "b": {"x": "q"}},  # ty: ignore[invalid-argument-type]
+        by_category={"a": {"x": 0}, "b": {"x": "q"}},  # ty: ignore[invalid-argument-type]
     )
 
 
 def _columns_mixing_bool_and_int():
-    characteristic_columns(category_class=_Two, cases={"a": {"x": True}, "b": {"x": 2}})
+    characteristics(category_class=_Two, by_category={"a": {"x": True}, "b": {"x": 2}})
 
 
 def _columns_outside_int32():
-    characteristic_columns(
-        category_class=_Two, cases={"a": {"x": 0}, "b": {"x": 2**31}}
-    )
+    characteristics(category_class=_Two, by_category={"a": {"x": 0}, "b": {"x": 2**31}})
 
 
 def _columns_with_identical_rows():
-    characteristic_columns(
-        category_class=_Two, cases={"a": {"x": 1, "y": 0}, "b": {"x": 1, "y": 0}}
+    characteristics(
+        category_class=_Two, by_category={"a": {"x": 1, "y": 0}, "b": {"x": 1, "y": 0}}
+    )
+
+
+def _columns_with_identical_rows_in_another_key_order():
+    characteristics(
+        category_class=_Two, by_category={"a": {"x": 0, "y": 1}, "b": {"y": 1, "x": 0}}
+    )
+
+
+def _columns_below_int32():
+    characteristics(
+        category_class=_Two, by_category={"a": {"x": 0}, "b": {"x": -(2**31) - 1}}
     )
 
 
@@ -136,9 +147,9 @@ def _columns_for_a_plain_class():
     class _NotCategorical:
         a: int
 
-    characteristic_columns(
+    characteristics(
         category_class=_NotCategorical,  # ty: ignore[invalid-argument-type]
-        cases={"a": {"x": 1}},
+        by_category={"a": {"x": 1}},
     )
 
 
@@ -156,93 +167,220 @@ def _columns_for_a_plain_class():
         (_columns_mixing_bool_and_int, r"`x`.*bool.*int"),
         (_columns_outside_int32, r"`b\.x`.*int32"),
         (_columns_with_identical_rows, r"`a`, `b`.*same characteristics"),
+        (
+            _columns_with_identical_rows_in_another_key_order,
+            "have the same characteristics",
+        ),
+        (_columns_below_int32, r"`b\.x`.*int32"),
         (_columns_for_a_plain_class, "DataclassInstance"),
     ],
 )
-def test_characteristic_columns_reject_inconsistent_tables(*, build, message):
+def test_characteristics_reject_inconsistent_tables(*, build, message):
     """Every inconsistency between the class and its table raises."""
     with pytest.raises(CategoricalDefinitionError, match=message):
         build()
 
 
 @pytest.mark.parametrize(
-    ("characteristics", "code"),
+    ("row", "code"),
     [
         ({"has_job": True, "on_di": False, "di_years": 0}, 0),
         ({"has_job": False, "on_di": False, "di_years": 0}, 1),
         ({"has_job": False, "on_di": True, "di_years": 2}, 3),
     ],
 )
-def test_find_code_returns_the_code_of_the_matching_category(*, characteristics, code):
+def test_category_with_returns_the_code_of_the_matching_category(*, row, code):
     """A full row maps back to its category's code."""
-    assert int(find_code(STATUS, **characteristics)) == code
+    assert int(category_with(STATUS, **row)) == code
 
 
-def test_find_code_accepts_a_subset_that_tells_all_categories_apart():
+def test_category_with_accepts_a_subset_that_tells_all_categories_apart():
     """A subset suffices when no two categories share it."""
-    columns = characteristic_columns(
-        category_class=_Two, cases={"a": {"x": 1, "y": 0}, "b": {"x": 2, "y": 0}}
+    columns = characteristics(
+        category_class=_Two, by_category={"a": {"x": 1, "y": 0}, "b": {"x": 2, "y": 0}}
     )
 
-    assert int(find_code(columns, x=2)) == 1
+    assert int(category_with(columns, x=2)) == 1
 
 
-def test_find_code_returns_the_missing_code_for_an_unlisted_combination():
+def test_category_with_returns_the_missing_code_for_an_unlisted_combination():
     """A combination no category has maps to the missing-category code."""
-    found = find_code(STATUS, has_job=True, on_di=True, di_years=1)
+    found = category_with(STATUS, has_job=True, on_di=True, di_years=1)
 
     assert int(found) == MISSING_CAT_CODE
 
 
-def test_find_code_returns_int32():
+def test_category_with_returns_int32():
     """Codes come back in the dtype of category codes."""
-    assert find_code(STATUS, has_job=True, on_di=False, di_years=0).dtype == jnp.int32
+    assert (
+        category_with(STATUS, has_job=True, on_di=False, di_years=0).dtype == jnp.int32
+    )
 
 
-def test_find_code_under_jit_matches_eager():
+def test_category_with_under_jit_matches_eager():
     """Characteristics computed inside `jit` map to the same codes."""
 
     @jax.jit
     def next_status(years):
-        return find_code(STATUS, has_job=False, on_di=True, di_years=years + 1)
+        return category_with(STATUS, has_job=False, on_di=True, di_years=years + 1)
 
     assert int(next_status(jnp.int32(1))) == int(Status.di_2)
 
 
-def test_find_code_under_vmap_maps_each_combination():
+def test_category_with_under_vmap_maps_each_combination():
     """Batched characteristics map to one code each, misses included."""
     years = jnp.array([1, 2, 3], dtype=jnp.int32)
 
     found = jax.vmap(
-        lambda y: find_code(STATUS, has_job=False, on_di=True, di_years=y)
+        lambda y: category_with(STATUS, has_job=False, on_di=True, di_years=y)
     )(years)
 
     np.testing.assert_array_equal(found, np.array([2, 3, MISSING_CAT_CODE]))
 
 
-def test_find_code_broadcasts_array_arguments():
+def test_category_with_broadcasts_array_arguments():
     """Array characteristics broadcast against each other and against scalars."""
-    found = find_code(STATUS, has_job=jnp.array([True, False]), on_di=False, di_years=0)
+    found = category_with(
+        STATUS, has_job=jnp.array([True, False]), on_di=False, di_years=0
+    )
 
     np.testing.assert_array_equal(found, np.array([0, 1]))
 
 
-def test_find_code_with_a_subset_shared_by_several_categories_raises():
+def test_category_with_a_subset_shared_by_several_categories_raises():
     """A subset that leaves categories tied raises before reading any value."""
     with pytest.raises(CategoricalDefinitionError, match=r"codes \[0, 1\]"):
-        find_code(STATUS, on_di=False, di_years=0)
+        category_with(STATUS, on_di=False, di_years=0)
 
 
-def test_find_code_without_characteristics_raises():
-    """`find_code` needs at least one characteristic."""
+def test_category_with_without_characteristics_raises():
+    """`category_with` needs at least one characteristic."""
     with pytest.raises(CategoricalDefinitionError, match="at least one"):
-        find_code(STATUS)
+        category_with(STATUS)
 
 
-def test_find_code_with_an_unknown_characteristic_raises():
+def test_category_with_an_unknown_characteristic_raises():
     """Characteristic names must be columns of the table."""
     with pytest.raises(CategoricalDefinitionError, match="wage"):
-        find_code(STATUS, has_job=True, on_di=False, di_years=0, wage=1)
+        category_with(STATUS, has_job=True, on_di=False, di_years=0, wage=1)
+
+
+def test_characteristics_match_row_entries_by_name_in_any_order():
+    """A row lists its characteristics in any order; columns follow the first row."""
+    columns = characteristics(
+        category_class=_Two, by_category={"a": {"x": 1, "y": 0}, "b": {"y": 0, "x": 2}}
+    )
+
+    assert {name: columns[name].tolist() for name in columns} == {
+        "x": [1, 2],
+        "y": [0, 0],
+    }
+
+
+def test_characteristics_accept_both_int32_endpoints():
+    """The smallest and largest int32 values are valid characteristics."""
+    columns = characteristics(
+        category_class=_Two, by_category={"a": {"x": -(2**31)}, "b": {"x": 2**31 - 1}}
+    )
+
+    np.testing.assert_array_equal(columns["x"], np.array([-(2**31), 2**31 - 1]))
+
+
+@categorical(ordered=False)
+class _Signed:
+    minimum: ScalarInt
+    negative: ScalarInt
+    zero: ScalarInt
+    maximum: ScalarInt
+
+
+SIGNED = characteristics(
+    category_class=_Signed,
+    by_category={
+        "minimum": {"x": -(2**31)},
+        "negative": {"x": -1},
+        "zero": {"x": 0},
+        "maximum": {"x": 2**31 - 1},
+    },
+)
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit"])
+def test_category_with_finds_int32_extremes_exactly(*, mode):
+    """Signed queries at and next to the int32 endpoints find their own rows."""
+    queries = jnp.array([-(2**31), -1, 0, 1, 2**31 - 1], dtype=jnp.int32)
+
+    def lookup(values):
+        return category_with(SIGNED, x=values)
+
+    found = jax.jit(lookup)(queries) if mode == "jit" else lookup(queries)
+
+    np.testing.assert_array_equal(found, np.array([0, 1, 2, MISSING_CAT_CODE, 3]))
+
+
+@pytest.mark.skipif(not X64_ENABLED, reason="int64 queries need x64")
+def test_category_with_treats_int64_values_outside_int32_as_missing():
+    """Wide signed queries keep their value: beyond int32 nothing matches."""
+    queries = jnp.array([-(2**31) - 1, -1, 2**31, 2**32 - 1], dtype=jnp.int64)
+
+    found = category_with(SIGNED, x=queries)
+
+    np.testing.assert_array_equal(
+        found, np.array([MISSING_CAT_CODE, 1, MISSING_CAT_CODE, MISSING_CAT_CODE])
+    )
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit"])
+@pytest.mark.parametrize("value", [-(2**31) - 1, 2**31, 2**32 - 1, 2**64])
+def test_category_with_treats_python_ints_outside_int32_as_missing(*, mode, value):
+    """No category has a characteristic outside int32, so such a value misses."""
+
+    def lookup():
+        return category_with(SIGNED, x=value)
+
+    found = jax.jit(lookup)() if mode == "jit" else lookup()
+
+    assert int(found) == MISSING_CAT_CODE
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        jnp.asarray(2**32 - 1, dtype=jnp.uint32),
+        jnp.asarray(1, dtype=jnp.uint8),
+        jnp.asarray(1.0),
+    ],
+)
+def test_category_with_rejects_values_that_are_not_bool_or_signed_integers(*, value):
+    """Unsigned and float queries raise before any comparison."""
+    with pytest.raises(CategoricalDefinitionError, match="bool or signed integer"):
+        category_with(SIGNED, x=value)
+
+
+def test_category_with_a_globally_ambiguous_subset_raises_for_a_unique_value():
+    """A subset is judged on all categories, also where the queried value is unique."""
+    with pytest.raises(CategoricalDefinitionError, match="do not tell all categories"):
+        category_with(STATUS, on_di=True, di_years=1)
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit"])
+def test_category_with_broadcasts_two_array_arguments(*, mode):
+    """Two array characteristics broadcast against each other into a grid of codes."""
+
+    def lookup(*, has_job, on_di):
+        return category_with(STATUS, has_job=has_job, on_di=on_di, di_years=0)
+
+    has_job = jnp.array([[True], [False]])
+    on_di = jnp.array([[False, True]])
+    found = (
+        jax.jit(lookup)(has_job=has_job, on_di=on_di)
+        if mode == "jit"
+        else lookup(has_job=has_job, on_di=on_di)
+    )
+
+    np.testing.assert_array_equal(
+        found, np.array([[0, MISSING_CAT_CODE], [1, MISSING_CAT_CODE]])
+    )
 
 
 @categorical(ordered=False)
@@ -306,7 +444,7 @@ def _next_pattern_status(
 ) -> IntND:
     years = jnp.where(status_on_di, jnp.minimum(status_di_years + 1, 2), 1)
     to_di = status_on_di | (apply == _Apply.yes)
-    on_di = find_code(STATUS, has_job=False, on_di=True, di_years=years)
+    on_di = category_with(STATUS, has_job=False, on_di=True, di_years=years)
     return jnp.where(
         status_has_job, Status.employed, jnp.where(to_di, on_di, Status.unemployed)
     )
@@ -395,14 +533,14 @@ def _simulate(*, use_pattern: bool) -> pd.DataFrame:
 
 
 def test_characteristic_pattern_solves_to_the_hand_table_values():
-    """Published characteristics and `find_code` reproduce the hand-table V."""
+    """Published characteristics and `category_with` reproduce the hand-table V."""
     np.testing.assert_array_equal(_solve(use_pattern=True), _solve(use_pattern=False))
 
 
 def test_characteristic_pattern_simulates_the_hand_table_paths():
-    """Published characteristics and `find_code` reproduce the simulated paths."""
+    """Published characteristics and `category_with` reproduce the simulated paths."""
     pd.testing.assert_frame_equal(
-        _simulate(use_pattern=True), _simulate(use_pattern=False)
+        _simulate(use_pattern=True), _simulate(use_pattern=False), check_exact=True
     )
 
 

@@ -36,28 +36,28 @@ documentation and tests.
 
 ## Grids, categories, and processes
 
-| Public name                                                                                | Canonical documentation              |
-| ------------------------------------------------------------------------------------------ | ------------------------------------ |
-| [`lcm.AgeGrid`](grids_and_processes.md#api-lifecycle-and-categorical-grids)                | Lifecycle grid                       |
-| [`lcm.categorical`](grids_and_processes.md#api-lifecycle-and-categorical-grids)            | Category declaration                 |
-| [`lcm.characteristic_columns`](grids_and_processes.md#api-lifecycle-and-categorical-grids) | Checked category characteristics     |
-| [`lcm.find_code`](grids_and_processes.md#api-lifecycle-and-categorical-grids)              | Category code from characteristics   |
-| [`lcm.DiscreteGrid`](grids_and_processes.md#api-lifecycle-and-categorical-grids)           | Discrete outcome grid                |
-| [`lcm.LinSpacedGrid`](grids_and_processes.md#api-continuous-grids)                         | Linear grid                          |
-| [`lcm.LogSpacedGrid`](grids_and_processes.md#api-continuous-grids)                         | Log grid                             |
-| [`lcm.IrregSpacedGrid`](grids_and_processes.md#api-continuous-grids)                       | Explicit irregular grid              |
-| [`lcm.GridBreakpoint`](grids_and_processes.md#api-continuous-grids)                        | Piecewise-grid boundary              |
-| [`lcm.PiecewiseLinSpacedGrid`](grids_and_processes.md#api-continuous-grids)                | Piecewise linear grid                |
-| [`lcm.PiecewiseLogSpacedGrid`](grids_and_processes.md#api-continuous-grids)                | Piecewise log grid                   |
-| [`lcm.UniformIIDProcess`](grids_and_processes.md#api-stochastic-processes)                 | IID uniform process                  |
-| [`lcm.NormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)                  | IID normal process                   |
-| [`lcm.JointNormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)             | Named correlated IID normal shocks   |
-| [`lcm.LogNormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)               | IID log-normal process               |
-| [`lcm.NormalMixtureIIDProcess`](grids_and_processes.md#api-stochastic-processes)           | IID normal mixture                   |
-| [`lcm.TauchenAR1Process`](grids_and_processes.md#api-stochastic-processes)                 | Tauchen AR(1)                        |
-| [`lcm.RouwenhorstAR1Process`](grids_and_processes.md#api-stochastic-processes)             | Rouwenhorst AR(1)                    |
-| [`lcm.TauchenNormalMixtureAR1Process`](grids_and_processes.md#api-stochastic-processes)    | Mixture AR(1)                        |
-| [`lcm.StateConditioned`](grids_and_processes.md#api-stochastic-processes)                  | State-conditioned process parameters |
+| Public name                                                                             | Canonical documentation              |
+| --------------------------------------------------------------------------------------- | ------------------------------------ |
+| [`lcm.AgeGrid`](grids_and_processes.md#api-lifecycle-and-categorical-grids)             | Lifecycle grid                       |
+| [`lcm.categorical`](grids_and_processes.md#api-lifecycle-and-categorical-grids)         | Category declaration                 |
+| [`lcm.characteristics`](grids_and_processes.md#api-lifecycle-and-categorical-grids)     | Checked category characteristics     |
+| [`lcm.category_with`](grids_and_processes.md#api-lifecycle-and-categorical-grids)       | Category code from characteristics   |
+| [`lcm.DiscreteGrid`](grids_and_processes.md#api-lifecycle-and-categorical-grids)        | Discrete outcome grid                |
+| [`lcm.LinSpacedGrid`](grids_and_processes.md#api-continuous-grids)                      | Linear grid                          |
+| [`lcm.LogSpacedGrid`](grids_and_processes.md#api-continuous-grids)                      | Log grid                             |
+| [`lcm.IrregSpacedGrid`](grids_and_processes.md#api-continuous-grids)                    | Explicit irregular grid              |
+| [`lcm.GridBreakpoint`](grids_and_processes.md#api-continuous-grids)                     | Piecewise-grid boundary              |
+| [`lcm.PiecewiseLinSpacedGrid`](grids_and_processes.md#api-continuous-grids)             | Piecewise linear grid                |
+| [`lcm.PiecewiseLogSpacedGrid`](grids_and_processes.md#api-continuous-grids)             | Piecewise log grid                   |
+| [`lcm.UniformIIDProcess`](grids_and_processes.md#api-stochastic-processes)              | IID uniform process                  |
+| [`lcm.NormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)               | IID normal process                   |
+| [`lcm.JointNormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)          | Named correlated IID normal shocks   |
+| [`lcm.LogNormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)            | IID log-normal process               |
+| [`lcm.NormalMixtureIIDProcess`](grids_and_processes.md#api-stochastic-processes)        | IID normal mixture                   |
+| [`lcm.TauchenAR1Process`](grids_and_processes.md#api-stochastic-processes)              | Tauchen AR(1)                        |
+| [`lcm.RouwenhorstAR1Process`](grids_and_processes.md#api-stochastic-processes)          | Rouwenhorst AR(1)                    |
+| [`lcm.TauchenNormalMixtureAR1Process`](grids_and_processes.md#api-stochastic-processes) | Mixture AR(1)                        |
+| [`lcm.StateConditioned`](grids_and_processes.md#api-stochastic-processes)               | State-conditioned process parameters |
 
 ## Transitions, phases, and structured declarations
 

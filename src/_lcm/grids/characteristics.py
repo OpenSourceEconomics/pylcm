@@ -3,9 +3,9 @@
 Some discrete variables have categories that are combinations of characteristics:
 a labour-market status is "employed", "on disability insurance for one year", and
 so on, and each status fixes whether the person has a job, receives benefits and
-for how long. `characteristic_columns` checks a table that lists every category's
+for how long. `characteristics` checks a table that lists every category's
 characteristics against its categorical class and returns one array per
-characteristic, indexed by code. `find_code` maps characteristics back to a code.
+characteristic, indexed by code. `category_with` maps characteristics back to a code.
 """
 
 from collections.abc import Mapping
@@ -29,14 +29,15 @@ type CharacteristicValue = int | bool
 # value is restated here and a test pins it to the engine's sentinel.
 _MISSING_CODE = np.iinfo(np.int32).min
 
-_INT32_INFO = np.iinfo(np.int32)
+_INT32_MIN = int(np.iinfo(np.int32).min)
+_INT32_MAX = int(np.iinfo(np.int32).max)
 
 
 @beartype(conf=CATEGORICAL_CONF)
-def characteristic_columns(
+def characteristics(
     *,
     category_class: type[DataclassInstance],
-    cases: Mapping[str, Mapping[str, CharacteristicValue]],
+    by_category: Mapping[str, Mapping[str, CharacteristicValue]],
 ) -> MappingProxyType[str, np.ndarray]:
     """Check a table of category characteristics and return it by code.
 
@@ -47,9 +48,9 @@ def characteristic_columns(
             di_1: ScalarInt
             di_2: ScalarInt
 
-        STATUS = characteristic_columns(
+        STATUS = characteristics(
             category_class=Status,
-            cases={
+            by_category={
                 "employed": {"has_job": True, "di_years": 0},
                 "di_1": {"has_job": False, "di_years": 1},
                 "di_2": {"has_job": False, "di_years": 2},
@@ -60,15 +61,15 @@ def characteristic_columns(
     Args:
         category_class: The categorical class whose categories the table
             describes.
-        cases: Mapping of every category name, in declaration order, to its
+        by_category: Mapping of every category name, in declaration order, to its
             characteristics. Every category sets the same characteristics,
-            each to an `int` or a `bool`, and no two categories set all of
-            them to the same values.
+            in any order, each to an `int` or a `bool`, and no two categories
+            set all of them to the same values.
 
     Returns:
-        A read-only mapping from each characteristic to a read-only 1-d array
-        indexed by category code: `bool` for bool characteristics, `int32`
-        otherwise.
+        A read-only mapping from each characteristic, in the first row's order,
+        to a read-only 1-d array indexed by category code: `bool` for bool
+        characteristics, `int32` otherwise.
 
     Raises:
         CategoricalDefinitionError: If the table does not describe exactly the
@@ -84,17 +85,17 @@ def characteristic_columns(
 
     error_messages = _check_case_names(
         category_names=tuple(get_category_codes(category_class)),
-        case_names=tuple(cases),
+        case_names=tuple(by_category),
     )
     if not error_messages:
-        error_messages = _check_rows(cases=cases)
+        error_messages = _check_rows(by_category=by_category)
     if error_messages:
         raise CategoricalDefinitionError(format_messages(error_messages))
 
-    names = tuple(next(iter(cases.values())))
+    names = tuple(next(iter(by_category.values())))
     columns = {}
     for name in names:
-        values = [row[name] for row in cases.values()]
+        values = [row[name] for row in by_category.values()]
         dtype = bool if isinstance(values[0], bool) else np.int32
         column = np.asarray(values, dtype=dtype)
         column.flags.writeable = False
@@ -103,40 +104,46 @@ def characteristic_columns(
 
 
 @beartype(conf=CATEGORICAL_CONF)
-def find_code(
-    columns: Mapping[str, np.ndarray], /, **characteristics: ValueND | int
+def category_with(
+    columns: Mapping[str, np.ndarray], /, **query: ValueND | int
 ) -> IntND:
     """Return the code of the category with the given characteristics.
 
     The given characteristics must tell all categories apart; this is checked
     from `columns` before any value is read, so it holds for every value and
-    raises at trace time. Values may be arrays, traced or not, and broadcast
-    against each other.
+    raises at trace time. Values are Python ints or bools, or bool or
+    signed-integer arrays, traced or not, and broadcast against each other.
 
     Example:
-        find_code(STATUS, has_job=False, di_years=years + 1)
+        category_with(STATUS, has_job=False, di_years=years + 1)
 
     Args:
-        columns: The table `characteristic_columns` returns.
-        **characteristics: Values of some or all characteristics.
+        columns: The table `characteristics` returns.
+        **query: Values of some or all characteristics.
 
     Returns:
         The int32 code of the matching category at every broadcast position,
         or the missing-category code (the int32 minimum) where no category has
-        these characteristics.
+        these characteristics, including every Python int outside int32.
 
     Raises:
         CategoricalDefinitionError: If no characteristic is given, one is not a
-            column, or two categories share the given characteristics.
+            column, two categories share the given characteristics, or a value
+            is an array of neither bool nor signed-integer dtype.
 
     """
-    names = _get_identifying_names(columns=columns, given=tuple(characteristics))
-    values = {name: jnp.asarray(characteristics[name]) for name in names}
-    shape = jnp.broadcast_shapes(*(value.shape for value in values.values()))
+    names = _get_identifying_names(columns=columns, given=tuple(query))
+    values = {name: _prepare_value(name=name, value=query[name]) for name in names}
+    shape = jnp.broadcast_shapes(
+        *(value.shape for value in values.values() if value is not None)
+    )
     n_categories = len(columns[names[0]])
     category_axis = (n_categories,) + (1,) * len(shape)
     matches = jnp.ones((n_categories, *shape), dtype=bool)
     for name, value in values.items():
+        if value is None:
+            matches = jnp.zeros_like(matches)
+            continue
         column = jnp.asarray(columns[name]).reshape(category_axis)
         matches = matches & (column == value)
     return jnp.where(
@@ -144,6 +151,26 @@ def find_code(
         jnp.argmax(matches, axis=0).astype(jnp.int32),
         jnp.int32(_MISSING_CODE),
     )
+
+
+def _prepare_value(*, name: str, value: ValueND | int) -> ValueND | None:
+    """Return `value` as an array that compares by its integer value.
+
+    A Python int outside int32 matches no characteristic and returns `None`.
+    Arrays must be bool or signed integers: JAX
+    compares an unsigned array with an int32 column in int32 when x64 is off,
+    which would let a large unsigned value match a negative characteristic.
+    """
+    if isinstance(value, int):
+        if _INT32_MIN <= value <= _INT32_MAX:
+            return jnp.asarray(value)
+        return None
+    if value.dtype.kind not in {"b", "i"}:
+        raise CategoricalDefinitionError(
+            f"category_with takes bool or signed integer values, but `{name}` has "
+            f"dtype {value.dtype}."
+        )
+    return value
 
 
 def _check_case_names(
@@ -160,9 +187,11 @@ def _check_case_names(
     ]
 
 
-def _check_rows(*, cases: Mapping[str, Mapping[str, CharacteristicValue]]) -> list[str]:
+def _check_rows(
+    *, by_category: Mapping[str, Mapping[str, CharacteristicValue]]
+) -> list[str]:
     """Return every inconsistency among the rows of the table."""
-    first_name, first_row = next(iter(cases.items()))
+    first_name, first_row = next(iter(by_category.items()))
     names = list(first_row)
     if not names:
         return ["Every category needs at least one characteristic."]
@@ -170,21 +199,21 @@ def _check_rows(*, cases: Mapping[str, Mapping[str, CharacteristicValue]]) -> li
     error_messages = [
         f"Category `{case}` sets the characteristics {list(row)}, but `{first_name}` "
         f"sets {names}; every category sets the same characteristics."
-        for case, row in cases.items()
-        if list(row) != names
+        for case, row in by_category.items()
+        if set(row) != set(names)
     ]
     if error_messages:
         return error_messages
 
     for name in names:
-        values = {case: row[name] for case, row in cases.items()}
+        values = {case: row[name] for case, row in by_category.items()}
         error_messages.extend(_check_column(name=name, values=values))
     if error_messages:
         return error_messages
 
     groups: dict[tuple[CharacteristicValue, ...], list[str]] = {}
-    for case, row in cases.items():
-        groups.setdefault(tuple(row.values()), []).append(case)
+    for case, row in by_category.items():
+        groups.setdefault(tuple(row[name] for name in names), []).append(case)
     error_messages.extend(
         f"Categories {', '.join(f'`{case}`' for case in group)} have the same "
         f"characteristics; every category needs a combination of its own."
@@ -208,7 +237,7 @@ def _check_column(*, name: str, values: Mapping[str, CharacteristicValue]) -> li
     return [
         f"`{case}.{name}` is {value}, outside the int32 range of category codes."
         for case, value in values.items()
-        if not _INT32_INFO.min <= value <= _INT32_INFO.max
+        if not _INT32_MIN <= value <= _INT32_MAX
     ]
 
 
@@ -218,13 +247,13 @@ def _get_identifying_names(
     """Return the given characteristics if they tell all categories apart."""
     if not given:
         raise CategoricalDefinitionError(
-            f"find_code needs at least one characteristic; the columns are "
+            f"category_with needs at least one characteristic; the columns are "
             f"{list(columns)}."
         )
     unknown = [name for name in given if name not in columns]
     if unknown:
         raise CategoricalDefinitionError(
-            f"find_code got characteristics {unknown} that are not columns; the "
+            f"category_with got characteristics {unknown} that are not columns; the "
             f"columns are {list(columns)}."
         )
     names = tuple(name for name in columns if name in given)
