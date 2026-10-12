@@ -53,6 +53,7 @@ from _lcm.typing import (
     EconFunction,
     HostArray,
     PytreeValue,
+    RegimeTransitionFunction,
     ShapeDtypePytree,
     TransitionFunction,
 )
@@ -68,9 +69,11 @@ type _OperandLeaf = (
 )
 
 # A model-owned input a `built` composer reads: a regime name, or one of the
-# regime's function, constraint, transition or transition-plan mappings.
+# regime's function, constraint, transition or transition-plan mappings and schema.
 type _BuilderInput = (
     RegimeName
+    | RegimeTransitionFunction
+    | tuple[ReferenceName, ...]
     | Mapping[
         str,
         EconFunction | ConstraintFunction | TransitionFunction | TargetTransitionPlan,

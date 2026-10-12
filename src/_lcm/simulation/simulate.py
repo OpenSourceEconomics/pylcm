@@ -47,6 +47,11 @@ from _lcm.engine import (
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.processes.joint_normal import JointNormalIIDProcess
+from _lcm.processes.joint_normal_lowering import (
+    coordinate_names,
+    joint_normal_declarations,
+)
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
@@ -151,12 +156,14 @@ from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
+from _lcm.transition_checks import _evaluate_admitted_transition_producer
 from _lcm.typing import (
     ActionName,
     ArrayTree,
     EconFunctionArg,
     FlatParams,
     FlatRegimeParams,
+    HostArray,
     InitialConditions,
     PeriodToRegimeToSimulationPolicy,
     PRNGKeyND,
@@ -184,6 +191,7 @@ from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
+    NoFeasibleActionError,
     UnrepresentableOuterCandidateError,
 )
 from lcm.result import SimulationResult
@@ -1868,6 +1876,75 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 value=V_arr,
                 n_subjects=n_chunk_subjects,
                 memory=memory,
+            )
+        empty_row = run_simulation_operation(
+            memory=memory,
+            function=_first_empty_action_row,
+            arguments={
+                "indices": indices_optimal_actions,
+                "in_regime": subject_ids_in_regime,
+            },
+            subject_arg_names=("indices", "in_regime"),
+        ).item()
+        if empty_row >= 0 and sim_policy is None:
+            state = {
+                name: (
+                    regime.simulation.discrete_grids[name].categories[
+                        int(np.asarray(values)[empty_row])
+                    ]
+                    if name in regime.simulation.discrete_grids
+                    else np.asarray(values)[empty_row].item()
+                )
+                for name, values in state_action_space.states.items()
+            }
+            for group, process in joint_normal_declarations(
+                regime.simulation.grids
+            ).items():
+                names = coordinate_names(group=group, process=process)
+                arguments: dict[str, FloatND | HostArray] = {
+                    "standard": np.stack(
+                        [
+                            np.asarray(state_action_space.states[name])[empty_row]
+                            for name in names
+                        ]
+                    )
+                }
+                law_params = {
+                    **regime.resolved_fixed_params,
+                    **regime_kernel_params(flat_params, regime_name=regime_name),
+                }
+                if process.mean is None:
+                    arguments["mean"] = cast("FloatND", law_params[f"{group}__mean"])
+                if process.cov is None:
+                    arguments["cov"] = cast("FloatND", law_params[f"{group}__cov"])
+                transform = cast(
+                    "Callable[..., FloatND]",
+                    functools.partial(JointNormalIIDProcess.transform, self=process),
+                )
+                if memory is None:
+                    physical = transform(
+                        **{
+                            name: jnp.asarray(value)
+                            for name, value in arguments.items()
+                        }
+                    )
+                else:
+                    physical = _evaluate_admitted_transition_producer(
+                        function=transform, arguments=arguments, memory=memory
+                    )
+                    memory.hold(tree=physical)
+                host_physical = np.asarray(physical)
+                state.update(
+                    {
+                        name: host_physical[dimension].item()
+                        for dimension, name in enumerate(process.states)
+                    }
+                )
+                for name in names:
+                    del state[name]
+            raise NoFeasibleActionError(
+                f"Regime '{regime_name}', period {period}, state {state} "
+                "has no feasible action."
             )
         optimal_actions = run_simulation_operation(
             memory=memory,
@@ -4180,6 +4257,13 @@ def _resources_at_subjects(
         ),
         (n_subjects,),
     )
+
+
+def _first_empty_action_row(*, indices: IntND, in_regime: BoolND) -> IntND:
+    """Find an owned empty decision, excluding other regimes and padding."""
+    rows = jnp.arange(in_regime.shape[0], dtype=jnp.int32)
+    first = jnp.min(jnp.where(in_regime & (indices < 0), rows, in_regime.shape[0]))
+    return jnp.where(first < in_regime.shape[0], first, -1)
 
 
 def _lookup_values_from_indices(

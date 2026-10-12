@@ -8,18 +8,24 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from _lcm import transition_checks
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.off_grid import count_off_grid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.shock_average import average_over_shock
 from _lcm.regime_building.V import (
     VInterpolationInfo,
     _get_coordinate_finder,
     get_V_interpolator,
 )
+from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.transitions import _clip_next_states
+from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
@@ -28,6 +34,7 @@ from lcm import (
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    NormalIIDProcess,
     StochasticTransition,
     Transition,
     categorical,
@@ -699,3 +706,105 @@ def test_joint_tail_support_survives_an_underflowed_probability_product(
             runtime_checks=runtime_checks,
         )
         np.testing.assert_array_equal(solution.values[0]["alive"], 1.0)
+
+
+def test_budgeted_mandatory_counts_reuse_the_warm_executable() -> None:
+    """Silent unchecked simulation still enforces raises without warm lowering."""
+    model = _model(off_grid="raise", hand_capped=True, device_memory_bytes=2**28)
+    params = {"discount_factor": 1.0, "reward": 2.0}
+    solution = model.solve(params=params, log_level="off")
+    initial = {
+        "age": jnp.zeros(2),
+        "regime_id": jnp.zeros(2, dtype=jnp.int32),
+        "wealth": jnp.array([0.0, 2.0]),
+    }
+    with count_compile_requests() as cold_requests:
+        cold = model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            runtime_checks=False,
+            log_level="off",
+        ).to_dataframe(use_labels=False)
+    with count_compile_requests() as warm_requests:
+        warm = model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            runtime_checks=False,
+            log_level="off",
+        ).to_dataframe(use_labels=False)
+    pd.testing.assert_frame_equal(warm, cold, check_exact=True)
+    assert (cold_requests.compile_requests > 0, warm_requests.compile_requests) == (
+        True,
+        0,
+    )
+
+
+def _shock_count_utility(*, wealth: ContinuousState, z: ContinuousState) -> FloatND:
+    return wealth**2 + z**2
+
+
+def _wealth_from_next_shock(next_z: ContinuousState) -> FloatND:
+    return 1 + next_z
+
+
+def test_budgeted_counts_read_changed_node_operands_on_the_same_model() -> None:
+    """The admitted producer reads fresh supplied nodes, not captured arrays."""
+    grid = LinSpacedGrid(start=0, stop=2, n_points=3, off_grid="raise")
+    shock = NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"wealth": grid, "z": shock},
+                functions={"utility": _shock_count_utility},
+                state_transitions={"wealth": _wealth_from_next_shock},
+            ),
+            "terminal": Regime(
+                states={"wealth": grid, "z": shock},
+                functions={"utility": _shock_count_utility},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"alive": {"terminal": 0}},
+        initial_nodes={0: "alive"},
+        regime_id_class=RegimeId,
+    )
+    devices = tuple(jax.devices()[:1])
+    memory = SimulationMemory(
+        budget_bytes=2**28,
+        devices=devices,
+        subject_devices=devices,
+        operations=ProfiledSimulationOperations(),
+        inputs=measure_buffer_footprint(tree={}),
+    )
+    source = model._regimes["alive"]
+    target = model._regimes["terminal"]
+    law = transition_checks._regime_laws_at_period(
+        regime=source, regime_name="alive", period=0
+    )[0][0]
+    params = model._process_params({"discount_factor": 1.0})
+    axes = target.solution.state_action_space(
+        regime_params=regime_kernel_params(params, regime_name="terminal")
+    ).states
+    for node_scale, expected in ((0.1, 0), (1.0, 18)):
+        summary = transition_checks._ValidationSummary(memory=memory)
+        try:
+            counts = transition_checks._off_grid_target_counts(
+                regime=source,
+                phase=source.solution,
+                target="terminal",
+                law=law,
+                points={"wealth": grid.to_jax()},
+                target_axes=MappingProxyType(
+                    dict(axes) | {"z": node_scale * axes["z"]}
+                ),
+                period=0,
+                flat_params=params,
+                ages=model._time,
+                summary=summary,
+                process_grid_resolver=None,
+            )
+            np.testing.assert_array_equal(counts, [[expected, 0]])
+        finally:
+            summary.close()
