@@ -8,6 +8,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from _lcm.grids.continuous import _clip_grid_value
@@ -19,6 +20,7 @@ from _lcm.regime_building.V import (
     get_V_interpolator,
 )
 from _lcm.simulation.transitions import _clip_next_states
+from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
@@ -678,3 +680,36 @@ def test_joint_tail_support_survives_an_underflowed_probability_product(
             runtime_checks=runtime_checks,
         )
         np.testing.assert_array_equal(solution.values[0]["alive"], 1.0)
+
+
+def test_budgeted_mandatory_counts_reuse_the_warm_executable() -> None:
+    """Silent unchecked simulation still enforces raises without warm lowering."""
+    model = _model(off_grid="raise", hand_capped=True, device_memory_bytes=2**28)
+    params = {"discount_factor": 1.0, "reward": 2.0}
+    solution = model.solve(params=params, log_level="off")
+    initial = {
+        "age": jnp.zeros(2),
+        "regime_id": jnp.zeros(2, dtype=jnp.int32),
+        "wealth": jnp.array([0.0, 2.0]),
+    }
+    with count_compile_requests() as cold_requests:
+        cold = model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            runtime_checks=False,
+            log_level="off",
+        ).to_dataframe(use_labels=False)
+    with count_compile_requests() as warm_requests:
+        warm = model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            runtime_checks=False,
+            log_level="off",
+        ).to_dataframe(use_labels=False)
+    pd.testing.assert_frame_equal(warm, cold, check_exact=True)
+    assert (cold_requests.compile_requests > 0, warm_requests.compile_requests) == (
+        True,
+        0,
+    )
