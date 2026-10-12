@@ -24,7 +24,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.regime_building import Q_and_F
 from _lcm.regime_building.ndimage import map_coordinates
@@ -131,7 +130,7 @@ def _next_wealth(*, before_bill: FloatND, cost: FloatND) -> ContinuousState:
 
 def _next_health(health: DiscreteState) -> FloatND:
     # NumPy literals must enter the traced law at the active precision.
-    return jnp.asarray(HEALTH_PROBS, dtype=canonical_float_dtype())[health]
+    return jnp.asarray(HEALTH_PROBS, dtype=jnp.result_type(0.0))[health]
 
 
 def _utility(*, consumption: ContinuousAction, health: DiscreteState) -> FloatND:
