@@ -509,6 +509,91 @@ def test_component_solve_jobs_report_each_count_once(
     ) == (total, 1)
 
 
+def _period_one_messages(*, messages: list[str]) -> list[str]:
+    """Return the working period-1 feasibility warnings, in logging order."""
+    return [
+        message
+        for message in messages
+        if any(pattern.match(message) for pattern in _COUNT_PATTERNS.values())
+    ]
+
+
+def test_blocked_solve_warning_names_the_whole_regime_period(
+    *, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A whole-model solve reports its counts without a scope label."""
+    _blocked_model(infinite_utility=True).solve(
+        params=_BLOCKED_PARAMS, log_level="warning"
+    )
+
+    assert _period_one_messages(
+        messages=[record.getMessage() for record in caplog.records]
+    ) == [
+        "5 state(s) with no feasible action for regime 'working', period 1 (age 1.0)",
+        "Inf in V_arr for 1 other state(s) for regime 'working', period 1 (age 1.0)",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("job", "expected"),
+    [
+        (
+            0,
+            [
+                (
+                    "3 state(s) with no feasible action for regime 'working', "
+                    "period 1 (age 1.0), pref_type codes (0,) only"
+                ),
+            ],
+        ),
+        (
+            2,
+            [
+                (
+                    "1 state(s) with no feasible action for regime 'working', "
+                    "period 1 (age 1.0), pref_type codes (2,) only"
+                ),
+                (
+                    "Inf in V_arr for 1 other state(s) for regime 'working', "
+                    "period 1 (age 1.0), pref_type codes (2,) only"
+                ),
+            ],
+        ),
+    ],
+)
+def test_component_job_warning_names_the_codes_it_covers(
+    *,
+    job: int,
+    expected: list[str],
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A job's counts are labelled with the blocked-state codes they cover."""
+    model = _blocked_model(infinite_utility=True)
+    directory = tmp_path / "jobs"
+    plan_component_jobs(
+        model=model,
+        params=_BLOCKED_PARAMS,
+        directory=directory,
+        assignment=((0,), (1,), (2,)),
+    )
+    caplog.clear()
+    run_component_job(
+        model=model,
+        params=_BLOCKED_PARAMS,
+        directory=directory,
+        job=job,
+        log_level="warning",
+    )
+
+    assert (
+        _period_one_messages(
+            messages=[record.getMessage() for record in caplog.records]
+        )
+        == expected
+    )
+
+
 def test_component_simulation_job_reports_each_count_once(
     *, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

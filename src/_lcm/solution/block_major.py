@@ -864,10 +864,18 @@ class ComponentSchedule:
         The counts are released once logged, so each is logged exactly once:
         a later flush, including the one `finish` runs, logs only components
         solved since. A selection of the codes logs the counts of its own
-        components, without requiring every code to be retained.
+        components, without requiring every code to be retained, and labels
+        each message with the blocked-state codes it covers.
         """
         emit_component_feasibility_warnings(
-            logger=self._logger, counts=self._feasibility_warnings
+            logger=self._logger,
+            counts=self._feasibility_warnings,
+            scope=""
+            if self._subject_codes is None or not self._components
+            else (
+                f", {self._components[0].state_name} codes "
+                f"{tuple(component.code for component in self._components)} only"
+            ),
         )
 
     def finish(self) -> RetainedComponentValues:
