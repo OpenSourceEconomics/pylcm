@@ -961,6 +961,7 @@ def _solve_job(
     for component in schedule.components:
         blocks = schedule.solve_component(code=component.code)
         schedule.retain_component(code=component.code, blocks=blocks)
+    schedule.flush_feasibility_warnings()
     return schedule.retained
 
 

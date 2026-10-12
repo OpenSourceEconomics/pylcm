@@ -25,8 +25,8 @@ import jax.numpy as jnp
 from jax.scipy.stats.norm import cdf
 
 from _lcm.grids import DiscreteGrid
-from _lcm.processes.base import StateConditioned
-from lcm.typing import Float1D, ScalarFloat, ScalarInt
+from _lcm.processes.base import StateConditioned, sealed
+from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
 
 __all__ = [
     "Family",
@@ -126,8 +126,9 @@ def iid_normal_row(*, nodes: Float1D, mu: _Scalar, sigma: _Scalar) -> Float1D:
     IID: the row does not depend on the time-$t$ value. Binned on the midpoints of the
     fixed common nodes, never on nodes that move with the selected `sigma`.
     """
-    edges = (nodes[:-1] + nodes[1:]) / 2.0
-    return _row_from_edge_cdf(cdf((edges - mu) / sigma))
+    return _row_from_edge_cdf(
+        cdf(_standardized_midpoints(nodes=nodes, location=mu, shift=0.0, sigma=sigma))
+    )
 
 
 def tauchen_row(
@@ -151,5 +152,45 @@ def tauchen_row(
     coordinates, where the intercept vanishes. Here it does not, and dropping it
     misplaces every row unless $\mu = 0$.
     """
-    edges = (nodes[:-1] + nodes[1:]) / 2.0
-    return _row_from_edge_cdf(cdf((edges - mu - rho * from_value) / sigma))
+    shift = sealed(jnp.asarray(rho) * from_value)
+    return _row_from_edge_cdf(
+        cdf(_standardized_midpoints(nodes=nodes, location=mu, shift=shift, sigma=sigma))
+    )
+
+
+def _standardized_midpoints(
+    *, nodes: Float1D, location: _Scalar, shift: _Scalar, sigma: _Scalar
+) -> Float1D:
+    r"""Standardize each adjacent-node midpoint against the conditional mean.
+
+    Return $((a + b)/2 - \mu - s) / \sigma$ for each adjacent node pair $(a, b)$,
+    with location $\mu$ and shift $s$ (the already-rounded $\rho y_t$ for an
+    AR(1)). The physical midpoint is never rounded on its own: next to a nonzero
+    offset, the exact midpoint of two adjacent representable nodes is not
+    representable, and rounding it first moves a bin edge by half a cell — which,
+    for an innovation scale comparable to the spacing, is an O(1) change in
+    probability. Each sum therefore carries its exact rounding error, and the
+    errors re-enter only after the large terms have cancelled. Halving before
+    adding keeps the midpoint finite whenever both nodes are, and is exact for
+    nodes in the normal range.
+
+    When the centred distance itself overflows, the error terms are dropped and
+    the boundary saturates the CDF.
+    """
+    halves = nodes * 0.5
+    midpoint, midpoint_error = _sum_with_error(left=halves[:-1], right=halves[1:])
+    mean, mean_error = _sum_with_error(
+        left=jnp.asarray(location, dtype=halves.dtype),
+        right=jnp.asarray(shift, dtype=halves.dtype),
+    )
+    centred, centred_error = _sum_with_error(left=midpoint, right=-mean)
+    correction = (centred_error + midpoint_error) - mean_error
+    return (centred + jnp.where(jnp.isfinite(centred), correction, 0.0)) / sigma
+
+
+def _sum_with_error(*, left: FloatND, right: FloatND) -> tuple[FloatND, FloatND]:
+    """Return the rounded sum and its exact rounding error (Knuth's two-sum)."""
+    total = left + right
+    right_part = total - left
+    error = (left - (total - right_part)) + (right - right_part)
+    return total, error

@@ -402,10 +402,12 @@ enter the address. Changing a taste-shock scale multiplies the same standardized
 so equal scaled shocks additionally require equal scales.
 
 The independent stream uses Threefry for integer seeds. A supplied typed root retains
-its PRNG implementation. Exact comparisons require matching numerical precision, backend
-and JAX random configuration. It does not alter the ordinary key-chain advancement
-directly. `taste_shock_seed=None` uses the existing ordinary stream, and the optional
-seed changes neither solutions nor their compatibility fingerprints.
+its PRNG implementation; with an RBG or unsafe-RBG root, each subject's draw comes from
+its own addressed key under every subject width and padding. Exact comparisons require
+matching numerical precision, backend and JAX random configuration. It does not alter
+the ordinary key-chain advancement directly. `taste_shock_seed=None` uses the existing
+ordinary stream, and the optional seed changes neither solutions nor their compatibility
+fingerprints.
 
 ### Heterogeneous initial ages
 

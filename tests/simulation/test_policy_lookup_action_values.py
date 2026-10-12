@@ -19,9 +19,12 @@ from lcm import (
     LinSpacedGrid,
     Model,
     PowerMean,
+    Regime,
+    categorical,
 )
 from lcm.exceptions import InvalidSimulationInputError
-from lcm.typing import BoolND, ContinuousAction, FloatND
+from lcm.result import PolicyLookup
+from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples import epstein_zin
 from lcm_examples.mortality import LaborSupply, utility_working
 from tests.conftest import DECIMAL_PRECISION
@@ -652,3 +655,65 @@ def test_action_value_lookup_evaluates_the_regime_kernel_once():
         return_action_values=True,
     )
     assert len(traces) == 1
+
+
+@categorical(ordered=False)
+class TerminalOnlyRegimeId:
+    terminal: ScalarInt
+
+
+def terminal_utility(*, x: ContinuousState) -> FloatND:
+    return x + 2.0
+
+
+def nonnegative_x(*, x: ContinuousState) -> BoolND:
+    return x >= 0.0
+
+
+def lookup_actionless_terminal(*, return_action_values: bool) -> PolicyLookup:
+    """Look up a stateful terminal regime without actions at `x = 0` and `x = -1`.
+
+    Each row has one candidate: utility `x + 2`, feasible only at `x >= 0`. The
+    solve grid is wholly feasible; the query at `x = -1` extrapolates off it, as
+    lookup permits for continuous states.
+    """
+    model = Model(
+        ages=AgeGrid(exact_values=(0,)),
+        regimes={
+            "terminal": Regime(
+                states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+                functions={"utility": terminal_utility},
+                constraints={"nonnegative_x": nonnegative_x},
+            )
+        },
+        regime_id_class=TerminalOnlyRegimeId,
+        initial_nodes={0: "terminal"},
+        edges={},
+    )
+    solution = model.solve(params={}, log_level="off")
+    return model.lookup_policy(
+        params={},
+        solution=solution,
+        period=0,
+        regime_name="terminal",
+        states={"x": jnp.asarray([0.0, -1.0])},
+        return_action_values=return_action_values,
+    )
+
+
+@pytest.mark.parametrize("return_action_values", [False, True])
+def test_actionless_row_with_infeasible_state_has_minus_infinity_value(
+    *, return_action_values: bool
+) -> None:
+    """An infeasible state with no actions to choose has no admissible value."""
+    got = lookup_actionless_terminal(return_action_values=return_action_values)
+    np.testing.assert_array_equal(np.asarray(got.value), [2.0, -np.inf])
+
+
+def test_actionless_row_with_infeasible_state_keeps_its_raw_parts() -> None:
+    """At an infeasible actionless row, `Q`, `U` and `CE` stay raw and `F` is false."""
+    got = lookup_actionless_terminal(return_action_values=True)
+    np.testing.assert_array_equal(
+        np.stack([np.asarray(x, dtype=float) for x in (got.Q, got.U, got.CE, got.F)]),
+        np.array([[2.0, 1.0], [2.0, 1.0], [0.0, 0.0], [1.0, 0.0]]),
+    )
