@@ -3983,12 +3983,15 @@ class Model:
         action_grids: Mapping[ActionName, jax.Array] | None = None,
         return_action_values: bool = False,
     ) -> PolicyLookup:
-        """Return the optimal actions and value at given states of one regime-period.
+        """Return the decision at given states of one regime-period.
 
-        Evaluates the same decision program `simulate` runs, so a subject standing
-        at one of `states` in `(period, regime_name)` chooses exactly the returned
-        actions and attains the returned value. Repeated calls with the same number
-        of rows reuse one compiled program.
+        Evaluates the decision `simulate` runs: the simulate phase's current
+        utility and aggregator with the solved continuation, on the requested
+        action grid. Without taste shocks, a subject standing at one of `states`
+        in `(period, regime_name)` chooses exactly the returned actions and
+        attains the returned value. With taste shocks, the returned choice
+        probabilities are the distribution of that subject's discrete choice.
+        Repeated calls with the same number of rows reuse one compiled program.
 
         Args:
             params: The parameters `solution` was solved with; checked against its

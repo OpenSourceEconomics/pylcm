@@ -201,8 +201,8 @@ def build_simulation_programs(
 
     # The dense decision with its parts, even where the decision streams: same
     # reads and subject tiling, no reduced action axis. A household argmax
-    # publishes no such parts. A taste-shock regime publishes the EV1 decision
-    # the solve reduces, which draws nothing, so it reads no taste-shock key.
+    # publishes no such parts. A taste-shock regime applies the solve's EV1
+    # reduction to its simulation decision, which draws nothing.
     action_value_bodies: dict[int, Callable[..., PytreeValue]] = {}
     action_values: dict[int, CoreProgram] = {}
     space = context.state_action_space
@@ -214,7 +214,6 @@ def build_simulation_programs(
             action_value_bodies[group] = _SubjectTiled(
                 func=_decision_with_action_parts(
                     Q_and_F=kernel,
-                    reducer=per_subject_decisions[period],
                     action_names=space.action_names,
                     body=(
                         partial(
@@ -783,16 +782,15 @@ ACTION_VALUES_OUTPUT_ROLES = (ACTION_INDEX, DECISION_VALUE, *ACTION_PARTS_ROLES)
 def _decision_with_action_parts(
     *,
     Q_and_F: QAndFFunction,
-    reducer: Callable[..., PytreeValue],
     action_names: tuple[ActionName, ...],
     body: Callable[..., Callable[..., PytreeValue]],
 ) -> Callable[..., PytreeValue]:
     """Return the dense decision extended by the parts it reduces.
 
-    The result takes the arguments of `reducer`, the dense decision over
-    `Q_and_F`, without a taste-shock key, and calls `body`, built from the parts
-    form of `Q_and_F` mapped once over the action product: the hard max of
-    `reducer` over the same `Q` and `F`, or the EV1 reduction of the solve.
+    The result takes the arguments of the parts form of `Q_and_F` mapped once
+    over the action product, and calls `body` built from it: the hard max over
+    that `Q` and `F`, or the EV1 reduction the solve applies, both without a
+    taste-shock draw.
     """
     parts = productmap(
         func=get_Q_and_F_parts(Q_and_F=Q_and_F),
@@ -801,11 +799,7 @@ def _decision_with_action_parts(
     )
     return with_signature(
         body(parts=parts),
-        args=[
-            name
-            for name in inspect.signature(reducer).parameters
-            if name != "taste_shock_key"
-        ],
+        args=list(inspect.signature(parts).parameters),
         return_annotation="tuple[FloatND | IntND | BoolND, ...]",
         enforce=False,
     )
