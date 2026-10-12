@@ -70,6 +70,7 @@ from _lcm.model_processing import (
     fail_if_nonpositive_taste_shock_scale,
     validate_model_inputs,
 )
+from _lcm.off_grid import fail_if_endogenous_grid_reads_a_clipped_grid
 from _lcm.pandas_utils import (
     convert_series_in_params,
     initial_conditions_from_dataframe,
@@ -1125,6 +1126,14 @@ class Model:
             fixed_component_splits=self._fixed_component_splits,
             block_widths=self._execution.invariant_block_widths,
             schedule=self._execution.invariant_block_schedule,
+        )
+        fail_if_endogenous_grid_reads_a_clipped_grid(
+            solvers={name: regime.solver for name, regime in self.user_regimes.items()},
+            grids={
+                name: (*regime.solution.grids.items(), *regime.simulation.grids.items())
+                for name, regime in self._regimes.items()
+            },
+            targets_by_regime=schedules.targets_by_regime,
         )
         # The axis names a width may fix are what the core programs declare, so
         # this is the first point at which the declaration can be checked at all.

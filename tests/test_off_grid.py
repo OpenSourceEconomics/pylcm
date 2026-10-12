@@ -42,10 +42,16 @@ from lcm import (
     Transition,
     categorical,
 )
+from lcm.consumption_savings_regime import (
+    ConsumptionSavingsRegime,
+    LiquidMargin,
+    post_decision_lower_bound,
+)
 from lcm.exceptions import (
     ExecutionPlanningError,
     GridInitializationError,
     InvalidValueFunctionError,
+    OffGridPolicyError,
     OffGridStateError,
 )
 from lcm.grids import (
@@ -57,6 +63,7 @@ from lcm.grids import (
     PiecewiseLogSpacedGrid,
 )
 from lcm.regime import Regime
+from lcm.solvers import EGM
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -66,6 +73,7 @@ from lcm.typing import (
     IntND,
     OffGrid,
     Period,
+    RegimeName,
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
@@ -1218,3 +1226,108 @@ def test_warm_public_solve_reuses_the_admitted_off_grid_count() -> None:
     with count_compile_requests() as warm:
         model.solve(params=params, log_level="off")
     assert (cold.compile_requests > 0, warm.compile_requests) == (True, 0)
+
+
+@categorical(ordered=False)
+class _EGMRegimeId:
+    working: ScalarInt
+    dead: ScalarInt
+
+
+def _log_utility(consumption: ContinuousAction) -> FloatND:
+    return jnp.log(consumption)
+
+
+def _inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+    return 1.0 / marginal_continuation
+
+
+def _affine_terminal(wealth: ContinuousState) -> FloatND:
+    return 1.0 + wealth
+
+
+def _savings(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption
+
+
+def _wealth_from_savings(savings: ContinuousState) -> ContinuousState:
+    return savings
+
+
+def _egm_model(*, own_rule: OffGrid, target_rule: OffGrid) -> Model:
+    """One-margin EGM regime whose savings all land below the terminal grid."""
+    margin = LiquidMargin(
+        state="wealth",
+        action="consumption",
+        resources="wealth",
+        post_decision_state="savings",
+    )
+    working = ConsumptionSavingsRegime(
+        states={
+            "wealth": LinSpacedGrid(start=0.5, stop=1.0, n_points=2, off_grid=own_rule)
+        },
+        actions={"consumption": LinSpacedGrid(start=0.5, stop=1.0, n_points=2)},
+        state_transitions={"wealth": _wealth_from_savings},
+        functions={
+            "utility": _log_utility,
+            "inverse_marginal_utility": _inverse_marginal_utility,
+            "savings": _savings,
+        },
+        constraints={
+            "borrowing_limit": post_decision_lower_bound(margin=margin, lower=0.0)
+        },
+        liquid=margin,
+        solver=EGM(savings_grid=LinSpacedGrid(start=0.0, stop=0.5, n_points=2)),
+    )
+    dead = Regime(
+        states={
+            "wealth": LinSpacedGrid(
+                start=1.0, stop=2.0, n_points=2, off_grid=target_rule
+            )
+        },
+        functions={"utility": _affine_terminal},
+    )
+    return Model(
+        edges={"working": {"dead": 0}},
+        regimes={"working": working, "dead": dead},
+        regime_id_class=_EGMRegimeId,
+        initial_nodes={0: "working"},
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("own_rule", "target_rule", "regime"),
+    [
+        ("extrapolate", "clip_lookup", "dead"),
+        ("extrapolate", "clip_state", "dead"),
+        ("clip_lookup", "extrapolate", "working"),
+        ("clip_state", "raise", "working"),
+    ],
+)
+def test_endogenous_grid_solver_refuses_a_clipped_grid_it_reads(
+    *, own_rule: OffGrid, target_rule: OffGrid, regime: RegimeName
+) -> None:
+    """A clipped grid read by an EGM carry or policy bank fails at construction."""
+    with pytest.raises(
+        OffGridPolicyError,
+        match=rf"EGM solver of regime 'working' reads regime {regime!r}, "
+        r"whose state 'wealth'.*'raise'",
+    ):
+        _egm_model(own_rule=own_rule, target_rule=target_rule)
+
+
+@pytest.mark.parametrize("beta", [0.125, 0.25, 0.5])
+def test_endogenous_grid_solver_keeps_extrapolated_targets(beta: float) -> None:
+    """Without clipping the EGM continuation reads the affine terminal at savings."""
+    solution = _egm_model(own_rule="extrapolate", target_rule="extrapolate").solve(
+        params={
+            "working": {"koopmans_aggregator": {"discount_factor": beta}},
+            "dead": {},
+        },
+        runtime_checks=False,
+        log_level="off",
+    )
+    np.testing.assert_array_equal(solution.values[0]["working"][1], beta)
