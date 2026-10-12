@@ -342,12 +342,12 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 _SOURCE_SEALS = {
     FEASIBILITY_SOURCE: "cc3119d434cfae994be210439ac7184399e3e1779821b008ea963d1c1648e331",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "73a1aa6133974a18aa83bab6bd2909ff9a56cbf250eee02208bef5f4476cbe49",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "565f0581f4adf76060653c6b224a6e68744b8f9887e00972a26afe175ff1a888",
     SUPPORT_DIAGNOSTICS_SOURCE: "339ae00367fcc387ad640b8cc1c0bda05928ac752b36384fd63316e750351103",
     SUPPORT_PRECONDITIONS_SOURCE: "52c97f5f2f6e9e3b6a7ac7215181874cef52948f613f59c270ef9638a51493ac",
     SUPPORT_AUTHORITY_SOURCE: "32647270dba80b48e33ecc27bb77609bf30d04a5b34b754b8a7340f208a8c9a0",
     SUPPORT_FINGERPRINT_SOURCE: "072c93e7613b1edf806dd5f5cff2db979c3ef9b96063feeb1766ee931981383b",
-    UNIFORM_PROCESS_GRID_SOURCE: "2818d3a92cb2a12bbc01433bc52744eabba138a5205230fa0a591851294ebb9b",
+    UNIFORM_PROCESS_GRID_SOURCE: "835673768193d0282fb78d8a1223557d6ca087ea0b4bf7b1c58f5e4b903629a0",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "4e7302d6cacb53a20f6a0a08e7f57d6e074dedddd8f6a95944a9ed1ed4df7bda",
     NATIVE_ARCHIVE_SOURCE: "783325f05360277cf31d45076bc4041a12143fe66469d9eba1c9c69fb36934c7",
@@ -365,13 +365,13 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "85070e5f57210e201be248c1f2deae8068dce674112f13efdb0eb94c1dd7f7b4",
     COMBINED_CHUNK_PROFILES_SOURCE: "d3e35d13b366f2e8b3e40bcf2814ae9b1f5a54d7a4d563dacc5346e85d872f22",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "477f39609fff5371d88d941cc5c4a0c9ab9fe3692ad2845a3fc3a6befb633f42",
-    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "8a423b69f2b6fdbf94b59a18cd84b33fadf508e30099266a62645e2f34ee509e",
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "0690a3dfc0ae36cab5d20639919ad25003e37d02ea578f5d6814503b580cae13",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: "a01996d65f3b7fefad2311850771e364c3862f0a8fcb9e27bd9954531fcc75ab",
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
     COMBINED_RESULT_SNAPSHOT_SOURCE: "95a3cd4e31bff7587defb208790620657eea96bfe6d78559f82ebfe7947aed18",
     COMBINED_VALIDATE_V_SOURCE: "70609bbd14dba6eeccf204a8f112c78cbd85799efbd007ecb880157259ecd2f3",
-    COMBINED_LOGGING_SOURCE: "fd8f8dc5c14ebae17016c3362867eb16f7e2389307e97fdf4cd2e3ad78e38118",
+    COMBINED_LOGGING_SOURCE: "264b60c4ce52703aba4f8eb113fc4e8d2f2daee6912b369fab8f8ee5e0bd808a",
     COMBINED_AUTHORITY_SOURCE: "9bac2b806c1a9440d3ef4ca7701ca820fa2c39091cde1ed607802b7c3a1e1f04",
     COMBINED_ENTRIES_SOURCE: "298ba9790d6fab60fd88729b476c75206319dba64f246a0979c7a58444f99bfb",
     COMBINED_STORES_SOURCE: "f40c0fdb20ebf37ff924fb970525084961ebf25e63ebfa142fff5082f2648a0d",
@@ -380,7 +380,7 @@ _SOURCE_SEALS = {
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "4e50d79fe971c9d5f0e59fc7b6942868cb09a1223bcde15754019d72efa2d979",
     NBEGM_SOURCE: "869fec6e36b3ace14c3cdcd1b1c5ca2f7c367224d658aa0c54510b11fa346c5d",
     CONTINUATION_ARGUMENTS_SOURCE: "48495f36be398f0d5eb1d1f9e161fb3a71d877dc164da416ada09aaeceda5f51",
-    SIMULATION_TASTE_STREAM_SOURCE: "ad7408ddbde296dbf48ce1f81244214a9ab119755370ecef6759dee0ecd42517",
+    SIMULATION_TASTE_STREAM_SOURCE: "a8a90200f06aec77d02d21780286e32a3620a1687ee76c23af301687a46ae5b9",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
     COMPILER_INPUTS_SOURCE: "c2df405f63a61f7d5201d754c95bcca9fdc213c97c1533025080da80814cda70",
     SIMULATION_OPERANDS_SOURCE: "7645b400641b5d995e1a2f651dc5d6ccb54df3e16732db64a75765c5a5f31645",
@@ -405,10 +405,10 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "884bd44a3fc6bc0738102ffbb041f12d68b62bc7feeacaa780970da30d667eda",
     SIMULATION_RUNTIME_SOURCE: "743031ba65c4ab17888b8f593d28f183261678c04bda69c7a76f1b54da76a2de",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "681a7fe6d5a31497945ade5190da4134abd344d92bf5905345f5547d296c693a",
-    COLLECTIVE_SOURCE: "3b7f2efb763c8334e9a70eaab00f7037c2dd990d0b310929d959d8919059c810",
-    MAX_Q_SOURCE: "812b8b4bd134c452dcacce27c953bbd9786fda17655eadb51d92ed7739d961bb",
-    PROCESSING_SOURCE: "615c7f0e158f9f2e89e1801de60a7b5fa35d4a5d0cb8a450735dc6b075ea5b8a",
+    ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
+    COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
+    MAX_Q_SOURCE: "dd7fe6cba6e9aa6e7b42688f294ed91b0fa03016456293865d4fbaea027c03b7",
+    PROCESSING_SOURCE: "62ddc46424f68b2c023f97e2d6e20e77c5426d8d5386bbf077f8f29db2a66172",
     GRID_SEARCH_SOURCE: "d2072683328d07682147fa21189d19e249bbf67e5d4b32c55d9960d90ae86e12",
     CORE_PROGRAM_SOURCE: "21e86cda882a227086aa6550a63daa9492071f7a14a9e56565e751a67ffae2b1",
     OUTPUT_LAYOUT_SOURCE: "1173fe52bc6c9315b328d5ed5bc752f8012614443bd15756e0bf7245595aafbb",
@@ -429,7 +429,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "8dc7a0c002e0357e463ce29f717aa2a5363f31185dda048d83660508d0f7c4ae",
     SIMULATION_TRANSITIONS_SOURCE: "f9b078431582f06fee72001a83ba842371c515d1b4bd68f101b00e3b9318db7e",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "b2892420fcead4cbcb5282a5985ff563ac30cf3ff448df3d0f94a38599157357",
+    MODEL_SOURCE: "adc67bc5c829202859e762e3ac9c7241e1135fb24bdbe2ba22ae9b6c1537e633",
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
     BACKWARD_INDUCTION_SOURCE: "844a956a46a68049150a8232957c01b836bae8cc5977673a09a91db226cd8499",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
@@ -452,17 +452,17 @@ _SOURCE_SEALS = {
     PROCESS_IID_SOURCE: "6a622d0886aa903d9c5f98ae3e26e0a94eb4d16209a2481074a89fda99b1e308",
     PROCESS_AR1_SOURCE: "ea461329286031288672a79f506bbf4ad18831e6c1553503e411f3a9e7abc52c",
     VARIABLES_SOURCE: "e7f2ceb78b82df85ee860e8e417138fa4ddfbd30d4125c58f7d2fd39d8d3c0f0",
-    PARAMS_REGIME_TEMPLATE_SOURCE: "71def81dfc7a133730a65e206fe770c8b2ee31edc6064448da5a7367dc3f0476",
+    PARAMS_REGIME_TEMPLATE_SOURCE: "c11a082f4a256c25a66779301417a29385ab1f0ec0674e02fec36983e862aca6",
     PARAMS_PROCESSING_SOURCE: "a6640eef75e746b50024d11c51c572d1daa062cf3d5256afe31a97b121a5410d",
     DTYPES_SOURCE: "1d38a54667166599fd692f8c58b37741f355753138d234b650c54384321bcbb2",
     NAMESPACE_SOURCE: "9a33080663f01a6d65501663e8436b132176be51c8223c28b2e749d8dbf8b570",
     PANDAS_UTILS_SOURCE: "9ce312a18a19bd267eec3145720f5b2911429490e9e1a4742de96aab5e35080d",
-    MODEL_PROCESSING_SOURCE: "b078ebaaea40133f98616c49c51367a1c08b2d9b92d2094d23c6548f7db47a65",
+    MODEL_PROCESSING_SOURCE: "fea42ce6dd630056b6483977e57cf3fafcf042b6c348bdc1c0fa3bc9bac8eb46",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 420
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 421
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "2ce1ac92a6e3cefa1c4c6b70ff0eab3139be5a3aa3ab7a2efa6d143b09be8808"
+    "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
 )
 EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 54
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
@@ -570,7 +570,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_TASTE_STREAM_SOURCE: (
-        "95eac128cab8974097f25d9c61648cc62210da735256d628ece75c90aa4002c3",
+        "62e32d23dc56cad5e11aa254963de93c803964b5a42539679b63054ad14a9491",
         {
             "create_taste_shock_key": "76cdca8e4c1fec745ba4041395bb23454129fc5a751b89d0b5dfddeccc689fa0",
             "prepare_decision_taste_keys": "ef085a5cfac60dce08367fc50b280500313659e270771b1e94367b73e3ddf717",
@@ -580,7 +580,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_encode_subject_row": "9206dbef80b1bf9607d6cfc42db24af9d7a01ee34ee04079d13c61582eeba82a",
             "_advance_simulation_taste_key": "d8854c351a6aac51cc858691332541a21413b90baccf6dd2a52fd2ae601a3752",
             "_taste_address_words": "4490c80c002e777c58e57d242f5a722e17f31d10e7d8120e32b31123ea284478",
-            "draw_taste_shock_keys": "bdc7eb50b64e31949af64b051935650b7f744467074adadc2dea930012d9d577",
+            "draw_taste_shock_keys": "cab000b3c2a725b99602e5162bc83076db4a2dfd2b466c5a660bc597c2034758",
             "_row_offset_words": "5b7e8a0ca6032c00fd2db2d24513c6642a270e20d98facc362b45bc784d80778",
             "_fold_subject_key": "6c3faf14f43234d25195bd3525659c095512857f4b9d4422e05e43e33d936493",
         },
@@ -949,10 +949,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: (
-        "03f2e40de7d155f84e2e3e0a922c83cd01fd6f42495aab63d012f8fa95781dcb",
+        "6467980e41377a6ba74f678e889c7c910c99f3bdfb66a5a5804424a25f762dd6",
         {
             "profile_forward_programs": "effdfca96bc6322a037b7f0b4b9d93f97a776a55db9d0de0fcf60d32dddf7a3d",
-            "profile_forward_unit": "7a3ca42c5d64dc41902e8658549d67c7f1f1abbf62fcdc6a6946262ed290d1f6",
+            "profile_forward_unit": "29eeddb11ecc9658bb518862496200e20562371b94a36c6824289d373a7a5331",
             "_profile_finite_decision": "5ca35d7e729d991a97f4d22e3f1a65b997c0403769ae6b76e5a35e512e5e66b0",
             "_abstract_policy_leaf": "96e133ac576cd9b40afbf10907084378253b43bf9376d39d0faa3743d58b0cd2",
             "AbstractSimulationProfile.__post_init__": "cbd87055b30ad84f7904480cff150f5d376033767ac3e759cfb7a086d7d19123",
@@ -1010,8 +1010,8 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_validate_sharded_state_capability": "76a10f69e8f6acb1150617100119e1f61ad7ed4b759f4849c8ee7536f44f3f4c",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "d837bd4f6c97be377ae02dca1f2044e1eb9974c6e7e08bc48866bed0f6886b18",
-            "Model.__init__": "20fec5f3f186ccde44b91b9bc726db746b1df5158e8505ad89244aad461afd33",
-            "Model.simulate": "a1247d33cac86f4bad9de32479fef891421050a97b90c7e9bbd6cc58d3026c4b",
+            "Model.__init__": "3dba4981513a5eeccce626d072095276dfde764a4c087dbb88553c2afce401b9",
+            "Model.simulate": "e11b62ab85493aa2fb92e895e9c98ef274c5583803d6e662e35d16d5d1e57f37",
             "Model._open_entry_allocations": "2d3a04ba171e7e79bb145481fb9859294a75004242c981ae32992f6121db017c",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "15a780da8bc0f5d8767481fc4f9442fd846d29e6105f72d9b795266256e328ff",
@@ -1026,7 +1026,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "Model._consume_owned_solution": "f646cbb48cea6c33227711df6ec93e2d51fe8fca435803069575c0cb0f01da9d",
             "Model._build_external_replay_readers": "62d5d2c5bd473f779ddb81644162279e0a3ca329105b42636220a862391dc771",
             "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
-            "Model._process_params": "dca0d8601440606c6dd4ea4766ddc743092005c8e78de780efcf93264354aedc",
+            "Model._process_params": "b5d2ea06549d0d63c7d1e27a3248c3a1186d01a9b71fc108918d1d99a5c4acb6",
             "_simulation_programs": "02d69b94d7005c2f01cb72585af823fcc62801fb5b45fbbac975fdfc1ceaae70",
         },
     ),
@@ -1317,7 +1317,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_LOGGING_SOURCE: (
-        "16ecfddd102d9137c21b91b9e987ccd0b63b3bcde64e21184400053d1122901e",
+        "f6da64154c33e278f3d9b66eb0671a0412a62c8cc2cef0224494caa18c0062e6",
         {
             "_owned_values": "9295ced0a7415a8738e6e9dd1b6a2ee6dc933bd3fdf37193e591752239c411ed",
             "non_finite_by_regime": "aa597487e43e16a2a001d5c05c0e00977c494349b9af3e65f8afd47aa6d63de4",
@@ -1494,7 +1494,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_PROCESSING_SOURCE: (
-        "206ff6eaa7d28e18aaa0645a9493c3373bb741fb9eb60c116d731fd8c74cdbc7",
+        "e01c6014e75fde68f55f75a8ed83db98596c87b2080573b0a383760f16eeb2f6",
         {
             "build_regimes_and_template": "da8e2ab92d9248698d20e43b0033ae1abdbdbff43f89f70cd2884304990bf1e1",
         },
@@ -1544,7 +1544,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
-        "98b1ebff930a0b94df444206928a00eef3d9ffb5e592072ae387619003d8ec59",
+        "5fd8bf15a2921bf5f12614a9856c62d8259e37fb3039aa95e3136ffae5bc2748",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "6dad8f387ecda88d9984797cdd8da57d2d4609201fe8b455c7fb6bc59a27e2d4",
@@ -1555,8 +1555,8 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_regime_probability_law": "45faf8cf57fd2fb8a754589d2edcda7a1eb82910c7dd4f3c9fc8115caf6728a1",
             "_check_and_release_regime_probability": "f54a64b0239559ff0527404fe7dcaaf0783361ee24d5bf628d971f8037873b4b",
             "_validate_regime_transition_probs": "403ad994ea48ce5ee2982ffe904f3d57adbd1039d8fe9056e989019d0af19749",
-            "validate_state_transitions_all_periods": "6309dd9cf4fce55766e6c21c70964ef0f66d62c580ccddd2d9f884f0644d362b",
-            "validate_joint_transitions_all_periods": "5f66840fc4fb41343f24822084cce6a8aac183f1b389b76be333c3d83d43a3ce",
+            "validate_state_transitions_all_periods": "835363237568754713af2b841349cb3f7e70e564d22ecb677788b0f2e2728423",
+            "validate_joint_transitions_all_periods": "27a6e3026d603052c37201fb8c406b4ca150c58ccbf0721db0ce698e1823dd90",
             "_own_transition_outputs": "3fbee994063b5cb63b318f51f35e7a88ada8a61ab8c9155867a54e9fd8b22a1e",
             "_set_transition_outputs": "fc03c7289678ba54ab855efb933f80ef877a071c2a2fb1566fc129053288a143",
             "_transition_owner_tree": "b977c18385d2630136d5e463d47786f1320862b7f58be015007eabbb19934bfb",
@@ -1567,7 +1567,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
             "_evaluate_joint_weights": "ad98e50978a61c64fc8e90ac84db7cb7cac6551491aceb3446dc352e38f8622d",
             "_joint_weight_law": "3ee7cd29818e915de77c8ed40d905b741912c49706cf76a3fd09a900d3c38fd9",
-            "_validate_state_transition_single": "441a9e31f06432159c8bf612c6b0085f016765dfb95efc0cc856efd16722d1d3",
+            "_validate_state_transition_single": "bd70fcd5f16e1fdaff02d044906eb873a8c732bb626e25e8144ced17510a1194",
             "_check_and_release_state_probability": "bbe5c53744d66283f4268a996341767fb18455c29017ca5bf6476e1f6ae1df6a",
             "_evaluate_state_probability_law": "91814f1439275d2c0af44fcff5cd2b6de9ce8f746a7b3945cf803120449e8e79",
             "_evaluate_admitted_transition_producer": "f6d28557d3bb75dc7780cfbf8d90bb3b9b5adffefa892fc25ec376ddece0103e",
@@ -1584,12 +1584,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     UNIFORM_PROCESS_GRID_SOURCE: (
-        "1586166cada2c8bd412cd980964f7fccb60f34ce7df4c00131778fce22cefcd6",
+        "80754c02c18f227aa2d4a37a0a1f0381b367e8b715617b19a9575c057f781603",
         {
             "_shared_uniform_operations": "77e4fa81b76a13e05edecb8cbc14571226bb6e34a9a80842289ac345cef3ad6e",
             "SimulationProcessGrids.supports": "47c6617af89cdcd6ba3a99aae345a8c32f8aec740f838bd0b37817236306ab79",
             "SimulationProcessGrids.array_roots": "ddc99b73e50d34ce46e2c362900c62af7a6954d15f96dec516f0776be32f6101",
-            "SimulationProcessGrids.__call__": "aa4eb0777e73e99a2126a2c232fb4310381da74fee4cbf1750b330745cfc627d",
+            "SimulationProcessGrids.__call__": "539b946733a550886073d1d4151262c786ca7c2adef0f72280de6db7feb85237",
             "SimulationProcessGrids.seal": "71dde0f63544df96a4c57b99a75f9dd844dd904be7c599ad30a3125262756e9d",
             "SimulationProcessGrids.close": "1fbde590b371243da9503b714cc55b822e333e3e7a64f100ed57051209076a5a",
             "SimulationProcessGrids._produce": "a8cda3f849b7a87d121b68083399f5ee0014608478bc5abaf13ad1c67f00b194",
@@ -1606,7 +1606,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_complete_process_parameters": "b11dea89c5a1b5ea44b482574f74ae6cb50eae5072293fb5116ddc1cab88bead",
             "_process_fixed_identity": "e2e8cd965379829662477a34f9fdc0eea48e7b83b8ffd69e24a30b64791c4e98",
             "_staged_parameter_is_weak": "408c2ee847275e1c74b09648ec40d930051387d6c0d8d341fde63c359086f567",
-            "_trace_process_jaxpr": "af42b98b18382ee4e88a3031fcb39e6111e11ced6d0581d695ab28c0bd0360a7",
+            "_trace_process_jaxpr": "1601b7cd9c726c0e9bf4055e16122c551491ab87dd7933d55bfedfa8318dfc23",
             "_process_grid_call": "d3c500914631c641753e0ee5cffc3d16a8ce2e8bbe720e76592d2067d2ac2000",
             "_validated_process_recipe": "de1e36e3f7b21ad614bc983eb3d2363988ca6f3ddae33fbe8306b64a71d89403",
             "_validate_attached_process_value": "316daad5ff10b7c79bc2ca6f314081e34c436b0cd9e3bdd8d91f8ea9ada9e3bb",
@@ -6391,9 +6391,13 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
         errors.append("taste noise: decorators are not allowlisted")
     if not _keyword_only_signature(node=node, names=("key", "shape", "scale")):
         errors.append("taste noise: signature changed")
-    expected_body = r"""return scale * (
-    jax.random.gumbel(key, shape) - EULER_GAMMA
-)
+    expected_body = r"""if key.shape == (1,):
+    gumbel = jax.custom_batching.sequential_vmap(
+        functools.partial(jax.random.gumbel, shape=shape)
+    )(key[0])
+else:
+    gumbel = jax.random.gumbel(key, shape)
+return scale * (gumbel - EULER_GAMMA)
 """
     if not _body_matches(node=node, expected_source=expected_body):
         errors.append(
@@ -6404,6 +6408,7 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         names={
             "cast",
+            "functools",
             "jax",
             "jnp",
             "math",
@@ -6415,6 +6420,7 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
     )
     expected_imports = sorted(
         [
+            "import functools",
             "import jax",
             "import jax.numpy as jnp",
             "import math",
@@ -6446,6 +6452,7 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
         and {
             "cast",
             "draw_taste_shock_noise",
+            "functools",
             "jax",
             "jnp",
             "math",
@@ -6554,10 +6561,9 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
 elif isinstance(axis, int):
     axis = (axis,)
 if a.ndim == 0 or len(axis) == 0:
-    return jnp.array(0, dtype=jnp.int32), a
-if a.ndim != 0:
-    a = _move_axes_to_back(a=a, axes=axis)
-    a = _flatten_last_n_axes(a=a, n=len(axis))
+    return _argmax_and_max_of_one_candidate(a=a, where=where, initial=initial)
+a = _move_axes_to_back(a=a, axes=axis)
+a = _flatten_last_n_axes(a=a, n=len(axis))
 if where is not None and where.ndim != 0:
     where = _move_axes_to_back(a=where, axes=axis)
     where = _flatten_last_n_axes(a=where, n=len(axis))
@@ -7617,26 +7623,31 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
     )
 
     mutations["shared_taste_noise:shared_draw"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale * ("
-        "jnp.broadcast_to(jax.random.gumbel(key, (1,)), shape) - EULER_GAMMA)",
+        "gumbel = jax.random.gumbel(key, shape)",
+        "gumbel = jnp.broadcast_to(jax.random.gumbel(key, (1,)), shape)",
         1,
     )
     mutations["shared_taste_noise:permuted_draw"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale * (jax.random.gumbel(key, shape).reshape(-1)[::-1]"
-        ".reshape(shape) - EULER_GAMMA)",
+        "gumbel = jax.random.gumbel(key, shape)",
+        "gumbel = jax.random.gumbel(key, shape).reshape(-1)[::-1].reshape(shape)",
         1,
     )
     mutations["shared_taste_noise:first_candidate_zeroed"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale * (jax.random.gumbel(key, shape).reshape(-1).at[0]"
-        ".set(0).reshape(shape) - EULER_GAMMA)",
+        "gumbel = jax.random.gumbel(key, shape)",
+        "gumbel = jax.random.gumbel(key, shape).reshape(-1).at[0].set(0)"
+        ".reshape(shape)",
+        1,
+    )
+    mutations["shared_taste_noise:batched_independent_draw"] = source.replace(
+        "gumbel = jax.custom_batching.sequential_vmap(\n"
+        "            functools.partial(jax.random.gumbel, shape=shape)\n"
+        "        )(key[0])",
+        "gumbel = jax.random.gumbel(key[0], shape)",
         1,
     )
     mutations["shared_taste_noise:wrong_scale"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale**2 * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
+        "return scale * (gumbel - EULER_GAMMA)",
+        "return scale**2 * (gumbel - EULER_GAMMA)",
         1,
     )
     mutations["shared_taste_noise:cast_import_replaced"] = source.replace(

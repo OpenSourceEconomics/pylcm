@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import NotRequired, Unpack, cast
+from unittest.mock import Mock
 
 import jax
 import jax.numpy as jnp
@@ -1121,8 +1122,14 @@ def test_period_replay_preserves_exact_artifact_selection(
         return real_select(**kwargs)
 
     monkeypatch.setattr(period_replay_module, "select_programs", record_select)
+    run_period = Mock(wraps=period_replay_module._run_period_kernel)
+    monkeypatch.setattr(period_replay_module, "_run_period_kernel", run_period)
     replay = replay_period(directory=tmp_path / "active@0")
 
+    run_period.assert_called_once()
+    dispatched_logger = run_period.call_args.kwargs["logger"]
+    assert validation_enabled(dispatched_logger) is runtime_checks
+    assert dispatched_logger.getEffectiveLevel() == restored_logger.getEffectiveLevel()
     assert observed == [
         (False, frozenset({POLICY_KEY, OPTIONAL_REPLAY_KEY, SCRATCH_KEY}))
     ]
