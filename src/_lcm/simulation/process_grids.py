@@ -282,6 +282,8 @@ class SimulationProcessGrids:
             binding_key = (binding_key, _normal_fixed_identity(spec))
         elif type(spec) is not UniformIIDProcess:
             binding_key = (binding_key, _process_fixed_identity(spec))
+        if type(spec) is _TauchenOnNodesProcess:
+            binding_key = (binding_key, _supplied_node_identity(spec))
         binding = self.bindings.get(binding_key)
         if binding is not None:
             return self.grids[binding.key]
@@ -322,7 +324,7 @@ class SimulationProcessGrids:
                 ),
             )
         if type(spec) is _TauchenOnNodesProcess:
-            key = (key, spec.nodes)
+            key = (key, _supplied_node_identity(spec))
         if key not in self.grids:
             if self.sealed:
                 raise ExecutionPlanningError(
@@ -620,6 +622,19 @@ def _process_fixed_identity(
     )
 
 
+def _supplied_node_identity(spec: _ContinuousStochasticProcess) -> _OperandBytes | None:
+    """Return the exact host bytes of a supplied physical axis, if the process has one.
+
+    Numeric equality of the node tuple identifies `-0.0` with `0.0` and ignores the
+    active float dtype, so it cannot decide whether a cached support, binding or
+    trace describes the same axis. The bytes are read from the host tuple at the
+    active precision, without a device transfer.
+    """
+    if type(spec) is not _TauchenOnNodesProcess:
+        return None
+    return _parameter_bytes(np.asarray(spec.nodes, dtype=canonical_float_dtype()))
+
+
 def _staged_parameter_is_weak(value: ProcessValue) -> bool:
     """Preserve host and JAX weak typing in composite support identity."""
     return type(value) in (bool, int, float) or bool(getattr(value, "weak_type", False))
@@ -653,6 +668,7 @@ def _trace_process_jaxpr(
     return _process_jaxpr(
         spec=spec,
         parameter_names=parameter_names,
+        node_identity=_supplied_node_identity(spec),
         parameter_types=tuple(
             jax.ShapeDtypeStruct(kind.shape, kind.dtype, weak_type=kind.weak_type)
             for kind in map(jax.typeof, parameter_values)
@@ -668,8 +684,15 @@ def _process_jaxpr(
     spec: _ContinuousStochasticProcess,
     parameter_names: tuple[ParameterName, ...],
     parameter_types: tuple[jax.ShapeDtypeStruct, ...],
+    node_identity: _OperandBytes | None,
 ) -> Jaxpr:
-    """Trace the process once per parameter type signature."""
+    """Trace the process once per parameter type signature.
+
+    `node_identity` only keys the cache: a supplied physical axis is captured as a
+    graph constant, so two axes that compare equal as numbers but differ in sign
+    bits or dtype must not share a graph.
+    """
+    del node_identity
     bound = partial(_process_grid_call, spec=spec, parameter_names=parameter_names)
     return jax.make_jaxpr(bound)(*parameter_types)
 

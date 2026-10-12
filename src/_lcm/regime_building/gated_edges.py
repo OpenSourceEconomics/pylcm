@@ -59,6 +59,7 @@ from _lcm.params.edges import (
 from _lcm.regime_building.age_normalization import PeriodizedEconFunction
 from _lcm.regime_building.Q_and_F import (
     EDGE_CHANNELS_ARG,
+    EDGE_FALLBACK_ARG_PREFIX,
     EDGE_REF_PARAMS_ARG,
     EDGE_REF_V_ARG,
     SAME_PERIOD_PARAMS_ARG,
@@ -228,8 +229,6 @@ class CompiledEdgeFold:
     channels: EdgeChannels
     """Layout of `surfaces`' trailing axis."""
 
-
-EDGE_FALLBACK_ARG_PREFIX = "__edge_fallback_"
 
 _EDGE_PERIOD_ARG = "period"
 _EDGE_AGE_ARG = "age"
@@ -2180,6 +2179,11 @@ class _EdgeBranchCombine:
 
     @no_type_check
     def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
+        return self.select(gate=self.gate(**kwargs), **kwargs)
+
+    @no_type_check
+    def gate(self, **kwargs: ParamsLeaf) -> BoolND:
+        """Evaluate the gate at the realized point: `True` opens onto the target."""
         stacked = cast("FloatND", kwargs[EDGE_CHANNELS_ARG])
         gate_kwargs = _assemble_gate_kwargs(
             gate_arg_names=self.gate_arg_names,
@@ -2200,11 +2204,16 @@ class _EdgeBranchCombine:
             },
             cell_kwargs=kwargs,
         )
-        gate = _as_boolean_gate(
+        return _as_boolean_gate(
             value=self.gate_evaluator(**gate_kwargs),
             target=self.edge_target,
             phase="solve",
         )
+
+    @no_type_check
+    def select(self, *, gate: BoolND, **kwargs: ParamsLeaf) -> FloatND:
+        """Pay each leg its open component where the gate opens, else its fallback."""
+        stacked = cast("FloatND", kwargs[EDGE_CHANNELS_ARG])
         # STRICT where — never `gate*V + (1-gate)*fallback` (`0*-inf = NaN`).
         component_values = [
             jnp.where(

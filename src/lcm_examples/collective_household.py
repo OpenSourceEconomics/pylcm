@@ -18,8 +18,18 @@ route fallback is her or his own single regime. Keying it by one partner's
 single regime would send both partners there whenever the couple stays
 together.
 
-Everything is CRRA over consumption with a fixed marriage premium, so the model
-is small, has no free structure, and scales along its grid knobs —
+The partners differ only in income. Alone, each keeps their own; married, the
+household pools both and splits consumption evenly. Her income is the higher
+one, so for her the marriage premium has to outweigh giving up part of it, and
+it does so only once the household is rich enough that income matters less
+than wealth: participation rules out the poorest households, through her.
+
+Consumption is chosen as a share of wealth, which keeps every choice
+affordable everywhere. A household's value then moves smoothly between grid
+nodes, so a couple between two nodes it can occupy can occupy that state too.
+
+Everything is log utility over consumption with a fixed marriage premium, so
+the model is small, has no free structure, and scales along its grid knobs —
 `n_periods`, `wealth_n_points` and `consumption_n_points` — which is what makes
 it usable as a benchmark workload as well as a worked example.
 """
@@ -61,6 +71,14 @@ WEALTH_MIN = 1.0
 # Highest wealth node.
 WEALTH_MAX = 20.0
 
+# Income she receives every period, single or married. Higher than his, so
+# living alone keeps all of it while the household splits the pooled income
+# evenly: her outside option is the one participation can rule out.
+INCOME_F = 3.0
+
+# Income he receives every period, single or married.
+INCOME_M = WEALTH_MIN
+
 # Chance a single meets a partner in a period, before consent is decided.
 MEETING_PROBABILITY = 0.4
 
@@ -89,7 +107,7 @@ def get_model(
     Args:
         n_periods: Number of lifecycle periods. The last one is terminal.
         wealth_n_points: Nodes on every regime's wealth grid.
-        consumption_n_points: Nodes on every regime's consumption grid.
+        consumption_n_points: Nodes on every regime's consumption-share grid.
         execution_config: Optional hardware-local execution controls.
 
     Returns:
@@ -100,8 +118,12 @@ def get_model(
     couple_wealth = LinSpacedGrid(
         start=2.0 * WEALTH_MIN, stop=2.0 * WEALTH_MAX, n_points=wealth_n_points
     )
-    consumption = LinSpacedGrid(
-        start=WEALTH_MIN, stop=2.0 * WEALTH_MAX, n_points=consumption_n_points
+    # Consumption is chosen as a share of wealth, so every choice is affordable
+    # at every wealth, on the grid or between its nodes. A choice in levels is
+    # affordable only from some wealth on, which makes a household's value
+    # jump between the nodes its outside option is interpolated across.
+    consumption_share = LinSpacedGrid(
+        start=1.0 / consumption_n_points, stop=1.0, n_points=consumption_n_points
     )
     last_age = n_periods - 1
     probability = _transition_probabilities(last_age=last_age)
@@ -140,14 +162,14 @@ def get_model(
     couple = Regime(
         states={"wealth": couple_wealth},
         state_transitions={"wealth": _next_couple_wealth},
-        actions={"consumption": consumption},
+        actions={"consumption_share": consumption_share},
         functions={
+            "consumption": _consumption,
             "utility": CollectiveUtility(
                 utilities={"f": _couple_utility_f, "m": _couple_utility_m}
-            )
+            ),
         },
         constraints={
-            "affordable": _consumption_within_couple_wealth,
             "participation_f": ValueDependentConstraint(
                 predicate=_participation_f,
                 references={
@@ -170,16 +192,16 @@ def get_model(
     )
     couple_terminal = Regime(
         states={"wealth": couple_wealth},
-        actions={"consumption": consumption},
+        actions={"consumption_share": consumption_share},
         functions={
+            "consumption": _consumption,
             "utility": CollectiveUtility(
                 utilities={
                     "f": _terminal_utility_collective,
                     "m": _terminal_utility_collective,
                 }
-            )
+            ),
         },
-        constraints={"affordable": _consumption_within_couple_wealth},
     )
     single_f_law = _until_last_age(
         {
@@ -226,15 +248,16 @@ def get_model(
         state_transitions={
             "wealth": {
                 "couple": _pooled_wealth,
-                "single_f": _next_single_wealth,
-                "single_f_terminal": _next_single_wealth,
+                "single_f": _next_single_wealth_f,
+                "single_f_terminal": _next_single_wealth_f,
             }
         },
-        actions={"consumption": consumption},
-        functions={"utility": _single_utility},
-        constraints={"affordable": _consumption_within_single_wealth},
+        actions={"consumption_share": consumption_share},
+        functions={"consumption": _consumption, "utility": _single_utility},
     )
-    single_f_terminal = _single_terminal(wealth=wealth, consumption=consumption)
+    single_f_terminal = _single_terminal(
+        wealth=wealth, consumption_share=consumption_share
+    )
     # Spelled out rather than derived from `single_f_law`: his law names his own
     # regimes and enters the household in his own role.
     single_m_law = _until_last_age(
@@ -277,13 +300,12 @@ def get_model(
         state_transitions={
             "wealth": {
                 "couple": _pooled_wealth,
-                "single_m": _next_single_wealth,
-                "single_m_terminal": _next_single_wealth,
+                "single_m": _next_single_wealth_m,
+                "single_m_terminal": _next_single_wealth_m,
             }
         },
-        actions={"consumption": consumption},
-        functions={"utility": _single_utility},
-        constraints={"affordable": _consumption_within_single_wealth},
+        actions={"consumption_share": consumption_share},
+        functions={"consumption": _consumption, "utility": _single_utility},
     )
     return Model(
         edges={
@@ -298,7 +320,7 @@ def get_model(
             "single_m": single_m,
             "single_f_terminal": single_f_terminal,
             "single_m_terminal": _single_terminal(
-                wealth=wealth, consumption=consumption
+                wealth=wealth, consumption_share=consumption_share
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
@@ -313,7 +335,7 @@ def get_model(
 def get_params(
     *,
     discount_factor: float = 0.95,
-    marriage_premium: float = 1.0,
+    marriage_premium: float = 0.3,
     interest_rate: float = 0.03,
     participation_slack: float = 0.0,
 ) -> dict[str, UserParamsNode]:
@@ -383,66 +405,67 @@ def get_initial_conditions(
     }
 
 
-def _log_utility(consumption: ContinuousAction) -> FloatND:
+def _log_utility(consumption: FloatND) -> FloatND:
     """Flow utility of consumption, finite on the whole grid."""
     return jnp.log(consumption)
 
 
-def _single_utility(consumption: ContinuousAction) -> FloatND:
+def _single_utility(consumption: FloatND) -> FloatND:
     return _log_utility(consumption)
 
 
-def _terminal_utility(consumption: ContinuousAction) -> FloatND:
+def _terminal_utility(consumption: FloatND) -> FloatND:
     return _log_utility(consumption)
 
 
-def _couple_utility_f(
-    *, consumption: ContinuousAction, marriage_premium: float
-) -> FloatND:
+def _couple_utility_f(*, consumption: FloatND, marriage_premium: float) -> FloatND:
     """Her flow utility: half of the household's consumption, plus the premium."""
     return _log_utility(0.5 * consumption) + marriage_premium
 
 
-def _couple_utility_m(
-    *, consumption: ContinuousAction, marriage_premium: float
-) -> FloatND:
+def _couple_utility_m(*, consumption: FloatND, marriage_premium: float) -> FloatND:
     """His flow utility, symmetric to hers."""
     return _log_utility(0.5 * consumption) + marriage_premium
 
 
-def _terminal_utility_collective(consumption: ContinuousAction) -> FloatND:
+def _terminal_utility_collective(consumption: FloatND) -> FloatND:
     return _log_utility(0.5 * consumption)
 
 
-def _next_single_wealth(
-    *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
+def _consumption(
+    *, wealth: ContinuousState, consumption_share: ContinuousAction
+) -> FloatND:
+    return consumption_share * wealth
+
+
+def _next_single_wealth_f(
+    *, wealth: ContinuousState, consumption: FloatND, interest_rate: float
 ) -> ContinuousState:
-    return (1.0 + interest_rate) * (wealth - consumption)
+    return (1.0 + interest_rate) * (wealth - consumption) + INCOME_F
+
+
+def _next_single_wealth_m(
+    *, wealth: ContinuousState, consumption: FloatND, interest_rate: float
+) -> ContinuousState:
+    return (1.0 + interest_rate) * (wealth - consumption) + INCOME_M
 
 
 def _pooled_wealth(
-    *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
+    *, wealth: ContinuousState, consumption: FloatND, interest_rate: float
 ) -> ContinuousState:
-    """Household wealth on entry: two partners' savings, pooled."""
-    return 2.0 * (1.0 + interest_rate) * (wealth - consumption)
+    """Household wealth on entry: two partners' savings and incomes, pooled.
+
+    The partner met is taken to hold the entrant's savings, so the household
+    starts with twice those savings plus both incomes, whichever of the two
+    enters it.
+    """
+    return 2.0 * (1.0 + interest_rate) * (wealth - consumption) + INCOME_F + INCOME_M
 
 
 def _next_couple_wealth(
-    *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
+    *, wealth: ContinuousState, consumption: FloatND, interest_rate: float
 ) -> ContinuousState:
-    return (1.0 + interest_rate) * (wealth - consumption)
-
-
-def _consumption_within_single_wealth(
-    *, wealth: ContinuousState, consumption: ContinuousAction
-) -> BoolND:
-    return consumption <= wealth
-
-
-def _consumption_within_couple_wealth(
-    *, wealth: ContinuousState, consumption: ContinuousAction
-) -> BoolND:
-    return consumption <= wealth
+    return (1.0 + interest_rate) * (wealth - consumption) + INCOME_F + INCOME_M
 
 
 def _half_of_couple_wealth(wealth: ContinuousState) -> ContinuousState:
@@ -486,13 +509,14 @@ def _until_last_age(
     )
 
 
-def _single_terminal(*, wealth: LinSpacedGrid, consumption: LinSpacedGrid) -> Regime:
+def _single_terminal(
+    *, wealth: LinSpacedGrid, consumption_share: LinSpacedGrid
+) -> Regime:
     """Build one single's terminal regime, identical for her and for him."""
     return Regime(
         states={"wealth": wealth},
-        actions={"consumption": consumption},
-        functions={"utility": _terminal_utility},
-        constraints={"affordable": _consumption_within_single_wealth},
+        actions={"consumption_share": consumption_share},
+        functions={"consumption": _consumption, "utility": _terminal_utility},
     )
 
 

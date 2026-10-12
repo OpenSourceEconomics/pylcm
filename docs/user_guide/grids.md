@@ -95,6 +95,12 @@ changes the economic handoff and therefore requires an economic reason. Clipping
 preserves non-finite values so a broken law cannot become a finite endpoint.
 Stochastic-process support admission remains a separate contract.
 
+The clipped rules are honoured by `GridSearch`. The endogenous-grid solvers (`EGM`,
+`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) read their continuation and policy on their own
+endogenous grids, so a model whose endogenous-grid regime, or any regime it transitions
+into, declares `clip_lookup` or `clip_state` is rejected at construction with
+`OffGridPolicyError`; declare `"raise"` or `"extrapolate"` there instead.
+
 For an age-dependent grid, the bounds belong to the target period. For a grid whose
 points arrive at runtime, those supplied points define the closed endpoints. Interior
 piecewise boundary ownership is unchanged. Numerical grid rules do not replace a tax,
@@ -104,6 +110,13 @@ With `runtime_checks=True` and output enabled, diagnostics count raw exterior ne
 states before clipping, excluding infeasible cells and unreachable lottery support.
 Silent solves skip these count-only diagnostic sweeps. The explicit `"raise"` policy
 applies at every `log_level`, even with `runtime_checks=False`.
+
+A regime with value-dependent constraints or gated edges only knows which actions and
+branches a next state is reached through once values exist. Its solve therefore checks
+`"raise"` grids inside the maximization: an exterior next state counts only for an
+action every constraint keeps, value constraints included, and through a gated edge only
+on the branch the gate selects — the target where it opens, the projected fallback where
+it closes. Such a regime emits no solve-phase diagnostic counts for the other rules.
 
 ### LinSpacedGrid
 

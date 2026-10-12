@@ -3513,6 +3513,13 @@ def _build_solution_phase(  # noqa: PLR0915
     # no continuation, so the set is empty there.
     co_map_state_names: tuple[StateName, ...] = ()
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = ()
+    # A value constraint or a gated edge decides which actions and branches a
+    # landing is reached through only once the values are known, so these
+    # sources count their raise-rule landings inside the solve kernel, where
+    # both are, rather than in the preflight, where neither is.
+    counts_raise_landings = bool(value_aware_feasibility.value_constraints) or bool(
+        gated_continuations
+    )
 
     period_to_state_nodes = _period_to_state_nodes(
         regime_name=regime_name, grid_schedule=grid_schedule
@@ -3634,6 +3641,7 @@ def _build_solution_phase(  # noqa: PLR0915
             same_period_refs=value_aware_feasibility.same_period_refs,
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
+            count_raise_landings=counts_raise_landings,
         )
         Q_and_F_functions = grouped_Q_and_F.by_period
         decision_group_key = grouped_Q_and_F.group_key
@@ -3874,6 +3882,7 @@ def _build_solution_phase(  # noqa: PLR0915
         action_partitions=action_partitions,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
+        counts_raise_landings=counts_raise_landings,
     )
     return _SolutionBuild(
         phase=phase,
@@ -5787,8 +5796,10 @@ def _process_regime_core(
     source_draw_grids = _source_draws_read_by_target_laws(
         flat_nested_transitions=flat_nested_transitions,
         reads_by_law=reads_by_law,
+        # `state_grids` only enumerates the source's states; the law comes from
+        # `all_grids`, which carries the active phase's declaration of each one.
         source_random_grids={
-            state: grid
+            state: all_grids[source_regime_name][state]
             for state, grid in state_grids[source_regime_name].items()
             if (
                 state in carried_processes
@@ -6729,10 +6740,14 @@ def _rename_params_to_qnames(
     # that takes none of its own must not be stamped with one the other phase
     # contributed.
     own_args = get_union_of_args([func])
-    param_names = [p for p in branch if p in own_args]
+    # A generated function may bind a public field to a private argument.
+    arguments = getattr(func, "_lcm_law_arguments", {})
+    param_names = [p for p in branch if arguments.get(p, p) in own_args]
     if not param_names:
         return cast("EconFunction", func)
-    mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
+    mapper = {
+        arguments.get(p, p): qname_from_tree_path((param_key, p)) for p in param_names
+    }
     return cast("EconFunction", rename_arguments(func, mapper=mapper))
 
 
@@ -8454,6 +8469,7 @@ def _build_Q_and_F_per_period(
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
+    count_raise_landings: bool = False,
 ) -> _GroupedQAndF:
     """Build Q-and-F closures for each active period of a non-terminal regime.
 
@@ -8506,6 +8522,8 @@ def _build_Q_and_F_per_period(
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
             regime without gated edges.
+        count_raise_landings: Whether each closure also returns its raw landing
+            counts on the raise-rule grids it reads. Only the solve site sets it.
 
     Returns:
         Immutable mapping of period index to the per-period Q-and-F closure.
@@ -8643,6 +8661,7 @@ def _build_Q_and_F_per_period(
                     else None
                 ),
                 gated_continuations=period_gated_continuations,
+                count_raise_landings=count_raise_landings,
             )
             continue
         built[key] = get_Q_and_F(
@@ -8683,6 +8702,7 @@ def _build_Q_and_F_per_period(
                 else None
             ),
             gated_continuations=period_gated_continuations,
+            count_raise_landings=count_raise_landings,
         )
 
     return _GroupedQAndF(

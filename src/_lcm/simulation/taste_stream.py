@@ -1,5 +1,6 @@
 """Address common taste-shock keys by exact age, action domain and subject row."""
 
+import functools
 import hashlib
 import json
 import struct
@@ -10,6 +11,7 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax._src.dtypes import ExtendedDType
 from jaxtyping import Key, UInt32
 
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
@@ -212,6 +214,11 @@ def draw_taste_shock_keys(
     Padded rows duplicate the final real subject. Only the current chunk is
     constructed. The caller supplies the caller's typed root; no mutable
     transition stream, regime code or population-wide split enters these keys.
+
+    For a root whose batched folds or draws are not a map over its keys, every
+    row's key is folded as a scalar and carries the trailing axis
+    `scalar_draw_axis` names, which tells the decision to draw from it as a
+    scalar too.
     """
     if type(subject_count) is not int or not 0 <= subject_count < 2**64:
         raise ValueError("A taste-key chunk requires a nonnegative uint64 row count.")
@@ -233,9 +240,33 @@ def draw_taste_shock_keys(
     padded = overflow | (high > last[0]) | ((high == last[0]) & (low > last[1]))
     row_high = jnp.where(padded, last[0], high)
     row_low = jnp.where(padded, last[1], low)
-    return jax.vmap(_fold_subject_key, in_axes=(None, 0, 0))(
-        addressed_key, row_high, row_low
+    draw_axis = scalar_draw_axis(dtype=addressed_key.dtype)
+    fold = (
+        jax.custom_batching.sequential_vmap(_fold_subject_key)
+        if draw_axis
+        else _fold_subject_key
     )
+    keys = jax.vmap(fold, in_axes=(None, 0, 0))(addressed_key, row_high, row_low)
+    return keys.reshape(*keys.shape, *draw_axis)
+
+
+def scalar_draw_axis(*, dtype: np.dtype | ExtendedDType) -> tuple[int, ...]:
+    """Return the per-subject axis that marks an independent key for scalar draws.
+
+    Batched Threefry folds and draws equal the per-key ones, so its keys keep
+    the plain subject axis and the decision's vectorized draw. Batched RBG draws
+    and unsafe-RBG folds are not maps over the keys, so an independent key of
+    any other implementation gets a trailing length-one axis and is folded and
+    drawn as a scalar.
+    """
+    return () if dtype == _threefry_key_dtype() else (1,)
+
+
+@functools.cache
+def _threefry_key_dtype() -> ExtendedDType:
+    return jax.eval_shape(
+        functools.partial(jax.random.key, 0, impl="threefry2x32")
+    ).dtype
 
 
 def _row_offset_words(*, count: int) -> tuple[jax.Array, jax.Array]:

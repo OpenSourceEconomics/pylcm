@@ -361,27 +361,14 @@ def test_projected_fallback_preserves_or_clips_its_economic_handoff(
 def test_projected_realized_fallback_raise_is_mandatory(
     *, runtime_checks: bool
 ) -> None:
-    """A routed fallback checks its actual projection even with diagnostics off."""
+    """A reached fallback projection fails the solve even with diagnostics off."""
     model = _make_model(
         saving_grid=IrregSpacedGrid(points=(0.5, 0.6)),
         fallback_off_grid="raise",
         project_outside_hull=True,
     )
-    solution = model.solve(
-        params=_params(), log_level="off", runtime_checks=runtime_checks
-    )
     with pytest.raises(OffGridStateError, match=r"regime='source'.*state='x'"):
-        model.simulate(
-            params=_params(),
-            initial_conditions={
-                "age": jnp.array([0.0]),
-                "x": jnp.array([0.0]),
-                "regime_id": jnp.array([RegimeId.source]),
-            },
-            solution=solution,
-            log_level="off",
-            runtime_checks=runtime_checks,
-        )
+        model.solve(params=_params(), log_level="off", runtime_checks=runtime_checks)
 
 
 def test_landings_that_all_fall_on_nodes_are_unaffected() -> None:
