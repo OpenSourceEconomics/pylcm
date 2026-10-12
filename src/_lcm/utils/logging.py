@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable
 from functools import partial
-from typing import Literal
+from typing import Literal, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -98,6 +98,13 @@ _LOG_LEVEL_MAP: dict[str, int] = {
 }
 
 
+class RunPolicy(TypedDict):
+    """Non-executable call policy persisted by a public numerical capture."""
+
+    log_level: LogLevel
+    runtime_checks: bool
+
+
 class _RunLogger(logging.Logger):
     """Call-local output level and independent numerical-validation policy.
 
@@ -123,6 +130,16 @@ class _RunLogger(logging.Logger):
             ),
             (),
         )
+
+
+def get_run_policy(logger: logging.Logger) -> RunPolicy:
+    """Read the exact public-call policy without serializing output handlers."""
+    if not isinstance(logger, _RunLogger):
+        raise TypeError("Public period capture requires a call-local logger.")
+    return {
+        "log_level": logger._log_level,  # noqa: SLF001 - owned in this module
+        "runtime_checks": logger.runtime_checks,
+    }
 
 
 def validation_enabled(logger: logging.Logger) -> bool:

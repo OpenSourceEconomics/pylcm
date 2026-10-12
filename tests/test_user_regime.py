@@ -4,8 +4,10 @@ import inspect
 import re
 from collections.abc import Callable
 from types import MappingProxyType
+from typing import Literal
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from dags import rename_arguments
 from dags.tree import QNAME_DELIMITER
@@ -25,6 +27,7 @@ from lcm import (
     DeterministicTransition,
     DiscreteGrid,
     Gate,
+    InitialNodes,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
@@ -42,17 +45,28 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
 )
+from lcm.regime import (
+    ActionEntry,
+    FunctionEntry,
+    StateEntry,
+    StateTransitionEntry,
+    StochasticTransition,
+)
 from lcm.regime import Regime as UserRegime
-from lcm.regime import StochasticTransition
 from lcm.typing import (
+    ActionName,
     BoolND,
     ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
+    FunctionName,
     ScalarInt,
+    StateName,
     UserFunction,
 )
+from tests.conftest import DECIMAL_PRECISION
 
 
 def utility(consumption):
@@ -820,3 +834,172 @@ def test_regime_with_fixed_states_only():
     assert all(
         jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
     )
+
+
+type _GuardLocation = Literal["state", "action", "derived", "phased", "fixed_component"]
+type _GuardScope = Literal["regime", "model"]
+
+
+@categorical(ordered=False)
+class _GuardRegimeId:
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+@categorical(ordered=False)
+class _GuardCategory:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _guard_wealth_utility(*, wealth: DiscreteState) -> FloatND:
+    return jnp.asarray(wealth, dtype=float)
+
+
+def _guard_action_utility(*, consumption: DiscreteAction) -> FloatND:
+    return jnp.asarray(consumption, dtype=float)
+
+
+def _guard_zero_utility() -> FloatND:
+    return jnp.asarray(0.0, dtype=float)
+
+
+def _guard_zero_wealth() -> DiscreteState:
+    return jnp.asarray(0, dtype=jnp.int32)
+
+
+def _guard_wealth_probabilities() -> FloatND:
+    return jnp.asarray([0.5, 0.5], dtype=float)
+
+
+def _guard_model(
+    *, grid: DiscreteGrid, location: _GuardLocation, scope: _GuardScope
+) -> Model:
+    """Place one two-node grid in a supported, reachable declaration slot."""
+    states: dict[StateName, StateEntry] = {}
+    actions: dict[ActionName, ActionEntry] = {}
+    state_transitions: dict[StateName, StateTransitionEntry] = {}
+    derived_categoricals: dict[FunctionName, DiscreteGrid] = {}
+    functions: dict[FunctionName, FunctionEntry] = {"utility": _guard_wealth_utility}
+    if location == "action":
+        actions["consumption"] = grid
+        functions["utility"] = _guard_action_utility
+    elif location == "derived":
+        derived_categoricals["wealth"] = grid
+        functions["wealth"] = _guard_zero_wealth
+    else:
+        states["wealth"] = (
+            Phased(solve=_guard_zero_wealth, simulate=grid)
+            if location == "phased"
+            else grid
+        )
+        state_transitions["wealth"] = (
+            StochasticTransition(
+                func=_guard_wealth_probabilities, fixed_component=(0, 0)
+            )
+            if location == "fixed_component"
+            else fixed_transition("wealth")
+        )
+    if scope == "regime":
+        alive = UserRegime(
+            states=states,
+            actions=actions,
+            state_transitions=state_transitions,
+            functions=functions,
+            derived_categoricals=derived_categoricals,
+        )
+        dead = UserRegime(functions={"utility": _guard_zero_utility})
+        states, actions, state_transitions, derived_categoricals = {}, {}, {}, {}
+    else:
+        alive = UserRegime(functions=functions)
+        dead_functions: dict[FunctionName, FunctionEntry] = {
+            "utility": _guard_zero_utility
+        }
+        if location == "derived":
+            dead_functions["wealth"] = _guard_zero_wealth
+        dead = UserRegime(
+            states=dict.fromkeys(states),
+            actions=dict.fromkeys(actions),
+            functions=dead_functions,
+        )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_GuardRegimeId,
+        initial_nodes=InitialNodes(by_age={0: "alive"}),
+        edges={"alive": {"alive": 0, "dead": 1}},
+        states=states,
+        actions=actions,
+        state_transitions=state_transitions,
+        derived_categoricals=derived_categoricals,
+        enable_jit=False,
+    )
+
+
+def test_model_refuses_a_value_grid_hidden_by_fixed_component_factoring():
+    """Factoring a Markov state into fixed components cannot hide a value grid."""
+    with pytest.raises(RegimeInitializationError, match=r"values=\.\.\."):
+        _guard_model(
+            grid=DiscreteGrid(values=[10, 20]),
+            location="fixed_component",
+            scope="regime",
+        )
+
+
+@pytest.mark.parametrize("scope", ["regime", "model"])
+@pytest.mark.parametrize(
+    "values",
+    [pytest.param((10, 20), id="integer"), pytest.param((10.0, 20.0), id="float")],
+)
+def test_model_refuses_value_grids_behind_a_fixed_component_in_every_scope(
+    *, scope: _GuardScope, values: tuple[int, ...] | tuple[float, ...]
+):
+    """A value grid behind a fixed component is refused in a regime and at model level.
+
+    Fixed-component factoring replaces the declared grid with category grids before
+    user functions are handed values, so the values would silently become codes.
+    """
+    with pytest.raises(RegimeInitializationError, match=r"values=\.\.\."):
+        _guard_model(
+            grid=DiscreteGrid(values=values), location="fixed_component", scope=scope
+        )
+
+
+@pytest.mark.parametrize(
+    "values",
+    [pytest.param((10, 20), id="integer"), pytest.param((10.0, 20.0), id="float")],
+)
+def test_value_grid_state_without_fixed_component_reaches_utility_as_values(
+    *, values: tuple[int, ...] | tuple[float, ...]
+):
+    """`u = wealth` on a value-grid state solves to the values, not the codes `0, 1`.
+
+    The state is fixed, the regime lives two periods with discount factor 0.9, and
+    its successor is a zero-utility terminal regime, so the first-period value is
+    `1.9 * wealth` at each node; codes would give `0` and `1.9`.
+    """
+    model = _guard_model(
+        grid=DiscreteGrid(values=values), location="state", scope="regime"
+    )
+    solution = model.solve(params={"discount_factor": 0.9}, log_level="off")
+    np.testing.assert_array_almost_equal(
+        np.asarray(solution.values[0]["alive"]),
+        1.9 * np.asarray(values, dtype=float),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize(
+    "location", ["state", "action", "derived", "phased", "fixed_component"]
+)
+@pytest.mark.parametrize("scope", ["regime", "model"])
+def test_model_keeps_category_grids_in_every_declaration_slot(
+    *, location: _GuardLocation, scope: _GuardScope
+):
+    """The category declaration in each refused slot still builds a model."""
+    model = _guard_model(
+        grid=DiscreteGrid(category_class=_GuardCategory),
+        location=location,
+        scope=scope,
+    )
+    assert set(model.user_regimes) == {"alive", "dead"}

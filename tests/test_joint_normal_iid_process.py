@@ -54,6 +54,9 @@ def _model(
     )
 
 
+_FULL_RANK_COV = ((1.0, -0.4), (-0.4, 2.0))
+
+
 def test_joint_normal_process_is_public() -> None:
     """A regime can declare a named joint normal IID process."""
     assert hasattr(lcm, "JointNormalIIDProcess")
@@ -63,7 +66,7 @@ def test_joint_normal_process_is_public() -> None:
 @pytest.mark.parametrize("fold", [False, True])
 @pytest.mark.parametrize(
     "cov",
-    [((1.0, -0.4), (-0.4, 2.0)), ((0.0, 0.0), (0.0, 2.0)), ((1.0, 2.0), (2.0, 4.0))],
+    [_FULL_RANK_COV, ((0.0, 0.0), (0.0, 2.0)), ((1.0, 2.0), (2.0, 4.0))],
 )
 def test_physical_initial_state_names_and_bounds(
     *, runtime: bool, fold: bool, cov: tuple[tuple[float, float], tuple[float, float]]
@@ -93,6 +96,13 @@ def test_physical_initial_state_names_and_bounds(
         "joint_normal_0",
         "joint_normal_1",
     )
+    if runtime and cov != _FULL_RANK_COV:
+        # Only a fixed covariance may be singular.
+        with pytest.raises(GridInitializationError, match="fixed cov"):
+            model.initial_state_bounds(
+                params=params, regime_name="working", state_name="x", period=0
+            )
+        return
     physical = np.asarray(
         process.compute_gridpoints(mean=jnp.array([1.0, -2.0]), cov=jnp.array(cov))
     )
@@ -486,7 +496,7 @@ def test_joint_normal_rejects_malformed_physical_inputs(malformed: str) -> None:
 @pytest.mark.parametrize("fold", [False, True])
 @pytest.mark.parametrize(
     "cov",
-    [((1.0, -0.4), (-0.4, 2.0)), ((0.0, 0.0), (0.0, 2.0)), ((1.0, 2.0), (2.0, 4.0))],
+    [_FULL_RANK_COV, ((0.0, 0.0), (0.0, 2.0)), ((1.0, 2.0), (2.0, 4.0))],
 )
 def test_joint_normal_validate_transitions_preserves_named_runtime_law(
     *, runtime: bool, fold: bool, cov: tuple[tuple[float, float], tuple[float, float]]
@@ -511,6 +521,11 @@ def test_joint_normal_validate_transitions_preserves_named_runtime_law(
         if runtime
         else {}
     )
+    if runtime and cov != _FULL_RANK_COV:
+        # Only a fixed covariance may be singular.
+        with pytest.raises(GridInitializationError, match="fixed cov"):
+            model.validate_transitions(params=params)
+        return
     assert model.validate_transitions(params=params) is None
     solution = model.solve(params=params, log_level="off", runtime_checks=True)
     for regime_to_values in solution.values.values():

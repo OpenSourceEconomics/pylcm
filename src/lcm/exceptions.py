@@ -137,6 +137,10 @@ class RegimeInitializationError(ModelInitializationError):
     """
 
 
+class OffGridPolicyError(ModelInitializationError):
+    """Raised when a solver cannot honour a state grid's declared `off_grid` rule."""
+
+
 class GridInitializationError(PyLCMError):
     """Raised when there is an error in the grid initialization."""
 

@@ -343,6 +343,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                                 regime_name
                             ].solution.grids.items()
                             if isinstance(grid, DiscreteGrid)
+                            and name in regimes[regime_name].solution.state_names
                             and name
                             in authority.values[(period, regime_name)].axis_names
                         },

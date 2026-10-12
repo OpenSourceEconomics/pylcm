@@ -674,3 +674,44 @@ def test_simulation_stays_ungrouped_when_the_simulate_phase_may_change_the_type(
 
     assert _subject_grouping(result=got) is None
     _assert_panels_identical(got=got, want=want)
+
+
+@pytest.mark.parametrize("budget", [None, _BUDGET], ids=["unbudgeted", "budgeted"])
+@pytest.mark.parametrize("blocked", [False, True], ids=["ungrouped", "grouped"])
+def test_realized_off_grid_counts_hold_each_genuine_row_once(
+    *,
+    budget: int | None,
+    blocked: bool,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Repeated chunk tails and alignment rows never add to realized counts.
+
+    Eleven subjects in chunks of three leave short tails in both routes; every
+    subject starts at the top of the wealth grid and consumption is barely valued,
+    so later exterior handoffs to `work` and to `dead` occur. The logged total
+    equals the exterior raw states the public panel holds.
+    """
+    params = _params(typed_dead=False, scale=0.01)
+    model = _model(typed_dead=False, budget=budget, blocked=blocked)
+    solution = _archived_solution(model=model, params=params, directory=tmp_path)
+    initial = _initial() | {"wealth": np.full(len(_UNBALANCED), 10.0)}
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        frame = model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            seed=7,
+            runtime_checks=True,
+            log_level="warning",
+        ).to_dataframe()
+    counted = sum(
+        int(message.rsplit("count=", 1)[1])
+        for record in caplog.records
+        if "Off-grid next states:" in (message := record.getMessage())
+        and "phase='realized'" in message
+    )
+    later = frame.loc[frame["period"] > 0, "wealth"].to_numpy()
+    expected = int(np.count_nonzero((later < 1) | (later > 10)))
+    assert (expected > 0, counted) == (True, expected)

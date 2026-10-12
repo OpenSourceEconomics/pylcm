@@ -235,8 +235,23 @@ def create_regime_params_template(
         other_regime_state_names=other_regime_state_names,
     )
 
+    # A bound law field is addressed through its function's namespace only, so
+    # it shadows no state or action of the same spelling.
     _validate_no_shadowing(
-        function_params={**function_params, **{k: {} for k in per_target_params}},
+        function_params={
+            **{
+                name: {
+                    param: annotation
+                    for param, annotation in params.items()
+                    if param
+                    not in getattr(
+                        template_functions.get(name), "_lcm_law_arguments", {}
+                    )
+                }
+                for name, params in function_params.items()
+            },
+            **{k: {} for k in per_target_params},
+        },
         user_regime=user_regime,
     )
 
@@ -829,6 +844,12 @@ def _discovered_params(
         }
     else:
         tree = dict(dt.create_tree_with_input_types({name: func}))
+    # A generated function binds some public parameter fields to private
+    # arguments; those fields are parameters whatever the engine wires.
+    bound = {
+        field: tree.pop(argument)
+        for field, argument in getattr(func, "_lcm_law_arguments", {}).items()
+    }
     # `dags` nests a `__`-joined argument into a subtree, so the argument names
     # are read back from the flattened tree.
     if errors := path_segment_name_errors(
@@ -843,7 +864,7 @@ def _discovered_params(
         for arg_name, annotation in sorted(tree.items())
         if arg_name not in non_params
         and not (strip_target_value_operands and is_target_value_operand(arg_name))
-    }
+    } | {field: cast("str", annotation) for field, annotation in bound.items()}
     return _annotate_temporal_params(
         params=params, functions=list(_callables_in(value=func)), name=name
     )

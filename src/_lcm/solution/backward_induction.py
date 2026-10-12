@@ -3158,20 +3158,24 @@ def _resident_inventory_by_triple(
                 # Native feasibility counters survive until the period barrier.
                 # Reserve a pair per cell plus an invariant-block merge pair;
                 # replication on every device conservatively covers placement.
+                # Owners outside the execution devices keep their charges.
                 fixed_bytes=MappingProxyType(
                     {
-                        device: fixed_bytes.get(device, 0)
-                        + 2
-                        * np.dtype(np.int32).itemsize
-                        * (
-                            len(
-                                _regimes_active_at_period(
-                                    regimes=regimes, period=period
+                        **fixed_bytes,
+                        **{
+                            device: fixed_bytes.get(device, 0)
+                            + 2
+                            * np.dtype(np.int32).itemsize
+                            * (
+                                len(
+                                    _regimes_active_at_period(
+                                        regimes=regimes, period=period
+                                    )
                                 )
+                                + 1
                             )
-                            + 1
-                        )
-                        for device in device_ids
+                            for device in device_ids
+                        },
                     }
                 ),
                 shared_copies=copies_by_period[period],

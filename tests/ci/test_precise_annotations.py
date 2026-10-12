@@ -1281,3 +1281,76 @@ def _details(
     return [
         (violation.line, violation.code, violation.detail) for violation in violations
     ]
+
+
+@pytest.mark.parametrize(
+    ("source_code", "expected_codes"),
+    [
+        pytest.param(
+            "import typing as tp\nvalue: tp.Any = 1\n",
+            ("PAN002",),
+            id="renamed-typing-module",
+        ),
+        pytest.param(
+            "from typing import Any as Payload\nvalue: Payload = 1\n",
+            ("PAN002",),
+            id="renamed-any-import",
+        ),
+        pytest.param(
+            "from typing import Any as Payload\nvalue: 'list[Payload]' = []\n",
+            ("PAN002",),
+            id="renamed-any-in-string-annotation",
+        ),
+        pytest.param(
+            "from collections.abc import Mapping as Table\nvalue: Table = {}\n",
+            ("PAN006",),
+            id="renamed-bare-generic",
+        ),
+        pytest.param(
+            "from typing import Literal as Tag\nvalue: Tag['Any'] = 'Any'\n",
+            (),
+            id="literal-metadata-is-not-a-type",
+        ),
+        pytest.param(
+            "from typing import Annotated as Marked\n"
+            "value: Marked[int, 'object'] = 1\n",
+            (),
+            id="annotated-metadata-is-not-a-type",
+        ),
+        pytest.param(
+            "from typing import cast as coerce\nvalue = coerce(object, 1)\n",
+            ("PAN001",),
+            id="renamed-cast",
+        ),
+        pytest.param(
+            "from typing import cast\nvalue = cast(typ=object, val=1)\n",
+            ("PAN001",),
+            id="all-keyword-cast",
+        ),
+        pytest.param(
+            "from typing import cast\nvalue = cast(typ=int, val=1)\n",
+            (),
+            id="precise-keyword-cast-control",
+        ),
+        pytest.param(
+            "from typing import Any as Payload\n"
+            "def f() -> None:\n"
+            "    class Payload:\n"
+            "        pass\n"
+            "    value: Payload\n",
+            (),
+            id="inner-scope-shadow-control",
+        ),
+    ],
+)
+def test_binding_and_call_form_invariance(
+    *, tmp_path: Path, source_code: str, expected_codes: tuple[str, ...]
+) -> None:
+    """Renamed imports and keyword `cast` calls are judged like their canonical forms.
+
+    A name rebound in an inner scope is an ordinary name there.
+    """
+    path = tmp_path / "binding_case.py"
+    path.write_text(source_code)
+    violations = find_annotation_violations(paths=[path])
+    assert tuple(violation.code for violation in violations) == expected_codes
