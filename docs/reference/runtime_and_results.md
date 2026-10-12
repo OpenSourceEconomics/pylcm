@@ -690,9 +690,10 @@ needs that function's value.
 ## `SimulationResult`
 
 `to_dataframe(additional_targets=None, use_labels=True, terminal_rows="first")`
-materializes a flat DataFrame. `additional_targets` accepts selected DAG outputs or
-`"all"`. `terminal_rows="all"` retains every frozen absorbing row; the default keeps
-only terminal entry.
+materializes a flat DataFrame. `additional_targets` accepts a sequence of selected DAG
+output names (including the tuple `result.available_targets`), `"all"`, or `None`. Other
+bare strings raise `InvalidAdditionalTargetsError`. `terminal_rows="all"` retains every
+frozen absorbing row; the default keeps only terminal entry.
 
 Inspection properties include `regime_names`, `state_names`, `action_names`,
 `n_periods`, `n_subjects`, `available_targets`, `raw_results`, `flat_params`, and
