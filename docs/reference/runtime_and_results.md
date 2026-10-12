@@ -676,14 +676,24 @@ can exceed `value`, and `value` is the max of `Q` over the entries `F` admits. B
 compiles its own program, so its `Q` and `value` can differ in the last bits from the
 matching slice of a full-grid lookup's `Q`.
 
+The same option fills `U` and `CE`, of the shape of `Q`, from the one kernel evaluation
+the decision maximizes over. `U` is the regime's flow utility. `CE` is the certainty
+equivalent of next period's value, undiscounted: the `CE` argument the regime's Koopmans
+aggregator receives, so `Q == W(utility=U, CE=CE, ...)` for every aggregator, and
+`Q == U + discount_factor * CE` under `LinearAggregator`. A terminal regime has
+`CE == 0` and `Q == U`. Like `Q`, both are unmasked. When the aggregator reads a regime
+function, such as a type-specific discount factor, rebuilding `Q` from `U` and `CE` also
+needs that function's value.
+
 (api-simulation-result)=
 
 ## `SimulationResult`
 
 `to_dataframe(additional_targets=None, use_labels=True, terminal_rows="first")`
-materializes a flat DataFrame. `additional_targets` accepts selected DAG outputs or
-`"all"`. `terminal_rows="all"` retains every frozen absorbing row; the default keeps
-only terminal entry.
+materializes a flat DataFrame. `additional_targets` accepts a sequence of selected DAG
+output names (including the tuple `result.available_targets`), `"all"`, or `None`. Other
+bare strings raise `InvalidAdditionalTargetsError`. `terminal_rows="all"` retains every
+frozen absorbing row; the default keeps only terminal entry.
 
 Inspection properties include `regime_names`, `state_names`, `action_names`,
 `n_periods`, `n_subjects`, `available_targets`, `raw_results`, `flat_params`, and
