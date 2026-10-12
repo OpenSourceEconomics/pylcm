@@ -362,7 +362,7 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "85070e5f57210e201be248c1f2deae8068dce674112f13efdb0eb94c1dd7f7b4",
     COMBINED_CHUNK_PROFILES_SOURCE: "d3e35d13b366f2e8b3e40bcf2814ae9b1f5a54d7a4d563dacc5346e85d872f22",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "477f39609fff5371d88d941cc5c4a0c9ab9fe3692ad2845a3fc3a6befb633f42",
-    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "00425b1e7ad0b20c3a5c9481785c96dbabaaf884ae4b19ae6744b751b8dec6d7",
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "d25178e1fa57bad202d6eade9da754630b4551112212297bc4d8b920ed50ada1",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: "da3ee40547e773ef94c9b0fe2e1c396d443e6894c752baf2d7eb6682744fce78",
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
@@ -377,7 +377,7 @@ _SOURCE_SEALS = {
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "4e50d79fe971c9d5f0e59fc7b6942868cb09a1223bcde15754019d72efa2d979",
     NBEGM_SOURCE: "869fec6e36b3ace14c3cdcd1b1c5ca2f7c367224d658aa0c54510b11fa346c5d",
     CONTINUATION_ARGUMENTS_SOURCE: "48495f36be398f0d5eb1d1f9e161fb3a71d877dc164da416ada09aaeceda5f51",
-    SIMULATION_TASTE_STREAM_SOURCE: "ad7408ddbde296dbf48ce1f81244214a9ab119755370ecef6759dee0ecd42517",
+    SIMULATION_TASTE_STREAM_SOURCE: "a8a90200f06aec77d02d21780286e32a3620a1687ee76c23af301687a46ae5b9",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
     COMPILER_INPUTS_SOURCE: "c2df405f63a61f7d5201d754c95bcca9fdc213c97c1533025080da80814cda70",
     SIMULATION_OPERANDS_SOURCE: "7645b400641b5d995e1a2f651dc5d6ccb54df3e16732db64a75765c5a5f31645",
@@ -404,7 +404,7 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
-    MAX_Q_SOURCE: "d3a6aa921d6c7f18763804c328f374b036787c4eda4b6acacbd974aa66789c3c",
+    MAX_Q_SOURCE: "2351fb60c4d4684d26d093d34335c6ec860460ab18d8c08a68466b6f74488441",
     PROCESSING_SOURCE: "db23ab13cbdf3662c0dae199ab7437116c61dfc05e477bc12645a9011ec0cf2a",
     GRID_SEARCH_SOURCE: "a656fc90438850ea4c61fe02062a118454de966a81dd7ff7be92b8de34958aea",
     CORE_PROGRAM_SOURCE: "21e86cda882a227086aa6550a63daa9492071f7a14a9e56565e751a67ffae2b1",
@@ -457,9 +457,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "fea42ce6dd630056b6483977e57cf3fafcf042b6c348bdc1c0fa3bc9bac8eb46",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 407
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
+    "60f4409ab18871f6413f57172303f9629ea88d3ec55bb7df425f6a6c981801f7"
 )
 EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 54
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
@@ -559,7 +559,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_TASTE_STREAM_SOURCE: (
-        "95eac128cab8974097f25d9c61648cc62210da735256d628ece75c90aa4002c3",
+        "62e32d23dc56cad5e11aa254963de93c803964b5a42539679b63054ad14a9491",
         {
             "create_taste_shock_key": "76cdca8e4c1fec745ba4041395bb23454129fc5a751b89d0b5dfddeccc689fa0",
             "prepare_decision_taste_keys": "ef085a5cfac60dce08367fc50b280500313659e270771b1e94367b73e3ddf717",
@@ -569,7 +569,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_encode_subject_row": "9206dbef80b1bf9607d6cfc42db24af9d7a01ee34ee04079d13c61582eeba82a",
             "_advance_simulation_taste_key": "d8854c351a6aac51cc858691332541a21413b90baccf6dd2a52fd2ae601a3752",
             "_taste_address_words": "4490c80c002e777c58e57d242f5a722e17f31d10e7d8120e32b31123ea284478",
-            "draw_taste_shock_keys": "bdc7eb50b64e31949af64b051935650b7f744467074adadc2dea930012d9d577",
+            "draw_taste_shock_keys": "cab000b3c2a725b99602e5162bc83076db4a2dfd2b466c5a660bc597c2034758",
             "_row_offset_words": "5b7e8a0ca6032c00fd2db2d24513c6642a270e20d98facc362b45bc784d80778",
             "_fold_subject_key": "6c3faf14f43234d25195bd3525659c095512857f4b9d4422e05e43e33d936493",
         },
@@ -938,10 +938,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: (
-        "6e01aa85f3d604f853544d2028f0cc6fce9f6e4598c7b12c3e76f8c963ea8ae2",
+        "7c01a7da2f249605cf77ea61fe8a454e8aca67037b3620f0a340c5352d893a9b",
         {
             "profile_forward_programs": "effdfca96bc6322a037b7f0b4b9d93f97a776a55db9d0de0fcf60d32dddf7a3d",
-            "profile_forward_unit": "aa66702db79f3c1a6cbb7a358278a8391248560f2b0a5ec1c5aeb0f6f95a17da",
+            "profile_forward_unit": "cab17b17430414d938770ec40c93bbbf0d850d39493683f6fed0b2c9e99cfaf2",
             "_profile_finite_decision": "5ca35d7e729d991a97f4d22e3f1a65b997c0403769ae6b76e5a35e512e5e66b0",
             "_abstract_policy_leaf": "96e133ac576cd9b40afbf10907084378253b43bf9376d39d0faa3743d58b0cd2",
             "AbstractSimulationProfile.__post_init__": "cbd87055b30ad84f7904480cff150f5d376033767ac3e759cfb7a086d7d19123",
@@ -6255,9 +6255,13 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
         errors.append("taste noise: decorators are not allowlisted")
     if not _keyword_only_signature(node=node, names=("key", "shape", "scale")):
         errors.append("taste noise: signature changed")
-    expected_body = r"""return scale * (
-    jax.random.gumbel(key, shape) - EULER_GAMMA
-)
+    expected_body = r"""if key.shape == (1,):
+    gumbel = jax.custom_batching.sequential_vmap(
+        functools.partial(jax.random.gumbel, shape=shape)
+    )(key[0])
+else:
+    gumbel = jax.random.gumbel(key, shape)
+return scale * (gumbel - EULER_GAMMA)
 """
     if not _body_matches(node=node, expected_source=expected_body):
         errors.append(
@@ -6268,6 +6272,7 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         names={
             "cast",
+            "functools",
             "jax",
             "jnp",
             "math",
@@ -6279,6 +6284,7 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
     )
     expected_imports = sorted(
         [
+            "import functools",
             "import jax",
             "import jax.numpy as jnp",
             "import math",
@@ -6310,6 +6316,7 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
         and {
             "cast",
             "draw_taste_shock_noise",
+            "functools",
             "jax",
             "jnp",
             "math",
@@ -7472,26 +7479,31 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
     )
 
     mutations["shared_taste_noise:shared_draw"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale * ("
-        "jnp.broadcast_to(jax.random.gumbel(key, (1,)), shape) - EULER_GAMMA)",
+        "gumbel = jax.random.gumbel(key, shape)",
+        "gumbel = jnp.broadcast_to(jax.random.gumbel(key, (1,)), shape)",
         1,
     )
     mutations["shared_taste_noise:permuted_draw"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale * (jax.random.gumbel(key, shape).reshape(-1)[::-1]"
-        ".reshape(shape) - EULER_GAMMA)",
+        "gumbel = jax.random.gumbel(key, shape)",
+        "gumbel = jax.random.gumbel(key, shape).reshape(-1)[::-1].reshape(shape)",
         1,
     )
     mutations["shared_taste_noise:first_candidate_zeroed"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale * (jax.random.gumbel(key, shape).reshape(-1).at[0]"
-        ".set(0).reshape(shape) - EULER_GAMMA)",
+        "gumbel = jax.random.gumbel(key, shape)",
+        "gumbel = jax.random.gumbel(key, shape).reshape(-1).at[0].set(0)"
+        ".reshape(shape)",
+        1,
+    )
+    mutations["shared_taste_noise:batched_independent_draw"] = source.replace(
+        "gumbel = jax.custom_batching.sequential_vmap(\n"
+        "            functools.partial(jax.random.gumbel, shape=shape)\n"
+        "        )(key[0])",
+        "gumbel = jax.random.gumbel(key[0], shape)",
         1,
     )
     mutations["shared_taste_noise:wrong_scale"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale**2 * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
+        "return scale * (gumbel - EULER_GAMMA)",
+        "return scale**2 * (gumbel - EULER_GAMMA)",
         1,
     )
     mutations["shared_taste_noise:cast_import_replaced"] = source.replace(
