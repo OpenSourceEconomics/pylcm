@@ -19,16 +19,32 @@ from scipy.special import ndtr
 from typing_extensions import TypedDict
 
 from _lcm.config import TEST_DATA
+from _lcm.processes.ar1 import _AR1Process
+from _lcm.typing import DataclassInstance
 from lcm import (
+    InitialNodes,
     LogNormalIIDProcess,
+    Model,
     NormalIIDProcess,
     NormalMixtureIIDProcess,
+    Regime,
     RouwenhorstAR1Process,
     TauchenAR1Process,
     TauchenNormalMixtureAR1Process,
     UniformIIDProcess,
+    categorical,
 )
 from lcm.exceptions import GridInitializationError
+from lcm.solver_api import SolutionResult
+from lcm.typing import (
+    ContinuousState,
+    Float1D,
+    FloatND,
+    Int1D,
+    ScalarFloat,
+    ScalarInt,
+    UserParams,
+)
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 from tests.test_models.processes import (
     MultiRegimeId,
@@ -253,6 +269,184 @@ def test_ar1_solve_rejects_nonstationary_runtime_persistence(
     params["alive"]["income"] = {**params["alive"]["income"], "rho": rho}
     with pytest.raises(GridInitializationError, match="no stationary distribution"):
         model.solve(params=params, log_level="off")
+
+
+type _Ar1Kind = Literal["tauchen-gh", "tauchen-linspace", "rouwenhorst", "mixture"]
+_AR1_KINDS: tuple[_Ar1Kind, ...] = (
+    "tauchen-gh",
+    "tauchen-linspace",
+    "rouwenhorst",
+    "mixture",
+)
+
+
+@categorical(ordered=False)
+class _ActiveOnlyId:
+    active: ScalarInt
+
+
+@categorical(ordered=False)
+class _ActiveDormantId:
+    active: ScalarInt
+    dormant: ScalarInt
+
+
+def _unit_utility() -> ScalarFloat:
+    return jnp.asarray(1.0)
+
+
+def _income_utility(income: ContinuousState) -> FloatND:
+    return income
+
+
+def _ar1_grid_without_rho(
+    grid_kind: _Ar1Kind,
+) -> TauchenAR1Process | RouwenhorstAR1Process | TauchenNormalMixtureAR1Process:
+    if grid_kind == "mixture":
+        return TauchenNormalMixtureAR1Process(
+            n_points=3,
+            mu=0.0,
+            n_std=3.0,
+            p1=0.7,
+            mu1=0.0,
+            sigma1=0.2,
+            mu2=0.1,
+            sigma2=0.3,
+        )
+    if grid_kind == "rouwenhorst":
+        return RouwenhorstAR1Process(n_points=3, sigma=0.2, mu=0.0)
+    if grid_kind == "tauchen-gh":
+        return TauchenAR1Process(n_points=3, gauss_hermite=True, sigma=0.2, mu=0.0)
+    return TauchenAR1Process(
+        n_points=3, gauss_hermite=False, n_std=3.0, sigma=0.2, mu=0.0
+    )
+
+
+def _terminal_model(
+    *,
+    regimes: dict[str, Regime],
+    regime_id_class: type[DataclassInstance],
+    enable_jit: bool,
+) -> Model:
+    return Model(
+        regimes=regimes,
+        edges={},
+        n_periods=1,
+        initial_nodes=InitialNodes(by_period={0: "active"}),
+        regime_id_class=regime_id_class,
+        enable_jit=enable_jit,
+        durable_identity=False,
+    )
+
+
+def _active_subject() -> dict[str, Int1D]:
+    return {
+        "period": jnp.array([0], dtype=jnp.int32),
+        "regime_id": jnp.full(1, _ActiveOnlyId.active, dtype=jnp.int32),
+    }
+
+
+def _float_dtype() -> np.dtype:
+    return np.dtype(np.float64 if X64_ENABLED else np.float32)
+
+
+@pytest.mark.parametrize("grid_kind", _AR1_KINDS)
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("entry", ["solve", "simulate", "simulate-with-solution"])
+def test_unreachable_regime_with_runtime_rho_needs_no_parameters(
+    *, grid_kind: _Ar1Kind, enable_jit: bool, entry: str
+) -> None:
+    """A regime no subject can enter imposes no runtime-rho parameter.
+
+    The active terminal cell has constant utility 1, so its value and its single
+    simulated row are known exactly, independent of any model machinery.
+    """
+    model = _terminal_model(
+        regimes={
+            "active": Regime(functions={"utility": _unit_utility}),
+            "dormant": Regime(
+                states={"income": _ar1_grid_without_rho(grid_kind)},
+                functions={"utility": _income_utility},
+            ),
+        },
+        regime_id_class=_ActiveDormantId,
+        enable_jit=enable_jit,
+    )
+    assert model.get_params_template()["dormant"] == {}
+    expected = np.asarray([1.0], dtype=_float_dtype())
+    if entry == "solve":
+        solution = model.solve(params={}, log_level="off")
+        got = np.asarray(solution.values[0]["active"]).reshape(1)
+    else:
+        frame = model.simulate(
+            params={},
+            initial_conditions=_active_subject(),
+            solution=(
+                model.solve(params={}, log_level="off")
+                if entry == "simulate-with-solution"
+                else None
+            ),
+            log_level="off",
+            seed=0,
+        ).to_dataframe()
+        assert frame["regime_name"].tolist() == ["active"]
+        got = frame["value"].to_numpy()
+    assert got.tobytes() == expected.tobytes()
+
+
+@pytest.mark.parametrize("grid_kind", _AR1_KINDS)
+@pytest.mark.parametrize("rho", [1.0, -1.0, 1.2, -1.2])
+@pytest.mark.parametrize("entry", ["solve", "simulate", "simulate-with-solution"])
+def test_active_runtime_rho_rejected_before_grid_realization(
+    *, grid_kind: _Ar1Kind, rho: float, entry: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every public entry rejects nonstationary rho before computing process nodes."""
+    grid = _ar1_grid_without_rho(grid_kind)
+    model = _terminal_model(
+        regimes={
+            "active": Regime(
+                states={"income": grid}, functions={"utility": _income_utility}
+            )
+        },
+        regime_id_class=_ActiveOnlyId,
+        enable_jit=False,
+    )
+    solution = (
+        model.solve(params={"active": {"income": {"rho": 0.5}}}, log_level="off")
+        if entry == "simulate-with-solution"
+        else None
+    )
+
+    monkeypatch.setattr(type(grid), "compute_gridpoints", _fail_if_nodes_realized)
+    with pytest.raises(GridInitializationError, match="no stationary distribution"):
+        _call_entry(
+            model=model,
+            entry=entry,
+            params={"active": {"income": {"rho": rho}}},
+            solution=solution,
+        )
+
+
+def _fail_if_nodes_realized(
+    self: _AR1Process,  # noqa: ARG001
+    **kwargs: ScalarFloat | ScalarInt,  # noqa: ARG001
+) -> Float1D:
+    raise AssertionError("process nodes realized before rho was validated")
+
+
+def _call_entry(
+    *, model: Model, entry: str, params: UserParams, solution: SolutionResult | None
+) -> None:
+    if entry == "solve":
+        model.solve(params=params, log_level="off")
+    else:
+        model.simulate(
+            params=params,
+            initial_conditions={**_active_subject(), "income": jnp.array([0.25])},
+            solution=solution,
+            log_level="off",
+            seed=0,
+        )
 
 
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
