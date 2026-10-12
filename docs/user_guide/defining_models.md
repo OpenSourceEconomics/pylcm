@@ -183,7 +183,10 @@ The `Model` constructor validates:
   function or function argument may take it.
 - `regime_id_class` fields must exactly match the `regimes` dict keys.
 - All states and actions must be used by at least one function (utility, constraints, or
-  transitions).
+  transitions). A state a regime only carries, for example with `fixed_transition`, is
+  used when a regime it can transition into keeps the state, because that regime's value
+  depends on it. Carrying chains: `A` carrying to `B` carrying to `C`, where only `C`
+  reads the state, uses the state in all three.
 - The age grid must be nonempty; every outgoing edge must have a next grid coordinate.
 - Required `edges` and `initial_nodes` must name known regimes and exact admissible
   ages.

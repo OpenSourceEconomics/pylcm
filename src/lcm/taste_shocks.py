@@ -38,4 +38,9 @@ class ExtremeValueTasteShocks:
     `fold=True`; and together with a nonlinear certainty equivalent. These
     combinations are rejected during `Regime` declaration or `Model`
     construction, before solve, rather than silently dropping the shocks.
+
+    The shocks are mean-zero. For location-0 shocks, add
+    `scale * lcm.EULER_GAMMA` to the utility of every action in each regime
+    that declares taste shocks. This is exact under `LinearAggregator` and
+    inexact under any other Koopmans aggregator; see the taste-shock docs.
     """

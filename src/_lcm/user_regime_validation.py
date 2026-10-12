@@ -1422,6 +1422,10 @@ def _state_transition_coverage_errors(
         name
         for name, grid in regime.states.items()
         if isinstance(grid, _ContinuousStochasticProcess)
+        or (
+            isinstance(grid, Phased)
+            and isinstance(grid.solve, _ContinuousStochasticProcess)
+        )
     }
     non_process_names: set[StateName] = set(regime.states) - process_names
 
@@ -1954,7 +1958,10 @@ def _fold_scope_errors(
             "reduction over a state axis — the two reductions are not "
             "composed."
         )
-    if aggregates_nonlinearly(regime.certainty_equivalent):
+    if (
+        regime.certainty_equivalent is not None
+        and type(regime.certainty_equivalent) is not LinearExpectation
+    ):
         error_messages.append(
             f"fold=True on state(s) {sorted(fold_names)} is not supported "
             "together with an explicit `certainty_equivalent`: the fold "
@@ -1962,13 +1969,9 @@ def _fold_scope_errors(
             "node axis ARITHMETICALLY, which is exact only for the LINEAR "
             "expectation E[V']. A certainty equivalent needs the shock's node "
             "axis intact to apply its own aggregator instead. Drop "
-            "`fold=True`, or drop `certainty_equivalent`. Note this rejects "
-            "EVERY non-None `certainty_equivalent`, including one that is "
-            "semantically linear (e.g. a parameter-free identity "
-            "`QuasiArithmeticMean`, which is equivalent to leaving it None). "
-            "That is a deliberate over-rejection, not a claim that your "
-            "aggregator is nonlinear: admitting the linear ones would mean "
-            "proving linearity of an arbitrary user aggregator here."
+            "`fold=True`, or use the exact `LinearExpectation`. Custom "
+            "subclasses and other certainty equivalents keep their realized "
+            "outcomes; their semantics cannot be inferred from inheritance."
         )
     if not isinstance(regime.solver, GridSearch):
         error_messages.append(

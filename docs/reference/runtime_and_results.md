@@ -612,8 +612,10 @@ and no explicit width, complete chunk profiles select the widest fitting candida
 Retained full-population inputs and result assembly remain part of the bound even when
 chunks shrink. Each simulation takes its population from the initial conditions, so the
 same model accepts different call-time populations. `seed` controls random draws
-independently of those chunk boundaries. A collective model may require an addressed
-dissolution replay artifact and `own_stakeholder`; see
+independently of those chunk boundaries. Ordinary and independent taste roots accept
+integers or scalar typed JAX keys; caller key buffers join the budgeted entry inventory,
+and profiles distinguish their actual PRNG implementations. A collective model may
+require an addressed dissolution replay artifact and `own_stakeholder`; see
 [Collective regimes](collective_regimes.md).
 
 Under a device-memory budget, the top-first outer-cohort planner profiles the
@@ -706,9 +708,10 @@ choice probabilities of its solve, so the lookup refuses such a regime.
 ## `SimulationResult`
 
 `to_dataframe(additional_targets=None, use_labels=True, terminal_rows="first")`
-materializes a flat DataFrame. `additional_targets` accepts selected DAG outputs or
-`"all"`. `terminal_rows="all"` retains every frozen absorbing row; the default keeps
-only terminal entry.
+materializes a flat DataFrame. `additional_targets` accepts a sequence of selected DAG
+output names (including the tuple `result.available_targets`), `"all"`, or `None`. Other
+bare strings raise `InvalidAdditionalTargetsError`. `terminal_rows="all"` retains every
+frozen absorbing row; the default keeps only terminal entry.
 
 Inspection properties include `regime_names`, `state_names`, `action_names`,
 `n_periods`, `n_subjects`, `available_targets`, `raw_results`, `flat_params`, and

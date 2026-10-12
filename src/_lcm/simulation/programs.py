@@ -886,7 +886,7 @@ class _StreamedArgmaxQOverA:
             next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params
         )
         return (
-            jnp.maximum(result.best_global_action_id, 0).astype(jnp.int32),
+            result.best_global_action_id.astype(jnp.int32),
             result.best_value,
         )
 

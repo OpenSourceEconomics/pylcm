@@ -98,7 +98,10 @@ def test_fully_specified_process():
     grid = TauchenAR1Process(
         n_points=5,
         gauss_hermite=False,
-        **_TAUCHEN_PARAMS,
+        rho=_TAUCHEN_PARAMS["rho"],
+        sigma=_TAUCHEN_PARAMS["sigma"],
+        mu=_TAUCHEN_PARAMS["mu"],
+        n_std=_TAUCHEN_PARAMS["n_std"],
     )
     assert grid.params_to_pass_at_runtime == ()
     assert grid.is_fully_specified

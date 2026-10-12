@@ -24,6 +24,7 @@ from _lcm.constraints.processed import (
 )
 from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.processes.iid import _IIDProcess
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
@@ -451,7 +452,7 @@ def project_onto_solve_phase(user_regime: Regime) -> Regime:
     carried = {
         name: spec.solve
         for name, spec in user_regime.states.items()
-        if isinstance(spec, Phased)
+        if isinstance(spec, Phased) and callable(spec.solve)
     }
     return user_regime.replace(
         functions={
@@ -462,7 +463,7 @@ def project_onto_solve_phase(user_regime: Regime) -> Regime:
             **carried,
         },
         states={
-            name: spec
+            name: _solve_variant(spec)
             for name, spec in user_regime.states.items()
             if name not in carried
         },
@@ -619,7 +620,29 @@ def _split_states(
     carried_imputations: dict[StateName, UserFunction] = {}
     errors: list[str] = []
     for name, spec in user_regime.states.items():
-        if isinstance(spec, Phased):
+        if (
+            isinstance(spec, Phased)
+            and isinstance(spec.solve, _ContinuousStochasticProcess)
+            and isinstance(spec.simulate, _ContinuousStochasticProcess)
+        ):
+            if any(
+                isinstance(side, _IIDProcess) and side.fold
+                for side in (spec.solve, spec.simulate)
+            ):
+                errors.append(
+                    f"states['{name}']: phased process laws do not support fold=True."
+                )
+            elif (
+                spec.simulate.simulate_draws == "nodes" and spec.solve != spec.simulate
+            ):
+                errors.append(
+                    f"states['{name}']: distinct phased simulation laws require "
+                    "continuous draws; nodes mode uses the solve support."
+                )
+            else:
+                solve_grid_states[name] = spec.solve
+                simulate_grid_states[name] = spec.simulate
+        elif isinstance(spec, Phased):
             imputation, carried_grid, state_errors = _normalize_phased_state(
                 name=name, phased=spec
             )
@@ -657,8 +680,8 @@ def _normalize_phased_state(
     - `(Grid, callable)` ⇒ not yet supported
     - `(callable, callable)` ⇒ a both-phase derived function belongs in
       `functions`
-    - a stochastic-process grid on either side ⇒ processes have intrinsic
-      transitions and cannot be phase-variant
+    - a stochastic process paired with a non-process ⇒ both phase laws must
+      be process declarations
     - an `AgeSpecializedGrid` on either side ⇒ the marker is resolved to each
       period's concrete grid only for a top-level `states` value, so a nested
       one would reach the kernels unresolved
@@ -676,7 +699,7 @@ def _normalize_phased_state(
             [
                 (
                     f"states['{name}']: stochastic-process grids have intrinsic "
-                    f"transitions and cannot be phase-variant."
+                    f"transitions and must be paired with another process."
                 )
             ],
         )

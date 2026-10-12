@@ -12,7 +12,8 @@ import numpy as np
 from beartype import beartype
 
 from _lcm.beartype_conf import PARAMS_CONF
-from lcm.typing import AgeLabel, PeriodLabel, ValueND
+from lcm.exceptions import InvalidParamsError
+from lcm.typing import AgeLabel, PeriodLabel, TimeLabel, ValueND
 
 if TYPE_CHECKING:
     from _lcm.typing import EconFunctionArg
@@ -62,30 +63,41 @@ class TimeVarying:
             )
 
     @classmethod
-    def from_profile(
+    def from_profile[P: PeriodLabel, A: AgeLabel](
         cls,
         *,
         values: ValueND | np.ndarray,
         labels: Sequence[Hashable],
-        period_to_label: Mapping[int, Hashable],
+        period_to_label: Mapping[P, Hashable] | None = None,
+        age_to_label: Mapping[A, Hashable] | None = None,
     ) -> TimeVarying:
-        """Gather an economic profile by an explicit period-to-label mapping.
+        """Gather an economic profile by an explicit time-to-label mapping.
 
-        Several stages may share a source label. Unused source rows are ignored;
-        missing mapped labels and duplicate selected labels are errors. The result
-        is period-labelled, so it serves period models; label an age model's
-        profile by age with `TimeVarying(values=..., ages=...)`.
+        Give exactly one mapping:
+
+        - `period_to_label` returns a period-labelled table, which serves period
+          models;
+        - `age_to_label` returns an age-labelled table, which serves age models.
+          Age keys must be finite numbers.
+
+        Several periods or ages may share a source label, so a table read at the
+        next age can map the last age to its own row. Unused source rows are
+        ignored. A mapped label missing from `labels` is an error, and so is a
+        selected label that appears more than once in `labels`.
         """
-        periods = tuple(period_to_label)
-        if any(
-            isinstance(period, (bool, np.bool_))
-            or not isinstance(period, (int, np.integer))
-            for period in periods
-        ):
-            raise ValueError("Profile period coordinates must be integers.")
+        if period_to_label is not None and age_to_label is None:
+            kind, mapping = "period", period_to_label
+        elif age_to_label is not None and period_to_label is None:
+            kind, mapping = "age", age_to_label
+        else:
+            raise ValueError(
+                "Profile requires exactly one of period_to_label and age_to_label."
+            )
+        keys = tuple(mapping)
+        _validate_time_labels(labels=keys, kind=kind, name="Profile")
         if values.ndim == 0 or values.shape[0] != len(labels):
             raise ValueError("Profile leading axis length must match its labels.")
-        required = set(period_to_label.values())
+        required = set(mapping.values())
         positions: dict[Hashable, int] = {}
         for index, label in enumerate(labels):
             if label not in required:
@@ -97,9 +109,12 @@ class TimeVarying:
         if missing:
             raise ValueError(f"Profile is missing mapped labels {list(missing)[:8]}.")
         indices = jnp.asarray(
-            [positions[label] for label in period_to_label.values()], dtype=jnp.int32
+            [positions[label] for label in mapping.values()], dtype=jnp.int32
         )
-        return cls(values=jnp.take(values, indices, axis=0), periods=periods)
+        gathered = jnp.take(values, indices, axis=0)
+        if period_to_label is not None:
+            return cls(values=gathered, periods=tuple(period_to_label))
+        return cls(values=gathered, ages=keys)
 
 
 class UnlabelledTimeParameterWarning(UserWarning):
@@ -193,3 +208,28 @@ def time_varying_params(*names: str) -> _TemporalDecorator:
     States and other DAG nodes cannot be marked as temporal parameters.
     """
     return _TemporalDecorator(names=names)
+
+
+def _validate_time_labels(
+    *, labels: tuple[TimeLabel, ...], kind: str, name: str
+) -> None:
+    """Validate the schema before surplus observations can be discarded."""
+    if kind == "period" and any(
+        isinstance(v, (bool, np.bool_)) or not isinstance(v, (int, np.integer))
+        for v in labels
+    ):
+        raise InvalidParamsError(
+            f"{name}: period coordinates must be integers, excluding booleans."
+        )
+    if kind == "age":
+        try:
+            finite = all(
+                not isinstance(v, (bool, np.bool_, str)) and np.isfinite(float(v))
+                for v in labels
+            )
+        except TypeError, ValueError:
+            finite = False
+        if not finite:
+            raise InvalidParamsError(
+                f"{name}: age coordinates must be finite numeric labels."
+            )
