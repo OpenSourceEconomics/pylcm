@@ -2274,6 +2274,18 @@ def _get_compute_CE(
         formed inside the node axes.
 
     """
+    # The plain expectation reduces each target on its own; every other
+    # certainty equivalent needs the whole joint lottery in one piece, because
+    # its transform has to be applied before any expectation is taken.
+    # `LinearExpectation.aggregate` states the same quantity over the flattened
+    # lottery, but reducing per target is materially cheaper.
+    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
+    # different quantity, and the per-target route would silently discard the
+    # override.
+    reduces_per_target = (
+        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
+    )
+
     continuations = {
         target_regime_name: _build_target_continuation(
             target_regime_name=target_regime_name,
@@ -2284,10 +2296,8 @@ def _get_compute_CE(
             co_map_state_names=co_map_state_names,
             n_stakeholders=n_stakeholders,
             gated_continuation=gated_continuations.get(target_regime_name),
-            restore_original_layout=(
-                certainty_equivalent is None
-                or type(certainty_equivalent) is LinearExpectation
-            ),
+            restore_original_layout=reduces_per_target,
+            allow_shock_average=reduces_per_target,
             allowed_shock_inputs=flat_param_names,
         )
         for target_regime_name in period_targets
@@ -2321,17 +2331,6 @@ def _get_compute_CE(
         for target_regime_name, reader in gated_scalar_readers.items()
     }
 
-    # The plain expectation reduces each target on its own; every other
-    # certainty equivalent needs the whole joint lottery in one piece, because
-    # its transform has to be applied before any expectation is taken.
-    # `LinearExpectation.aggregate` states the same quantity over the flattened
-    # lottery, but reducing per target is materially cheaper.
-    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
-    # different quantity, and the per-target route would silently discard the
-    # override.
-    reduces_per_target = (
-        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
-    )
     ce_flat_param_names = (
         MappingProxyType({})
         if certainty_equivalent is None
@@ -3116,6 +3115,7 @@ def _build_target_continuation(
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
     n_stakeholders: int | None,
+    allow_shock_average: bool,
     gated_continuation: GatedContinuationSpec | None = None,
     restore_original_layout: bool = False,
     allowed_shock_inputs: frozenset[str] | None = None,
@@ -3146,6 +3146,9 @@ def _build_target_continuation(
         gated_continuation: How to turn this target's stacked operand channels
             into one value per leg at the landing point, or `None` when the
             target's leaf is an ordinary value function.
+        allow_shock_average: Whether the source uses the exact linear expectation,
+            so a transition-local draw may be averaged before the certainty
+            equivalent is applied. Other specifications retain draw enumeration.
         allowed_shock_inputs: Names an additive shock may read besides its
             conditioners, the draws and the time coordinates: the source's
             parameters. `None` skips that check.
@@ -3306,6 +3309,9 @@ def _build_target_continuation(
         allowed_inputs=allowed_shock_inputs,
         co_map_state_names=co_map_state_names,
     )
+    # Validate the additive declaration even when its averaging route is ineligible.
+    if not allow_shock_average:
+        shock_average = None
     averaged_inputs: tuple[str, ...] = ()
     integrated_weight_names: tuple[str, ...] = ()
     if shock_average is not None:

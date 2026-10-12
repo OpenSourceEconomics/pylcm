@@ -35,6 +35,12 @@ class AdditiveShockTransition:
     With the value function linear between its grid points, `W` is linear
     between the merged points `{a_j - shock_k}`, so storing it there makes the
     average exact rather than an approximation on the target's own grid.
+
+    Precomputation requires the exact `LinearExpectation` certainty equivalent
+    (the model default). Nonlinear specifications and custom subclasses retain
+    ordinary draw enumeration, so their transform sees each realized value.
+    The merged-point table and interpolation weights require temporary storage
+    growing with the grid, shock support, conditioners and retained draws.
     """
 
     base: FunctionName
