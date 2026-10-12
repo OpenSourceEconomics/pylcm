@@ -129,7 +129,8 @@ def _next_wealth(*, before_bill: FloatND, cost: FloatND) -> ContinuousState:
 
 
 def _next_health(health: DiscreteState) -> FloatND:
-    return jnp.asarray(HEALTH_PROBS)[health]
+    # NumPy literals must enter the traced law at the active precision.
+    return jnp.asarray(HEALTH_PROBS, dtype=jnp.result_type(0.0))[health]
 
 
 def _utility(*, consumption: ContinuousAction, health: DiscreteState) -> FloatND:
@@ -413,6 +414,7 @@ def test_the_fp32_value_matches_the_fp64_reference_at_the_plain_law_accuracy(
     """
     V = _alive_values(_model(additive=additive))[period]
 
+    assert V.dtype == np.dtype(np.float32)
     np.testing.assert_allclose(
         V, _reference_alive_values()[period], rtol=0, atol=_FP32_ATOL
     )
