@@ -87,6 +87,31 @@ def argmax_and_max(
     return _argmax, _max
 
 
+def argmax_and_readout(
+    *, selection: FloatND, readout: FloatND, where: BoolND
+) -> tuple[IntND, FloatND]:
+    """Select the first feasible maximizer of `selection` and read `readout` there.
+
+    Both arrays share one shape and are reduced over all axes. The index is the
+    one `argmax_and_max` returns for `selection`. The value is `readout` at that
+    index, except:
+    - no element is feasible ⇒ `-inf`;
+    - a feasible `selection` element is NaN ⇒ NaN.
+
+    Args:
+        selection: The values the element is selected on.
+        readout: The values published at the selected element.
+        where: Feasibility of each element.
+
+    Returns:
+        The flat index of the selected element and the readout there.
+
+    """
+    index, selected = argmax_and_max(a=selection, where=where, initial=-jnp.inf)
+    value = jnp.where(jnp.any(where), jnp.ravel(readout)[index], -jnp.inf)
+    return index, jnp.where(jnp.isnan(selected), jnp.nan, value)
+
+
 def max_and_smallest_id(
     *, values: FloatND | IntND, ids: IntND, initial: float
 ) -> tuple[FloatND | IntND, IntND]:

@@ -237,6 +237,35 @@ on the source regime of a gated transition; together with a folded IID state
 boundaries, not ignored options: the declaration is rejected during `Regime` declaration
 or `Model` construction, before solve.
 
+(api-euler-gamma)=
+
+### Location-0 shocks and `EULER_GAMMA`
+
+pylcm's taste shocks are mean-zero. Many papers use the standard Gumbel with location
+zero, whose mean is `scale * EULER_GAMMA`, the scale times the Euler-Mascheroni
+constant. To match such a model, add that mean to the utility of every action in each
+regime that declares taste shocks:
+
+```python
+import jax.numpy as jnp
+
+from lcm import EULER_GAMMA
+
+
+def utility(*, consumption, work, kappa, taste_shock_scale):
+    return jnp.log(consumption) - kappa * work + taste_shock_scale * EULER_GAMMA
+```
+
+Pass `taste_shock_scale` with the same value as the regime's `taste_shocks` scale.
+`lcm.EULER_GAMMA` equals `numpy.euler_gamma`.
+
+The recipe reproduces the location-0 model exactly, values and choice probabilities,
+when the Koopmans aggregator is additive in utility with unit slope, as
+`LinearAggregator` (the default) is. pylcm adds the shock to the choice-specific value
+after aggregation, so under any other aggregator, such as `CESAggregator`, the constant
+moves each action's value by a different amount and the result differs from the
+location-0 model.
+
 ## Derived categoricals
 
 Use `derived_categoricals={"name": DiscreteGrid(category_class=Category)}` when a
