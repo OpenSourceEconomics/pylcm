@@ -1645,10 +1645,14 @@ class Model:
         requires `require_reference=False` and cannot establish parity.
         GPU replay requires actual serialized buffer-assignment metadata.
         Missing runtime metadata is refused before selected-period dispatch.
+        Output and numerical checks follow the recorded call policy. Captures
+        without that policy must be recaptured with this runtime.
         """
         self._fail_if_ephemeral_operation(operation="replay_period")
         self._check_identity_runtime()
-        flat_params = self._process_params(params)
+        # Keep parameter schema validation here. Replay applies optional
+        # numerical selection checks only after binding the captured policy.
+        flat_params = self._process_params(params, runtime_checks=False)
         return replay_public_period(
             directory=Path(directory),
             flat_params=flat_params,
@@ -1660,6 +1664,9 @@ class Model:
             model_fingerprint=self._model_fingerprint(flat_params=flat_params),
             params_fingerprint=self._params_fingerprint(flat_params=flat_params),
             require_reference=require_reference,
+            validate_selection=functools.partial(
+                self._validate_regime_selection, flat_params=flat_params
+            ),
         )
 
     @beartype(conf=PARAMS_CONF)
