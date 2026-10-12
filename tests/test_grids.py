@@ -1172,3 +1172,99 @@ def _apply_route(*, function, values, route):
     if route == "vmap":
         return jax.vmap(function)(values)
     return function(values)
+
+
+_NARROW_NODE_COUNTS = (127, 128, 255, 256, 257, 383, 384, 511, 512)
+
+
+def _range_grid(*, n_nodes, kind):
+    values = tuple(range(n_nodes))
+    return DiscreteGrid(
+        values=tuple(float(value) for value in values) if kind == "float" else values
+    )
+
+
+def _assert_decodes_like_python_integers(*, decoded, codes, n_nodes, kind):
+    """Compare with the original codes' Python integers, before any narrowing."""
+    expected = [
+        float(int(code))
+        if 0 <= int(code) < n_nodes
+        else (math.nan if kind == "float" else MISSING_CAT_CODE)
+        for code in codes.flat
+    ]
+    np.testing.assert_array_equal(
+        np.asarray(decoded, dtype=float).ravel(), np.asarray(expected, dtype=float)
+    )
+
+
+@pytest.mark.parametrize("n_nodes", _NARROW_NODE_COUNTS)
+@pytest.mark.parametrize("kind", ["integer", "float"])
+@pytest.mark.parametrize("route", ["eager", "jit_closure"])
+def test_value_grid_decodes_narrow_host_codes_off_the_axis_as_off_grid(
+    *, n_nodes, kind, route
+):
+    """An int8 code off the axis stays off-grid even when `n` does not fit int8."""
+    grid = _range_grid(n_nodes=n_nodes, kind=kind)
+    for codes in (
+        np.asarray(-1, dtype=np.int8),
+        np.asarray([[-128, -1, 0], [1, 126, 127]], dtype=np.int8),
+    ):
+        decoded = (
+            jax.jit(lambda codes=codes: grid.decode(codes))()
+            if route == "jit_closure"
+            else grid.decode(codes)
+        )
+        _assert_decodes_like_python_integers(
+            decoded=decoded, codes=codes, n_nodes=n_nodes, kind=kind
+        )
+
+
+@pytest.mark.parametrize("dtype", [np.int8, np.uint8, np.int16, np.uint16])
+@pytest.mark.parametrize("n_nodes", [127, 256, 257])
+@pytest.mark.parametrize("kind", ["integer", "float"])
+@pytest.mark.parametrize("route", ["eager", "jit", "vmap"])
+def test_value_grid_decodes_narrow_device_codes_by_their_integer_bounds(
+    *, dtype, n_nodes, kind, route
+):
+    """Narrow device codes are bounded as integers, not in their own dtype."""
+    info = np.iinfo(dtype)
+    codes = np.asarray(
+        [int(info.min), 0, 1, min(126, int(info.max)), int(info.max)], dtype=dtype
+    )
+    grid = _range_grid(n_nodes=n_nodes, kind=kind)
+    decoded = _apply_route(function=grid.decode, values=jnp.asarray(codes), route=route)
+    _assert_decodes_like_python_integers(
+        decoded=decoded, codes=codes, n_nodes=n_nodes, kind=kind
+    )
+
+
+@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+@pytest.mark.parametrize("kind", ["integer", "float"])
+@pytest.mark.parametrize("route", ["eager", "jit_closure"])
+def test_value_grid_decodes_wide_host_codes_by_their_original_bounds(
+    *, dtype, kind, route
+):
+    """Wide host codes are bounded before any narrowing, around both int32 edges."""
+    values = [0, 1, 2, 3, 2**31, 2**32, 2**32 + 1, 2**32 + 2]
+    values += [-1, -(2**31), -(2**32)] if dtype is np.int64 else [2**64 - 1]
+    codes = np.asarray(values, dtype=dtype)
+    grid = _range_grid(n_nodes=3, kind=kind)
+    decoded = (
+        jax.jit(lambda: grid.decode(codes))()
+        if route == "jit_closure"
+        else grid.decode(codes)
+    )
+    _assert_decodes_like_python_integers(
+        decoded=decoded, codes=codes, n_nodes=3, kind=kind
+    )
+
+
+@pytest.mark.parametrize("dtype", [np.int8, np.uint8, np.int16, np.uint16])
+def test_integer_value_grid_encodes_narrow_host_integers_by_membership(dtype):
+    """Narrow host integers match exactly the nodes they equal."""
+    info = np.iinfo(dtype)
+    raw = [int(info.min), 0, 1, 20, int(info.max)]
+    nodes = (0, 1, 20, 300)
+    expected = [nodes.index(v) if v in nodes else MISSING_CAT_CODE for v in raw]
+    encoded = DiscreteGrid(values=nodes).encode(np.asarray(raw, dtype=dtype))
+    assert np.asarray(encoded).tolist() == expected

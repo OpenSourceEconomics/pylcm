@@ -424,7 +424,7 @@ def _as_integer_query(value: ArrayLike) -> ValueND:
             in_range = host <= _INT32_MAX
             if host.dtype.kind == "i":
                 in_range &= host > MISSING_CAT_CODE
-            host = np.where(in_range, host, MISSING_CAT_CODE).astype(np.int32)
+            host = _int32_where(in_range=in_range, host=host, fill=MISSING_CAT_CODE)
         query = jnp.asarray(host)
     if not jnp.issubdtype(query.dtype, jnp.integer):
         msg = (
@@ -451,10 +451,29 @@ def _as_index(*, code: ArrayLike, n_nodes: int) -> IntND:
     if not isinstance(code, jax.Array):
         host = np.asarray(code)
         if host.dtype.kind in "iu":
-            host = np.where((host >= 0) & (host < n_nodes), host, n_nodes)
-            host = host.astype(np.int32)
+            host = _int32_where(
+                in_range=(host >= 0) & (host < n_nodes), host=host, fill=n_nodes
+            )
         code = jnp.asarray(host)
+    # A narrow dtype cannot hold `n`, so it widens to int32 before the limit
+    # meets it; a wider dtype keeps its own integers for the comparison.
+    if code.dtype.itemsize < jnp.dtype(jnp.int32).itemsize:
+        code = code.astype(jnp.int32)
     return jnp.where((code >= 0) & (code < n_nodes), code, n_nodes).astype(jnp.int32)
+
+
+def _int32_where(
+    *, in_range: np.ndarray | np.bool_, host: np.ndarray, fill: int
+) -> np.ndarray:
+    """Return `host` as int32 where `in_range`, else `fill`.
+
+    The result is built in int32, so neither the fill nor an out-of-range input
+    passes through the input's own dtype, narrow or wide.
+    """
+    in_range = np.asarray(in_range)
+    out = np.full(host.shape, fill, dtype=np.int32)
+    out[in_range] = host[in_range]
+    return out
 
 
 def _off_grid_value(nodes: Int1D | Float1D) -> float | int:
