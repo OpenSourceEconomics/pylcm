@@ -33,9 +33,15 @@ import json
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 type SourcePath = str
+
+
+class _InvocationPolicy(TypedDict):
+    policy_child: bool
+    ci_policy: str | None
+    hardware_profile: str
 
 
 class _InvocationEnvironment(TypedDict, total=False):
@@ -45,7 +51,7 @@ class _InvocationEnvironment(TypedDict, total=False):
     devices: int
     workers: int
     isolation: str
-    policy: dict[str, bool | str]
+    policy: _InvocationPolicy
 
 
 class _InvocationShard(TypedDict):
@@ -69,7 +75,7 @@ class Invocation(TypedDict, total=False):
     nodeids: list[str]
     no_skips_required: bool
     note: str
-    portability_controls: list[str]
+    portability_controls: str
     predicted_payload_minutes: float
     reclassified_files: list[str]
     source_only: bool
@@ -84,6 +90,8 @@ class _FileWeight(TypedDict):
 class _LegWeight(TypedDict):
     junit_source: SourcePath
     measurement: str
+    imputed_note: NotRequired[str]
+    imputed_files: NotRequired[list[SourcePath]]
     seconds: dict[str, float]
     counts: dict[str, int]
 
@@ -109,7 +117,7 @@ class _CeilingBacklog(TypedDict):
 
 
 class WorkloadManifest(TypedDict):
-    schema_version: str
+    schema_version: int
     frozen_head: str
     source: dict[str, str]
     guardrails: dict[str, float]
