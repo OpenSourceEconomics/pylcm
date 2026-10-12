@@ -1,6 +1,7 @@
 """Grid policies distinguish value lookup from the economic state handoff."""
 
 from collections.abc import Callable
+from fractions import Fraction
 from functools import partial
 from types import MappingProxyType
 from typing import Literal
@@ -29,6 +30,7 @@ from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
@@ -906,3 +908,185 @@ def test_realized_off_grid_panel_keeps_raw_states_in_subject_order(
         check_dtype=False,
         check_exact=True,
     )
+
+
+@categorical(ordered=False)
+class _PairRegime:
+    source: ScalarInt
+    terminal: ScalarInt
+
+
+@categorical(ordered=False)
+class _Rarity:
+    ordinary: ScalarInt
+    rare: ScalarInt
+
+
+@categorical(ordered=False)
+class _RoutedRegime:
+    source: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+
+
+def _zero_source() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _lottery_weights(weights: FloatND) -> FloatND:
+    return weights
+
+
+def _rarity_landing(next_rarity: DiscreteState) -> FloatND:
+    return jnp.where(next_rarity == _Rarity.rare, 3.0, 1.0)
+
+
+def _rarity_terminal(*, wealth: ContinuousState, rarity: DiscreteState) -> FloatND:
+    return wealth + 0.0 * rarity
+
+
+def _rare_regime_probability(mass: FloatND) -> FloatND:
+    return mass
+
+
+def _common_regime_probability(mass: FloatND) -> FloatND:
+    return 1.0 - mass
+
+
+def _safe_wealth() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _exterior_wealth() -> FloatND:
+    return jnp.asarray(3.0)
+
+
+def _linear_terminal(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _represented_mass(kind: str) -> tuple[jax.Array, bool]:
+    """Build an exact IEEE probability from its bits and its exact liveness.
+
+    The bit pattern is checked after conversion, so a witness flushed before the
+    solve cannot stand in for the subnormal operand. Liveness is decided by
+    rational arithmetic on the represented value, not by a device comparison.
+    """
+    dtype = np.dtype(jnp.asarray(0.0).dtype)
+    uint = np.dtype(np.uint64 if dtype.itemsize == 8 else np.uint32)
+    fraction_bits = 52 if dtype.itemsize == 8 else 23
+    bits = {
+        "zero": 0,
+        "smallest_subnormal": 1,
+        "largest_subnormal": (1 << fraction_bits) - 1,
+        "smallest_normal": 1 << fraction_bits,
+    }[kind]
+    host_value = np.array(bits, dtype=uint).view(dtype)
+    value = jnp.asarray(host_value, dtype=dtype)
+    assert int(np.asarray(value).view(uint)) == bits
+    return value, Fraction(float(host_value)) > 0
+
+
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize(
+    "kind", ["zero", "smallest_subnormal", "largest_subnormal", "smallest_normal"]
+)
+def test_raise_refuses_every_represented_positive_lottery_tail(
+    *, runtime_checks: bool, enable_jit: bool, kind: str
+) -> None:
+    """A lottery node with any represented positive mass is reached support."""
+    mass, live = _represented_mass(kind)
+    model = Model(
+        regimes={
+            "source": Regime(
+                functions={"utility": _zero_source},
+                state_transitions={
+                    "rarity": {"terminal": StochasticTransition(func=_lottery_weights)},
+                    "wealth": {"terminal": _rarity_landing},
+                },
+            ),
+            "terminal": Regime(
+                states={
+                    "rarity": DiscreteGrid(category_class=_Rarity),
+                    "wealth": LinSpacedGrid(
+                        start=0.0, stop=2.0, n_points=3, off_grid="raise"
+                    ),
+                },
+                functions={"utility": _rarity_terminal},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"source": {"terminal": 0}},
+        initial_nodes={0: "source"},
+        regime_id_class=_PairRegime,
+        enable_jit=enable_jit,
+    )
+    weights = jnp.stack((1.0 - mass, mass))
+    assert np.asarray(weights)[1].tobytes() == np.asarray(mass).tobytes()
+    params = {"discount_factor": 1.0, "weights": weights}
+    if live:
+        with pytest.raises(OffGridStateError, match="state='wealth'"):
+            model.solve(params=params, runtime_checks=runtime_checks, log_level="off")
+    else:
+        result = model.solve(
+            params=params, runtime_checks=runtime_checks, log_level="off"
+        )
+        np.testing.assert_array_equal(result.values[0]["source"], 1.0)
+
+
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("kind", ["zero", "smallest_subnormal", "smallest_normal"])
+def test_raise_refuses_every_represented_positive_regime_mass(
+    *, runtime_checks: bool, enable_jit: bool, kind: str
+) -> None:
+    """A target regime with any represented positive mass is reached."""
+    mass, live = _represented_mass(kind)
+    grid = LinSpacedGrid(start=0.0, stop=2.0, n_points=3, off_grid="raise")
+    model = Model(
+        regimes={
+            "source": Regime(
+                functions={"utility": _zero_source},
+                state_transitions={
+                    "wealth": {"target": _exterior_wealth, "fallback": _safe_wealth}
+                },
+            ),
+            "target": Regime(
+                states={"wealth": grid}, functions={"utility": _linear_terminal}
+            ),
+            "fallback": Regime(
+                states={"wealth": grid}, functions={"utility": _linear_terminal}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={
+            "source": Transition(
+                targets={"target": 0, "fallback": 0},
+                law=ByAge(
+                    cases={
+                        0: {
+                            "target": StochasticTransition(
+                                func=_rare_regime_probability
+                            ),
+                            "fallback": StochasticTransition(
+                                func=_common_regime_probability
+                            ),
+                        }
+                    }
+                ),
+            )
+        },
+        initial_nodes={0: "source"},
+        regime_id_class=_RoutedRegime,
+        enable_jit=enable_jit,
+    )
+    params = {"discount_factor": 1.0, "mass": mass}
+    if live:
+        with pytest.raises(OffGridStateError, match="target='target'"):
+            model.solve(params=params, runtime_checks=runtime_checks, log_level="off")
+    else:
+        result = model.solve(
+            params=params, runtime_checks=runtime_checks, log_level="off"
+        )
+        np.testing.assert_array_equal(result.values[0]["source"], 1.0)

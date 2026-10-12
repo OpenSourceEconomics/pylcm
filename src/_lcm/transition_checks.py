@@ -58,6 +58,7 @@ from _lcm.off_grid import count_off_grid, report_off_grid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.probability import is_live
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
@@ -701,7 +702,7 @@ class _OffGridNode:
     def __call__(self, **kwargs: EconFunctionArg) -> IntND:
         reached = kwargs["__off_grid_reached"]
         for name, weight in self.lotteries:
-            reached = reached & (kwargs[weight][kwargs[name].astype(jnp.int32)] > 0)
+            reached = reached & is_live(kwargs[weight][kwargs[name].astype(jnp.int32)])
         return jnp.stack(
             [
                 jnp.stack(
@@ -735,8 +736,8 @@ class _OffGridCell:
 
     @no_type_check
     def __call__(self, **kwargs: EconFunctionArg) -> IntND:
-        reached = self.feasibility(**kwargs) & (
-            self.regime_law(**kwargs)[self.target] > 0
+        reached = self.feasibility(**kwargs) & is_live(
+            self.regime_law(**kwargs)[self.target]
         )
         rows = self.reader(
             **{
