@@ -5,7 +5,9 @@ every reachable target into one function of states, actions and params.
 `get_Q_and_F_terminal`, `get_Q_and_F_collective` and the terminal collective
 variant are the specializations the regimes that need them get instead, and
 `get_compute_intermediates` publishes the same chain's intermediates for the
-NaN diagnostics.
+NaN diagnostics. `get_Q_and_F_parts` publishes, from one evaluation of a
+singleton kernel, the flow utility, feasibility, certainty-equivalent
+continuation and action value that kernel returns `Q` and `F` from.
 """
 
 import dataclasses
@@ -14,13 +16,14 @@ import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import cast, no_type_check
+from typing import NamedTuple, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
 from dags import (
     concatenate_functions,
     get_annotations,
+    with_signature,
 )
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
@@ -103,6 +106,27 @@ type Intermediates = tuple[
 # What the utilities-and-feasibility DAG returns at a cell: each felicity, then
 # the feasibility mask (a Python `bool` for a regime without constraints).
 type UtilitiesAndF = tuple[FloatND | IntND | BoolND | bool, ...]
+
+
+class QAndFParts(NamedTuple):
+    """One evaluation of a singleton action-value kernel, at one cell.
+
+    `Q` is `W(utility=U, CE=CE, **W_params)`, the regime's Koopmans aggregator
+    applied to the other two values. A terminal regime has no continuation, so
+    its `CE` is zero and its `Q` is `U`.
+    """
+
+    U: FloatND
+    """Flow utility, the regime's `utility` target."""
+
+    F: BoolND
+    """Feasibility of the cell."""
+
+    CE: FloatND
+    """Certainty-equivalent continuation, undiscounted: the `CE` argument of `W`."""
+
+    Q: FloatND
+    """Action value."""
 
 
 def _compare_swap_values(
@@ -445,6 +469,29 @@ def _continuation_reads(
     return frozenset(parameter.name for parameter in parameters) | arg_names
 
 
+def get_Q_and_F_parts(*, Q_and_F: QAndFFunction) -> Callable[..., QAndFParts]:
+    """Return the parts form of a singleton `Q_and_F` kernel.
+
+    The result takes the kernel's own arguments and returns `QAndFParts` from
+    the same evaluation the kernel returns `(Q, F)` from, so its `Q` and `F` are
+    the kernel's.
+
+    Args:
+        Q_and_F: A kernel built by `get_Q_and_F` or `get_Q_and_F_terminal`.
+
+    Returns:
+        The kernel's `parts` method, with the kernel's published signature.
+
+    """
+    kernel = cast("_QAndF | _TerminalQAndF", Q_and_F)
+    return with_signature(
+        kernel.parts,
+        args=list(inspect.signature(kernel).parameters),
+        return_annotation="QAndFParts",
+        enforce=False,
+    )
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _QAndF:
     """State-action value and feasibility of a non-terminal period at one cell."""
@@ -494,6 +541,29 @@ class _QAndF:
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
+        parts = self.parts(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
+        return parts.Q, parts.F
+
+    @no_type_check
+    def parts(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: QAndFArg,
+    ) -> QAndFParts:
+        """Calculate utility, feasibility, continuation and action value at a cell.
+
+        Args:
+            next_regime_to_V_arr: The next period's value function array.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            The flow utility, feasibility, certainty-equivalent continuation and
+            state-action value.
+
+        """
         # F_arr is built here, before and independently of Q (it never reads
         # E_next_V). A value-aware mask cannot be built at this point: it needs
         # the per-stakeholder Q^s, which is why `get_Q_and_F_collective` keeps
@@ -513,8 +583,13 @@ class _QAndF:
         )
 
         # Handle cases when there is only one state.
-        # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
-        return jnp.asarray(Q_arr), jnp.asarray(F_arr)
+        # In that case, the parts are scalars, but we require arrays as output.
+        return QAndFParts(
+            U=jnp.asarray(U_arr),
+            F=jnp.asarray(F_arr),
+            CE=jnp.asarray(CE),
+            Q=jnp.asarray(Q_arr),
+        )
 
 
 def get_compute_intermediates(
@@ -718,7 +793,7 @@ class _TerminalQAndF:
     @no_type_check
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
@@ -734,8 +809,36 @@ class _TerminalQAndF:
             mask (F).
 
         """
+        parts = self.parts(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
+        return parts.Q, parts.F
+
+    @no_type_check
+    def parts(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
+        **states_actions_params: QAndFArg,
+    ) -> QAndFParts:
+        """Calculate utility, feasibility, continuation and action value at a cell.
+
+        A terminal period has no continuation: `CE` is zero and `Q` is `U`.
+
+        Args:
+            next_regime_to_V_arr: Unused in the terminal period.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            The flow utility, feasibility, zero continuation and state-action
+            value.
+
+        """
         U_arr, F_arr = self.U_and_F(**states_actions_params)
-        return jnp.asarray(U_arr), jnp.asarray(F_arr)
+        U_arr = jnp.asarray(U_arr)
+        return QAndFParts(
+            U=U_arr, F=jnp.asarray(F_arr), CE=jnp.zeros_like(U_arr), Q=U_arr
+        )
 
 
 def get_Q_and_F_terminal_collective(
@@ -2274,6 +2377,18 @@ def _get_compute_CE(
         formed inside the node axes.
 
     """
+    # The plain expectation reduces each target on its own; every other
+    # certainty equivalent needs the whole joint lottery in one piece, because
+    # its transform has to be applied before any expectation is taken.
+    # `LinearExpectation.aggregate` states the same quantity over the flattened
+    # lottery, but reducing per target is materially cheaper.
+    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
+    # different quantity, and the per-target route would silently discard the
+    # override.
+    reduces_per_target = (
+        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
+    )
+
     continuations = {
         target_regime_name: _build_target_continuation(
             target_regime_name=target_regime_name,
@@ -2284,10 +2399,8 @@ def _get_compute_CE(
             co_map_state_names=co_map_state_names,
             n_stakeholders=n_stakeholders,
             gated_continuation=gated_continuations.get(target_regime_name),
-            restore_original_layout=(
-                certainty_equivalent is None
-                or type(certainty_equivalent) is LinearExpectation
-            ),
+            restore_original_layout=reduces_per_target,
+            allow_shock_average=reduces_per_target,
             allowed_shock_inputs=flat_param_names,
         )
         for target_regime_name in period_targets
@@ -2321,17 +2434,6 @@ def _get_compute_CE(
         for target_regime_name, reader in gated_scalar_readers.items()
     }
 
-    # The plain expectation reduces each target on its own; every other
-    # certainty equivalent needs the whole joint lottery in one piece, because
-    # its transform has to be applied before any expectation is taken.
-    # `LinearExpectation.aggregate` states the same quantity over the flattened
-    # lottery, but reducing per target is materially cheaper.
-    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
-    # different quantity, and the per-target route would silently discard the
-    # override.
-    reduces_per_target = (
-        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
-    )
     ce_flat_param_names = (
         MappingProxyType({})
         if certainty_equivalent is None
@@ -3116,6 +3218,7 @@ def _build_target_continuation(
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
     n_stakeholders: int | None,
+    allow_shock_average: bool,
     gated_continuation: GatedContinuationSpec | None = None,
     restore_original_layout: bool = False,
     allowed_shock_inputs: frozenset[str] | None = None,
@@ -3146,6 +3249,9 @@ def _build_target_continuation(
         gated_continuation: How to turn this target's stacked operand channels
             into one value per leg at the landing point, or `None` when the
             target's leaf is an ordinary value function.
+        allow_shock_average: Whether the source uses the exact linear expectation,
+            so a transition-local draw may be averaged before the certainty
+            equivalent is applied. Other specifications retain draw enumeration.
         allowed_shock_inputs: Names an additive shock may read besides its
             conditioners, the draws and the time coordinates: the source's
             parameters. `None` skips that check.
@@ -3306,6 +3412,9 @@ def _build_target_continuation(
         allowed_inputs=allowed_shock_inputs,
         co_map_state_names=co_map_state_names,
     )
+    # Validate the additive declaration even when its averaging route is ineligible.
+    if not allow_shock_average:
+        shock_average = None
     averaged_inputs: tuple[str, ...] = ()
     integrated_weight_names: tuple[str, ...] = ()
     if shock_average is not None:

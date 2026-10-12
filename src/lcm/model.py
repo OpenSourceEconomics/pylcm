@@ -93,7 +93,7 @@ from _lcm.processes.ar1 import (
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
+from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess, _IIDProcess
 from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
     joint_normal_declarations,
@@ -155,7 +155,16 @@ from _lcm.simulation.initial_conditions import (
 )
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.program_arguments import decision_arguments
-from _lcm.simulation.program_types import SimulationProgramExecutor
+from _lcm.simulation.program_types import (
+    ACTION_FEASIBILITY,
+    ACTION_INDEX,
+    ACTION_VALUES,
+    CONTINUATION_CE,
+    DECISION_VALUE,
+    FLOW_UTILITY,
+    SimulationProgramExecutor,
+)
+from _lcm.simulation.random import canonicalize_simulation_seed
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -166,6 +175,11 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.simulation.shock_paths import (
+    bind_shock_path_programs,
+    canonicalize_shock_paths,
+    seed_shock_paths,
+)
 from _lcm.simulation.simulate import (
     _lookup_values_from_indices,
     _referenced_value_kwargs,
@@ -351,10 +365,12 @@ from lcm.typing import (
     FloatND,
     IntND,
     Phase,
+    PRNGKey,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
     UserParams,
+    UserSeed,
     ValueND,
     _UserFacingTemplateNode,
 )
@@ -436,6 +452,9 @@ class _PickledModel(TypedDict):
     _declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     _cells_without_edges: MappingProxyType[tuple[RegimeName, int], DroppedCells]
     _transition_only_shock_names: NotRequired[frozenset[str]]
+    _draw_only_processes: NotRequired[
+        Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
+    ]
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     regime_names_to_ids: RegimeNamesToIds
@@ -696,6 +715,8 @@ class Model:
 
     They are no states of any regime; an initial value given for one is dropped.
     """
+    _draw_only_processes: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
+    """Declarations of transition-local folded shocks, retained for path validation."""
 
     _execution: ResolvedExecution
     """Hardware-local facts both phases run under, resolved once at model build.
@@ -963,9 +984,11 @@ class Model:
             ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
         )
+        # Removal is regime-local; initialization preserves names another regime keeps.
         self._transition_only_shock_names = frozenset(
             name for shocks in draw_only_processes.values() for name in shocks
         )
+        self._draw_only_processes = draw_only_processes
         finalized_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
             laws=laws,
@@ -1003,6 +1026,7 @@ class Model:
             broadcast_variables=broadcast_variables,
             ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
+            targets_by_regime=schedules.targets_by_regime,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
         )
@@ -1298,6 +1322,7 @@ class Model:
             _declared_edge_vocabulary=self._declared_edge_vocabulary,
             _cells_without_edges=self._cells_without_edges,
             _transition_only_shock_names=self._transition_only_shock_names,
+            _draw_only_processes=self._draw_only_processes,
             pruned_variables=self.pruned_variables,
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
@@ -1331,6 +1356,9 @@ class Model:
         self.__dict__.update(state)
         self._transition_only_shock_names = state.get(
             "_transition_only_shock_names", frozenset()
+        )
+        self._draw_only_processes = state.get(
+            "_draw_only_processes", MappingProxyType({})
         )
         self._fixed_component_splits = MappingProxyType(
             dict(state["_fixed_component_splits"])
@@ -1507,6 +1535,31 @@ class Model:
             axis_widths=axis_widths,
             device_ids=self._execution.device_ids,
         )
+
+    @beartype(conf=PARAMS_CONF)
+    def validate_transitions(self, *, params: UserParams) -> None:
+        """Run the solve's transition preflight without backward induction.
+
+        Process parameters and check regime probabilities, stochastic state laws
+        and transition-local joint supports and probabilities over their active
+        periods and phase grids. The first failure raises with the same diagnostic
+        as ``solve(runtime_checks=True)``; valid laws return ``None``. Checks are
+        always enabled and produce no console output. This does not validate
+        utilities, solver outputs or general deterministic next-state finiteness.
+
+        Args:
+            params: Model parameters compatible with ``get_params_template()``.
+        """
+        self._check_identity_runtime()
+        flat_params = self._process_params(params)
+        with naming_cells_without_edges(self._cells_without_edges):
+            validate_transitions(
+                regimes=self._regimes,
+                flat_params=flat_params,
+                ages=self._time,
+                logger=get_logger(log_level="off", runtime_checks=True),
+                process_grid_resolver=None,
+            )
 
     @beartype(conf=PARAMS_CONF)
     def solve(
@@ -2060,6 +2113,8 @@ class Model:
         params: UserParams,
         inputs: _EntryInputs,
         solution: _SolutionResultBoundary | None,
+        random_roots: tuple[PRNGKey, ...] = (),
+        data_roots: tuple[jax.Array, ...] = (),
     ) -> SimulationEntryAllocations | None:
         """Own a budgeted public call's original inputs, solution and model roots.
 
@@ -2071,6 +2126,8 @@ class Model:
             params=params,
             initial_conditions=inputs,
             solution=solution,
+            random_roots=random_roots,
+            data_roots=data_roots,
         )
         if entry_inputs is None:
             return None
@@ -3264,8 +3321,9 @@ class Model:
         solution: _SolutionResultBoundary | None = None,
         log_level: LogLevel,
         runtime_checks: bool = True,
-        seed: int | None = None,
-        taste_shock_seed: int | None = None,
+        seed: UserSeed | None = None,
+        taste_shock_seed: UserSeed | None = None,
+        shock_paths: Mapping[StateName, jax.Array | np.ndarray] | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
@@ -3312,15 +3370,28 @@ class Model:
                 token; restored results instead match the durable model fingerprint.
                 When omitted, ``simulate`` obtains the same complete result from an
                 automatic solve.
-            seed: Random seed.
-            taste_shock_seed: Optional independent seed for common taste-shock
+            seed: Integer random seed or scalar typed `jax.random.key`; a typed
+                key is used directly, preserving its PRNG implementation. `None`
+                draws a fresh integer seed. Raw uint32 keys are refused.
+            taste_shock_seed: Optional independent integer seed or scalar typed
+                key for common taste-shock
                 realizations across counterfactual simulations. Matching exact
                 ages, initial-condition row positions and ordered discrete-action
                 domains receive the same standardized shocks, regardless of
                 `seed`, policy parameters or realized regime. Reordering or
-                resizing that discrete domain changes the stream. Uses Threefry;
+                resizing that discrete domain changes the stream. Integer seeds use
+                Threefry; typed keys retain their implementation;
                 comparisons require matching precision/backend and JAX random
                 configuration. `None` preserves the ordinary seeded stream.
+            shock_paths: Given realised shock values indexed by computational period:
+                `(periods,)` for a common path or `(subjects, periods)` in original
+                initial-condition row order. Overrides the entry value and later
+                draws, including folded IID and persistent processes. Continuous
+                values must be in the distribution's support; discrete values are
+                exact category codes. Model-active periods must be covered; inactive
+                periods are ignored. Transition-local draws use the destination's
+                period. Solve expectations and unnamed shocks' seeded streams are
+                unchanged.
             log_level: Console verbosity: off, warning, progress or debug.
             runtime_checks: Validate computed transition probabilities, NaN values
                 and numerical feasibility/replay checks; raise on the first failure.
@@ -3341,7 +3412,10 @@ class Model:
 
         """
         self._check_identity_runtime()
-        _fail_if_invalid_taste_shock_seed(taste_shock_seed=taste_shock_seed)
+        seed = canonicalize_simulation_seed(seed=seed, name="seed")
+        taste_shock_seed = canonicalize_simulation_seed(
+            seed=taste_shock_seed, name="taste_shock_seed"
+        )
         initial_conditions = lower_initial_time(
             initial_conditions=initial_conditions, ages=self._time
         )
@@ -3362,7 +3436,19 @@ class Model:
                     initial_conditions=initial_conditions
                 )
                 entry_allocations = self._open_entry_allocations(
-                    params=params, inputs=initial_conditions, solution=solution
+                    params=params,
+                    inputs=initial_conditions,
+                    solution=solution,
+                    random_roots=tuple(
+                        key
+                        for key in (seed, taste_shock_seed)
+                        if isinstance(key, jax.Array)
+                    ),
+                    data_roots=tuple(
+                        path
+                        for path in (shock_paths or {}).values()
+                        if isinstance(path, jax.Array)
+                    ),
                 )
                 # The canonical parameters bind both the supplied result preflight
                 # and an automatic solve. Process them once and keep one
@@ -3460,6 +3546,19 @@ class Model:
                     )
                 if entry_allocations is not None:
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
+                resolved_shock_paths = canonicalize_shock_paths(
+                    paths=shock_paths,
+                    regimes=self._regimes,
+                    draw_only=self._draw_only_processes,
+                    params=flat_params,
+                    n_subjects=len(initial_conditions["regime_id"]),
+                )
+                initial_conditions = seed_shock_paths(
+                    initial=initial_conditions,
+                    paths=resolved_shock_paths,
+                    age_values=self._time.values,
+                    regimes=self._regimes,
+                )
                 initial_conditions = canonicalize_initial_conditions(
                     initial_conditions=initial_conditions,
                     regimes=self._regimes,
@@ -3646,6 +3745,11 @@ class Model:
                     simulate_regimes = self._runtime_regimes_for_shape(
                         compile_batch_size=padded_n_subjects,
                     )
+                    simulate_regimes = bind_shock_path_programs(
+                        regimes=simulate_regimes,
+                        paths=resolved_shock_paths,
+                        params=flat_params,
+                    )
                     prepared_chunks = prepare_simulation_chunks(
                         regimes=simulate_regimes,
                         flat_params=flat_params,
@@ -3658,6 +3762,16 @@ class Model:
                         original_population=original_n_subjects,
                         retained_footprint=entry_allocations.snapshot(),
                         independent_taste=taste_shock_seed is not None,
+                        taste_prng_impl=(
+                            str(jax.random.key_impl(taste_shock_seed))
+                            if isinstance(taste_shock_seed, jax.Array)
+                            else "threefry2x32"
+                        ),
+                        prng_impl=(
+                            str(jax.random.key_impl(seed))
+                            if isinstance(seed, jax.Array)
+                            else jax.config.jax_default_prng_impl
+                        ),
                         log_level=log_level,
                         runtime_checks=runtime_checks,
                         process_grid_resolver=process_grid_resolver,
@@ -3688,6 +3802,11 @@ class Model:
                     simulate_regimes = self._runtime_regimes_for_shape(
                         compile_batch_size=compile_batch_size,
                     )
+                    simulate_regimes = bind_shock_path_programs(
+                        regimes=simulate_regimes,
+                        paths=resolved_shock_paths,
+                        params=flat_params,
+                    )
             result = simulate(
                 flat_params=flat_params,
                 initial_conditions=initial_conditions,
@@ -3704,6 +3823,7 @@ class Model:
                 simulation_output_dtypes=self.simulation_output_dtypes,
                 seed=seed,
                 taste_shock_seed=taste_shock_seed,
+                shock_paths=resolved_shock_paths,
                 subject_batch_size=compile_batch_size,
                 original_n_subjects=original_n_subjects,
                 device_ids=self._execution.device_ids,
@@ -3880,15 +4000,16 @@ class Model:
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
-            return_action_values: Whether to also return the action values `Q`
-                and their feasibility `F` over the (possibly restricted) action
-                grid, from the same decision program. Not supported for a
-                collective regime.
+            return_action_values: Whether to also return the action values `Q`,
+                their feasibility `F`, the flow utility `U` and the
+                certainty-equivalent continuation `CE` over the (possibly
+                restricted) action grid, all from the one kernel evaluation the
+                decision maximizes over. Not supported for a collective regime.
 
         Returns:
             The argmax action value per action name and the max of Q over the
             (possibly restricted) action grid, one entry per state row; with
-            `return_action_values`, also `Q` and `F`.
+            `return_action_values`, also `Q`, `F`, `U` and `CE`.
 
         """
         self._check_identity_runtime()
@@ -4125,17 +4246,18 @@ class Model:
                 ),
             )
             executor = unit
+        program = (
+            programs.action_values[period]
+            if return_action_values
+            else _with_action_extents(
+                program=programs.decision[period],
+                extents=tuple(len(grids[n]) for n in space.action_names),
+            )
+        )
         outputs = cast(
             "tuple[jax.Array, ...]",
             executor.dispatch(
-                program=(
-                    programs.action_values[period]
-                    if return_action_values
-                    else _with_action_extents(
-                        program=programs.decision[period],
-                        extents=tuple(len(grids[n]) for n in space.action_names),
-                    )
-                ),
+                program=program,
                 period=period,
                 n_subjects=n_rows,
                 arguments=decision_arguments(
@@ -4156,8 +4278,10 @@ class Model:
             # once, for the one row an empty query stands for; every output gets
             # that row here.
             outputs = tuple(output[None] for output in outputs)
-        indices, value = outputs[:2]
-        Q, F = outputs[2:] if return_action_values else (None, None)
+        # Both lookup programs publish a flat tuple, one role per output.
+        roles = cast("tuple[str, ...]", program.output_roles)
+        by_role = dict(zip(roles, outputs, strict=True))
+        indices, value = by_role[ACTION_INDEX], by_role[DECISION_VALUE]
         lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
         if unit is None or allocations is None:
             actions = _lookup_values_from_indices(
@@ -4185,7 +4309,14 @@ class Model:
             jax.block_until_ready(actions)
             unit.close()
         return _trim_lookup_rows(
-            lookup=PolicyLookup(actions=actions, value=value, Q=Q, F=F),
+            lookup=PolicyLookup(
+                actions=actions,
+                value=value,
+                Q=by_role.get(ACTION_VALUES),
+                F=by_role.get(ACTION_FEASIBILITY),
+                U=by_role.get(FLOW_UTILITY),
+                CE=by_role.get(CONTINUATION_CE),
+            ),
             n_rows=n_query_rows,
             allocations=allocations,
             unit=unit,
@@ -4820,14 +4951,6 @@ def _fail_if_off_grid(
             raise InvalidSimulationInputError(msg)
 
 
-def _fail_if_invalid_taste_shock_seed(*, taste_shock_seed: int | None) -> None:
-    """Refuse Boolean stream configuration before processing inputs or solving."""
-    if taste_shock_seed is not None and type(taste_shock_seed) is not int:
-        raise InvalidSimulationInputError(
-            f"taste_shock_seed must be an integer or None, got {taste_shock_seed!r}."
-        )
-
-
 def _missing_policy_message(
     *, missing_or_mismatched_policies: tuple[tuple[int, RegimeName, str], ...]
 ) -> str:
@@ -5202,6 +5325,8 @@ def _trim_lookup_rows(
             value=lookup.value[:n_rows],
             Q=None if lookup.Q is None else lookup.Q[:n_rows],
             F=None if lookup.F is None else lookup.F[:n_rows],
+            U=None if lookup.U is None else lookup.U[:n_rows],
+            CE=None if lookup.CE is None else lookup.CE[:n_rows],
         )
     return _admit_trimmed_lookup_rows(
         lookup=lookup,
@@ -5245,7 +5370,7 @@ def _admit_trimmed_lookup_rows(
                     call_roots=(
                         call_roots,
                         tuple(lookup.actions.values()),
-                        (lookup.value, lookup.Q, lookup.F),
+                        (lookup.value, lookup.Q, lookup.F, lookup.U, lookup.CE),
                         kept,
                     ),
                 ),
@@ -5263,6 +5388,8 @@ def _admit_trimmed_lookup_rows(
         value=trim(lookup.value),
         Q=None if lookup.Q is None else trim(lookup.Q),
         F=None if lookup.F is None else trim(lookup.F),
+        U=None if lookup.U is None else trim(lookup.U),
+        CE=None if lookup.CE is None else trim(lookup.CE),
     )
 
 
