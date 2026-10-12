@@ -38,7 +38,7 @@ __all__ = [
     "tauchen_row",
 ]
 
-type _Scalar = float | int | ScalarFloat
+type _Scalar = float | int | ScalarFloat | ScalarInt
 
 # Process families whose transition CDF carries `sigma`. Rouwenhorst is absent: its
 # transition is `rho`-only, so a fixed node grid leaves no channel for a

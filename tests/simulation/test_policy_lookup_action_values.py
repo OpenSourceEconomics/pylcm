@@ -383,9 +383,10 @@ def test_terminal_regime_without_states_has_zero_continuation(*, solved, period)
         states={},
         return_action_values=True,
     )
-    assert (np.asarray(got.U).tolist(), np.asarray(got.CE).tolist()) == (
-        [0.0],
-        [0.0],
+    np.testing.assert_array_almost_equal(
+        np.stack([np.asarray(got.U), np.asarray(got.CE)]),
+        np.zeros((2, 1)),
+        decimal=DECIMAL_PRECISION,
     )
 
 
