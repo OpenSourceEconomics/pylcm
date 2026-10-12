@@ -37,6 +37,7 @@ from _lcm.simulation.program_arguments import (
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.shock_paths import supplied_shock_argument_names
 from _lcm.simulation.subject_groups import type_local_template
+from _lcm.simulation.taste_stream import scalar_draw_axis
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _states_for_period
 from _lcm.time import TimeAxis
@@ -323,10 +324,14 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     subject_key = jax.ShapeDtypeStruct(
         (n_subjects,), ordinary_key.dtype, sharding=subject
     )
-    decision_key = jax.ShapeDtypeStruct(
-        (n_subjects,),
-        (ordinary_key if taste_key is None else taste_key).dtype,
-        sharding=subject,
+    decision_key = (
+        jax.ShapeDtypeStruct((n_subjects,), ordinary_key.dtype, sharding=subject)
+        if taste_key is None
+        else jax.ShapeDtypeStruct(
+            (n_subjects, *scalar_draw_axis(dtype=taste_key.dtype)),
+            taste_key.dtype,
+            sharding=subject,
+        )
     )
     if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
         actions, _, _ = cast(

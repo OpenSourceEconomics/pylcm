@@ -49,6 +49,7 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
     union_buffer_footprints,
 )
+from _lcm.simulation.simulate import _first_empty_action_row
 from _lcm.typing import FootprintTree, PytreeValue
 from benchmarks.asv._simulation_witnesses import dissolution
 from lcm.exceptions import ExecutionPlanningError
@@ -56,9 +57,12 @@ from lcm.execution import ExecutionConfig
 from tests.simulation._callback_types import HostDispatch, WorkspacePlanning
 
 # The checked dissolution witness includes numerical preflight and outcome flags.
-# User-law producers also enter the axis-free plan outside helper dispatch.
-_WITNESS_HELPER_OPERATIONS = 63
+# Its four realized off-grid counts are helpers too. User-law producers also enter
+# the axis-free plan outside helper dispatch.
+_WITNESS_HELPER_OPERATIONS = 67
 _WITNESS_PRODUCER_ADMISSIONS = 5
+# Every owned decision checks its selected action before downstream indexing.
+_WITNESS_EMPTY_ACTION_CHECKS = 5
 
 _WITNESS_SEED = 6606
 
@@ -134,7 +138,12 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
     producer_admissions: int,
 ) -> None:
     """One warm forward call plans each helper once, and never on the frontier."""
-    counts: dict[str, int] = {"dispatch": 0, "axis_free": 0, "frontier": 0}
+    counts: dict[str, int] = {
+        "dispatch": 0,
+        "axis_free": 0,
+        "frontier": 0,
+        "empty_action_checks": 0,
+    }
     recording = {"on": False}
 
     original_dispatch = host_operations.ProfiledSimulationOperations.dispatch
@@ -146,6 +155,8 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
     ) -> PytreeValue:
         if recording["on"]:
             counts["dispatch"] += 1
+            if kwargs["function"] is _first_empty_action_row:
+                counts["empty_action_checks"] += 1
         return original_dispatch(self, **kwargs)
 
     def counted_axis_free[Compiled](
@@ -198,8 +209,10 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
     )
     recording["on"] = False
 
-    assert counts["dispatch"] == helper_operations
-    assert counts["axis_free"] == helper_operations + producer_admissions
+    assert counts["empty_action_checks"] == _WITNESS_EMPTY_ACTION_CHECKS
+    total_helpers = helper_operations + _WITNESS_EMPTY_ACTION_CHECKS
+    assert counts["dispatch"] == total_helpers
+    assert counts["axis_free"] == total_helpers + producer_admissions
     assert counts["frontier"] == 0
 
 
@@ -424,7 +437,9 @@ def test_the_charge_never_falls_below_a_fresh_measurement_of_the_live_owners(
             log_level="off",
         )
     )
-    assert len(witness.samples) > _WITNESS_HELPER_OPERATIONS
+    assert len(witness.samples) > (
+        _WITNESS_HELPER_OPERATIONS + _WITNESS_EMPTY_ACTION_CHECKS
+    )
     assert all(charged >= fresh for charged, fresh in witness.samples)
     assert any(fresh > 0 for _charged, fresh in witness.samples)
 

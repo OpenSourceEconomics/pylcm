@@ -70,6 +70,7 @@ from _lcm.model_processing import (
     fail_if_nonpositive_taste_shock_scale,
     validate_model_inputs,
 )
+from _lcm.off_grid import fail_if_endogenous_grid_reads_a_clipped_grid
 from _lcm.pandas_utils import (
     convert_series_in_params,
     initial_conditions_from_dataframe,
@@ -148,6 +149,7 @@ from _lcm.simulation.initial_conditions import (
     initial_conditions_feasibility_mask,
     pad_initial_conditions_to_multiple,
     resolve_initial_periods,
+    transition_preflight_memory,
     validate_simulation_inputs,
 )
 from _lcm.simulation.initial_conditions import (
@@ -1029,7 +1031,7 @@ class Model:
             broadcast_variables=broadcast_variables,
             ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
-            targets_by_regime=schedules.targets_by_regime,
+            targets_by_phase=schedules.targets_by_phase,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
         )
@@ -1127,6 +1129,14 @@ class Model:
             fixed_component_splits=self._fixed_component_splits,
             block_widths=self._execution.invariant_block_widths,
             schedule=self._execution.invariant_block_schedule,
+        )
+        fail_if_endogenous_grid_reads_a_clipped_grid(
+            solvers={name: regime.solver for name, regime in self.user_regimes.items()},
+            grids={
+                name: (*regime.solution.grids.items(), *regime.simulation.grids.items())
+                for name, regime in self._regimes.items()
+            },
+            targets_by_regime=schedules.targets_by_regime,
         )
         # The axis names a width may fix are what the core programs declare, so
         # this is the first point at which the declaration can be checked at all.
@@ -1562,7 +1572,20 @@ class Model:
                 ages=self._time,
                 logger=get_logger(log_level="off", runtime_checks=True),
                 process_grid_resolver=None,
+                memory=self._transition_memory(flat_params=flat_params),
+                count_when_silent=True,
             )
+
+    def _transition_memory(self, *, flat_params: FlatParams) -> SimulationMemory | None:
+        """Return the budgeted owner admitting this call's transition checks."""
+        return transition_preflight_memory(
+            execution=self._execution,
+            producers=self._simulate_entry_operations,
+            flat_params=flat_params,
+            regimes=self._regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            ages=self._time,
+        )
 
     @beartype(conf=PARAMS_CONF)
     def solve(
@@ -1638,6 +1661,7 @@ class Model:
                         ages=self._time,
                         logger=log,
                         process_grid_resolver=None,
+                        memory=self._transition_memory(flat_params=flat_params),
                     )
             result = self._solve_from_flat_params(
                 flat_params=flat_params,
@@ -1686,10 +1710,14 @@ class Model:
         requires `require_reference=False` and cannot establish parity.
         GPU replay requires actual serialized buffer-assignment metadata.
         Missing runtime metadata is refused before selected-period dispatch.
+        Output and numerical checks follow the recorded call policy. Captures
+        without that policy must be recaptured with this runtime.
         """
         self._fail_if_ephemeral_operation(operation="replay_period")
         self._check_identity_runtime()
-        flat_params = self._process_params(params)
+        # Keep parameter schema validation here. Replay applies optional
+        # numerical selection checks only after binding the captured policy.
+        flat_params = self._process_params(params, runtime_checks=False)
         return replay_public_period(
             directory=Path(directory),
             flat_params=flat_params,
@@ -1701,6 +1729,9 @@ class Model:
             model_fingerprint=self._model_fingerprint(flat_params=flat_params),
             params_fingerprint=self._params_fingerprint(flat_params=flat_params),
             require_reference=require_reference,
+            validate_selection=functools.partial(
+                self._validate_regime_selection, flat_params=flat_params
+            ),
         )
 
     @beartype(conf=PARAMS_CONF)
@@ -1748,6 +1779,7 @@ class Model:
             ages=self._time,
             logger=log,
             process_grid_resolver=None,
+            memory=self._transition_memory(flat_params=flat_params),
         )
         preparation = self._prepare_solution(
             flat_params=flat_params,
@@ -3559,7 +3591,7 @@ class Model:
                 initial_conditions = seed_shock_paths(
                     initial=initial_conditions,
                     paths=resolved_shock_paths,
-                    age_values=self._time.values,
+                    ages=self._time,
                     regimes=self._regimes,
                 )
                 initial_conditions = canonicalize_initial_conditions(
@@ -3840,6 +3872,8 @@ class Model:
                 call_id=call_id,
                 component_values=component_values,
             )
+            if isinstance(component_values, SolvingComponentValues):
+                component_values.flush_feasibility_warnings()
             if (
                 isinstance(component_values, SolvingComponentValues)
                 and component_values.subject_codes is None
@@ -4863,6 +4897,8 @@ class Model:
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
         for regime_name, regime in self._regimes.items():
+            if not regime.active_periods:
+                continue
             for phase in (regime.solution, regime.simulation):
                 validate_joint_normal_params(
                     grids=phase.grids,

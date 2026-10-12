@@ -22,6 +22,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   existing integer-seeded streams. Legacy uint32 keys receive guidance naming the
   typed constructor. Budgeted entry accounts for caller key buffers before uploads
   or automatic solving; chunk profiles distinguish the actual implementations.
+  Independent taste draws from an RBG or unsafe-RBG root fold and draw each
+  subject's key as a scalar, so subject widths and padding do not change them.
 - The Mahler initial-population factory accepts the same typed roots with its
   existing positional splits.
 
@@ -45,8 +47,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 ### Public `EULER_GAMMA` for location-0 taste shocks
 
 - `lcm.EULER_GAMMA` exports the Euler-Mascheroni constant. Adding
-  `scale * EULER_GAMMA` to utility turns pylcm's mean-zero taste shocks into
-  location-0 shocks under `LinearAggregator`.
+  `scale * EULER_GAMMA` to Bellman utility reproduces location-0 shocks under
+  `LinearAggregator` when other uses of the original utility are preserved;
+  see the [location-0 recipe](docs/reference/model_and_regime.md#api-euler-gamma).
 
 ### Carrying a state to a regime that uses it counts as a use
 

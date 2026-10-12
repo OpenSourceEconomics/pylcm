@@ -1,7 +1,7 @@
 """Correlated normal IID shocks on a tensor of independent normal coordinates."""
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 
 import jax
@@ -53,6 +53,12 @@ class JointNormalIIDProcess:
     """Equally spaced support halfwidth, required without Gauss-Hermite."""
     fold: bool = False
     """Integrate the current-period shock tensor out of stored values."""
+    exact_zero_pivots: tuple[tuple[str, tuple[bool, ...] | None], ...] = field(
+        init=False, default=(), repr=False, compare=False
+    )
+    """Exact zero pivots of the fixed covariance rounded to each float dtype name.
+
+    `None` where the rounded covariance is not positive semidefinite."""
 
     def __post_init__(self) -> None:
         if not self.states or len(set(self.states)) != len(self.states):
@@ -94,6 +100,17 @@ class JointNormalIIDProcess:
                 "cov",
                 tuple(tuple(float(value) for value in row) for row in self.cov),
             )
+            object.__setattr__(
+                self,
+                "exact_zero_pivots",
+                tuple(
+                    (
+                        np.dtype(dtype).name,
+                        _rounded_zero_pivots(cov=self.cov, dtype=dtype),
+                    )
+                    for dtype in (np.float32, np.float64)
+                ),
+            )
 
     @property
     def node_counts(self) -> tuple[int, ...]:
@@ -125,38 +142,32 @@ class JointNormalIIDProcess:
 
     def validate_covariance(
         self, cov: NormalCovariance | FloatND | HostNormalArray
-    ) -> None:
+    ) -> tuple[bool, ...]:
         """Reject a covariance without assuming small negative pivots are zero.
 
         Exact rational LDL elimination classifies the supplied finite binary floats.
         Thus a genuinely indefinite matrix is never accepted using an eigenvalue
         tolerance, while exact singular matrices retain their zero pivots.
+
+        Returns:
+            Whether each exact pivot, in states order, is zero.
         """
-        values = np.asarray(cov)
-        size = len(self.states)
-        if (
-            values.shape != (size, size)
-            or not np.isfinite(values).all()
-            or not np.array_equal(values, values.T)
-        ):
+        return _exact_zero_pivots(cov=np.asarray(cov), size=len(self.states))
+
+    def fixed_zero_pivots(self) -> tuple[bool, ...] | None:
+        """Return the exact zero pivots of the fixed covariance at active precision.
+
+        The factor eliminates nothing on these pivots, so a fixed singular law keeps
+        exactly its declared support. `None` for a runtime covariance.
+        """
+        if self.cov is None:
+            return None
+        pattern = dict(self.exact_zero_pivots)[jnp.asarray(self.cov).dtype.name]
+        if pattern is None:
             raise GridInitializationError(
-                "cov must be finite, symmetric and square in states order."
+                "cov must be positive semidefinite at the active float precision."
             )
-        residual = [[Fraction(float(value)) for value in row] for row in values]
-        for column in range(size):
-            pivot = residual[column][column]
-            if pivot < 0 or (
-                pivot == 0
-                and any(residual[row][column] != 0 for row in range(column + 1, size))
-            ):
-                raise GridInitializationError("cov must be positive semidefinite.")
-            if pivot == 0:
-                continue
-            for row in range(column + 1, size):
-                for other in range(column + 1, size):
-                    residual[row][other] -= (
-                        residual[row][column] * residual[other][column] / pivot
-                    )
+        return pattern
 
     def compute_gridpoints(
         self, *, mean: FloatND | None = None, cov: FloatND | None = None
@@ -190,7 +201,7 @@ class JointNormalIIDProcess:
         covariance = jnp.asarray(self.cov) if self.cov is not None else cov
         if covariance is None:
             raise GridInitializationError("Joint normal cov must be supplied.")
-        factor = covariance_factor(covariance)
+        factor = covariance_factor(cov=covariance, zero_pivots=self.fixed_zero_pivots())
         axes = [
             self.standard_normal_process(count).get_gridpoints()
             for count in self.node_counts
@@ -231,7 +242,7 @@ class JointNormalIIDProcess:
         cov_array = jnp.asarray(self.cov) if self.cov is not None else cov
         if mean_array is None or cov_array is None:
             raise GridInitializationError("Joint normal mean and cov must be supplied.")
-        factor = covariance_factor(cov_array)
+        factor = covariance_factor(cov=cov_array, zero_pivots=self.fixed_zero_pivots())
         values = []
         for row in range(len(self.states)):
             value = mean_array[row]
@@ -250,16 +261,33 @@ class JointNormalIIDProcess:
         )
 
 
-def covariance_factor(cov: FloatND) -> Float2D:
+def covariance_factor(
+    *, cov: FloatND, zero_pivots: tuple[bool, ...] | None = None
+) -> Float2D:
     """Return a lower-triangular factor of an already validated PSD covariance.
 
-    A zero pivot contributes no remaining column. Clipping diagonal residuals only
+    Elimination runs on the diagonal congruence `C = D^{-1} cov D^{-1}`, where the
+    power-of-two scales `D` place every positive diagonal entry of `C` in `[1, 4)`
+    and a zero diagonal keeps scale one. Power-of-two scaling is exact, and every
+    entry of the PSD matrix `C` is below 4 in magnitude, so no product of two
+    entries overflows and a product underflows only where it is negligible against
+    the residual it updates. The factor of `cov` is `D` times the factor of `C`.
+
+    A zero pivot contributes no remaining column. `zero_pivots`, the exact pattern
+    of a fixed covariance, marks pivots that are zero although roundoff leaves a
+    residual: their columns stay exactly zero. Clipping diagonal residuals only
     removes arithmetic roundoff after the exact host-side PSD validation.
     """
     cov = cov.astype(jnp.result_type(cov, 0.0))
+    diagonal = jnp.diagonal(cov)
+    _, exponent = jnp.frexp(diagonal)
+    # A diagonal m * 2**e with m in [1/2, 1) has 4**shift <= diagonal < 4**(shift+1).
+    shift = jnp.where(diagonal > 0, (exponent - 1) // 2, 0)
+    residual = jnp.ldexp(cov, -(shift[:, None] + shift[None, :]))
     factor = jnp.zeros_like(cov)
-    residual = cov
     for column in range(cov.shape[0]):
+        if zero_pivots is not None and zero_pivots[column]:
+            continue
         pivot = jnp.maximum(residual[column, column], 0.0)
         denominator = jnp.where(pivot > 0, pivot, 1.0)
         for row in range(column, cov.shape[0]):
@@ -278,4 +306,50 @@ def covariance_factor(cov: FloatND) -> Float2D:
                 residual = residual.at[row, other].set(
                     sealed(residual[row, other] - correction)
                 )
-    return factor
+    return jnp.ldexp(factor, shift[:, None])
+
+
+# Host consumers share the forward map's compiled factor, and so its rank.
+compiled_covariance_factor = jax.jit(covariance_factor, static_argnames="zero_pivots")
+
+
+def _rounded_zero_pivots(
+    *, cov: NormalCovariance, dtype: type[np.floating]
+) -> tuple[bool, ...] | None:
+    """Return the exact zero pivots of `cov` rounded to `dtype`, if it stays PSD."""
+    with np.errstate(over="ignore"):
+        values = np.asarray(cov, dtype=dtype)
+    try:
+        return _exact_zero_pivots(cov=values, size=len(cov))
+    except GridInitializationError:
+        return None
+
+
+def _exact_zero_pivots(*, cov: HostNormalArray, size: int) -> tuple[bool, ...]:
+    """Classify finite binary floats by exact LDL elimination, rejecting non-PSD."""
+    if (
+        cov.shape != (size, size)
+        or not np.isfinite(cov).all()
+        or not np.array_equal(cov, cov.T)
+    ):
+        raise GridInitializationError(
+            "cov must be finite, symmetric and square in states order."
+        )
+    residual = [[Fraction(float(value)) for value in row] for row in cov]
+    zero = []
+    for column in range(size):
+        pivot = residual[column][column]
+        if pivot < 0 or (
+            pivot == 0
+            and any(residual[row][column] != 0 for row in range(column + 1, size))
+        ):
+            raise GridInitializationError("cov must be positive semidefinite.")
+        zero.append(pivot == 0)
+        if pivot == 0:
+            continue
+        for row in range(column + 1, size):
+            for other in range(column + 1, size):
+                residual[row][other] -= (
+                    residual[row][column] * residual[other][column] / pivot
+                )
+    return tuple(zero)
