@@ -2,7 +2,9 @@
 
 The rules apply to every annotation position: parameters, returns, variables,
 attributes, type aliases, type-parameter bounds and defaults, class bases and
-`cast` targets, string annotations included:
+`cast` targets, string annotations included. A name imported under another
+name, or reached through a renamed module, is judged as the name it binds; a
+name rebound in an enclosing function or class is an ordinary name there:
 
 - `PAN001`: `object` in an annotation;
 - `PAN002`: `Any` in an annotation;
@@ -37,6 +39,7 @@ from collections import Counter
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import MappingProxyType
 
 type SourceText = str
 
@@ -57,6 +60,18 @@ _COMPARISON_DUNDERS = frozenset(
 _DATA_MODEL_PARAMETERS = frozenset({("__setattr__", "value"), ("__deepcopy__", "memo")})
 _ANY_MODULES = frozenset({"t", "typing", "typing_extensions"})
 _OBJECT_MODULES = frozenset({"builtins"})
+# Modules whose imported names the rules know by their imported spelling.
+_TYPING_SOURCES = frozenset(
+    {
+        "builtins",
+        "collections",
+        "collections.abc",
+        "jaxtyping",
+        "types",
+        "typing",
+        "typing_extensions",
+    }
+)
 _FIRST_ARGUMENT_ONLY = frozenset(
     {
         "Annotated",
@@ -223,6 +238,26 @@ class _Finding:
 
 
 @dataclass(frozen=True, kw_only=True)
+class _Names:
+    """How the names of one scope resolve to the names the rules know."""
+
+    imported: MappingProxyType[str, str]
+    """Each local name an import from a known module binds, to the name it imports."""
+
+    modules: MappingProxyType[str, str]
+    """Each local name bound to a known module, to that module's name."""
+
+    shadowed: frozenset[str] = frozenset()
+    """Names rebound in an enclosing function or class, which stay ordinary."""
+
+    def resolve(self, name: str) -> str:
+        return name if name in self.shadowed else self.imported.get(name, name)
+
+    def module(self, name: str) -> str:
+        return name if name in self.shadowed else self.modules.get(name, name)
+
+
+@dataclass(frozen=True, kw_only=True)
 class _SourceUnit:
     source: SourceText
     cell: int | None = None
@@ -289,12 +324,14 @@ def _render(violation: AnnotationViolation) -> str:
 
 def _findings_for_source(*, source: SourceText) -> list[_Finding]:
     comments = _comments(source=source)
+    tree = ast.parse(source)
     visitor = _AnnotationVisitor(
         standalone_comment_lines=frozenset(
             line for line, (text, standalone) in comments.items() if standalone
-        )
+        ),
+        names=_imported_names(tree=tree),
     )
-    visitor.visit(ast.parse(source))
+    visitor.visit(tree)
     findings: list[_Finding] = []
     reported = {(finding.line, finding.code) for finding in visitor.findings}
     for line, (comment, _) in comments.items():
@@ -345,11 +382,25 @@ def _noqa_reason(*, comment: str) -> dict[str, bool]:
 
 
 class _AnnotationVisitor(ast.NodeVisitor):
-    def __init__(self, *, standalone_comment_lines: frozenset[int]) -> None:
+    def __init__(
+        self, *, standalone_comment_lines: frozenset[int], names: _Names
+    ) -> None:
         self.findings: list[_Finding] = []
         self._standalone_comment_lines = standalone_comment_lines
         self._scopes: list[str] = []
         self._fallback_has_reason: bool | None = None
+        self._file_names = names
+        self._names = names
+
+    def _enter_scope(self, *, kind: str, node: _ScopeNode) -> None:
+        self._scopes.append(kind)
+        self._names = replace(
+            self._names, shadowed=self._names.shadowed | _scope_bindings(node=node)
+        )
+
+    def _leave_scope(self, *, shadowed: frozenset[str]) -> None:
+        self._scopes.pop()
+        self._names = replace(self._names, shadowed=shadowed)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self._check_type_params(node.type_params)
@@ -357,10 +408,11 @@ class _AnnotationVisitor(ast.NodeVisitor):
             self._check_type(node=base, construct="base")
         for child in (*node.decorator_list, *node.keywords):
             self.visit(child)
-        self._scopes.append("class")
+        shadowed = self._names.shadowed
+        self._enter_scope(kind="class", node=node)
         for statement in node.body:
             self.visit(statement)
-        self._scopes.pop()
+        self._leave_scope(shadowed=shadowed)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._visit_function(node)
@@ -369,7 +421,7 @@ class _AnnotationVisitor(ast.NodeVisitor):
         self._visit_function(node)
 
     def visit_If(self, node: ast.If) -> None:
-        if _head_name(node.test) != "TYPE_CHECKING":
+        if _head_name(node=node.test, names=self._names) != "TYPE_CHECKING":
             self.generic_visit(node)
             return
         for statement in node.body:
@@ -387,7 +439,10 @@ class _AnnotationVisitor(ast.NodeVisitor):
             commented_until = statement.end_lineno if has_reason else 0
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        if _head_name(node.annotation) == "TypeAlias" and node.value is not None:
+        if (
+            _head_name(node=node.annotation, names=self._names) == "TypeAlias"
+            and node.value is not None
+        ):
             self._report_alias(node=node, name=_target_name(node.target))
             self._check_alias_value(node=node.value)
             return
@@ -414,7 +469,7 @@ class _AnnotationVisitor(ast.NodeVisitor):
             not self._scopes
             and isinstance(target, ast.Name)
             and _is_type_name(target.id)
-            and _is_implicit_alias(node.value)
+            and _is_implicit_alias(value=node.value, names=self._names)
         ):
             self._report_alias(node=node, name=target.id)
             self._check_alias_value(node=node.value)
@@ -422,10 +477,12 @@ class _AnnotationVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
-        callee = _head_name(node.func)
-        if callee == "cast" and node.args:
-            self._check_type(node=node.args[0], construct="cast")
+        callee = _head_name(node=node.func, names=self._names)
+        keywords = node.keywords
+        if callee == "cast" and (target := _cast_target(node)) is not None:
+            self._check_type(node=target, construct="cast")
             arguments = node.args[1:]
+            keywords = [keyword for keyword in keywords if keyword.value is not target]
         elif callee == "TypeAliasType" and len(node.args) >= 2:
             name = node.args[0]
             self._report_alias(
@@ -453,7 +510,7 @@ class _AnnotationVisitor(ast.NodeVisitor):
         else:
             self.generic_visit(node)
             return
-        for argument in (*arguments, *(keyword.value for keyword in node.keywords)):
+        for argument in (*arguments, *(keyword.value for keyword in keywords)):
             self.visit(argument)
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
@@ -489,10 +546,11 @@ class _AnnotationVisitor(ast.NodeVisitor):
             *(default for default in arguments.kw_defaults if default is not None),
         ):
             self.visit(child)
-        self._scopes.append("function")
+        shadowed = self._names.shadowed
+        self._enter_scope(kind="function", node=node)
         for statement in node.body:
             self.visit(statement)
-        self._scopes.pop()
+        self._leave_scope(shadowed=shadowed)
 
     def _check_type_params(self, type_params: list[ast.type_param]) -> None:
         for type_param in type_params:
@@ -505,7 +563,9 @@ class _AnnotationVisitor(ast.NodeVisitor):
         if self._fallback_has_reason is None:
             self._check_type(node=node, construct="type-alias")
             return
-        for line, code, name in _imprecise_tokens(node=node, line_offset=0):
+        for line, code, name in _imprecise_tokens(
+            node=node, line_offset=0, names=self._names
+        ):
             if code == "PAN006":
                 self._add(line=line, code=code, construct="type-alias", name=name)
             elif not self._fallback_has_reason:
@@ -521,7 +581,9 @@ class _AnnotationVisitor(ast.NodeVisitor):
     def _check_type(
         self, *, node: ast.expr | None, construct: str, allow_object: bool = False
     ) -> None:
-        for line, code, name in _imprecise_tokens(node=node, line_offset=0):
+        for line, code, name in _imprecise_tokens(
+            node=node, line_offset=0, names=self._names
+        ):
             if not (allow_object and code == "PAN001"):
                 self._add(line=line, code=code, construct=construct, name=name)
 
@@ -550,7 +612,9 @@ class _AnnotationVisitor(ast.NodeVisitor):
     ) -> None:
         if identifier is None:
             return
-        detail = _label_detail(annotation=annotation, identifier=identifier)
+        detail = _label_detail(
+            annotation=annotation, identifier=identifier, names=self._names
+        )
         if detail is not None:
             self.findings.append(
                 _Finding(
@@ -563,23 +627,30 @@ class _AnnotationVisitor(ast.NodeVisitor):
 
 
 def _imprecise_tokens(
-    *, node: ast.expr | None, line_offset: int
+    *, node: ast.expr | None, line_offset: int, names: _Names
 ) -> Iterator[tuple[int, str, str]]:
     """Yield the line, code and spelled name of every imprecise type in `node`."""
     if node is None:
         return
-    if _is_spelled(node=node, name="object", modules=_OBJECT_MODULES):
+    head = _head_name(node=node, names=names)
+    if _is_spelled(node=node, name="object", modules=_OBJECT_MODULES, names=names):
         yield node.lineno + line_offset, "PAN001", "object"
-    elif _is_spelled(node=node, name="Any", modules=_ANY_MODULES):
+    elif _is_spelled(node=node, name="Any", modules=_ANY_MODULES, names=names):
         yield node.lineno + line_offset, "PAN002", "Any"
-    elif isinstance(node, ast.Name | ast.Attribute) and _head_name(node) in _GENERICS:
-        yield node.lineno + line_offset, "PAN006", str(_head_name(node))
+    elif isinstance(node, ast.Name | ast.Attribute) and head in _GENERICS:
+        yield node.lineno + line_offset, "PAN006", str(head)
     else:
-        for child, child_offset in _type_children(node=node, line_offset=line_offset):
-            yield from _imprecise_tokens(node=child, line_offset=child_offset)
+        for child, child_offset in _type_children(
+            node=node, line_offset=line_offset, names=names
+        ):
+            yield from _imprecise_tokens(
+                node=child, line_offset=child_offset, names=names
+            )
 
 
-def _type_children(*, node: ast.expr, line_offset: int) -> list[tuple[ast.expr, int]]:
+def _type_children(
+    *, node: ast.expr, line_offset: int, names: _Names
+) -> list[tuple[ast.expr, int]]:
     """Return the sub-expressions of a type expression that are types themselves.
 
     A string is parsed as the type it spells. A subscript contributes its
@@ -591,7 +662,7 @@ def _type_children(*, node: ast.expr, line_offset: int) -> list[tuple[ast.expr, 
         parsed = _parse_type_string(node.value)
         return [] if parsed is None else [(parsed, line_offset + node.lineno - 1)]
     if isinstance(node, ast.Subscript):
-        head = _head_name(node.value)
+        head = _head_name(node=node.value, names=names)
         elements = _subscript_elements(node)
         if head == "Literal":
             elements = []
@@ -607,7 +678,9 @@ def _type_children(*, node: ast.expr, line_offset: int) -> list[tuple[ast.expr, 
     return []
 
 
-def _label_detail(*, annotation: ast.expr, identifier: str) -> str | None:
+def _label_detail(
+    *, annotation: ast.expr, identifier: str, names: _Names
+) -> str | None:
     name = identifier.lstrip("_")
     annotation = _without_none(_unquoted(annotation))
     if _is_str(annotation):
@@ -615,7 +688,7 @@ def _label_detail(*, annotation: ast.expr, identifier: str) -> str | None:
     elif isinstance(annotation, ast.Subscript) and _is_str(
         next(iter(_subscript_elements(annotation)), None)
     ):
-        head = _head_name(annotation.value)
+        head = _head_name(node=annotation.value, names=names)
         if head in _COLLECTION_HEADS:
             role, rule = "the elements of ", _matching_rule(name=name, shape="elements")
         elif head in _MAPPING_HEADS:
@@ -649,24 +722,26 @@ def _is_type_name(name: str) -> bool:
     return bare[:1].isupper() and any(character.islower() for character in bare)
 
 
-def _is_implicit_alias(value: ast.expr) -> bool:
+def _is_implicit_alias(*, value: ast.expr, names: _Names) -> bool:
     """Return whether a module-level assignment to a type name defines an alias."""
     return (
         isinstance(value, ast.Subscript)
         or (isinstance(value, ast.BinOp) and isinstance(value.op, ast.BitOr))
-        or _is_spelled(node=value, name="Any", modules=_ANY_MODULES)
-        or _is_spelled(node=value, name="object", modules=_OBJECT_MODULES)
+        or _is_spelled(node=value, name="Any", modules=_ANY_MODULES, names=names)
+        or _is_spelled(node=value, name="object", modules=_OBJECT_MODULES, names=names)
     )
 
 
-def _is_spelled(*, node: ast.expr, name: str, modules: frozenset[str]) -> bool:
+def _is_spelled(
+    *, node: ast.expr, name: str, modules: frozenset[str], names: _Names
+) -> bool:
     if isinstance(node, ast.Name):
-        return node.id == name
+        return names.resolve(node.id) == name
     return (
         isinstance(node, ast.Attribute)
         and node.attr == name
         and isinstance(node.value, ast.Name)
-        and node.value.id in modules
+        and names.module(node.value.id) in modules
     )
 
 
@@ -702,12 +777,81 @@ def _parse_type_string(text: str) -> ast.expr | None:
         return None
 
 
-def _head_name(node: ast.expr) -> str | None:
+def _head_name(*, node: ast.expr, names: _Names) -> str | None:
     if isinstance(node, ast.Name):
-        return node.id
+        return names.resolve(node.id)
     if isinstance(node, ast.Attribute):
         return node.attr
     return None
+
+
+def _cast_target(node: ast.Call) -> ast.expr | None:
+    """Return the type argument of a `cast` call, positional or keyword."""
+    if node.args:
+        return node.args[0]
+    return next(
+        (keyword.value for keyword in node.keywords if keyword.arg == "typ"), None
+    )
+
+
+def _imported_names(*, tree: ast.Module) -> _Names:
+    """Collect the names that imports from known modules bind anywhere in `tree`."""
+    imported: dict[str, str] = {}
+    modules: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in _TYPING_SOURCES:
+            for alias in node.names:
+                imported[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname is not None and alias.name in _TYPING_SOURCES:
+                    modules[alias.asname] = alias.name
+    return _Names(
+        imported=MappingProxyType(imported), modules=MappingProxyType(modules)
+    )
+
+
+type _ScopeNode = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+
+
+def _scope_bindings(*, node: _ScopeNode) -> frozenset[str]:
+    """Return the names a function or class body binds other than known imports.
+
+    Nested functions, classes and lambdas bind in their own scopes, so only their
+    names count here.
+    """
+    bound: set[str] = set()
+    if not isinstance(node, ast.ClassDef):
+        arguments = node.args
+        bound.update(
+            argument.arg
+            for argument in (
+                *arguments.posonlyargs,
+                *arguments.args,
+                *arguments.kwonlyargs,
+                *(a for a in (arguments.vararg, arguments.kwarg) if a is not None),
+            )
+        )
+    pending: list[ast.AST] = list(node.body)
+    while pending:
+        child = pending.pop()
+        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            bound.add(child.name)
+            continue
+        if isinstance(child, ast.Lambda):
+            continue
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+            bound.add(child.id)
+        elif isinstance(child, ast.ImportFrom) and child.module not in _TYPING_SOURCES:
+            bound.update(alias.asname or alias.name for alias in child.names)
+        elif isinstance(child, ast.Import):
+            bound.update(
+                alias.asname or alias.name.partition(".")[0]
+                for alias in child.names
+                if alias.name not in _TYPING_SOURCES
+            )
+        pending.extend(ast.iter_child_nodes(child))
+    return frozenset(bound)
 
 
 def _target_name(target: ast.expr) -> str | None:

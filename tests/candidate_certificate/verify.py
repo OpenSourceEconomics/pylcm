@@ -171,6 +171,28 @@ class _SelfTests(TypedDict):
     all_controls_sensitive: bool
 
 
+class _ReferenceReport(TypedDict):
+    q_values_flat: list[float]
+    nonempty_mask_count: int
+    all_infeasible_out_of_domain: bool
+    ties_refused: bool
+
+
+class _CliVerificationReport(TypedDict):
+    schema_version: str
+    result: str
+    repo_root: str
+    inventory: str
+    contract: str | None
+    policy: str | None
+    errors: list[str]
+    offending_paths: list[str]
+    details: _VerificationDetails
+    reference: _ReferenceReport
+    self_test: _SelfTests | None
+    self_tests: _SelfTests | None
+
+
 _Q_VALUES = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
 
 
@@ -1077,7 +1099,7 @@ def main() -> int:
         if not controls_green:
             errors.append("self-test: one or more mutation controls did not fire")
 
-    payload = {
+    payload: _CliVerificationReport = {
         "schema_version": "1",
         "result": "pass" if not errors else "fail",
         "repo_root": str(root),
