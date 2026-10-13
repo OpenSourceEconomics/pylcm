@@ -49,6 +49,19 @@ Applications with stronger finite-value requirements must retain their own infin
 invariant. See [Solving and Simulating](solving_and_simulating.md) for the independent
 output and validation controls and snapshot behavior.
 
+### Check transition laws without a solve
+
+While assembling a calibration, run the same transition preflight as a checked solve:
+
+```python
+model.validate_transitions(params=params)
+```
+
+This returns `None` on success and raises the first failing law's solve diagnostic. It
+checks regime probabilities, stochastic state probabilities and joint supports and
+weights across active periods and phase grids. It does not evaluate utilities or run
+backward induction, and does not check general deterministic next-state finiteness.
+
 ### Diagnose with checks enabled
 
 Keep `runtime_checks=True` during development and production validation. An explicit

@@ -15,8 +15,10 @@ runs. Two families:
   state transition (incl. per-target dict entries), evaluates the user
   function on the Cartesian product of the grid variables it reads, directly
   or through the phase's regime functions, and verifies outcome-axis size,
-  [0, 1] range, and sum-to-1. A simulate-phase law reads each carried state on
-  its simulate grid.
+  [0, 1] range, and sum-to-1. Each law is evaluated in every phase that uses
+  it — a phase-invariant law in both — with that phase's targets, functions
+  and grids, at each period's own nodes of an age-specialized state. A
+  simulate-phase evaluation reads each carried state on its simulate grid.
 
 Both checks read the explicit runtime policy carried by the logger. Enabled
 checks raise on the first failure, independently of console output.
@@ -143,6 +145,9 @@ type _StateProbabilityKey = tuple[
     int,
     tuple[tuple[str, _BindingToken], ...],
 ]
+# What one phase feeds a state law: the identities of the functions it reads and
+# the names of the carried grids it reads.
+type _ConsumedContext = tuple[tuple[tuple[FunctionName, int], ...], tuple[str, ...]]
 # The law and the inputs a cached state probability was computed from.
 type _BoundInputs = tuple[Callable[..., FloatND] | _BoundInput, ...]
 # One leaf of a placed producer operand: an array, or a host array or scalar.
@@ -1205,6 +1210,9 @@ def validate_state_transitions_all_periods(  # noqa: C901
                     params=regime_kernel_params(flat_params, regime_name=regime_name),
                 )
             )
+            state_action_space = _state_action_space_for_period(
+                regime=regime, base=state_action_space, period=period
+            )
             age = ages.values[period]  # noqa: PD011
             # The regime functions a law may read are evaluated as the solve
             # does: not partialled over fixed params, so bind both.
@@ -1215,41 +1223,39 @@ def validate_state_transitions_all_periods(  # noqa: C901
                 }
             )
             for transition in regime.stochastic_state_transitions.values():
-                if _state_transition_unused_in_period(
+                # Each demanded phase supplies its own functions and grids, and
+                # the law labelled with the phase its diagnostics name.
+                for phase_law, functions, extra_grids in _demanded_phase_contexts(
                     transition=transition,
                     regime=regime,
                     period=period,
+                    state_action_space=state_action_space,
                 ):
-                    continue
-                try:
-                    _validate_state_transition_single(
-                        transition=transition,
-                        regime_params=_params_callable_for_state_transition(
-                            regime=regime,
-                            flat_params_for_regime=regime_kernel_params(
-                                flat_params, regime_name=regime_name
+                    try:
+                        _validate_state_transition_single(
+                            transition=phase_law,
+                            regime_params=_params_callable_for_state_transition(
+                                regime=regime,
+                                flat_params_for_regime=regime_kernel_params(
+                                    flat_params, regime_name=regime_name
+                                ),
+                                transition=transition,
                             ),
-                            transition=transition,
-                        ),
-                        state_action_space=state_action_space,
-                        regime_name=regime_name,
-                        age=age,
-                        period=period,
-                        logger=logger,
-                        summary=summary,
-                        memory=memory,
-                        functions=_phase_functions(
-                            regime=regime, phase=transition.phase, period=period
-                        ),
-                        function_params=function_params,
-                        extra_grids=_phase_extra_grids(
-                            regime=regime, phase=transition.phase
-                        ),
-                    )
-                except InvalidStateTransitionProbabilitiesError as error:
-                    if summary is not None:
-                        raise _SerialValidationRequired from error
-                    raise_or_warn(logger=logger, error=error)
+                            state_action_space=state_action_space,
+                            regime_name=regime_name,
+                            age=age,
+                            period=period,
+                            logger=logger,
+                            summary=summary,
+                            memory=memory,
+                            functions=functions,
+                            function_params=function_params,
+                            extra_grids=extra_grids,
+                        )
+                    except InvalidStateTransitionProbabilitiesError as error:
+                        if summary is not None:
+                            raise _SerialValidationRequired from error
+                        raise_or_warn(logger=logger, error=error)
 
 
 def validate_joint_transitions_all_periods(
@@ -1303,6 +1309,9 @@ def validate_joint_transitions_all_periods(
                     regime=regime,
                     params=regime_kernel_params(flat_params, regime_name=regime_name),
                 )
+            )
+            state_action_space = _state_action_space_for_period(
+                regime=regime, base=state_action_space, period=period
             )
             # A carried state has no solve grid axis, so a simulate-phase law
             # reading one is not resolvable on the solution state-action space.
@@ -1814,25 +1823,127 @@ def _joint_weight_law(
     )(*flat_arrays)
 
 
-def _state_transition_unused_in_period(
+def _effective_phases(transition: _StochasticStateTransition) -> tuple[Side, ...]:
+    """The phases whose programs evaluate a state law.
+
+    - an explicitly phased law ⇒ its own phase only
+    - a phase-invariant law ⇒ the solve phase, then the simulate phase
+    """
+    if transition.phase is None:
+        return ("solve", "simulate")
+    return (transition.phase,)
+
+
+def _demanded_phase_contexts(
     *,
     transition: _StochasticStateTransition,
     regime: Regime,
     period: int,
-) -> bool:
-    """Return whether a state transition has no retained edge this period.
+    state_action_space: StateActionSpace,
+) -> tuple[
+    tuple[
+        _StochasticStateTransition,
+        EconFunctionsMapping,
+        Mapping[StateOrActionName, FloatND | IntND],
+    ],
+    ...,
+]:
+    """The law, functions and phase grids of each distinct phase that uses a law.
 
-    A coarse (`target_regime_name is None`) state law applies regardless of
-    the regime-transition graph's own target set — an empty `period_targets`
-    is a fact about *which regime* is reached, not about whether a coarse
-    state law still needs checking. Only a per-target state law can be
-    unused, and only when its specific target isn't retained this period.
+    A phase contributes only when it demands the law this period. A phase whose
+    program and inputs repeat an earlier phase's exactly is evaluated once, under
+    the earlier phase. A phase-invariant law's simulate-only evaluation carries
+    the simulate phase, so its diagnostics say which phase failed.
     """
+    contexts = []
+    consumed: set[_ConsumedContext] = set()
+    for phase in _effective_phases(transition):
+        if _state_transition_unused_in_period(
+            transition=transition, regime=regime, phase=phase, period=period
+        ):
+            continue
+        functions = _phase_functions(regime=regime, phase=phase, period=period)
+        extra_grids = _phase_extra_grids(regime=regime, phase=phase)
+        context = _consumed_context(
+            transition=transition,
+            state_action_space=state_action_space,
+            functions=functions,
+            extra_grids=extra_grids,
+        )
+        if context not in consumed:
+            consumed.add(context)
+            labelled = (
+                replace(transition, phase=phase)
+                if phase == "simulate" and transition.phase is None
+                else transition
+            )
+            contexts.append((labelled, functions, extra_grids))
+    return tuple(contexts)
+
+
+def _consumed_context(
+    *,
+    transition: _StochasticStateTransition,
+    state_action_space: StateActionSpace,
+    functions: EconFunctionsMapping,
+    extra_grids: Mapping[StateOrActionName, FloatND | IntND],
+) -> _ConsumedContext:
+    """Identify what one phase's program feeds a state law at one period.
+
+    Within one regime and period the state-action space, the parameters and the
+    clock are shared by both phases, so two phases evaluate the same program on
+    the same inputs exactly when the law reads the same function objects and the
+    same phase-only grids. The returned key holds the identities of the
+    functions the law reads, directly or through other functions, and the names
+    of the carried grids it or they read.
+    """
+    declared, original_codes, _ = _as_declared_law(transition)
+    inputs = frozenset(
+        (
+            *state_action_space.states,
+            *state_action_space.actions,
+            *extra_grids,
+            *original_codes,
+            *declared.derived_categorical_codes,
+        )
+    )
+    pool = {name: func for name, func in functions.items() if name not in inputs}
+    read = _functions_read(func=declared.func, pool=pool)
+    arguments = frozenset(inspect.signature(declared.func).parameters).union(
+        *(inspect.signature(pool[name]).parameters for name in read)
+    )
+    return (
+        tuple(sorted((name, id(pool[name])) for name in read)),
+        tuple(sorted(name for name in arguments if name in extra_grids)),
+    )
+
+
+def _state_transition_unused_in_period(
+    *,
+    transition: _StochasticStateTransition,
+    regime: Regime,
+    phase: Side,
+    period: int,
+) -> bool:
+    """Return whether a state transition has no edge `phase` demands this period.
+
+    - the simulate phase in a period no simulated subject occupies the regime
+      ⇒ unused, whatever the law's target
+    - a coarse (`target_regime_name is None`) law otherwise ⇒ used; an empty
+      `period_targets` is a fact about *which regime* is reached, not about
+      whether a coarse state law still needs checking
+    - a per-target law ⇒ unused when its target isn't among the targets the
+      phase's own graph reaches this period
+    """
+    owner = regime.simulation if phase == "simulate" else regime.solution
+    if (
+        phase == "simulate"
+        and regime.name not in owner.reachability.active_regimes_by_period[period]
+    ):
+        return True
     if transition.target_regime_name is None:
         return False
-    period_targets = regime.solution.reachability.targets(
-        period=period, source=regime.name
-    )
+    period_targets = owner.reachability.targets(period=period, source=regime.name)
     return transition.target_regime_name not in period_targets
 
 
@@ -1883,6 +1994,7 @@ def _validate_state_transition_single(
             regime_name=regime_name,
             age=age,
             period=period,
+            extra_grids=extra_grids,
         )
         if summary is not None and summary.memory is None
         else None
@@ -2281,13 +2393,16 @@ def _state_probability_binding(
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
     period: int,
+    extra_grids: Mapping[StateOrActionName, FloatND | IntND] = _NO_EXTRA_GRIDS,
 ) -> tuple[_StateProbabilityKey, _BoundInputs] | None:
     """Identify this pure law's exact immutable inputs inside one preflight.
 
     Model numerical functions obey JAX's purity contract. Mutable or opaque
     explicit operands decline reuse; a callable identity alone never suffices.
-    Age and period enter the key whenever consumed. Outcome count is checked
-    separately for every occurrence, including when the numerical inputs repeat.
+    Age, period and every grid the law reads — the period's own state nodes
+    and a carried state's simulate grid included — enter the key whenever
+    consumed. Outcome count is checked separately for every occurrence,
+    including when the numerical inputs repeat.
     """
     arguments: list[tuple[str, _BindingToken]] = []
     bound_inputs: list[Callable[..., FloatND] | _BoundInput] = [transition.func]
@@ -2295,6 +2410,7 @@ def _state_probability_binding(
         **transition.derived_categorical_codes,
         **state_action_space.actions,
         **state_action_space.states,
+        **extra_grids,
     }
     for name in signature_names:
         if name == "period":

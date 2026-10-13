@@ -219,3 +219,15 @@ def test_an_unresolvable_joint_argument_is_refused_in_debug() -> None:
     message = str(excinfo.value)
     assert "unknown_quantity" in message
     assert "working" in message
+
+
+def test_validate_transitions_checks_simulate_phase_on_carried_grids() -> None:
+    """The public check includes a realized law absent from the solve grids."""
+    model = _build_model(
+        simulate_probabilities=_invalid_probabilities_from_carried_state
+    )
+    with pytest.raises(InvalidStateTransitionProbabilitiesError) as preflight:
+        model.validate_transitions(params=_params())
+    with pytest.raises(InvalidStateTransitionProbabilitiesError) as solve:
+        model.solve(params=_params(), log_level="off")
+    assert str(preflight.value) == str(solve.value)

@@ -484,3 +484,13 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
             ages=model.ages,
             logger=logger,
         )
+
+
+def test_validate_transitions_sweeps_every_action_and_matches_solve() -> None:
+    """A law valid at the first action still fails the no-solve public check."""
+    model, params = _build_action_dependent_model()
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as preflight:
+        model.validate_transitions(params=params)
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as solve:
+        model.solve(params=params, log_level="off")
+    assert str(preflight.value) == str(solve.value)

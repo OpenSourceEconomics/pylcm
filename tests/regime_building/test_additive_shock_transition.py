@@ -452,6 +452,14 @@ def test_a_shock_reading_a_source_state_outside_its_conditioners_is_refused() ->
         _model(additive=True, shock_reads_wealth=True)
 
 
+@pytest.mark.parametrize("additive", [False, True])
+def test_validate_transitions_accepts_plain_and_folded_shock_laws(
+    *, additive: bool
+) -> None:
+    """The no-solve preflight accepts both declarations of the same shock law."""
+    assert _model(additive=additive).validate_transitions(params=_params()) is None
+
+
 @dataclass(frozen=True, kw_only=True)
 class _HarmonicLinearSubclass(LinearExpectation):
     """Use a harmonic mean even though the public base class is linear."""
