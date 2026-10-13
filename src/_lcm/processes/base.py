@@ -11,7 +11,7 @@ from abc import abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -133,6 +133,9 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     n_points: int
     """The number of points for the discretization of the process."""
 
+    simulate_draws: Literal["continuous", "nodes"] = "continuous"
+    """Draw from the continuous law, or sample the solve nodes with their weights."""
+
     state_conditioned: StateConditioned | None = field(init=False, default=None)
     """The conditioning declaration, when `sigma` was given as one.
 
@@ -149,7 +152,7 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     """
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"n_points", "state_conditioned"}
+        {"n_points", "state_conditioned", "simulate_draws"}
     )
     """Dataclass field names that are not distribution parameters.
 
@@ -158,6 +161,9 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     """
 
     def __post_init__(self) -> None:
+        if self.simulate_draws not in {"continuous", "nodes"}:
+            msg = "simulate_draws must be 'continuous' or 'nodes'."
+            raise GridInitializationError(msg)
         self._resolve_conditioned_sigma()
 
     def _resolve_conditioned_sigma(self) -> None:

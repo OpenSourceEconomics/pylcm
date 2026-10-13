@@ -37,9 +37,19 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
     supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
     uniform = direct_flow.uniform_process_mutation_specs(repo_root=root)
 
-    assert len(registered) == 406
+    historical = {
+        name: spec
+        for name, spec in registered.items()
+        if not name.startswith("simulation_adapter:initial_physical_")
+    }
+    assert len(historical) == 409
+    assert (
+        _name_digest(historical)
+        == "3c5fdaf1c4a0eb22ad92ac592d4ca84cef0c97a4b94bc525a7f8592d886880a7"
+    )
+    assert len(registered) == 421
     assert _name_digest(registered) == (
-        "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
+        "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
     )
     assert len(supplemental) == 54
     assert _name_digest(supplemental) == (

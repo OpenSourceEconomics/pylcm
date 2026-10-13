@@ -5,7 +5,9 @@ every reachable target into one function of states, actions and params.
 `get_Q_and_F_terminal`, `get_Q_and_F_collective` and the terminal collective
 variant are the specializations the regimes that need them get instead, and
 `get_compute_intermediates` publishes the same chain's intermediates for the
-NaN diagnostics.
+NaN diagnostics. `get_Q_and_F_parts` publishes, from one evaluation of a
+singleton kernel, the flow utility, feasibility, certainty-equivalent
+continuation and action value that kernel returns `Q` and `F` from.
 """
 
 import dataclasses
@@ -14,17 +16,22 @@ import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import cast, no_type_check
+from typing import NamedTuple, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
 from dags import (
     concatenate_functions,
     get_annotations,
+    with_signature,
 )
+from dags.tree import qname_from_tree_path
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.grids import ContinuousGrid, IrregSpacedGrid
+from _lcm.grids.discrete import read_at_codes
 from _lcm.probability import (
+    is_live,
     is_negative,
     is_represented_zero,
     normalized_scaled_weights,
@@ -103,6 +110,42 @@ type Intermediates = tuple[
 # What the utilities-and-feasibility DAG returns at a cell: each felicity, then
 # the feasibility mask (a Python `bool` for a regime without constraints).
 type UtilitiesAndF = tuple[FloatND | IntND | BoolND | bool, ...]
+
+# One raw landing a solve kernel counts: the regime whose grid is read, and the
+# state whose `off_grid="raise"` grid the landing is checked against.
+type LandingCheck = tuple[RegimeName, StateName]
+
+# What the continuation aggregator returns at a cell: `CE` and the active
+# regimes' transition probabilities, then the landing counts when it counts any.
+type ContinuationAggregate = (
+    tuple[FloatND, MappingProxyType[RegimeName, FloatND]]
+    | tuple[FloatND, MappingProxyType[RegimeName, FloatND], IntND]
+)
+
+
+class QAndFParts(NamedTuple):
+    """One evaluation of a singleton action-value kernel, at one cell.
+
+    `Q` is `W(utility=U, CE=CE, **W_params)`, the regime's Koopmans aggregator
+    applied to the other two values. A terminal regime has no continuation, so
+    its `CE` is zero and its `Q` is `U`.
+    """
+
+    U: FloatND
+    """Flow utility, the regime's `utility` target."""
+
+    F: BoolND
+    """Feasibility of the cell."""
+
+    CE: FloatND
+    """Certainty-equivalent continuation, undiscounted: the `CE` argument of `W`."""
+
+    Q: FloatND
+    """Action value."""
+
+    Q_selection: FloatND | None = None
+    """`W_sel(utility=U, CE=CE, **W_sel_params)`, the value the action is
+    selected on, or `None` when the regime's Koopmans aggregator selects."""
 
 
 def _compare_swap_values(
@@ -296,12 +339,14 @@ def get_Q_and_F(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
+    selection_aggregator: EconFunction | None = None,
     certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...] = (),
     continuation_functions: EconFunctionsMapping | None = None,
     gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
         {}
     ),
+    count_raise_landings: bool = False,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -347,6 +392,8 @@ def get_Q_and_F(
             info.
         koopmans_aggregator: The regime's Bellman aggregator, combining
             utility and the certainty equivalent into `Q`.
+        selection_aggregator: The aggregator the action is selected on, or
+            `None` when the Bellman aggregator selects.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None` for the linear expectation.
         co_map_state_names: Tuple of state names co-mapped with the continuation V —
@@ -364,10 +411,14 @@ def get_Q_and_F(
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation spec that target's leaf is read under. A target absent
             from it is read as an ordinary value function.
+        count_raise_landings: Whether the kernel counts the raw landings on
+            every `off_grid="raise"` grid its continuation reads, on the branch
+            each landing is read through. A kernel finding no such grid counts
+            nothing and is the kernel built without the flag.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
-        for a non-terminal period.
+        for a non-terminal period, followed by the landing counts when it counts any.
 
     """
     # In the solve phase the two roles coincide; only simulate passes them apart.
@@ -394,9 +445,17 @@ def get_Q_and_F(
         certainty_equivalent=certainty_equivalent,
         co_map_state_names=co_map_state_names,
         gated_continuations=gated_continuations,
+        count_raise_landings=count_raise_landings,
     )
     _build_W_kwargs = _get_build_W_kwargs(
         functions=functions, koopmans_aggregator=koopmans_aggregator
+    )
+    build_selection_kwargs = (
+        None
+        if selection_aggregator is None
+        else _get_build_W_kwargs(
+            functions=functions, koopmans_aggregator=selection_aggregator
+        )
     )
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
@@ -405,6 +464,12 @@ def get_Q_and_F(
             {"next_regime_to_V_arr", "period", "age"}
             | flat_param_names
             | continuation_arg_names
+            | _build_W_kwargs.arg_names
+            | (
+                frozenset()
+                if build_selection_kwargs is None
+                else build_selection_kwargs.arg_names
+            )
         ),
         exclude=frozenset(),
     )
@@ -414,10 +479,13 @@ def get_Q_and_F(
         compute_CE=compute_CE,
         koopmans_aggregator=koopmans_aggregator,
         build_W_kwargs=_build_W_kwargs,
+        selection_aggregator=selection_aggregator,
+        build_selection_kwargs=build_selection_kwargs,
         arg_names=tuple(arg_names_of_Q_and_F),
         continuation_reads=_continuation_reads(
             deps=continuation_deps, arg_names=continuation_arg_names
         ),
+        landing_checks=cast("_ComputeCE", compute_CE).landing_checks,
     )
 
 
@@ -445,18 +513,53 @@ def _continuation_reads(
     return frozenset(parameter.name for parameter in parameters) | arg_names
 
 
+def has_selection_aggregator(*, Q_and_F: QAndFFunction) -> bool:
+    """Return whether the kernel selects its action on a separate aggregator."""
+    return getattr(Q_and_F, "selection_aggregator", None) is not None
+
+
+def get_Q_and_F_parts(*, Q_and_F: QAndFFunction) -> Callable[..., QAndFParts]:
+    """Return the parts form of a singleton `Q_and_F` kernel.
+
+    The result takes the kernel's own arguments and returns `QAndFParts` from
+    the same evaluation the kernel returns `(Q, F)` from, so its `Q` and `F` are
+    the kernel's.
+
+    Args:
+        Q_and_F: A kernel built by `get_Q_and_F` or `get_Q_and_F_terminal`.
+
+    Returns:
+        The kernel's `parts` method, with the kernel's published signature.
+
+    """
+    kernel = cast("_QAndF | _TerminalQAndF", Q_and_F)
+    return with_signature(
+        kernel.parts,
+        args=list(inspect.signature(kernel).parameters),
+        return_annotation="QAndFParts",
+        enforce=False,
+    )
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _QAndF:
     """State-action value and feasibility of a non-terminal period at one cell."""
 
     U_and_F: Callable[..., UtilitiesAndF]
     """Utility and feasibility at the cell."""
-    compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
+    compute_CE: Callable[..., ContinuationAggregate]
     """The continuation aggregator."""
     koopmans_aggregator: EconFunction
     """The regime's Bellman aggregator `W`."""
     build_W_kwargs: Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]
     """Assembles `W`'s further arguments from the cell."""
+    selection_aggregator: EconFunction | None
+    """The aggregator `W_sel` the action is selected on, or `None` when `W`
+    selects."""
+    build_selection_kwargs: (
+        Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]] | None
+    )
+    """Assembles `W_sel`'s further arguments from the cell."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
     continuation_reads: frozenset[str] | None
@@ -464,6 +567,13 @@ class _QAndF:
 
     A state outside it enters `Q` only through utility, feasibility and `W`, so
     the continuation is constant along that state's axis.
+    """
+    landing_checks: tuple[LandingCheck, ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """The raise-rule landings the kernel counts, in the order of its third output.
+
+    Empty for a kernel that counts none, which then returns `(Q, F)` alone.
     """
 
     def __post_init__(self) -> None:
@@ -491,16 +601,52 @@ class _QAndF:
                 regime params.
 
         Returns:
-            A tuple containing the arrays with state-action values and feasibilities.
+            A tuple containing the arrays with state-action values and
+            feasibilities, followed by the raw landing counts of
+            `landing_checks` when the kernel counts any.
 
         """
+        parts, landing_counts = self._evaluate(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
+        return (parts.Q, parts.F, *landing_counts)
+
+    @no_type_check
+    def parts(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: QAndFArg,
+    ) -> QAndFParts:
+        """Calculate utility, feasibility, continuation and action value at a cell.
+
+        Args:
+            next_regime_to_V_arr: The next period's value function array.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            The flow utility, feasibility, certainty-equivalent continuation and
+            state-action value.
+
+        """
+        return self._evaluate(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )[0]
+
+    @no_type_check
+    def _evaluate(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: QAndFArg,
+    ) -> tuple[QAndFParts, tuple[IntND, ...]]:
+        """Evaluate the cell's parts and the raw landing counts it carries."""
         # F_arr is built here, before and independently of Q (it never reads
         # E_next_V). A value-aware mask cannot be built at this point: it needs
         # the per-stakeholder Q^s, which is why `get_Q_and_F_collective` keeps
         # the state-independent F here and ANDs its value constraints in only
         # after computing Q^s.
         U_arr, F_arr = self.U_and_F(**states_actions_params)
-        CE, _ = self.compute_CE(
+        CE, _, *landing_counts = self.compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
             zero=jnp.zeros_like(U_arr),
             states_actions_params=states_actions_params,
@@ -511,10 +657,27 @@ class _QAndF:
             CE=CE,
             **self.build_W_kwargs(states_actions_params),
         )
+        Q_selection = (
+            None
+            if self.selection_aggregator is None
+            else jnp.asarray(
+                self.selection_aggregator(
+                    utility=U_arr,
+                    CE=CE,
+                    **self.build_selection_kwargs(states_actions_params),
+                )
+            )
+        )
 
         # Handle cases when there is only one state.
-        # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
-        return jnp.asarray(Q_arr), jnp.asarray(F_arr)
+        # In that case, the parts are scalars, but we require arrays as output.
+        return QAndFParts(
+            U=jnp.asarray(U_arr),
+            F=jnp.asarray(F_arr),
+            CE=jnp.asarray(CE),
+            Q=jnp.asarray(Q_arr),
+            Q_selection=Q_selection,
+        ), tuple(landing_counts)
 
 
 def get_compute_intermediates(
@@ -621,7 +784,7 @@ class _ComputeIntermediates:
 
     U_and_F: Callable[..., UtilitiesAndF]
     """Utility and feasibility at the cell."""
-    compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
+    compute_CE: Callable[..., ContinuationAggregate]
     """The continuation aggregator."""
     koopmans_aggregator: EconFunction
     """The regime's Bellman aggregator `W`."""
@@ -718,7 +881,7 @@ class _TerminalQAndF:
     @no_type_check
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
@@ -734,8 +897,36 @@ class _TerminalQAndF:
             mask (F).
 
         """
+        parts = self.parts(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
+        return parts.Q, parts.F
+
+    @no_type_check
+    def parts(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
+        **states_actions_params: QAndFArg,
+    ) -> QAndFParts:
+        """Calculate utility, feasibility, continuation and action value at a cell.
+
+        A terminal period has no continuation: `CE` is zero and `Q` is `U`.
+
+        Args:
+            next_regime_to_V_arr: Unused in the terminal period.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            The flow utility, feasibility, zero continuation and state-action
+            value.
+
+        """
         U_arr, F_arr = self.U_and_F(**states_actions_params)
-        return jnp.asarray(U_arr), jnp.asarray(F_arr)
+        U_arr = jnp.asarray(U_arr)
+        return QAndFParts(
+            U=U_arr, F=jnp.asarray(F_arr), CE=jnp.zeros_like(U_arr), Q=U_arr
+        )
 
 
 def get_Q_and_F_terminal_collective(
@@ -938,6 +1129,11 @@ _EDGE_CONTEXT_ARGS = frozenset({"period", "age"})
 # gate. Declared here rather than beside the edge machinery because both sides
 # of the split need it and the continuation reader is the lower layer.
 EDGE_CHANNELS_ARG = "__edge_channels__"
+
+# The keyword prefix a leg's fallback value reaches its gate under. Declared
+# here for the reason `EDGE_CHANNELS_ARG` is: the continuation reader counts the
+# landings of the fallback a closed gate routes to.
+EDGE_FALLBACK_ARG_PREFIX = "__edge_fallback_"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1235,10 +1431,8 @@ class _SamePeriodReferenceReader:
             # read the declared stakeholder's slice (state axes only remain).
             V_ref = V_ref[..., self.ref.stakeholder_index]
         coordinates = {
-            f"{_REF_STATE_PREFIX}{state}": self.projection_funcs[state](
-                **{arg: kwargs[arg] for arg in self.projection_args[state]}
-            )
-            for state in self.v_interpolation_info.state_names
+            f"{_REF_STATE_PREFIX}{state}": coordinate
+            for state, coordinate in self.coordinates(**kwargs).items()
         }
         return self.interpolator(
             **coordinates,
@@ -1249,6 +1443,16 @@ class _SamePeriodReferenceReader:
             ),
             **{_REF_V_ARR_NAME: V_ref},
         )
+
+    @no_type_check
+    def coordinates(self, **kwargs: ParamsLeaf) -> dict[StateName, FloatND]:
+        """Project the cell onto the reference regime's states, unclipped."""
+        return {
+            state: self.projection_funcs[state](
+                **{arg: kwargs[arg] for arg in self.projection_args[state]}
+            )
+            for state in self.v_interpolation_info.state_names
+        }
 
 
 def _reference_interpolator_param_qnames(
@@ -1352,6 +1556,7 @@ def get_Q_and_F_collective(
     gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
         {}
     ),
+    count_raise_landings: bool = False,
 ) -> QAndFFunction:
     """Non-terminal (Q, F) for a collective regime — per-stakeholder continuation.
 
@@ -1440,11 +1645,14 @@ def get_Q_and_F_collective(
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation spec that target's leaf is read under. A target absent
             from it is read as an ordinary value function.
+        count_raise_landings: Whether the kernel counts raw raise-rule landings,
+            as in `get_Q_and_F`.
 
     Returns:
         A function computing the stacked per-stakeholder state-action values
         (trailing stakeholder axis) and the shared feasibility mask for a
-        non-terminal collective period.
+        non-terminal collective period, followed by the landing counts when it
+        counts any.
 
     """
     # Phase split, mirroring get_Q_and_F: in the solve phase the two roles
@@ -1489,6 +1697,7 @@ def get_Q_and_F_collective(
         co_map_state_names=co_map_state_names,
         n_stakeholders=n_stakeholders,
         gated_continuations=gated_continuations,
+        count_raise_landings=count_raise_landings,
     )
 
     _build_W_kwargs = _get_build_W_kwargs(
@@ -1533,6 +1742,7 @@ def get_Q_and_F_collective(
         build_W_kwargs=_build_W_kwargs,
         value_constraint_machinery=value_constraint_machinery,
         arg_names=tuple(arg_names_of_Q_and_F),
+        landing_checks=cast("_ComputeCE", compute_CE).landing_checks,
     )
 
 
@@ -1542,7 +1752,7 @@ class _CollectiveQAndF:
 
     utilities_and_F: Callable[..., UtilitiesAndF]
     """Every stakeholder's utility and the shared feasibility at the cell."""
-    compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
+    compute_CE: Callable[..., ContinuationAggregate]
     """The continuation aggregator."""
     koopmans_aggregator: EconFunction
     """The regime's Bellman aggregator `W`."""
@@ -1552,6 +1762,13 @@ class _CollectiveQAndF:
     """The value-constraint readers and evaluators."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
+    landing_checks: tuple[LandingCheck, ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """The raise-rule landings the kernel counts, in the order of its third output.
+
+    Empty for a kernel that counts none, which then returns `(Q, F)` alone.
+    """
 
     def __post_init__(self) -> None:
         _publish_signature(
@@ -1577,7 +1794,11 @@ class _CollectiveQAndF:
 
         Returns:
             A tuple of the stacked per-stakeholder state-action value array
-            (trailing stakeholder axis) and the shared feasibility mask.
+            (trailing stakeholder axis) and the shared feasibility mask,
+            followed by the raw landing counts of `landing_checks` when the
+            kernel counts any. The counts are not masked here: the action
+            reduction sums them over the actions this mask keeps, value
+            constraints included.
 
         """
         *stakeholder_utilities, feasibility = self.utilities_and_F(
@@ -1591,7 +1812,7 @@ class _CollectiveQAndF:
         # The mass is stakeholder-independent — the regime transition is — so the
         # accumulator zero carries the cell shape, and the aggregator puts the
         # stakeholder axis back on the value it builds.
-        CE, _ = self.compute_CE(
+        CE, _, *landing_counts = self.compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
             zero=jnp.zeros_like(U_stack[..., 0]),
             states_actions_params=states_actions_params,
@@ -1624,7 +1845,7 @@ class _CollectiveQAndF:
                 states_actions_params=states_actions_params,
             )
 
-        return jnp.asarray(Q_arr), jnp.asarray(F_arr)
+        return (jnp.asarray(Q_arr), jnp.asarray(F_arr), *landing_counts)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1909,7 +2130,9 @@ def _get_pointwise_gated_interpolator(
     target_ages: Float1D,
     co_map_state_names: tuple[StateName, ...],
     draw_resolution: _NodeDrawResolution | None = None,
-) -> Callable[..., FloatND]:
+    landing_counter: Callable[..., IntND] | None = None,
+    fallback_checks: tuple[tuple[str, tuple[tuple[StateName, Float1D], ...]], ...] = (),
+) -> Callable[..., FloatND | tuple[FloatND, IntND]]:
     """Read a gated edge's operand surfaces at the landing point, then gate.
 
     A gated target's continuation leaf is not one value function but a stack of
@@ -1944,10 +2167,18 @@ def _get_pointwise_gated_interpolator(
             so a reference landing on such a state is resolved here through the
             same node resolution the channels interpolate under, rather than
             demanded from a caller that cannot supply it.
+        landing_counter: Counts the landing's raw coordinates outside the
+            target's raise-rule grids, or `None`. Counted only where the gate
+            opens onto the target.
+        fallback_checks: Per leg fallback reader name, the raise-rule grids of
+            the regime it projects onto, as `(state, points)` pairs. Counted
+            only where the gate closes and the leg reads its fallback.
 
     Returns:
         A callable returning the gated continuation, one trailing axis per leg
-        for a collective source and none for a singleton one.
+        for a collective source and none for a singleton one. With a counter or
+        a fallback check, it returns that value and the int32 landing counts:
+        the target's checks first, then each fallback's in the given order.
 
     Raises:
         ValueError: The gate reads a co-mapped state, which arrives with no
@@ -1994,6 +2225,9 @@ def _get_pointwise_gated_interpolator(
     resolved_landing = {
         landing for landing in landing_names.values() if landing in resolved_names
     }
+    landing_counter_args = (
+        set(get_union_of_args([landing_counter])) if landing_counter else set()
+    )
     outer_arg_names = sorted(
         (
             set(interpolator_args)
@@ -2015,6 +2249,7 @@ def _get_pointwise_gated_interpolator(
             }
             | ({"period"} if context_args else set())
             | (set(resolver_arg_names) if resolved_landing else set())
+            | landing_counter_args
         )
         - {EDGE_CHANNELS_ARG}
         - reader_names
@@ -2037,6 +2272,9 @@ def _get_pointwise_gated_interpolator(
         resolver_arg_names=tuple(resolver_arg_names),
         resolved_landing=frozenset(resolved_landing),
         projected_readers=projected_readers,
+        landing_counter=landing_counter,
+        landing_counter_args=tuple(sorted(landing_counter_args)),
+        fallback_checks=fallback_checks,
         arg_names=tuple(outer_arg_names),
     )
 
@@ -2077,6 +2315,18 @@ class _PointwiseGatedInterpolator:
     """Gate references and leg fallbacks, evaluated at the landing."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
+    landing_counter: Callable[..., IntND] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Counts the landing's raw coordinates outside the target's raise grids."""
+    landing_counter_args: tuple[ReferenceName, ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Every argument `landing_counter` reads."""
+    fallback_checks: tuple[tuple[str, tuple[tuple[StateName, Float1D], ...]], ...] = (
+        field(default=(), metadata={"fingerprint_omit_if_default": True})
+    )
+    """Per fallback reader name, the raise-rule grids it projects onto."""
 
     def __post_init__(self) -> None:
         _publish_signature(
@@ -2087,7 +2337,60 @@ class _PointwiseGatedInterpolator:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
+    def __call__(self, **kwargs: ParamsLeaf) -> FloatND | tuple[FloatND, IntND]:
+        combine_kwargs, landing_states, other_values = self._combine_kwargs(kwargs)
+        if self.landing_counter is None and not self.fallback_checks:
+            return self.combine(**combine_kwargs)
+        # The gate decides which branch the source pays, so it also decides
+        # which landing is read: the target's own where it opens, the leg's
+        # projected fallback where it closes. Only that branch is counted.
+        gate = self.combine.gate(**combine_kwargs)
+        counts = []
+        if self.landing_counter is not None:
+            counts.append(
+                jnp.where(
+                    gate,
+                    self.landing_counter(
+                        **{name: kwargs[name] for name in self.landing_counter_args}
+                    ),
+                    0,
+                )
+            )
+        readers = {reader.name: reader for reader in self.projected_readers}
+        for name, grids in self.fallback_checks:
+            reader = readers[name]
+            coordinates = reader.reader.coordinates(
+                **{arg: landing_states[arg] for arg in reader.state_args},
+                **{arg: other_values[arg] for arg in reader.other_args},
+            )
+            counts.append(
+                jnp.where(
+                    gate,
+                    0,
+                    jnp.stack(
+                        [
+                            _count_outside_grid(
+                                values=coordinates[state], points=points
+                            )
+                            for state, points in grids
+                        ]
+                    ),
+                )
+            )
+        return (
+            self.combine.select(gate=gate, **combine_kwargs),
+            jnp.concatenate(counts).astype(jnp.int32),
+        )
+
+    @no_type_check
+    def _combine_kwargs(
+        self, kwargs: Mapping[str, ParamsLeaf]
+    ) -> tuple[
+        dict[str, FloatND],
+        dict[str, ContinuousState | DiscreteState],
+        dict[str, FloatND],
+    ]:
+        """Assemble the gate's arguments and the readers' inputs at the landing."""
         stacked = cast("FloatND", kwargs[self.V_arr_name])
         interpolator_kwargs = {
             name: kwargs[name]
@@ -2127,26 +2430,28 @@ class _PointwiseGatedInterpolator:
         # projection declaring `period` or `age` means the TARGET fold's, the
         # same context it would have been handed inside the fold — never the
         # source's own.
+        landing_states = {
+            arg: cast(
+                "ContinuousState | DiscreteState",
+                landing[self.landing_names[arg]]
+                if self.landing_names[arg] in landing
+                else kwargs[self.landing_names[arg]],
+            )
+            for reader in self.projected_readers
+            for arg in reader.state_args
+        }
+        other_values = {
+            arg: context[arg] if arg in self.context_args else kwargs[arg]
+            for reader in self.projected_readers
+            for arg in reader.other_args
+        }
         projected_values = evaluate_projected_readers(
             readers=self.projected_readers,
-            landing_states={
-                arg: cast(
-                    "ContinuousState | DiscreteState",
-                    landing[self.landing_names[arg]]
-                    if self.landing_names[arg] in landing
-                    else kwargs[self.landing_names[arg]],
-                )
-                for reader in self.projected_readers
-                for arg in reader.state_args
-            },
-            other_values={
-                arg: context[arg] if arg in self.context_args else kwargs[arg]
-                for reader in self.projected_readers
-                for arg in reader.other_args
-            },
+            landing_states=landing_states,
+            other_values=other_values,
         )
-        return self.combine(
-            **{EDGE_CHANNELS_ARG: channels},
+        combine_kwargs = {
+            EDGE_CHANNELS_ARG: channels,
             **projected_values,
             **{
                 name: context[name]
@@ -2158,7 +2463,8 @@ class _PointwiseGatedInterpolator:
                 for name in self.combine_args
                 if name != EDGE_CHANNELS_ARG and name not in self.reader_names
             },
-        )
+        }
+        return combine_kwargs, landing_states, other_values
 
 
 def partition_continuation_targets(
@@ -2209,8 +2515,9 @@ def _get_compute_CE(
         {}
     ),
     flat_param_names: frozenset[QualifiedName] | None = None,
+    count_raise_landings: bool = False,
 ) -> tuple[
-    Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]],
+    Callable[..., ContinuationAggregate],
     tuple[Callable[..., ArrayTree], ...],
     frozenset[str],
 ]:
@@ -2266,14 +2573,31 @@ def _get_compute_CE(
         flat_param_names: The regime's flat parameter names, which an additive
             shock may read besides its conditioners and the draws. `None` skips
             that check.
+        count_raise_landings: Whether to count the raw landings on every
+            `off_grid="raise"` grid the continuation reads. A landing counts
+            where its target regime and its lottery node are live and, through
+            a gated edge, where the gate routes to the grid it is read on.
 
     Returns:
-        Tuple of the closure returning `(CE, active_regime_probs)`, the
-        dependencies whose arguments must enter the calling closure's signature,
-        and the further argument names that signature must carry for weights
-        formed inside the node axes.
+        Tuple of the closure returning `(CE, active_regime_probs)` — followed by
+        the int32 landing counts of its `landing_checks` when there are any —,
+        the dependencies whose arguments must enter the calling closure's
+        signature, and the further argument names that signature must carry for
+        weights formed inside the node axes.
 
     """
+    # The plain expectation reduces each target on its own; every other
+    # certainty equivalent needs the whole joint lottery in one piece, because
+    # its transform has to be applied before any expectation is taken.
+    # `LinearExpectation.aggregate` states the same quantity over the flattened
+    # lottery, but reducing per target is materially cheaper.
+    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
+    # different quantity, and the per-target route would silently discard the
+    # override.
+    reduces_per_target = (
+        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
+    )
+
     continuations = {
         target_regime_name: _build_target_continuation(
             target_regime_name=target_regime_name,
@@ -2284,13 +2608,22 @@ def _get_compute_CE(
             co_map_state_names=co_map_state_names,
             n_stakeholders=n_stakeholders,
             gated_continuation=gated_continuations.get(target_regime_name),
-            restore_original_layout=(
-                certainty_equivalent is None
-                or type(certainty_equivalent) is LinearExpectation
-            ),
+            restore_original_layout=reduces_per_target,
+            allow_shock_average=reduces_per_target,
             allowed_shock_inputs=flat_param_names,
+            count_raise_landings=count_raise_landings,
         )
         for target_regime_name in period_targets
+    }
+    # A stateless target has no landing of its own; through a gated edge, the
+    # fallback a closed gate projects onto still has one.
+    gated_scalar_fallback_checks = {
+        target_regime_name: _fallback_raise_checks(
+            projected_readers=spec.projected_readers
+        )
+        for target_regime_name in scalar_targets
+        if count_raise_landings
+        and (spec := gated_continuations.get(target_regime_name)) is not None
     }
     # A gated target carrying no state has no landing coordinate to interpolate
     # at, but its leaf is still the fold's channel stack rather than a rank-zero
@@ -2310,6 +2643,12 @@ def _get_compute_CE(
             projected_readers=spec.projected_readers,
             target_ages=spec.target_ages,
             co_map_state_names=co_map_state_names,
+            fallback_checks=tuple(
+                (name, grids)
+                for name, _, grids in gated_scalar_fallback_checks.get(
+                    target_regime_name, ()
+                )
+            ),
         )
         for target_regime_name in scalar_targets
         if (spec := gated_continuations.get(target_regime_name)) is not None
@@ -2321,17 +2660,6 @@ def _get_compute_CE(
         for target_regime_name, reader in gated_scalar_readers.items()
     }
 
-    # The plain expectation reduces each target on its own; every other
-    # certainty equivalent needs the whole joint lottery in one piece, because
-    # its transform has to be applied before any expectation is taken.
-    # `LinearExpectation.aggregate` states the same quantity over the flattened
-    # lottery, but reducing per target is materially cheaper.
-    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
-    # different quantity, and the per-target route would silently discard the
-    # override.
-    reduces_per_target = (
-        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
-    )
     ce_flat_param_names = (
         MappingProxyType({})
         if certainty_equivalent is None
@@ -2355,6 +2683,16 @@ def _get_compute_CE(
         ce_flat_param_names=ce_flat_param_names,
         co_map_next_names=co_map_next_names,
         n_stakeholders=n_stakeholders,
+        gated_scalar_landing_checks=tuple(
+            (
+                target_regime_name,
+                tuple(
+                    (regime, state) for _, regime, grids in checks for state, _ in grids
+                ),
+            )
+            for target_regime_name, checks in gated_scalar_fallback_checks.items()
+            if checks
+        ),
     )
 
     deps = (
@@ -2384,7 +2722,9 @@ class _ComputeCE:
     """Reachable targets carrying no state."""
     continuations: MappingProxyType[RegimeName, _TargetContinuation]
     """Per stateful target, everything built once for its continuation."""
-    gated_scalar_readers: MappingProxyType[RegimeName, Callable[..., FloatND]]
+    gated_scalar_readers: MappingProxyType[
+        RegimeName, Callable[..., FloatND | tuple[FloatND, IntND]]
+    ]
     """Per gated stateless target, the reader applying its gate to the channel stack."""
     gated_scalar_arg_names: MappingProxyType[RegimeName, tuple[str, ...]]
     """Per gated stateless target, the reader's arguments besides the value array."""
@@ -2398,6 +2738,26 @@ class _ComputeCE:
     """`next_`-prefixed names of the co-mapped states, which carry no coordinate."""
     n_stakeholders: int | None
     """Number of stakeholders of a collective regime, or `None`."""
+    gated_scalar_landing_checks: tuple[
+        tuple[RegimeName, tuple[LandingCheck, ...]], ...
+    ] = field(default=(), metadata={"fingerprint_omit_if_default": True})
+    """Per gated stateless target with counted fallbacks, those fallbacks' checks."""
+
+    @property
+    def landing_checks(self) -> tuple[LandingCheck, ...]:
+        """Every counted landing, in the order of the third output."""
+        return (
+            *(
+                check
+                for _, checks in self.gated_scalar_landing_checks
+                for check in checks
+            ),
+            *(
+                check
+                for target in self.period_targets
+                for check in self.continuations[target].landing_checks
+            ),
+        )
 
     @no_type_check
     def __call__(
@@ -2406,7 +2766,7 @@ class _ComputeCE:
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         zero: FloatND,
         states_actions_params: QAndFKwargs,
-    ) -> tuple[FloatND, MappingProxyType[RegimeName, FloatND]]:
+    ) -> ContinuationAggregate:
         """Aggregate the continuation lottery into `CE` at one state-action point.
 
         Args:
@@ -2425,7 +2785,8 @@ class _ComputeCE:
 
         Returns:
             Tuple of the aggregated continuation value and the regime transition
-            probabilities of the reachable targets.
+            probabilities of the reachable targets, followed by the int32 counts
+            of `landing_checks` when there are any.
 
         """
         regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
@@ -2489,7 +2850,11 @@ class _ComputeCE:
         # The accumulators are seeded with the stateless targets, which carry no
         # node axis of their own but do carry mass, a sign, and — under a
         # nonlinear certainty equivalent — one lottery node each.
-        gated_scalar_readers = self.gated_scalar_readers
+        gated_scalar_values, landing_counts = self._read_gated_scalar_targets(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            active_regime_probs=active_regime_probs,
+            states_actions_params=states_actions_params,
+        )
         (
             mixture_terms,
             lottery_values,
@@ -2500,21 +2865,7 @@ class _ComputeCE:
         ) = _scalar_target_contribution(
             scalar_targets=self.scalar_targets,
             next_regime_to_V_arr=MappingProxyType(
-                {
-                    **next_regime_to_V_arr,
-                    **{
-                        target_regime_name: reader(
-                            next_V_arr=next_regime_to_V_arr[target_regime_name],
-                            **{
-                                arg: states_actions_params[arg]
-                                for arg in self.gated_scalar_arg_names[
-                                    target_regime_name
-                                ]
-                            },
-                        )
-                        for target_regime_name, reader in gated_scalar_readers.items()
-                    },
-                }
+                {**next_regime_to_V_arr, **gated_scalar_values}
             ),
             active_regime_probs=active_regime_probs,
             as_lottery=not self.reduces_per_target,
@@ -2565,8 +2916,9 @@ class _ComputeCE:
             # sees the same rest-axis lookup as the original categorical grid.
             # Axes already removed by the caller's device co-map are absent.
             for axis, name in reversed(continuation.fixed_value_axes):
-                next_values = jax.lax.dynamic_index_in_dim(
-                    next_values, next_states[name], axis=axis, keepdims=False
+                next_values = read_at_codes(
+                    array=next_values,
+                    positions=(*(slice(None),) * axis, next_states[name]),
                 )
             interpolator_coordinates = {
                 name: val
@@ -2583,6 +2935,21 @@ class _ComputeCE:
                     for name in continuation.integrated_weight_names
                 },
             )
+
+            if continuation.landing_checks:
+                next_V_at_stochastic_states_arr, node_counts = (
+                    next_V_at_stochastic_states_arr
+                )
+                landing_counts.append(
+                    _live_landing_counts(
+                        node_counts=node_counts,
+                        target_probability=active_regime_probs[target_regime_name],
+                        node_weights=continuation.node_weights_at(
+                            marginals=target_marginals[target_regime_name],
+                            next_states=next_states,
+                        ),
+                    )
+                )
 
             # A node the target's own lottery gives zero probability is never
             # realized, so whatever a law names there -- a value off the target's
@@ -2720,7 +3087,40 @@ class _ComputeCE:
                 jnp.nan,
             )
 
-        return CE, active_regime_probs
+        return (CE, active_regime_probs, *_concatenated(landing_counts))
+
+    @no_type_check
+    def _read_gated_scalar_targets(
+        self,
+        *,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        active_regime_probs: MappingProxyType[RegimeName, FloatND],
+        states_actions_params: QAndFKwargs,
+    ) -> tuple[dict[RegimeName, FloatND], list[IntND]]:
+        """Read each gated stateless target, and count its fallbacks' landings.
+
+        A fallback's landing counts only where the target's regime probability
+        is live.
+        """
+        counted = frozenset(target for target, _ in self.gated_scalar_landing_checks)
+        values: dict[RegimeName, FloatND] = {}
+        landing_counts: list[IntND] = []
+        for target_regime_name, reader in self.gated_scalar_readers.items():
+            values[target_regime_name] = reader(
+                next_V_arr=next_regime_to_V_arr[target_regime_name],
+                **{
+                    arg: states_actions_params[arg]
+                    for arg in self.gated_scalar_arg_names[target_regime_name]
+                },
+            )
+            if target_regime_name in counted:
+                values[target_regime_name], counts = values[target_regime_name]
+                landing_counts.append(
+                    jnp.where(
+                        is_live(active_regime_probs[target_regime_name]), counts, 0
+                    )
+                )
+        return values, landing_counts
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -2736,7 +3136,7 @@ class _TargetContinuation:
     joint_lottery_weights: Callable[..., tuple[FloatND, IntND]]
     """Outer product of the lottery marginals, over the node axes."""
 
-    next_V: Callable[..., FloatND]
+    next_V: Callable[..., FloatND | tuple[FloatND, IntND]]
     """Target's value function, product-mapped over its lottery axes.
 
     A declared entry gets no axis: its one value is interpolated on the target's
@@ -2792,6 +3192,40 @@ class _TargetContinuation:
     state onto the referenced regime's grid — it consumes the state as a value, not
     as an index, so the coordinate is supplied even though the axis is gone.
     """
+
+    landing_checks: tuple[LandingCheck, ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Raise-rule landings `next_V` counts beside the value, in output order.
+
+    Empty unless counting was requested and the target, or a fallback its gate
+    projects onto, declares a raise-rule grid; `next_V` then returns the value
+    alone.
+    """
+
+    node_weight_names: tuple[str, ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Marginal weight of each lottery axis, aligned with `lottery_axis_names`.
+
+    Set only beside `landing_checks`: a node counts only where it is live.
+    """
+
+    def node_weights_at(
+        self,
+        *,
+        marginals: Mapping[str, FloatND | IntND],
+        next_states: Mapping[str, FloatND | IntND],
+    ) -> tuple[FloatND, ...]:
+        """Return each lottery axis's weight at its nodes, in axis order."""
+        return tuple(
+            jnp.asarray(marginals[weight_name])[
+                jnp.asarray(next_states[name]).astype(jnp.int32)
+            ]
+            for name, weight_name in zip(
+                self.lottery_axis_names, self.node_weight_names, strict=True
+            )
+        )
 
 
 def draw_dependencies_by_law(
@@ -3116,9 +3550,11 @@ def _build_target_continuation(
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
     n_stakeholders: int | None,
+    allow_shock_average: bool,
     gated_continuation: GatedContinuationSpec | None = None,
     restore_original_layout: bool = False,
     allowed_shock_inputs: frozenset[str] | None = None,
+    count_raise_landings: bool = False,
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
@@ -3146,12 +3582,22 @@ def _build_target_continuation(
         gated_continuation: How to turn this target's stacked operand channels
             into one value per leg at the landing point, or `None` when the
             target's leaf is an ordinary value function.
+        allow_shock_average: Whether the source uses the exact linear expectation,
+            so a transition-local draw may be averaged before the certainty
+            equivalent is applied. Other specifications retain draw enumeration.
         allowed_shock_inputs: Names an additive shock may read besides its
             conditioners, the draws and the time coordinates: the source's
             parameters. `None` skips that check.
+        count_raise_landings: Whether `next_V` also counts, per node, the raw
+            landings outside each `off_grid="raise"` grid it reads.
 
     Returns:
         The target's continuation machinery.
+
+    Raises:
+        ModelInitializationError: Landings are to be counted on a continuation
+            read through an averaged shock or a restored original layout, whose
+            nodes are not the landings.
 
     """
     lottery_variables = tuple(
@@ -3306,6 +3752,9 @@ def _build_target_continuation(
         allowed_inputs=allowed_shock_inputs,
         co_map_state_names=co_map_state_names,
     )
+    # Validate the additive declaration even when its averaging route is ineligible.
+    if not allow_shock_average:
+        shock_average = None
     averaged_inputs: tuple[str, ...] = ()
     integrated_weight_names: tuple[str, ...] = ()
     if shock_average is not None:
@@ -3359,6 +3808,33 @@ def _build_target_continuation(
         )
         next_V_interpolator = draw_resolution.interpolator
 
+    landing_counting = _plan_landing_counting(
+        count_raise_landings=count_raise_landings,
+        target_regime_name=target_regime_name,
+        v_interpolation_info=v_interpolation_info,
+        landing_state_names=tuple(
+            name
+            for name in v_interpolation_info.state_names
+            if f"next_{name}" in bundle and name not in co_map_state_names
+        ),
+        gated_continuation=gated_continuation,
+        counts_nodes_as_landings=(
+            shock_average is None and not original_layouts and not fixed_value_axes
+        ),
+        node_weight_names=tuple(
+            transition_plans[target_regime_name].lotteries[name].weight_name
+            for name in node_variables
+        ),
+        draw_resolution=_DrawResolutionInputs(
+            bundle=bundle,
+            functions=functions,
+            stochastic_names=node_variables,
+            draw_dependent_names=dependent_coordinate_names,
+            node_values=node_values,
+            support_provider_names=support_provider_names,
+        ),
+    )
+
     # The stakeholder axis is put on last, after every coordinate question has
     # been settled, so the slicing wrapper sees the same interpolator a singleton
     # regime gets and the two cannot drift apart.
@@ -3378,14 +3854,18 @@ def _build_target_continuation(
             target_ages=gated_continuation.target_ages,
             co_map_state_names=co_map_state_names,
             draw_resolution=draw_resolution,
+            landing_counter=landing_counting.counter,
+            fallback_checks=landing_counting.fallback_checks,
         )
     elif n_stakeholders is None:
-        mapped_interpolator = next_V_interpolator
+        mapped_interpolator = landing_counting.paired_with(next_V_interpolator)
     else:
-        mapped_interpolator = _get_stakeholder_sliced_interpolator(
-            base_interpolator=next_V_interpolator,
-            V_arr_name=V_arr_name,
-            n_stakeholders=n_stakeholders,
+        mapped_interpolator = landing_counting.paired_with(
+            _get_stakeholder_sliced_interpolator(
+                base_interpolator=next_V_interpolator,
+                V_arr_name=V_arr_name,
+                n_stakeholders=n_stakeholders,
+            )
         )
 
     return _TargetContinuation(
@@ -3413,10 +3893,13 @@ def _build_target_continuation(
         fixed_value_axes=fixed_value_axes,
         original_node_axes=original_axes if reader_does_arithmetic else (),
         original_value_axes=() if reader_does_arithmetic else original_axes,
-        next_V=productmap(
-            func=mapped_interpolator,
-            variables=node_variables,
-            batch_sizes=dict.fromkeys(node_variables, 0),
+        next_V=cast(
+            "Callable[..., FloatND | tuple[FloatND, IntND]]",
+            productmap(
+                func=cast("Callable[..., ArrayTree]", mapped_interpolator),
+                variables=node_variables,
+                batch_sizes=dict.fromkeys(node_variables, 0),
+            ),
         ),
         # Read off the MAPPED interpolator: a gated target's gate carries free
         # parameters of its own, and naming them here is how they reach the
@@ -3435,12 +3918,330 @@ def _build_target_continuation(
             mapped_interpolator=mapped_interpolator,
             co_map_state_names=co_map_state_names,
         ),
+        landing_checks=landing_counting.checks,
+        node_weight_names=landing_counting.node_weight_names,
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _LandingCounting:
+    """What one target's continuation counts, and the checks it reports."""
+
+    counter: Callable[..., IntND] | None = None
+    """Counts the target's own raw raise-rule landings at a node, or `None`."""
+    fallback_checks: tuple[tuple[str, tuple[tuple[StateName, Float1D], ...]], ...] = ()
+    """Per gated fallback reader name, the raise-rule grids it projects onto."""
+    checks: tuple[LandingCheck, ...] = ()
+    """The counted `(regime, state)` landings, the target's first."""
+    node_weight_names: tuple[str, ...] = ()
+    """Marginal weight of each lottery axis, set only beside `checks`."""
+
+    def paired_with(
+        self, read_value: Callable[..., FloatND]
+    ) -> Callable[..., FloatND | tuple[FloatND, IntND]]:
+        """Pair an ungated value reader with the counter, if there is one."""
+        if self.counter is None:
+            return read_value
+        return _with_landing_counts(read_value=read_value, count_landings=self.counter)
+
+
+_NO_LANDING_COUNTING = _LandingCounting()
+
+
+@dataclass(frozen=True, kw_only=True)
+class _DrawResolutionInputs:
+    """What resolving a target's draw-dependent laws on its node axis reads."""
+
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction]
+    """The target's unqualified `next_<state>` transition functions."""
+    functions: EconFunctionsMapping
+    """The function pool the laws resolve against."""
+    stochastic_names: tuple[TransitionFunctionName, ...]
+    """The target's node-axis `next_<state>` names."""
+    draw_dependent_names: tuple[TransitionFunctionName, ...]
+    """Laws resolved on the node axis; empty when none reads a draw."""
+    node_values: MappingProxyType[TransitionFunctionName, Int1D | Float1D]
+    """Per stochastic law, its nodes indexed by the draw's value."""
+    support_provider_names: MappingProxyType[TransitionFunctionName, str]
+    """Per joint lottery, the DAG node supplying its support."""
+
+
+def _plan_landing_counting(
+    *,
+    count_raise_landings: bool,
+    target_regime_name: RegimeName,
+    v_interpolation_info: VInterpolationInfo,
+    landing_state_names: tuple[StateName, ...],
+    gated_continuation: GatedContinuationSpec | None,
+    counts_nodes_as_landings: bool,
+    node_weight_names: tuple[str, ...],
+    draw_resolution: _DrawResolutionInputs,
+) -> _LandingCounting:
+    """Plan the raw raise-rule landings one target's continuation counts.
+
+    A landing whose law reads one of the target's own draws is resolved on the
+    node axis, through the same resolution the value reader uses.
+
+    Raises:
+        ModelInitializationError: A raise-rule grid is read through nodes that
+            are not the raw landings — an averaged shock or a restored original
+            layout.
+
+    """
+    if not count_raise_landings:
+        return _NO_LANDING_COUNTING
+    landing_grids = _raise_rule_grids(
+        v_interpolation_info=v_interpolation_info, state_names=landing_state_names
+    )
+    fallback_checks = (
+        _fallback_raise_checks(projected_readers=gated_continuation.projected_readers)
+        if gated_continuation is not None
+        else ()
+    )
+    if not landing_grids and not fallback_checks:
+        return _NO_LANDING_COUNTING
+    if not counts_nodes_as_landings:
+        msg = (
+            f"The continuation toward regime '{target_regime_name}' reads an "
+            'off_grid="raise" grid through an averaged shock or a factored '
+            "lottery, whose nodes are not the raw landings a solve counts. "
+            'Declare off_grid="extrapolate" or a clipped rule on that grid, '
+            "or declare the law as a plain function."
+        )
+        raise ModelInitializationError(msg)
+    counter: Callable[..., IntND] | None = None
+    if landing_grids:
+        counter = _get_raise_landing_counter(grids=landing_grids)
+        if draw_resolution.draw_dependent_names:
+            counter = _get_interpolator_resolving_draws(
+                next_V_interpolator=counter,
+                bundle=draw_resolution.bundle,
+                functions=draw_resolution.functions,
+                stochastic_names=draw_resolution.stochastic_names,
+                draw_dependent_names=draw_resolution.draw_dependent_names,
+                node_values=draw_resolution.node_values,
+                support_provider_names=draw_resolution.support_provider_names,
+            ).interpolator
+    return _LandingCounting(
+        counter=counter,
+        node_weight_names=node_weight_names,
+        fallback_checks=tuple((name, grids) for name, _, grids in fallback_checks),
+        checks=(
+            *((target_regime_name, state) for state, _ in landing_grids),
+            *(
+                (regime, state)
+                for _, regime, grids in fallback_checks
+                for state, _ in grids
+            ),
+        ),
+    )
+
+
+def _raise_rule_grids(
+    *, v_interpolation_info: VInterpolationInfo, state_names: tuple[StateName, ...]
+) -> tuple[tuple[StateName, ContinuousGrid], ...]:
+    """Return the named continuous states whose grid declares `off_grid="raise"`.
+
+    A stochastic process is read on its own nodes rather than at a raw landing,
+    so its grid carries no landing to count.
+    """
+    return tuple(
+        (state, grid)
+        for state, grid in v_interpolation_info.continuous_states.items()
+        if state in state_names
+        and isinstance(grid, ContinuousGrid)
+        and not isinstance(grid, _ContinuousStochasticProcess)
+        and grid.off_grid == "raise"
+    )
+
+
+def _fallback_raise_checks(
+    *, projected_readers: tuple[ProjectedLandingReader, ...]
+) -> tuple[tuple[str, RegimeName, tuple[tuple[StateName, Float1D], ...]], ...]:
+    """Return each leg fallback's raise-rule grids, keyed by its reader name.
+
+    Raises:
+        ModelInitializationError: A fallback's reference grid takes its points
+            at runtime, which the fallback reads from another regime's params.
+    """
+    checks = []
+    for projected in projected_readers:
+        if not projected.name.startswith(EDGE_FALLBACK_ARG_PREFIX):
+            continue
+        reader = cast("_SamePeriodReferenceReader", projected.reader)
+        regime = reader.ref.regime
+        grids = _raise_rule_grids(
+            v_interpolation_info=reader.v_interpolation_info,
+            state_names=reader.v_interpolation_info.state_names,
+        )
+        runtime = [
+            state
+            for state, grid in grids
+            if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime
+        ]
+        if runtime:
+            msg = (
+                f"A gated edge falls back onto regime '{regime}', whose states "
+                f'{runtime} declare off_grid="raise" on grid points supplied '
+                "at runtime. A solve cannot count a projected fallback against "
+                "runtime points; fix the points or declare another off_grid rule."
+            )
+            raise ModelInitializationError(msg)
+        if grids:
+            checks.append(
+                (
+                    projected.name,
+                    regime,
+                    tuple((state, grid.to_jax()) for state, grid in grids),
+                )
+            )
+    return tuple(checks)
+
+
+def _count_outside_grid(*, values: FloatND, points: Float1D) -> IntND:
+    """Count raw values outside the grid's closed endpoints, NaN included."""
+    inside = (values >= points[0]) & (values <= points[-1])
+    return jnp.sum(~inside, dtype=jnp.int32)
+
+
+def _get_raise_landing_counter(
+    *, grids: tuple[tuple[StateName, ContinuousGrid], ...]
+) -> _RaiseLandingCounter:
+    """Build the per-node counter of one target's raw raise-rule landings."""
+    points_params = tuple(
+        qname_from_tree_path((state, "points"))
+        if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime
+        else None
+        for state, grid in grids
+    )
+    return _RaiseLandingCounter(
+        states=tuple(state for state, _ in grids),
+        points=tuple(
+            None if param is not None else grid.to_jax()
+            for (_, grid), param in zip(grids, points_params, strict=True)
+        ),
+        points_params=points_params,
+        arg_names=(
+            *(f"next_{state}" for state, _ in grids),
+            *(param for param in points_params if param is not None),
+        ),
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _RaiseLandingCounter:
+    """Count one node's raw landings outside each raise-rule grid."""
+
+    states: tuple[StateName, ...]
+    """The checked states, in output order."""
+    points: tuple[Float1D | None, ...]
+    """Each state's grid points, or `None` where they arrive at runtime."""
+    points_params: tuple[str | None, ...]
+    """Each state's runtime points argument, or `None` for fixed points."""
+    arg_names: tuple[ReferenceName, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="IntND",
+            name="count_raise_landings",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: EconFunctionArg) -> IntND:
+        return jnp.stack(
+            [
+                _count_outside_grid(
+                    values=kwargs[f"next_{state}"],
+                    points=kwargs[param] if param is not None else points,
+                )
+                for state, points, param in zip(
+                    self.states, self.points, self.points_params, strict=True
+                )
+            ]
+        )
+
+
+def _with_landing_counts(
+    *, read_value: Callable[..., FloatND], count_landings: Callable[..., IntND]
+) -> _WithLandingCounts:
+    """Pair a target's value reader with the counter of its raw landings."""
+    value_args = tuple(get_union_of_args([read_value]))
+    count_args = tuple(get_union_of_args([count_landings]))
+    return _WithLandingCounts(
+        read_value=read_value,
+        value_args=value_args,
+        count_landings=count_landings,
+        count_args=count_args,
+        arg_names=tuple(dict.fromkeys((*value_args, *count_args))),
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _WithLandingCounts:
+    """Read a target's value at one node and count the node's raw landings."""
+
+    read_value: Callable[..., FloatND]
+    """The target's value reader."""
+    value_args: tuple[ReferenceName, ...]
+    """Every argument `read_value` reads."""
+    count_landings: Callable[..., IntND]
+    """Counts the node's landings outside the target's raise-rule grids."""
+    count_args: tuple[ReferenceName, ...]
+    """Every argument `count_landings` reads."""
+    arg_names: tuple[ReferenceName, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation=inspect.Signature.empty,
+            name="next_V_with_landing_counts",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: EconFunctionArg) -> tuple[FloatND, IntND]:
+        return (
+            self.read_value(**{name: kwargs[name] for name in self.value_args}),
+            self.count_landings(**{name: kwargs[name] for name in self.count_args}),
+        )
+
+
+def _concatenated(landing_counts: list[IntND]) -> tuple[IntND, ...]:
+    """Concatenate the counted landings into one output, or none without any."""
+    return (jnp.concatenate(landing_counts),) if landing_counts else ()
+
+
+def _live_landing_counts(
+    *,
+    node_counts: IntND,
+    target_probability: FloatND,
+    node_weights: tuple[FloatND, ...],
+) -> IntND:
+    """Sum one target's per-node landing counts over its live nodes.
+
+    `node_counts` carries one leading axis per lottery, in the order of
+    `node_weights`, and the checks last. A node counts only where its target
+    regime and every lottery's weight at it are live.
+    """
+    live = is_live(target_probability)
+    for axis, weights in enumerate(node_weights):
+        shape = [1] * len(node_weights)
+        shape[axis] = -1
+        live = live & is_live(weights).reshape(shape)
+    return jnp.sum(
+        jnp.where(live[..., None], node_counts, 0),
+        axis=tuple(range(len(node_weights))),
+        dtype=jnp.int32,
     )
 
 
 def _co_mapped_landing_names(
     *,
-    mapped_interpolator: Callable[..., FloatND],
+    mapped_interpolator: Callable[..., FloatND | tuple[FloatND, IntND]],
     co_map_state_names: tuple[StateName, ...],
 ) -> frozenset[TransitionFunctionName]:
     """Return the co-mapped landing coordinates this continuation still names.

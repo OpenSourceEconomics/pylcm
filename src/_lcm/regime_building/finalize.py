@@ -26,6 +26,11 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import Condition
 from _lcm.egm.nbegm import PieceSet
 from _lcm.grids import DiscreteGrid
+from _lcm.regime_building.value_adapter import (
+    AdaptableEntry,
+    adapt_entry,
+    collect_value_grids,
+)
 from _lcm.regime_law import RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
 from _lcm.user_regime_validation import (
@@ -41,9 +46,10 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
+from lcm.regime import ConstraintEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.transition import _AgeSpecialized
-from lcm.typing import FloatND, ReferenceName, UserFunction, ValueND
+from lcm.typing import FloatND, ReferenceName, StateName, UserFunction, ValueND
 
 # A user `Regime` after model-build finalization. Runtime-equivalent to
 # `lcm.regime.Regime`; internal signatures use this alias to mark values
@@ -104,6 +110,9 @@ def finalize_regimes(
         if regime.stakeholders is not None
         for stakeholder in regime.stakeholders
     )
+    value_grids = collect_value_grids(
+        regimes=user_regimes, laws=laws, derived_categoricals=derived_categoricals
+    )
     result: dict[RegimeName, FinalizedUserRegime] = {}
     for regime_name, user_regime in user_regimes.items():
         merged = _merge_derived_categoricals(
@@ -140,7 +149,28 @@ def finalize_regimes(
         # them straight into `functions` would put the decomposition where the
         # declaration was. The write-back goes by provenance instead.
         finalized = user_regime.with_engine_functions(
-            engine_functions=MappingProxyType(functions),
+            engine_functions=cast(
+                "Mapping[FunctionName, UserFunction | Phased | None]",
+                _adapt_slot(
+                    slot=functions, value_grids=value_grids, encoded=frozenset(merged)
+                ),
+            ),
+            state_transitions=cast(
+                "Mapping[StateName, StateTransitionEntry]",
+                _adapt_slot(
+                    slot=user_regime.state_transitions,
+                    value_grids=value_grids,
+                    encoded=frozenset(user_regime.state_transitions),
+                ),
+            ),
+            constraints=cast(
+                "Mapping[FunctionName, ConstraintEntry]",
+                _adapt_slot(
+                    slot=user_regime.constraints,
+                    value_grids=value_grids,
+                    encoded=frozenset(),
+                ),
+            ),
             derived_categoricals=merged,
             koopmans_aggregator=regime_koopmans_aggregator,
             certainty_equivalent=regime_certainty_equivalent,
@@ -157,6 +187,25 @@ def finalize_regimes(
         finalized._validate_finalized_structure(regime_name=regime_name)  # noqa: SLF001
         result[regime_name] = finalized
     return MappingProxyType(result)
+
+
+def _adapt_slot(
+    *,
+    slot: Mapping[str, AdaptableEntry],
+    value_grids: Mapping[str, DiscreteGrid],
+    encoded: frozenset[str],
+) -> MappingProxyType[str, AdaptableEntry]:
+    """Adapt one regime slot; entries named in `encoded` return their grid's code."""
+    return MappingProxyType(
+        {
+            name: adapt_entry(
+                entry=entry,
+                value_grids=value_grids,
+                encode=value_grids.get(name) if name in encoded else None,
+            )
+            for name, entry in slot.items()
+        }
+    )
 
 
 def _compose_case_piece_outputs(

@@ -64,12 +64,14 @@ class _ClosureKwargs(TypedDict):
     specs: Mapping[RegimeName, PhasedRegimeSpec]
     user_regimes: Mapping[RegimeName, Regime]
     laws: RegimeLaws
-    broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]]
+    candidates: Mapping[RegimeName, frozenset[StateOrActionName]]
     koopmans_aggregator: UserFunction
     kept: Mapping[RegimeName, frozenset[StateOrActionName]]
     all_regime_names: frozenset[RegimeName]
     ages: None
     active_periods_by_regime: None
+    visited_periods_by_regime: None
+    targets_by_phase: None
 
 
 _IMMUTABLE = (MappingProxyType, tuple, frozenset)
@@ -94,12 +96,14 @@ def _regime_cases(model: Model) -> dict[str, Callable[[], Sized]]:
         "specs": specs,
         "user_regimes": model.user_regimes,
         "laws": laws,
-        "broadcast_variables": unkept,
+        "candidates": unkept,
         "koopmans_aggregator": lambda: 0.0,
         "kept": unkept,
         "all_regime_names": frozenset(model.user_regimes),
         "ages": None,
         "active_periods_by_regime": None,
+        "visited_periods_by_regime": None,
+        "targets_by_phase": None,
     }
     return {
         "valuation_roots": lambda: _valuation_roots(

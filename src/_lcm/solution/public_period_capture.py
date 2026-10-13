@@ -28,6 +28,7 @@ from _lcm.persistence.period import read_period_archive, write_period_archive
 from _lcm.solution.period_capture import PeriodKernelKwargs, _period_layouts
 from _lcm.time import age_at
 from _lcm.typing import DataclassInstance, JSONValue
+from _lcm.utils.logging import get_run_policy
 from lcm.period_capture import PeriodCapture, PeriodCaptureRecord
 
 _GRID_SEARCH_ROUTE = "_lcm.solution.grid_search._GridSearchPeriodKernel"
@@ -220,6 +221,7 @@ def capture_public_entry(
         kernel_kwargs=kernel_kwargs,
         compiled_cores=compiled_cores,
     )
+    call_policy = get_run_policy(kernel_kwargs["logger"])
     metadata = {
         "identity": context.identity,
         "regime": kernel_kwargs["regime_name"],
@@ -232,6 +234,10 @@ def capture_public_entry(
         "admission": plain_metadata(admission),
         "optimized_hlo": optimized_hlo_records(compiled_cores=compiled_cores),
         "retain_replay": kernel_kwargs["retain_replay"],
+        "call_policy": {
+            "log_level": call_policy["log_level"],
+            "runtime_checks": call_policy["runtime_checks"],
+        },
     }
     arrays = {
         f"{channel}/{name}": np.asarray(array)

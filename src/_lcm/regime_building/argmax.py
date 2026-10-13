@@ -47,16 +47,11 @@ def argmax_and_max(
     elif isinstance(axis, int):
         axis = (axis,)
 
-    # Handle scalar or empty axis case (no actions to maximize over)
     if a.ndim == 0 or len(axis) == 0:
-        # When there are no dimensions to reduce over, return:
-        # - index 0 (trivial argmax since there's only one element)
-        # - the array itself (already the maximum)
-        return jnp.array(0, dtype=jnp.int32), a
+        return _argmax_and_max_of_one_candidate(a=a, where=where, initial=initial)
 
-    if a.ndim != 0:
-        a = _move_axes_to_back(a=a, axes=axis)
-        a = _flatten_last_n_axes(a=a, n=len(axis))
+    a = _move_axes_to_back(a=a, axes=axis)
+    a = _flatten_last_n_axes(a=a, n=len(axis))
 
     if where is not None and where.ndim != 0:
         where = _move_axes_to_back(a=where, axes=axis)
@@ -85,6 +80,57 @@ def argmax_and_max(
     _argmax = jnp.where(any_nan | (_argmax == NO_ID), 0, _argmax)
 
     return _argmax, _max
+
+
+def argmax_and_readout(
+    *, selection: FloatND, readout: FloatND, where: BoolND
+) -> tuple[IntND, FloatND]:
+    """Select the first feasible maximizer of `selection` and read `readout` there.
+
+    Both arrays share one shape and are reduced over all axes. The index is the
+    one `argmax_and_max` returns for `selection`. The value is `readout` at that
+    index, except:
+    - no element is feasible ⇒ `-inf`;
+    - a feasible `selection` element is NaN ⇒ NaN.
+
+    Args:
+        selection: The values the element is selected on.
+        readout: The values published at the selected element.
+        where: Feasibility of each element.
+
+    Returns:
+        The flat index of the selected element and the readout there.
+
+    """
+    index, selected = argmax_and_max(a=selection, where=where, initial=-jnp.inf)
+    value = jnp.where(jnp.any(where), jnp.ravel(readout)[index], -jnp.inf)
+    return index, jnp.where(jnp.isnan(selected), jnp.nan, value)
+
+
+def _argmax_and_max_of_one_candidate(
+    *, a: FloatND | IntND, where: BoolND | None, initial: float | None
+) -> tuple[IntND, FloatND | IntND]:
+    """Return the index and value of each cell of `a` when nothing is reduced.
+
+    Every cell has one candidate, its own value, at index zero. The value is the
+    larger of the candidate and `initial` where `where` admits the candidate, and
+    `initial` elsewhere; without `initial` the dtype's lowest value stands in. A
+    feasible NaN stays NaN, and the derivative splits a tie as `jnp.max` does. No
+    reduction is involved, so a candidate above `initial` keeps its exact bits.
+    """
+    lowest = (
+        -jnp.inf if jnp.issubdtype(a.dtype, jnp.floating) else jnp.iinfo(a.dtype).min
+    )
+    floor = jnp.asarray(lowest if initial is None else initial, dtype=a.dtype)
+    admitted = (
+        jnp.ones(a.shape, dtype=bool)
+        if where is None
+        else jnp.broadcast_to(where, a.shape)
+    )
+    return (
+        jnp.zeros(a.shape, dtype=jnp.int32),
+        jnp.where(admitted, jnp.maximum(a, floor), floor),
+    )
 
 
 def max_and_smallest_id(

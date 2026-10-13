@@ -423,6 +423,7 @@ def _policy_on_the_grid(
         regime_name="alive",
         states=states,
     )
+    assert lookup.actions is not None
     return np.asarray(lookup.actions["consumption"]).reshape(grids[0].shape)
 
 
@@ -776,6 +777,7 @@ def test_certain_three_quarters_of_max_beats_a_lottery_worth_half_of_it(
             "landing": jnp.zeros(2, dtype=jnp.int32),
         },
     )
+    assert lookup.actions is not None
     np.testing.assert_array_equal(
         np.asarray(lookup.actions["choice"]), np.ones(2, dtype=np.int32)
     )
@@ -918,6 +920,7 @@ def test_certain_three_quarters_of_max_beats_a_half_weighted_near_max_target(
             "landing": jnp.zeros(2, dtype=jnp.int32),
         },
     )
+    assert lookup.actions is not None
     np.testing.assert_array_equal(
         np.asarray(lookup.actions["choice"]), np.ones(2, dtype=np.int32)
     )

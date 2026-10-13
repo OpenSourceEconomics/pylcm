@@ -16,10 +16,17 @@ phase slice. A random state — a process or a Markov state — is also needed w
 its next-period draw is read, since the draw is taken from the state, and so is
 every input of the Markov law the draw is taken from.
 
-`root_functions` is the single definition of those root computations. The
-pruning walk here and the variable-usage check in `_lcm.model_processing`
-both take their roots from it, so the two cannot disagree about what counts
-as a read.
+`compute_kept_variables` is that fixed point, and `root_functions` is the
+single definition of its root computations. The pruning walk here runs it over
+the broadcast variables, and the variable-usage check in `_lcm.model_processing`
+over the variables a regime does not read itself. Both count a state as used
+where it is read, and where the regime hands it to a reachable target that keeps
+it. They differ in two ways. Pruning takes every candidate target of a regime's
+transition as reachable and lets any kept name of the target count, where the
+usage check takes the targets the model graph reaches in the law's own phase and
+counts only a target that keeps the name as a state. And the usage check also
+counts, within the regime, every law of motion that is not a `fixed_transition`
+identity.
 """
 
 import inspect
@@ -249,43 +256,16 @@ def prune_broadcast_variables(
         Tuple of the pruned regimes and, per regime, the pruned names.
 
     """
-    specs = {
-        regime_name: normalize_regime_phases(user_regime, law=laws[regime_name])
-        for regime_name, user_regime in user_regimes.items()
-    }
     all_regime_names = frozenset(user_regimes)
-
-    declared_kept = {
-        regime_name: frozenset(
-            (set(user_regime.states) | set(user_regime.actions))
-            - broadcast_variables[regime_name]
-        )
-        for regime_name, user_regime in user_regimes.items()
-    }
-
-    kept = _joint_phase_closure(
-        specs=specs,
+    kept = compute_kept_variables(
         user_regimes=user_regimes,
         laws=laws,
-        broadcast_variables=broadcast_variables,
+        candidates=broadcast_variables,
         koopmans_aggregator=koopmans_aggregator,
-        kept=declared_kept,
-        all_regime_names=all_regime_names,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
     )
-
-    reachable_targets = {
-        regime_name: frozenset(
-            target
-            for phase_name in ("solution", "simulation")
-            for target in candidate_targets_from_transition(
-                transition=getattr(spec, phase_name).regime_transition,
-                all_regime_names=all_regime_names,
-            )
-        )
-        for regime_name, spec in specs.items()
-    }
+    reachable_targets = _reachable_targets(user_regimes=user_regimes, laws=laws)
 
     pruned_regimes: dict[RegimeName, UserRegime] = {}
     pruned_variables: dict[RegimeName, frozenset[StateOrActionName]] = {}
@@ -324,6 +304,117 @@ def prune_broadcast_variables(
         )
 
     return MappingProxyType(pruned_regimes), MappingProxyType(pruned_variables)
+
+
+def compute_kept_variables(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
+    candidates: Mapping[RegimeName, frozenset[StateOrActionName]],
+    koopmans_aggregator: UserFunction | None,
+    ages: TimeAxis | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]]
+    | None = None,
+) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
+    """Close each regime's kept states and actions under use.
+
+    Every declared variable that is not a candidate is kept. A candidate is kept
+    in a regime when a root computation of either phase slice transitively reads
+    it there, or when a law of motion toward a reachable target that keeps the
+    law's state reads it: the target's value has an axis for the state, so the
+    regime has to hand the value over. A random state whose next-period draw is
+    read is kept too, and so is a state a reachable process is conditioned on.
+    The result is the least fixed point across regimes and phase slices, so
+    hand-overs chain: a regime that keeps a state only to hand it on is itself a
+    target that keeps it.
+
+    Args:
+        user_regimes: Mapping of regime names to `Regime` instances.
+        laws: Each regime's law, lowered to the demanded periods, by regime name.
+        candidates: Per regime, the state and action names whose use is in
+            question. A regime missing from the mapping has none.
+        koopmans_aggregator: The model-level Bellman aggregator, used as a root
+            in every non-terminal regime that declares none of its own. `None`
+            leaves it out, for regimes that already carry their own.
+        ages: The model's time axis, used to resolve `AgeSpecializedFunction`
+            markers at a representative age. `None` skips resolution.
+        active_periods_by_regime: The per-regime coverage, whose first period
+            is the representative one. `None` skips resolution.
+        visited_periods_by_regime: Per regime, the periods a subject can be in
+            it. The simulation slice is resolved at the first of them, since it
+            runs only where subjects are; a regime without any falls back to its
+            coverage. `None` resolves both slices on the coverage.
+        targets_by_phase: Per phase slice and regime, the targets the model
+            graph reaches from it at the demanded periods. A law of motion of
+            that slice is a use only toward one of them that keeps the law's
+            output as a state; a same-named action of the target does not count.
+            `None` takes every candidate target of the lowered regime transition,
+            which for a callable law is every regime, and lets any kept name of
+            the target count.
+
+    Returns:
+        Per regime, the kept state and action names: every non-candidate
+        declaration plus the candidates in use.
+
+    """
+    specs = {
+        regime_name: normalize_regime_phases(user_regime, law=laws[regime_name])
+        for regime_name, user_regime in user_regimes.items()
+    }
+    candidates_by_regime = {
+        regime_name: candidates.get(regime_name, frozenset())
+        for regime_name in user_regimes
+    }
+    declared_kept = {
+        regime_name: frozenset(
+            (set(user_regime.states) | set(user_regime.actions))
+            - candidates_by_regime[regime_name]
+        )
+        for regime_name, user_regime in user_regimes.items()
+    }
+    return _joint_phase_closure(
+        specs=specs,
+        user_regimes=user_regimes,
+        laws=laws,
+        candidates=candidates_by_regime,
+        koopmans_aggregator=koopmans_aggregator,
+        kept=declared_kept,
+        all_regime_names=frozenset(user_regimes),
+        ages=ages,
+        active_periods_by_regime=active_periods_by_regime,
+        visited_periods_by_regime=visited_periods_by_regime,
+        targets_by_phase=targets_by_phase,
+    )
+
+
+def _reachable_targets(
+    *, user_regimes: Mapping[RegimeName, UserRegime], laws: RegimeLaws
+) -> MappingProxyType[RegimeName, frozenset[RegimeName]]:
+    """Collect each regime's candidate targets, in either phase slice.
+
+    The candidates are read off each phase slice's lowered regime transition.
+    A per-target mapping or a `StochasticTransition` with targets names them;
+    any other callable names every regime.
+    """
+    all_regime_names = frozenset(user_regimes)
+    return MappingProxyType(
+        {
+            regime_name: frozenset(
+                target
+                for phase_name in ("solution", "simulation")
+                for target in candidate_targets_from_transition(
+                    transition=getattr(
+                        normalize_regime_phases(user_regime, law=laws[regime_name]),
+                        phase_name,
+                    ).regime_transition,
+                    all_regime_names=all_regime_names,
+                )
+            )
+            for regime_name, user_regime in user_regimes.items()
+        }
+    )
 
 
 def split_transition_only_folds(
@@ -370,7 +461,6 @@ def split_transition_only_folds(
             a target folds and reads within its period.
 
     """
-    all_regime_names = frozenset(user_regimes)
     specs = {
         name: normalize_regime_phases(regime, law=laws[name])
         for name, regime in user_regimes.items()
@@ -383,18 +473,7 @@ def split_transition_only_folds(
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
     )
-    targets_by_source = {
-        name: frozenset(
-            target
-            for phase_name in ("solution", "simulation")
-            for target in candidate_targets_from_transition(
-                transition=getattr(spec, phase_name).regime_transition,
-                all_regime_names=all_regime_names,
-            )
-        )
-        & all_regime_names
-        for name, spec in specs.items()
-    }
+    targets_by_source = _reachable_targets(user_regimes=user_regimes, laws=laws)
     folded_by_regime = {
         name: {
             state: grid
@@ -471,6 +550,8 @@ class _NamesRead:
     The roots are `root_functions`' plus the laws of motion toward the given
     candidate targets, so a name in the result is read within the regime's
     period or by a law it hands to one of those targets.
+
+    Every declared state counts as kept by its regime.
     """
 
     specs: Mapping[RegimeName, PhasedRegimeSpec]
@@ -540,11 +621,11 @@ def root_functions(
     slots mentions them and a walk over one regime in isolation cannot see the
     read.
 
-    Laws of motion are deliberately absent: the two consumers ask different
-    questions of them. The pruning walk roots a law toward a target that keeps
-    the state, because the value has to be handed over; the usage check roots
-    every law that is not an identity, because handing a state to itself is
-    not a use of it. Each consumer adds its own law roots on top of these.
+    Laws of motion are deliberately absent. `compute_kept_variables` roots a
+    law toward a reachable target that keeps the state, because the value has
+    to be handed over. The usage check also roots, within the regime, every
+    law that is not a `fixed_transition` identity, and passes the variables
+    still unread to `compute_kept_variables`.
 
     Args:
         regime_name: Name of the regime whose roots are collected.
@@ -611,6 +692,9 @@ def _valuation_roots(
         aggregator = regime.get_koopmans_aggregator(phase=phase) or koopmans_aggregator
         if aggregator is not None:
             roots["__koopmans_aggregator"] = aggregator
+        selection = regime.get_selection_aggregator(phase=phase)
+        if selection is not None:
+            roots["__selection_aggregator"] = selection
     return MappingProxyType(roots)
 
 
@@ -710,12 +794,15 @@ def _joint_phase_closure(
     specs: Mapping[RegimeName, PhasedRegimeSpec],
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
-    broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
-    koopmans_aggregator: UserFunction,
+    candidates: Mapping[RegimeName, frozenset[StateOrActionName]],
+    koopmans_aggregator: UserFunction | None,
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     all_regime_names: frozenset[RegimeName],
     ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]]
+    | None,
     phase_order: tuple[PhaseName, ...] = ("solution", "simulation"),
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to the least fixed point of both phase operators.
@@ -739,13 +826,15 @@ def _joint_phase_closure(
                 specs=specs,
                 user_regimes=user_regimes,
                 laws=laws,
-                broadcast_variables=broadcast_variables,
+                candidates=candidates,
                 koopmans_aggregator=koopmans_aggregator,
                 kept=grown,
                 phase_name=phase_name,
                 all_regime_names=all_regime_names,
                 ages=ages,
                 active_periods_by_regime=active_periods_by_regime,
+                visited_periods_by_regime=visited_periods_by_regime,
+                targets_by_phase=targets_by_phase,
             )
         if grown == before:
             return grown
@@ -756,20 +845,23 @@ def _phase_fixed_point(
     specs: Mapping[RegimeName, PhasedRegimeSpec],
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
-    broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
-    koopmans_aggregator: UserFunction,
+    candidates: Mapping[RegimeName, frozenset[StateOrActionName]],
+    koopmans_aggregator: UserFunction | None,
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     phase_name: PhaseName,
     all_regime_names: frozenset[RegimeName],
     ages: TimeAxis | None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]]
+    | None,
 ) -> MappingProxyType[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to this phase slice's least fixed point.
 
     Per iteration, each regime's needed-set is the DAG ancestry of its root
     computations plus the laws of motion toward candidate targets that
-    currently keep the law's state; a broadcast variable joins the kept-set
-    when needed. Monotone in the kept-sets, so iteration terminates. The
+    currently keep the law's state; a candidate joins the kept-set when
+    needed. Monotone in the kept-sets, so iteration terminates. The
     input mapping is left untouched; the grown kept-sets are returned.
     """
     candidates_by_source = {
@@ -779,15 +871,28 @@ def _phase_fixed_point(
                 all_regime_names=all_regime_names,
             )
         )
+        & (
+            all_regime_names
+            if targets_by_phase is None
+            else targets_by_phase[phase_name].get(regime_name, frozenset())
+        )
         for regime_name, spec in specs.items()
     }
 
     grown = dict(kept)
     while True:
         changed = False
+        handed_to = (
+            grown
+            if targets_by_phase is None
+            else {
+                name: names & frozenset(user_regimes[name].states)
+                for name, names in grown.items()
+            }
+        )
         for regime_name, user_regime in user_regimes.items():
-            candidates = broadcast_variables[regime_name] - grown[regime_name]
-            if not candidates:
+            open_candidates = candidates[regime_name] - grown[regime_name]
+            if not open_candidates:
                 continue
             phase_slice = getattr(specs[regime_name], phase_name)
             needed = _needed_names(
@@ -798,28 +903,50 @@ def _phase_fixed_point(
                 phase_name=phase_name,
                 koopmans_aggregator=koopmans_aggregator,
                 candidate_targets=candidates_by_source[regime_name],
-                kept=grown,
+                kept=handed_to,
                 ages=ages,
-                active_periods=(
-                    None
-                    if active_periods_by_regime is None
-                    else active_periods_by_regime.get(regime_name, ())
+                active_periods=_representative_periods(
+                    regime_name=regime_name,
+                    phase_name=phase_name,
+                    active_periods_by_regime=active_periods_by_regime,
+                    visited_periods_by_regime=visited_periods_by_regime,
                 ),
             )
             needed |= _state_conditioned_names(
                 user_regime=user_regime,
-                reachable_targets=candidates_by_source[regime_name] & all_regime_names,
+                reachable_targets=candidates_by_source[regime_name],
                 user_regimes=user_regimes,
-                candidates=broadcast_variables[regime_name],
+                candidates=candidates[regime_name],
                 grown_here=grown[regime_name],
             )
             needed |= states_read_through_their_draw(regime=user_regime, reads=needed)
-            newly_kept = candidates & needed
+            newly_kept = open_candidates & needed
             if newly_kept:
                 grown[regime_name] = grown[regime_name] | newly_kept
                 changed = True
         if not changed:
             return MappingProxyType(grown)
+
+
+def _representative_periods(
+    *,
+    regime_name: RegimeName,
+    phase_name: PhaseName,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+) -> tuple[int, ...] | None:
+    """Return the periods whose first one a phase slice is resolved at.
+
+    The solution slice runs at every solved period. The simulation slice runs
+    only where a subject can be, so it takes the visited periods when there are
+    any, and the solved periods otherwise.
+    """
+    if active_periods_by_regime is None:
+        return None
+    active_periods = active_periods_by_regime.get(regime_name, ())
+    if phase_name == "solution" or visited_periods_by_regime is None:
+        return active_periods
+    return visited_periods_by_regime.get(regime_name, ()) or active_periods
 
 
 def _state_conditioned_names(
@@ -958,7 +1085,7 @@ def _needed_names(
     user_regime: UserRegime,
     laws: RegimeLaws,
     phase_name: PhaseName,
-    koopmans_aggregator: UserFunction,
+    koopmans_aggregator: UserFunction | None,
     candidate_targets: frozenset[RegimeName],
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     ages: TimeAxis | None,

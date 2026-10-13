@@ -153,7 +153,9 @@ def _observe_solve(
         },
     }
     assert filled_toy_params(params)
-    solution = model.solve(params=params, log_level="off")
+    # Runtime checks off: their off-grid count producers are host operations whose
+    # argument descriptions would be counted beside the solve cores observed here.
+    solution = model.solve(params=params, log_level="off", runtime_checks=False)
     (frontier,) = frontiers
     (programs,) = compiled
     return _SolveObservation(

@@ -34,6 +34,7 @@ from _lcm.params.processing import (
     find_param_candidates,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
@@ -54,7 +55,9 @@ from lcm.typing import UserFunction, UserParams, UserParamsLeaf, UserParamsNode
 # declaration. The two are one type because a carried state is
 # `Phased(solve=callable, simulate=Grid)`, so a member may be a plain function
 # where the outer slot may not.
-type StateDeclaration = Grid | Phased | AgeSpecializedGrid | UserFunction | None
+type StateDeclaration = (
+    Grid | JointNormalIIDProcess | Phased | AgeSpecializedGrid | UserFunction | None
+)
 # A process distribution field as baked into the process: a Python scalar.
 type _ProcessField = float | int | bool
 

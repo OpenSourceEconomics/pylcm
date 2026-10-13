@@ -68,11 +68,55 @@ actions = {"labor_supply": DiscreteGrid(category_class=LaborSupply)}
 Values are integer codes (0, 1, 2, ...) auto-assigned by `@categorical`. In simulation
 output, labels are preserved via pandas Categorical.
 
+When each category is a combination of characteristics, such as a labour-market status
+that fixes job holding and benefit duration, see
+[Categories with characteristics](categories_with_characteristics.md).
+
 When used as an **action**, no further configuration is needed. When used as a
 **state**, the transition is specified via `state_transitions` on the `Regime` — see
 [Transitions](transitions.ipynb).
 
 ## Continuous Grids
+
+### Values outside a state grid
+
+Continuous grids accept `off_grid=` with an explicit meaning:
+
+| Rule                      | Continuation or policy lookup         | Economic next state                                |
+| ------------------------- | ------------------------------------- | -------------------------------------------------- |
+| `"extrapolate"` (default) | Preserve ordinary extrapolation       | Preserve the raw law of motion                     |
+| `"clip_lookup"`           | Read at the nearest closed endpoint   | Preserve the raw value in histories and later laws |
+| `"clip_state"`            | Read at the nearest closed endpoint   | Cap the next-period handoff to the grid            |
+| `"raise"`                 | Refuse a feasible exterior next state | Refuse an exterior realized next state             |
+
+The ambiguous spelling `"clip"` is rejected. `clip_lookup` is appropriate when a finite
+numerical grid approximates a state whose economic support is larger; `clip_state`
+changes the economic handoff and therefore requires an economic reason. Clipping
+preserves non-finite values so a broken law cannot become a finite endpoint.
+Stochastic-process support admission remains a separate contract.
+
+The clipped rules are honoured by `GridSearch`. The endogenous-grid solvers (`EGM`,
+`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) read their continuation and policy on their own
+endogenous grids, so a model whose endogenous-grid regime, or any regime it transitions
+into, declares `clip_lookup` or `clip_state` is rejected at construction with
+`OffGridPolicyError`; declare `"raise"` or `"extrapolate"` there instead.
+
+For an age-dependent grid, the bounds belong to the target period. For a grid whose
+points arrive at runtime, those supplied points define the closed endpoints. Interior
+piecewise boundary ownership is unchanged. Numerical grid rules do not replace a tax,
+benefit or other economic cap declared in the model.
+
+With `runtime_checks=True` and output enabled, diagnostics count raw exterior next
+states before clipping, excluding infeasible cells and unreachable lottery support.
+Silent solves skip these count-only diagnostic sweeps. The explicit `"raise"` policy
+applies at every `log_level`, even with `runtime_checks=False`.
+
+A regime with value-dependent constraints or gated edges only knows which actions and
+branches a next state is reached through once values exist. Its solve therefore checks
+`"raise"` grids inside the maximization: an exterior next state counts only for an
+action every constraint keeps, value constraints included, and through a gated edge only
+on the branch the gate selects — the target where it opens, the projected fallback where
+it closes. Such a regime emits no solve-phase diagnostic counts for the other rules.
 
 ### LinSpacedGrid
 

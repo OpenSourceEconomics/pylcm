@@ -100,6 +100,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.collective import CollectiveUtility
+from lcm.exceptions import NoFeasibleActionError
 from lcm.regime import Regime
 from lcm.result import SimulationResult
 from lcm.solver_api import ArtifactKey, KernelOutput
@@ -121,6 +122,7 @@ from lcm.typing import (
     UserParamsNode,
 )
 from tests.candidate_certificate.direct_flow import (
+    _feasibility_summary_errors,
     direct_flow_mutation_specs,
     supplemental_direct_flow_mutation_specs,
     verify_direct_candidate_flow,
@@ -157,6 +159,7 @@ class _AverageArguments(TypedDict, closed=True):
 class _KernelOutputArguments(TypedDict, closed=True):
     value: FloatND
     solve_time_artifacts: NotRequired[Mapping[ArtifactKey, ArtifactPayload]]
+    feasibility_counts: tuple[IntND, IntND]
 
 
 class _SimulationKeyArguments(TypedDict, closed=True):
@@ -405,6 +408,23 @@ def _splatted_chains(*, node: ast.AST) -> set[str]:
             if chain is not None:
                 found.add(chain)
     return found
+
+
+def test_feasibility_summary_preserves_the_native_value() -> None:
+    """Diagnostic counters cannot change the value the action reducer produced."""
+    tree = _parse("src/_lcm/solution/feasibility.py")
+    assert _feasibility_summary_errors(tree) == []
+
+
+def test_feasibility_summary_rejects_changed_native_values() -> None:
+    """Changing only the wrapper's value readout breaks its transport proof."""
+    source = (_SRC_ROOT / "_lcm/solution/feasibility.py").read_text()
+    changed = source.replace(
+        "return value, empty_count, other_inf_count",
+        "return -value, empty_count, other_inf_count",
+    )
+    assert changed != source
+    assert _feasibility_summary_errors(ast.parse(changed))
 
 
 def test_build_period_kernels_passes_the_whole_action_name_tuple():
@@ -739,6 +759,70 @@ def test_structural_blueprint_mutation_is_rejected(*, tmp_path: Path, mutation: 
     assert result["offending_paths"] == [_STRUCTURAL_BLUEPRINT_SOURCE]
 
 
+_MAX_Q_SOURCE = "src/_lcm/regime_building/max_Q_over_a.py"
+_FOLDED_BODY_MUTATIONS = {
+    "width_forwarding_filtered": (
+        (
+            "        out = self.mapped(\n"
+            "            next_regime_to_V_arr=next_regime_to_V_arr, "
+            "**states_actions_params\n"
+            "        )"
+        ),
+        (
+            "        out = self.mapped(\n"
+            "            next_regime_to_V_arr=next_regime_to_V_arr,\n"
+            "            **{\n"
+            "                name: value\n"
+            "                for name, value in states_actions_params.items()\n"
+            "                if name != '_lcm_action_block_width'\n"
+            "            },\n"
+            "        )"
+        ),
+    ),
+    "published_value_changed": (
+        "return V_arr if empty is None else (V_arr, empty)",
+        "return -V_arr if empty is None else (-V_arr, empty)",
+    ),
+    "empty_support_dropped": (
+        "empty = jnp.any(empty & support, axis=axis)",
+        "empty = jnp.any(empty, axis=axis)",
+    ),
+}
+
+
+@pytest.mark.parametrize("mutation", tuple(_FOLDED_BODY_MUTATIONS))
+def test_folded_kernel_mutation_is_rejected_after_byte_reseal(
+    *, mutation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resealing the source bytes cannot hide a changed folded-kernel body."""
+    root = _SRC_ROOT.parent
+    marker, replacement = _FOLDED_BODY_MUTATIONS[mutation]
+    source = (root / _MAX_Q_SOURCE).read_text(encoding="utf-8")
+    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
+    for relative in sources:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            source.replace(marker, replacement, 1)
+            if relative == _MAX_Q_SOURCE
+            else (root / relative).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(
+        "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
+        {relative: sha256_file(tmp_path / relative) for relative in sources},
+    )
+
+    result = verify_direct_candidate_flow(repo_root=tmp_path)
+
+    assert (
+        source.count(marker),
+        any("source seal mismatch" in error for error in result["errors"]),
+        result["offending_paths"],
+        any("streamed max-Q builder" in error for error in result["errors"]),
+    ) == (1, False, [_MAX_Q_SOURCE], True)
+
+
 def test_streamed_reducer_sources_are_literal_certificate_obligations():
     """The generated inventory owns every live streamed transport helper."""
     assert isinstance(_parse("src/_lcm/execution/core_program.py"), ast.Module)
@@ -807,6 +891,8 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     """Synchronized controls attack both taste corridors and their deep helpers."""
     names = set(direct_flow_mutation_specs(repo_root=_SRC_ROOT.parent))
     required = {
+        "feasibility_summary:published_value_changed",
+        "feasibility_summary:empty_count_reversed",
         "taste_shock_solve:q_order",
         "taste_shock_solve:q_gap",
         "taste_shock_solve:support_size",
@@ -829,6 +915,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "shared_logsum:axis_prefix",
         "shared_taste_noise:shared_draw",
         "shared_taste_noise:permuted_draw",
+        "shared_taste_noise:batched_independent_draw",
         "solve:action_names_rebinding",
         "simulate:action_names_rebinding",
         "solve:dormant_certified_reducer",
@@ -1086,15 +1173,27 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     original_names = {
         name for name in names if not name.startswith("simulation_adapter:")
     }
-    assert len(original_names) == 388
+    assert len(original_names) == 391
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "a777f806edb684b976b8da5ba78fe9425439f962a1de60a4508290cff3edb79d"
+        == "e98342d0cc2f4c7f98d4b3140dc437e1262eed7065612bc965fbf3edfb3a3180"
     )
-    assert len(names) == 406
+    historical_names = {
+        name
+        for name in names
+        if not name.startswith("simulation_adapter:initial_physical_")
+    }
+    assert len(historical_names) == 409
+    assert (
+        hashlib.sha256(
+            ("\n".join(sorted(historical_names)) + "\n").encode()
+        ).hexdigest()
+        == "3c5fdaf1c4a0eb22ad92ac592d4ca84cef0c97a4b94bc525a7f8592d886880a7"
+    )
+    assert len(names) == 421
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
+        == "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
     )
 
 
@@ -2262,14 +2361,16 @@ def test_negating_kernel_output_reverses_the_public_candidate(
     """The solved-value transport into backward induction is behaviorally live."""
     model = _build_zero_weight_fold_model()
     baseline = _simulate_zero_weight_fold(model)
-    original = grid_search_module.KernelOutput
+    original = grid_search_module.FeasibilityKernelOutput
 
     def negated_kernel_output(**kwargs: Unpack[_KernelOutputArguments]) -> KernelOutput:
         output = original(**kwargs)
         object.__setattr__(output, "value", -output.value)
         return output
 
-    monkeypatch.setattr(grid_search_module, "KernelOutput", negated_kernel_output)
+    monkeypatch.setattr(
+        grid_search_module, "FeasibilityKernelOutput", negated_kernel_output
+    )
     shifted = _simulate_zero_weight_fold(model)
 
     assert baseline == ([1], [1], [1])
@@ -2518,13 +2619,8 @@ def _simulation_fold_masking_the_last_action_cell(
     )
 
 
-def test_masking_one_simulate_candidate_changes_the_published_action():
-    """Hiding one cell from the simulate reducer alone moves the published action.
-
-    Without this the simulate sweep's green would only say that nothing raised. The
-    masked candidate is the one the constraint admits, so an exhaustive simulate
-    search would publish it and this run publishes a different action.
-    """
+def test_masking_the_only_simulate_candidate_raises():
+    """Hiding the sole feasible candidate triggers the native empty-action guard."""
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
             simulation_programs_module,
@@ -2536,21 +2632,22 @@ def test_masking_one_simulate_candidate_changes_the_published_action():
             constraints={"only_target": _only_target},
             terminal_utility=lambda: jnp.array(0.0),
         )
-        rows = _simulate_acting(
-            model=model,
-            work=_WORK_VALUES[-1],
-            consumption=_CONSUMPTION_VALUES[-1],
-            function_name="only_target",
-        )
-
-    assert rows["consumption"] != [_CONSUMPTION_VALUES[-1]] * len(_WEALTH_VALUES)
+        with pytest.raises(
+            NoFeasibleActionError, match=r"Regime 'acting', period 0, state .*wealth"
+        ):
+            _simulate_acting(
+                model=model,
+                work=_WORK_VALUES[-1],
+                consumption=_CONSUMPTION_VALUES[-1],
+                function_name="only_target",
+            )
 
 
 def test_masking_one_simulate_candidate_leaves_the_others_alone():
     """The simulate mask removes one cell, not the simulation.
 
-    A patch that broke the simulate reduction outright would move every published
-    action and make the control above pass for the wrong reason.
+    A broken simulate reduction could refuse every candidate and make the
+    empty-action control pass for the wrong reason.
     """
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(

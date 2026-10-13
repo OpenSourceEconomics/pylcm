@@ -17,6 +17,15 @@ an outcome grid and its transition mechanism.
   field uses `ScalarInt` and receives a consecutive `jnp.int32` code.
 - `DiscreteGrid(category_class=Category)` turns that category class into a state or
   action grid.
+- `characteristics(category_class=Category, by_category=...)` checks a table of every
+  category's `int` or `bool` characteristics (above the int32 minimum), keyed by
+  category name in declaration order, with the same characteristics in any order per row
+  and unique per category, and returns read-only arrays indexed by code.
+- `category_with(columns, **characteristics)` returns the int32 code of the category
+  with the given characteristics, or the int32 minimum where none has them. The given
+  characteristics must tell all categories apart, and array values must be bool or
+  signed integers. See
+  [Categories with characteristics](../user_guide/categories_with_characteristics.md).
 
 The explicit `ordered` flag matters: interpolation and comparison may use ordering only
 when the economics declares it.
@@ -44,15 +53,22 @@ economic budget kink to a specialized solver. Use [case pieces](case_pieces.md) 
 
 Place process instances in `states` and omit their names from `state_transitions`:
 
-| Process                          | Meaning                                              |
-| -------------------------------- | ---------------------------------------------------- |
-| `UniformIIDProcess`              | IID uniform draws                                    |
-| `NormalIIDProcess`               | IID normal draws                                     |
-| `LogNormalIIDProcess`            | IID log-normal draws                                 |
-| `NormalMixtureIIDProcess`        | IID normal-mixture draws                             |
-| `TauchenAR1Process`              | AR(1) discretized by Tauchen                         |
-| `RouwenhorstAR1Process`          | AR(1) discretized by Rouwenhorst                     |
-| `TauchenNormalMixtureAR1Process` | Mixture innovation with Tauchen-style discretization |
+| Process                          | Meaning                                               |
+| -------------------------------- | ----------------------------------------------------- |
+| `UniformIIDProcess`              | IID uniform draws                                     |
+| `NormalIIDProcess`               | IID normal draws                                      |
+| `JointNormalIIDProcess`          | Named IID Gaussian shocks sharing a covariance matrix |
+| `LogNormalIIDProcess`            | IID log-normal draws                                  |
+| `NormalMixtureIIDProcess`        | IID normal-mixture draws                              |
+| `TauchenAR1Process`              | AR(1) discretized by Tauchen                          |
+| `RouwenhorstAR1Process`          | AR(1) discretized by Rouwenhorst                      |
+| `TauchenNormalMixtureAR1Process` | Mixture innovation with Tauchen-style discretization  |
+
+`TauchenAR1Process.on_nodes(nodes=..., rho=None, sigma=None, mu=0.0)` uses supplied
+physical nodes with midpoint probability bins and open tails. The axis is fixed;
+unspecified law parameters are runtime operands and unit-root persistence is allowed.
+Nodes must be finite and strictly increasing at the working precision. Ordinary Tauchen
+construction still places its own stationary grid.
 
 A process owns its transition mechanism. Adding a second law under `state_transitions`
 is an ambiguous declaration and is rejected.

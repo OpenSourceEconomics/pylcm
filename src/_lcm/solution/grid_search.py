@@ -22,7 +22,7 @@ import inspect
 import logging
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import cast
@@ -30,6 +30,7 @@ from typing import cast
 import jax
 import jax.numpy as jnp
 from beartype import beartype
+from dags import with_signature
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.routes import (
@@ -58,6 +59,8 @@ from _lcm.execution.invariant_blocks import block_state_action_space
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     VALUE,
+    OutputRoleLeaf,
+    StateAxesLeading,
 )
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
@@ -79,12 +82,12 @@ from _lcm.solution.contract import (
     simulation_route,
 )
 from _lcm.solution.dcegm import CELL_AXIS
+from _lcm.solution.feasibility import CountedGridSearch, FeasibilityKernelOutput
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
-    MaxQOverAFunction,
     PytreeValue,
     QAndFArg,
     QAndFFunction,
@@ -99,6 +102,7 @@ from lcm.solver_api import KernelOutput
 from lcm.typing import (
     BoolND,
     FloatND,
+    IntND,
 )
 
 # Planner name of the flattened Cartesian action axis grid search reduces.
@@ -129,6 +133,8 @@ class _ActionStreamingDisposition(StrEnum):
     DENSE_CO_MAP_REFERENCE_CHANNEL = (
         "deliberately_dense:co_map_with_separate_reference_channel"
     )
+    DENSE_SELECTION_READOUT = "deliberately_dense:selection_readout"
+    DENSE_OFF_GRID_RAISE_COUNT = "deliberately_dense:off_grid_raise_count"
     UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
     UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
     UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
@@ -243,7 +249,7 @@ class GridSearch(Solver):
             ),
         )
 
-    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:  # noqa: PLR0915
         """Build one max-Q-over-a period adapter per period.
 
         Periods sharing the same Q_and_F object reuse the same selected program
@@ -254,13 +260,22 @@ class GridSearch(Solver):
         from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
             get_action_partitioned_max_Q_over_a,
             get_max_Q_over_a,
+            get_selection_readout_max_Q_over_a,
             get_streaming_max_Q_over_a,
         )
         from _lcm.regime_building.processing import (  # noqa: PLC0415
             get_conditioned_fold_weights_by_code,
         )
+        from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
+            has_selection_aggregator,
+        )
+        from _lcm.solution.landing_counts import (  # noqa: PLC0415
+            LandingCountedGridSearch,
+            get_landing_counting_max_Q_over_a,
+            landing_checks_of,
+        )
 
-        program_functions: dict[int, MaxQOverAFunction] = {}
+        program_functions: dict[int, Callable[..., PytreeValue]] = {}
         broadcast_extents: dict[int, int] = {}
         result: dict[int, PeriodKernel] = {}
         # Fold weights are the folded process's own marginal distribution, a
@@ -292,6 +307,15 @@ class GridSearch(Solver):
         action_width_keyword = _select_action_width_keyword(context=context)
         action_names = context.state_action_space.action_names
         action_extents = context.state_action_space.actions_grid_shapes
+        if (
+            math.prod(
+                grid.shape[0] for grid in context.state_action_space.states.values()
+            )
+            > jnp.iinfo(jnp.int32).max
+        ):
+            raise ExecutionPlanningError(
+                "GridSearch state domains must fit an int32 feasibility count."
+            )
         untiled_state_names = tuple(
             name
             for name in context.state_action_space.state_names
@@ -349,8 +373,27 @@ class GridSearch(Solver):
                     "fold_state_names": context.fold_state_names,
                     "fold_weights": MappingProxyType(fold_weights),
                     "fold_conditioning": MappingProxyType(fold_conditioning),
+                    "return_feasibility": True,
                 }
-                if action_partition_mesh is not None:
+                if has_selection_aggregator(Q_and_F=Q_and_F):
+                    _fail_if_selection_route_co_maps(context=context)
+                    _fail_if_selection_route_counts_landings(
+                        context=context, Q_and_F=Q_and_F
+                    )
+                    program_functions[q_id] = get_selection_readout_max_Q_over_a(
+                        Q_and_F=Q_and_F,
+                        action_names=action_names,
+                        state_names=context.state_action_space.state_names,
+                        cell_width_keyword=cell_width_keyword,
+                        untiled_state_names=untiled_state_names,
+                        broadcast_state_names=broadcast_state_names,
+                        return_feasibility=True,
+                    )
+                elif landing_checks_of(Q_and_F):
+                    program_functions[q_id] = get_landing_counting_max_Q_over_a(
+                        **common_kwargs
+                    )
+                elif action_partition_mesh is not None:
                     program_functions[q_id] = get_action_partitioned_max_Q_over_a(
                         Q_and_F=Q_and_F,
                         batch_sizes=common_kwargs["batch_sizes"],
@@ -362,6 +405,7 @@ class GridSearch(Solver):
                         cell_width_keyword=cell_width_keyword,
                         untiled_state_names=untiled_state_names,
                         broadcast_state_names=broadcast_state_names,
+                        return_feasibility=True,
                     )
                 else:
                     program_functions[q_id] = (
@@ -372,6 +416,18 @@ class GridSearch(Solver):
                         if stream_actions
                         else get_max_Q_over_a(**common_kwargs)
                     )
+                reducer = program_functions[q_id]
+                counted = CountedGridSearch(
+                    function=cast("Callable[..., tuple[FloatND, BoolND]]", reducer),
+                    collective=context.stakeholders is not None,
+                )
+                program_functions[q_id] = with_signature(
+                    LandingCountedGridSearch(counted=counted)
+                    if landing_checks_of(Q_and_F)
+                    else counted,
+                    args=list(inspect.signature(reducer).parameters),
+                    enforce=False,
+                )
             target_regimes = (
                 ()
                 if period == context.solution_reachability.n_periods - 1
@@ -442,9 +498,32 @@ class GridSearch(Solver):
                 argument_builder=argument_builder,
                 requirements=requirements,
                 output_roles=(
-                    (VALUE, DISSOLUTION_FLAG)
-                    if context.stakeholders is not None
-                    else VALUE
+                    *(
+                        (
+                            VALUE,
+                            DISSOLUTION_FLAG,
+                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                        )
+                        if context.stakeholders is not None
+                        else (
+                            VALUE,
+                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                            StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+                        )
+                    ),
+                    # One raw landing total per raise-rule check the kernel counts.
+                    *(
+                        (
+                            StateAxesLeading(
+                                state_names=(),
+                                dtype=jnp.int32,
+                                shape=(len(landing_checks_of(Q_and_F)),),
+                            ),
+                        )
+                        if landing_checks_of(Q_and_F)
+                        else ()
+                    ),
                 ),
                 disposition=(
                     CoreExecutionDisposition.PLANNED
@@ -457,7 +536,8 @@ class GridSearch(Solver):
             result[period] = _GridSearchPeriodKernel(
                 _core_programs=MappingProxyType({"main": program})
                 if not context.invariant_bindings
-                else _bound_programs(program=program, context=context)
+                else _bound_programs(program=program, context=context),
+                landing_checks=landing_checks_of(Q_and_F),
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
 
@@ -558,10 +638,44 @@ def _continuation_unread_state_names(
     return unread if 0 < len(unread) < len(inner_state_names) else ()
 
 
-def _classify_action_streaming(
+def _fail_if_selection_route_co_maps(*, context: SolverBuildContext) -> None:
+    """Refuse a co-mapped state on the dense selection-aggregator route."""
+    if context.co_map_state_names:
+        msg = (
+            f"Regime {context.regime_name!r} declares a `selection_aggregator`, "
+            "whose solve does not co-map the sharded states "
+            f"{list(context.co_map_state_names)}. Do not shard them, or drop the "
+            "selection aggregator."
+        )
+        raise ExecutionPlanningError(msg)
+
+
+def _fail_if_selection_route_counts_landings(
+    *, context: SolverBuildContext, Q_and_F: QAndFFunction
+) -> None:
+    """Refuse off-grid landing counts on the dense selection-aggregator route.
+
+    The selection readout publishes no landing counts, so a regime that declares
+    both a `selection_aggregator` and an off-grid raise check would lose the check.
+    """
+    from _lcm.solution.landing_counts import landing_checks_of  # noqa: PLC0415
+
+    if landing_checks_of(Q_and_F):
+        msg = (
+            f"Regime {context.regime_name!r} declares a `selection_aggregator` and "
+            "an off-grid check that counts landings; the selection-aggregator solve "
+            "does not count landings. Drop one of the two."
+        )
+        raise ExecutionPlanningError(msg)
+
+
+def _classify_action_streaming(  # noqa: C901
     *, context: SolverBuildContext
 ) -> _ActionStreamingDisposition:
     """Classify one solve route without conflating dense and unsupported cases."""
+    from _lcm.regime_building.Q_and_F import has_selection_aggregator  # noqa: PLC0415
+    from _lcm.solution.landing_counts import landing_checks_of  # noqa: PLC0415
+
     action_extents = context.state_action_space.actions_grid_shapes
     if context.has_taste_shocks and context.stakeholders is not None:
         disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1
@@ -579,10 +693,19 @@ def _classify_action_streaming(
         context.same_period_ref_regimes or context.edge_reference_regimes
     ):
         disposition = _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL
+    elif any(
+        has_selection_aggregator(Q_and_F=Q_and_F)
+        for Q_and_F in context.Q_and_F_functions.values()
+    ):
+        disposition = _ActionStreamingDisposition.DENSE_SELECTION_READOUT
     elif context.has_taste_shocks:
         disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL
     elif context.stakeholders is not None:
         disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES
+    elif any(map(landing_checks_of, context.Q_and_F_functions.values())):
+        # The dense reduction sums each action's raw raise-rule landings over
+        # the feasible actions in the pass that takes the maximum.
+        disposition = _ActionStreamingDisposition.DENSE_OFF_GRID_RAISE_COUNT
     else:
         disposition = _ActionStreamingDisposition.STREAMED
     return disposition
@@ -830,6 +953,14 @@ class _GridSearchPeriodKernel:
 
     _core_programs: Mapping[str, CoreProgram]
     """The immutable GridSearch program graph: `main`, or one program per code."""
+    landing_checks: tuple[tuple[RegimeName, StateName], ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """The `(target, state)` raise-rule landings the program counts, in order.
+
+    A nonzero total is a reached raw landing outside a grid declaring
+    `off_grid="raise"`, and fails the solve.
+    """
 
     def __post_init__(self) -> None:
         """Snapshot and require the one mathematical GridSearch core family."""
@@ -940,12 +1071,34 @@ class _GridSearchPeriodKernel:
             )
         )
         out = compiled_cores[core_key](**arguments)
-        if program.output_roles == (VALUE, DISSOLUTION_FLAG):
-            V_arr, dissolution = cast("tuple[FloatND, BoolND]", out)
-            return KernelOutput(
+        if self.landing_checks:
+            from _lcm.solution.landing_counts import (  # noqa: PLC0415
+                fail_on_reached_landings,
+            )
+
+            *out, landing_totals = cast("tuple[PytreeValue, ...]", out)
+            fail_on_reached_landings(
+                totals=cast("IntND", landing_totals),
+                checks=self.landing_checks,
+                regime_name=argument_builder.regime_name,
+                period=period,
+            )
+        # A program declaring the value alone publishes no feasibility counts.
+        if program.output_roles is VALUE:
+            return KernelOutput(value=cast("FloatND", out))
+        if (
+            cast("tuple[OutputRoleLeaf, ...]", program.output_roles)[1]
+            is DISSOLUTION_FLAG
+        ):
+            V_arr, dissolution, empty_count, other_inf_count = cast(
+                "tuple[FloatND, BoolND, IntND, IntND]", out
+            )
+            return FeasibilityKernelOutput(
                 value=V_arr,
                 solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},
+                feasibility_counts=(empty_count, other_inf_count),
             )
-        # Every other declared output role tree is the value array alone.
-        out = cast("FloatND", out)
-        return KernelOutput(value=out)
+        V_arr, empty_count, other_inf_count = cast("tuple[FloatND, IntND, IntND]", out)
+        return FeasibilityKernelOutput(
+            value=V_arr, feasibility_counts=(empty_count, other_inf_count)
+        )

@@ -11,7 +11,7 @@ from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.utils.ast_inspection import time_index_names
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
-from lcm.temporal import TimeVarying
+from lcm.temporal import TimeVarying, _validate_time_labels
 from lcm.typing import TimeLabel, UserAge, UserFunction, ValueND
 
 
@@ -53,31 +53,6 @@ def validate_temporal_variants(
                     "and unmanaged consumers. Use distinct parameter names."
                 )
     return names
-
-
-def _validate_time_labels(
-    *, labels: tuple[TimeLabel, ...], kind: str, name: str
-) -> None:
-    """Validate the schema before surplus observations can be discarded."""
-    if kind == "period" and any(
-        isinstance(v, (bool, np.bool_)) or not isinstance(v, (int, np.integer))
-        for v in labels
-    ):
-        raise InvalidParamsError(
-            f"{name}: period coordinates must be integers, excluding booleans."
-        )
-    if kind == "age":
-        try:
-            finite = all(
-                not isinstance(v, (bool, np.bool_, str)) and np.isfinite(float(v))
-                for v in labels
-            )
-        except TypeError, ValueError:
-            finite = False
-        if not finite:
-            raise InvalidParamsError(
-                f"{name}: age coordinates must be finite numeric labels."
-            )
 
 
 def time_gather_indices(

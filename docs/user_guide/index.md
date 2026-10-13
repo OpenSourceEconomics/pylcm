@@ -20,6 +20,8 @@ If you have not solved the tiny model yet, start with
   aligns parameter profiles by their labels.
 - [Regimes](regimes.ipynb) covers qualitatively different decision problems.
 - [Grids](grids.md) defines numerical outcome spaces.
+- [Categories with characteristics](categories_with_characteristics.md) declares
+  categories that are combinations of characteristics.
 - [Transitions](transitions.ipynb) covers deterministic, stochastic, joint, and regime
   transitions.
 - [Households and value-dependent choice](collective_regimes.md) declares stakeholders,

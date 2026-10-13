@@ -237,6 +237,42 @@ on the source regime of a gated transition; together with a folded IID state
 boundaries, not ignored options: the declaration is rejected during `Regime` declaration
 or `Model` construction, before solve.
 
+(api-euler-gamma)=
+
+### Location-0 shocks and `EULER_GAMMA`
+
+pylcm's taste shocks are mean-zero. Many papers use the standard Gumbel with location
+zero, whose mean is `scale * EULER_GAMMA`, the scale times the Euler-Mascheroni
+constant. To match such a model, add that mean to the utility of every action in each
+regime that declares taste shocks:
+
+```python
+import jax.numpy as jnp
+
+from lcm import EULER_GAMMA
+
+
+def utility(*, consumption, work, kappa, taste_shock_scale):
+    return jnp.log(consumption) - kappa * work + taste_shock_scale * EULER_GAMMA
+```
+
+Pass `taste_shock_scale` with the same value as the regime's `taste_shocks` scale.
+`lcm.EULER_GAMMA` equals `numpy.euler_gamma`.
+
+Apply the shift only to the Bellman utility. Keep feasibility, transition laws, and
+other consumers of the original utility unchanged. If `utility` also feeds a constraint
+or another DAG node, factor the original expression into `base_utility`, point those
+consumers at `base_utility`, and add the shift in the `utility` wrapper. For example,
+`base_utility >= 0` must not become `base_utility + scale * EULER_GAMMA >= 0`.
+
+With these other uses preserved, the recipe reproduces the location-0 model, including
+solved values and choice probabilities, when the Koopmans aggregator satisfies
+`W(u + c, CE, ...) = W(u, CE, ...) + c` for `c = scale * EULER_GAMMA`.
+`LinearAggregator` (the default) and custom aggregators additive in utility with unit
+slope have this property. pylcm adds the shock to the choice-specific value after
+aggregation; for aggregators without this property, such as `CESAggregator` in general,
+shifting utility does not reproduce location-0 shocks.
+
 ## Derived categoricals
 
 Use `derived_categoricals={"name": DiscreteGrid(category_class=Category)}` when a

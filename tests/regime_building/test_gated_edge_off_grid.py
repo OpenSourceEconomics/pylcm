@@ -35,7 +35,11 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
+from lcm.exceptions import (
+    InvalidValueFunctionError,
+    ModelInitializationError,
+    OffGridStateError,
+)
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -43,6 +47,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    OffGrid,
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
@@ -88,6 +93,10 @@ def _identity_x(x: ContinuousState) -> ContinuousState:
     return x
 
 
+def _outside_hull_x(x: ContinuousState) -> ContinuousState:
+    return x + 3.0
+
+
 def _gate(x: ContinuousState) -> BoolND:
     return x > 1.0
 
@@ -104,6 +113,8 @@ def _make_model(
     *,
     saving_grid=_SAVING,
     off_grid: Literal["pointwise", "reject"] = "pointwise",
+    fallback_off_grid: OffGrid = "extrapolate",
+    project_outside_hull: bool = False,
 ) -> Model:
     return Model(
         regimes={
@@ -118,7 +129,7 @@ def _make_model(
                 functions={"utility": _utility_target},
             ),
             "fallback": Regime(
-                states={"x": _X},
+                states={"x": _X.replace(off_grid=fallback_off_grid)},
                 functions={"utility": _utility_fallback},
             ),
         },
@@ -138,7 +149,11 @@ def _make_model(
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
-                                    projection={"x": _identity_x},
+                                    projection={
+                                        "x": _outside_hull_x
+                                        if project_outside_hull
+                                        else _identity_x
+                                    },
                                 )
                             )
                         },
@@ -311,6 +326,49 @@ def test_the_action_taken_is_the_one_the_gated_value_ranks_first() -> None:
     first_period = result.to_dataframe().query("period == 0")
 
     assert first_period["saving"].to_numpy().tolist() == [1.5]
+
+
+@pytest.mark.parametrize(
+    ("fallback_off_grid", "expected"),
+    [("clip_lookup", 3.5), ("clip_state", 2.0)],
+)
+def test_projected_fallback_preserves_or_clips_its_economic_handoff(
+    *,
+    fallback_off_grid: OffGrid,
+    expected: float,
+) -> None:
+    """A closed gate writes the fallback projection under the fallback's rule."""
+    model = _make_model(
+        saving_grid=IrregSpacedGrid(points=(0.5, 0.6)),
+        fallback_off_grid=fallback_off_grid,
+        project_outside_hull=True,
+    )
+    result = model.simulate(
+        params=_params(),
+        initial_conditions={
+            "age": jnp.array([0.0]),
+            "x": jnp.array([0.0]),
+            "regime_id": jnp.array([RegimeId.source]),
+        },
+        log_level="off",
+    )
+    frame = result.to_dataframe().query("period == 1")
+    np.testing.assert_array_equal(frame["regime_name"], ["fallback"])
+    np.testing.assert_array_equal(frame["x"], [expected])
+
+
+@pytest.mark.parametrize("runtime_checks", [False, True])
+def test_projected_realized_fallback_raise_is_mandatory(
+    *, runtime_checks: bool
+) -> None:
+    """A reached fallback projection fails the solve even with diagnostics off."""
+    model = _make_model(
+        saving_grid=IrregSpacedGrid(points=(0.5, 0.6)),
+        fallback_off_grid="raise",
+        project_outside_hull=True,
+    )
+    with pytest.raises(OffGridStateError, match=r"regime='source'.*state='x'"):
+        model.solve(params=_params(), log_level="off", runtime_checks=runtime_checks)
 
 
 def test_landings_that_all_fall_on_nodes_are_unaffected() -> None:

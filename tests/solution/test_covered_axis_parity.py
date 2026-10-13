@@ -218,7 +218,13 @@ def _simulate(
 
 
 def _initial_conditions(solver: str) -> dict[str, jax.Array]:
-    """Subjects spread over the model's wealth-like state, all alive at the start."""
+    """Subjects spread over the model's wealth-like state, all alive at the start.
+
+    GridSearch subjects start at wealth 47 or more. Below that, a subject who
+    consumes a node within one unit of its wealth and does not work enters period
+    1 with less wealth than the smallest consumption node, a state with no
+    feasible action, which simulation refuses.
+    """
     regime_id = jnp.zeros(_N_SUBJECTS, dtype=jnp.int32)
     if solver == _NBEGM:
         return {
@@ -228,7 +234,7 @@ def _initial_conditions(solver: str) -> dict[str, jax.Array]:
             "regime_id": regime_id,
         }
     return {
-        "wealth": jnp.linspace(1.0, 150.0, _N_SUBJECTS),
+        "wealth": jnp.linspace(47.0, 150.0, _N_SUBJECTS),
         "age": jnp.full(_N_SUBJECTS, float(regression.START_AGE)),
         "regime_id": regime_id,
     }

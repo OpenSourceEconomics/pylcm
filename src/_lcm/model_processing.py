@@ -35,12 +35,14 @@ from _lcm.params.processing import (
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.reachability import PhaseName
 from _lcm.regime_building.age_normalization import (
     _regime_has_markers,
     normalize_age_specialization,
 )
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.broadcast import (
+    compute_kept_variables,
     root_functions,
     states_read_through_their_draw,
 )
@@ -260,6 +262,7 @@ def validate_model_inputs(
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     removed_edge_reads: Mapping[
         RegimeName, Mapping[str, tuple[RegimeName, ...]]
@@ -276,6 +279,10 @@ def validate_model_inputs(
     function still counts as used. A marker only the simulate phase reads is
     resolved at the first of `visited_periods_by_regime`, where a subject can be;
     they default to the active periods.
+
+    `targets_by_phase` names, per phase and regime, the targets the model graph
+    reaches at the demanded periods; a state a phase's law hands to one of that
+    phase's targets that keeps it as a state is used.
 
     `removed_edge_reads` name, per regime, the variables read by declarations
     that fixed-zero pruning removed with their edges, and those edges' targets.
@@ -354,6 +361,7 @@ def validate_model_inputs(
             broadcast_variables=broadcast_variables,
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
+            targets_by_phase=targets_by_phase,
             visited_periods_by_regime=visited_periods_by_regime,
             removed_edge_reads=removed_edge_reads,
         )
@@ -473,7 +481,12 @@ def _model_wide_conditioning_names(
     return frozenset(
         grid.state_conditioned.on
         for user_regime in user_regimes.values()
-        for grid in user_regime.states.values()
+        for declaration in user_regime.states.values()
+        for grid in (
+            (declaration.solve, declaration.simulate)
+            if isinstance(declaration, Phased)
+            else (declaration,)
+        )
         if isinstance(grid, _ContinuousStochasticProcess)
         and grid.state_conditioned is not None
     )
@@ -486,6 +499,7 @@ def _validate_all_variables_used(
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     removed_edge_reads: Mapping[
         RegimeName, Mapping[str, tuple[RegimeName, ...]]
@@ -494,8 +508,8 @@ def _validate_all_variables_used(
     """Validate that all states and actions are used somewhere in each regime.
 
     Each state or action must be read by one of the regime's root computations
-    (`root_functions`) or by a law of motion that is not the identity. That
-    covers, per regime:
+    (`root_functions`) or by a law of motion that is not the identity, or be
+    handed to a reachable target that keeps it. That covers, per regime:
 
     - the concurrent valuation — utility, or a collective regime's
       per-stakeholder utilities, and the constraints;
@@ -507,18 +521,21 @@ def _validate_all_variables_used(
     - the gate, gate references or fallback projections of a gated edge whose
       target is this regime — those are declared on the source regime but
       evaluated here, so this regime is where the state they read must live;
-    - a law of motion, unless it hands the state to itself;
+    - a law of motion, unless it is a `fixed_transition` identity;
     - for a process state, any of the above reading its next-period draw
-      `next_<state>`, which is taken from the state.
+      `next_<state>`, which is taken from the state;
+    - a law of motion, identity included, toward a target the regime can
+      transition into that keeps the state, because that target's value has an
+      axis the regime has to fill. Hand-overs chain through
+      `compute_kept_variables`, so a regime that keeps a state only to hand it
+      on is itself such a target.
 
     A declaration removed with a fixed-zero edge is not a use: pruning removes
     as much as it can up front, so a variable read only across such an edge is
     unused, exactly as in the model declared without that edge.
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
-    ones, and a retained broadcast variable may be used only through a law
-    of motion toward a candidate target (which this per-regime check cannot
-    see).
+    ones.
 
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
@@ -526,6 +543,13 @@ def _validate_all_variables_used(
         laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
         broadcast_variables: Per regime, the model-level broadcast state and
             action names to exempt.
+        ages: The model's time axis, used to resolve `AgeSpecializedFunction`
+            markers at a representative age.
+        active_periods_by_regime: The per-regime coverage.
+        targets_by_phase: Per phase and regime, the targets the model graph
+            reaches at the demanded periods.
+        visited_periods_by_regime: Per regime, the periods a subject can be in
+            it, where a simulate-only marker is resolved.
         removed_edge_reads: Per regime, each state or action read by a
             declaration removed with its fixed-zero edge, and the targets of
             those edges; named in the error to explain why a variable is unused.
@@ -534,8 +558,8 @@ def _validate_all_variables_used(
         A list of error messages. Empty list if validation passes.
 
     """
-    error_messages = []
     conditioning_names = _model_wide_conditioning_names(user_regimes)
+    unread_by_regime: dict[RegimeName, frozenset[str]] = {}
 
     for regime_name, user_regime in user_regimes.items():
         variable_names = set(user_regime.states) | set(user_regime.actions)
@@ -604,11 +628,11 @@ def _validate_all_variables_used(
 
         targets = [
             *roots,
-            # A law of motion is a use of what it reads, except when it is the
-            # identity: handing a state to itself says nothing about the state
-            # being needed. This is where the two consumers of `root_functions`
-            # part ways — the pruning walk roots the identity hand-over, because
-            # a target that keeps the state has to be given its value.
+            # A law of motion is a use of what it reads, except when it is a
+            # `fixed_transition` identity: carrying a state says nothing about
+            # the state being needed. An identity hand-over is a use only toward
+            # a target that keeps the state, which `compute_kept_variables`
+            # decides below across regimes.
             *(
                 name
                 for name in user_functions
@@ -631,7 +655,22 @@ def _validate_all_variables_used(
         # that reads its next-period draw ends the walk at a leaf. The draw is
         # taken from the state, so reading it is a use of the state.
         reachable |= states_read_through_their_draw(regime=user_regime, reads=reachable)
-        unused_variables = sorted(variable_names - reachable)
+        unread_by_regime[regime_name] = frozenset(variable_names - reachable)
+
+    kept = compute_kept_variables(
+        user_regimes=user_regimes,
+        laws=laws,
+        candidates=unread_by_regime,
+        koopmans_aggregator=None,
+        ages=ages,
+        active_periods_by_regime=active_periods_by_regime,
+        visited_periods_by_regime=visited_periods_by_regime,
+        targets_by_phase=targets_by_phase,
+    )
+    error_messages = []
+    for regime_name, unread in unread_by_regime.items():
+        user_regime = user_regimes[regime_name]
+        unused_variables = sorted(unread - kept[regime_name])
 
         if unused_variables:
             unused_states = [v for v in unused_variables if v in user_regime.states]
@@ -650,6 +689,19 @@ def _validate_all_variables_used(
                 f"'{regime_name}': {' and '.join(msg_parts)}. "
                 f"Each state and action must be used in at least one of: "
                 f"utility, constraints, or transition functions."
+                + (
+                    _hand_over_explanation(
+                        regime_name=regime_name,
+                        reachable_targets=frozenset().union(
+                            *(
+                                by_regime.get(regime_name, frozenset())
+                                for by_regime in targets_by_phase.values()
+                            )
+                        ),
+                    )
+                    if unused_states
+                    else ""
+                )
                 + _removed_edge_explanation(
                     regime_name=regime_name,
                     unused=unused_variables,
@@ -658,6 +710,21 @@ def _validate_all_variables_used(
             )
 
     return tuple(error_messages)
+
+
+def _hand_over_explanation(
+    *, regime_name: RegimeName, reachable_targets: frozenset[RegimeName]
+) -> str:
+    """State the hand-over rule and name the targets it was checked against."""
+    targets = (
+        f"the regimes reachable from '{regime_name}' are {sorted(reachable_targets)}"
+        if reachable_targets
+        else f"'{regime_name}' reaches no regime"
+    )
+    return (
+        f" A state also counts as used when '{regime_name}' carries it with a law "
+        f"of motion to a reachable target that uses it; {targets}."
+    )
 
 
 def _removed_edge_explanation(
@@ -799,7 +866,7 @@ def _validate_constraint_phase_invariance(
         carried_next = frozenset(
             f"next_{name}"
             for name, spec in user_regime.states.items()
-            if isinstance(spec, Phased)
+            if isinstance(spec, Phased) and callable(spec.solve)
         )
         if not phase_varying and not carried_next:
             continue

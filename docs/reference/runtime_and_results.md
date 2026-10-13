@@ -396,21 +396,29 @@ solution = model.solve(
 )
 
 V_working = solution.value(period=0, regime="working")
-frame = solution.value_frame(period=0, regime="working")
+values = solution.value_array(period=0, regime="working")
+curve = values.sel(education="college")
+frame = curve.to_dataframe().reset_index()
+full_frame = solution.value_frame(period=0, regime="working")
 codes = solution.value_frame(period=0, regime="working", use_labels=False)
 ```
 
-`value_frame` returns a long pandas DataFrame: state columns in
-`metadata.value_schemas[(period, regime)].axis_names` order, followed by `V`. Axis names
-must be unique and cannot be `V`, which is reserved for the value column. Discrete
-states use categorical labels and ordering matching simulation; `use_labels=False` keeps
-integer codes. Collective regimes also have a `stakeholder` column. Coordinates are the
-resolved grid nodes used by the solve, including parameter-dependent process grids and
-period-specialized grids, and remain available after saving and loading. The call
-materializes every grid point, so the frame can be large. For values between nodes, use
-`Model.lookup_policy`, which uses the same interpolation as simulation. The
-coordinate-bearing value schema uses solution schema version 3; archives from a
-different schema version are refused by the existing compatibility gate.
+`value_array` returns an xarray `DataArray` named `V` with one dimension per axis in
+`metadata.value_schemas[(period, regime)].axis_names` order. Axis names must be unique
+and cannot be `V`, which is reserved for the value. Discrete states carry their labels
+as a categorical coordinate in declaration order, with the ordering matching simulation;
+`use_labels=False` keeps integer codes. Collective regimes also have a `stakeholder`
+dimension, and a regime without states yields a zero-dimensional array. Coordinates are
+the resolved grid nodes used by the solve, including parameter-dependent process grids
+and period-specialized grids, and remain available after saving and loading. The array
+wraps the stored value without copying it to the host, so select the slice you need
+before converting it to a table.
+
+`value_frame` is the same array in long form: a pandas DataFrame with one column per
+dimension followed by `V`. It materializes every grid point, so the frame can be large.
+For values between nodes, use `Model.lookup_policy`, which uses the same interpolation
+as simulation. The coordinate-bearing value schema uses solution schema version 3;
+archives from a different schema version are refused by the existing compatibility gate.
 
 The result and its supporting types live in the lightweight `lcm.solver_api` submodule;
 they are not re-exported from the top-level `lcm` namespace. The retention modes are:
@@ -612,8 +620,10 @@ and no explicit width, complete chunk profiles select the widest fitting candida
 Retained full-population inputs and result assembly remain part of the bound even when
 chunks shrink. Each simulation takes its population from the initial conditions, so the
 same model accepts different call-time populations. `seed` controls random draws
-independently of those chunk boundaries. A collective model may require an addressed
-dissolution replay artifact and `own_stakeholder`; see
+independently of those chunk boundaries. Ordinary and independent taste roots accept
+integers or scalar typed JAX keys; caller key buffers join the budgeted entry inventory,
+and profiles distinguish their actual PRNG implementations. A collective model may
+require an addressed dissolution replay artifact and `own_stakeholder`; see
 [Collective regimes](collective_regimes.md).
 
 Under a device-memory budget, the top-first outer-cohort planner profiles the
@@ -676,14 +686,50 @@ can exceed `value`, and `value` is the max of `Q` over the entries `F` admits. B
 compiles its own program, so its `Q` and `value` can differ in the last bits from the
 matching slice of a full-grid lookup's `Q`.
 
+The same option fills `U` and `CE`, of the shape of `Q`, from the one kernel evaluation
+the decision maximizes over. `U` is the regime's flow utility. `CE` is the certainty
+equivalent of next period's value, undiscounted: the `CE` argument the regime's Koopmans
+aggregator receives, so `Q == W(utility=U, CE=CE, ...)` for every aggregator, and
+`Q == U + discount_factor * CE` under `LinearAggregator`. A terminal regime has
+`CE == 0` and `Q == U`. Like `Q`, both are unmasked. When the aggregator reads a regime
+function, such as a type-specific discount factor, rebuilding `Q` from `U` and `CE` also
+needs that function's value.
+
+In a regime with `ExtremeValueTasteShocks` the discrete choice is random, so `actions`
+is `None` and the lookup publishes the distribution of the discrete choice that
+`simulate` draws. For each state row and discrete-action combination, `Qc` is the max of
+`Q` over the feasible continuous actions (`-inf` without one), `choice_probabilities` is
+`softmax(Qc / scale)` over the feasible combinations (exactly `0.0` for an infeasible
+one), and `conditional_actions` maps each continuous action to its grid value at that
+max. All three have one leading row axis and one axis per discrete action of the
+(possibly restricted) grid. `value` is the smoothed maximum
+`scale * logsumexp(Qc / scale)` of those conditional values. A row without a feasible
+combination has `value == -inf` and zero probabilities, and its conditional actions hold
+the first grid value.
+
+The lookup applies the solve's reduction (mask, continuous max, logsum) to the decision
+`simulate` runs: current utility and the Koopmans aggregator take their `simulate`
+variants, and the continuation is the solved one. When both phases share those
+primitives and the action grid is the declared one, `value` equals the stored solve
+value at grid rows to numerical precision. With `Phased` current utility the two can
+differ, and the probabilities are those of the simulated choice.
+
+To evaluate the distribution on the full state grid, take each state's nodes from
+`Model.state_grid` in `Model.state_names(regime_name=...)` order, form their Cartesian
+product with `numpy.meshgrid(*nodes, indexing="ij")`, and pass each flattened mesh as
+that state's array. Only GridSearch regimes support this lookup: an EGM-family solver's
+simulation recomputes the choice on an action grid that can differ from its solve's
+candidates, so the lookup refuses such a regime.
+
 (api-simulation-result)=
 
 ## `SimulationResult`
 
 `to_dataframe(additional_targets=None, use_labels=True, terminal_rows="first")`
-materializes a flat DataFrame. `additional_targets` accepts selected DAG outputs or
-`"all"`. `terminal_rows="all"` retains every frozen absorbing row; the default keeps
-only terminal entry.
+materializes a flat DataFrame. `additional_targets` accepts a sequence of selected DAG
+output names (including the tuple `result.available_targets`), `"all"`, or `None`. Other
+bare strings raise `InvalidAdditionalTargetsError`. `terminal_rows="all"` retains every
+frozen absorbing row; the default keeps only terminal entry.
 
 Inspection properties include `regime_names`, `state_names`, `action_names`,
 `n_periods`, `n_subjects`, `available_targets`, `raw_results`, `flat_params`, and

@@ -914,6 +914,26 @@ def test_discrete_grid_fingerprint_binds_category_order_and_ordered_flag() -> No
     )
 
 
+@pytest.mark.parametrize(
+    "other",
+    [
+        pytest.param({"values": [0.0, 0.5]}, id="values"),
+        pytest.param({"values": [0.0, 0.25], "tolerance": 1e-6}, id="tolerance"),
+        pytest.param({"values": [0, 1]}, id="integer-values"),
+    ],
+)
+def test_value_grid_fingerprint_binds_values_and_tolerance(other) -> None:
+    baseline = fingerprints._semantic_fingerprint(DiscreteGrid(values=[0.0, 0.25]))
+
+    assert baseline != fingerprints._semantic_fingerprint(DiscreteGrid(**other))
+
+
+def test_value_grid_fingerprint_is_reproducible() -> None:
+    assert fingerprints._semantic_fingerprint(
+        DiscreteGrid(values=[0.0, 0.25])
+    ) == fingerprints._semantic_fingerprint(DiscreteGrid(values=[0.0, 0.25]))
+
+
 def test_discrete_grid_protocol_subclass_fails_closed() -> None:
     with pytest.raises(TypeError, match="DiscreteGrid subclass"):
         fingerprints._semantic_fingerprint(

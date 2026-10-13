@@ -26,17 +26,17 @@ from lcm.typing import BoolND, FloatND, FunctionName, IntND, UserFunction
 
 def _resolve_targets(
     *,
-    additional_targets: list[str] | Literal["all"] | None,
+    additional_targets: Sequence[FunctionName] | Literal["all"] | None,
     available_targets: tuple[FunctionName, ...],
-) -> tuple[str, ...] | None:
+) -> tuple[FunctionName, ...] | None:
     """Resolve and validate additional targets.
 
     Args:
         additional_targets: User-provided targets specification.
-        available_targets: List of all available target names.
+        available_targets: Tuple of all available target names.
 
     Returns:
-        Resolved list of target names, or None if no targets requested.
+        Resolved tuple of target names, or None if no targets requested.
 
     Raises:
         InvalidAdditionalTargetsError: If any target is not available.
@@ -44,17 +44,23 @@ def _resolve_targets(
     """
     if additional_targets is None:
         return None
-    if additional_targets == "all":
-        return tuple(available_targets)
+    if isinstance(additional_targets, str):
+        if additional_targets == "all":
+            return available_targets
+        raise InvalidAdditionalTargetsError(
+            "Provide a sequence of target names, 'all', or None; "
+            f"got bare string {additional_targets!r}."
+        )
 
-    invalid = set(additional_targets) - set(available_targets)
+    resolved_targets = tuple(additional_targets)
+    invalid = set(resolved_targets) - set(available_targets)
     if invalid:
         raise InvalidAdditionalTargetsError(
             f"Targets {invalid} not found in any regime. "
             f"Available targets: {available_targets}"
         )
 
-    return tuple(additional_targets)
+    return resolved_targets
 
 
 def _collect_all_available_targets(
@@ -94,6 +100,7 @@ def _get_available_targets_for_regime(regime: Regime) -> frozenset[str]:
             for pool in (sim.functions, sim.constraints)
             for name, func in pool.items()
             if getattr(func, "_lcm_internal_no_params", False)
+            or getattr(func, "_lcm_joint_normal_output", False)
         }
     )
     if regime.solution.solves_from_continuation:

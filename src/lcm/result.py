@@ -3,7 +3,7 @@
 import gc
 import operator
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -52,11 +52,18 @@ else:
 class PolicyLookup:
     """The optimal choice and value at caller-supplied states of one regime-period."""
 
-    actions: MappingProxyType[ActionName, FloatND]
-    """Argmax action value per action name, one entry per queried state row."""
+    actions: MappingProxyType[ActionName, FloatND] | None
+    """Argmax action value per action name, one entry per queried state row.
+
+    `None` in a regime with taste shocks, where the discrete choice is random.
+    """
 
     value: FloatND
-    """Max over the action grid of Q, using the solved continuation, per row."""
+    """Max over the action grid of Q, using the solved continuation, per row.
+
+    In a regime with taste shocks, the smoothed maximum
+    `scale * logsumexp(Qc / scale)` over the discrete-action combinations.
+    """
 
     Q: FloatND | None = None
     """Action values over the queried action grid, or `None` unless requested.
@@ -68,6 +75,48 @@ class PolicyLookup:
 
     F: BoolND | None = None
     """Feasibility of each entry of `Q`, same shape, or `None` unless requested."""
+
+    U: FloatND | None = None
+    """Flow utility of each entry of `Q`, same shape, or `None` unless requested.
+
+    The regime's `utility` at the queried state and action, raw and unmasked
+    like `Q`.
+    """
+
+    CE: FloatND | None = None
+    """Continuation of each entry of `Q`, same shape, or `None` unless requested.
+
+    The certainty equivalent of next period's value, undiscounted: the `CE` that
+    the regime's Koopmans aggregator combines with `U` into
+    `Q == W(utility=U, CE=CE, ...)`. Under `LinearAggregator`,
+    `Q == U + discount_factor * CE`. Zero in a terminal regime, where `Q == U`.
+    An aggregator that reads a regime function, such as a type-specific discount
+    factor, also needs that function's value to rebuild `Q` from `U` and `CE`.
+    """
+
+    Qc: FloatND | None = None
+    """Conditional value per discrete-action combination, or `None`.
+
+    Filled for a regime with taste shocks only: one leading row axis, then one
+    axis per discrete action of the queried grid. The max of `Q` over the
+    feasible continuous actions, `-inf` for a combination without one.
+    """
+
+    choice_probabilities: FloatND | None = None
+    """Probability of each discrete-action combination, shape of `Qc`, or `None`.
+
+    `softmax(Qc / scale)` over the feasible combinations: exactly zero for an
+    infeasible combination, and zero everywhere in a row without a feasible
+    combination, whose `value` is `-inf`.
+    """
+
+    conditional_actions: MappingProxyType[ActionName, FloatND] | None = None
+    """Continuous actions attaining `Qc`, one array of the shape of `Qc` each.
+
+    Filled for a regime with taste shocks only. A combination without a feasible
+    continuous action holds the first grid value; mask it with
+    `choice_probabilities > 0`.
+    """
 
 
 class SimulationResult:
@@ -198,7 +247,7 @@ class SimulationResult:
     def to_dataframe(
         self,
         *,
-        additional_targets: list[str] | Literal["all"] | None = None,
+        additional_targets: Sequence[FunctionName] | Literal["all"] | None = None,
         use_labels: bool = True,
         terminal_rows: Literal["first", "all"] = "first",
     ) -> pd.DataFrame:
@@ -207,7 +256,7 @@ class SimulationResult:
         Args:
             additional_targets: Targets to compute. Can be:
                 - None (default): No additional targets
-                - list[str]: Specific target names to compute
+                - Sequence[FunctionName]: Specific target names to compute
                 - "all": Compute all available targets (see `available_targets`)
                 Targets can be any function defined in a regime. Each target is
                 computed for the regimes where it exists; rows from regimes without
@@ -258,7 +307,7 @@ class SimulationResult:
         self,
         *,
         directory: Path,
-        df_additional_targets: list[str] | Literal["all"] | None = None,
+        df_additional_targets: Sequence[FunctionName] | Literal["all"] | None = None,
         df_use_labels: bool = True,
     ) -> Path:
         """Persist the result to a directory.
@@ -289,7 +338,7 @@ class SimulationResult:
             df_additional_targets: Targets passed through to `to_dataframe`
                 when projecting the on-disk arrow file. `None` (default)
                 writes only the base columns (states, actions, regime, age,
-                period, V_arr). Pass a list of target names to bake specific
+                period, V_arr). Pass a sequence of target names to bake specific
                 DAG outputs into the artifact, or `"all"` to include every
                 available target — the latter can grow the file by an order
                 of magnitude on large models with many DAG leaves.
@@ -322,6 +371,10 @@ class SimulationResult:
                 "An ephemeral simulation result cannot be persisted; "
                 "export its dataframe instead."
             )
+        df_additional_targets = _resolve_targets(
+            additional_targets=df_additional_targets,
+            available_targets=self.available_targets,
+        )
         target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
 

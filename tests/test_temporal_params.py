@@ -606,10 +606,9 @@ def test_series_time_and_categorical_axes_are_validated_together(
 
 def test_economic_profile_mapping_is_explicit_and_differentiable() -> None:
     def total(values: FloatND) -> FloatND:
+        stage_to_quarter = {0: 3, 1: 3, 2: 4, 3: 4}
         profile = lcm.TimeVarying.from_profile(
-            values=values,
-            labels=(4, 9, 3),
-            period_to_label={0: 3, 1: 3, 2: 4, 3: 4},
+            values=values, labels=(4, 9, 3), period_to_label=stage_to_quarter
         )
         assert profile.periods == (0, 1, 2, 3)
         return jnp.sum(profile.values)
@@ -620,16 +619,140 @@ def test_economic_profile_mapping_is_explicit_and_differentiable() -> None:
     )
 
 
-@pytest.mark.parametrize("labels", [(3, 9), (3, 3)])
+@pytest.mark.parametrize(
+    ("labels", "error"), [((3, 9), "missing"), ((3, 3, 4), "duplicate")]
+)
 def test_economic_profile_mapping_rejects_missing_or_duplicate_selected_labels(
-    labels: tuple[int, ...],
+    *, labels: tuple[int, ...], error: str
 ) -> None:
-    with pytest.raises(ValueError, match=r"missing|duplicate"):
+    with pytest.raises(ValueError, match=error):
         lcm.TimeVarying.from_profile(
-            values=jnp.array([5.0, 10.0]),
+            values=jnp.arange(len(labels), dtype=float),
             labels=labels,
             period_to_label={0: 3, 1: 4},
         )
+
+
+def test_age_profile_mapping_equals_the_hand_built_age_table() -> None:
+    def gather(values: FloatND) -> lcm.TimeVarying:
+        return lcm.TimeVarying.from_profile(
+            values=values,
+            labels=(42, 999, 40, 41),
+            age_to_label={40: 41, 41: 42, 42: 42},
+        )
+
+    values = jnp.array([[3.0, 30.0], [999.0, 999.0], [1.0, 10.0], [2.0, 20.0]])
+    profile = gather(values)
+    expected = lcm.TimeVarying(values=values[jnp.array([3, 0, 0])], ages=(40, 41, 42))
+
+    assert profile.ages == expected.ages
+    assert profile.periods is None
+    np.testing.assert_array_equal(profile.values, expected.values)
+    np.testing.assert_allclose(
+        jax.grad(lambda v: jnp.sum(gather(v).values))(values),
+        [[2, 2], [0, 0], [0, 0], [1, 1]],
+    )
+
+
+@pytest.mark.parametrize("mappings", ["both", "neither"])
+def test_profile_requires_exactly_one_time_mapping(mappings: str) -> None:
+    keyword_mappings = (
+        {"period_to_label": {0: 3}, "age_to_label": {40: 3}}
+        if mappings == "both"
+        else {}
+    )
+    with pytest.raises(ValueError, match=r"exactly one of period_to_label"):
+        lcm.TimeVarying.from_profile(
+            values=jnp.array([5.0]), labels=(3,), **keyword_mappings
+        )
+
+
+@pytest.mark.parametrize(
+    ("labels", "error"), [((41, 99), "missing"), ((41, 41, 42), "duplicate")]
+)
+def test_age_profile_mapping_rejects_missing_or_duplicate_selected_labels(
+    *, labels: tuple[int, ...], error: str
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        lcm.TimeVarying.from_profile(
+            values=jnp.arange(len(labels), dtype=float),
+            labels=labels,
+            age_to_label={40: 41, 41: 42},
+        )
+
+
+@pytest.mark.parametrize("clock", ["period", "age"])
+def test_profile_mapping_ignores_duplicates_among_unused_labels(clock: str) -> None:
+    mapping = {"period_to_label": {0: 41, 1: 42}, "age_to_label": {40: 41, 41: 42}}
+    profile = lcm.TimeVarying.from_profile(
+        values=jnp.array([1.0, 2.0, 8.0, 9.0]),
+        labels=(41, 42, 99, 99),
+        **{f"{clock}_to_label": mapping[f"{clock}_to_label"]},
+    )
+    np.testing.assert_array_equal(profile.values, [1.0, 2.0])
+
+
+@pytest.mark.parametrize("clock", ["period", "age"])
+def test_profile_mapping_rejects_a_leading_axis_longer_than_its_labels(
+    clock: str,
+) -> None:
+    mapping = {"period_to_label": {0: 41, 1: 42}, "age_to_label": {40: 41, 41: 42}}
+    with pytest.raises(ValueError, match="leading axis"):
+        lcm.TimeVarying.from_profile(
+            values=jnp.array([1.0, 2.0, 3.0]),
+            labels=(41, 42),
+            **{f"{clock}_to_label": mapping[f"{clock}_to_label"]},
+        )
+
+
+@pytest.mark.parametrize("age", [float("nan"), float("inf"), "40", True])
+def test_age_profile_mapping_rejects_non_finite_or_non_numeric_ages(
+    *, age: float | str | bool
+) -> None:
+    with pytest.raises(lcm.exceptions.InvalidParamsError, match=r"age|ages"):
+        lcm.TimeVarying.from_profile(
+            values=jnp.array([5.0]),
+            labels=(41,),
+            age_to_label={age: 41},  # ty: ignore[invalid-argument-type]
+        )
+
+
+@pytest.mark.parametrize("period", [True, 1.0, "0"])
+def test_period_profile_mapping_rejects_non_integer_periods(
+    *, period: bool | float | str
+) -> None:
+    with pytest.raises(lcm.exceptions.InvalidParamsError, match=r"period"):
+        lcm.TimeVarying.from_profile(
+            values=jnp.array([5.0]),
+            labels=(41,),
+            period_to_label={period: 41},  # ty: ignore[invalid-argument-type]
+        )
+
+
+def test_age_model_solves_identically_with_an_age_profile_mapping() -> None:
+    source = jnp.array([7.0, 2.0, 3.0, 5.0])
+    source_labels = (39, 40, 41, 42)
+    ages = (40, 41, 42)
+    # The model reads next year's wage; the last age reads its own row.
+    next_age = {age: min(age + 1, ages[-1]) for age in ages}
+    mapped = lcm.TimeVarying.from_profile(
+        values=source, labels=source_labels, age_to_label=next_age
+    )
+    hand_built = lcm.TimeVarying(values=jnp.array([3.0, 5.0, 5.0]), ages=ages)
+
+    solved = {
+        name: _model(age=True).solve(params={"wage": value}, log_level="off")
+        for name, value in (("mapped", mapped), ("hand_built", hand_built))
+    }
+
+    for period in (0, 1):
+        np.testing.assert_array_equal(
+            solved["mapped"].values[period]["work"],
+            solved["hand_built"].values[period]["work"],
+        )
+    # Age 40 earns wage(41) = 3, then age 41 earns wage(42) = 5 and retires (8).
+    expected_v0 = 3.0 + 0.5 * (5.0 + 0.5 * 8.0)
+    np.testing.assert_allclose(solved["mapped"].values[0]["work"], expected_v0)
 
 
 def test_managed_consumer_cannot_index_its_time_axis_again() -> None:

@@ -79,6 +79,7 @@ ARGMAX_SOURCE = "src/_lcm/regime_building/argmax.py"
 COLLECTIVE_SOURCE = "src/_lcm/regime_building/collective.py"
 LOGSUM_SOURCE = "src/_lcm/logsum.py"
 GRID_SEARCH_SOURCE = "src/_lcm/solution/grid_search.py"
+FEASIBILITY_SOURCE = "src/_lcm/solution/feasibility.py"
 CORE_PROGRAM_SOURCE = "src/_lcm/execution/core_program.py"
 OUTPUT_LAYOUT_SOURCE = "src/_lcm/execution/output_layout.py"
 VALUE_TRANSFER_SOURCE = "src/_lcm/execution/value_transfer.py"
@@ -221,6 +222,7 @@ _UNIFORM_PROCESS_SOURCES = (
 
 
 _CERTIFIED_CORRIDOR_SOURCES = (
+    FEASIBILITY_SOURCE,
     *_ACTION_GRID_SOURCES,
     *_UNIFORM_PROCESS_SOURCES,
     NATIVE_VALUES_SOURCE,
@@ -338,13 +340,14 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
+    FEASIBILITY_SOURCE: "a977b82186236c442f799ad361a1d1f10df5a1b495680ed6d8487c9b8a754649",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "4211ddf98911d0159742ffc6869cfd9b55a23d6ee630b040c227d85c55ffab43",
-    SUPPORT_DIAGNOSTICS_SOURCE: "ac67f8399f45bb0e2d270b62043f047d97736900ec62c0ae6cfccfee3070fcb5",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "594d3b2024d8a7ef32fabac6a2d9f07c96c05351080f62138cd26599a35a5730",
+    SUPPORT_DIAGNOSTICS_SOURCE: "ce6d8924504860accdc21a3e81b0cc92029b8e35ee869da4478140a990cf9da0",
     SUPPORT_PRECONDITIONS_SOURCE: "52c97f5f2f6e9e3b6a7ac7215181874cef52948f613f59c270ef9638a51493ac",
     SUPPORT_AUTHORITY_SOURCE: "32647270dba80b48e33ecc27bb77609bf30d04a5b34b754b8a7340f208a8c9a0",
-    SUPPORT_FINGERPRINT_SOURCE: "072c93e7613b1edf806dd5f5cff2db979c3ef9b96063feeb1766ee931981383b",
-    UNIFORM_PROCESS_GRID_SOURCE: "85783762a3cc96a19b332b786f8d0ff5ca01307336a3b196bf7e5d8ac1592a60",
+    SUPPORT_FINGERPRINT_SOURCE: "81ce9a279c79b44fd06ca87b9414a17c36883f4217d334b35b107b02b2f7fd74",
+    UNIFORM_PROCESS_GRID_SOURCE: "835673768193d0282fb78d8a1223557d6ca087ea0b4bf7b1c58f5e4b903629a0",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "4e7302d6cacb53a20f6a0a08e7f57d6e074dedddd8f6a95944a9ed1ed4df7bda",
     NATIVE_ARCHIVE_SOURCE: "783325f05360277cf31d45076bc4041a12143fe66469d9eba1c9c69fb36934c7",
@@ -355,20 +358,20 @@ _SOURCE_SEALS = {
     RUNTIME_SHARDING_SOURCE: "13f6b68846532c6631f27db1c84b47f6c866a992e037dfd8e40c791c16f50f90",
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "1ade513e829c0bd8e053b90ab312e53f7b51a5a4da6ae1000079c5684a8017e4",
     COMBINED_ASSEMBLY_SOURCE: "7e1a7967d013827a9fe51862d304e686105ae7886b3539122289ef3866f5f94a",
-    COMBINED_CHUNK_ADMISSION_SOURCE: "729ceed8098d152e36e6a70b83c0f7e4a38b0e0fa39fd382de38ecf88e201c15",
+    COMBINED_CHUNK_ADMISSION_SOURCE: "1bf5fdb05046e9edfd7f93a6e666999b48973fae4c2025320c3b79011f967716",
     COMBINED_CHUNK_OFFLOAD_SOURCE: "4afae1dea7452ecada529d2ffd60026bae24c945fcf9ac8c021445c4ec7e073c",
     COMBINED_CHUNK_OPERATIONS_SOURCE: "481b768fc97b134c671c386336a25e9e3e78b631a0a3bc4643d9e74d0ba47e54",
     COMBINED_CHUNK_PLANNING_SOURCE: "807378c7ac745eb7fc3d42c27020f6b40d10d40da3041dcdb647e7e2d3e0d90a",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "85070e5f57210e201be248c1f2deae8068dce674112f13efdb0eb94c1dd7f7b4",
-    COMBINED_CHUNK_PROFILES_SOURCE: "ecaf62d1054372b7fe1cb10d61d880bf77a505f03edba39899ddbdae377b5c12",
+    COMBINED_CHUNK_PROFILES_SOURCE: "1c2fea8138f7df79567534267da9d54e7b21008e307e3a93dc31f9095ed28319",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "477f39609fff5371d88d941cc5c4a0c9ab9fe3692ad2845a3fc3a6befb633f42",
-    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "00425b1e7ad0b20c3a5c9481785c96dbabaaf884ae4b19ae6744b751b8dec6d7",
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "563c7e97d4ee38bedf64cb9a6938c7fc20239d47c2a91636200d2002cc7a68d0",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
-    COMBINED_PROGRAM_ARGUMENTS_SOURCE: "da3ee40547e773ef94c9b0fe2e1c396d443e6894c752baf2d7eb6682744fce78",
+    COMBINED_PROGRAM_ARGUMENTS_SOURCE: "c04b3fc05dd31f728a629ff17b9774a97313b65f145216c8eb1dd741e68c5208",
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
     COMBINED_RESULT_SNAPSHOT_SOURCE: "95a3cd4e31bff7587defb208790620657eea96bfe6d78559f82ebfe7947aed18",
     COMBINED_VALIDATE_V_SOURCE: "70609bbd14dba6eeccf204a8f112c78cbd85799efbd007ecb880157259ecd2f3",
-    COMBINED_LOGGING_SOURCE: "fd8f8dc5c14ebae17016c3362867eb16f7e2389307e97fdf4cd2e3ad78e38118",
+    COMBINED_LOGGING_SOURCE: "264b60c4ce52703aba4f8eb113fc4e8d2f2daee6912b369fab8f8ee5e0bd808a",
     COMBINED_AUTHORITY_SOURCE: "9bac2b806c1a9440d3ef4ca7701ca820fa2c39091cde1ed607802b7c3a1e1f04",
     COMBINED_ENTRIES_SOURCE: "298ba9790d6fab60fd88729b476c75206319dba64f246a0979c7a58444f99bfb",
     COMBINED_STORES_SOURCE: "f40c0fdb20ebf37ff924fb970525084961ebf25e63ebfa142fff5082f2648a0d",
@@ -377,19 +380,19 @@ _SOURCE_SEALS = {
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "4e50d79fe971c9d5f0e59fc7b6942868cb09a1223bcde15754019d72efa2d979",
     NBEGM_SOURCE: "869fec6e36b3ace14c3cdcd1b1c5ca2f7c367224d658aa0c54510b11fa346c5d",
     CONTINUATION_ARGUMENTS_SOURCE: "48495f36be398f0d5eb1d1f9e161fb3a71d877dc164da416ada09aaeceda5f51",
-    SIMULATION_TASTE_STREAM_SOURCE: "e1c4b55877a5bbc3a3bc74447c7fcdae6c6f8b2a88ce5f7d949bf082032226a9",
+    SIMULATION_TASTE_STREAM_SOURCE: "a8a90200f06aec77d02d21780286e32a3620a1687ee76c23af301687a46ae5b9",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
     COMPILER_INPUTS_SOURCE: "c2df405f63a61f7d5201d754c95bcca9fdc213c97c1533025080da80814cda70",
     SIMULATION_OPERANDS_SOURCE: "7645b400641b5d995e1a2f651dc5d6ccb54df3e16732db64a75765c5a5f31645",
     SIMULATION_UNIT_SOURCE: "74859e03e21e9861cc7847f49a8cde2301700b656b2556ad0fb47334d6e809c6",
-    SIMULATION_HOST_SOURCE: "43c3cd3b13b91730d0758f78e486a9c59986593e9b21b75d3538fd8135e6ced1",
-    SIMULATION_MEMORY_SOURCE: "f5de32a31115cb0f358e542982f11b9577a3ee79a8d95866ac68cbb5aa8deddd",
+    SIMULATION_HOST_SOURCE: "9f26942832e882269715087d5e1da41a973ac81786ea3bd1181554ab785d81e1",
+    SIMULATION_MEMORY_SOURCE: "19afb85a7c2d446209cd668aaf90ab50792698f1403e6d2a619a4ed6a49bc874",
     SIMULATION_PERIOD_INPUTS_SOURCE: "dcdc57a2d7374e2931f71add777e511360aebf44187f2c7becf26be44d1923fe",
     SIMULATION_REPLAY_INPUTS_SOURCE: "2ee44446e1524d202b474d72a58465e574e8f212b9efaaabb7177da5ded9e054",
     SIMULATION_VALUE_READS_SOURCE: "4ed63570347beab876c3ff87854dae6d84e9e9f2aa8755a261d65897ea0eba32",
     SIMULATION_VALUE_PLACEMENT_SOURCE: "afd58b343d0385934c3add5552d7926dc3f9ba2700e5a40b26a65a62a75b1e68",
     SIMULATION_CHUNK_INPUTS_SOURCE: "33449e9833e30dbe50f455603916489145b5ec9484639acf0609e8927bca42ed",
-    SIMULATION_ENTRY_INPUTS_SOURCE: "de9b448a8e56e196d515e9e9ce958eb688173020137173a4f5c5ac97311a0c4e",
+    SIMULATION_ENTRY_INPUTS_SOURCE: "44f24b2c57d551088ed220b6726c17f0b6a4a0bf37ee56f1f20c29a0560f216f",
     SIMULATION_RESIDENCY_SOURCE: "269a66f4a0abd46e3bb6b9bd8b9df6c3c73bd5507c2c236edea7d881efe78274",
     SIMULATION_GATED_ROUTING_SOURCE: "3a1685c78c9d1dd345e4242bc008f2858578725232b85610d12fa08535f82274",
     VALUE_TOPOLOGY_SOURCE: "5809eef9ae77ef90075d57674db13a7ea89fb9c55bf4005daffee3b83991019d",
@@ -398,15 +401,15 @@ _SOURCE_SEALS = {
     LIVENESS_SOURCE: "056bda4d48f26768ed8615925ce8ff89665bb8eed94b59d69f02701a95943dff",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
     WORKSPACE_PLANNING_SOURCE: "c5cb4ef56e436e5620ef16575fb6f2a92a6c5a5162e3ef005acb855ce259d493",
-    SIMULATION_PROGRAMS_SOURCE: "849b87c55de2a6a03cf65f8db659bb828b8b7bd82d11b1b387058a29aaa43fcc",
-    SIMULATION_PROGRAM_TYPES_SOURCE: "99793b9203d1f8fa0e811f8aaaedf904508691cc657dd8206c73a79f1251b708",
+    SIMULATION_PROGRAMS_SOURCE: "86c98b7cd0aed37c5985a247e6d952cbe77b9893994ed3f017df3878f2dd5799",
+    SIMULATION_PROGRAM_TYPES_SOURCE: "c3b149fd3d72cbdf43d39bb5b321500be7b2485cfce035c47e68a404df558399",
     SIMULATION_RUNTIME_SOURCE: "743031ba65c4ab17888b8f593d28f183261678c04bda69c7a76f1b54da76a2de",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "681a7fe6d5a31497945ade5190da4134abd344d92bf5905345f5547d296c693a",
-    COLLECTIVE_SOURCE: "3b7f2efb763c8334e9a70eaab00f7037c2dd990d0b310929d959d8919059c810",
-    MAX_Q_SOURCE: "d3a6aa921d6c7f18763804c328f374b036787c4eda4b6acacbd974aa66789c3c",
-    PROCESSING_SOURCE: "db23ab13cbdf3662c0dae199ab7437116c61dfc05e477bc12645a9011ec0cf2a",
-    GRID_SEARCH_SOURCE: "a656fc90438850ea4c61fe02062a118454de966a81dd7ff7be92b8de34958aea",
+    ARGMAX_SOURCE: "5dc1565ef853120aa81f045d93e2a2e6e89456e30aae65da8bdd0abcd783d204",
+    COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
+    MAX_Q_SOURCE: "b9b11f59c0cbf4587cc945cc36f94bc614725a33e28d5236a45636c172661438",
+    PROCESSING_SOURCE: "913cdf8753b43dcae8fccc2bdf883c38aa75104fabf914e6d6ab5dec3db19313",
+    GRID_SEARCH_SOURCE: "66e966a77df0971b964583d792550f85b2a2c0ed18bcdba5aadba1861f73d83e",
     CORE_PROGRAM_SOURCE: "21e86cda882a227086aa6550a63daa9492071f7a14a9e56565e751a67ffae2b1",
     OUTPUT_LAYOUT_SOURCE: "1173fe52bc6c9315b328d5ed5bc752f8012614443bd15756e0bf7245595aafbb",
     VALUE_TRANSFER_SOURCE: "c3b8b9df21ea6ebb6d029becdafd4da8905f1a3699d2a1ff5d206af218d097f6",
@@ -421,45 +424,45 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "99fc6b5647425c11e2c15abc9ff49c84d1b1ff3bace3f8e51e593ff8f98ec4ad",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
-    ENGINE_SOURCE: "1a31f2797a8c8f519a5c7ebe0ba5a2fdf8f1dd52b24cd1f6ce33ae1c5fb3ab11",
+    ENGINE_SOURCE: "cc6c650d562cebb9602cf72c0576a5b369b6925824d61eadcd0fb038c7594043",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
-    SIMULATION_SOURCE: "8d6e5e05994b1d5f836af4943dd11e1894d45c6f7a10e1017e091aba3fb9ab92",
-    SIMULATION_TRANSITIONS_SOURCE: "1b2f18af63637bd0e856df76d9efcf60b9331e2144ae40115f410bfdd5ab37c2",
+    SIMULATION_SOURCE: "88e8a29b518add2783972d0a6cea783cdd3fa0bb0c1c6ee45be2b2b9e8b3199e",
+    SIMULATION_TRANSITIONS_SOURCE: "90ac2c39a47b529061da1106f1c0b688e32f8e19b8b37717f85565c9f404057a",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "f0eb0da32e7e9e1e0fa49c826a030b2b85503cd17aa66216babc60ae0d9a5a5f",
+    MODEL_SOURCE: "c7888637d8d6cf3a1e32c528fb46e2c628a1e82a104c406a1dd8c05a4df8c547",
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
-    BACKWARD_INDUCTION_SOURCE: "b06a093bc535610add24a808bc8f87953987faea76e13d30e763d00118714190",
+    BACKWARD_INDUCTION_SOURCE: "bd156449e1bb2dcc47b115a3818be9039ddc6ca0211e20457a11fc6c06e224f8",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
-    INITIAL_CONDITIONS_SOURCE: "0440bfaf6c0380df246dd5184eb818e0a638c4121ec392b80f61c4a91596401f",
-    RESULT_SOURCE: "6da8d6ed7adc3d9d952623419f36550a16d0f49080f476299120d7a107fdcd7b",
-    RESULT_DATAFRAME_SOURCE: "d4dd248500cb96179f378430236c0201d221f377f62ec63689eb5234431376a5",
-    RESULT_METADATA_SOURCE: "b775c7cda25a3d7c53e6bc08499b24e2a277d95b5a2cef6e7fce5512cf208591",
-    ADDITIONAL_TARGETS_SOURCE: "dd3c1756ba2a6fbedd67465e7eb4d92c32aebb216f9d5683f821703ccccf9619",
-    SIMULATION_RANDOM_SOURCE: "f755c4a35a8ef395d2990d08e725f999a2deb4aff803df5940edbf3e1c4ccd2e",
+    INITIAL_CONDITIONS_SOURCE: "ad911f7196d00ee34a94a943968c36d7c1e13cd7a42ea9510c0c7386dcfd1b99",
+    RESULT_SOURCE: "172ced15f34d821650d67d2cbff0b78fad45da1fdbd09078ca3ec774dc37dd6d",
+    RESULT_DATAFRAME_SOURCE: "88773c4ce66f54feface58198c1785040ba43973f0fc24cab623c699aa400a41",
+    RESULT_METADATA_SOURCE: "3f1e299a4c7aa76aedea4d39288c9941a27ba7cb881d83792a44ad63b31f775d",
+    ADDITIONAL_TARGETS_SOURCE: "3a4d95d5c88c801bb8bb0881a52cd8985e1cc17efdbfbf5474332e46b8d46614",
+    SIMULATION_RANDOM_SOURCE: "d646f465051511559a77dd993ff26fc3adcdbd594178b7b9ba4c7986d5d07d77",
     FOLD_ZERO_SAFE_SOURCE: "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5",
     SOLUTION_CONTRACT_SOURCE: "13ba30149b02fc028fbb21880ae202978825a7474ac1f81e44303a48147e775c",
     GRIDS_INIT_SOURCE: "3c720bc2240dd1cfd45855ce501f03f8a05abda5de1142b9d00208e517b9ddce",
     GRID_BASE_SOURCE: "045d3d462aa80c6f3444030003547f76864bb1f038b8ccb1bd15a00e29e0c2a7",
     GRID_COORDINATES_SOURCE: "9dd0cf9e3c702023cd3cfa40a3164bf399ea295c57349223b8ab617c7f3533d5",
-    DISCRETE_GRID_SOURCE: "574a9457210bad39263e7eaf7d5efb2f83661a5ab101f08b4ae3d8f65228452a",
-    CONTINUOUS_GRID_SOURCE: "a2b2c4f6a956e473193b46d7ba451a9e93f5c40fbb57130ecc2aa067e444c16a",
-    PIECEWISE_GRID_SOURCE: "65d571f651695af2b925cda751c9c5ecdedb8dda55cba6dd0d1714f26840ca33",
+    DISCRETE_GRID_SOURCE: "a3b30b147c1b97be91b2ad3a46ad5226c9daad24f244f399093d378f23de8242",
+    CONTINUOUS_GRID_SOURCE: "1b21422b57e79fa93f3ed59dd5c10fef620f2b3008eedcbf60e7bf8440323726",
+    PIECEWISE_GRID_SOURCE: "a1fbb24c824da48df6c4869c61288e3dbf533c059178e88636871a23d13dafb3",
     PROCESSES_INIT_SOURCE: "fbce6ed4c889cf4c30f5242c142b4dcf2fa9e186b75cd17be1557f827abff00a",
-    PROCESS_BASE_SOURCE: "0fdc8c86c546c8a0221afc45a35c14b7ea5048579820e25957887bed480b54c2",
+    PROCESS_BASE_SOURCE: "cf3eeb214e28ee9b16976cf3e741c8db44f603ca01ee7cba436d61db8ec5249b",
     PROCESS_IID_SOURCE: "6a622d0886aa903d9c5f98ae3e26e0a94eb4d16209a2481074a89fda99b1e308",
-    PROCESS_AR1_SOURCE: "0f2fd7e9f8d5879096cca7311e830a590461c372615bc396182787df0aae52eb",
-    VARIABLES_SOURCE: "e7f2ceb78b82df85ee860e8e417138fa4ddfbd30d4125c58f7d2fd39d8d3c0f0",
-    PARAMS_REGIME_TEMPLATE_SOURCE: "71def81dfc7a133730a65e206fe770c8b2ee31edc6064448da5a7367dc3f0476",
+    PROCESS_AR1_SOURCE: "1d837d51445c48a1f5a41e95f1ccceb8d2b01bb946636bd319bad122a50e8686",
+    VARIABLES_SOURCE: "8445fd5d92144d013955027460ee204debfdcedf8bb5ef5d10092538cd18de8c",
+    PARAMS_REGIME_TEMPLATE_SOURCE: "eb0515b5925306dcfb9b28b17ab5e73871e8dccf974d3d38ce27847c12296ea7",
     PARAMS_PROCESSING_SOURCE: "a6640eef75e746b50024d11c51c572d1daa062cf3d5256afe31a97b121a5410d",
     DTYPES_SOURCE: "1d38a54667166599fd692f8c58b37741f355753138d234b650c54384321bcbb2",
     NAMESPACE_SOURCE: "9a33080663f01a6d65501663e8436b132176be51c8223c28b2e749d8dbf8b570",
-    PANDAS_UTILS_SOURCE: "6d62f9b897416aceb89143db4cbe9a691b907d75579f736b830fede239bc199b",
-    MODEL_PROCESSING_SOURCE: "115f378c9b251e496cc6704c69fc9f1fed9c43abc56d3bd0c4763ae3991cf3b0",
+    PANDAS_UTILS_SOURCE: "9ce312a18a19bd267eec3145720f5b2911429490e9e1a4742de96aab5e35080d",
+    MODEL_PROCESSING_SOURCE: "fc0df70c0eb59559eff5022068ef3e2dc47658042c825cdfc5e6e71c57bc46d5",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 421
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
+    "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
 )
 EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 54
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
@@ -478,8 +481,15 @@ EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
 # `_surface_pin`, so one reviewed fact is never written twice, and a stored pin
 # that no family selects is a verifier error rather than a silent no-op.
 _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
+    FEASIBILITY_SOURCE: (
+        "d29bb927eb84020be66ccc43e7cd95a462773573df0f12ee0dab31264b80486e",
+        {
+            "CountedGridSearch.__call__": "b4079d0cec5e6e8312189e663d7c8eeb3d2de45a83e8cd88655d910837630c45",
+            "FeasibilityKernelOutput.__post_init__": "73fb942f391739a207ebe8f57aafbe812430350d202a9846b70bba00f8f25f53",
+        },
+    ),
     PANDAS_UTILS_SOURCE: (
-        "5273a52aca54f130e969dbe1cf85ec2c3eb81d305e8fcb8022735ad52f802ef1",
+        "5dbbe7a597f6c1c7e3f26c1ab68cf0f05d9ce110486d47bb7a2e9cc99f190e3e",
         {
             "initial_conditions_from_dataframe": "996cc674b61f66fd3c1517429659eea8a6201779570bba88e2002cd2663b32e8",
             "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
@@ -526,28 +536,30 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     INITIAL_CONDITIONS_SOURCE: (
-        "883d296c194b51842f92e3a4edf477754ee46a954d9b841c59ecea24546cc7df",
+        "32dd4cc1b607cf6a9ff4b078dee92e3a767b8bb7b73b67e1c80a6301574fc0b0",
         {
-            "validate_simulation_inputs": "11b399b724c138450522600bed2e97020966ad1795999bb18034fd8c8425c87c",
-            "_preflight_memory": "55dcaad31fc350c161a1bfde013381ebe2e9948df1a55cee02044cf51a45c972",
+            "validate_simulation_inputs": "1b024d99f9d3f19eea0863fd5c24d15535b07496bbe8db990d4511fe2b7118ef",
+            "_preflight_memory": "f422d02e3553d6c9f839dc586e7237deb82b365276c58942e782184fb6ac89de",
             "_discrete_initial_specs": "6e837939569bad3b27093ab4a14ce38ad16756f86910f37127432d07291195a6",
             "_pack_initial_summary": "e674412100af558aae66243e25060f3ce8538ffd4ad138c7e0effd58e1e3357e",
             "_read_initial_cohorts": "a720c185a1ac905d76fb08dcdba34b7a964b9bf8cf461ad31f7f4e29c86ab8e2",
-            "validate_initial_conditions": "91ad22d98c8777318b68d05eb4858f5f606a61bd8bcc61e639d2048e9533b147",
+            "validate_initial_conditions": "5bd4508a22bf98537aac6bbf158f2fd0179f99fb508e68a3f41ffbefe7ec4942",
             "_collect_feasibility_errors": "bdc760357ec435abd0a5bacadc9890087789aedf351e1948f81080f66e7fc602",
             "_age_specialized_feasibility_message": "893004374a072675df58e2a22ef9905c784127e82283bb4a0ebac2d18aca0ff0",
-            "_check_regime_feasibility": "dd5f6449c0e80fee60a9f1701c1d2908c1f88fb7a257efb9e035c921b3dcc0cd",
+            "_check_regime_feasibility": "72c808a53cc090e4f17b2a1bdc4b717e15e90bf2c2327f07f1fdb77e46e6f01b",
             "_regime_feasibility_mask": "376939e5868277767e4bee361d06c8fac5324b1a0a4552281042e24e40d410dc",
             "_run_profiled_feasibility": "4efae4cf1e6ba63418c8347c61843943079eadef62bb3b2f4cf49c9ad5961d98",
             "_batched_feasibility_check": "4f2637ac22488e5202f6bbc655f093753c5f296bd13629148c0ff937ab7d1177",
             "_evaluate_constant_feasibility": "3de32aeab79d2a95b7831fcafc75bb8da9478a8090f0859d73c2e43375f3f9c0",
             "_admits_any_action": "7b79e5bde0a32eb36456597caf5b61e1e04736099b78e8c9d2a89382747c4678",
             "_per_constraint_feasibility": "9a40c5071201df771c58b17e05c7eb088a22e94a8e5a06fef835a854b62b4b4f",
-            "_format_infeasibility_message": "f8bbf735e2c797e53e1be248998b0349d82495354d4370412d6b98f991e032b2",
+            "_initial_physical_joint_states": "86f8eedbe28cf8cfe0f69cafb8968bd619de673540f0325c495de0e2085df68b",
+            "_replace_joint_coordinates": "926e669f6474495d0b914bd8dbc6268f3182efbd7cad92b95ae6d232ab397bf8",
+            "_format_infeasibility_message": "b6683eabf3a727ebf1f61b8aa98c2818fa0fd00a7c9f295692fefbad40c75b03",
             "_gather_feasibility_inputs": "557c76957b3e216d9a95166daee80fefdd0af163633920b30b1d7215596d8515",
             "_subject_feasibility_flag": "58bfc237bc5b8a51897de10ffee1eb33f7a2cb6504c094ed48544946185bd404",
             "_constant_feasibility_flag": "f7b994fa04576c7157f8bab30ef0e17126c181ba874cbe493c1e19e6be056f17",
-            "canonicalize_initial_conditions": "f07710214a6b3ba63b70a656f4d4bead8e403950743ebc248256dfa028cf1c92",
+            "canonicalize_initial_conditions": "d3638b17606badee06c1e8c337a8b0f8a66d0342696116269b7700ad2a10bcc0",
             "_CarrierWriter.__call__": "697bae0eaa97d3806c3079466e8c3de66ce08eec331d66402da3fa02958a573e",
             "_build_admitted_initial_states": "ca3e5c754d9c86385c7302441e2199c338239d89edde06c5620874793afc68ec",
             "_cast_carrier": "5a08758007268730f195c44800937e9274ee44167d6ca2ae6ea00dd75ea4800b",
@@ -559,9 +571,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_TASTE_STREAM_SOURCE: (
-        "baaefd0a6d556fb0cb5f8e6ccbd7fbc84e8adc8fdd138f6ff03e4578ff9d7791",
+        "62e32d23dc56cad5e11aa254963de93c803964b5a42539679b63054ad14a9491",
         {
-            "create_taste_shock_key": "12900cfb3cc0a28f69b58dfcf4c590448d037a0ce5ff96344aaf46e42cabe3e6",
+            "create_taste_shock_key": "76cdca8e4c1fec745ba4041395bb23454129fc5a751b89d0b5dfddeccc689fa0",
             "prepare_decision_taste_keys": "ef085a5cfac60dce08367fc50b280500313659e270771b1e94367b73e3ddf717",
             "generate_taste_shock_keys": "66f0dddec645c123e66957e33ea5da7f932c83c23822dd9a49c308034339a038",
             "advance_simulation_taste_key": "49eecd1a5724049acc7108921c86640236140477924fbf3b561156c7a449381b",
@@ -569,7 +581,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_encode_subject_row": "9206dbef80b1bf9607d6cfc42db24af9d7a01ee34ee04079d13c61582eeba82a",
             "_advance_simulation_taste_key": "d8854c351a6aac51cc858691332541a21413b90baccf6dd2a52fd2ae601a3752",
             "_taste_address_words": "4490c80c002e777c58e57d242f5a722e17f31d10e7d8120e32b31123ea284478",
-            "draw_taste_shock_keys": "bdc7eb50b64e31949af64b051935650b7f744467074adadc2dea930012d9d577",
+            "draw_taste_shock_keys": "cab000b3c2a725b99602e5162bc83076db4a2dfd2b466c5a660bc597c2034758",
             "_row_offset_words": "5b7e8a0ca6032c00fd2db2d24513c6642a270e20d98facc362b45bc784d80778",
             "_fold_subject_key": "6c3faf14f43234d25195bd3525659c095512857f4b9d4422e05e43e33d936493",
         },
@@ -640,7 +652,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_HOST_SOURCE: (
-        "fc502606957226c9f900b322d511253e293cc2881a355e1eef4d2585db27e5ca",
+        "2f0468177c23c83e374e15ddd4acf2a93a5e802bc05d63272e6925ce16f044df",
         {
             "ProfiledSimulationOperations.dispatch": "20d68817ed760c316ad119ea002808c35581fe7b27553abf6f3efc37c469e178",
             "ProfiledSimulationOperations.compile_candidate": "fa16641b0058003789569be59cf753f15129b9ed0e3f906896b7fe593f64e4f6",
@@ -662,7 +674,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_MEMORY_SOURCE: (
-        "5ed2917eb487e9b492f5139b9ef4221062e05447a960fc880f00a1eb9f525313",
+        "ef8bdd149ef9c3ac54b4804285cab4cea9ef50cb66786c2d0abea819d7c3ac66",
         {
             "SimulationMemory.__setattr__": "f1f1f1e5c28e4d0099b7ed4b0c8fad853cd447efb65ea98af0268f8a5e16c5ff",
             "SimulationMemory._period_snapshot": "5c2d15995d981f85cea04e2d0c6b608dbd33916c604115b122a17efd69a7b774",
@@ -673,8 +685,8 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "SimulationMemory.replace_outputs": "e01242175d3a6c8261b8f94b8e8361147019e0d8e667d176d8c314fd0e044e90",
             "SimulationMemory.set_derived": "37d12b85b0715cc5e304cd4c1c883368232fff1b233c0c978c0153a8d9d5e37b",
             "SimulationMemory.hold": "3492055e2604c528002da2df4b0dde23e40962e193dad2dfff1a22a7bfea255e",
-            "SimulationMemory.before_transfer": "8f90ea91ccd52885cef10e97c47c0789e4f7be21b0c69b846f8c82ba3c97b764",
-            "SimulationMemory.check_resident": "f5eafe87346b680fc08d2617bb10f395585346ec569bb887a8eac725485daea5",
+            "SimulationMemory.before_transfer": "16a2151cf001c60c14e40f6a7511d39e3a687b079fce838f97258ebefe03048b",
+            "SimulationMemory.check_resident": "2dc1e19c92cffb46032324e68a41c655a31cf77c702f060caa1b328516988c92",
             "SimulationMemory.run": "5f032e3774d15890471a774391ffb79b18bda53f8e5d7e95b7076a3f3a69db60",
             "SimulationMemory.close_unit": "ad93e305391d4eea94af93d4561ff2ff0a699c691f24084f5f1bcb63ae589838",
             "run_simulation_operation": "e7113ea2849245cd18779eb8f15e3a83a6d59389b6baec8be5254cd5d26e53d8",
@@ -731,10 +743,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_ENTRY_INPUTS_SOURCE: (
-        "19298fcadc9496eb0783d317d0906a5395a72c1c44ed7b97d118c394543f2317",
+        "377aaa182a0004d22f71c1ed8f53b682b623f690328e50e9186373e60ae91b4e",
         {
             "SimulationEntryInputs.footprint": "1953575a6f4762e5d24f20332868a5dfbffd884d41ac4334b8455317dfb55355",
-            "capture_simulation_entry_inputs": "c31f897a2c610499ad3cbd7a860d06ed930d88c0f59b6589c17609459448eead",
+            "capture_simulation_entry_inputs": "08797a7cb0a3caa760f9eb24fd99d21b3f3fe239192a61bafc9301dc706ffd14",
             "_caller_arrays": "ee4e16b5f1f25036f1c23004d847c17eca19ca6d88e0b353cfebd736dc883b9e",
         },
     ),
@@ -906,28 +918,28 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_CHUNK_ADMISSION_SOURCE: (
-        "c4f91ea4ebbe7a18f40ef83b3dc19fcff1edb1c2384b6bf780d505c0ada7827c",
+        "87bb08a1fe5f5f3dc9699a5c34b299a95c64cf6a8e1a3225ea32842dbfb9cdc3",
         {
-            "_ChunkProfiler.profile_widths": "c58476e0887efa304631ea4bf1d21adcb5833138607fad891c42ee2eadf0f05b",
-            "_simulation_chunk_profile_key": "54fbe929412547f0a09efa9b889499eb9fbcee86f00abb937982b667780a6d3f",
+            "_ChunkProfiler.profile_widths": "b7a9346339afcbbad29681f08c675fca425956b8bd8ee0769fe1cbb436b3b7c0",
+            "_simulation_chunk_profile_key": "a5f7a053c76422275310491213d67f6d00bc90150300e63678413d8e3b1a1d79",
             "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
             "_independent_anchor_widths": "1c9375085f39b01649366f937b1eb59c5fc120ba611efbe8870a4e0c9d40d078",
             "_plan_independent_chunks": "030a717fb2310c2c85cf9daa0a75ec918dc8e33dab682ba642fcbba27f723015",
             "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
-            "prepare_simulation_chunks": "dac703e0678ac32bd02520afb2db2befdd8cd5a34f596602dd8b0891b59a1657",
+            "prepare_simulation_chunks": "a34e071da6c8ed66ef1f047af9ebe8b6c213fd2692895e0954c5168e82e7b187",
             "_ChunkProfiler.__call__": "dfdaeb448cdff047ed8bad87b46cbce7649782bd9ae525af5b240a0d836aa2f1",
             "_common_axes": "277ef7d313404ccdd8610cf7f5a4896b38710693206a213f6728e4377cf637ef",
             "PreparedSimulationChunks.require_chunk": "4c567102baec45a7386ba33c9159ea2ce4a29fa292795c29b41faa18021e94a6",
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "add8d7386a948e5a13f1f6c9658ecd120f2fc7918676907fca9ddb73fb47c823",
+        "56ac5168b71953b1b998ac2bd186f9dabf519e7fded08d06043c817d1820b203",
         {
-            "profile_simulation_chunk": "ed0eebd43869e36c6f69b8aaadcd101018f54852b83ee7d1b739b6e1b61ebbf5",
+            "profile_simulation_chunk": "6d6fcedb7426a014a789b822e592147a1d2ffea40cc4004f61add59651431cba",
             "_period_copy_reservation": "bf995f9f6b2ee949a83d862cac85fb1e0148fd80ac225c0e0c469f6f758b05f2",
             "_policy_read_sources": "a83d15eb8de8a505e80cdce7a9448b11d7a9ab3001e92beb7676b491fb63245e",
             "_retained_read_source": "e0233031b8fb4dcb494575a397f5c2e9ccbfd45a69d0e6f951bb3612323cf82f",
-            "_profile_next_subjects": "4ae1bfc38693f3c7e5c8c9a57a58d6805d4d43e4adf92bfaef9ddb0d676bbd9c",
+            "_profile_next_subjects": "a06ea887076865b4df4ef39c3eb81a0dd757825b44534df21fb5997cbc327c08",
             "_profile_population_roles": "99510aeb32383e09d2b2972ef0ac6354dd0259aa494d77cefd9aa43d9fecad8e",
             "_profile_outer_storage": "f140b97925fd77d4b73acef4d6cea9c9cbc2db8cf67fb70d692be6130eed11c3",
             "_record_core": "1ca4c13d2facd739b83c8ee4c9cf265ddefcf982b4d937a6daedf39e2393684f",
@@ -938,10 +950,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: (
-        "6e01aa85f3d604f853544d2028f0cc6fce9f6e4598c7b12c3e76f8c963ea8ae2",
+        "776092c8593104d4b41ad20adb4ca356f1c5ec73b0c178aff133929ba5dbc127",
         {
             "profile_forward_programs": "effdfca96bc6322a037b7f0b4b9d93f97a776a55db9d0de0fcf60d32dddf7a3d",
-            "profile_forward_unit": "aa66702db79f3c1a6cbb7a358278a8391248560f2b0a5ec1c5aeb0f6f95a17da",
+            "profile_forward_unit": "d17687a79e8ac70a69b242cd097152414ab484ae1c1ecd516972e1943b617d18",
             "_profile_finite_decision": "5ca35d7e729d991a97f4d22e3f1a65b997c0403769ae6b76e5a35e512e5e66b0",
             "_abstract_policy_leaf": "96e133ac576cd9b40afbf10907084378253b43bf9376d39d0faa3743d58b0cd2",
             "AbstractSimulationProfile.__post_init__": "cbd87055b30ad84f7904480cff150f5d376033767ac3e759cfb7a086d7d19123",
@@ -955,21 +967,21 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: (
-        "f10be88662d7a82e66428a5d3af8da024e0464cac414bbff0b1dac4e2368d1b8",
+        "4e78a74055ec714228b16f8a88512af263d8b353b4894c991c1f42418980e331",
         {
             "policy_prepare_arguments": "8e82a8646d7b7553c1ce0748d6b321a72ad2a6542caff4ec92f5820733bbb8dd",
             "policy_rank_arguments": "451148291aca1118a504f213973ee246b11226789800fbcce38c47f866003730",
             "gate_fold_arguments": "14264886b5ffff2d7ecaab619eb270bfd895acf096cf32cfec5b259d0a74ea91",
             "gate_route_arguments": "f5d91292d00f3a029a7ba682d7482af2704733fd7bf7947885b4473a72f3f195",
             "decision_arguments": "46071286a5f53d60000d90ce098c2932699186c284db7717786a8a5f16d93566",
-            "transition_arguments": "eab1b8193f71cd84e911506b827792b73ee6baf7144fead32d0ecdb3f846e8c3",
+            "transition_arguments": "71cac1a76e8546cce540a7bc0e1fd75ec0a979e77c3a941593a6c00d4036f544",
         },
     ),
     SIMULATION_SOURCE: (
-        "3487535ecd1a1fbdfbe4a2501267bdbb34c6368ef13f35c04db894434caf692a",
+        "f024d480b09fe244f8adeca8eb887fa8ff90bd927613bbaeaf0caad1a052a3fb",
         {
-            "simulate": "63de7af7950c94b856783111458e25a8f334bbe1848654003578fdc73ae22891",
-            "_simulate_regime_in_period": "a3a32e5e21bd0efd52ad165191534a6762dafea741a705d2c2a331d0e9d0b122",
+            "simulate": "5a200607ba9aa61ef745fe1a4d5ef16a78582039948ab2078da4a7b2f4d9b9ce",
+            "_simulate_regime_in_period": "34cb3f47fc1607d59ebcdddda5cafce37fbfbebdaaf4a6cd1c20f4f13434dac7",
             "_execute_finite_replay": "8fbb9dc117de1e2154984bbc79668966690ed60572129e2d46a376e02a60d1d9",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
             "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
@@ -977,14 +989,14 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
             "_validate_period_values": "30fe242e786e7e38637d380ecad0aa4d1689bc71c1fa9cbf2ae3c781e011a3c3",
             "_validate_simulated_value": "5938880b9d43f485c98f21b559d9b6d9326adc0dfde9dbca9d6a831e128cfd00",
-            "_simulate_subject_chunk": "73992a1fb91a25fa59a07d2a6176e6ff4cf8b4730b7fb411ab292c547041a099",
+            "_simulate_subject_chunk": "4788130a3fc2de169f176be1a60ea9977b48c9c45251e95c52ed4a1ddeb93ac2",
             "_bind_unit_executor": "a787e30bafb80053703e1f4ce0c1d84feb5ac522cd41349665c600dcf9f1eda5",
             "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
             "_read_external_replay": "392ae18dc5916b0dd6b9539f395002fb97b1d1d985a8b985dc547785cd98ab53",
             "_replay_nnbegm_candidates": "8a0f5086bdeb56bb6622302db85cdc1b03d06ede559d45a95bf6346f31764de8",
             "_prepare_nnbegm_candidate_bank": "d5406bb8fb04f481aeb91ecbce93394cf531239a137df46d28ace9993797b62f",
             "_rank_nnbegm_candidate_bank": "fa90813a7edb9f5aa16be3f809c132f3d2e4f9ac87ce6729993e799a3ac26db5",
-            "_initialize_chunk_state": "0597964759cc394aea8126642ecf7a6d0902c080cf9ceff9cd704e805a4c149d",
+            "_initialize_chunk_state": "ce97dba339426c926a50f326577ea8a09cdc8f18f9193b3ea3cdcc5403956092",
         },
     ),
     POLICY_DIAGNOSTICS_SOURCE: (
@@ -994,14 +1006,14 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "af1f34535997863f040cbdc95c12bc81657b55ecc5ddd0d6ace82399a35f8240",
+        "67d0a6b7b578ffe5fe7a88b3debeb299269b4cb0c75ad32544993823f24262ac",
         {
-            "_validate_sharded_state_capability": "76a10f69e8f6acb1150617100119e1f61ad7ed4b759f4849c8ee7536f44f3f4c",
+            "_validate_sharded_state_capability": "a9179a16ff241bdb413609784c552d9a167f3a7bf956137e7509b8d7ceec83e7",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
-            "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "0cf8089b482909e952e683cfdf155f7dc934f3f10ae7c11b54b4c5c0de6e6e71",
-            "Model.simulate": "ccce7497df14c2c278bcee92cf308682fee0fe622000939aafcdf7482ae95e4e",
-            "Model._open_entry_allocations": "eef364fb50a07f87d74caf5d7f84b2a3f6ba7e66c3d84b4a25e9bf8d73c4b543",
+            "_supports_unsharded_continuous_process": "d837bd4f6c97be377ae02dca1f2044e1eb9974c6e7e08bc48866bed0f6886b18",
+            "Model.__init__": "1df788cc452b59db5832be2b0e0e5c8136e9806a4c0ae5bfdcfb5dcd32d1d6ee",
+            "Model.simulate": "a953907b88790f9ef7c2c7d1b09ce69e6d9864fdcb85e37db807b59ecbf58a39",
+            "Model._open_entry_allocations": "2d3a04ba171e7e79bb145481fb9859294a75004242c981ae32992f6121db017c",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "15a780da8bc0f5d8767481fc4f9442fd846d29e6105f72d9b795266256e328ff",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -1009,14 +1021,13 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "Model._snapshot_solution_envelope": "9a4c08dc99912920df4b670212a15313e4e4e79446b8ae6a19a11fe6ba66910a",
             "Model._declared_solution_authority": "606f4c123f2b6593e1e2f212f572a035cdb6b304b185055a08af490bd097a6a9",
             "Model._model_fingerprint": "3b5ede2a24fdb3a9ee1993d3b0ad6a9092e75b82089d341dd7bde349ff458816",
-            "Model.solve": "865f1ed3ff241b1517466538847ea1651b0c1240e6caf35f568052de2a95f78b",
+            "Model.solve": "7d8eb4744ba31981e3aac5029a4ef1ac05bd60dd90b28380b9f4aad3020173d3",
             "Model._solve_from_flat_params": "3216a2a81ff103475c41111f06811d2371e8bbeef1e833f38b5d38b22ada37bd",
             "Model._solve_compiled": "f11ed21e22d3769fa8d19df0ae65dbf0a5103aae400c763da3b266caf55b9b39",
             "Model._consume_owned_solution": "f646cbb48cea6c33227711df6ec93e2d51fe8fca435803069575c0cb0f01da9d",
             "Model._build_external_replay_readers": "62d5d2c5bd473f779ddb81644162279e0a3ca329105b42636220a862391dc771",
             "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
-            "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
-            "Model._process_params": "8692b98788fd78cfdd12f187a14fec3a39f41c1309322554f56f4c4bb3643968",
+            "Model._process_params": "b5d2ea06549d0d63c7d1e27a3248c3a1186d01a9b71fc108918d1d99a5c4acb6",
             "_simulation_programs": "02d69b94d7005c2f01cb72585af823fcc62801fb5b45fbbac975fdfc1ceaae70",
         },
     ),
@@ -1085,13 +1096,13 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     BACKWARD_INDUCTION_SOURCE: (
-        "c4edf650065dcf16fcbb1a0f815005b683aedcc5ab6c766e7252049b313bba40",
+        "bcccb1ca7d18caf1f4d95e1fb78ea58822ce2b3f1f6bcc5fc1590019b1807c83",
         {
             "_period_transfer_scratch_reservations": "e614b686048f4131f4b612386ca89ed8cec5f786fc64ac82f7ba87866e54fc76",
             "_continuous_value_replica_required": "4f22692255b3746899ee7b2849776ea8967090af80d68d46272cd0b9a5bc771b",
             "_compile_all_functions": "802f1da17e33d1c45eb47a63a2dd1c9bdb4f6b5b374387c9d1b34cbd2852483d",
             "_prepare_solve_programs": "a27b9fd4211fae36c9c83b34fd628e062b8bfdc6f970e9944e5356937d7aa3f6",
-            "solve": "962a86f3bffb44436f6043f174c25f966a553fa59cee36456deb4bd53774dd55",
+            "solve": "1b16fd4f261b9bbd6c71374ffe065d06450298b35a213c49d6431f489c56d372",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
             "_release_closed_period_inputs": "b6fbfbdb2200f128c8c60f096e2eeaf173dffcf770b7c4a177d69c7e3e270951",
             "_retire_donated_inputs": "39d14fa63f9419afb506a7aa78e0798a51ade88d10f1df32c4ebcc0dffaafa0c",
@@ -1132,7 +1143,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_attach_resolved_output_layout": "86b17ee66949cdc2a0751de70bf01eae7498333b18d9252d0c969e272498069c",
             "_publish_kernel_value": "50d720543d37adaae9c5e8799d72306ab1456d98ce590b3083b0d501d97e3516",
             "_resident_bytes_by_triple": "b87b5df2ce91647adf464bf2175d9453c186c1c65a7cc7e54ff6967dc015aa1d",
-            "_resident_inventory_by_triple": "cb705ece147eae8b01d74de9a35719629367436be4592571e535b4e9a7647112",
+            "_resident_inventory_by_triple": "3a1a4cf02baf2c360ac7a68259b8deff80a73589f89452a79b424d18a02ae7da",
             "_candidate_resident_bytes": "ac8b5a9aad74d28aa50407882824f567314e9a582dc47b60766eef33686689df",
             "_compiler_reads_source": "3a1099c48958b2a5ec59affe0d9cf0dc179d773c8e96e9fcf821526572f23439",
             "_period_copy_reservations": "4bf41c2f458b194cef80ab182a8b9e3db392353ae606828c3699b07c0c63a831",
@@ -1307,7 +1318,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_LOGGING_SOURCE: (
-        "16ecfddd102d9137c21b91b9e987ccd0b63b3bcde64e21184400053d1122901e",
+        "f6da64154c33e278f3d9b66eb0671a0412a62c8cc2cef0224494caa18c0062e6",
         {
             "_owned_values": "9295ced0a7415a8738e6e9dd1b6a2ee6dc933bd3fdf37193e591752239c411ed",
             "non_finite_by_regime": "aa597487e43e16a2a001d5c05c0e00977c494349b9af3e65f8afd47aa6d63de4",
@@ -1385,11 +1396,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_TRANSITIONS_SOURCE: (
-        "8d81139d993e64121d7d4f0f10019c41fcab59102fc57a71eb557cd98d7fdfb8",
+        "c0bd00c49e90dabcd3d0ab23548db601cb74c43b20a7fedd038cce0d7ffe2f8f",
         {
             "_draw_random_regime_ids_from_scalars": "548fcaf12654d05a584fabee3fbd81fe42ad256307d5ea4df826cb3ae3355a5a",
             "draw_key_from_dict": "9dfed8dafa357fa87cde342dc7f174028e4adf8454b5906a4e0d24bee164cdae",
-            "calculate_next_states": "fa123ef47cb0aff0c4e6f93753244292d2c25b331825fd9de573424770831922",
+            "calculate_next_states": "723ce9b99f9225da0d117e382ff61f7659dfabcf751be7f112e381b849153005",
             "calculate_next_regime_membership": "0b6b07b2c499e50144feedefce8e33e74a77ce1a7113a8c87da2e6a55ffe32a5",
             "_update_regime_ids": "93e8f8c1aba6e42f14269aac5d911c722e5e132c207cae6fa3e07bf138a58163",
             "_draw_random_regime_ids": "87fa7035d1095f0dc1a17e51e517ef559808039ac8a107864995ce94f2bf7430",
@@ -1397,11 +1408,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_RANDOM_SOURCE: (
-        "c4d8e3dd9c67fb0ee5ae84d00d28d7962bb88dbe8409e3222c0b4959eafdb236",
+        "611eb6e41f547e0bdc51a030efcf23e2a5557d4916312e61d63f12976bb62553",
         {
+            "canonicalize_simulation_seed": "dbfacef021d74076d14cc68a6a9f93df8640232dc345418bf651d764644d0a49",
             "_generate_windowed_simulation_keys": "7f78949425a2334609fdcafc40af7004735f24079634d434a8ce4a0610092dd6",
             "_validated_chunk_window": "b3ea4d659dd8c777e88a08d8c3e3524236d5cecff309bc5cfdf3217e5766876c",
-            "create_simulation_key": "76fca4fbc2e18885d2ee67512e8207616fe8d17443954d9b36765a4bc52b3dd4",
+            "create_simulation_key": "70caf625c025754799edfd9d4e3bb4c3e03d8a1ca480cb33ab5588a0a9a7119f",
             "_create_simulation_key": "1ab7921d3e42ea7255fb8bbc60d1ed58e408e8818d0bac91ec132c276c62a05d",
             "split_simulation_key": "9968b4530b74638b082b63c0160391573b8ae4c20a9dc3b733a9b424de259921",
             "_split_simulation_key": "666d1e23f386815a8fd331cd543813fa2fcdb501f7672a82be9f48fe31c293b2",
@@ -1483,13 +1495,13 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_PROCESSING_SOURCE: (
-        "deb4056e4721f4868c9a2ec51fa9405e7f09357b86837ec562b406d184e5d561",
+        "e01c6014e75fde68f55f75a8ed83db98596c87b2080573b0a383760f16eeb2f6",
         {
             "build_regimes_and_template": "da8e2ab92d9248698d20e43b0033ae1abdbdbff43f89f70cd2884304990bf1e1",
         },
     ),
     ENGINE_SOURCE: (
-        "9425be330690fda85804474a11b04243f8a541b7902e9b0aac0efe6315957342",
+        "92f283b2d8491ec65fe3fbc80120e77556c6f6d4a3004f2b0755102148fd70db",
         {
             "SolutionPhase.resolve_process_grids": "700a7c24fe948dd51bb3bf1057504a5d05ff7ea1499fe51f8341623ffe41e34e",
             "SolutionPhase.state_action_space": "582368bba80ec725dffb46af088874dae5dee05c8601290e9fe3e8ab34a68cab",
@@ -1503,16 +1515,16 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_DIAGNOSTICS_SOURCE: (
-        "9ed5c197c2450889efdc856dff9445fcf23ae0a79061bdbc4b3ba66d370aa470",
+        "e40892e40a9a02cb2519dc1166011f90d5f9c46d78b505f02dda4c6e53e2d0ba",
         {
-            "_emit_post_loop_diagnostics": "a6a354445e86cee4ee1444ca6f39b841b7d6c30c9a5f5348a5b09278f5fb1855",
+            "_emit_post_loop_diagnostics": "d4100e6b986d8389dc3bccc7d08887fbc31de1979bb74b1dbc5250cc3d808f75",
             "_raise_first_nan_row": "957fe2169afa34e08bb34d577b665d9b86d924a85f177e69d3a9aa2e641f4f7e",
             "_raise_at": "94ff13c6d62acf39aa658191459878aac96462c200228095b2a89548a6bfe39b",
             "_reconstruct_next_regime_to_V_arr": "4bd93914f56d0a9e25592c7a50d64e303f314e591d31c55c5d19bf22bb67315f",
         },
     ),
     SUPPORT_FINGERPRINT_SOURCE: (
-        "9989870620a57b7516bc04b4ec5a251dca2eacd0f788cb222a90a9c95729a326",
+        "923361a328b960211627b2e49b06cd8702525d398f80d3d6924bb77fb685fdf8",
         {
             "fingerprint_solution_support": "db6206fa4209d1d6892566377c6c62c6bed1aa28f23ce49d85fb3455f978d19f",
             "fingerprint_model": "04c8f2960e52d4144353b1e3b962edbc17b00eb05fc68a3207cf4826acbbda51",
@@ -1533,19 +1545,19 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
-        "f38373edcbfca8693046b9a171a8ecf511abcb5c105191dbac2c8dd1c1284442",
+        "45d9dd51ff897c135720b68d30a1035044721028c46060a59ad18bb6d34d5a57",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
-            "validate_transitions": "6dad8f387ecda88d9984797cdd8da57d2d4609201fe8b455c7fb6bc59a27e2d4",
-            "_validate_transition_sequence": "f57042cc6f993861cd755032f35e0edd80916cf9f2cc157ad09ddffa7c63ed72",
+            "validate_transitions": "f2e957d256f1b78763d7a38a28003f93b8fd5979bdbfef29f36be27f1dad7e98",
+            "_validate_transition_sequence": "0a00ef0423d5728ace28799afc955a31fad10cd103f8993121ddb0b3f65b9440",
             "validate_regime_transition_probs_all_periods": "bd4b49bcb10108dd06f79e01d59ee449cd7db25bfb9e15449561d23655392c02",
             "_validate_regime_transition_single": "689a067b3c00cd24ae46e69c12e1a2a0f8f6f530607b105de2403aee82bd13dd",
             "_evaluate_regime_probability_law": "c26148c3519d19ff749d06a65bb484f50fbf0a7ce0df36d09e1a1d98fbbf2e7f",
             "_regime_probability_law": "45faf8cf57fd2fb8a754589d2edcda7a1eb82910c7dd4f3c9fc8115caf6728a1",
             "_check_and_release_regime_probability": "f54a64b0239559ff0527404fe7dcaaf0783361ee24d5bf628d971f8037873b4b",
             "_validate_regime_transition_probs": "403ad994ea48ce5ee2982ffe904f3d57adbd1039d8fe9056e989019d0af19749",
-            "validate_state_transitions_all_periods": "6309dd9cf4fce55766e6c21c70964ef0f66d62c580ccddd2d9f884f0644d362b",
-            "validate_joint_transitions_all_periods": "5f66840fc4fb41343f24822084cce6a8aac183f1b389b76be333c3d83d43a3ce",
+            "validate_state_transitions_all_periods": "835363237568754713af2b841349cb3f7e70e564d22ecb677788b0f2e2728423",
+            "validate_joint_transitions_all_periods": "27a6e3026d603052c37201fb8c406b4ca150c58ccbf0721db0ce698e1823dd90",
             "_own_transition_outputs": "3fbee994063b5cb63b318f51f35e7a88ada8a61ab8c9155867a54e9fd8b22a1e",
             "_set_transition_outputs": "fc03c7289678ba54ab855efb933f80ef877a071c2a2fb1566fc129053288a143",
             "_transition_owner_tree": "b977c18385d2630136d5e463d47786f1320862b7f58be015007eabbb19934bfb",
@@ -1556,10 +1568,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
             "_evaluate_joint_weights": "ad98e50978a61c64fc8e90ac84db7cb7cac6551491aceb3446dc352e38f8622d",
             "_joint_weight_law": "3ee7cd29818e915de77c8ed40d905b741912c49706cf76a3fd09a900d3c38fd9",
-            "_validate_state_transition_single": "441a9e31f06432159c8bf612c6b0085f016765dfb95efc0cc856efd16722d1d3",
+            "_validate_state_transition_single": "bd70fcd5f16e1fdaff02d044906eb873a8c732bb626e25e8144ced17510a1194",
             "_check_and_release_state_probability": "bbe5c53744d66283f4268a996341767fb18455c29017ca5bf6476e1f6ae1df6a",
             "_evaluate_state_probability_law": "91814f1439275d2c0af44fcff5cd2b6de9ce8f746a7b3945cf803120449e8e79",
-            "_evaluate_admitted_transition_producer": "310d5e1a8e90866764775a44b77bed9103deac3a71b0ab01a75603f8206b7de0",
+            "_evaluate_admitted_transition_producer": "f6d28557d3bb75dc7780cfbf8d90bb3b9b5adffefa892fc25ec376ddece0103e",
             "_state_probability_law": "fddff0c03e9d046b20c4694816898d5d0e3fbf00007c8f618811b0f43f9cd0c8",
             "_abstract_transition_operand": "da4ed98dd978aa74b9e1e8886ab15e60f875198ad048d68ff23d143d370af33c",
             "_check_state_probs": "4e4e56e44907490ddbf993e53fd1f4e49611a505884128c66124d455143f23c7",
@@ -1573,12 +1585,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     UNIFORM_PROCESS_GRID_SOURCE: (
-        "a10d3e7c62a846aa346003dd1a8531d491366047d6e2f959d31bed3e1c761fdd",
+        "80754c02c18f227aa2d4a37a0a1f0381b367e8b715617b19a9575c057f781603",
         {
             "_shared_uniform_operations": "77e4fa81b76a13e05edecb8cbc14571226bb6e34a9a80842289ac345cef3ad6e",
             "SimulationProcessGrids.supports": "47c6617af89cdcd6ba3a99aae345a8c32f8aec740f838bd0b37817236306ab79",
             "SimulationProcessGrids.array_roots": "ddc99b73e50d34ce46e2c362900c62af7a6954d15f96dec516f0776be32f6101",
-            "SimulationProcessGrids.__call__": "65127cfecf2a7f45f02fa50d72a40f7e1977f1728f88c543689c5b43519bc921",
+            "SimulationProcessGrids.__call__": "539b946733a550886073d1d4151262c786ca7c2adef0f72280de6db7feb85237",
             "SimulationProcessGrids.seal": "71dde0f63544df96a4c57b99a75f9dd844dd904be7c599ad30a3125262756e9d",
             "SimulationProcessGrids.close": "1fbde590b371243da9503b714cc55b822e333e3e7a64f100ed57051209076a5a",
             "SimulationProcessGrids._produce": "a8cda3f849b7a87d121b68083399f5ee0014608478bc5abaf13ad1c67f00b194",
@@ -1591,11 +1603,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_normal_parameters": "893f4e4e80b34a1529672043f66cfbcef9989fd9730265858791d4d12321da1b",
             "_normal_fixed_identity": "467654dc343d02c419bd202358aad1e0ebad76ca7a754b8f82c708ee9ba4be1f",
             "_compute_normal_stage": "e49e8d6ed2760a94e39877a1717a6567220467d098de8f1670033411016d003f",
-            "SimulationProcessGrids._produce_staged": "24d2c9c23ae74153fa9a63895f871104c8395c78c279a5354b1a70cb72ddce16",
+            "SimulationProcessGrids._produce_staged": "831f8107d8c1be270ce94a13d5f17e32b982f27758a2f6238bdecfc69950b0c2",
             "_complete_process_parameters": "b11dea89c5a1b5ea44b482574f74ae6cb50eae5072293fb5116ddc1cab88bead",
             "_process_fixed_identity": "e2e8cd965379829662477a34f9fdc0eea48e7b83b8ffd69e24a30b64791c4e98",
             "_staged_parameter_is_weak": "408c2ee847275e1c74b09648ec40d930051387d6c0d8d341fde63c359086f567",
-            "_trace_process_jaxpr": "af42b98b18382ee4e88a3031fcb39e6111e11ced6d0581d695ab28c0bd0360a7",
+            "_trace_process_jaxpr": "1601b7cd9c726c0e9bf4055e16122c551491ab87dd7933d55bfedfa8318dfc23",
             "_process_grid_call": "d3c500914631c641753e0ee5cffc3d16a8ce2e8bbe720e76592d2067d2ac2000",
             "_validated_process_recipe": "de1e36e3f7b21ad614bc983eb3d2363988ca6f3ddae33fbe8306b64a71d89403",
             "_validate_attached_process_value": "316daad5ff10b7c79bc2ca6f314081e34c436b0cd9e3bdd8d91f8ea9ada9e3bb",
@@ -1639,11 +1651,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     GRID_SEARCH_SOURCE: (
-        "23dadb5101649abb1251ceca79d58b217161a2d5611cfd0d4f1df9804e146c79",
+        "b8da334e2e8f89d59dd38e8b763bcc048a7ad303a01d504000edf58c6e8304d6",
         {
-            "GridSearch.build_period_kernels": "19bec5035c11fc9d3657e1a780169754c2e3cb1164f2d12804ce13e598dc986b",
+            "GridSearch.build_period_kernels": "83cfa26651c76486d2cc22d8552fbae8dd91092ce97c717a7e08df3b8ff6e4b9",
             "_action_partition_mesh": "cab2381dbe9650e10620db20b6614ccb015eb147ff3356ab66e90cec58bf06fe",
-            "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
+            "_classify_action_streaming": "0654090c92d09e35cc005f16436a0e61a190da6069748149180d184d60888b4e",
             "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
             "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
             "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
@@ -1658,24 +1670,24 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_GridSearchPeriodKernel.__post_init__": "1e8c230f0845d9b8335c667f38593221a957c34955efe44921763bce6cd24ac7",
             "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
             "_GridSearchPeriodKernel.with_fixed_params": "5f5a26e02b136c760bd242cd91c22b76153adc9828a13d20de7a6a98f5877e14",
-            "_GridSearchPeriodKernel.__call__": "d5371441759416db418198b6b0164a0718d825e64c378696123eb09c12553a2a",
+            "_GridSearchPeriodKernel.__call__": "1e438c005f504266afdf08858f5067c977997745cbcb897b59f879cb6d43d446",
         },
     ),
     MAX_Q_SOURCE: (
-        "585ece85c1cd50212e38344fd35d7aec7ec10a03bac7bfb87ca3ba69aea7e928",
+        "733606ca6a3fa3dfe99dbd6c8e1a981ec64fc2e6fb536fee7ce2c240606aaf1a",
         {
-            "get_action_partitioned_max_Q_over_a": "9443177495a4aa17b12aed6bda675dace04c1422b7d37a96e6fc76df8e46c30e",
-            "_ActionPartitionedMaxQOverA.__call__": "908cb48cd85a7987cbbf3c4c92a6929b5da1e2dd7f1c70900e4934c8b3ad3c10",
+            "get_action_partitioned_max_Q_over_a": "1fc3280eb991581e01fd097902f248c24cc48349c976780bbf7ecbd0d493a5fd",
+            "_ActionPartitionedMaxQOverA.__call__": "5f09c6f1757b622b6c36c0fcbc80463b5edd8a0e04f387eacbab4265730c8c35",
             "_arguments_named": "95c0088a6f36474a87a6dd5d4f0a72745787638106bcbb911a0f5aad35101365",
-            "_OnActionPartitionAxis.__call__": "00f65bb9b858b815e7d5fc96fb308317a567e789ccb70cdbeea28a6e067ceab2",
-            "_call_with_operands": "65f621e941c69e4f0023b040374993174c013fe747fc1e8fca726bd0b82205f8",
+            "_OnActionPartitionAxis.__call__": "4446b26d78ea869dfe4d4971c394b2d50e9641c223ec825922b93ff717af0175",
+            "_call_with_operands": "68fd0d9f8a0fab1a7014574f44cdaf3b6f77fa35143359f441fb84e73cee73b0",
             "_get_extra_param_names": "ccb1bc531a850fb9475d70e0a06b5d0bf53888e4b7b447e9c06f9e8b8333e958",
             "_fail_if_action_width_keyword_collides": "d72946426a1e4a1d300fa4812f07eea8139236693ef8f79d0e8384b9d59a9f0d",
-            "get_streaming_max_Q_over_a": "f6049aafdb1361ab3dc07245c3e201f35719fe199c7278fb748c7658ac5f8a63",
+            "get_streaming_max_Q_over_a": "cc2876935608ee535fd906584d761d87560da573c4a2addbf332eacd10a202d8",
             "_fail_if_full_V_streaming_route_is_unsupported": "cd4c96d572ec7df9dc269f5fa2bfc1ec5c16fe0a78de3be56adc28c15f065d2c",
             "_fail_if_streaming_co_map_layout_is_invalid": "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979",
-            "_wrap_with_fold_reduction": "20dee195475a290e229948d79aa1b0b65a0c20a59f0412468637039809b32f07",
-            "_StreamedMaxQOverA.__call__": "825b72e2a3efd69ea6ae04ebb9ca712ba11709fae41162cab5d8a084d88b2053",
+            "_wrap_with_fold_reduction": "f46df676f9a2e6332002d58209f131c87f06f293049060e37859d55c9bfd6341",
+            "_StreamedMaxQOverA.__call__": "79a448e8706992991eb62e6e31b8d0a235c9f8d5e7b876f27a6a24e24dfb712f",
         },
     ),
     ACTION_STREAMING_SOURCE: (
@@ -1783,7 +1795,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     PROCESSING_SOURCE: (
         None,
         {
-            "_build_per_subject_decisions_per_period": "3b2dfd37e32f72e41f17264ec806fcb9309bf9f6d2faed91fafd1477871cea83",
+            "_build_per_subject_decisions_per_period": "7d0afa06636243c53e2b3bb438b88c57c490e2f8c203e3d93a86bd540d7c7c3a",
             "process_regimes": "426381b6253f468a41b68396775123a1360ea65d57e927ff78c8ef8e59fa5c7c",
             "_TerminalCarryPeriodKernel.core_programs": "842c31af0bea766bfd410783881770152246a825505be327096c117f60ee65fa",
             "_TerminalCarryPeriodKernel.with_fixed_params": "4ee13dc7cbc4ebaa68102cc6eea4272791590fa1005080dbbbcf898e5f92a8f6",
@@ -1791,9 +1803,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
-        "b0a12526d3de2c1a6313649cc1e0406a461811637d3cd5652ddab4d3b7efe180",
+        "88ac9426415f5180325a3ed6412972ee245c31b800579fd1f32c0586b2cbea98",
         {
-            "build_simulation_programs": "5abc9f5eaf0211642d45521ec3232e21fffa5a79bde6fac36b4d25bfbca06ca0",
+            "build_simulation_programs": "9d67303c19bef05175937f741503456ebafa65bc8877e007ef08f78c9379d6f8",
             "_decision_programs": "bd9e88a1511edb65636d9d154c56a64e78a33b094321803cef6355b4c6bec629",
             "attach_gated_simulation_programs": "e92be1be5b6628706b2a2c7cdfb749b3936ade622d352161fb72d9d949a59cfa",
             "gated_simulation_programs_ready": "fe5419d6b84ba1929acf26cde8dc2feedf9589a2345925a1ae6de25fde674def",
@@ -1804,7 +1816,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_decision_subject_arg_names": "3bf80bc49a6326e6be6369de80863482db1615e713b95ce476966e9562d6fde5",
             "_decision_value_reads": "7480309f78099994ba417dab87ff44c8ccc545f662855a44bc142bd3509cc1a9",
             "_decision_body": "b888d12d325f80f67e2e7681ed2938b53a0625b3925441e791e8ea5a32450ce4",
-            "_StreamedArgmaxQOverA.__call__": "8ec8f0298dc6af4e9807195b1011dd9b1f99945e9c16990e167e1b7fcf86af45",
+            "_StreamedArgmaxQOverA.__call__": "806859bf8272d676d72b70bb5ede5f7b044160fd1190534e56bf9723b7fe8cce",
             "_StreamedArgmaxQOverA._fold": "a817cf3a8b385691bc4b98405197fa89fb5737d47cc61157687b847a83737ea1",
             "_SubjectTiled.__call__": "f62934dc58bb872bb7f39136966c083d5a53a56aea86ac606ea5eaa972ce2a04",
             "_evaluate_subject_tile": "da5ea37bc7faea1405b83b856ca8701e178e0daf0a26223eb70146589d6d26de",
@@ -1812,7 +1824,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_PROGRAM_TYPES_SOURCE: (
-        "a4a162db3811fff8b7d880906837a21dcb53c39dad3dfc555562606f96082c8f",
+        "5364fbe1718c975183eb6dab00b31576f692f1b12b0596f78541ba5031a7f55c",
         {
             "SimulationProgramExecutor.dispatch": "cc42079ac6d204e3b4e22b058c24d7db4ac41c8269fd276a5ad224cb5bd2a7c7",
             "SimulationPrograms.declared_axis_names": "1451b9d993c5de21035c9a25f9aa19ba953d2e8dfebb5f952bda617d2fa69b81",
@@ -2346,10 +2358,13 @@ def _exact_reducer_signature_call(
     if simulate:
         annotation_source = '"tuple[IntND, FloatND]"'
     elif taste_shocks:
-        annotation_source = '"FloatND"'
+        annotation_source = (
+            '"tuple[FloatND, BoolND]" if return_feasibility else "FloatND"'
+        )
     else:
         annotation_source = (
-            '"tuple[FloatND, BoolND]" if stakeholders is not None else "FloatND"'
+            '"tuple[FloatND, BoolND]" '
+            'if stakeholders is not None or return_feasibility else "FloatND"'
         )
     return (
         _expression_matches(node=_keyword(call=call, name="args"), source=args_source)
@@ -2974,11 +2989,9 @@ def _exact_collective_return(*, statement: ast.stmt, simulate: bool) -> bool:
     ):
         return False
     if simulate:
-        return len(statement.value.elts) == 2 and all(
-            _name(node=node, expected=expected)
-            for node, expected in zip(
-                statement.value.elts, ("argmax_flat", "V_stacked"), strict=True
-            )
+        return _statements_match(
+            observed=[statement],
+            expected_source="return jnp.where(_dissolution, -1, argmax_flat), V_stacked",
         )
     return (
         len(statement.value.elts) == 2
@@ -3115,11 +3128,12 @@ if fold_state_names:
         fold_state_names=fold_state_names, stakeholders=stakeholders
     )
     mapped = _wrap_with_fold_reduction(
-        mapped=cast("Callable[..., FloatND]", mapped),
+        mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", mapped),
         fold_state_names=fold_state_names,
         fold_weights=fold_weights,
         fold_conditioning=fold_conditioning,
         inner_state_names=inner_state_names,
+        return_feasibility=return_feasibility,
         action_names=action_names,
         state_names=state_names,
         extra_param_names=[
@@ -3185,6 +3199,7 @@ Q_and_F = productmap(
                 "cell_width_keyword",
                 "untiled_state_names",
                 "broadcast_state_names",
+                "return_feasibility",
             ),
             (
                 None,
@@ -3203,6 +3218,7 @@ Q_and_F = productmap(
                 "None",
                 "()",
                 "()",
+                "False",
             ),
         ),
         "get_argmax_and_max_Q_over_a": (
@@ -3297,7 +3313,7 @@ Q_and_F = productmap(
                 "import jax.numpy as jnp",
                 "from dags import with_signature",
                 "from _lcm.logsum import EULER_GAMMA, logsum_and_softmax",
-                "from _lcm.regime_building.argmax import argmax_and_max",
+                "from _lcm.regime_building.argmax import argmax_and_max, argmax_and_readout",
                 (
                     "from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout, collective_readout"
                 ),
@@ -3373,15 +3389,56 @@ _STREAMED_MAX_BUILDER_PINS = _callable_pins(
 
 def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
     """Pin streamed VALUE production, optional folding, and fail-closed boundaries."""
-    return _exact_callable_errors(
+    errors = _exact_callable_errors(
         tree=tree,
         label="streamed max-Q builder",
         contracts=_STREAMED_MAX_BUILDER_PINS,
     )
+    try:
+        _, folded = _method_definition(
+            tree=tree, class_name="_FoldedMaxQOverA", method_name="__call__"
+        )
+    except ValueError as error:
+        return [*errors, f"streamed max-Q builder: {error}"]
+    if not _body_matches(
+        node=folded,
+        expected_source="""out = self.mapped(
+    next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+)
+if self.return_feasibility:
+    V_arr, empty = cast("tuple[FloatND, BoolND]", out)
+else:
+    V_arr = cast("FloatND", out)
+    empty = None
+for name, axis, conditioning_axis in self.fold_steps:
+    weights = self.fold_weights[name]
+    if conditioning_axis is not None:
+        weights = _broadcast_conditioned_rows(
+            rows=weights,
+            conditioning_axis=conditioning_axis,
+            fold_axis=axis,
+            shape=V_arr.shape,
+        )
+    if empty is not None:
+        if weights.ndim == 1:
+            weight_shape = [1] * V_arr.ndim
+            weight_shape[axis] = weights.shape[0]
+            support = weights.reshape(weight_shape) > 0
+        else:
+            support = weights > 0
+        empty = jnp.any(empty & support, axis=axis)
+    V_arr = self.fold_reducers[name](a=V_arr, axis=axis, weights=weights)
+return V_arr if empty is None else (V_arr, empty)
+""",
+    ):
+        errors.append(
+            "streamed max-Q builder: folded value or support transport changed"
+        )
+    return errors
 
 
 def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
-    """Pin the five max-Q kernel classes to fields, one ``__call__``, and no more.
+    """Pin the six max-Q kernel classes to fields, one ``__call__``, and no more.
 
     Every corridor above reads the reduction out of a kernel's ``__call__`` and
     its operands out of ``self.<field>``. A property, a descriptor, or a
@@ -3398,6 +3455,7 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "__name__: ClassVar[str] = 'max_Q_over_a'",
                 "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
                 "n_discrete_action_axes: int",
+                "return_feasibility: bool = False",
             ),
         ),
         (
@@ -3408,6 +3466,7 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
                 "stakeholders: tuple[str, ...] | None",
                 "pareto_weights: ParetoWeights | None",
+                "return_feasibility: bool = False",
             ),
         ),
         (
@@ -3424,6 +3483,18 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "q_and_f_arg_names: frozenset[ReferenceName]",
                 "action_width_keyword: str",
                 "whole_product_Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "return_feasibility: bool = False",
+            ),
+        ),
+        (
+            "folded max-Q kernel",
+            "_FoldedMaxQOverA",
+            (
+                "mapped: Callable[..., FloatND | tuple[FloatND, BoolND]]",
+                "fold_steps: tuple[tuple[StateName, int, int | None], ...]",
+                "fold_weights: Mapping[StateName, FloatND]",
+                "fold_reducers: Mapping[StateName, Callable[..., FloatND]]",
+                "return_feasibility: bool",
             ),
         ),
         (
@@ -4050,6 +4121,8 @@ DENSE_EV1_NONCANONICAL = "deliberately_dense:ev1_canonical_reduction_order"
 DENSE_COLLECTIVE_RESOURCES = "deliberately_dense:collective_resource_regression"
 DENSE_TRIVIAL_ACTION_PRODUCT = "deliberately_dense:trivial_action_product"
 DENSE_CO_MAP_REFERENCE_CHANNEL = "deliberately_dense:co_map_with_separate_reference_channel"
+DENSE_SELECTION_READOUT = "deliberately_dense:selection_readout"
+DENSE_OFF_GRID_RAISE_COUNT = "deliberately_dense:off_grid_raise_count"
 UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
 UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
 UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
@@ -4094,7 +4167,13 @@ def category(self) -> str:
             tree=tree,
             label="solve caller native program graph",
             class_name="_GridSearchPeriodKernel",
-            fields=("_core_programs: Mapping[str, CoreProgram]",),
+            fields=(
+                "_core_programs: Mapping[str, CoreProgram]",
+                (
+                    "landing_checks: tuple[tuple[RegimeName, StateName], ...] = "
+                    "field(default=(), metadata={'fingerprint_omit_if_default': True})"
+                ),
+            ),
             methods=(
                 "__post_init__",
                 "core_programs",
@@ -4110,6 +4189,58 @@ def category(self) -> str:
             contracts=_GRID_SEARCH_NATIVE_GRAPH_PINS,
         )
     )
+    return errors
+
+
+_FEASIBILITY_SUMMARY_SURFACE = _surface_pin(FEASIBILITY_SOURCE)
+_FEASIBILITY_SUMMARY_PINS = _callable_pins(
+    source=FEASIBILITY_SOURCE,
+    names=("CountedGridSearch.__call__", "FeasibilityKernelOutput.__post_init__"),
+)
+
+
+def _feasibility_summary_errors(tree: ast.Module) -> list[str]:
+    """Require the diagnostic wrapper to publish its producer's unchanged value."""
+    errors = _class_surface_errors(
+        tree=tree,
+        label="native feasibility summary",
+        class_name="CountedGridSearch",
+        fields=(
+            "function: Callable[..., tuple[FloatND, BoolND]]",
+            "collective: bool",
+        ),
+        methods=("__call__",),
+        decorators=("dataclass(frozen=True, kw_only=True, eq=False)",),
+    )
+    if _transport_module_surface(tree) != _FEASIBILITY_SUMMARY_SURFACE:
+        errors.append("native feasibility summary: module surface changed")
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="native feasibility summary",
+            contracts=_FEASIBILITY_SUMMARY_PINS,
+        )
+    )
+    try:
+        _, method = _method_definition(
+            tree=tree, class_name="CountedGridSearch", method_name="__call__"
+        )
+    except ValueError as error:
+        return [*errors, f"native feasibility summary: {error}"]
+    if not _body_matches(
+        node=method,
+        expected_source="""value, empty = self.function(**kwargs)
+infinite = jnp.isinf(value)
+if self.collective:
+    infinite = jnp.any(infinite, axis=-1)
+empty_count = jnp.sum(empty, dtype=jnp.int32)
+other_inf_count = jnp.sum(infinite & ~empty, dtype=jnp.int32)
+if self.collective:
+    return value, empty, empty_count, other_inf_count
+return value, empty_count, other_inf_count
+""",
+    ):
+        errors.append("native feasibility summary: producer value or counters changed")
     return errors
 
 
@@ -4700,7 +4831,7 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
                 (
                     "from _lcm.engine import EGMPolicyRead, FeasibilityPoolsByPeriod, NNBEGMPolicyRead, Regime, SimulationPhase, SolutionPhase, StateActionSpace, Variables, _fail_if_template_is_misplaced, placed_devices_for_ids"
                 ),
-                "from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a",
+                "from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a, get_selection_readout_Q_over_a",
                 "from _lcm.simulation.programs import attach_gated_simulation_programs, build_simulation_programs",
             ],
             expected_binding_counts={
@@ -4880,11 +5011,11 @@ _SIMULATION_DISPATCH_CORRIDOR_CONTRACTS = _contracts(
             "Model._solve_from_flat_params",
             "Model._solve_compiled",
             "Model._build_external_replay_readers",
-            "_fail_if_invalid_taste_shock_seed",
             "Model._process_params",
             "_simulation_programs",
         ),
         SIMULATION_RANDOM_SOURCE: (
+            "canonicalize_simulation_seed",
             "create_simulation_key",
             "_create_simulation_key",
             "split_simulation_key",
@@ -4973,6 +5104,8 @@ _SIMULATION_ADAPTER_CONTRACTS = _contracts(
             "_evaluate_constant_feasibility",
             "_admits_any_action",
             "_per_constraint_feasibility",
+            "_initial_physical_joint_states",
+            "_replace_joint_coordinates",
             "_format_infeasibility_message",
             "_gather_feasibility_inputs",
             "_subject_feasibility_flag",
@@ -5249,6 +5382,66 @@ _SIMULATION_ADAPTER_CONTRACTS = _contracts(
 )
 
 _SIMULATION_ADAPTER_MUTATIONS = {
+    "simulation_adapter:initial_physical_transform_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "process.transform(standard=node, mean=mean, cov=cov)",
+        "node",
+    ),
+    "simulation_adapter:initial_physical_mean_forwarding_omitted": (
+        INITIAL_CONDITIONS_SOURCE,
+        "process.transform(standard=node, mean=mean, cov=cov)",
+        "process.transform(standard=node, cov=cov)",
+    ),
+    "simulation_adapter:initial_physical_cov_forwarding_omitted": (
+        INITIAL_CONDITIONS_SOURCE,
+        "process.transform(standard=node, mean=mean, cov=cov)",
+        "process.transform(standard=node, mean=mean)",
+    ),
+    "simulation_adapter:initial_physical_mean_operand_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        'arguments["mean"] = cast("FloatND", regime_params[f"{group}__mean"])',
+        'arguments["mean"] = jnp.zeros_like(regime_params[f"{group}__mean"])',
+    ),
+    "simulation_adapter:initial_physical_cov_operand_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        'arguments["cov"] = cast("FloatND", regime_params[f"{group}__cov"])',
+        'arguments["cov"] = jnp.zeros_like(regime_params[f"{group}__cov"])',
+    ),
+    "simulation_adapter:initial_physical_fixed_law_selection_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "if process.mean is None:",
+        "if True:",
+    ),
+    "simulation_adapter:initial_physical_subject_order_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        '"standard": state_df[list(names)].to_numpy()',
+        '"standard": state_df[list(names)].to_numpy()[::-1]',
+    ),
+    "simulation_adapter:initial_physical_admission_bypassed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "physical = _evaluate_admitted_transition_producer(\n                function=transform, arguments=arguments, memory=memory\n            )",
+        "physical = transform(**arguments)",
+    ),
+    "simulation_adapter:initial_physical_output_hold_omitted": (
+        INITIAL_CONDITIONS_SOURCE,
+        "            memory.hold(tree=physical)\n",
+        "",
+    ),
+    "simulation_adapter:initial_physical_prefix_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "        value = values.iloc[0]\n",
+        "        value = 0.0\n",
+    ),
+    "simulation_adapter:initial_physical_internal_columns_retained": (
+        INITIAL_CONDITIONS_SOURCE,
+        "        state_df = state_df.drop(columns=list(names))\n",
+        "",
+    ),
+    "simulation_adapter:initial_physical_table_column_changed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "            state_df[name] = np.asarray(physical)[:, dimension]",
+        "            state_df[name] = np.asarray(physical)[:, 0]",
+    ),
     "simulation_adapter:placed_operand_changed": (
         SIMULATION_OPERANDS_SOURCE,
         "return jax.device_put(leaf, sharding)",
@@ -5298,8 +5491,8 @@ _SIMULATION_ADAPTER_MUTATIONS = {
     ),
     "simulation_adapter:original_inputs_omitted": (
         SIMULATION_ENTRY_INPUTS_SOURCE,
-        "arrays=_caller_arrays(values=(params, initial_conditions))",
-        "arrays=_caller_arrays(values=(initial_conditions,))",
+        "_caller_arrays(values=(params, initial_conditions))",
+        "_caller_arrays(values=(initial_conditions,))",
     ),
     "simulation_adapter:retained_payload_omitted": (
         SIMULATION_RESIDENCY_SOURCE,
@@ -6038,7 +6231,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "a4cee1b42742def4634b2c087305aaaf927d12e839f9a72b2795cbb79a6836aa"
+        expected = "9aa89082feabf7911e7fda36df5d723743638255dde40d4fe480e3667b87f313"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -6119,7 +6312,7 @@ def _corridor_errors(
             outer_name=outer_name,
             nested_name=nested_name,
             class_name=class_name,
-            fields=fields,
+            fields=fields if simulate else (*fields, "return_feasibility"),
         )
     except ValueError as error:
         return [f"{label}: {error}"]
@@ -6128,13 +6321,13 @@ def _corridor_errors(
     ):
         errors.append(f"{label}: ordinary reducer signature wrapper changed")
     body = _body_without_docstring(nested)
-    if len(body) != 3:
+    if len(body) != 4:
         errors.append(
             f"{label}: ordinary reducer corridor must contain exactly origin, "
-            f"collective branch, singleton return; found {len(body)} statements"
+            f"collective branch, singleton reduction and return; found {len(body)} statements"
         )
         return errors
-    origin, collective, singleton = body
+    origin, collective, *singleton = body
     if not _q_and_f_origin(origin):
         errors.append(
             f"{label}: first corridor statement is not exact Q_arr/F_arr origin"
@@ -6145,10 +6338,15 @@ def _corridor_errors(
         errors.append(
             f"{label}: collective corridor contains a non-allowlisted transformation"
         )
-    singleton_ok = (
-        _exact_singleton_simulate_return(singleton)
-        if simulate
-        else _exact_singleton_solve_return(singleton)
+    singleton_ok = _statements_match(
+        observed=singleton,
+        expected_source=(
+            "index, value = argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)\n"
+            "return jnp.where(jnp.any(F_arr), index, -1), value"
+            if simulate
+            else "value = Q_arr.max(where=F_arr, initial=-jnp.inf)\n"
+            "return (value, ~jnp.any(F_arr)) if self.return_feasibility else value"
+        ),
     )
     if not singleton_ok:
         errors.append(
@@ -6183,7 +6381,7 @@ def _taste_corridor_errors(
             outer_name=outer_name,
             nested_name=nested_name,
             class_name=class_name,
-            fields=fields,
+            fields=fields if simulate else (*fields, "return_feasibility"),
         )
     except ValueError as error:
         return [f"{label}: {error}"]
@@ -6209,7 +6407,7 @@ smoothed, _ = logsum_and_softmax(
     ),
     axes=tuple(range(Qc.ndim)),
 )
-return smoothed
+return (smoothed, ~jnp.any(F_arr)) if self.return_feasibility else smoothed
 """
     expected_simulate = r"""taste_shock_key = cast(
     "Array", states_actions_params.pop("taste_shock_key")
@@ -6234,7 +6432,7 @@ flat_index = (
     discrete_argmax * n_continuous_cells
     + continuous_argmax[discrete_argmax]
 )
-return flat_index.astype(jnp.int32), Qc[discrete_argmax]
+return jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32), Qc[discrete_argmax]
 """
     expected = expected_simulate if simulate else expected_solve
     if not _body_matches(node=nested, expected_source=expected):
@@ -6255,9 +6453,13 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
         errors.append("taste noise: decorators are not allowlisted")
     if not _keyword_only_signature(node=node, names=("key", "shape", "scale")):
         errors.append("taste noise: signature changed")
-    expected_body = r"""return scale * (
-    jax.random.gumbel(key, shape) - EULER_GAMMA
-)
+    expected_body = r"""if key.shape == (1,):
+    gumbel = jax.custom_batching.sequential_vmap(
+        functools.partial(jax.random.gumbel, shape=shape)
+    )(key[0])
+else:
+    gumbel = jax.random.gumbel(key, shape)
+return scale * (gumbel - EULER_GAMMA)
 """
     if not _body_matches(node=node, expected_source=expected_body):
         errors.append(
@@ -6268,6 +6470,7 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         names={
             "cast",
+            "functools",
             "jax",
             "jnp",
             "math",
@@ -6279,6 +6482,7 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
     )
     expected_imports = sorted(
         [
+            "import functools",
             "import jax",
             "import jax.numpy as jnp",
             "import math",
@@ -6310,6 +6514,7 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
         and {
             "cast",
             "draw_taste_shock_noise",
+            "functools",
             "jax",
             "jnp",
             "math",
@@ -6418,10 +6623,9 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
 elif isinstance(axis, int):
     axis = (axis,)
 if a.ndim == 0 or len(axis) == 0:
-    return jnp.array(0, dtype=jnp.int32), a
-if a.ndim != 0:
-    a = _move_axes_to_back(a=a, axes=axis)
-    a = _flatten_last_n_axes(a=a, n=len(axis))
+    return _argmax_and_max_of_one_candidate(a=a, where=where, initial=initial)
+a = _move_axes_to_back(a=a, axes=axis)
+a = _flatten_last_n_axes(a=a, n=len(axis))
 if where is not None and where.ndim != 0:
     where = _move_axes_to_back(a=where, axes=axis)
     where = _flatten_last_n_axes(a=where, n=len(axis))
@@ -6817,6 +7021,12 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> DirectFlowReport:
         errors.extend(new_errors)
         if new_errors:
             offending.add(GRID_SEARCH_SOURCE)
+    feasibility_tree = parsed.get(FEASIBILITY_SOURCE)
+    if feasibility_tree is not None:
+        new_errors = _feasibility_summary_errors(feasibility_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(FEASIBILITY_SOURCE)
     functools_tree = parsed.get(FUNCTOOLS_SOURCE)
     if functools_tree is not None:
         new_errors = _functools_adapter_errors(functools_tree)
@@ -7126,9 +7336,9 @@ def _replace_nth(*, text: str, marker: str, replacement: str, occurrence: int) -
 def direct_flow_mutations(source: SourceText) -> dict[str, str]:
     """Generate the required route/value/support/shape/index perturbation family."""
     mutations: dict[str, str] = {}
-    solve_singleton = "        return Q_arr.max(where=F_arr, initial=-jnp.inf)"
+    solve_singleton = "        value = Q_arr.max(where=F_arr, initial=-jnp.inf)"
     simulate_singleton = (
-        "        return argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)"
+        "        index, value = argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)"
     )
     collective_marker = "            action_axes = tuple(range(F_arr.ndim))"
 
@@ -7200,8 +7410,8 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
     )
 
     mutations["singleton_solve:inline_where_transform"] = source.replace(
-        "return Q_arr.max(where=F_arr, initial=-jnp.inf)",
-        "return Q_arr.max(\n"
+        "value = Q_arr.max(where=F_arr, initial=-jnp.inf)",
+        "value = Q_arr.max(\n"
         "            where=F_arr.reshape(-1).at[0].set(False)\n"
         "            .reshape(F_arr.shape),\n"
         "            initial=-jnp.inf,\n"
@@ -7209,8 +7419,8 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
         1,
     )
     mutations["singleton_simulate:inline_q_transform"] = source.replace(
-        "return argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)",
-        "return argmax_and_max(\n"
+        "index, value = argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)",
+        "index, value = argmax_and_max(\n"
         "            a=Q_arr.reshape(-1)[::-1], where=F_arr, initial=-jnp.inf\n"
         "        )",
         1,
@@ -7417,8 +7627,8 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
         1,
     )
     mutations["taste_shock_solve:wrong_return"] = source.replace(
-        "        return smoothed",
-        "        return Qc.reshape(-1)[0]",
+        "return (smoothed, ~jnp.any(F_arr)) if self.return_feasibility else smoothed",
+        "return (Qc.reshape(-1)[0], ~jnp.any(F_arr)) if self.return_feasibility else Qc.reshape(-1)[0]",
         1,
     )
 
@@ -7467,32 +7677,39 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
         1,
     )
     mutations["taste_shock_simulate:noisy_value_return"] = source.replace(
-        "return flat_index.astype(jnp.int32), Qc[discrete_argmax]",
-        "return flat_index.astype(jnp.int32), noisy_Qc[discrete_argmax]",
+        "return jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32), Qc[\n"
+        "            discrete_argmax\n        ]",
+        "return jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32), "
+        "noisy_Qc[discrete_argmax]",
         1,
     )
 
     mutations["shared_taste_noise:shared_draw"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale * ("
-        "jnp.broadcast_to(jax.random.gumbel(key, (1,)), shape) - EULER_GAMMA)",
+        "gumbel = jax.random.gumbel(key, shape)",
+        "gumbel = jnp.broadcast_to(jax.random.gumbel(key, (1,)), shape)",
         1,
     )
     mutations["shared_taste_noise:permuted_draw"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale * (jax.random.gumbel(key, shape).reshape(-1)[::-1]"
-        ".reshape(shape) - EULER_GAMMA)",
+        "gumbel = jax.random.gumbel(key, shape)",
+        "gumbel = jax.random.gumbel(key, shape).reshape(-1)[::-1].reshape(shape)",
         1,
     )
     mutations["shared_taste_noise:first_candidate_zeroed"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale * (jax.random.gumbel(key, shape).reshape(-1).at[0]"
-        ".set(0).reshape(shape) - EULER_GAMMA)",
+        "gumbel = jax.random.gumbel(key, shape)",
+        "gumbel = jax.random.gumbel(key, shape).reshape(-1).at[0].set(0)"
+        ".reshape(shape)",
+        1,
+    )
+    mutations["shared_taste_noise:batched_independent_draw"] = source.replace(
+        "gumbel = jax.custom_batching.sequential_vmap(\n"
+        "            functools.partial(jax.random.gumbel, shape=shape)\n"
+        "        )(key[0])",
+        "gumbel = jax.random.gumbel(key[0], shape)",
         1,
     )
     mutations["shared_taste_noise:wrong_scale"] = source.replace(
-        "return scale * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
-        "return scale**2 * (jax.random.gumbel(key, shape) - EULER_GAMMA)",
+        "return scale * (gumbel - EULER_GAMMA)",
+        "return scale**2 * (gumbel - EULER_GAMMA)",
         1,
     )
     mutations["shared_taste_noise:cast_import_replaced"] = source.replace(
@@ -7587,9 +7804,9 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
         occurrence=3,
     )
     mutations["singleton_simulate:attribute_argmax_and_max"] = source.replace(
-        "return argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)",
+        "index, value = argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)",
         (
-            "return candidate_filter.argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)"
+            "index, value = candidate_filter.argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)"
         ),
         1,
     )
@@ -8441,8 +8658,14 @@ _ACTION_GRID_MUTATIONS = {
         "src/_lcm/simulation/initial_conditions.py",
         "validate_simulation_inputs",
         "expression",
-        "contextlib.closing",
-        "contextlib.nullcontext",
+        (
+            "contextlib.closing("
+            "PreflightActionGrids(memory=memory, build=_build_flat_action_grid))"
+        ),
+        (
+            "contextlib.nullcontext("
+            "PreflightActionGrids(memory=memory, build=_build_flat_action_grid))"
+        ),
         1,
     ),
     "action_grid:binding_release_omitted": (
@@ -8964,7 +9187,7 @@ _FEASIBILITY_MUTATIONS = {
         "keyword",
         "memory",
         "None",
-        7,
+        9,
     ),
     "feasibility:joint_admission_bypassed": (
         INITIAL_CONDITIONS_SOURCE,
@@ -9756,6 +9979,26 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             )
         return source.replace(old, new, 1)
 
+    feasibility_source = (root / FEASIBILITY_SOURCE).read_text(encoding="utf-8")
+    specs["feasibility_summary:published_value_changed"] = {
+        "path": FEASIBILITY_SOURCE,
+        "source": replace_once(
+            source=feasibility_source,
+            old="return value, empty_count, other_inf_count",
+            new="return -value, empty_count, other_inf_count",
+            label="feasibility summary unchanged value",
+        ),
+    }
+    specs["feasibility_summary:empty_count_reversed"] = {
+        "path": FEASIBILITY_SOURCE,
+        "source": replace_once(
+            source=feasibility_source,
+            old="empty_count = jnp.sum(empty, dtype=jnp.int32)",
+            new="empty_count = jnp.sum(~empty, dtype=jnp.int32)",
+            label="feasibility summary native count",
+        ),
+    }
+
     grid_cases = {
         "caller_solve:action_names_slice": replace_once(
             source=grid_source,
@@ -9814,11 +10057,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "native_graph:collective_output_role_dropped": replace_once(
             source=grid_source,
-            old=(
-                "                    if context.stakeholders is not None\n"
-                "                    else VALUE"
-            ),
-            new="                    if False\n                    else VALUE",
+            old="                    if context.stakeholders is not None\n",
+            new="                    if False\n",
             label="native graph output-role authority",
         ),
         "native_graph:planned_disposition_forced_dense": replace_once(
@@ -9954,8 +10194,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "caller_solve:published_value_filtered": replace_once(
             source=grid_source,
-            old="        return KernelOutput(value=out)",
-            new="        return KernelOutput(value=candidate_filter(out))",
+            old="            value=V_arr, feasibility_counts=(empty_count, other_inf_count)",
+            new="            value=candidate_filter(V_arr), feasibility_counts=(empty_count, other_inf_count)",
             label="solve caller value publication",
         ),
         "streaming_provider:action_names_slice": replace_once(
@@ -10337,11 +10577,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "            fold_state_names=fold_state_names, stakeholders=stakeholders\n"
         "        )\n"
         "        mapped = _wrap_with_fold_reduction(\n"
-        '            mapped=cast("Callable[..., FloatND]", mapped),\n'
+        '            mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", mapped),\n'
         "            fold_state_names=fold_state_names,\n"
         "            fold_weights=fold_weights,\n"
         "            fold_conditioning=fold_conditioning,\n"
         "            inner_state_names=inner_state_names,\n"
+        "            return_feasibility=return_feasibility,\n"
         "            action_names=action_names,\n"
         "            state_names=state_names,\n"
         + streaming_fold_extra_params
@@ -10378,9 +10619,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "path": MAX_Q_SOURCE,
         "source": _replace_nth(
             text=max_source,
-            marker='            mapped=cast("Callable[..., FloatND]", mapped),',
+            marker='            mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", mapped),',
             replacement=(
-                '            mapped=cast("Callable[..., FloatND]", '
+                '            mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", '
                 "candidate_filter(mapped)),"
             ),
             occurrence=2,
@@ -10394,8 +10635,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "path": MAX_Q_SOURCE,
         "source": replace_once(
             source=max_source,
-            old="    @with_signature(\n        kwargs=[\n",
-            new="    @with_signature(\n        args=[\n",
+            old='        ),\n        kwargs=[\n            "next_regime_to_V_arr",',
+            new='        ),\n        args=[\n            "next_regime_to_V_arr",',
             label="streamed fold keyword-only signature",
         ),
     }
@@ -10413,17 +10654,17 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "source": replace_once(
             source=max_source,
             old=(
-                "        V_arr = mapped(\n"
+                "        out = self.mapped(\n"
                 "            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params\n"
                 "        )"
             ),
             new=(
-                "        V_arr = mapped(\n"
+                "        out = self.mapped(\n"
                 "            next_regime_to_V_arr=next_regime_to_V_arr,\n"
                 "            **{\n"
                 "                name: value\n"
                 "                for name, value in states_actions_params.items()\n"
-                "                if name != extra_param_names[-1]\n"
+                "                if name != '_lcm_action_block_width'\n"
                 "            },\n"
                 "        )"
             ),
@@ -11307,8 +11548,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_PROGRAMS_SOURCE,
                 "source": replace_once(
                     source=simulation_programs_source,
-                    old="jnp.maximum(result.best_global_action_id, 0).astype(jnp.int32)",
-                    new="jnp.maximum(result.best_global_action_id + 1, 0).astype(jnp.int32)",
+                    old="result.best_global_action_id.astype(jnp.int32)",
+                    new="(result.best_global_action_id + 1).astype(jnp.int32)",
                     label="streamed_index_shifted",
                 ),
             },
@@ -11462,8 +11703,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     processing_cases = {
         "caller_simulate:action_names_slice": replace_once(
             source=processing_source,
-            old="                action_names=state_action_space.action_names,",
-            new="                action_names=state_action_space.action_names[:-1],",
+            old="                action_names=state_action_space.action_names,\n"
+            "                state_names=state_action_space.state_names,\n"
+            "                n_discrete_action_axes=",
+            new="                action_names=state_action_space.action_names[:-1],\n"
+            "                state_names=state_action_space.state_names,\n"
+            "                n_discrete_action_axes=",
             label="simulate caller action names",
         ),
         "caller_simulate:wrong_discrete_axis_count": replace_once(
@@ -12536,6 +12781,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
 
     originals = {
         MAX_Q_SOURCE: max_source,
+        FEASIBILITY_SOURCE: feasibility_source,
         ARGMAX_SOURCE: argmax_source,
         COLLECTIVE_SOURCE: collective_source,
         LOGSUM_SOURCE: logsum_source,

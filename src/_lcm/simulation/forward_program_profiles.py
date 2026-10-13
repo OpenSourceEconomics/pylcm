@@ -31,10 +31,13 @@ from _lcm.simulation.program_arguments import (
     gate_fold_arguments,
     policy_prepare_arguments,
     policy_rank_arguments,
+    process_node_arguments,
     transition_arguments,
 )
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.simulation.shock_paths import supplied_shock_argument_names
 from _lcm.simulation.subject_groups import type_local_template
+from _lcm.simulation.taste_stream import scalar_draw_axis
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _states_for_period
 from _lcm.time import TimeAxis
@@ -321,10 +324,14 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     subject_key = jax.ShapeDtypeStruct(
         (n_subjects,), ordinary_key.dtype, sharding=subject
     )
-    decision_key = jax.ShapeDtypeStruct(
-        (n_subjects,),
-        (ordinary_key if taste_key is None else taste_key).dtype,
-        sharding=subject,
+    decision_key = (
+        jax.ShapeDtypeStruct((n_subjects,), ordinary_key.dtype, sharding=subject)
+        if taste_key is None
+        else jax.ShapeDtypeStruct(
+            (n_subjects, *scalar_draw_axis(dtype=taste_key.dtype)),
+            taste_key.dtype,
+            sharding=subject,
+        )
     )
     if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
         actions, _, _ = cast(
@@ -437,13 +444,46 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
         if program is None:
             continue
         keys = (
-            _stochastic_keys(regime=regime, key=subject_key)
+            dict(_stochastic_keys(regime=regime, key=subject_key))
             if family == "transition"
             else {}
         )
+        if family == "transition":
+            for argument in supplied_shock_argument_names(regime=regime, period=period):
+                if argument.startswith("supplied_shock__"):
+                    state = argument.removeprefix("supplied_shock__")
+                    integer = any(
+                        (f"next_{state}" in plan.lotteries)
+                        and (
+                            plan.lotteries[f"next_{state}"].node_annotation
+                            == "DiscreteState"
+                            or (
+                                state in base_spaces[target].states
+                                and np.issubdtype(
+                                    base_spaces[target].states[state].dtype, np.integer
+                                )
+                            )
+                        )
+                        for target, plan in regime.simulation.transition_plans.items()
+                    )
+                    keys[argument] = jax.ShapeDtypeStruct(
+                        (n_subjects,),
+                        np.dtype(np.int32 if integer else canonical_float_dtype()),
+                        sharding=subject,
+                    )
         arguments = transition_arguments(
             states=states,
             carried=carried,
+            process_nodes=(
+                {
+                    key: _placed_abstract(leaf=nodes, sharding=shared)
+                    for key, nodes in process_node_arguments(
+                        regime=regime, regimes=regimes, base_spaces=base_spaces
+                    ).items()
+                }
+                if family == "transition"
+                else None
+            ),
             actions=actions,
             keys=keys,
             period=period_value,
