@@ -134,6 +134,7 @@ from lcm.fixed_forms import (  # noqa: E402
     liquid_law_from_savings,
 )
 from lcm.grids import (  # noqa: E402
+    ConditionalAction,
     DiscreteGrid,
     GridBreakpoint,
     IrregSpacedGrid,
@@ -243,6 +244,7 @@ __all__ = [
     "CollectiveUtility",
     "CompositeState",
     "Condition",
+    "ConditionalAction",
     "ConsumptionSavingsRegime",
     "DeterministicTransition",
     "DiscreteGrid",

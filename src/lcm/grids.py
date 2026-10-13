@@ -5,12 +5,14 @@ Leaf classes users instantiate to declare state and action grids on a
 fields become a `DiscreteGrid`'s codes, `characteristics` and
 `category_with` for categories that are combinations of characteristics, and the
 `ContinuousGrid` base class a solver names when it accepts any continuous
-grid. The internal `Grid` / `UniformContinuousGrid` ABCs and the validators /
-coordinate helpers live in `_lcm.grids`.
+grid, and `ConditionalAction` for a continuous action that is active only under
+some discrete-action values. The internal `Grid` / `UniformContinuousGrid` ABCs
+and the validators / coordinate helpers live in `_lcm.grids`.
 """
 
 from _lcm.grids.categorical import categorical
 from _lcm.grids.characteristics import category_with, characteristics
+from _lcm.grids.conditional_action import ConditionalAction
 from _lcm.grids.continuous import (
     ContinuousGrid,
     IrregSpacedGrid,
@@ -25,6 +27,7 @@ from _lcm.grids.piecewise import (
 )
 
 __all__ = [
+    "ConditionalAction",
     "ContinuousGrid",
     "DiscreteGrid",
     "GridBreakpoint",
