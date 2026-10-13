@@ -108,6 +108,7 @@ from _lcm.typing import (
     TransitionFunction,
     TransitionFunctionName,
 )
+from _lcm.utils.counts import add_counts, sum_counts
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
@@ -713,12 +714,13 @@ def _off_grid_counts_law(
     grid_names: tuple[StateOrActionName, ...],
     func: Callable[..., IntND],
 ) -> IntND:
-    """Reduce exact integer counts block by block inside one producer.
+    """Reduce saturating integer counts block by block inside one producer.
 
     The trailing axes whose product fits `_OFF_GRID_BLOCK_ROWS` are evaluated
-    together; a loop walks the remaining leading axes and accumulates the exact
-    integer counts, so no intermediate holds more than one block of rows,
-    however large the state-action product is.
+    together; a loop walks the remaining leading axes and accumulates the
+    counts, so no intermediate holds more than one block of rows, however large
+    the state-action product is. Every addition saturates at `COUNT_CAPACITY`,
+    so a total is exact below it and a positive population never reads as zero.
     """
     point = _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
     if not grid_names:
@@ -743,7 +745,7 @@ def _off_grid_counts_law(
             return point(*fixed)
         mesh = jnp.meshgrid(*inner, indexing="ij")
         rows = jax.vmap(partial(point, *fixed))(*(array.ravel() for array in mesh))
-        return jnp.sum(rows, axis=0, dtype=jnp.int32)
+        return sum_counts(counts=rows, axis=0)
 
     if not outer:
         return count_block(jnp.int32(0))
@@ -757,7 +759,9 @@ def _off_grid_counts_law(
     return jax.lax.fori_loop(
         0,
         n_blocks,
-        lambda index, total: total + count_block(index.astype(jnp.int32)),
+        lambda index, total: add_counts(
+            left=total, right=count_block(index.astype(jnp.int32))
+        ),
         jnp.zeros(shape.shape, dtype=shape.dtype),
     )
 
@@ -832,7 +836,7 @@ class _OffGridCell:
                 "__off_grid_reached": reached,
             }
         )
-        return jnp.sum(rows, axis=tuple(range(self.n_lotteries)), dtype=jnp.int32)
+        return sum_counts(counts=rows, axis=tuple(range(self.n_lotteries)))
 
 
 def _validate_transition_sequence(

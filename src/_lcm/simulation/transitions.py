@@ -40,6 +40,7 @@ from _lcm.typing import (
     StateName,
     StatesPerRegime,
 )
+from _lcm.utils.counts import sum_counts
 from _lcm.utils.logging import validation_enabled
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError, OffGridStateError
 from lcm.typing import Bool1D, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
@@ -147,7 +148,7 @@ def _count_realized_grid_state(
     return jnp.stack(
         [
             count_off_grid(values=values, points=points, feasible=owned),
-            jnp.count_nonzero(owned & ~jnp.isfinite(values)).astype(jnp.int32),
+            sum_counts(counts=owned & ~jnp.isfinite(values)),
         ]
     )
 
