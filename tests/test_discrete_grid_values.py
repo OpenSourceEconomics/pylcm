@@ -28,12 +28,34 @@ from _lcm.regime_building.value_adapter import (
     adapt_user_function,
     collect_value_grids,
 )
-from lcm import AgeGrid, DiscreteGrid, Model, Phased, fixed_transition
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    ByAge,
+    DeterministicTransition,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Phased,
+    Transition,
+    case_boundary,
+    categorical,
+    fixed_transition,
+    piece,
+    ref,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 from lcm_examples.mortality import (
     is_working,
     labor_income,
@@ -386,3 +408,388 @@ def test_adapting_an_adapted_function_wraps_the_user_function_once():
     )
     twice = adapt_user_function(func=once, value_grids=_VALUE_GRIDS, encode=None)
     assert jnp.asarray(twice(wealth=jnp.int32(1))).tolist() == 11
+
+
+@categorical(ordered=False)
+class _WorkingDead:
+    working: ScalarInt
+    dead: ScalarInt
+
+
+@categorical(ordered=True)
+class _HoursCodes:
+    low: ScalarInt
+    high: ScalarInt
+
+
+_NODE_PAIRS = [
+    pytest.param((10, 20), id="integers-10-20"),
+    pytest.param((5, 25), id="integers-5-25"),
+    pytest.param((2.5, 7.5), id="floats-2_5-7_5"),
+]
+
+
+def _zero_utility() -> FloatND:
+    return jnp.asarray(0.0, dtype=float)
+
+
+def _one_period_model(
+    *, working: UserRegime, enable_jit: bool, model_aggregator=None, n_periods: int = 1
+) -> Model:
+    """A working regime that moves to a terminal regime after `n_periods`."""
+    targets = {"dead": n_periods - 1}
+    if n_periods > 1:
+        targets["working"] = tuple(range(n_periods - 1))
+    options = (
+        {} if model_aggregator is None else {"koopmans_aggregator": model_aggregator}
+    )
+    return Model(
+        regimes={
+            "working": working,
+            "dead": UserRegime(functions={"utility": _zero_utility}),
+        },
+        regime_id_class=_WorkingDead,
+        ages=AgeGrid(start=0, inclusive_stop=n_periods, step="Y"),
+        initial_nodes={0: "working"},
+        edges={"working": targets},
+        enable_jit=enable_jit,
+        **options,
+    )
+
+
+def _first_values(*, model: Model, params) -> np.ndarray:
+    return np.asarray(model.solve(params=params, log_level="off").values[0]["working"])
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("location", ["regime", "model", "phased"])
+@pytest.mark.parametrize("nodes", _NODE_PAIRS)
+def test_koopmans_aggregator_reads_the_value_of_a_derived_categorical(
+    *, enable_jit, location, nodes
+):
+    """W reading a value-grid derived output receives its value, not its code."""
+
+    def bonus() -> DiscreteState:
+        return jnp.asarray(nodes[1])
+
+    def aggregate(*, utility: FloatND, CE: FloatND, bonus: DiscreteState) -> FloatND:
+        return utility + bonus + 0.0 * CE
+
+    declaration = (
+        Phased(solve=aggregate, simulate=aggregate)
+        if location == "phased"
+        else aggregate
+    )
+    working = UserRegime(
+        functions={"utility": _zero_utility, "bonus": bonus},
+        derived_categoricals={"bonus": DiscreteGrid(values=nodes)},
+        koopmans_aggregator=None if location == "model" else declaration,
+    )
+    model = _one_period_model(
+        working=working,
+        enable_jit=enable_jit,
+        model_aggregator=declaration if location == "model" else None,
+    )
+    assert _first_values(model=model, params={}).item() == nodes[1]
+
+
+def _report_utility(*, utility: FloatND, CE: FloatND) -> FloatND:
+    return utility + 0.0 * CE
+
+
+def _utility_of_hours(*, hours: DiscreteAction) -> FloatND:
+    return jnp.asarray(hours, dtype=float)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("nodes", _NODE_PAIRS)
+@pytest.mark.parametrize("phased", [False, True])
+def test_selection_aggregator_selects_by_the_values_of_an_action(
+    *, enable_jit, nodes, phased
+):
+    """A selection rule on hours values keeps the unique optimum at the lower node."""
+
+    def select(*, utility: FloatND, CE: FloatND, hours: DiscreteAction) -> FloatND:
+        return -((hours - nodes[0]) ** 2) + 0.0 * utility + 0.0 * CE
+
+    working = UserRegime(
+        actions={"hours": DiscreteGrid(values=nodes)},
+        functions={"utility": _utility_of_hours},
+        koopmans_aggregator=_report_utility,
+        selection_aggregator=(
+            Phased(solve=select, simulate=select) if phased else select
+        ),
+    )
+    model = _one_period_model(working=working, enable_jit=enable_jit)
+    assert _first_values(model=model, params={}).item() == nodes[0]
+
+
+@pytest.mark.parametrize("nodes", _NODE_PAIRS)
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("explicit_phases", [False, True])
+def test_one_function_in_both_phases_keeps_the_feasible_set(
+    *, nodes, enable_jit, explicit_phases
+):
+    """The same authored helper in both phases is one function, not a varying one."""
+
+    def hours_as_float(*, hours: DiscreteState) -> FloatND:
+        return jnp.asarray(hours, dtype=float)
+
+    def utility(*, h: FloatND) -> FloatND:
+        return h
+
+    def positive(*, h: FloatND) -> BoolND:
+        return h > 0.0
+
+    working = UserRegime(
+        states={"hours": DiscreteGrid(values=nodes)},
+        state_transitions={"hours": fixed_transition("hours")},
+        functions={
+            "h": (
+                Phased(solve=hours_as_float, simulate=hours_as_float)
+                if explicit_phases
+                else hours_as_float
+            ),
+            "utility": utility,
+        },
+        constraints={"positive": positive},
+    )
+    got = _first_values(
+        model=_one_period_model(working=working, enable_jit=enable_jit),
+        params={"discount_factor": 1.0},
+    )
+    np.testing.assert_array_equal(got, np.asarray(nodes, dtype=float))
+
+
+def _case_regime(*, nodes, value_side: str) -> UserRegime:
+    boundary = case_boundary(condition=ref("wealth") < 1.5, kind="jump")
+
+    def from_hours(*, hours: DiscreteState) -> FloatND:
+        return jnp.asarray(hours, dtype=float)
+
+    def constant() -> FloatND:
+        return jnp.asarray(7.0, dtype=float)
+
+    def utility(*, income: FloatND, wealth: ContinuousState) -> FloatND:
+        return income + 0.0 * wealth
+
+    when_func, otherwise_func = (
+        (from_hours, constant) if value_side == "when" else (constant, from_hours)
+    )
+    return UserRegime(
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=2, n_points=2),
+            "hours": DiscreteGrid(values=nodes),
+        },
+        state_transitions={
+            "wealth": fixed_transition("wealth"),
+            "hours": fixed_transition("hours"),
+        },
+        functions={
+            "eligible": boundary,
+            "income_below": piece(output="income", when=boundary)(when_func),
+            "income_above": piece(output="income", otherwise=boundary)(otherwise_func),
+            "utility": utility,
+        },
+    )
+
+
+@pytest.mark.parametrize("nodes", _NODE_PAIRS)
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("value_side", ["when", "otherwise"])
+def test_case_pieces_survive_three_reuses_of_a_finalized_regime(
+    *, nodes, enable_jit, value_side
+):
+    """A value-reading case piece keeps its role and its values across reuses."""
+    model = _one_period_model(
+        working=_case_regime(nodes=nodes, value_side=value_side),
+        enable_jit=enable_jit,
+    )
+    first = _first_values(model=model, params={"discount_factor": 1.0})
+    np.testing.assert_array_equal(
+        np.sort(first.ravel()), np.sort(np.asarray([*nodes, 7.0, 7.0], dtype=float))
+    )
+    for _ in range(3):
+        model = _one_period_model(
+            working=model.user_regimes["working"], enable_jit=enable_jit
+        )
+        np.testing.assert_array_equal(
+            _first_values(model=model, params={"discount_factor": 1.0}), first
+        )
+
+
+def _working_hours_utility(*, hours: DiscreteState) -> FloatND:
+    return jnp.asarray(hours, dtype=float)
+
+
+def _law_at_zero(*, hours: DiscreteState) -> ScalarInt:
+    return jnp.where(hours <= 15, _WorkingDead.working, _WorkingDead.dead)
+
+
+def _law_at_one(*, hours: DiscreteState) -> ScalarInt:
+    return jnp.full_like(hours, _WorkingDead.dead, dtype=jnp.int32)
+
+
+def _flat_law(*, hours: DiscreteState, age: float) -> ScalarInt:
+    return jnp.where(
+        (age == 0) & (hours <= 15), _WorkingDead.working, _WorkingDead.dead
+    )
+
+
+@pytest.mark.parametrize("law_form", ["flat", "by_age"])
+def test_regime_transition_law_reading_a_value_grid_is_refused_in_any_form(law_form):
+    """A regime law that reads a value grid is refused, flat or scheduled by age."""
+    law = (
+        DeterministicTransition(func=_flat_law)
+        if law_form == "flat"
+        else ByAge(
+            cases={
+                0: DeterministicTransition(func=_law_at_zero),
+                1: DeterministicTransition(func=_law_at_one),
+            }
+        )
+    )
+    working = UserRegime(
+        states={"hours": DiscreteGrid(values=[10, 20])},
+        state_transitions={"hours": fixed_transition("hours")},
+        functions={"utility": _working_hours_utility},
+    )
+    with pytest.raises(RegimeInitializationError, match="regime transition law"):
+        Model(
+            regimes={
+                "working": working,
+                "dead": UserRegime(functions={"utility": _zero_utility}),
+            },
+            regime_id_class=_WorkingDead,
+            ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+            initial_nodes={0: "working"},
+            edges={
+                "working": Transition(
+                    targets={"working": (0,), "dead": (0, 1)}, law=law
+                )
+            },
+            enable_jit=False,
+        )
+
+
+def _bonus_regime(kind: str) -> UserRegime:
+    def integer_bonus() -> FloatND:
+        return jnp.int32(20)
+
+    def float_bonus() -> FloatND:
+        return jnp.asarray(20.0)
+
+    def utility(*, bonus: FloatND) -> FloatND:
+        return bonus + 0.0
+
+    return UserRegime(
+        functions={
+            "bonus": integer_bonus if kind == "integer" else float_bonus,
+            "utility": utility,
+        },
+        derived_categoricals={
+            "bonus": DiscreteGrid(
+                values=[10, 20] if kind == "integer" else [10.0, 20.0]
+            )
+        },
+    )
+
+
+def _add_continuation(*, utility: FloatND, CE: FloatND) -> FloatND:
+    return utility + CE
+
+
+@categorical(ordered=False)
+class _EarlyLate:
+    early: ScalarInt
+    late: ScalarInt
+
+
+def _bonus_model(*, order, early_kind, late_kind) -> Model:
+    declared = {"early": _bonus_regime(early_kind), "late": _bonus_regime(late_kind)}
+    ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
+    return Model(
+        regimes={name: declared[name] for name in order},
+        ages=ages,
+        regime_id_class=_EarlyLate,
+        initial_nodes={ages.exact_values[0]: "early"},
+        edges={"early": {"late": AgeRange(exclusive_stop=1)}},
+        koopmans_aggregator=_add_continuation,
+        enable_jit=False,
+    )
+
+
+@pytest.mark.parametrize("order", [("early", "late"), ("late", "early")])
+def test_one_derived_name_with_integer_and_float_values_is_refused(order):
+    """One name with integer values in one regime and floats in another is refused."""
+    with pytest.raises(RegimeInitializationError, match="bonus"):
+        _bonus_model(order=order, early_kind="integer", late_kind="float")
+
+
+@pytest.mark.parametrize("kind", ["integer", "float"])
+@pytest.mark.parametrize("order", [("early", "late"), ("late", "early")])
+def test_one_derived_name_with_one_kind_of_values_solves_in_either_order(
+    *, kind, order
+):
+    """The same derived grid in two regimes gives the declared values 40 and 20."""
+    model = _bonus_model(order=order, early_kind=kind, late_kind=kind)
+    values = model.solve(params={}, log_level="off").values
+    assert (
+        np.asarray(values[0]["early"]).item(),
+        np.asarray(values[1]["late"]).item(),
+    ) == (40.0, 20.0)
+
+
+def _earnings_utility(*, earnings: FloatND) -> FloatND:
+    return earnings
+
+
+def _hours_as_float(*, hours: DiscreteState) -> FloatND:
+    return jnp.asarray(hours, dtype=float)
+
+
+def _impute_twenty() -> DiscreteState:
+    return jnp.int32(20)
+
+
+def test_an_imputation_reading_a_value_grid_is_refused():
+    """A carried state's solve imputation that reads a value grid is refused."""
+    working = UserRegime(
+        states={
+            "hours": DiscreteGrid(values=[10, 20]),
+            "earnings": Phased(
+                solve=_hours_as_float,
+                simulate=LinSpacedGrid(start=0, stop=30, n_points=2),
+            ),
+        },
+        state_transitions={
+            "hours": fixed_transition("hours"),
+            "earnings": fixed_transition("earnings"),
+        },
+        functions={"utility": _earnings_utility},
+    )
+    with pytest.raises(RegimeInitializationError, match="imputation"):
+        _one_period_model(working=working, enable_jit=False)
+
+
+def test_an_imputed_value_grid_state_is_refused():
+    """A carried state declared with values in its simulate phase is refused."""
+    working = UserRegime(
+        states={
+            "wealth": LinSpacedGrid(start=0, stop=30, n_points=4),
+            "hours": Phased(
+                solve=_impute_twenty, simulate=DiscreteGrid(values=[10, 20])
+            ),
+        },
+        state_transitions={
+            "wealth": _hours_as_float,
+            "hours": fixed_transition("hours"),
+        },
+        functions={"utility": _wealth_utility},
+    )
+    with pytest.raises(RegimeInitializationError, match="imputation"):
+        _one_period_model(working=working, enable_jit=False, n_periods=2)
+
+
+def _wealth_utility(*, wealth: ContinuousState) -> FloatND:
+    return wealth
