@@ -320,7 +320,7 @@ def _is_initial_conditions[Inputs](inputs: Inputs) -> TypeGuard[UserInitialCondi
 def _call(*, model: Model, params: _Params, log_level: LogLevel) -> _Result:
     """Run the arm's public call: simulate when initial conditions ride along."""
     if _ACA_INITIAL_CONDITIONS not in params:
-        return model.solve(params=params, log_level=log_level)
+        return model.solve(params=params, log_level=log_level, runtime_checks=False)
     initial_conditions = params[_ACA_INITIAL_CONDITIONS]
     assert _is_initial_conditions(initial_conditions)
     rest = {k: v for k, v in params.items() if k != _ACA_INITIAL_CONDITIONS}
@@ -328,6 +328,7 @@ def _call(*, model: Model, params: _Params, log_level: LogLevel) -> _Result:
         params=rest,
         initial_conditions=initial_conditions,
         log_level=log_level,
+        runtime_checks=False,
         seed=0,
     )
 
