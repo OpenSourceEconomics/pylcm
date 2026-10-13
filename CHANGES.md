@@ -5,14 +5,20 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
-### Flow utility and continuation in policy lookup
+### Intermediates in policy lookup
 
-- `Model.lookup_policy(..., return_action_values=True)` also returns `U`, the flow
-  utility, and `CE`, the undiscounted certainty-equivalent continuation, per state row
-  and action, with the shape of `Q`. `Q == W(utility=U, CE=CE, ...)` for every Koopmans
-  aggregator, so `Q == U + discount_factor * CE` under `LinearAggregator`; a terminal
-  regime has `CE == 0`. `actions`, `value`, `Q`, `F`, `U` and `CE` come from one
-  evaluation of the regime's kernel.
+- `Model.lookup_policy(..., keep_intermediates=...)` replaces
+  `return_action_values=True`, which is removed. It takes any subset of `"Q"`, `"F"`,
+  `"U"` and `"CE"`, in any order, and fills only those fields of `PolicyLookup`; the
+  default `()` keeps none and runs the plain decision. `return_action_values=True`
+  becomes `keep_intermediates=("Q", "F", "U", "CE")`, or `("Q", "F")` for its former
+  output.
+- `U` is the flow utility and `CE` the undiscounted certainty-equivalent continuation,
+  per state row and action, with the shape of `Q`. `Q == W(utility=U, CE=CE, ...)` for
+  every Koopmans aggregator, so `Q == U + discount_factor * CE` under
+  `LinearAggregator`; a terminal regime has `CE == 0`. `actions`, `value` and the kept
+  intermediates come from one evaluation of the regime's kernel.
+- An unknown or repeated name raises `InvalidSimulationInputError`.
 
 ### Public `EULER_GAMMA` for location-0 taste shocks
 
