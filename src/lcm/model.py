@@ -169,6 +169,7 @@ from _lcm.simulation.program_types import (
     FLOW_UTILITY,
     SimulationProgramExecutor,
 )
+from _lcm.simulation.programs import with_kept_action_parts
 from _lcm.simulation.random import canonicalize_simulation_seed
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
@@ -369,6 +370,7 @@ from lcm.transition import (
 from lcm.typing import (
     Bool1D,
     FloatND,
+    Intermediate,
     IntND,
     Phase,
     PRNGKey,
@@ -4008,6 +4010,7 @@ class Model:
             )
             raise ExecutionPlanningError(msg)
 
+    @beartype(conf=SIMULATION_INPUT_CONF)
     def lookup_policy(
         self,
         *,
@@ -4017,7 +4020,7 @@ class Model:
         regime_name: RegimeName,
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None = None,
-        return_action_values: bool = False,
+        keep_intermediates: tuple[Intermediate, ...] = (),
     ) -> PolicyLookup:
         """Return the decision at given states of one regime-period.
 
@@ -4042,19 +4045,25 @@ class Model:
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
-            return_action_values: Whether to also return the action values `Q`,
-                their feasibility `F`, the flow utility `U` and the
-                certainty-equivalent continuation `CE` over the (possibly
-                restricted) action grid, all from the one kernel evaluation the
-                decision maximizes over. Not supported for a collective regime.
+            keep_intermediates: Which intermediates of the decision to keep over
+                the (possibly restricted) action grid, in any order: the action
+                values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and
+                the certainty-equivalent continuation `"CE"`, all from the one
+                kernel evaluation the decision maximizes over. They leave the
+                actions and value unchanged. `Q`, `U` and `CE` are unmasked; `F`
+                says which of their entries the decision admits. Any non-empty
+                choice materializes the whole action product, even where the
+                decision alone streams over it. Not supported for a collective
+                regime.
 
         Returns:
             The argmax action value per action name and the max of Q over the
-            (possibly restricted) action grid, one entry per state row; with
-            `return_action_values`, also `Q`, `F`, `U` and `CE`. A GridSearch
-            regime with taste shocks returns no actions; it returns the smoothed
-            maximum as the value, and per discrete-action combination `Qc`,
-            the choice probabilities and the continuous actions attaining `Qc`.
+            (possibly restricted) action grid, one entry per state row, and the
+            intermediates named in `keep_intermediates`; the others are `None`. A
+            GridSearch regime with taste shocks returns no actions; it returns the
+            smoothed maximum as the value, and per discrete-action combination
+            `Qc`, the choice probabilities and the continuous actions attaining
+            `Qc`.
 
         """
         self._check_identity_runtime()
@@ -4065,11 +4074,12 @@ class Model:
         if period not in regime.simulation.programs.decision:
             msg = f"Regime {regime_name!r} makes no decision in period {period}."
             raise InvalidSimulationInputError(msg)
+        _fail_if_repeated_intermediates(keep_intermediates=keep_intermediates)
         _fail_if_policy_lookup_unsupported(
             regime=regime,
             regime_name=regime_name,
             solver=self.user_regimes[regime_name].solver,
-            return_action_values=return_action_values,
+            keep_intermediates=keep_intermediates,
         )
         allocations = self._open_entry_allocations(
             params=params, inputs=(states, action_grids), solution=solution
@@ -4134,7 +4144,7 @@ class Model:
                 action_grids=action_grids,
                 allocations=allocations,
                 processed_params=processed_params,
-                return_action_values=return_action_values,
+                keep_intermediates=frozenset(keep_intermediates),
                 n_query_rows=(
                     n_rows
                     if states and len(next(iter(states.values()))) != n_rows
@@ -4155,7 +4165,7 @@ class Model:
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None,
         allocations: SimulationEntryAllocations | None,
-        return_action_values: bool,
+        keep_intermediates: frozenset[Intermediate],
         n_query_rows: int | None,
         processed_params: FlatParams | None = None,
     ) -> PolicyLookup:
@@ -4286,8 +4296,15 @@ class Model:
             )
             executor = unit
         program = (
-            programs.action_values[period]
-            if return_action_values or regime.has_taste_shocks
+            with_kept_action_parts(
+                program=programs.action_values[period],
+                roles=frozenset(
+                    _INTERMEDIATE_ROLES[name] for name in keep_intermediates
+                ),
+            )
+            # A taste-shock regime draws its discrete action, so its lookup
+            # always takes the decision that publishes the choice probabilities.
+            if keep_intermediates or regime.has_taste_shocks
             else _with_action_extents(
                 program=programs.decision[period],
                 extents=tuple(len(grids[n]) for n in space.action_names),
@@ -4353,24 +4370,17 @@ class Model:
             )
             jax.block_until_ready(actions)
             unit.close()
-        parts = (
-            {
-                "Q": by_role[ACTION_VALUES],
-                "F": by_role[ACTION_FEASIBILITY],
-                "U": by_role[FLOW_UTILITY],
-                "CE": by_role[CONTINUATION_CE],
-            }
-            if return_action_values
-            else {}
-        )
         return _trim_lookup_rows(
             lookup=PolicyLookup(
                 actions=None if regime.has_taste_shocks else actions,
                 value=by_role[DECISION_VALUE],
+                Q=by_role.get(ACTION_VALUES),
+                F=by_role.get(ACTION_FEASIBILITY),
+                U=by_role.get(FLOW_UTILITY),
+                CE=by_role.get(CONTINUATION_CE),
                 Qc=by_role.get(CONDITIONAL_VALUE),
                 choice_probabilities=by_role.get(CHOICE_PROBABILITIES),
                 conditional_actions=actions if regime.has_taste_shocks else None,
-                **parts,
             ),
             n_rows=n_query_rows,
             allocations=allocations,
@@ -4936,6 +4946,29 @@ class Model:
         return flat_params
 
 
+# The output role each intermediate a policy lookup can keep is published under.
+_INTERMEDIATE_ROLES: MappingProxyType[Intermediate, str] = MappingProxyType(
+    {
+        "Q": ACTION_VALUES,
+        "F": ACTION_FEASIBILITY,
+        "U": FLOW_UTILITY,
+        "CE": CONTINUATION_CE,
+    }
+)
+
+
+def _fail_if_repeated_intermediates(
+    *, keep_intermediates: tuple[Intermediate, ...]
+) -> None:
+    """Raise if `keep_intermediates` names one intermediate more than once."""
+    repeated = sorted(
+        {name for name in keep_intermediates if keep_intermediates.count(name) > 1}
+    )
+    if repeated:
+        msg = f"Policy lookup keeps each intermediate at most once; got {repeated}."
+        raise InvalidSimulationInputError(msg)
+
+
 # Keyed by the source program's identity; the source is held alongside so the
 # identity cannot be recycled while its entry lives.
 # ponytail: unbounded, one small entry per (decision program, restricted extents).
@@ -4975,7 +5008,7 @@ def _fail_if_policy_lookup_unsupported(
     regime: Regime,
     regime_name: RegimeName,
     solver: Solver,
-    return_action_values: bool,
+    keep_intermediates: tuple[Intermediate, ...],
 ) -> None:
     """Raise when policy lookup cannot reproduce the regime's simulated decision."""
     if regime.gated_edges:
@@ -4992,9 +5025,9 @@ def _fail_if_policy_lookup_unsupported(
             "the choice probabilities of its solve."
         )
         raise InvalidSimulationInputError(msg)
-    if return_action_values and regime.stakeholders is not None:
+    if keep_intermediates and regime.stakeholders is not None:
         msg = (
-            "Policy lookup returns action values for singleton regimes only; "
+            "Policy lookup keeps intermediates for singleton regimes only; "
             f"{regime_name!r} is a collective regime."
         )
         raise InvalidSimulationInputError(msg)

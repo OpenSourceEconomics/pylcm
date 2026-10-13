@@ -302,10 +302,41 @@ def test_lookup_restricted_work_grid_shrinks_the_discrete_axis(solved):
     )
 
 
+def test_lookup_keeps_no_intermediates_unless_requested(solved):
+    """The choice distribution is always published; `Q`, `F`, `U`, `CE` on request."""
+    model, params, solution = solved
+    got = lookup(model=model, params=params, solution=solution)
+    assert (got.Q, got.F, got.U, got.CE) == (None, None, None, None)
+    assert got.Qc is not None
+    assert got.choice_probabilities is not None
+
+
+def test_lookup_keeps_only_the_requested_intermediates(solved):
+    model, params, solution = solved
+    full = lookup(
+        model=model,
+        params=params,
+        solution=solution,
+        keep_intermediates=("Q", "F", "U", "CE"),
+    )
+    got = lookup(
+        model=model, params=params, solution=solution, keep_intermediates=("CE",)
+    )
+    assert (got.Q, got.F, got.U) == (None, None, None)
+    np.testing.assert_array_equal(np.asarray(got.CE), np.asarray(full.CE))
+    np.testing.assert_array_equal(
+        np.asarray(got.choice_probabilities), np.asarray(full.choice_probabilities)
+    )
+    np.testing.assert_array_equal(np.asarray(got.value), np.asarray(full.value))
+
+
 def test_lookup_with_action_values_has_Qc_as_the_masked_max_of_Q(solved):
     model, params, solution = solved
     got = lookup(
-        model=model, params=params, solution=solution, return_action_values=True
+        model=model,
+        params=params,
+        solution=solution,
+        keep_intermediates=("Q", "F", "U", "CE"),
     )
     masked = np.where(np.asarray(got.F), np.asarray(got.Q), -np.inf)
     np.testing.assert_array_equal(np.asarray(got.Qc), masked.max(axis=2))
@@ -314,7 +345,10 @@ def test_lookup_with_action_values_has_Qc_as_the_masked_max_of_Q(solved):
 def test_lookup_flow_utility_is_the_utility_of_each_action(solved):
     model, params, solution = solved
     got = lookup(
-        model=model, params=params, solution=solution, return_action_values=True
+        model=model,
+        params=params,
+        solution=solution,
+        keep_intermediates=("Q", "F", "U", "CE"),
     )
     expected = np.log(CONSUMPTION)[None, :] - 0.3 * np.array([0.0, 1.0])[:, None]
     np.testing.assert_array_almost_equal(
@@ -327,7 +361,10 @@ def test_lookup_flow_utility_is_the_utility_of_each_action(solved):
 def test_lookup_continuation_is_the_terminal_value_at_feasible_actions(solved):
     model, params, solution = solved
     got = lookup(
-        model=model, params=params, solution=solution, return_action_values=True
+        model=model,
+        params=params,
+        solution=solution,
+        keep_intermediates=("Q", "F", "U", "CE"),
     )
     next_wealth_values = (
         WEALTH[:, None, None]

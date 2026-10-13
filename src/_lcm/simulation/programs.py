@@ -778,6 +778,103 @@ def _decision_body(
 # returns them: the decision's own pair, then each part over the action product.
 ACTION_VALUES_OUTPUT_ROLES = (ACTION_INDEX, DECISION_VALUE, *ACTION_PARTS_ROLES)
 
+# Keyed by the source program's identity and the kept parts; the source is held
+# alongside so the identity cannot be recycled while its entry lives.
+# ponytail: unbounded, one small entry per (parts program, kept subset).
+_KEPT_PARTS_PROGRAMS: dict[
+    tuple[int, frozenset[str]], tuple[CoreProgram, CoreProgram]
+] = {}
+
+
+def with_kept_action_parts(
+    *, program: CoreProgram, roles: frozenset[str]
+) -> CoreProgram:
+    """Return a lookup decision with its parts that publishes only the parts in `roles`.
+
+    The decision's own outputs are always published, followed by the kept parts in
+    the order of `ACTION_PARTS_ROLES`. The selection is made at each state cell, so
+    a dropped part is never stacked over the subjects. Keeping every part returns
+    `program` unchanged; one object per kept subset keeps the executor's
+    compiled-route cache warm.
+    """
+    unknown = roles - set(ACTION_PARTS_ROLES)
+    if unknown:
+        msg = (
+            f"Unknown action part roles {sorted(unknown)}; known: {ACTION_PARTS_ROLES}."
+        )
+        raise ValueError(msg)
+    if roles == set(ACTION_PARTS_ROLES):
+        return program
+    key = (id(program), roles)
+    if key not in _KEPT_PARTS_PROGRAMS:
+        published = cast("tuple[str, ...]", program.output_roles)
+        kept = tuple(
+            role
+            for role in published
+            if role not in ACTION_PARTS_ROLES or role in roles
+        )
+        _KEPT_PARTS_PROGRAMS[key] = (
+            program,
+            dataclasses.replace(
+                program,
+                function=_select_cell_outputs(
+                    function=program.function,
+                    positions=tuple(published.index(role) for role in kept),
+                ),
+                output_roles=kept,
+            ),
+        )
+    return _KEPT_PARTS_PROGRAMS[key][1]
+
+
+def _select_cell_outputs(
+    *, function: Callable[..., PytreeValue], positions: tuple[int, ...]
+) -> Callable[..., PytreeValue]:
+    """Return `function` with its tiled cell body publishing only `positions`.
+
+    `function` is a subject-tiled body, possibly under the keyword bindings the
+    model layer wraps around it; the bindings are kept around the new body.
+    """
+    bindings: list[Mapping[str, PytreeValue]] = []
+    inner = function
+    while isinstance(inner, partial):
+        if inner.args:
+            msg = "A simulation body takes keyword bindings only."
+            raise TypeError(msg)
+        bindings.append(inner.keywords)
+        inner = inner.func
+    tiled = cast("_SubjectTiled", inner)
+    selected: Callable[..., PytreeValue] = dataclasses.replace(
+        tiled,
+        func=with_signature(
+            _SelectedOutputs(body=tiled.func, positions=positions),
+            args=list(inspect.signature(tiled.func).parameters),
+            enforce=False,
+        ),
+    )
+    for keywords in reversed(bindings):
+        selected = partial(selected, **keywords)
+    return selected
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _SelectedOutputs:
+    """A cell body that publishes only some of the outputs of another."""
+
+    __name__: ClassVar[str] = "argmax_and_max_Q_over_a_with_kept_parts"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    body: Callable[..., PytreeValue]
+    """The cell body whose output tuple is selected from."""
+
+    positions: tuple[int, ...]
+    """Positions of the published outputs in the output tuple of `body`."""
+
+    def __call__(self, **kwargs: PytreeValue) -> tuple[PytreeValue, ...]:
+        """Return the outputs of `body` at `positions`."""
+        outputs = cast("tuple[PytreeValue, ...]", self.body(**kwargs))
+        return tuple(outputs[position] for position in self.positions)
+
 
 def _decision_with_action_parts(
     *,
