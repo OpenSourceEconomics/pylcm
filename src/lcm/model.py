@@ -153,7 +153,7 @@ from _lcm.simulation.program_types import (
     FLOW_UTILITY,
     SimulationProgramExecutor,
 )
-from _lcm.simulation.programs import with_kept_action_parts
+from _lcm.simulation.programs import KeptPartsPrograms, with_kept_action_parts
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -714,7 +714,16 @@ class Model:
     """
 
     _simulate_compile_lock: threading.Lock
-    """Serialize creation of runtime executors for each subject shape."""
+    """Serialize creation of runtime executors for each subject shape, and of the
+    programs policy lookup derives from them."""
+
+    _kept_parts_programs: KeptPartsPrograms
+    """Lookup decisions publishing only some parts, derived once per source program
+    and kept subset; released with the model."""
+
+    _action_extent_programs: _ActionExtentPrograms
+    """Lookup decisions streaming restricted action grids, derived once per source
+    program and extents; released with the model."""
 
     @beartype(conf=MODEL_CONF)
     def __init__(  # noqa: PLR0915
@@ -850,6 +859,8 @@ class Model:
         self._simulate_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
+        self._kept_parts_programs = {}
+        self._action_extent_programs = {}
         # In-memory result provenance. Kept in pickle state so a model and a
         # result round-tripped together remain compatible, but deliberately not
         # presented as a durable model-content fingerprint.
@@ -1283,11 +1294,12 @@ class Model:
     def __getstate__(self) -> _PickledModel:
         """Return the attributes a restored model needs.
 
-        Leaves out runtime executors and their lock, declared-authority state,
-        the parameter projection, the creating process, the published initial
-        nodes, and sealed bindings that name this process's namespaces and
-        closure cells. `__setstate__` rebuilds them. The attributes an archive may
-        lack are written only when the model holds them.
+        Leaves out runtime executors, the lookup programs derived from them and
+        their lock, declared-authority state, the parameter projection, the
+        creating process, the published initial nodes, and sealed bindings that
+        name this process's namespaces and closure cells. `__setstate__` rebuilds
+        them. The attributes an archive may lack are written only when the model
+        holds them.
         """
         state = _PickledModel(
             description=self.description,
@@ -1356,6 +1368,8 @@ class Model:
         self._simulate_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
+        self._kept_parts_programs = {}
+        self._action_extent_programs = {}
         self._declared_authority_cache = OrderedDict()
         self._declared_authority_lock = threading.Lock()
         self._gather_checks = {}
@@ -4130,19 +4144,24 @@ class Model:
                 ),
             )
             executor = unit
-        program = (
-            with_kept_action_parts(
-                program=programs.action_values[period],
-                roles=frozenset(
-                    _INTERMEDIATE_ROLES[name] for name in keep_intermediates
-                ),
+        # Taken after the runtime regimes above, which take the same lock, and
+        # released before dispatch.
+        with self._simulate_compile_lock:
+            program = (
+                with_kept_action_parts(
+                    program=programs.action_values[period],
+                    roles=frozenset(
+                        _INTERMEDIATE_ROLES[name] for name in keep_intermediates
+                    ),
+                    cache=self._kept_parts_programs,
+                )
+                if keep_intermediates
+                else _with_action_extents(
+                    program=programs.decision[period],
+                    extents=tuple(len(grids[n]) for n in space.action_names),
+                    cache=self._action_extent_programs,
+                )
             )
-            if keep_intermediates
-            else _with_action_extents(
-                program=programs.decision[period],
-                extents=tuple(len(grids[n]) for n in space.action_names),
-            )
-        )
         outputs = cast(
             "tuple[jax.Array, ...]",
             executor.dispatch(
@@ -4667,29 +4686,33 @@ def _fail_if_repeated_intermediates(
         raise InvalidSimulationInputError(msg)
 
 
-# Keyed by the source program's identity; the source is held alongside so the
-# identity cannot be recycled while its entry lives.
-# ponytail: unbounded, one small entry per (decision program, restricted extents).
-_ACTION_EXTENT_PROGRAMS: dict[
+# Derived programs keyed by the source program's identity and extents. The source
+# is held alongside so its identity cannot be reused while the entry lives.
+type _ActionExtentPrograms = dict[
     tuple[int, tuple[int, ...]], tuple[CoreProgram, CoreProgram]
-] = {}
+]
 
 
 def _with_action_extents(
-    *, program: CoreProgram, extents: tuple[int, ...]
+    *,
+    program: CoreProgram,
+    extents: tuple[int, ...],
+    cache: _ActionExtentPrograms,
 ) -> CoreProgram:
     """Return `program` with its streamed action axis declared at `extents`.
 
     A dense decision program declares no action axis and is returned unchanged.
     One object per extents keeps the executor's compiled-route cache warm.
+    `cache` belongs to the owner of `program`, so the derived programs live exactly
+    as long as it does; the owner serializes calls.
     """
     reduced = program.requirements.reduced_axes
     if not reduced or reduced[0].coordinate_extents == extents:
         return program
     key = (id(program), extents)
-    if key not in _ACTION_EXTENT_PROGRAMS:
+    if key not in cache:
         axis = dataclasses.replace(reduced[0], coordinate_extents=extents)
-        _ACTION_EXTENT_PROGRAMS[key] = (
+        cache[key] = (
             program,
             dataclasses.replace(
                 program,
@@ -4698,7 +4721,7 @@ def _with_action_extents(
                 ),
             ),
         )
-    return _ACTION_EXTENT_PROGRAMS[key][1]
+    return cache[key][1]
 
 
 def _fail_if_off_grid(
