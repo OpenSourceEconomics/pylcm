@@ -326,7 +326,9 @@ def _run_calls(
             retained.clear()
             gc.collect()
         with _collecting_lcm_records() as lines, count_compile_requests() as counts:
-            result = model.solve(params=params, log_level=log_level)
+            result = model.solve(
+                params=params, log_level=log_level, runtime_checks=False
+            )
         retained.append(result)
         calls = parse_phase_records(lines=lines)
         if len(calls) != 1:
@@ -359,7 +361,7 @@ def _time_without_handler(*, model: Model, params: UserParams, n_calls: int) -> 
     """Return the total seconds of `n_calls` solves with nothing attached."""
     start = time.monotonic()
     for _ in range(n_calls):
-        model.solve(params=params, log_level=LOG_LEVEL)
+        model.solve(params=params, log_level=LOG_LEVEL, runtime_checks=False)
     return time.monotonic() - start
 
 
