@@ -243,7 +243,10 @@ def run_cell(
     with _compilation_events() as solve_events:
         started = time.perf_counter()
         solution = model.solve(
-            params=params, max_compilation_workers=workers, log_level="off"
+            params=params,
+            max_compilation_workers=workers,
+            log_level="off",
+            runtime_checks=False,
         )
         jax.block_until_ready(solution)
         solve_seconds = time.perf_counter() - started
@@ -280,6 +283,7 @@ def run_cell(
                     solution=solution,
                     seed=SIMULATION_SEED,
                     log_level="off",
+                    runtime_checks=False,
                 )
                 jax.block_until_ready(output.raw_results)
                 raw_seconds.append(time.perf_counter() - started)

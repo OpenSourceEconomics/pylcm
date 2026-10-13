@@ -141,9 +141,11 @@ class AcaBaseline:
     # Benchmark semantics version for deterministic forward simulation.
     version = "2"
     timeout = 14400
-    # Simulate logging configuration; `AcaBaselineDebugLog` overrides both.
+    # Simulate logging and validation configuration; `AcaBaselineDebugLog`
+    # overrides all three.
     log_level = "off"
     log_path: str | None = None
+    runtime_checks = False
 
     def setup_cache(self) -> dict[str, float]:
         return _gpu_mem.measure_combined(
@@ -166,6 +168,7 @@ class AcaBaseline:
             seed=_SIMULATION_SEED,
             log_level=self.log_level,
             log_path=self.log_path,
+            runtime_checks=self.runtime_checks,
         )
 
     def track_execution_time(self, cache: dict[str, float] | None = None) -> float:
@@ -194,6 +197,7 @@ class AcaBaselineDebugLog(AcaBaseline):
     """
 
     log_level = "debug"
+    runtime_checks = True
 
     def setup_cache(self) -> dict[str, float]:
         return _gpu_mem.measure_combined(
