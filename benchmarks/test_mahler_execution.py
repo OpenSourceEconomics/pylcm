@@ -171,6 +171,7 @@ class _SimulateKwargs(TypedDict):
     initial_conditions: dict[str, object]  # noqa: PAN001 - opaque state-identity sentinels are only forwarded.
     seed: int
     log_level: str
+    runtime_checks: bool
     solution: NotRequired[object]  # noqa: PAN001 - opaque supplied-solution identity sentinel.
 
 
