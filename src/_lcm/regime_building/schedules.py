@@ -185,10 +185,11 @@ class RegimeSchedules:
     @property
     def targets_by_regime(self) -> MappingProxyType[RegimeName, frozenset[RegimeName]]:
         """Per source regime, every target its support names in either phase."""
+        by_phase = self.targets_by_phase
         return MappingProxyType(
             {
                 name: frozenset().union(
-                    *(by_regime[name] for by_regime in self.targets_by_phase.values())
+                    *(by_regime[name] for by_regime in by_phase.values())
                 )
                 for name in self.coverage_by_regime
             }
