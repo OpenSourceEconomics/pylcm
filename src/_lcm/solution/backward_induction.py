@@ -189,7 +189,11 @@ from _lcm.solution.diagnostics import (
     _materialize_period_feasibility_counts,
     _states_for_period,
 )
-from _lcm.solution.feasibility import FeasibilityCounts, FeasibilityKernelOutput
+from _lcm.solution.feasibility import (
+    FeasibilityCounts,
+    FeasibilityKernelOutput,
+    add_feasibility_counts,
+)
 from _lcm.solution.grid_search import _GridSearchArgumentBuilder
 from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
@@ -1637,11 +1641,12 @@ def _run_dispatch_unit(
             feasibility_counts = (
                 counts
                 if feasibility_counts is None
-                else (
-                    feasibility_counts[0]
-                    + jax.device_put(counts[0], feasibility_counts[0].sharding),
-                    feasibility_counts[1]
-                    + jax.device_put(counts[1], feasibility_counts[1].sharding),
+                else add_feasibility_counts(
+                    total=feasibility_counts,
+                    block=(
+                        jax.device_put(counts[0], feasibility_counts[0].sharding),
+                        jax.device_put(counts[1], feasibility_counts[1].sharding),
+                    ),
                 )
             )
         value = write_block(
@@ -3151,30 +3156,23 @@ def _resident_inventory_by_triple(
         )
         for period in range(_model_n_periods(regimes=regimes))
     }
+    counters_by_period = {
+        period: _period_feasibility_counter_reservations(
+            active=_regimes_active_at_period(regimes=regimes, period=period),
+            device_ids_by_regime=device_ids_by_regime,
+        )
+        for period in range(_model_n_periods(regimes=regimes))
+    }
     return MappingProxyType(
         {
             (regime_name, period, core_key): dataclasses.replace(
                 resident[(period, regime_name)],
-                # Native feasibility counters survive until the period barrier.
-                # Reserve a pair per cell plus an invariant-block merge pair;
-                # replication on every device conservatively covers placement.
-                # Owners outside the execution devices keep their charges.
                 fixed_bytes=MappingProxyType(
                     {
                         **fixed_bytes,
                         **{
-                            device: fixed_bytes.get(device, 0)
-                            + 2
-                            * np.dtype(np.int32).itemsize
-                            * (
-                                len(
-                                    _regimes_active_at_period(
-                                        regimes=regimes, period=period
-                                    )
-                                )
-                                + 1
-                            )
-                            for device in device_ids
+                            device: fixed_bytes.get(device, 0) + size
+                            for device, size in counters_by_period[period].items()
                         },
                     }
                 ),
@@ -3184,6 +3182,27 @@ def _resident_inventory_by_triple(
             for (regime_name, period), core_keys in program_keys_by_cell.items()
             for core_key in core_keys
         }
+    )
+
+
+def _period_feasibility_counter_reservations(
+    *,
+    active: frozenset[RegimeName],
+    device_ids_by_regime: Mapping[RegimeName, frozenset[int]],
+) -> MappingProxyType[int, int]:
+    """Reserve the period's native feasibility counters until its barrier.
+
+    Every active regime publishes an int32 pair, and merging invariant blocks
+    holds one more. Each pair is charged on every device an active regime runs
+    on, which conservatively covers wherever a replicated counter is placed;
+    a device no active regime runs on holds none.
+    """
+    size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)
+    return MappingProxyType(
+        dict.fromkeys(
+            sorted(frozenset().union(*(device_ids_by_regime[name] for name in active))),
+            size,
+        )
     )
 
 

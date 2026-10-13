@@ -810,10 +810,7 @@ def test_folded_kernel_mutation_is_rejected_after_byte_reseal(
         )
     monkeypatch.setattr(
         "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
-        {
-            relative: hashlib.sha256((tmp_path / relative).read_bytes()).hexdigest()
-            for relative in sources
-        },
+        {relative: sha256_file(tmp_path / relative) for relative in sources},
     )
 
     result = verify_direct_candidate_flow(repo_root=tmp_path)

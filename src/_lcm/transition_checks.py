@@ -1804,7 +1804,13 @@ def _validate_discrete_state_laws(
 
     The laws to each target are composed as the solve composes them, through the
     regime functions and through each other. A stochastic sibling the solve
-    resolves on its node axis is an input here, swept over its target grid.
+    resolves on its node axis, including a joint transition's drawn output, is an
+    input here, swept over its target grid; the lotteries themselves are left out.
+
+    The laws are first evaluated on the grid of the variables they read alone. Only
+    when some code leaves its grid there are they evaluated again together with the
+    feasibility, on the larger grid of everything either reads, to tell whether a
+    feasible cell is affected.
     """
     regime = regimes[regime_name]
     for side, phase in (("solve", regime.solution), ("simulate", regime.simulation)):
@@ -1818,11 +1824,29 @@ def _validate_discrete_state_laws(
         }
         for target in phase.reachability.targets(period=period, source=regime_name):
             transitions = phase.transitions.get(target, MappingProxyType({}))
+            plan = phase.transition_plans.get(target)
+            lotteries = (
+                set()
+                if plan is None
+                else {
+                    name
+                    for lottery_name, lottery in plan.lotteries.items()
+                    for name in (lottery_name, lottery.support_provider_name)
+                    if name is not None
+                }
+            )
             stochastic = {
                 name
                 for name in transitions
                 if name in regime.stochastic_state_transitions
                 or f"{name}__{target}" in regime.stochastic_state_transitions
+                or (
+                    plan is not None
+                    and (output := plan.outputs.get(name.removeprefix("next_")))
+                    is not None
+                    and output.next_state_name == name
+                    and bool(output.lottery_dependencies)
+                )
             }
             target_grids = {
                 name: grid
@@ -1840,25 +1864,54 @@ def _validate_discrete_state_laws(
                 continue
             laws = get_next_state_function_for_solution(
                 transitions=MappingProxyType(
-                    {k: v for k, v in transitions.items() if k not in stochastic}
+                    {
+                        k: v
+                        for k, v in transitions.items()
+                        if k not in stochastic and k not in lotteries
+                    }
                 ),
                 functions=functions,
                 targets=tuple(target_grids),
             )
+            law_grids = {
+                **grids,
+                **{
+                    name: regimes[target]
+                    .solution.grids[name.removeprefix("next_")]
+                    .to_jax()
+                    for name in stochastic
+                },
+            }
+            scalar_kwargs = {**params, "period": jnp.int32(period), "age": age}
+            law_names = frozenset(inspect.signature(laws).parameters)
+            law_codes, _, _ = _evaluate_feasible_rows(
+                law=_NamedArgumentsCall(func=laws, names=law_names),
+                feasibility=_NamedArgumentsCall(
+                    func=_every_cell_feasible, names=frozenset()
+                ),
+                grid_args=MappingProxyType(
+                    {k: v for k, v in law_grids.items() if k in law_names}
+                ),
+                scalar_kwargs=MappingProxyType(
+                    {k: v for k, v in scalar_kwargs.items() if k in law_names}
+                ),
+                memory=memory,
+            )
+            if not any(
+                _off_grid_rows(
+                    codes=law_codes[name],
+                    feasible=_every_cell_feasible(),
+                    target_grid=grid,
+                ).any()
+                for name, grid in target_grids.items()
+            ):
+                continue
             codes, feasible, point = _evaluate_on_feasible_rows(
                 law=laws,
                 phase=phase,
                 period=period,
-                grids={
-                    **grids,
-                    **{
-                        name: regimes[target]
-                        .solution.grids[name.removeprefix("next_")]
-                        .to_jax()
-                        for name in stochastic
-                    },
-                },
-                scalar_kwargs={**params, "period": jnp.int32(period), "age": age},
+                grids=law_grids,
+                scalar_kwargs=scalar_kwargs,
                 memory=memory,
             )
             for name, target_grid in target_grids.items():
@@ -1925,11 +1978,7 @@ def _fail_if_codes_leave_the_grid(
     description: str,
 ) -> None:
     """Raise at the first feasible row whose code lies outside `0..n-1`."""
-    # A constant feasibility, as for a regime without constraints, is unbatched.
-    codes_array, feasible_array = jnp.broadcast_arrays(jnp.asarray(codes), feasible)
-    off_grid = np.asarray(
-        feasible_array & ((codes_array < 0) | (codes_array >= len(target_grid.codes)))
-    )
+    off_grid = _off_grid_rows(codes=codes, feasible=feasible, target_grid=target_grid)
     if not off_grid.any():
         return
     row = int(np.argmax(off_grid))
@@ -1941,6 +1990,22 @@ def _fail_if_codes_leave_the_grid(
         f"{description} leaves its grid at the feasible cell {cell}. "
         + _off_grid_remedy(target_grid)
     )
+
+
+def _off_grid_rows(
+    *, codes: ValueND, feasible: BoolND, target_grid: DiscreteGrid
+) -> np.ndarray:
+    """Flag the feasible rows whose code lies outside `0..n-1`."""
+    # A constant feasibility, as for a regime without constraints, is unbatched.
+    codes_array, feasible_array = jnp.broadcast_arrays(jnp.asarray(codes), feasible)
+    return np.asarray(
+        feasible_array & ((codes_array < 0) | (codes_array >= len(target_grid.codes)))
+    )
+
+
+def _every_cell_feasible() -> BoolND:
+    """Treat every cell as feasible, for a check that needs no constraint."""
+    return jnp.ones((), dtype=bool)
 
 
 def _off_grid_remedy(grid: DiscreteGrid) -> str:
