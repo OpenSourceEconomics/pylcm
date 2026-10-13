@@ -63,7 +63,7 @@ def _measure_combination(*, witness: str, log_level: str) -> dict[str, float]:
     model, model_params, initial_conditions = WITNESSES[witness](
         **_gpu_mem.default_budget_execution_kwargs()
     )
-    solution = model.solve(params=model_params, log_level="off")
+    solution = model.solve(params=model_params, log_level="off", runtime_checks=False)
 
     def _simulate() -> SimulationResult:
         return model.simulate(
@@ -71,6 +71,7 @@ def _measure_combination(*, witness: str, log_level: str) -> dict[str, float]:
             initial_conditions=initial_conditions,
             solution=solution,
             log_level=log_level,
+            runtime_checks=False,
             seed=0,
         )
 

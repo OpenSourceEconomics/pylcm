@@ -301,6 +301,7 @@ from _lcm.utils.containers import (
 from _lcm.utils.error_messages import format_messages
 from _lcm.utils.logging import (
     LogLevel,
+    get_call_logger,
     get_logger,
 )
 from _lcm.variables import carried_state_grids, from_regime, get_grids
@@ -1607,7 +1608,8 @@ class Model:
         laws of discrete states stay on their grids at feasible cells, over their
         active periods and phase grids. The first failure raises with the same
         diagnostic as ``solve(runtime_checks=True)``; valid laws return ``None``.
-        Checks are always enabled and produce no console output. This does not
+        Checks are always enabled. A law that cannot be numerically validated is
+        reported as a warning; otherwise nothing is printed. This does not
         validate utilities, solver outputs or continuous next-state finiteness.
 
         Args:
@@ -1620,7 +1622,7 @@ class Model:
                 regimes=self._regimes,
                 flat_params=flat_params,
                 ages=self._time,
-                logger=get_logger(log_level="off", runtime_checks=True),
+                logger=get_call_logger(log_level="warning", runtime_checks=True),
                 process_grid_resolver=None,
                 memory=self._transition_memory(flat_params=flat_params),
                 count_when_silent=True,

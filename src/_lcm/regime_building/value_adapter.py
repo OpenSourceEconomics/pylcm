@@ -31,12 +31,30 @@ from lcm.phased import Phased
 from lcm.regime import ConstraintEntry, FunctionEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction, JointTransition, StochasticTransition
-from lcm.typing import StateOrActionName, UserFunction, ValueND
+from lcm.typing import StateName, StateOrActionName, UserFunction, ValueND
 
 _CODE_ANNOTATION = "DiscreteState"
 
 # One entry of a regime's `functions`, `state_transitions` or `constraints`.
 type AdaptableEntry = FunctionEntry | StateTransitionEntry | ConstraintEntry
+
+# The adapters built for one model: each authored function and encoding grid
+# (by identity) to the function and its adapter.
+type AdapterMemo = dict[tuple[int, int], tuple[UserFunction, ValueAdapter]]
+
+# The attributes an adapter publishes itself and never takes from its function.
+_ADAPTER_OWN_ATTRIBUTES: frozenset[str] = frozenset(
+    {
+        "func",
+        "decoded",
+        "encode",
+        "__signature__",
+        "__wrapped__",
+        "__annotations__",
+        "__annotate__",
+        "__dict__",
+    }
+)
 
 
 def collect_value_grids(
@@ -48,8 +66,8 @@ def collect_value_grids(
     """Return the value grid of every variable a model declares by its values.
 
     A name declared with values in one place must be declared with the same
-    values and tolerance wherever it appears, so one grid encodes a law's
-    result whichever regime reads it next.
+    values, numeric kind and tolerance wherever it appears, so one grid encodes
+    a law's result whichever regime reads it next.
 
     Raises:
         RegimeInitializationError: If a name is a value grid in one declaration
@@ -64,8 +82,13 @@ def collect_value_grids(
             **dict(regime.actions),
             **dict(regime.derived_categoricals),
         }.items():
-            if isinstance(entry, DiscreteGrid):
-                declarations.setdefault(name, []).append((regime_name, entry))
+            # A carried state declares its grid on one side of `Phased`.
+            sides = (
+                (entry.solve, entry.simulate) if isinstance(entry, Phased) else (entry,)
+            )
+            for side in sides:
+                if isinstance(side, DiscreteGrid):
+                    declarations.setdefault(name, []).append((regime_name, side))
     for name, grid in derived_categoricals.items():
         declarations.setdefault(name, []).append(("model", grid))
     value_grids = {
@@ -75,22 +98,33 @@ def collect_value_grids(
         if value_grid is not None
     }
     for name, value_grid in value_grids.items():
+        expected_key = _value_grid_key(grid=value_grid)
         mismatched = [
             regime_name
             for regime_name, grid in declarations[name]
-            if (grid.values, grid.tolerance)
-            != (value_grid.values, value_grid.tolerance)
+            if _value_grid_key(grid=grid) != expected_key
         ]
         if mismatched:
             raise RegimeInitializationError(
                 f"'{name}' is a `DiscreteGrid(values=...)` with values "
                 f"{value_grid.values} and tolerance {value_grid.tolerance}, but "
                 f"{mismatched} declare it differently. Declare it with the same "
-                "values and tolerance everywhere."
+                "values and tolerance everywhere. The numeric kind (all integers "
+                "or all floats) must also match."
             )
     if value_grids:
         _fail_if_unsupported_reader(regimes=regimes, laws=laws, value_grids=value_grids)
     return MappingProxyType(value_grids)
+
+
+def _value_grid_key(
+    *, grid: DiscreteGrid
+) -> tuple[tuple[int | float, ...] | None, float, bool | None]:
+    """Return values, tolerance and numeric kind for one declared grid."""
+    values = grid.values
+    # Validated value grids are nonempty and hold only Python ints or floats.
+    is_integer = None if values is None else isinstance(values[0], int)
+    return values, grid.tolerance, is_integer
 
 
 def adapt_user_function(
@@ -98,6 +132,7 @@ def adapt_user_function(
     func: UserFunction,
     value_grids: Mapping[StateOrActionName, DiscreteGrid],
     encode: DiscreteGrid | None,
+    adapters: AdapterMemo | None = None,
 ) -> UserFunction:
     """Wrap `func` to read values and, given `encode`, to return a code.
 
@@ -109,6 +144,8 @@ def adapt_user_function(
         value_grids: The value grid of every variable declared by its values.
         encode: The grid whose code the function's returned value names, for a
             deterministic law or a derived categorical of a value grid.
+        adapters: The adapters already built for this model, so one authored
+            function with one encoding gets one adapter wherever it appears.
 
     Returns:
         The function the engine calls with codes.
@@ -126,7 +163,14 @@ def adapt_user_function(
     }
     if not decoded and encode is None:
         return func
-    return ValueAdapter(func=func, decoded=MappingProxyType(decoded), encode=encode)
+    key = (id(func), id(encode))
+    if adapters is not None and key in adapters:
+        return adapters[key][1]
+    adapter = ValueAdapter(func=func, decoded=MappingProxyType(decoded), encode=encode)
+    if adapters is not None:
+        # The function is kept with its adapter, so its id cannot be reused.
+        adapters[key] = (func, adapter)
+    return adapter
 
 
 def adapt_entry(
@@ -134,12 +178,14 @@ def adapt_entry(
     entry: AdaptableEntry,
     value_grids: Mapping[StateOrActionName, DiscreteGrid],
     encode: DiscreteGrid | None,
+    adapters: AdapterMemo | None = None,
 ) -> AdaptableEntry:
     """Adapt every user function inside one regime slot entry.
 
     Walks `Phased` sides, per-target mappings and the probability function of a
     `StochasticTransition`, which is decoded only: it returns probabilities over
-    codes.
+    codes. With `adapters`, one authored function gets one adapter wherever it
+    appears, so a function shared by both phases stays one function.
     """
     # Without value grids nothing changes. Conditions and the collective
     # declarations carry no user function over variables, and an identity law
@@ -154,13 +200,20 @@ def adapt_entry(
         | None,
     ):
         return entry
+    adapters = {} if adapters is None else adapters
     if isinstance(entry, Phased):
         return Phased(
             solve=adapt_entry(
-                entry=entry.solve, value_grids=value_grids, encode=encode
+                entry=entry.solve,
+                value_grids=value_grids,
+                encode=encode,
+                adapters=adapters,
             ),
             simulate=adapt_entry(
-                entry=entry.simulate, value_grids=value_grids, encode=encode
+                entry=entry.simulate,
+                value_grids=value_grids,
+                encode=encode,
+                adapters=adapters,
             ),
         )
     if isinstance(entry, Mapping):
@@ -169,7 +222,10 @@ def adapt_entry(
             MappingProxyType(
                 {
                     key: adapt_entry(
-                        entry=value, value_grids=value_grids, encode=encode
+                        entry=value,
+                        value_grids=value_grids,
+                        encode=encode,
+                        adapters=adapters,
                     )
                     for key, value in entry.items()
                 }
@@ -179,11 +235,14 @@ def adapt_entry(
         return dataclasses.replace(
             entry,
             func=adapt_user_function(
-                func=entry.func, value_grids=value_grids, encode=None
+                func=entry.func, value_grids=value_grids, encode=None, adapters=adapters
             ),
         )
     return adapt_user_function(
-        func=cast("UserFunction", entry), value_grids=value_grids, encode=encode
+        func=cast("UserFunction", entry),
+        value_grids=value_grids,
+        encode=encode,
+        adapters=adapters,
     )
 
 
@@ -206,6 +265,11 @@ class ValueAdapter:
     """The grid whose code the returned value names, if any."""
 
     def __post_init__(self) -> None:
+        # The function's own attributes, declaration markers such as a case
+        # piece's among them, stay visible on the adapter that stands in for it.
+        for name, value in getattr(self.func, "__dict__", {}).items():
+            if name not in _ADAPTER_OWN_ATTRIBUTES:
+                object.__setattr__(self, name, value)
         for name in ("__module__", "__name__", "__qualname__", "__doc__"):
             value = getattr(self.func, name, None)
             if value is not None:
@@ -281,6 +345,14 @@ def _fail_if_unsupported_reader(
         if declared and regime.stakeholders is not None:
             problems.append(f"'{regime_name}' is a collective regime")
         problems.extend(
+            f"the imputation of the carried state '{name}' of '{regime_name}'"
+            for name, entry in regime.states.items()
+            if isinstance(entry, Phased)
+            and _imputation_meets_value_grids(
+                entry=entry, name=name, value_grids=value_grids
+            )
+        )
+        problems.extend(
             f"the joint transition '{key}' to '{target}' of '{regime_name}'"
             for target, joints in regime.joint_transitions.items()
             for key, joint in joints.items()
@@ -347,5 +419,20 @@ def _law_reads(law: DecomposedTransition) -> Iterator[str]:
             yield from _law_reads(cell)
     elif isinstance(law, StochasticTransition):
         yield from _read_names(law.func)
-    elif inspect.isfunction(law):
-        yield from _read_names(law)
+    elif callable(law):
+        yield from _read_names(cast("UserFunction", law))
+
+
+def _imputation_meets_value_grids(
+    *, entry: Phased, name: StateName, value_grids: Mapping[str, DiscreteGrid]
+) -> bool:
+    """Return whether a carried state's imputation reads or imputes a value grid."""
+    imputations = [side for side in (entry.solve, entry.simulate) if callable(side)]
+    return bool(imputations) and (
+        name in value_grids
+        or any(
+            set(_read_names(cast("UserFunction", imputation)))
+            & _value_names(value_grids)
+            for imputation in imputations
+        )
+    )

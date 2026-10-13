@@ -76,7 +76,9 @@ class PrecautionarySavingsSolve:
         self._build()
 
     def execute_for_measurement(self):
-        self.model.solve(params=self.model_params, log_level="off")
+        self.model.solve(
+            params=self.model_params, log_level="off", runtime_checks=False
+        )
 
     def setup_cache(self):
         return _gpu_mem.measure_combined_with_warm_samples(
@@ -116,7 +118,7 @@ class PrecautionarySavingsSimulate:
     def _build(self):
         self.model, self.model_params = _make_model()
         self.period_to_regime_to_V_arr = self.model.solve(
-            params=self.model_params, log_level="off"
+            params=self.model_params, log_level="off", runtime_checks=False
         )
         self.initial_conditions = _make_initial_conditions(1_000_000)
 
@@ -129,6 +131,7 @@ class PrecautionarySavingsSimulate:
             initial_conditions=self.initial_conditions,
             solution=self.period_to_regime_to_V_arr,
             log_level="off",
+            runtime_checks=False,
         )
 
     def setup_cache(self):
@@ -186,6 +189,7 @@ class PrecautionarySavingsSimulateWithSolve:
             params=self.model_params,
             initial_conditions=self.initial_conditions,
             log_level="off",
+            runtime_checks=False,
         )
 
     def setup_cache(self):
@@ -244,6 +248,7 @@ class PrecautionarySavingsSimulateWithSolveIrreg:
             params=self.model_params,
             initial_conditions=self.initial_conditions,
             log_level="off",
+            runtime_checks=False,
         )
 
     def setup_cache(self):
