@@ -289,7 +289,7 @@ def test_public_lookup_prices_the_independent_spread(
         period=0,
         regime_name="working",
         states={"x": jnp.asarray((0.0,)), "y": jnp.asarray((scale,))},
-        return_action_values=True,
+        keep_intermediates=("Q", "F", "U", "CE"),
     )
     assert lookup.U is not None
     assert lookup.CE is not None
