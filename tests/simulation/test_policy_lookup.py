@@ -204,7 +204,7 @@ def test_lookup_policy_without_states_returns_one_row_of_action_values(
     solved_stateless,
 ):
     """`Q` holds each labor supply's utility in grid order, all feasible, in one row."""
-    got = _lookup_stateless(solved_stateless, return_action_values=True)
+    got = _lookup_stateless(solved_stateless, keep_intermediates=("Q", "F"))
     assert (np.asarray(got.Q).tolist(), np.asarray(got.F).tolist()) == (
         [[1.0, 0.25]],
         [[True, True]],

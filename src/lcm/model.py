@@ -158,6 +158,7 @@ from _lcm.simulation.program_types import (
     FLOW_UTILITY,
     SimulationProgramExecutor,
 )
+from _lcm.simulation.programs import with_kept_action_parts
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -352,6 +353,7 @@ from lcm.transition import (
 from lcm.typing import (
     Bool1D,
     FloatND,
+    Intermediate,
     IntND,
     Phase,
     UserFacingParamsTemplate,
@@ -3883,6 +3885,7 @@ class Model:
             )
             raise ExecutionPlanningError(msg)
 
+    @beartype(conf=SIMULATION_INPUT_CONF)
     def lookup_policy(
         self,
         *,
@@ -3892,7 +3895,7 @@ class Model:
         regime_name: RegimeName,
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None = None,
-        return_action_values: bool = False,
+        keep_intermediates: tuple[Intermediate, ...] = (),
     ) -> PolicyLookup:
         """Return the optimal actions and value at given states of one regime-period.
 
@@ -3914,16 +3917,21 @@ class Model:
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
-            return_action_values: Whether to also return the action values `Q`,
-                their feasibility `F`, the flow utility `U` and the
-                certainty-equivalent continuation `CE` over the (possibly
-                restricted) action grid, all from the one kernel evaluation the
-                decision maximizes over. Not supported for a collective regime.
+            keep_intermediates: Which intermediates of the decision to keep over
+                the (possibly restricted) action grid, in any order: the action
+                values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and
+                the certainty-equivalent continuation `"CE"`, all from the one
+                kernel evaluation the decision maximizes over. They leave the
+                actions and value unchanged. `Q`, `U` and `CE` are unmasked; `F`
+                says which of their entries the decision admits. Any non-empty
+                choice materializes the whole action product, even where the
+                decision alone streams over it. Not supported for a collective
+                regime.
 
         Returns:
             The argmax action value per action name and the max of Q over the
-            (possibly restricted) action grid, one entry per state row; with
-            `return_action_values`, also `Q`, `F`, `U` and `CE`.
+            (possibly restricted) action grid, one entry per state row, and the
+            intermediates named in `keep_intermediates`; the others are `None`.
 
         """
         self._check_identity_runtime()
@@ -3940,9 +3948,10 @@ class Model:
                 f"edges; {regime_name!r} declares one."
             )
             raise InvalidSimulationInputError(msg)
-        if return_action_values and regime.stakeholders is not None:
+        _fail_if_repeated_intermediates(keep_intermediates=keep_intermediates)
+        if keep_intermediates and regime.stakeholders is not None:
             msg = (
-                "Policy lookup returns action values for singleton regimes only; "
+                "Policy lookup keeps intermediates for singleton regimes only; "
                 f"{regime_name!r} is a collective regime."
             )
             raise InvalidSimulationInputError(msg)
@@ -3980,7 +3989,7 @@ class Model:
                 states=states,
                 action_grids=action_grids,
                 allocations=allocations,
-                return_action_values=return_action_values,
+                keep_intermediates=frozenset(keep_intermediates),
                 n_query_rows=(
                     n_rows
                     if states and len(next(iter(states.values()))) != n_rows
@@ -4001,7 +4010,7 @@ class Model:
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None,
         allocations: SimulationEntryAllocations | None,
-        return_action_values: bool,
+        keep_intermediates: frozenset[Intermediate],
         n_query_rows: int | None,
     ) -> PolicyLookup:
         """Run a validated lookup under the call's entry owner, if budgeted.
@@ -4127,8 +4136,13 @@ class Model:
             )
             executor = unit
         program = (
-            programs.action_values[period]
-            if return_action_values
+            with_kept_action_parts(
+                program=programs.action_values[period],
+                roles=frozenset(
+                    _INTERMEDIATE_ROLES[name] for name in keep_intermediates
+                ),
+            )
+            if keep_intermediates
             else _with_action_extents(
                 program=programs.decision[period],
                 extents=tuple(len(grids[n]) for n in space.action_names),
@@ -4633,6 +4647,29 @@ class Model:
             array_writer.publish(stage="params", tree=flat_params)
 
         return flat_params
+
+
+# The output role each intermediate a policy lookup can keep is published under.
+_INTERMEDIATE_ROLES: MappingProxyType[Intermediate, str] = MappingProxyType(
+    {
+        "Q": ACTION_VALUES,
+        "F": ACTION_FEASIBILITY,
+        "U": FLOW_UTILITY,
+        "CE": CONTINUATION_CE,
+    }
+)
+
+
+def _fail_if_repeated_intermediates(
+    *, keep_intermediates: tuple[Intermediate, ...]
+) -> None:
+    """Raise if `keep_intermediates` names one intermediate more than once."""
+    repeated = sorted(
+        {name for name in keep_intermediates if keep_intermediates.count(name) > 1}
+    )
+    if repeated:
+        msg = f"Policy lookup keeps each intermediate at most once; got {repeated}."
+        raise InvalidSimulationInputError(msg)
 
 
 # Keyed by the source program's identity; the source is held alongside so the

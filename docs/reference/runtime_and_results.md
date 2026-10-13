@@ -666,7 +666,7 @@ preallocates; with `XLA_PYTHON_CLIENT_PREALLOCATE=false` pass an explicit
 
 ## `PolicyLookup`
 
-`Model.lookup_policy(params=..., solution=..., period=..., regime_name=..., states=..., action_grids=None, return_action_values=False)`
+`Model.lookup_policy(params=..., solution=..., period=..., regime_name=..., states=..., action_grids=None, keep_intermediates=())`
 evaluates the decision that simulate takes at caller-supplied states of one demanded
 period and regime. It returns a `PolicyLookup` with `actions`, a mapping from action
 name to the chosen grid values, and `value`, the maximised value at each state.
@@ -675,23 +675,30 @@ restricted `action_grids` values must lie on their grids. `Model.state_names` gi
 axis order of `solution.values[period][regime]`, and `Model.state_grid` gives a state's
 grid nodes after runtime parameters.
 
-With `return_action_values=True`, the lookup also fills `Q` and `F` from the same
-decision program: the action values and their feasibility over the (possibly restricted)
-action grid, with one leading row per state and one axis per action in the order of
-`actions`. `Q` is raw: an infeasible entry holds the value the action would have, which
-can exceed `value`, and `value` is the max of `Q` over the entries `F` admits. Both are
-`None` by default. Collective regimes refuse the option. A lookup over a restricted grid
-compiles its own program, so its `Q` and `value` can differ in the last bits from the
-matching slice of a full-grid lookup's `Q`.
+`keep_intermediates` names the intermediates of the decision to keep, in any order: the
+action values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and the
+certainty-equivalent continuation `"CE"`. Each kept one fills the field of that name
+over the (possibly restricted) action grid, with one leading row per state and one axis
+per action in the order of `actions`; the others stay `None`, as all four do by default.
+All come from the one kernel evaluation the decision maximizes over, and keeping them
+leaves `actions` and `value` unchanged. Collective regimes refuse the option.
 
-The same option fills `U` and `CE`, of the shape of `Q`, from the one kernel evaluation
-the decision maximizes over. `U` is the regime's flow utility. `CE` is the certainty
-equivalent of next period's value, undiscounted: the `CE` argument the regime's Koopmans
-aggregator receives, so `Q == W(utility=U, CE=CE, ...)` for every aggregator, and
+`Q`, `U` and `CE` are raw: an infeasible entry holds what the action would have, so a
+`Q` entry can exceed `value`, and `value` is the max of `Q` over the entries `F` admits.
+Keep `"F"` alongside any of them to know which entries the decision admits. `U` is the
+regime's flow utility. `CE` is the certainty equivalent of next period's value,
+undiscounted: the `CE` argument the regime's Koopmans aggregator receives, so
+`Q == W(utility=U, CE=CE, ...)` for every aggregator, and
 `Q == U + discount_factor * CE` under `LinearAggregator`. A terminal regime has
-`CE == 0` and `Q == U`. Like `Q`, both are unmasked. When the aggregator reads a regime
-function, such as a type-specific discount factor, rebuilding `Q` from `U` and `CE` also
-needs that function's value.
+`CE == 0` and `Q == U`. When the aggregator reads a regime function, such as a
+type-specific discount factor, rebuilding `Q` from `U` and `CE` also needs that
+function's value.
+
+Each kept intermediate holds one float or bool per state row and action. Any non-empty
+`keep_intermediates` evaluates the whole action product at once, even where the decision
+alone streams over it, so it costs more memory than the arrays it returns. A lookup over
+a restricted grid compiles its own program, so its `Q` and `value` can differ in the
+last bits from the matching slice of a full-grid lookup's `Q`.
 
 (api-simulation-result)=
 
