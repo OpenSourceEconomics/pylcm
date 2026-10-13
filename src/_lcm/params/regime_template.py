@@ -50,7 +50,7 @@ from _lcm.typing import (
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args, is_user_function
 from lcm.collective import Gate
-from lcm.decision_value import (
+from lcm.decoupled import (
     koopmans_aggregator_variants,
     resolve_koopmans_aggregator,
 )
@@ -1246,12 +1246,12 @@ def _koopmans_consumers(
     *, user_regime: UserRegime, phase: Literal["solve", "simulate"]
 ) -> dict[str, UserFunction]:
     """Name the aggregators the Koopmans slot runs in `phase`, for read checks."""
-    value, decision = resolve_koopmans_aggregator(
+    value, objective = resolve_koopmans_aggregator(
         declaration=user_regime.koopmans_aggregator, phase=phase
     )
     consumers = {} if value is None else {"koopmans_aggregator": value}
-    if decision is not None:
-        consumers["koopmans_aggregator (decision)"] = decision
+    if objective is not None:
+        consumers["koopmans_aggregator (objective)"] = objective
     return consumers
 
 

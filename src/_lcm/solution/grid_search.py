@@ -134,7 +134,7 @@ class _ActionStreamingDisposition(StrEnum):
         "deliberately_dense:co_map_with_separate_reference_channel"
     )
     DENSE_OFF_GRID_RAISE_COUNT = "deliberately_dense:off_grid_raise_count"
-    DENSE_DECISION_VALUE = "deliberately_dense:decision_value"
+    DENSE_DECOUPLED = "deliberately_dense:decoupled"
     UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
     UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
     UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
@@ -259,8 +259,8 @@ class GridSearch(Solver):
         route constructs only the streamed function; its dense evaluator remains an
         independently constructed test oracle rather than a second production path.
         """
-        from _lcm.regime_building.decision_value import (  # noqa: PLC0415
-            get_decision_value_max_Q_over_a,
+        from _lcm.regime_building.decoupled import (  # noqa: PLC0415
+            get_decoupled_max_Q_over_a,
         )
         from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
             get_action_partitioned_max_Q_over_a,
@@ -271,7 +271,7 @@ class GridSearch(Solver):
             get_conditioned_fold_weights_by_code,
         )
         from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
-            has_decision_profile,
+            has_objective_profile,
         )
         from _lcm.solution.landing_counts import (  # noqa: PLC0415
             LandingCountedGridSearch,
@@ -379,11 +379,11 @@ class GridSearch(Solver):
                     "fold_conditioning": MappingProxyType(fold_conditioning),
                     "return_feasibility": True,
                 }
-                if has_decision_profile(Q_and_F=Q_and_F):
-                    _fail_if_decision_value_route_is_unsupported(
+                if has_objective_profile(Q_and_F=Q_and_F):
+                    _fail_if_decoupled_route_is_unsupported(
                         context=context, Q_and_F=Q_and_F
                     )
-                    program_functions[q_id] = get_decision_value_max_Q_over_a(
+                    program_functions[q_id] = get_decoupled_max_Q_over_a(
                         Q_and_F=Q_and_F,
                         batch_sizes=common_kwargs["batch_sizes"],
                         action_names=action_names,
@@ -648,10 +648,10 @@ def _continuation_unread_state_names(
     return unread if 0 < len(unread) < len(inner_state_names) else ()
 
 
-def _fail_if_decision_value_route_is_unsupported(
+def _fail_if_decoupled_route_is_unsupported(
     *, context: SolverBuildContext, Q_and_F: QAndFFunction
 ) -> None:
-    """Refuse a `DecisionValue` regime on a route its reduction does not cover."""
+    """Refuse a `Decoupled` regime on a route its reduction does not cover."""
     from _lcm.solution.landing_counts import landing_checks_of  # noqa: PLC0415
 
     unsupported = [
@@ -664,7 +664,7 @@ def _fail_if_decision_value_route_is_unsupported(
     ]
     if unsupported:
         msg = (
-            f"Regime {context.regime_name!r} declares a `DecisionValue` Koopmans "
+            f"Regime {context.regime_name!r} declares a `Decoupled` Koopmans "
             "aggregator, whose reduction does not support this route: "
             + "; ".join(unsupported)
             + "."
@@ -676,7 +676,7 @@ def _classify_action_streaming(  # noqa: C901
     *, context: SolverBuildContext
 ) -> _ActionStreamingDisposition:
     """Classify one solve route without conflating dense and unsupported cases."""
-    from _lcm.regime_building.Q_and_F import has_decision_profile  # noqa: PLC0415
+    from _lcm.regime_building.Q_and_F import has_objective_profile  # noqa: PLC0415
     from _lcm.solution.landing_counts import landing_checks_of  # noqa: PLC0415
 
     action_extents = context.state_action_space.actions_grid_shapes
@@ -697,10 +697,10 @@ def _classify_action_streaming(  # noqa: C901
     ):
         disposition = _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL
     elif any(
-        has_decision_profile(Q_and_F=Q_and_F)
+        has_objective_profile(Q_and_F=Q_and_F)
         for Q_and_F in context.Q_and_F_functions.values()
     ):
-        disposition = _ActionStreamingDisposition.DENSE_DECISION_VALUE
+        disposition = _ActionStreamingDisposition.DENSE_DECOUPLED
     elif context.has_taste_shocks:
         disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL
     elif context.stakeholders is not None:

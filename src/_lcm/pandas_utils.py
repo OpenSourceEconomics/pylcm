@@ -47,7 +47,7 @@ from _lcm.typing import (
 from _lcm.utils.ast_inspection import _get_func_indexing_params, time_index_names
 from _lcm.utils.functools import is_user_function
 from _lcm.utils.namespace import ParamsQnameDepth
-from lcm.decision_value import koopmans_aggregator_variants
+from lcm.decoupled import koopmans_aggregator_variants
 from lcm.exceptions import InvalidParamsError
 from lcm.params import (
     TimeVarying,
@@ -451,7 +451,7 @@ def convert_series_in_params(
                 )
         # The Koopmans aggregator is not a regime function; its params live
         # under a pseudo-function key of the same name. Every aggregator the slot
-        # runs (both `Phased` variants, a `DecisionValue`'s decision and value)
+        # runs (both `Phased` variants, a `Decoupled`'s decision and value)
         # declares its own parameters and the template carries their union, so
         # the variant that declares each parameter is the one whose source
         # describes how it is indexed.

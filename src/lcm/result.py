@@ -94,12 +94,12 @@ class PolicyLookup:
     factor, also needs that function's value to rebuild `Q` from `U` and `CE`.
     """
 
-    Q_decision: FloatND | None = None
+    Q_objective: FloatND | None = None
     """Value each entry of `Q` is chosen on, same shape, or `None`.
 
-    With a `DecisionValue` Koopmans aggregator, its simulate-phase decision
+    With a `Decoupled` Koopmans aggregator, its simulate-phase objective
     aggregator applied to `U` and `CE`: the action is the first feasible
-    maximizer of `Q_decision` and `value` is `Q` there. `None` when the
+    maximizer of `Q_objective` and `value` is `Q` there. `None` when the
     Koopmans aggregator also chooses, or unless action values are requested.
     """
 

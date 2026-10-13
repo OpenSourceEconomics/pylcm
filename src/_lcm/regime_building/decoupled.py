@@ -1,15 +1,15 @@
 """Reduce over actions for a regime that chooses with one aggregator and stores another.
 
-A `DecisionValue` Koopmans aggregator gives each cell two profiles from one
-kernel evaluation: `Q_decision`, which the action maximizes, and `Q`, which is
+A `Decoupled` Koopmans aggregator gives each cell two profiles from one
+kernel evaluation: `Q_objective`, which the action maximizes, and `Q`, which is
 stored and published at that action. The reductions here mirror the dense ones
 in `max_Q_over_a` for that pair:
 
 - `argmax_and_readout` is the hard-max reduction at one cell, and
-  `decision_value_logsum` the extreme-value one;
-- `get_decision_value_Q_over_a` is the reduction over the action product, as
+  `decoupled_logsum` the extreme-value one;
+- `get_decoupled_Q_over_a` is the reduction over the action product, as
   simulation and policy lookup run it;
-- `get_decision_value_max_Q_over_a` maps it over the state product, with the
+- `get_decoupled_max_Q_over_a` maps it over the state product, with the
   same tiling and fold `get_max_Q_over_a` takes, as the solve runs it.
 """
 
@@ -38,8 +38,8 @@ from _lcm.simulation.program_types import (
     CHOICE_PROBABILITIES,
     CONDITIONAL_ACTION_INDEX,
     CONDITIONAL_VALUE,
-    DECISION_PROFILE,
     DECISION_VALUE,
+    OBJECTIVE_PROFILE,
 )
 from _lcm.typing import (
     ActionName,
@@ -84,7 +84,7 @@ def argmax_and_readout(
     )
 
 
-def get_decision_value_Q_over_a(
+def get_decoupled_Q_over_a(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     action_names: tuple[ActionName, ...],
@@ -93,10 +93,10 @@ def get_decision_value_Q_over_a(
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
 ) -> Callable[..., tuple[IntND, FloatND] | tuple[FloatND, BoolND]]:
-    """Get the reduction over actions of a `DecisionValue` regime, at one cell.
+    """Get the reduction over actions of a `Decoupled` regime, at one cell.
 
     Args:
-        Q_and_F: A kernel built by `get_Q_and_F` with a decision aggregator.
+        Q_and_F: A kernel built by `get_Q_and_F` with an objective aggregator.
         action_names: Tuple of action names, discrete first.
         state_names: Tuple of state names.
         publishes_index: Whether to return `(index, value)`, as simulation
@@ -119,7 +119,7 @@ def get_decision_value_Q_over_a(
         batch_sizes=dict.fromkeys(action_names, 0),
     )
     return with_signature(
-        _DecisionValueQOverA(
+        _DecoupledQOverA(
             parts=parts,
             publishes_index=publishes_index,
             n_discrete_action_axes=n_discrete_action_axes if has_taste_shocks else None,
@@ -138,7 +138,7 @@ def get_decision_value_Q_over_a(
     )
 
 
-def get_decision_value_max_Q_over_a(
+def get_decoupled_max_Q_over_a(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     batch_sizes: dict[StateName, int],
@@ -153,13 +153,13 @@ def get_decision_value_max_Q_over_a(
     fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
     fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
 ) -> MaxQOverAFunction:
-    """Get the solve's value function of a `DecisionValue` regime.
+    """Get the solve's value function of a `Decoupled` regime.
 
-    Maps `get_decision_value_Q_over_a` over the state product, then folds
+    Maps `get_decoupled_Q_over_a` over the state product, then folds
     exactly as `get_max_Q_over_a` does, and returns `(V, empty)` with `empty`
     marking the cells without a feasible action.
     """
-    cell = get_decision_value_Q_over_a(
+    cell = get_decoupled_Q_over_a(
         Q_and_F=Q_and_F,
         action_names=action_names,
         state_names=state_names,
@@ -203,14 +203,14 @@ def get_decision_value_max_Q_over_a(
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _DecisionValueQOverA:
-    """The stored value at the decision's choice, at one state cell.
+class _DecoupledQOverA:
+    """The stored value at the objective's choice, at one state cell.
 
     The caller wraps it in `dags.with_signature` to advertise the arguments the
     state productmap binds by name.
     """
 
-    __name__: ClassVar[str] = "decision_value_Q_over_a"
+    __name__: ClassVar[str] = "decoupled_Q_over_a"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
     parts: Callable[..., QAndFParts]
@@ -237,7 +237,7 @@ class _DecisionValueQOverA:
         empty = ~jnp.any(parts.F)
         if self.n_discrete_action_axes is None:
             index, value = argmax_and_readout(
-                selection=cast("FloatND", parts.Q_decision),
+                selection=cast("FloatND", parts.Q_objective),
                 readout=parts.Q,
                 where=parts.F,
             )
@@ -247,7 +247,7 @@ class _DecisionValueQOverA:
         )
         scale = cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM])
         if not self.publishes_index:
-            value, _ = decision_value_logsum(
+            value, _ = decoupled_logsum(
                 conditional=conditional, scale=scale, parts=parts
             )
             return value, empty
@@ -255,10 +255,10 @@ class _DecisionValueQOverA:
         # draws, so the same key gives the same shocks.
         noise = draw_taste_shock_noise(
             key=cast("Array", taste_shock_key),
-            shape=(conditional.decision.size,),
+            shape=(conditional.objective.size,),
             scale=scale,
         )
-        discrete = jnp.argmax(jnp.ravel(conditional.decision) + noise)
+        discrete = jnp.argmax(jnp.ravel(conditional.objective) + noise)
         n_continuous = math.prod(parts.F.shape[self.n_discrete_action_axes :])
         flat_index = (
             discrete * n_continuous + jnp.ravel(conditional.continuous_index)[discrete]
@@ -270,10 +270,10 @@ class _DecisionValueQOverA:
 
 
 class ConditionalProfiles(NamedTuple):
-    """Both profiles per discrete-action combination, at the decision's choice."""
+    """Both profiles per discrete-action combination, at the objective's choice."""
 
-    decision: FloatND
-    """Max of the masked decision profile over the continuous actions; `-inf`
+    objective: FloatND
+    """Max of the masked objective profile over the continuous actions; `-inf`
     for a combination without a feasible continuous action."""
 
     value: FloatND
@@ -286,14 +286,14 @@ class ConditionalProfiles(NamedTuple):
 def get_conditional_profiles(
     *, parts: QAndFParts, n_discrete_action_axes: int
 ) -> ConditionalProfiles:
-    """Choose the continuous actions on the decision profile, per combination."""
+    """Choose the continuous actions on the objective profile, per combination."""
     shape = parts.F.shape[:n_discrete_action_axes]
-    decision = jnp.where(parts.F, cast("FloatND", parts.Q_decision), -jnp.inf).reshape(
-        *shape, -1
-    )
-    continuous_index = jnp.argmax(decision, axis=-1)
+    objective = jnp.where(
+        parts.F, cast("FloatND", parts.Q_objective), -jnp.inf
+    ).reshape(*shape, -1)
+    continuous_index = jnp.argmax(objective, axis=-1)
     return ConditionalProfiles(
-        decision=jnp.take_along_axis(decision, continuous_index[..., None], axis=-1)[
+        objective=jnp.take_along_axis(objective, continuous_index[..., None], axis=-1)[
             ..., 0
         ],
         value=jnp.take_along_axis(
@@ -303,57 +303,57 @@ def get_conditional_profiles(
     )
 
 
-def decision_value_logsum(
+def decoupled_logsum(
     *, conditional: ConditionalProfiles, scale: FloatND, parts: QAndFParts
 ) -> tuple[FloatND, FloatND]:
     """Return the expected stored value under EV1 shocks and the probabilities.
 
-    With `P = softmax(decision / scale)` over the feasible combinations, the
-    value is `scale * logsumexp(decision / scale) + sum_k P_k (value_k -
-    decision_k)`: the expected value of the stored profile at the noisy choice,
+    With `P = softmax(objective / scale)` over the feasible combinations, the
+    value is `scale * logsumexp(objective / scale) + sum_k P_k (value_k -
+    objective_k)`: the expected value of the stored profile at the noisy choice,
     shock included. No feasible combination gives `-inf`; a NaN at any feasible
     action, in either profile, gives NaN.
     """
     smoothed, probabilities = logsum_and_softmax(
-        values=conditional.decision,
+        values=conditional.objective,
         scale=scale,
-        axes=tuple(range(conditional.decision.ndim)),
+        axes=tuple(range(conditional.objective.ndim)),
     )
     correction = jnp.sum(
         probabilities
         * jnp.where(
-            jnp.isneginf(conditional.decision),
+            jnp.isneginf(conditional.objective),
             0.0,
-            conditional.value - conditional.decision,
+            conditional.value - conditional.objective,
         )
     )
     feasible_nan = jnp.any(
-        parts.F & (jnp.isnan(cast("FloatND", parts.Q_decision)) | jnp.isnan(parts.Q))
+        parts.F & (jnp.isnan(cast("FloatND", parts.Q_objective)) | jnp.isnan(parts.Q))
     )
     return jnp.where(feasible_nan, jnp.nan, smoothed + correction), probabilities
 
 
-# What the dense lookup of a `DecisionValue` regime publishes, in the order its
-# body returns them: the decision's pair, the kernel's parts over the action
-# product, then the decision profile.
-DECISION_VALUE_LOOKUP_OUTPUT_ROLES = (
+# What the dense lookup of a `Decoupled` regime publishes, in the order its
+# body returns them: the objective's pair, the kernel's parts over the action
+# product, then the objective profile.
+DECOUPLED_LOOKUP_OUTPUT_ROLES = (
     ACTION_INDEX,
     DECISION_VALUE,
     *ACTION_PARTS_ROLES,
-    DECISION_PROFILE,
+    OBJECTIVE_PROFILE,
 )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class DecisionValueWithActionParts:
-    """The dense lookup decision of a `DecisionValue` regime at one state cell.
+class DecoupledWithActionParts:
+    """The dense lookup body of a `Decoupled` regime at one state cell.
 
     Returns the chosen flat index and the stored value there, followed by `Q`,
-    `F`, `U`, `CE` and `Q_decision` over the action product, all from one
+    `F`, `U`, `CE` and `Q_objective` over the action product, all from one
     evaluation of the regime's kernel.
     """
 
-    __name__: ClassVar[str] = "decision_value_Q_over_a_with_action_parts"
+    __name__: ClassVar[str] = "decoupled_Q_over_a_with_action_parts"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
     parts: Callable[..., QAndFParts]
@@ -362,38 +362,38 @@ class DecisionValueWithActionParts:
     def __call__(
         self, **kwargs: QAndFArg
     ) -> tuple[IntND, FloatND, FloatND, BoolND, FloatND, FloatND, FloatND]:
-        """Return the index, the value, and `Q`, `F`, `U`, `CE`, `Q_decision`."""
+        """Return the index, the value, and `Q`, `F`, `U`, `CE`, `Q_objective`."""
         parts = self.parts(**kwargs)
-        Q_decision = cast("FloatND", parts.Q_decision)
+        Q_objective = cast("FloatND", parts.Q_objective)
         index, value = argmax_and_readout(
-            selection=Q_decision, readout=parts.Q, where=parts.F
+            selection=Q_objective, readout=parts.Q, where=parts.F
         )
-        return index, value, parts.Q, parts.F, parts.U, parts.CE, Q_decision
+        return index, value, parts.Q, parts.F, parts.U, parts.CE, Q_objective
 
 
-# What the EV1 lookup of a `DecisionValue` regime publishes, in the order its
+# What the EV1 lookup of a `Decoupled` regime publishes, in the order its
 # body returns them.
-DECISION_VALUE_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES = (
+DECOUPLED_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES = (
     DECISION_VALUE,
     CONDITIONAL_VALUE,
     CHOICE_PROBABILITIES,
     CONDITIONAL_ACTION_INDEX,
     *ACTION_PARTS_ROLES,
-    DECISION_PROFILE,
+    OBJECTIVE_PROFILE,
 )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class DecisionValueTasteShockLookup:
-    """The EV1 lookup decision of a `DecisionValue` regime at one state cell.
+class DecoupledTasteShockLookup:
+    """The EV1 lookup body of a `Decoupled` regime at one state cell.
 
     Returns the expected stored value, the stored profile `Qc` and the choice
     probability of each discrete-action combination, the flat index of the
-    continuous action chosen there, and `Q`, `F`, `U`, `CE` and `Q_decision`
+    continuous action chosen there, and `Q`, `F`, `U`, `CE` and `Q_objective`
     over the action product.
     """
 
-    __name__: ClassVar[str] = "decision_value_logsum_Q_over_a_with_action_parts"
+    __name__: ClassVar[str] = "decoupled_logsum_Q_over_a_with_action_parts"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
     parts: Callable[..., QAndFParts]
@@ -408,7 +408,7 @@ class DecisionValueTasteShockLookup:
         conditional = get_conditional_profiles(
             parts=parts, n_discrete_action_axes=self.n_discrete_action_axes
         )
-        value, probabilities = decision_value_logsum(
+        value, probabilities = decoupled_logsum(
             conditional=conditional,
             scale=cast("FloatND", kwargs[TASTE_SHOCK_SCALE_PARAM]),
             parts=parts,
@@ -422,5 +422,5 @@ class DecisionValueTasteShockLookup:
             parts.F,
             parts.U,
             parts.CE,
-            cast("FloatND", parts.Q_decision),
+            cast("FloatND", parts.Q_objective),
         )

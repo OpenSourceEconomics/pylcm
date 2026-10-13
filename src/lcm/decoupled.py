@@ -1,4 +1,4 @@
-"""The `DecisionValue` declaration for the Koopmans aggregator slot.
+"""The `Decoupled` declaration for the Koopmans aggregator slot.
 
 A thin leaf module, like `lcm.phased`: the class definition only, so the
 user-facing `Regime`, the regime validators and the regime-building code can
@@ -15,14 +15,14 @@ from lcm.phased import Phased
 from lcm.typing import UserFunction
 
 
-class DecisionValue:
+class Decoupled:
     """Choose actions with one aggregator and store the value of another.
 
     Pass it as a regime's `koopmans_aggregator`. Both functions take the
     Koopmans aggregator's arguments, `W(utility, CE, ...)`, and see the same
     period utility and certainty-equivalent continuation:
 
-    - `decision` ranks the actions: the action taken maximizes it over the
+    - `objective` ranks the actions: the action taken maximizes it over the
       feasible set, or, with taste shocks, it sets the choice probabilities.
     - `value` gives the value stored and passed back: the solve stores `value`
       at the chosen action, and simulation and policy lookup publish it.
@@ -30,10 +30,10 @@ class DecisionValue:
     With taste shocks the stored value is the expected `value` at the choice,
     including the chosen action's shock. Under extreme-value shocks of scale
     `scale` this is
-    `scale * logsumexp(Q_decision / scale) + sum_k P_k (Q_value_k - Q_decision_k)`
-    with `P = softmax(Q_decision / scale)`.
+    `scale * logsumexp(Q_objective / scale) + sum_k P_k (Q_value_k - Q_objective_k)`
+    with `P = softmax(Q_objective / scale)`.
 
-    `decision` may be `Phased`: its `solve` variant is how the selves the solve
+    `objective` may be `Phased`: its `solve` variant is how the selves the solve
     anticipates choose, its `simulate` variant how the acting self chooses.
     `value` is the same in both phases.
 
@@ -46,55 +46,53 @@ class DecisionValue:
     not the long-run value of the policy it actually follows.
 
     A `Phased` Koopmans aggregator, `Phased(solve=f, simulate=g)`, is the
-    special case `DecisionValue(decision=Phased(solve=f, simulate=g), value=f)`
+    special case `Decoupled(objective=Phased(solve=f, simulate=g), value=f)`
     for the choices it makes; it publishes `g` instead of `f` in simulation.
     """
 
-    __slots__ = ("decision", "value")
+    __slots__ = ("objective", "value")
 
     @beartype(conf=REGIME_CONF)
     def __init__(
         self,
         *,
-        decision: UserFunction | Phased[UserFunction, UserFunction],
+        objective: UserFunction | Phased[UserFunction, UserFunction],
         value: UserFunction,
     ) -> None:
-        _fail_if_a_decision_variant_is_not_an_aggregator(decision=decision)
-        self.decision: Final[UserFunction | Phased[UserFunction, UserFunction]] = (
-            decision
+        _fail_if_an_objective_variant_is_not_an_aggregator(objective=objective)
+        self.objective: Final[UserFunction | Phased[UserFunction, UserFunction]] = (
+            objective
         )
         self.value: Final[UserFunction] = value
 
     def __repr__(self) -> str:
-        return f"DecisionValue(decision={self.decision!r}, value={self.value!r})"
+        return f"Decoupled(objective={self.objective!r}, value={self.value!r})"
 
 
-def _fail_if_a_decision_variant_is_not_an_aggregator(
-    *, decision: UserFunction | Phased[UserFunction, UserFunction]
+def _fail_if_an_objective_variant_is_not_an_aggregator(
+    *, objective: UserFunction | Phased[UserFunction, UserFunction]
 ) -> None:
-    """Refuse a `Phased` decision whose variants are not plain aggregators."""
-    if isinstance(decision, Phased) and any(
-        isinstance(variant, DecisionValue) or not callable(variant)
-        for variant in (decision.solve, decision.simulate)
+    """Refuse a `Phased` objective whose variants are not plain aggregators."""
+    if isinstance(objective, Phased) and any(
+        isinstance(variant, Decoupled) or not callable(variant)
+        for variant in (objective.solve, objective.simulate)
     ):
-        msg = (
-            "`DecisionValue(decision=Phased(...))` needs an aggregator for each phase."
-        )
+        msg = "`Decoupled(objective=Phased(...))` needs an aggregator for each phase."
         raise RegimeInitializationError(msg)
 
 
 type KoopmansDeclaration = (
-    UserFunction | Phased[UserFunction, UserFunction] | DecisionValue | None
+    UserFunction | Phased[UserFunction, UserFunction] | Decoupled | None
 )
 
 
 def resolve_koopmans_aggregator(
     *, declaration: KoopmansDeclaration, phase: Literal["solve", "simulate"]
 ) -> tuple[UserFunction | None, UserFunction | None]:
-    """Return the value aggregator and the decision aggregator one phase runs.
+    """Return the value aggregator and the objective aggregator one phase runs.
 
-    The decision aggregator is `None` unless the slot declares a
-    `DecisionValue`; then the value aggregator also chooses.
+    The objective aggregator is `None` unless the slot declares a
+    `Decoupled`; then the value aggregator also chooses.
 
     Args:
         declaration: The regime's `koopmans_aggregator` slot.
@@ -102,12 +100,12 @@ def resolve_koopmans_aggregator(
 
     Returns:
         The value aggregator, or `None` when the slot is empty, and the
-        decision aggregator, or `None`.
+        objective aggregator, or `None`.
 
     """
-    if isinstance(declaration, DecisionValue):
+    if isinstance(declaration, Decoupled):
         return declaration.value, _phase_variant(
-            value=declaration.decision, phase=phase
+            value=declaration.objective, phase=phase
         )
     if declaration is None:
         return None, None
@@ -121,8 +119,8 @@ def koopmans_aggregator_variants(
 ) -> tuple[UserFunction, ...]:
     """Return every aggregator the slot runs, in one phase or in both.
 
-    Each callable appears once, in the order value, solve decision, simulate
-    decision, so a consumer that resolves a parameter by the first variant
+    Each callable appears once, in the order value, solve objective, simulate
+    objective, so a consumer that resolves a parameter by the first variant
     declaring it reads the value aggregator first.
 
     Args:
@@ -138,10 +136,10 @@ def koopmans_aggregator_variants(
     )
     found: dict[int, UserFunction] = {}
     for current in phases:
-        value, decision = resolve_koopmans_aggregator(
+        value, objective = resolve_koopmans_aggregator(
             declaration=declaration, phase=current
         )
-        for func in (value, decision):
+        for func in (value, objective):
             if func is not None:
                 found.setdefault(id(func), func)
     return tuple(found.values())

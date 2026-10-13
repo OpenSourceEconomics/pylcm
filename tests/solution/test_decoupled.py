@@ -1,4 +1,4 @@
-"""`DecisionValue` chooses with one aggregator and stores the value of another.
+"""`Decoupled` chooses with one aggregator and stores the value of another.
 
 The model is small enough to solve by hand. Wealth takes the codes `0, 1, 2, 3`.
 Spending yields utility `1.5` and lowers wealth by one, and is feasible only
@@ -112,15 +112,15 @@ def indifferent(*, utility: FloatND, CE: FloatND) -> FloatND:
 
 
 # The future selves choose with `β̃`, today's self in simulation with `β`.
-PRESENT_BIAS = lcm.DecisionValue(
-    decision=lcm.Phased(solve=perceived_future_choice, simulate=current_choice),
+PRESENT_BIAS = lcm.Decoupled(
+    objective=lcm.Phased(solve=perceived_future_choice, simulate=current_choice),
     value=long_run,
 )
 
 
 def _model(
     *,
-    koopmans_aggregator: UserFunction | lcm.Phased | lcm.DecisionValue = PRESENT_BIAS,
+    koopmans_aggregator: UserFunction | lcm.Phased | lcm.Decoupled = PRESENT_BIAS,
 ) -> lcm.Model:
     wealth = lcm.DiscreteGrid(Wealth)
     return lcm.Model(
@@ -208,7 +208,7 @@ def test_enumeration_matches_the_hand_solution(
 
 @pytest.mark.parametrize("period", [0, 1])
 @pytest.mark.parametrize("agent", list(AGENTS))
-def test_solve_stores_the_value_at_the_decision(*, agent: str, period: int) -> None:
+def test_solve_stores_the_value_at_the_objective(*, agent: str, period: int) -> None:
     """`V_t` is `u + δ·CE` at the action that maximizes `u + β̃δ·CE`."""
     beta_tilde = AGENTS[agent]
     solution = _model().solve(params=_params(beta_tilde=beta_tilde), log_level="off")
@@ -230,13 +230,13 @@ def test_sophisticated_value_lies_below_the_best_long_run_value() -> None:
 
 
 @pytest.mark.parametrize("period", [0, 1])
-def test_identical_decision_and_value_solve_like_the_plain_aggregator(
+def test_identical_objective_and_value_solve_like_the_plain_aggregator(
     *, period: int
 ) -> None:
-    """`DecisionValue(decision=W, value=W)` solves like `koopmans_aggregator=W`."""
+    """`Decoupled(objective=W, value=W)` solves like `koopmans_aggregator=W`."""
     params: UserParams = {"decide": {"koopmans_aggregator": {"delta": DELTA}}}
     wrapped = _model(
-        koopmans_aggregator=lcm.DecisionValue(decision=long_run, value=long_run)
+        koopmans_aggregator=lcm.Decoupled(objective=long_run, value=long_run)
     ).solve(params=params, log_level="off")
     plain = _model(koopmans_aggregator=long_run).solve(params=params, log_level="off")
     assert_array_equal(
@@ -246,10 +246,10 @@ def test_identical_decision_and_value_solve_like_the_plain_aggregator(
 
 
 @pytest.mark.parametrize("period", [0, 1])
-def test_tied_decision_takes_the_first_feasible_action(*, period: int) -> None:
-    """A decision tied across actions picks spend wherever it is feasible."""
+def test_tied_objective_takes_the_first_feasible_action(*, period: int) -> None:
+    """An objective tied across actions picks spend wherever it is feasible."""
     solution = _model(
-        koopmans_aggregator=lcm.DecisionValue(decision=indifferent, value=long_run)
+        koopmans_aggregator=lcm.Decoupled(objective=indifferent, value=long_run)
     ).solve(
         params={"decide": {"koopmans_aggregator": {"delta": DELTA}}},
         log_level="off",
@@ -309,7 +309,7 @@ def test_simulation_publishes_the_stored_value_of_the_choice() -> None:
 
 
 def test_phased_koopmans_aggregator_makes_the_same_choices() -> None:
-    """`Phased(solve=f, simulate=g)` chooses like `DecisionValue(Phased(f, g), f)`."""
+    """`Phased(solve=f, simulate=g)` chooses like `Decoupled(Phased(f, g), f)`."""
     phased = _first_period(
         _simulate(
             model=_model(
@@ -379,18 +379,18 @@ def test_lookup_publishes_the_stored_value_of_the_choice(
     )
 
 
-def test_lookup_publishes_the_decision_profile() -> None:
-    """`Q_decision` is today's `u + βδ·CE` per action; `Q` is `u + δ·CE`."""
+def test_lookup_publishes_the_objective_profile() -> None:
+    """`Q_objective` is today's `u + βδ·CE` per action; `Q` is `u + δ·CE`."""
     got = _lookup(return_action_values=True)
     assert_array_almost_equal(
-        cast("FloatND", got.Q_decision),
+        cast("FloatND", got.Q_objective),
         cast("FloatND", got.U) + BETA * DELTA * cast("FloatND", got.CE),
         decimal=DECIMAL_PRECISION,
     )
 
 
-def test_lookup_without_decision_value_publishes_no_decision_profile() -> None:
-    """A plain Koopmans aggregator leaves `Q_decision` empty."""
+def test_lookup_without_decoupled_publishes_no_objective_profile() -> None:
+    """A plain Koopmans aggregator leaves `Q_objective` empty."""
     model = _model(koopmans_aggregator=long_run)
     params: UserParams = {"decide": {"koopmans_aggregator": {"delta": DELTA}}}
     got = model.lookup_policy(
@@ -401,53 +401,53 @@ def test_lookup_without_decision_value_publishes_no_decision_profile() -> None:
         states={"wealth": jnp.array([0, 1])},
         return_action_values=True,
     )
-    assert got.Q_decision is None
+    assert got.Q_objective is None
 
 
 @pytest.mark.parametrize(
     "build",
     [
-        lambda: lcm.DecisionValue(
-            decision=long_run,
+        lambda: lcm.Decoupled(
+            objective=long_run,
             value=lcm.Phased(solve=long_run, simulate=long_run),  # ty: ignore[invalid-argument-type]
         ),
-        lambda: lcm.DecisionValue(
-            decision=lcm.DecisionValue(decision=long_run, value=long_run),  # ty: ignore[invalid-argument-type]
+        lambda: lcm.Decoupled(
+            objective=lcm.Decoupled(objective=long_run, value=long_run),  # ty: ignore[invalid-argument-type]
             value=long_run,
         ),
-        lambda: lcm.DecisionValue(decision=long_run, value=2.0),  # ty: ignore[invalid-argument-type]
+        lambda: lcm.Decoupled(objective=long_run, value=2.0),  # ty: ignore[invalid-argument-type]
     ],
     ids=["phased-value", "nested", "not-callable"],
 )
-def test_decision_value_refuses_an_invalid_declaration(build) -> None:
-    """Only `decision` may be `Phased`, and both parts must be aggregators."""
-    with pytest.raises(RegimeInitializationError, match="DecisionValue"):
+def test_decoupled_refuses_an_invalid_declaration(build) -> None:
+    """Only `objective` may be `Phased`, and both parts must be aggregators."""
+    with pytest.raises(RegimeInitializationError, match="Decoupled"):
         build()
 
 
-def test_phased_koopmans_aggregator_refuses_a_decision_value() -> None:
-    """`Phased` around a `DecisionValue` is refused; put `Phased` on `decision`."""
-    with pytest.raises(ModelInitializationError, match="DecisionValue"):
+def test_phased_koopmans_aggregator_refuses_a_decoupled_aggregator() -> None:
+    """`Phased` around a `Decoupled` is refused; put `Phased` on `objective`."""
+    with pytest.raises(ModelInitializationError, match="Decoupled"):
         _model(
             koopmans_aggregator=lcm.Phased(solve=PRESENT_BIAS, simulate=PRESENT_BIAS)
         )
 
 
-def test_other_solvers_refuse_a_decision_value() -> None:
+def test_other_solvers_refuse_a_decoupled_aggregator() -> None:
     """Only `GridSearch` chooses with one aggregator and stores another."""
     from lcm_examples import iskhakov_et_al_2017 as iskhakov  # noqa: PLC0415
 
     ages = lcm.AgeGrid(start=40, inclusive_stop=60, step="10Y")
-    decision_value = lcm.DecisionValue(decision=long_run, value=long_run)
+    decoupled = lcm.Decoupled(objective=long_run, value=long_run)
     with pytest.raises(ModelInitializationError, match="DCEGM solver does not"):
         lcm.Model(
             edges=iskhakov.get_edges(ages=ages),
             regimes={
                 "working_life": iskhakov.dcegm_working_life.replace(
-                    koopmans_aggregator=decision_value
+                    koopmans_aggregator=decoupled
                 ),
                 "retirement": iskhakov.dcegm_retirement.replace(
-                    koopmans_aggregator=decision_value
+                    koopmans_aggregator=decoupled
                 ),
                 "dead": iskhakov.dead,
             },
@@ -457,7 +457,7 @@ def test_other_solvers_refuse_a_decision_value() -> None:
         )
 
 
-def test_collective_regime_refuses_a_decision_value() -> None:
+def test_collective_regime_refuses_a_decoupled_aggregator() -> None:
     """A household chooses with its Pareto-weighted objective."""
     shared_utility = lcm.CollectiveUtility(utilities={"f": utility, "m": utility})
     with pytest.raises(ModelInitializationError, match="collective regime cannot"):
@@ -467,8 +467,8 @@ def test_collective_regime_refuses_a_decision_value() -> None:
                 "decide": lcm.Regime(
                     actions={"choice": lcm.DiscreteGrid(Choice)},
                     functions={"utility": shared_utility},
-                    koopmans_aggregator=lcm.DecisionValue(
-                        decision=long_run, value=long_run
+                    koopmans_aggregator=lcm.Decoupled(
+                        objective=long_run, value=long_run
                     ),
                 ),
                 "end": lcm.Regime(
@@ -496,8 +496,8 @@ def mood_dependent_choice(
 
 def _mood_model(
     *,
-    koopmans_aggregator: UserFunction | lcm.DecisionValue = lcm.DecisionValue(  # noqa: B008
-        decision=mood_dependent_choice, value=long_run
+    koopmans_aggregator: UserFunction | lcm.Decoupled = lcm.Decoupled(  # noqa: B008
+        objective=mood_dependent_choice, value=long_run
     ),
     execution_config: lcm.ExecutionConfig = lcm.ExecutionConfig(),  # noqa: B008
 ) -> lcm.Model:
@@ -535,7 +535,7 @@ def _mood_model(
     )
 
 
-def test_a_state_read_only_by_the_decision_is_used() -> None:
+def test_a_state_read_only_by_the_objective_is_used() -> None:
     """An impatient mood chooses like the sophisticated agent, a patient one not."""
     solution = _mood_model().solve(
         params={"decide": {"koopmans_aggregator": {"delta": DELTA}}}, log_level="off"
@@ -565,7 +565,7 @@ def test_a_state_read_only_by_the_koopmans_aggregator_is_used() -> None:
     )
 
 
-def test_a_labelled_decision_parameter_is_read_by_label() -> None:
+def test_a_labelled_objective_parameter_is_read_by_label() -> None:
     """A `pd.Series` indexed by mood binds each row to its label, not its position."""
     beta_by_mood = pd.Series(
         [BETA, 1.0],
@@ -583,9 +583,7 @@ def test_a_labelled_decision_parameter_is_read_by_label() -> None:
         return utility + beta[mood] * delta * CE
 
     solution = _mood_model(
-        koopmans_aggregator=lcm.DecisionValue(
-            decision=mood_indexed_choice, value=long_run
-        )
+        koopmans_aggregator=lcm.Decoupled(objective=mood_indexed_choice, value=long_run)
     ).solve(
         params={
             "decide": {"koopmans_aggregator": {"delta": DELTA, "beta": beta_by_mood}}
@@ -626,7 +624,7 @@ def additive(*, utility: FloatND, CE: FloatND) -> FloatND:
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_simulation_rejects_a_decision_with_no_feasible_action(
+def test_simulation_rejects_an_objective_with_no_feasible_action(
     *, enable_jit: bool
 ) -> None:
     """A feasible start lands in a state that admits no action in period one."""
@@ -643,9 +641,7 @@ def test_simulation_rejects_a_decision_with_no_feasible_action(
                 },
                 constraints={"can_act": can_act},
                 functions={"utility": first_choice_utility},
-                koopmans_aggregator=lcm.DecisionValue(
-                    decision=additive, value=additive
-                ),
+                koopmans_aggregator=lcm.Decoupled(objective=additive, value=additive),
             ),
             "end": lcm.Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
         },
@@ -696,7 +692,7 @@ def _readout_oracle(
 READOUT_CASES = {
     "scalar feasible": (2.0, 7.0, True),
     "scalar infeasible": (2.0, 7.0, False),
-    "scalar infeasible NaN decision": (np.nan, 7.0, False),
+    "scalar infeasible NaN objective": (np.nan, 7.0, False),
     "all infeasible": ([2.0, 1.0], [7.0, 8.0], [False, False]),
     "first of two": ([2.0, 1.0], [7.0, 8.0], [True, True]),
     "tie picks first feasible": (
@@ -713,7 +709,7 @@ READOUT_CASES = {
         [True, True],
     ),
     "NaN value at an infeasible action": ([2.0, 1.0], [7.0, np.nan], [True, False]),
-    "NaN decision at a feasible action": ([2.0, np.nan], [7.0, 8.0], [True, True]),
+    "NaN objective at a feasible action": ([2.0, np.nan], [7.0, 8.0], [True, True]),
 }
 
 
@@ -725,7 +721,7 @@ def test_readout_follows_the_empty_tie_and_nan_contract(
     """Index `-1` and `-inf` without a feasible action; a feasible NaN poisons."""
     import jax  # noqa: PLC0415
 
-    from _lcm.regime_building.decision_value import argmax_and_readout  # noqa: PLC0415
+    from _lcm.regime_building.decoupled import argmax_and_readout  # noqa: PLC0415
 
     selection, readout, where = (np.asarray(part) for part in READOUT_CASES[case])
     function = jax.jit(argmax_and_readout) if enable_jit else argmax_and_readout
@@ -881,7 +877,7 @@ def test_ev1_enumeration_matches_the_hand_solution(
 
 
 def _ev1_model(
-    *, koopmans_aggregator: UserFunction | lcm.DecisionValue = PRESENT_BIAS
+    *, koopmans_aggregator: UserFunction | lcm.Decoupled = PRESENT_BIAS
 ) -> lcm.Model:
     model = _model(koopmans_aggregator=koopmans_aggregator)
     return lcm.Model(
@@ -921,7 +917,7 @@ def _ev1_params(*, beta_tilde: float) -> UserParams:
 
 @pytest.mark.parametrize("period", [0, 1])
 @pytest.mark.parametrize("agent", list(AGENTS))
-def test_ev1_solve_stores_the_expected_value_at_the_noisy_decision(
+def test_ev1_solve_stores_the_expected_value_at_the_noisy_objective(
     *, agent: str, period: int
 ) -> None:
     """With taste shocks `V` is the expected `u + delta * CE` plus the chosen shock."""
@@ -937,10 +933,10 @@ def test_ev1_solve_stores_the_expected_value_at_the_noisy_decision(
 
 
 @pytest.mark.parametrize("period", [0, 1])
-def test_ev1_identical_decision_and_value_solve_like_the_plain_aggregator(
+def test_ev1_identical_objective_and_value_solve_like_the_plain_aggregator(
     *, period: int
 ) -> None:
-    """With `decision = value` the EV1 solve equals the plain logsum."""
+    """With `objective = value` the EV1 solve equals the plain logsum."""
     params: UserParams = {
         "decide": {
             "koopmans_aggregator": {"delta": DELTA},
@@ -948,7 +944,7 @@ def test_ev1_identical_decision_and_value_solve_like_the_plain_aggregator(
         }
     }
     wrapped = _ev1_model(
-        koopmans_aggregator=lcm.DecisionValue(decision=long_run, value=long_run)
+        koopmans_aggregator=lcm.Decoupled(objective=long_run, value=long_run)
     ).solve(params=params, log_level="off")
     plain = _ev1_model(koopmans_aggregator=long_run).solve(
         params=params, log_level="off"
@@ -968,7 +964,7 @@ def _naive_today_probabilities() -> np.ndarray:
 
 
 def test_ev1_lookup_publishes_the_acting_selfs_choice_probabilities() -> None:
-    """Probabilities are `softmax(Q_decision / scale)` with today's beta."""
+    """Probabilities are `softmax(Q_objective / scale)` with today's beta."""
     model = _ev1_model()
     params = _ev1_params(beta_tilde=1.0)
     got = model.lookup_policy(

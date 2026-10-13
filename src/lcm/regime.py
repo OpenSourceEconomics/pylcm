@@ -34,8 +34,8 @@ from lcm.collective import (
     ProjectedRegimeValue,
     ValueDependentConstraint,
 )
-from lcm.decision_value import (
-    DecisionValue,
+from lcm.decoupled import (
+    Decoupled,
     resolve_koopmans_aggregator,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -89,7 +89,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     derived_categoricals: Mapping[FunctionName, DiscreteGrid]
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
-    koopmans_aggregator: UserFunction | Phased | DecisionValue | None
+    koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
     description: str
 
@@ -260,13 +260,13 @@ class Regime:
     `NNBEGM`.
     """
 
-    koopmans_aggregator: UserFunction | Phased | DecisionValue | None = None
+    koopmans_aggregator: UserFunction | Phased | Decoupled | None = None
     """Combines current-period utility with the certainty equivalent into `Q`.
 
     Signature `W(utility, CE, ...)`; further arguments are runtime params
     under the pseudo-function name `koopmans_aggregator`, or outputs of
     regime functions of the same name. `Phased(solve=..., simulate=...)`
-    gives the two phases different aggregators. `DecisionValue(decision=...,
+    gives the two phases different aggregators. `Decoupled(objective=...,
     value=...)` chooses actions with one aggregator and stores the value of
     another (time-inconsistent agents). `None` means the regime takes the model-level
     aggregator (`lcm.LinearAggregator` unless the `Model` says otherwise). Terminal
@@ -587,24 +587,24 @@ class Regime:
         )
         return value
 
-    def get_decision_aggregator(
+    def get_objective_aggregator(
         self,
         phase: Literal["solve", "simulate"] = "solve",
     ) -> UserFunction | None:
         """Get the aggregator this phase chooses actions with, if separate.
 
         Args:
-            phase: Which variant to use when the decision is `Phased`.
+            phase: Which variant to use when the objective is `Phased`.
 
         Returns:
-            The decision aggregator of a `DecisionValue` declaration, or `None`
+            The objective aggregator of a `Decoupled` declaration, or `None`
             when the Koopmans aggregator also chooses.
 
         """
-        _, decision = resolve_koopmans_aggregator(
+        _, objective = resolve_koopmans_aggregator(
             declaration=self.koopmans_aggregator, phase=phase
         )
-        return decision
+        return objective
 
     # keyword-only-exempt: primary-argument=phase
     def get_all_functions(

@@ -692,9 +692,9 @@ def _valuation_roots(
         aggregator = regime.get_koopmans_aggregator(phase=phase) or koopmans_aggregator
         if aggregator is not None:
             roots["__koopmans_aggregator"] = aggregator
-        decision = regime.get_decision_aggregator(phase=phase)
-        if decision is not None:
-            roots["__koopmans_aggregator__decision"] = decision
+        objective = regime.get_objective_aggregator(phase=phase)
+        if objective is not None:
+            roots["__koopmans_aggregator__objective"] = objective
     return MappingProxyType(roots)
 
 

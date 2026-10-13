@@ -165,9 +165,9 @@ from _lcm.simulation.program_types import (
     CONDITIONAL_ACTION_INDEX,
     CONDITIONAL_VALUE,
     CONTINUATION_CE,
-    DECISION_PROFILE,
     DECISION_VALUE,
     FLOW_UTILITY,
+    OBJECTIVE_PROFILE,
     SimulationProgramExecutor,
 )
 from _lcm.simulation.random import canonicalize_simulation_seed
@@ -304,7 +304,7 @@ from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.contract import ArtifactContractValue
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
-from lcm.decision_value import DecisionValue
+from lcm.decoupled import Decoupled
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidInitialConditionsError,
@@ -4359,7 +4359,7 @@ class Model:
                 "F": by_role[ACTION_FEASIBILITY],
                 "U": by_role[FLOW_UTILITY],
                 "CE": by_role[CONTINUATION_CE],
-                "Q_decision": by_role.get(DECISION_PROFILE),
+                "Q_objective": by_role.get(OBJECTIVE_PROFILE),
             }
             if return_action_values
             else {}
@@ -5094,7 +5094,7 @@ def _validate_sharded_state_capability(
         "normal/log-normal processes, fixed Rouwenhorst/Tauchen processes and "
         "carried linear grids. Runtime state grids, folded processes, "
         "mixed solvers, collective/gated/same-period routes, taste shocks and "
-        "`DecisionValue` Koopmans aggregators are unsupported."
+        "`Decoupled` Koopmans aggregators are unsupported."
     )
     if len(sharded_states) != 1:
         raise ExecutionPlanningError(message)
@@ -5114,7 +5114,7 @@ def _validate_sharded_state_capability(
             or regime.value_constraints
             or regime.same_period_refs
             or regime.taste_shocks is not None
-            or isinstance(regime.koopmans_aggregator, DecisionValue)
+            or isinstance(regime.koopmans_aggregator, Decoupled)
         ):
             raise ExecutionPlanningError(
                 f"{message} Unsupported regime: {regime_name!r}."

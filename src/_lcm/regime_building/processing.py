@@ -135,7 +135,7 @@ from _lcm.regime_building.collective import (
     build_pareto_weights,
     build_role_vocabulary,
 )
-from _lcm.regime_building.decision_value import get_decision_value_Q_over_a
+from _lcm.regime_building.decoupled import get_decoupled_Q_over_a
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.fixed_components import FixedComponentLaw
@@ -199,7 +199,7 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F_collective,
     get_Q_and_F_terminal,
     get_Q_and_F_terminal_collective,
-    has_decision_profile,
+    has_objective_profile,
     partition_continuation_targets,
 )
 from _lcm.regime_building.stochastic_state_transitions import (
@@ -3474,7 +3474,7 @@ def _build_solution_phase(  # noqa: PLR0915
     core = _process_regime_core(
         source_regime_name=regime_name,
         koopmans_aggregator=spec.solution.koopmans_aggregator,
-        decision_aggregator=spec.solution.decision_aggregator,
+        objective_aggregator=spec.solution.objective_aggregator,
         functions=spec.solution.functions,
         constraints=spec.solution.constraints,
         evaluated_constraint_names=routing.evaluated_names,
@@ -3634,7 +3634,7 @@ def _build_solution_phase(  # noqa: PLR0915
             # through that code's block, which has the state's axis removed.
             co_map_state_names=(*co_map_state_names, *invariant_bindings),
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
-            decision_aggregator=core.decision_aggregator,
+            objective_aggregator=core.objective_aggregator,
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
             value_constraints=value_aware_feasibility.value_constraints,
@@ -4596,7 +4596,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     core = _process_regime_core(
         source_regime_name=regime_name,
         koopmans_aggregator=spec.simulation.koopmans_aggregator,
-        decision_aggregator=spec.simulation.decision_aggregator,
+        objective_aggregator=spec.simulation.objective_aggregator,
         functions=decision_functions,
         constraints=spec.simulation.constraints,
         evaluated_constraint_names=routing.evaluated_names,
@@ -4826,7 +4826,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             flat_param_names=flat_param_names,
             period_to_regime_v_interp=period_to_regime_v_interp,
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
-            decision_aggregator=core.decision_aggregator,
+            objective_aggregator=core.objective_aggregator,
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
             value_constraints=value_aware_feasibility.value_constraints,
@@ -5339,7 +5339,7 @@ class _CoreResult:
     """The Bellman aggregator with params renamed to qnames; `None` in a
     terminal regime."""
 
-    decision_aggregator: EconFunction | None
+    objective_aggregator: EconFunction | None
     """The aggregator the actions are chosen with, params renamed to qnames;
     `None` when the Bellman aggregator also chooses."""
 
@@ -5473,7 +5473,7 @@ def _process_regime_core(
     constraints: ProcessedConstraintsMapping,
     evaluated_constraint_names: frozenset[FunctionName],
     koopmans_aggregator: UserFunction | None,
-    decision_aggregator: UserFunction | None,
+    objective_aggregator: UserFunction | None,
     state_transitions: Mapping[StateName, _PhaseStateTransition],
     markov_draw_laws: Mapping[StateName, StochasticTransition],
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
@@ -5503,7 +5503,7 @@ def _process_regime_core(
             feasibility kernel after routing.
         koopmans_aggregator: The regime's Bellman aggregator, or `None` in a
             terminal regime.
-        decision_aggregator: The aggregator the actions are chosen with, or
+        objective_aggregator: The aggregator the actions are chosen with, or
             `None` when the Bellman aggregator also chooses.
         state_transitions: This phase's `state_transitions` slice, used to
             detect per-target dicts and stochastic transitions.
@@ -5922,12 +5922,12 @@ def _process_regime_core(
             param_key="koopmans_aggregator",
         )
     )
-    # A decision aggregator reads its params from the Koopmans namespace too.
-    processed_decision_aggregator = (
+    # An objective aggregator reads its params from the Koopmans namespace too.
+    processed_objective_aggregator = (
         None
-        if decision_aggregator is None
+        if objective_aggregator is None
         else _process_one_function(
-            func=decision_aggregator,
+            func=objective_aggregator,
             regime_params_template=regime_params_template,
             param_key="koopmans_aggregator",
         )
@@ -5943,7 +5943,7 @@ def _process_regime_core(
         next_regime_func=next_regime_func,
         next_regime_cells=next_regime_cells,
         koopmans_aggregator=processed_koopmans_aggregator,
-        decision_aggregator=processed_decision_aggregator,
+        objective_aggregator=processed_objective_aggregator,
     )
 
 
@@ -8454,7 +8454,7 @@ def _build_Q_and_F_per_period(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[QualifiedName],
     koopmans_aggregator: EconFunction,
-    decision_aggregator: EconFunction | None = None,
+    objective_aggregator: EconFunction | None = None,
     certainty_equivalent: CertaintyEquivalent | None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
@@ -8502,7 +8502,7 @@ def _build_Q_and_F_per_period(
         flat_param_names: Frozenset of flat parameter names for the regime.
         koopmans_aggregator: The regime's Bellman aggregator, with params
             renamed to qnames.
-        decision_aggregator: The aggregator the actions are chosen with, params
+        objective_aggregator: The aggregator the actions are chosen with, params
             renamed, or `None` when the Bellman aggregator also chooses.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
@@ -8687,7 +8687,7 @@ def _build_Q_and_F_per_period(
             regime_to_v_interpolation_info=continuation_info(representative_period),
             co_map_state_names=co_map_state_names,
             koopmans_aggregator=koopmans_aggregator,
-            decision_aggregator=decision_aggregator,
+            objective_aggregator=objective_aggregator,
             certainty_equivalent=certainty_equivalent,
             # Resolve the perceived continuation pool at this group's own period.
             # Safe because that pool's per-period signature is part of the group key
@@ -8731,10 +8731,10 @@ def _build_per_subject_decisions_per_period(
     result: dict[int, ArgmaxQOverAFunction] = {}
     for period, Q_and_F in Q_and_F_functions.items():
         q_id = id(Q_and_F)
-        if q_id not in built and has_decision_profile(Q_and_F=Q_and_F):
+        if q_id not in built and has_objective_profile(Q_and_F=Q_and_F):
             built[q_id] = cast(
                 "ArgmaxQOverAFunction",
-                get_decision_value_Q_over_a(
+                get_decoupled_Q_over_a(
                     Q_and_F=Q_and_F,
                     action_names=state_action_space.action_names,
                     state_names=state_action_space.state_names,
