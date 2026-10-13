@@ -1,6 +1,7 @@
 """Label alignment protects temporal parameters before numerical evaluation."""
 
 import inspect
+from fractions import Fraction
 from functools import partial
 from pathlib import Path
 from typing import NotRequired
@@ -703,6 +704,60 @@ def test_profile_mapping_rejects_a_leading_axis_longer_than_its_labels(
             labels=(41, 42),
             **{f"{clock}_to_label": mapping[f"{clock}_to_label"]},
         )
+
+
+@pytest.mark.parametrize("clock", ["period", "age"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        np.array([2**40 + 7, 5], dtype=np.int64),
+        np.array([1.0 + 2**-30, np.finfo(np.float64).max]),
+    ],
+)
+def test_profile_mapping_keeps_numpy_values_and_dtype(
+    *, clock: str, source: np.ndarray
+) -> None:
+    mapping = {"period_to_label": {0: 42, 1: 41}, "age_to_label": {40: 42, 41: 41}}
+    profile = lcm.TimeVarying.from_profile(
+        values=source,
+        labels=(41, 42),
+        **{f"{clock}_to_label": mapping[f"{clock}_to_label"]},
+    )
+    assert profile.values.dtype == source.dtype
+    np.testing.assert_array_equal(profile.values, source[[1, 0]])
+
+
+def test_age_profile_mapping_keeps_each_age_with_its_row_in_any_key_order() -> None:
+    profile = lcm.TimeVarying.from_profile(
+        values=jnp.array([3.0, 5.0]), labels=(41, 42), age_to_label={41: 42, 40: 41}
+    )
+    hand_built = lcm.TimeVarying(values=jnp.array([3.0, 5.0]), ages=(40, 41))
+    by_age = dict(zip(profile.ages or (), profile.values.tolist(), strict=True))
+    assert by_age == dict(
+        zip(hand_built.ages or (), hand_built.values.tolist(), strict=True)
+    )
+
+
+@pytest.mark.parametrize("age", [40.5, Fraction(81, 2), np.float64(40.5)])
+def test_age_profile_mapping_keeps_exact_non_integer_age_coordinates(
+    age: float | Fraction,
+) -> None:
+    profile = lcm.TimeVarying.from_profile(
+        values=jnp.array([7.0]), labels=(41,), age_to_label={age: 41}
+    )
+    assert profile.ages is not None
+    assert profile.ages == (age,)
+    assert type(profile.ages[0]) is type(age)
+
+
+def test_age_profile_mapping_matches_the_hand_built_table_bit_for_bit() -> None:
+    source = jnp.array([1.0 + 2**-30, 2.0])
+    profile = lcm.TimeVarying.from_profile(
+        values=source, labels=(41, 42), age_to_label={40: 42, 41: 41}
+    )
+    hand_built = lcm.TimeVarying(values=source[jnp.array([1, 0])], ages=(40, 41))
+    assert profile.values.dtype == hand_built.values.dtype
+    np.testing.assert_array_equal(profile.values, hand_built.values)
 
 
 @pytest.mark.parametrize("age", [float("nan"), float("inf"), "40", True])
