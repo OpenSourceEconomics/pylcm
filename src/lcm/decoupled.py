@@ -42,8 +42,12 @@ class Decoupled:
     `u + βδ·CE`, `β̃ = 1` is the naive agent, `β̃ = β` the sophisticated agent
     and `β < β̃ < 1` the partially naive agent. The stored value is then the
     long-run value of the policy the agent expects its future selves to follow.
-    For naive and partially naive agents it is the agent's self-assessment,
-    not the long-run value of the policy it actually follows.
+    For naive and partially naive agents it is the agent's self-assessment;
+    the policy it actually follows has a different long-run value.
+
+    The stored value is read off at the objective's choice, away from the
+    value's own maximum, so grid error in the chosen action enters it at first
+    order. Expect to need finer grids than for an ordinary aggregator.
 
     A `Phased` Koopmans aggregator, `Phased(solve=f, simulate=g)`, is the
     special case `Decoupled(objective=Phased(solve=f, simulate=g), value=f)`

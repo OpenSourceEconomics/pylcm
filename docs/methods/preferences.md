@@ -53,7 +53,23 @@ A terminal regime declares neither: there is no continuation to aggregate.
 
 `Phased(solve=..., simulate=...)` is accepted for the Koopmans aggregator. It can
 represent perceived versus realized intertemporal behavior, including naive
-quasi-hyperbolic discounting. See the executable
+quasi-hyperbolic discounting.
+
+`Decoupled(objective=..., value=...)` chooses actions with one aggregator and stores the
+value of another, both with the Koopmans aggregator's signature:
+
+- `objective` ranks the actions: the action taken maximizes it, or, with taste shocks,
+  it sets the choice probabilities. It may be `Phased`.
+- `value` is stored at the chosen action and passed back as the continuation. With taste
+  shocks the stored value is its expectation at the noisy choice.
+
+With `value = u + δ·CE`, an objective `u + β̃δ·CE` in the solve and `u + βδ·CE` in
+simulation, this covers the naive (`β̃ = 1`), sophisticated (`β̃ = β`) and partially
+naive (`β < β̃ < 1`) quasi-hyperbolic agents. For naive and partially naive agents the
+stored value is the agent's assessment of the policy it expects to follow, which differs
+from the long-run value of the policy it follows. The stored value is read off away from
+its own maximum, so grid error in the chosen action enters it at first order. Only
+`GridSearch` solves a `Decoupled` regime. See the executable
 [beta-delta notebook](../explanations/beta_delta.ipynb).
 
 Solver support for nonlinear certainty equivalents is narrower than support for linear
