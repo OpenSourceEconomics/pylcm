@@ -22,8 +22,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `values`. Integer values arrive as int32, as codes do. A variable declared with values
   must carry the same values and tolerance in every regime. Value grids are not yet
   supported for joint transitions, condition constraints, collective regimes,
-  age-specialized functions, or regime transition laws that read them; the model
-  raises for these.
+  carried-state imputations, age-specialized functions, or regime transition laws
+  that read them; the model raises for these. Age-specialized readers are refused
+  in functions, constraints and carried-state imputations; this includes `Phased`
+  function declarations and model-level derived value grids.
 
 ### Selection aggregator
 
