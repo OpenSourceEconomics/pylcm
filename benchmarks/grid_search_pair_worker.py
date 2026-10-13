@@ -941,7 +941,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     if _has_legacy_solve(model=model):
         solve = partial(model.solve, **solve_kwargs, return_dissolution_flags=True)
     else:
-        solve = partial(model.solve, **solve_kwargs)
+        solve = partial(model.solve, **solve_kwargs, runtime_checks=False)
 
     memory_before_solve = _read_proc_memory()
     with ExitStack() as stack:

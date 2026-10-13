@@ -1223,9 +1223,9 @@ def validate_state_transitions_all_periods(  # noqa: C901
                 }
             )
             for transition in regime.stochastic_state_transitions.values():
-                # The descriptor keeps its declared phase for diagnostics; each
-                # demanded phase supplies its own functions and grids.
-                for functions, extra_grids in _demanded_phase_contexts(
+                # Each demanded phase supplies its own functions and grids, and
+                # the law labelled with the phase its diagnostics name.
+                for phase_law, functions, extra_grids in _demanded_phase_contexts(
                     transition=transition,
                     regime=regime,
                     period=period,
@@ -1233,7 +1233,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
                 ):
                     try:
                         _validate_state_transition_single(
-                            transition=transition,
+                            transition=phase_law,
                             regime_params=_params_callable_for_state_transition(
                                 regime=regime,
                                 flat_params_for_regime=regime_kernel_params(
@@ -1841,12 +1841,19 @@ def _demanded_phase_contexts(
     period: int,
     state_action_space: StateActionSpace,
 ) -> tuple[
-    tuple[EconFunctionsMapping, Mapping[StateOrActionName, FloatND | IntND]], ...
+    tuple[
+        _StochasticStateTransition,
+        EconFunctionsMapping,
+        Mapping[StateOrActionName, FloatND | IntND],
+    ],
+    ...,
 ]:
-    """The functions and phase grids of each distinct phase that uses a law.
+    """The law, functions and phase grids of each distinct phase that uses a law.
 
     A phase contributes only when it demands the law this period. A phase whose
-    program and inputs repeat an earlier phase's exactly is evaluated once.
+    program and inputs repeat an earlier phase's exactly is evaluated once, under
+    the earlier phase. A phase-invariant law's simulate-only evaluation carries
+    the simulate phase, so its diagnostics say which phase failed.
     """
     contexts = []
     consumed: set[_ConsumedContext] = set()
@@ -1865,7 +1872,12 @@ def _demanded_phase_contexts(
         )
         if context not in consumed:
             consumed.add(context)
-            contexts.append((functions, extra_grids))
+            labelled = (
+                replace(transition, phase=phase)
+                if phase == "simulate" and transition.phase is None
+                else transition
+            )
+            contexts.append((labelled, functions, extra_grids))
     return tuple(contexts)
 
 
@@ -1915,16 +1927,22 @@ def _state_transition_unused_in_period(
 ) -> bool:
     """Return whether a state transition has no edge `phase` demands this period.
 
-    A coarse (`target_regime_name is None`) state law applies regardless of
-    the regime-transition graph's own target set — an empty `period_targets`
-    is a fact about *which regime* is reached, not about whether a coarse
-    state law still needs checking. Only a per-target state law can be
-    unused, and only when its specific target isn't among the targets the
-    phase's own graph reaches this period.
+    - the simulate phase in a period no simulated subject occupies the regime
+      ⇒ unused, whatever the law's target
+    - a coarse (`target_regime_name is None`) law otherwise ⇒ used; an empty
+      `period_targets` is a fact about *which regime* is reached, not about
+      whether a coarse state law still needs checking
+    - a per-target law ⇒ unused when its target isn't among the targets the
+      phase's own graph reaches this period
     """
+    owner = regime.simulation if phase == "simulate" else regime.solution
+    if (
+        phase == "simulate"
+        and regime.name not in owner.reachability.active_regimes_by_period[period]
+    ):
+        return True
     if transition.target_regime_name is None:
         return False
-    owner = regime.simulation if phase == "simulate" else regime.solution
     period_targets = owner.reachability.targets(period=period, source=regime.name)
     return transition.target_regime_name not in period_targets
 
