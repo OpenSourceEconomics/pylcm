@@ -97,7 +97,7 @@ def test_runtime_joint_mean_is_not_captured_by_an_ordinary_mean_state() -> None:
             "y": jnp.asarray((-1.0, -1.0)),
             "mean": jnp.asarray((0.0, 1.0)),
         },
-        return_action_values=True,
+        keep_intermediates=("Q", "F", "U", "CE"),
     )
     # The ordinary state is carried unchanged and the law mean gives E[x+y]=1,
     # so a law that ignored its mean would fail as well as one that lost it.
@@ -249,7 +249,7 @@ def test_process_parameter_ownership_survives_legal_identifier_changes(
             period=0,
             regime_name="working",
             states=physical,
-            return_action_values=True,
+            keep_intermediates=("Q", "F", "U", "CE"),
         )
         # E[X²+XY+2Y²] follows from the mean and covariance alone.
         at_mean = mean[0] ** 2 + mean[0] * mean[1] + 2 * mean[1] ** 2
@@ -319,7 +319,7 @@ def test_two_process_groups_do_not_share_their_runtime_law() -> None:
                 ("x", "y", "u", "v"), (*_MEAN_0, *_MEAN_1), strict=True
             )
         },
-        return_action_values=True,
+        keep_intermediates=("Q", "F", "U", "CE"),
     )
     assert result.U is not None
     assert result.CE is not None

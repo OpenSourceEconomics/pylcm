@@ -12,6 +12,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import lcm.model
+from _lcm.simulation.program_types import (
+    ACTION_INDEX,
+    CONTINUATION_CE,
+    DECISION_VALUE,
+)
+from _lcm.simulation.programs import with_kept_action_parts
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -24,7 +31,14 @@ from lcm import (
 )
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.result import PolicyLookup
-from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    Intermediate,
+    ScalarInt,
+)
 from lcm_examples import epstein_zin
 from lcm_examples.mortality import LaborSupply, utility_working
 from tests.conftest import DECIMAL_PRECISION
@@ -48,6 +62,7 @@ from tests.test_models.deterministic.regression import (
 
 N_PERIODS = 5
 LAST_ALIVE_PERIOD = N_PERIODS - 2
+ALL_INTERMEDIATES: tuple[Intermediate, ...] = ("Q", "F", "U", "CE")
 # The declared action grids of `working_life`.
 ACTION_GRIDS = {
     "labor_supply": np.asarray(DiscreteGrid(category_class=LaborSupply).to_jax()),
@@ -87,14 +102,67 @@ def masked_max_and_argmax(*, Q, F):
     return masked.max(axis=1), masked.argmax(axis=1)
 
 
-def test_action_values_are_absent_unless_requested(solved):
+def test_intermediates_are_absent_unless_requested(solved):
     got = lookup(solved=solved, period=0)
-    assert (got.Q, got.F) == (None, None)
+    assert (got.Q, got.F, got.U, got.CE) == (None, None, None, None)
+
+
+def test_no_intermediates_dispatch_the_decision_without_its_parts(
+    *, solved, monkeypatch
+):
+    """Keeping nothing runs the plain decision, which may stream over actions."""
+
+    def _refuse(**_kwargs):
+        msg = "keeping no intermediates must not build a parts program"
+        raise AssertionError(msg)
+
+    expected = lookup(solved=solved, period=0, keep_intermediates=ALL_INTERMEDIATES)
+    monkeypatch.setattr(lcm.model, "with_kept_action_parts", _refuse)
+    got = lookup(solved=solved, period=0, keep_intermediates=())
+    np.testing.assert_array_equal(np.asarray(got.value), np.asarray(expected.value))
+
+
+@pytest.mark.parametrize(
+    "keep_intermediates",
+    [("Q",), ("F",), ("U",), ("CE",), ("CE", "Q"), ("F", "U", "CE")],
+)
+def test_lookup_keeps_exactly_the_requested_intermediates(
+    *, solved, keep_intermediates
+):
+    """Each requested intermediate equals the full request's; the others are None."""
+    full = lookup(solved=solved, period=0, keep_intermediates=ALL_INTERMEDIATES)
+    got = lookup(solved=solved, period=0, keep_intermediates=keep_intermediates)
+    np.testing.assert_array_equal(np.asarray(got.value), np.asarray(full.value))
+    for name in ALL_INTERMEDIATES:
+        if name in keep_intermediates:
+            np.testing.assert_array_equal(
+                np.asarray(getattr(got, name)), np.asarray(getattr(full, name))
+            )
+        else:
+            assert getattr(got, name) is None
+
+
+def test_kept_parts_program_publishes_only_the_kept_parts(solved):
+    model, _, _ = solved
+    program = model._regimes["working_life"].simulation.programs.action_values[0]
+    kept = with_kept_action_parts(program=program, roles=frozenset({CONTINUATION_CE}))
+    assert kept.output_roles == (ACTION_INDEX, DECISION_VALUE, CONTINUATION_CE)
+
+
+@pytest.mark.parametrize(
+    ("keep_intermediates", "match"),
+    [(("V",), "keep_intermediates"), (("Q", "Q"), "at most once")],
+)
+def test_lookup_refuses_unknown_or_repeated_intermediates(
+    *, solved, keep_intermediates, match
+):
+    with pytest.raises(InvalidSimulationInputError, match=match):
+        lookup(solved=solved, period=0, keep_intermediates=keep_intermediates)
 
 
 @pytest.mark.parametrize("period", [0, LAST_ALIVE_PERIOD])
 def test_action_values_cover_the_action_grid_with_a_leading_row_axis(*, solved, period):
-    got = lookup(solved=solved, period=period, return_action_values=True)
+    got = lookup(solved=solved, period=period, keep_intermediates=ALL_INTERMEDIATES)
     n_rows = len(got.value)
     action_shape = tuple(len(ACTION_GRIDS[name]) for name in got.actions)
     assert (got.Q.shape, got.F.shape, got.F.dtype) == (
@@ -106,14 +174,14 @@ def test_action_values_cover_the_action_grid_with_a_leading_row_axis(*, solved, 
 
 @pytest.mark.parametrize("period", [0, LAST_ALIVE_PERIOD])
 def test_value_is_the_max_of_feasible_action_values(*, solved, period):
-    got = lookup(solved=solved, period=period, return_action_values=True)
+    got = lookup(solved=solved, period=period, keep_intermediates=ALL_INTERMEDIATES)
     expected, _ = masked_max_and_argmax(Q=np.asarray(got.Q), F=np.asarray(got.F))
     np.testing.assert_array_equal(np.asarray(got.value), expected)
 
 
 @pytest.mark.parametrize("period", [0, LAST_ALIVE_PERIOD])
 def test_actions_are_the_argmax_of_feasible_action_values(*, solved, period):
-    got = lookup(solved=solved, period=period, return_action_values=True)
+    got = lookup(solved=solved, period=period, keep_intermediates=ALL_INTERMEDIATES)
     _, flat = masked_max_and_argmax(Q=np.asarray(got.Q), F=np.asarray(got.F))
     indices = np.unravel_index(flat, got.Q.shape[1:])
     chosen = {
@@ -128,7 +196,9 @@ def test_actions_are_the_argmax_of_feasible_action_values(*, solved, period):
 @pytest.mark.parametrize("period", [0, LAST_ALIVE_PERIOD])
 def test_requesting_action_values_leaves_actions_and_value_unchanged(*, solved, period):
     plain = lookup(solved=solved, period=period)
-    with_values = lookup(solved=solved, period=period, return_action_values=True)
+    with_values = lookup(
+        solved=solved, period=period, keep_intermediates=ALL_INTERMEDIATES
+    )
     np.testing.assert_array_equal(
         np.stack(
             [
@@ -161,7 +231,7 @@ def test_action_values_of_a_regime_without_states_or_actions_have_one_row(
         period=period,
         regime_name="dead",
         states={},
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     assert (
         got.Q.shape,
@@ -172,7 +242,9 @@ def test_action_values_of_a_regime_without_states_or_actions_have_one_row(
 
 
 def test_some_actions_are_infeasible(solved):
-    got = lookup(solved=solved, period=LAST_ALIVE_PERIOD, return_action_values=True)
+    got = lookup(
+        solved=solved, period=LAST_ALIVE_PERIOD, keep_intermediates=ALL_INTERMEDIATES
+    )
     assert not np.asarray(got.F).all()
 
 
@@ -188,7 +260,7 @@ def test_infeasible_action_with_larger_raw_value_is_not_chosen(solved):
         solved=solved,
         period=LAST_ALIVE_PERIOD,
         states=states,
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     Q, F = np.asarray(got.Q), np.asarray(got.F)
     infeasible_max = np.where(F, -np.inf, Q).reshape(len(Q), -1).max(axis=1)
@@ -203,7 +275,7 @@ def test_restricted_action_grid_restricts_the_action_values(*, solved, branch):
         solved=solved,
         period=0,
         action_grids={"labor_supply": jnp.array([branch], dtype=jnp.int32)},
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     labor_axis = list(got.actions).index("labor_supply")
     expected, _ = masked_max_and_argmax(Q=np.asarray(got.Q), F=np.asarray(got.F))
@@ -211,7 +283,7 @@ def test_restricted_action_grid_restricts_the_action_values(*, solved, branch):
     np.testing.assert_array_equal(np.asarray(got.value), expected)
 
 
-def test_action_values_are_refused_for_a_collective_regime():
+def test_intermediates_are_refused_for_a_collective_regime():
     """A collective regime's household argmax has no single action value to report."""
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     model = Model(
@@ -230,7 +302,7 @@ def test_action_values_are_refused_for_a_collective_regime():
             period=0,
             regime_name="couple",
             states={"wage": jnp.array([8.0, 40.0])},
-            return_action_values=True,
+            keep_intermediates=("CE",),
         )
 
 
@@ -255,7 +327,7 @@ def test_budgeted_lookup_returns_the_feasibility_of_each_action():
         period=1,
         regime_name="working_life",
         states={"wealth": jnp.array([2.0])},
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     assert tuple(got.actions) == ("labor_supply", "consumption")
     np.testing.assert_array_equal(
@@ -300,13 +372,13 @@ def test_action_values_bind_the_models_fixed_params(solved):
         period=LAST_ALIVE_PERIOD,
         regime_name="working_life",
         states=states,
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     expected = lookup(
         solved=solved,
         period=LAST_ALIVE_PERIOD,
         states=states,
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     np.testing.assert_array_equal(flatten_lookup(got), flatten_lookup(expected))
 
@@ -329,7 +401,7 @@ def test_flow_utility_and_continuation_are_absent_unless_requested(solved):
 def test_flow_utility_and_continuation_have_the_shape_of_the_action_values(
     *, solved, period
 ):
-    got = lookup(solved=solved, period=period, return_action_values=True)
+    got = lookup(solved=solved, period=period, keep_intermediates=ALL_INTERMEDIATES)
     assert (got.U.shape, got.CE.shape) == (got.Q.shape, got.Q.shape)
 
 
@@ -343,7 +415,7 @@ def test_linear_action_value_is_flow_utility_plus_discounted_continuation(
     the rounding of the sum is bounded relative to `|U| + discount_factor * |CE|`.
     Where both terms are zero, `Q` must be zero itself.
     """
-    got = lookup(solved=solved, period=period, return_action_values=True)
+    got = lookup(solved=solved, period=period, keep_intermediates=ALL_INTERMEDIATES)
     U, CE = np.asarray(got.U), np.asarray(got.CE)
     scale = np.abs(U) + DISCOUNT_FACTOR * np.abs(CE)
     np.testing.assert_array_almost_equal(
@@ -361,7 +433,7 @@ def test_flow_utility_is_the_utility_function_on_the_action_grid(*, solved, peri
     The utility of `working_life` reads no state, so every queried row holds the
     same table over `(labor_supply, consumption)`.
     """
-    got = lookup(solved=solved, period=period, return_action_values=True)
+    got = lookup(solved=solved, period=period, keep_intermediates=ALL_INTERMEDIATES)
     working = ACTION_GRIDS["labor_supply"] == LaborSupply.work
     table = (
         np.log(ACTION_GRIDS["consumption"])[None, :]
@@ -384,7 +456,7 @@ def test_terminal_regime_without_states_has_zero_continuation(*, solved, period)
         period=period,
         regime_name="dead",
         states={},
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     np.testing.assert_array_almost_equal(
         np.stack([np.asarray(got.U), np.asarray(got.CE)]),
@@ -400,7 +472,7 @@ def test_infeasible_actions_keep_a_finite_flow_utility_and_continuation(solved):
         solved=solved,
         period=0,
         states=states,
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     Q, F = np.asarray(got.Q), np.asarray(got.F)
     finite = np.isfinite(Q)
@@ -419,12 +491,12 @@ def test_restricted_action_grid_restricts_flow_utility_and_continuation(
     The restricted lookup compiles its own program, so the slice agrees to the
     working precision, relative to continuations that reach the hundreds.
     """
-    full = lookup(solved=solved, period=0, return_action_values=True)
+    full = lookup(solved=solved, period=0, keep_intermediates=ALL_INTERMEDIATES)
     restricted = lookup(
         solved=solved,
         period=0,
         action_grids={"labor_supply": jnp.array([branch], dtype=jnp.int32)},
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     labor_axis = 1 + list(full.actions).index("labor_supply")
     position = int(np.flatnonzero(ACTION_GRIDS["labor_supply"] == branch)[0])
@@ -485,7 +557,7 @@ def lookup_alive_on_the_grid(*, solved_epstein_zin, period):
             "wealth": jnp.asarray(wealth_rows),
             "health": jnp.asarray(health_rows),
         },
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     return got, wealth_rows, health_rows
 
@@ -603,7 +675,7 @@ def test_terminal_regime_with_states_has_its_utility_as_action_value(
         period=EZ_N_PERIODS - 1,
         regime_name="dead",
         states={"wealth": jnp.asarray(wealth)},
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     np.testing.assert_array_almost_equal(
         np.stack([np.asarray(got.U), np.asarray(got.Q), np.asarray(got.CE)]),
@@ -652,7 +724,7 @@ def test_action_value_lookup_evaluates_the_regime_kernel_once():
         period=0,
         regime_name="working_life",
         states={"wealth": jnp.array([5.0, 20.0])},
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     assert len(traces) == 1
 
@@ -670,7 +742,9 @@ def nonnegative_x(*, x: ContinuousState) -> BoolND:
     return x >= 0.0
 
 
-def lookup_actionless_terminal(*, return_action_values: bool) -> PolicyLookup:
+def lookup_actionless_terminal(
+    *, keep_intermediates: tuple[Intermediate, ...]
+) -> PolicyLookup:
     """Look up a stateful terminal regime without actions at `x = 0` and `x = -1`.
 
     Each row has one candidate: utility `x + 2`, feasible only at `x >= 0`. The
@@ -697,22 +771,22 @@ def lookup_actionless_terminal(*, return_action_values: bool) -> PolicyLookup:
         period=0,
         regime_name="terminal",
         states={"x": jnp.asarray([0.0, -1.0])},
-        return_action_values=return_action_values,
+        keep_intermediates=keep_intermediates,
     )
 
 
-@pytest.mark.parametrize("return_action_values", [False, True])
+@pytest.mark.parametrize("keep_intermediates", [(), ALL_INTERMEDIATES])
 def test_actionless_row_with_infeasible_state_has_minus_infinity_value(
-    *, return_action_values: bool
+    *, keep_intermediates: tuple[Intermediate, ...]
 ) -> None:
     """An infeasible state with no actions to choose has no admissible value."""
-    got = lookup_actionless_terminal(return_action_values=return_action_values)
+    got = lookup_actionless_terminal(keep_intermediates=keep_intermediates)
     np.testing.assert_array_equal(np.asarray(got.value), [2.0, -np.inf])
 
 
 def test_actionless_row_with_infeasible_state_keeps_its_raw_parts() -> None:
     """At an infeasible actionless row, `Q`, `U` and `CE` stay raw and `F` is false."""
-    got = lookup_actionless_terminal(return_action_values=True)
+    got = lookup_actionless_terminal(keep_intermediates=ALL_INTERMEDIATES)
     np.testing.assert_array_equal(
         np.stack([np.asarray(x, dtype=float) for x in (got.Q, got.U, got.CE, got.F)]),
         np.array([[2.0, 1.0], [2.0, 1.0], [0.0, 0.0], [1.0, 0.0]]),

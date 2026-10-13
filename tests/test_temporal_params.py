@@ -764,11 +764,14 @@ def test_age_profile_mapping_matches_the_hand_built_table_bit_for_bit() -> None:
 def test_age_profile_mapping_rejects_non_finite_or_non_numeric_ages(
     *, age: float | str | bool
 ) -> None:
-    with pytest.raises(lcm.exceptions.InvalidParamsError, match=r"age|ages"):
+    with pytest.raises(
+        lcm.exceptions.InvalidParamsError,
+        match=r"Profile: age coordinates must be finite numeric labels",
+    ):
         lcm.TimeVarying.from_profile(
-            values=jnp.array([5.0]),
-            labels=(41,),
-            age_to_label={age: 41},  # ty: ignore[invalid-argument-type]
+            values=jnp.array([5.0, 6.0]),
+            labels=(41, 42),
+            age_to_label={40: 41, age: 42},  # ty: ignore[invalid-argument-type]
         )
 
 
@@ -776,11 +779,14 @@ def test_age_profile_mapping_rejects_non_finite_or_non_numeric_ages(
 def test_period_profile_mapping_rejects_non_integer_periods(
     *, period: bool | float | str
 ) -> None:
-    with pytest.raises(lcm.exceptions.InvalidParamsError, match=r"period"):
+    with pytest.raises(
+        lcm.exceptions.InvalidParamsError,
+        match=r"Profile: period coordinates must be integers, excluding booleans",
+    ):
         lcm.TimeVarying.from_profile(
-            values=jnp.array([5.0]),
-            labels=(41,),
-            period_to_label={period: 41},  # ty: ignore[invalid-argument-type]
+            values=jnp.array([5.0, 6.0]),
+            labels=(41, 42),
+            period_to_label={0: 41, period: 42},  # ty: ignore[invalid-argument-type]
         )
 
 
@@ -856,6 +862,36 @@ def test_temporal_alignment_keeps_values_for_canonical_range_validation(
             params={"wage": lcm.TimeVarying(values=values, periods=(0, 1))},
             log_level="off",
         )
+
+
+@pytest.mark.parametrize("builder", ["hand_built", "from_profile"])
+def test_out_of_range_integer_table_is_rejected_before_solving(builder: str) -> None:
+    values = np.array([2**32, 1], dtype=np.int64)
+    table = (
+        lcm.TimeVarying(values=values, ages=(40, 41))
+        if builder == "hand_built"
+        else lcm.TimeVarying.from_profile(
+            values=values, labels=(40, 41), age_to_label={40: 40, 41: 41}
+        )
+    )
+    with pytest.raises(ValueError, match=r"wage.*int32 overflow"):
+        _model(age=True).solve(params={"wage": table}, log_level="off")
+
+
+@pytest.mark.parametrize("builder", ["hand_built", "from_profile"])
+def test_float32_overflow_reports_the_supplied_table_value(builder: str) -> None:
+    if jax.config.x64_enabled:
+        pytest.skip("A float64-to-float32 range check requires float32 mode.")
+    values = np.array([1e39, 1.0])
+    table = (
+        lcm.TimeVarying(values=values, ages=(40, 41))
+        if builder == "hand_built"
+        else lcm.TimeVarying.from_profile(
+            values=values, labels=(40, 41), age_to_label={40: 40, 41: 41}
+        )
+    )
+    with pytest.raises(OverflowError, match=r"wage.*1e\+39"):
+        _model(age=True).solve(params={"wage": table}, log_level="off")
 
 
 def _zero() -> FloatND:
