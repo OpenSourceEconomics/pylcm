@@ -8,6 +8,9 @@ from typing import (
     TYPE_CHECKING,
 )
 
+import numpy as np
+import pandas as pd
+import xarray as xr
 from beartype import beartype
 
 from lcm._solver_api.authority import (
@@ -143,3 +146,65 @@ class SolutionResult:
         from lcm.persistence import save_solution  # noqa: PLC0415
 
         return save_solution(solution=self, path=path)
+
+    def value_array(
+        self, *, period: int, regime: RegimeName, use_labels: bool = True
+    ) -> xr.DataArray:
+        """Return one value-function array with its state coordinates, named `V`.
+
+        Dimensions follow the stored value schema's axis order, including a
+        trailing `stakeholder` dimension for collective values; a regime without
+        states yields a zero-dimensional array. Coordinates are the resolved
+        process and period-specific grid nodes used by this solve. With
+        `use_labels=True`, discrete states carry their labels as an (ordered)
+        categorical index in declaration order, matching simulation labels;
+        otherwise they carry integer codes. Axis names must be unique and must
+        not be `V`.
+
+        The array wraps the stored value as is, so a device-resident value stays
+        on its device until it is converted. Select coordinates with `.sel`
+        before converting to a table to keep the conversion small.
+        """
+        value = self.value(period=period, regime=regime)
+        schema = self.metadata.value_schemas[period, regime]
+        if "V" in schema.axis_names or len(set(schema.axis_names)) != len(
+            schema.axis_names
+        ):
+            raise ValueError("Value axes must be unique and must not be named 'V'.")
+        if len(schema.named_axes) != value.ndim:
+            raise ValueError("This value schema does not retain grid coordinates.")
+        if value.shape != schema.shape:
+            raise ValueError("Value shape differs from its stored schema.")
+        coordinates: dict[str, pd.Index] = {}
+        for axis in schema.named_axes:
+            nodes = pd.Index(np.asarray(axis.coordinates))
+            domain = schema.categorical_domains.get(axis.name)
+            if use_labels and domain is not None:
+                nodes = pd.CategoricalIndex(
+                    pd.Categorical.from_codes(
+                        pd.Index(domain.codes).get_indexer(nodes),
+                        categories=pd.Index(domain.labels),
+                        ordered=domain.ordered,
+                    )
+                )
+            coordinates[axis.name] = nodes
+        return xr.DataArray(value, dims=schema.axis_names, coords=coordinates, name="V")
+
+    def value_frame(
+        self, *, period: int, regime: RegimeName, use_labels: bool = True
+    ) -> pd.DataFrame:
+        """Return grid values in long form, with state columns followed by `V`.
+
+        The frame is `value_array(...)` in long form: one column per dimension,
+        in the same order and with the same coordinates and categorical labels,
+        followed by `V`.
+
+        This explicit call materializes one row per grid point and stakeholder,
+        so large grids produce large frames; select a slice of `value_array`
+        first to convert only part of it. For values between nodes, use
+        `Model.lookup_policy`, which uses simulation's interpolation.
+        """
+        array = self.value_array(period=period, regime=regime, use_labels=use_labels)
+        if not array.dims:
+            return pd.DataFrame({"V": np.asarray(array).reshape(-1)})
+        return array.to_dataframe().reset_index()

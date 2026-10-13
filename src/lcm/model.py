@@ -1761,6 +1761,7 @@ class Model:
                 log=log,
                 call_id=call_id,
                 component_values=retained,
+                process_grid_resolver=process_grid_resolver,
             )
         internal_result = self._solve_compiled(
             flat_params=flat_params,
@@ -1786,6 +1787,7 @@ class Model:
             flat_params=flat_params,
             log=log,
             call_id=call_id,
+            process_grid_resolver=process_grid_resolver,
         )
 
     @property
@@ -1846,6 +1848,7 @@ class Model:
         flat_params: FlatParams,
         log: logging.Logger,
         call_id: CallId | None,
+        process_grid_resolver: ProcessGridResolver | None = None,
         component_values: RetainedComponentValues | None = None,
     ) -> SolutionResult:
         """Assemble the public result of one solve's engine outputs."""
@@ -1868,6 +1871,8 @@ class Model:
                 durable_identity=self.durable_identity,
                 authority=authority,
                 component_values=component_values,
+                flat_params=flat_params,
+                process_grid_resolver=process_grid_resolver,
             )
 
     def _component_schedule(
@@ -3715,6 +3720,7 @@ class Model:
                     log=log,
                     call_id=call_id,
                     component_values=component_values.retained,
+                    process_grid_resolver=process_grid_resolver,
                 )
             with solve_phase(name="result_finalization", logger=log, call_id=call_id):
                 if entry_allocations is not None:

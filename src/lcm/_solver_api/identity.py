@@ -63,7 +63,7 @@ SOLVER_API_VERSION = 3
 # Version 2 covers typed internal outputs between core programs, the host-driven
 # core-execution disposition, and compilation keys formed from program identity.
 
-SOLUTION_SCHEMA_VERSION = 2
+SOLUTION_SCHEMA_VERSION = 3
 # Version of the labelled in-memory solution schema.
 
 SOLUTION_FORMAT_VERSION = 2

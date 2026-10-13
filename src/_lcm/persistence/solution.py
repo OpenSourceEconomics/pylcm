@@ -2075,6 +2075,23 @@ def _metadata_to_manifest(metadata: SolutionMetadata) -> dict[str, JSONValue]:
                 "shape": list(schema.shape),
                 "dtype": schema.dtype,
                 "axis_names": list(schema.axis_names),
+                "named_axes": [
+                    {
+                        "name": axis.name,
+                        "length": axis.length,
+                        "role": axis.role.value,
+                        "coordinates": list(axis.coordinates),
+                    }
+                    for axis in schema.named_axes
+                ],
+                "categorical_domains": {
+                    name: {
+                        "labels": list(domain.labels),
+                        "codes": list(domain.codes),
+                        "ordered": domain.ordered,
+                    }
+                    for name, domain in schema.categorical_domains.items()
+                },
             }
             for (period, regime), schema in sorted(metadata.value_schemas.items())
         ],
@@ -2329,7 +2346,15 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
             if type(item) is not dict:
                 raise TypeError("value schema is not an object")
             entry = cast("dict[str, JSONValue]", item)
-            if set(entry) != {"period", "regime", "shape", "dtype", "axis_names"}:
+            if set(entry) != {
+                "period",
+                "regime",
+                "shape",
+                "dtype",
+                "axis_names",
+                "named_axes",
+                "categorical_domains",
+            }:
                 raise ValueError("invalid value schema fields")
             coordinate = (
                 _require_nonnegative_exact_int(
@@ -2359,6 +2384,10 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
                         value=name, label="value-schema axis name"
                     )
                     for name in axis_names_raw
+                ),
+                named_axes=_axis_descriptors_from_manifest(entry.get("named_axes")),
+                categorical_domains=_categorical_domains_from_manifest(
+                    entry.get("categorical_domains")
                 ),
             )
 

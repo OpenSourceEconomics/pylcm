@@ -312,6 +312,10 @@ class ValueArraySchema:
     """NumPy dtype name."""
     axis_names: tuple[str, ...]
     """Canonical axis name behind each array dimension, in order."""
+    named_axes: tuple[AxisDescriptor, ...] = ()
+    """Resolved grid coordinates in the same order as the value dimensions."""
+    categorical_domains: Mapping[str, CategoryDomain] = MappingProxyType({})
+    """Labels and ordering for discrete state axes."""
 
     def __post_init__(self) -> None:
         if any(size < 0 for size in self.shape):
@@ -322,6 +326,29 @@ class ValueArraySchema:
             raise ValueError(
                 "ValueArraySchema.axis_names must name every array dimension."
             )
+        if self.named_axes:
+            if tuple((axis.name, axis.length) for axis in self.named_axes) != tuple(
+                zip(self.axis_names, self.shape, strict=True)
+            ):
+                raise ValueError(
+                    "ValueArraySchema named axes must match names and shape."
+                )
+            if any(len(axis.coordinates) != axis.length for axis in self.named_axes):
+                raise ValueError("ValueArraySchema requires every grid coordinate.")
+        domains = dict(self.categorical_domains)
+        if not domains.keys() <= set(self.axis_names):
+            raise ValueError("ValueArraySchema categorical domains must name axes.")
+        for axis in self.named_axes:
+            if (
+                axis.role is AxisRole.STATE
+                and axis.name in domains
+                and axis.coordinates != domains[axis.name].codes
+            ):
+                raise ValueError(
+                    "ValueArraySchema category codes must match coordinates."
+                )
+        object.__setattr__(self, "named_axes", tuple(self.named_axes))
+        object.__setattr__(self, "categorical_domains", MappingProxyType(domains))
 
 
 @dataclass(frozen=True, kw_only=True)
