@@ -33,7 +33,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.composite_state import CompositeVariant
-from lcm.exceptions import InvalidInitialConditionsError
+from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -352,3 +352,34 @@ def test_labelled_initial_frame_names_members_like_the_dense_model() -> None:
         ).to_dataframe(use_labels=False)[["subject_id", "period", "choice"]]
 
     pd.testing.assert_frame_equal(run(_composite("closed")), run(_model()))
+
+
+def test_unknown_member_label_in_initial_frame_is_named() -> None:
+    """A label that is no category of its member is reported as that label."""
+    frame = pd.DataFrame(
+        {
+            "regime_name": ["alive"],
+            "age": [0.0],
+            "wealth": [2.0],
+            "offer": ["no"],
+            "count_a": ["zero"],
+            "count_b": ["zero"],
+            "count_c": ["bogus"],
+        }
+    )
+    with pytest.raises(InvalidInitialConditionsError, match="bogus"):
+        _composite("closed").simulate(
+            params=_PARAMS, initial_conditions=frame, log_level="off", seed=1
+        )
+
+
+def test_composite_name_taken_by_an_action_is_refused() -> None:
+    """The generated state may not reuse the name of a declared action."""
+    with pytest.raises(ModelInitializationError, match="choice"):
+        _model(
+            composite_states={
+                "choice": CompositeState(
+                    members=_MEMBERS, start_codes=dict.fromkeys(_MEMBERS, (0,))
+                )
+            }
+        )

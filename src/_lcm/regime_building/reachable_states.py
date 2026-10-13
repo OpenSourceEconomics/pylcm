@@ -62,6 +62,9 @@ class ReachableStates:
     closed: tuple[Codes, ...]
     """Sorted union of every node's tuples, closed under every active period's laws."""
 
+    carriers: frozenset[RegimeName]
+    """Regimes that carry every named state."""
+
     skipped_constraints: MappingProxyType[
         tuple[RegimeName, FunctionName], tuple[ReferenceName, ...]
     ]
@@ -144,6 +147,7 @@ def enumerate_reachable_states(
             {node: frozenset(tuples) for node, tuples in sorted(by_node.items())}
         ),
         closed=tuple(sorted(closed)),
+        carriers=carriers,
         skipped_constraints=MappingProxyType(dict(sorted(evaluator.skipped.items()))),
     )
 

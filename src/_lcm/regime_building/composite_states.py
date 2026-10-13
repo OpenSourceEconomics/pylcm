@@ -44,6 +44,7 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
+from _lcm.utils.functools import publish_signature
 from _lcm.utils.namespace import flatten_regime_namespace
 from lcm.composite_state import CompositeState, CompositeVariant
 from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
@@ -160,13 +161,17 @@ def lower_composite_states(
         else tuple(sorted(set().union(*reachable.by_node.values())))
     )
     members = declaration.members
-    carriers = frozenset(
-        regime_name
-        for regime_name, regime in regimes.items()
-        if all(member in regime.states for member in members)
-    )
-    first = engine[min(carriers)].solution.grids
-    shape = tuple(len(cast("DiscreteGrid", first[member]).codes) for member in members)
+    carriers = reachable.carriers
+    declared = regimes[min(carriers)].states
+    member_grids = [
+        grid
+        for member in members
+        if isinstance(grid := declared.get(member), DiscreteGrid)
+    ]
+    if len(member_grids) != len(members):
+        msg = f"Every member of {name!r} must be held on a discrete grid."
+        raise ModelInitializationError(msg)
+    shape = tuple(len(grid.codes) for grid in member_grids)
     table = np.asarray(codes, dtype=np.int32).reshape(len(codes), len(members))
     encoding = np.full(shape, MISSING_CAT_CODE, dtype=np.int32)
     encoding[tuple(table.T)] = np.arange(len(codes), dtype=np.int32)
@@ -178,9 +183,7 @@ def lower_composite_states(
         table=table,
         encoding=encoding,
         carriers=carriers,
-        member_labels=tuple(
-            tuple(cast("DiscreteGrid", first[member]).categories) for member in members
-        ),
+        member_labels=tuple(tuple(grid.categories) for grid in member_grids),
     )
     grid = DiscreteGrid(_category_class(name=name, n_codes=len(codes)))
     period_masks = (
@@ -255,6 +258,16 @@ def _lower_labelled_frame(
             continue
         members = out.reindex(columns=list(lowering.members))
         given = members.notna().all(axis=1).to_numpy()
+        for member, labels in zip(
+            lowering.members, lowering.member_labels, strict=True
+        ):
+            unknown = sorted(set(members[member][given].astype(str)) - set(labels))
+            if unknown:
+                msg = (
+                    f"Initial labels {unknown} of {member!r} are not among its "
+                    f"categories {list(labels)}."
+                )
+                raise InvalidInitialConditionsError(msg)
         rows = np.stack(
             [
                 pd.Categorical(members[member], categories=labels).codes
@@ -356,20 +369,22 @@ def _read_flat(
 
 def _publish(
     *,
-    target: object,  # noqa: PAN001 - any callable instance
+    target: _MemberDecoder | _CompositeEncoder | _ReachableAtPeriod,
     args: Mapping[ReferenceName, object],  # noqa: PAN001 - annotation objects
     name: str,
     returns: object = DiscreteState,  # noqa: PAN001 - an annotation object
 ) -> None:
     """Give a callable instance the signature and annotations the DAG reads."""
-    signature = inspect.Signature(
-        [
-            inspect.Parameter(arg, inspect.Parameter.KEYWORD_ONLY, annotation=kind)
-            for arg, kind in args.items()
-        ],
-        return_annotation=returns,
+    publish_signature(
+        target=target,
+        signature=inspect.Signature(
+            [
+                inspect.Parameter(arg, inspect.Parameter.KEYWORD_ONLY, annotation=kind)
+                for arg, kind in args.items()
+            ],
+            return_annotation=returns,
+        ),
     )
-    object.__setattr__(target, "__signature__", signature)
     object.__setattr__(target, "__annotations__", {**args, "return": returns})
     object.__setattr__(target, "__name__", name)
 
