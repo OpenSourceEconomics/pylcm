@@ -142,10 +142,6 @@ class QAndFParts(NamedTuple):
     Q: FloatND
     """Action value."""
 
-    Q_selection: FloatND | None = None
-    """`W_sel(utility=U, CE=CE, **W_sel_params)`, the value the action is
-    selected on, or `None` when the regime's Koopmans aggregator selects."""
-
 
 def _compare_swap_values(
     *, left: FloatND, right: FloatND, ascending: bool
@@ -338,7 +334,6 @@ def get_Q_and_F(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
-    selection_aggregator: EconFunction | None = None,
     certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...] = (),
     continuation_functions: EconFunctionsMapping | None = None,
@@ -391,8 +386,6 @@ def get_Q_and_F(
             info.
         koopmans_aggregator: The regime's Bellman aggregator, combining
             utility and the certainty equivalent into `Q`.
-        selection_aggregator: The aggregator the action is selected on, or
-            `None` when the Bellman aggregator selects.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None` for the linear expectation.
         co_map_state_names: Tuple of state names co-mapped with the continuation V —
@@ -449,13 +442,6 @@ def get_Q_and_F(
     _build_W_kwargs = _get_build_W_kwargs(
         functions=functions, koopmans_aggregator=koopmans_aggregator
     )
-    build_selection_kwargs = (
-        None
-        if selection_aggregator is None
-        else _get_build_W_kwargs(
-            functions=functions, koopmans_aggregator=selection_aggregator
-        )
-    )
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[U_and_F, *continuation_deps],
@@ -464,11 +450,6 @@ def get_Q_and_F(
             | flat_param_names
             | continuation_arg_names
             | _build_W_kwargs.arg_names
-            | (
-                frozenset()
-                if build_selection_kwargs is None
-                else build_selection_kwargs.arg_names
-            )
         ),
         exclude=frozenset(),
     )
@@ -478,8 +459,6 @@ def get_Q_and_F(
         compute_CE=compute_CE,
         koopmans_aggregator=koopmans_aggregator,
         build_W_kwargs=_build_W_kwargs,
-        selection_aggregator=selection_aggregator,
-        build_selection_kwargs=build_selection_kwargs,
         arg_names=tuple(arg_names_of_Q_and_F),
         continuation_reads=_continuation_reads(
             deps=continuation_deps, arg_names=continuation_arg_names
@@ -510,11 +489,6 @@ def _continuation_reads(
     ):
         return None
     return frozenset(parameter.name for parameter in parameters) | arg_names
-
-
-def has_selection_aggregator(*, Q_and_F: QAndFFunction) -> bool:
-    """Return whether the kernel selects its action on a separate aggregator."""
-    return getattr(Q_and_F, "selection_aggregator", None) is not None
 
 
 def get_Q_and_F_parts(*, Q_and_F: QAndFFunction) -> Callable[..., QAndFParts]:
@@ -552,13 +526,6 @@ class _QAndF:
     """The regime's Bellman aggregator `W`."""
     build_W_kwargs: Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]
     """Assembles `W`'s further arguments from the cell."""
-    selection_aggregator: EconFunction | None
-    """The aggregator `W_sel` the action is selected on, or `None` when `W`
-    selects."""
-    build_selection_kwargs: (
-        Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]] | None
-    )
-    """Assembles `W_sel`'s further arguments from the cell."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
     continuation_reads: frozenset[str] | None
@@ -656,17 +623,6 @@ class _QAndF:
             CE=CE,
             **self.build_W_kwargs(states_actions_params),
         )
-        Q_selection = (
-            None
-            if self.selection_aggregator is None
-            else jnp.asarray(
-                self.selection_aggregator(
-                    utility=U_arr,
-                    CE=CE,
-                    **self.build_selection_kwargs(states_actions_params),
-                )
-            )
-        )
 
         # Handle cases when there is only one state.
         # In that case, the parts are scalars, but we require arrays as output.
@@ -675,7 +631,6 @@ class _QAndF:
             F=jnp.asarray(F_arr),
             CE=jnp.asarray(CE),
             Q=jnp.asarray(Q_arr),
-            Q_selection=Q_selection,
         ), tuple(landing_counts)
 
 

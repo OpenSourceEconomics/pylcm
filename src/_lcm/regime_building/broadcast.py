@@ -692,9 +692,6 @@ def _valuation_roots(
         aggregator = regime.get_koopmans_aggregator(phase=phase) or koopmans_aggregator
         if aggregator is not None:
             roots["__koopmans_aggregator"] = aggregator
-        selection = regime.get_selection_aggregator(phase=phase)
-        if selection is not None:
-            roots["__selection_aggregator"] = selection
     return MappingProxyType(roots)
 
 

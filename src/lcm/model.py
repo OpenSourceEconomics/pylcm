@@ -5090,8 +5090,8 @@ def _validate_sharded_state_capability(
         "coordinate, concrete discrete grids, fixed unfolded Gauss-Hermite "
         "normal/log-normal processes, fixed Rouwenhorst/Tauchen processes and "
         "carried linear grids. Runtime state grids, folded processes, "
-        "mixed solvers, collective/gated/same-period routes, taste shocks and "
-        "selection aggregators are unsupported."
+        "mixed solvers, collective/gated/same-period routes and taste shocks "
+        "are unsupported."
     )
     if len(sharded_states) != 1:
         raise ExecutionPlanningError(message)
@@ -5111,7 +5111,6 @@ def _validate_sharded_state_capability(
             or regime.value_constraints
             or regime.same_period_refs
             or regime.taste_shocks is not None
-            or regime.selection_aggregator is not None
         ):
             raise ExecutionPlanningError(
                 f"{message} Unsupported regime: {regime_name!r}."
