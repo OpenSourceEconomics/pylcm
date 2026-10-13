@@ -340,7 +340,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
-    FEASIBILITY_SOURCE: "cc3119d434cfae994be210439ac7184399e3e1779821b008ea963d1c1648e331",
+    FEASIBILITY_SOURCE: "a977b82186236c442f799ad361a1d1f10df5a1b495680ed6d8487c9b8a754649",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
     SUPPORT_TRANSITION_CHECKS_SOURCE: "565f0581f4adf76060653c6b224a6e68744b8f9887e00972a26afe175ff1a888",
     SUPPORT_DIAGNOSTICS_SOURCE: "ce6d8924504860accdc21a3e81b0cc92029b8e35ee869da4478140a990cf9da0",
@@ -363,7 +363,7 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_OPERATIONS_SOURCE: "481b768fc97b134c671c386336a25e9e3e78b631a0a3bc4643d9e74d0ba47e54",
     COMBINED_CHUNK_PLANNING_SOURCE: "807378c7ac745eb7fc3d42c27020f6b40d10d40da3041dcdb647e7e2d3e0d90a",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "85070e5f57210e201be248c1f2deae8068dce674112f13efdb0eb94c1dd7f7b4",
-    COMBINED_CHUNK_PROFILES_SOURCE: "d3e35d13b366f2e8b3e40bcf2814ae9b1f5a54d7a4d563dacc5346e85d872f22",
+    COMBINED_CHUNK_PROFILES_SOURCE: "187bdadd72e23ba7feea8694ee925d1a502df5fe52012f0680df8d08baadb51a",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "477f39609fff5371d88d941cc5c4a0c9ab9fe3692ad2845a3fc3a6befb633f42",
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "0690a3dfc0ae36cab5d20639919ad25003e37d02ea578f5d6814503b580cae13",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
@@ -409,7 +409,7 @@ _SOURCE_SEALS = {
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "dd7fe6cba6e9aa6e7b42688f294ed91b0fa03016456293865d4fbaea027c03b7",
     PROCESSING_SOURCE: "62ddc46424f68b2c023f97e2d6e20e77c5426d8d5386bbf077f8f29db2a66172",
-    GRID_SEARCH_SOURCE: "d2072683328d07682147fa21189d19e249bbf67e5d4b32c55d9960d90ae86e12",
+    GRID_SEARCH_SOURCE: "faf6205d1316b087f35cfd6f072712cbda1536ce4bc4e343307956a18b9c0167",
     CORE_PROGRAM_SOURCE: "21e86cda882a227086aa6550a63daa9492071f7a14a9e56565e751a67ffae2b1",
     OUTPUT_LAYOUT_SOURCE: "1173fe52bc6c9315b328d5ed5bc752f8012614443bd15756e0bf7245595aafbb",
     VALUE_TRANSFER_SOURCE: "c3b8b9df21ea6ebb6d029becdafd4da8905f1a3699d2a1ff5d206af218d097f6",
@@ -431,7 +431,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "584b0b3f6bbee4e62000013a8842c249953e8e6e5d8928afe21b7e9b68a95011",
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
-    BACKWARD_INDUCTION_SOURCE: "3080de0da5669997f55534688ac857644246fc214efb2ec6817da1d2a990756c",
+    BACKWARD_INDUCTION_SOURCE: "bd156449e1bb2dcc47b115a3818be9039ddc6ca0211e20457a11fc6c06e224f8",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
     INITIAL_CONDITIONS_SOURCE: "007cf9fac0d78321f2dbb2920396268e4de85aa11b45f75021df0c359cfeea6d",
     RESULT_SOURCE: "90aef72078273514aab54a02db61791a1644cead6c5d1c5db3a08822996583bf",
@@ -482,7 +482,7 @@ EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
 # that no family selects is a verifier error rather than a silent no-op.
 _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     FEASIBILITY_SOURCE: (
-        "75eea39103489a90c5c61b3a9d57e010b375c2820128ba175cccb62dcb9a15cd",
+        "d29bb927eb84020be66ccc43e7cd95a462773573df0f12ee0dab31264b80486e",
         {
             "CountedGridSearch.__call__": "b4079d0cec5e6e8312189e663d7c8eeb3d2de45a83e8cd88655d910837630c45",
             "FeasibilityKernelOutput.__post_init__": "73fb942f391739a207ebe8f57aafbe812430350d202a9846b70bba00f8f25f53",
@@ -554,6 +554,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_admits_any_action": "7b79e5bde0a32eb36456597caf5b61e1e04736099b78e8c9d2a89382747c4678",
             "_per_constraint_feasibility": "9a40c5071201df771c58b17e05c7eb088a22e94a8e5a06fef835a854b62b4b4f",
             "_initial_physical_joint_states": "86f8eedbe28cf8cfe0f69cafb8968bd619de673540f0325c495de0e2085df68b",
+            "_replace_joint_coordinates": "926e669f6474495d0b914bd8dbc6268f3182efbd7cad92b95ae6d232ab397bf8",
             "_format_infeasibility_message": "b6683eabf3a727ebf1f61b8aa98c2818fa0fd00a7c9f295692fefbad40c75b03",
             "_gather_feasibility_inputs": "557c76957b3e216d9a95166daee80fefdd0af163633920b30b1d7215596d8515",
             "_subject_feasibility_flag": "58bfc237bc5b8a51897de10ffee1eb33f7a2cb6504c094ed48544946185bd404",
@@ -934,7 +935,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     COMBINED_CHUNK_PROFILES_SOURCE: (
         "f05f43c3290105f51a298dff4be72ef0840d5218d1864944cb21f2586ec286d4",
         {
-            "profile_simulation_chunk": "48cb679eb4f813c02d90bd6454f5431a0450e2333d6ae02761b4b8400e45a227",
+            "profile_simulation_chunk": "fefca240be792ef6245a241d7e150318d9311f8be52f8d148537aec566e675c5",
             "_period_copy_reservation": "bf995f9f6b2ee949a83d862cac85fb1e0148fd80ac225c0e0c469f6f758b05f2",
             "_policy_read_sources": "a83d15eb8de8a505e80cdce7a9448b11d7a9ab3001e92beb7676b491fb63245e",
             "_retained_read_source": "e0233031b8fb4dcb494575a397f5c2e9ccbfd45a69d0e6f951bb3612323cf82f",
@@ -1095,7 +1096,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     BACKWARD_INDUCTION_SOURCE: (
-        "5b4ba2d103d36c948cbd79997b4846ea05ef41b8f3499c891859f78a6fe7b9af",
+        "bcccb1ca7d18caf1f4d95e1fb78ea58822ce2b3f1f6bcc5fc1590019b1807c83",
         {
             "_period_transfer_scratch_reservations": "e614b686048f4131f4b612386ca89ed8cec5f786fc64ac82f7ba87866e54fc76",
             "_continuous_value_replica_required": "4f22692255b3746899ee7b2849776ea8967090af80d68d46272cd0b9a5bc771b",
@@ -1142,7 +1143,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_attach_resolved_output_layout": "86b17ee66949cdc2a0751de70bf01eae7498333b18d9252d0c969e272498069c",
             "_publish_kernel_value": "50d720543d37adaae9c5e8799d72306ab1456d98ce590b3083b0d501d97e3516",
             "_resident_bytes_by_triple": "b87b5df2ce91647adf464bf2175d9453c186c1c65a7cc7e54ff6967dc015aa1d",
-            "_resident_inventory_by_triple": "9af4d09e320a0cdb362f10cafb326ef4d8f66fe0047bc743e459cedbc52dc15c",
+            "_resident_inventory_by_triple": "3a1a4cf02baf2c360ac7a68259b8deff80a73589f89452a79b424d18a02ae7da",
             "_candidate_resident_bytes": "ac8b5a9aad74d28aa50407882824f567314e9a582dc47b60766eef33686689df",
             "_compiler_reads_source": "3a1099c48958b2a5ec59affe0d9cf0dc179d773c8e96e9fcf821526572f23439",
             "_period_copy_reservations": "4bf41c2f458b194cef80ab182a8b9e3db392353ae606828c3699b07c0c63a831",
@@ -1669,7 +1670,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_GridSearchPeriodKernel.__post_init__": "1e8c230f0845d9b8335c667f38593221a957c34955efe44921763bce6cd24ac7",
             "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
             "_GridSearchPeriodKernel.with_fixed_params": "5f5a26e02b136c760bd242cd91c22b76153adc9828a13d20de7a6a98f5877e14",
-            "_GridSearchPeriodKernel.__call__": "0472e596d20a3918ae6998909e598ba2eb9cdbc27ef572d415b330ee22fac8fa",
+            "_GridSearchPeriodKernel.__call__": "06cc339f35e36b3ad91911bdd7eb9c2642e5c4f44f19c57a711ee4194a27a5a9",
         },
     ),
     MAX_Q_SOURCE: (
@@ -5096,6 +5097,7 @@ _SIMULATION_ADAPTER_CONTRACTS = _contracts(
             "_admits_any_action",
             "_per_constraint_feasibility",
             "_initial_physical_joint_states",
+            "_replace_joint_coordinates",
             "_format_infeasibility_message",
             "_gather_feasibility_inputs",
             "_subject_feasibility_flag",

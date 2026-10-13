@@ -143,13 +143,24 @@ def _value_bytes() -> int:
     return _N_WEALTH * jnp.zeros(()).dtype.itemsize
 
 
+def _counter_bytes() -> int:
+    """Feasibility counters every device reserves at each period of the witness.
+
+    One regime is active per period: its int32 pair of empty-action and other-Inf
+    counts, plus the pair that merges invariant blocks.
+    """
+    return 2 * 4 * (1 + 1)
+
+
 def _fixed_fixture_bytes() -> int:
-    """Two state grids, two V placeholders, consumption, beta, work and ages.
+    """Two state grids, two V placeholders, consumption, beta, work, ages, counters.
 
     The completed state spaces reuse the base arrays in this fixed-grid witness.
     The two integer work codes and four integer ages each occupy four bytes.
     """
-    return 4 * _value_bytes() + 4 * jnp.zeros(()).dtype.itemsize + 6 * 4
+    return (
+        4 * _value_bytes() + 4 * jnp.zeros(()).dtype.itemsize + 6 * 4 + _counter_bytes()
+    )
 
 
 def _fake_peak(
@@ -282,7 +293,12 @@ def test_resident_bytes_grow_by_one_retained_value_per_earlier_period(
         resident[("acting", 2, "main")],
         resident[("acting", 1, "main")],
         resident[("acting", 0, "main")],
-    ) == (0, 0, _value_bytes(), 2 * _value_bytes())
+    ) == (
+        _counter_bytes(),
+        _counter_bytes(),
+        _value_bytes() + _counter_bytes(),
+        2 * _value_bytes() + _counter_bytes(),
+    )
 
 
 def test_every_core_of_one_cell_sees_the_same_resident_bytes(
@@ -306,7 +322,7 @@ def test_a_second_core_of_one_cell_is_not_counted_as_a_concurrent_peer(
         extra_cores=MappingProxyType({("acting", 1): "replay"}),
     )
 
-    assert resident[("acting", 1, "main")] == _value_bytes()
+    assert resident[("acting", 1, "main")] == _value_bytes() + _counter_bytes()
 
 
 def test_the_period_below_a_retained_value_streams_narrower(

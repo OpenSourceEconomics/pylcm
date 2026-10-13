@@ -66,8 +66,9 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidSimulationInputError
+from lcm.exceptions import InvalidSimulationInputError, NoFeasibleActionError
 from lcm.koopmans_aggregation import LinearAggregator
+from lcm.result import SimulationResult
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     SIMULATION_POLICY,
@@ -905,37 +906,31 @@ def test_dissolution_edge_leg_projector_computes_the_non_primary_states_too():
 # mask: married_ir's mask is empty at wage=2).
 
 
-def test_value_masked_simulate_reports_the_solved_masked_value():
-    """A household evaluated directly IN married_ir at the D=True cell gets -inf.
+def _simulate_directly_in_married_ir(*, wages: list[float]) -> SimulationResult:
+    """Simulate households placed directly IN married_ir at period 1.
 
-       Initializing subjects directly into `married_ir` (bypassing the `married`
-       source, so the value router's routing does not preempt it) confirms the
-       simulate-side Q_and_F applies the IDENTICAL value-aware feasibility mask
-    the solve phase used: the argmax's `V_arr` reports the same `-inf`
-       sentinel `solution[1]["married_ir"]` carries at wage=2 (the empty mask;
-       the household's real-world routing away from this cell is the gated
-       edge's separate concern, covered by the dissolution test above).
+    Initializing subjects directly into `married_ir` bypasses the `married`
+    source, so the value router's routing does not preempt the masked cell.
     """
     ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_dissolution()
     )
-    np.testing.assert_allclose(
-        np.asarray(solution[1]["married_ir"])[1], [-np.inf, -np.inf]
-    )
-
+    n_subjects = len(wages)
     initial_conditions = MappingProxyType(
         {
-            "wage": jnp.array([1.0, 2.0, 3.0]),
-            "age": jnp.array([1.0, 1.0, 1.0]),
-            "regime_id": jnp.array(
-                [regime_names_to_ids["married_ir"]] * 3, dtype=jnp.int32
+            "wage": jnp.array(wages),
+            "age": jnp.ones(n_subjects),
+            "regime_id": jnp.full(
+                n_subjects, regime_names_to_ids["married_ir"], dtype=jnp.int32
             ),
             "own_stakeholder": jnp.full(
-                3, regimes["married_ir"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+                n_subjects,
+                regimes["married_ir"].stakeholder_names_to_ids["f"],
+                dtype=jnp.int32,
             ),
         }
     )
-    result = simulate(
+    return simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
         regimes=bind_eager_simulation(regimes=regimes),
@@ -947,11 +942,37 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
         simulation_output_dtypes={},
         seed=0,
     )
-    married_ir = result.raw_results["married_ir"][1]
-    np.testing.assert_array_equal(np.asarray(married_ir.in_regime), [True, True, True])
+
+
+def test_value_masked_solve_stores_minus_inf_at_the_empty_cell():
+    """The solve phase's value-aware mask leaves married_ir empty at wage=2."""
+    *_, solution, _ = _solve_dissolution()
+
     np.testing.assert_allclose(
-        np.asarray(married_ir.V_arr), [[2.0, 1.0], [-np.inf, -np.inf], [6.0, 3.0]]
+        np.asarray(solution[1]["married_ir"])[1], [-np.inf, -np.inf]
     )
+
+
+def test_value_masked_simulate_refuses_the_solved_empty_cell():
+    """Simulate applies the solve's mask: the household at wage=2 has no action.
+
+    The gated edge routes real households away from this cell; one placed on it
+    directly is refused, named by its state, rather than assigned an action.
+    """
+    with pytest.raises(
+        NoFeasibleActionError,
+        match=r"Regime 'married_ir', period 1, state \{'wage': 2\.0\} has no",
+    ):
+        _simulate_directly_in_married_ir(wages=[1.0, 2.0, 3.0])
+
+
+def test_value_masked_simulate_reports_the_solved_values_off_the_empty_cell():
+    """Households on the cells the mask leaves feasible get the solved values."""
+    married_ir = _simulate_directly_in_married_ir(wages=[1.0, 3.0]).raw_results[
+        "married_ir"
+    ][1]
+
+    np.testing.assert_allclose(np.asarray(married_ir.V_arr), [[2.0, 1.0], [6.0, 3.0]])
 
 
 # Test 5: pin — calling the internal `simulate()` for a dissolution-gated model

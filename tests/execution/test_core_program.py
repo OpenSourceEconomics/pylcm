@@ -31,6 +31,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     VALUE,
+    StateAxesLeading,
     resolve_output_layout,
 )
 from _lcm.execution.reductions import ReductionDeclaration
@@ -63,6 +64,12 @@ from tests.test_models.nbegm_common import (
 )
 
 _WIDTH_KEYWORD = "_lcm_action_block_width"
+
+# A GridSearch core also publishes its empty-action and other-Inf state counts.
+_FEASIBILITY_COUNT_ROLES = (
+    StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+    StateAxesLeading(state_names=(), dtype=jnp.int32, shape=()),
+)
 
 _SCHEDULED_SOURCE = ("source", 0, "main")
 
@@ -553,7 +560,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
         "period",
         "age",
     )
-    assert program.output_roles is VALUE
+    assert program.output_roles == (VALUE, *_FEASIBILITY_COUNT_ROLES)
     assert program.requirements.reduced_axes == (
         ReducedAxis(
             name="action_product",
@@ -581,8 +588,9 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
     output = _eval_resolved_shape(resolved)
 
     assert jax.tree.structure(output) == jax.tree.structure(program.output_roles)
-    assert isinstance(output, jax.ShapeDtypeStruct)
-    assert output.shape == next_V["alive"].shape
+    assert isinstance(output, tuple)
+    assert isinstance(output[0], jax.ShapeDtypeStruct)
+    assert output[0].shape == next_V["alive"].shape
 
 
 def test_collective_grid_search_plans_cells_with_canonical_action_reduction() -> None:
@@ -612,7 +620,11 @@ def test_collective_grid_search_plans_cells_with_canonical_action_reduction() ->
 
     assert program.disposition is CoreExecutionDisposition.PLANNED
     assert program.disposition_reason is None
-    assert program.output_roles == (VALUE, DISSOLUTION_FLAG)
+    assert program.output_roles == (
+        VALUE,
+        DISSOLUTION_FLAG,
+        *_FEASIBILITY_COUNT_ROLES,
+    )
     assert program.requirements.reduced_axes == ()
 
     resolved = resolve_core_program(
@@ -664,7 +676,7 @@ def test_ev1_grid_search_plans_cells_with_canonical_action_reduction() -> None:
 
     assert program.disposition is CoreExecutionDisposition.PLANNED
     assert program.disposition_reason is None
-    assert program.output_roles is VALUE
+    assert program.output_roles == (VALUE, *_FEASIBILITY_COUNT_ROLES)
     assert program.requirements.reduced_axes == ()
 
     resolved = resolve_core_program(
@@ -679,8 +691,9 @@ def test_ev1_grid_search_plans_cells_with_canonical_action_reduction() -> None:
     output = _eval_resolved_shape(resolved)
 
     assert jax.tree.structure(output) == jax.tree.structure(program.output_roles)
-    assert isinstance(output, jax.ShapeDtypeStruct)
-    assert output.shape == next_V["alive"].shape
+    assert isinstance(output, tuple)
+    assert isinstance(output[0], jax.ShapeDtypeStruct)
+    assert output[0].shape == next_V["alive"].shape
 
 
 def test_resolver_binds_width_without_adding_a_dynamic_argument() -> None:
