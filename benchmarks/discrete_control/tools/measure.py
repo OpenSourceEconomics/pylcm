@@ -110,7 +110,7 @@ def measure_call(
         with patch.object(
             backward, "_compile_all_functions", observe_compile(original_compile)
         ):
-            solution = model.solve(params=params, log_level="off")
+            solution = model.solve(params=params, log_level="off", runtime_checks=False)
         synchronize(solution)
         wall, cpu = time.perf_counter() - start, time.process_time() - cpu
     finally:
