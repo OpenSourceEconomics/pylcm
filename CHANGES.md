@@ -136,6 +136,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   Construction, parameter schema, initial-condition structure and solution identity
   validation remain active. Infinity-only value warnings retain their existing meaning.
 
+### Labelled value functions
+
+- `SolutionResult.value_array(period=..., regime=...)` returns an xarray `DataArray`
+  named `V` with one dimension per state axis, the resolved grid nodes as coordinates,
+  discrete states labelled as categoricals in declaration order (`use_labels=False` for
+  integer codes), and a `stakeholder` dimension for collective regimes. It wraps the
+  stored value without a host copy; `.sel(...)` selects a curve or surface by name before
+  any table is built. `SolutionResult.value_frame(...)` returns the same values as a long
+  pandas DataFrame with state columns followed by `V`. Both survive saving and loading.
+- New dependency: `xarray`.
+
 ### Explicit initial nodes and owned declarations
 
 - Declare admissible starts with `InitialNodes(by_age={25: "working"})` or
