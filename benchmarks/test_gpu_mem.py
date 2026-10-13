@@ -520,6 +520,7 @@ class _FakeMahlerSolution:
 class _SolveKwargs(TypedDict):
     params: dict[str, int]
     log_level: str
+    runtime_checks: bool
     retention: ResultRetention
 
 
@@ -528,6 +529,7 @@ class _SimulateKwargs(TypedDict):
     initial_conditions: dict[str, object]  # noqa: PAN001 - opaque state-identity sentinels are only forwarded.
     seed: int
     log_level: str
+    runtime_checks: bool
     solution: NotRequired[_FakeMahlerSolution]
 
 
@@ -577,6 +579,7 @@ def test_mahler_yum_gpu_memory_phases_dispatch_exact_workloads(
         "initial_conditions": benchmark.initial_conditions,
         "seed": 0,
         "log_level": "off",
+        "runtime_checks": False,
     }
 
     benchmark.execute_gpu_memory_phase(
@@ -588,6 +591,7 @@ def test_mahler_yum_gpu_memory_phases_dispatch_exact_workloads(
     assert model.solve_calls[-1] == {
         "params": benchmark.model_params,
         "log_level": "off",
+        "runtime_checks": False,
         "retention": ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
     }
     assert saved.saved_paths == [archive]
@@ -603,6 +607,7 @@ def test_mahler_yum_gpu_memory_phases_dispatch_exact_workloads(
         "solution": loaded,
         "seed": 0,
         "log_level": "off",
+        "runtime_checks": False,
     }
 
 

@@ -101,7 +101,7 @@ class _Category:
 
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=3)
-_CONSUMPTION = LinSpacedGrid(start=0.5, stop=2.0, n_points=3)
+_CONSUMPTION = LinSpacedGrid(start=0.1, stop=2.0, n_points=3)
 _HEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 
 #: Wealth above which the gate opens and the closed branch lands in `high`.
@@ -141,6 +141,13 @@ def _utility_of_x_and_health(
 
 def _bequest_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
+
+
+def _positive_bequest_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> BoolND:
+    # The simulation must stay inside the logarithmic bequest's domain.
+    return consumption < wealth
 
 
 def _next_wealth(*, wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
@@ -214,6 +221,7 @@ def build_model(
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_x},
+        constraints={"positive_bequest_wealth": _positive_bequest_wealth},
         state_transitions={
             "wealth": _next_wealth,
             "x": {"solo": fixed_transition("x")},
@@ -249,6 +257,7 @@ def build_model(
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": pair_utility},
+        constraints={"positive_bequest_wealth": _positive_bequest_wealth},
         state_transitions={
             "wealth": _next_wealth,
             pair_reads: {"pair": fixed_transition(pair_reads)},

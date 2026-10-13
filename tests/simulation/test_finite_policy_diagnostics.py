@@ -46,13 +46,15 @@ def test_candidate_count_uses_only_live_unrepresented_cells(
 
 
 @pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
-def test_real_finite_diagnostic_preserves_log_gate_and_precedes_ranking(
+@pytest.mark.parametrize("runtime_checks", [False, True])
+def test_real_finite_diagnostic_preserves_check_policy_and_precedes_ranking(
     *,
     log_level: LogLevel,
+    runtime_checks: bool,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A seeded unsupported bank keeps its numeric mask and original host policy."""
+    """A seeded unsupported bank is checked independently of output verbosity."""
     model, params, initial = _inputs(discrete=False, budget=2**32)
     solution = model.solve(params=params, log_level="off")
     dispatch = SimulationRuntime.dispatch
@@ -92,9 +94,10 @@ def test_real_finite_diagnostic_preserves_log_gate_and_precedes_ranking(
         solution=solution,
         initial_conditions=initial,
         log_level=log_level,
+        runtime_checks=runtime_checks,
         seed=17,
     )
-    if log_level == "debug":
+    if runtime_checks:
         with pytest.raises(
             UnrepresentableOuterCandidateError, match="live outer candidates"
         ):
@@ -102,10 +105,7 @@ def test_real_finite_diagnostic_preserves_log_gate_and_precedes_ranking(
         assert events == ["prepare", "count"]
     else:
         result = simulate()
-        expected_events = (
-            ["prepare", "rank"] if log_level == "off" else ["prepare", "count", "rank"]
-        )
-        assert events == expected_events
+        assert events == ["prepare", "rank"]
         rows = result.to_dataframe().query("regime_name == 'alive' and period == 0")
         assert np.isneginf(rows["value"]).all()
         assert np.isnan(rows["consumption"]).all()
@@ -115,9 +115,4 @@ def test_real_finite_diagnostic_preserves_log_gate_and_precedes_ranking(
             for record in caplog.records
             if "live outer candidates could not be reconstructed" in record.message
         ]
-        if log_level == "off":
-            assert messages == []
-        else:
-            assert len(messages) == 1
-            for message, count in zip(messages, expected_live, strict=True):
-                assert f"{count} of {count} live outer candidates" in message
+        assert messages == []

@@ -44,11 +44,18 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
-from lcm.regime import ActionEntry, FunctionEntry, StateEntry, StateTransitionEntry
+from lcm.regime import (
+    ActionEntry,
+    ConstraintEntry,
+    FunctionEntry,
+    StateEntry,
+    StateTransitionEntry,
+)
 from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
 from lcm.typing import (
     ActionName,
+    BoolND,
     FloatND,
     FunctionName,
     RegimeName,
@@ -81,7 +88,7 @@ class _Kind:
 
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=100.0, n_points=6)
-_CONSUMPTION = LinSpacedGrid(start=1.0, stop=10.0, n_points=4)
+_CONSUMPTION = LinSpacedGrid(start=0.1, stop=10.0, n_points=4)
 _PARAMS = {"discount_factor": 0.95}
 _INITIAL_CONDITIONS = {
     "age": jnp.zeros(4),
@@ -107,6 +114,11 @@ def _bequest_utility(wealth: FloatND) -> FloatND:
     return jnp.log(wealth)
 
 
+def _positive_bequest_wealth(*, wealth: FloatND, consumption: FloatND) -> BoolND:
+    # The simulation must stay inside the logarithmic bequest's domain.
+    return consumption < wealth
+
+
 def _entry_kind(wealth: FloatND) -> FloatND:
     """Probabilities over `_Kind`, richer entrants arriving in higher categories."""
     high = jnp.clip(wealth / 100.0, 0.0, 1.0)
@@ -120,6 +132,7 @@ class RegimeSpec(TypedDict, total=False):
     states: Mapping[StateName, StateEntry]
     actions: Mapping[ActionName, ActionEntry]
     functions: Mapping[FunctionName, FunctionEntry]
+    constraints: Mapping[FunctionName, ConstraintEntry]
     state_transitions: Mapping[StateName, StateTransitionEntry]
 
 
@@ -154,6 +167,7 @@ def _working(**overrides: Unpack[RegimeSpec]) -> Regime:
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
         "functions": {"utility": _utility_of_consumption},
+        "constraints": {"positive_bequest_wealth": _positive_bequest_wealth},
         "state_transitions": {"wealth": _next_wealth},
     }
     spec.update(overrides)
@@ -165,6 +179,7 @@ def _retired(**overrides: Unpack[RegimeSpec]) -> Regime:
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
         "functions": {"utility": _utility_of_consumption},
+        "constraints": {"positive_bequest_wealth": _positive_bequest_wealth},
         "state_transitions": {"wealth": _next_wealth},
     }
     spec.update(overrides)

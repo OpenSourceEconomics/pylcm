@@ -598,8 +598,8 @@ def _log_top_array_tree_leaves(
 ) -> None:
     """Emit the `top_k` biggest `jax.Array` leaves plus aggregate tree size.
 
-    Writes directly to `sys.stderr` so the lines surface even when the
-    `lcm` logger is silenced (`log_level="off"` raises it to CRITICAL).
+    Writes directly to `sys.stderr` so the lines surface even during a
+    silent run (`log_level="off"`).
     Each line carries path, shape, dtype, and size in GiB; the leading
     line reports total leaf count and aggregate bytes.
     """

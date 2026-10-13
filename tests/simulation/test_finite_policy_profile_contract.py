@@ -115,8 +115,9 @@ def test_finite_bank_keeps_the_full_outer_extent_without_allocating(
         )
 
 
+@pytest.mark.parametrize("runtime_checks", [False, True])
 def test_public_finite_bank_floor_refuses_before_any_chunk_allocation(
-    monkeypatch: pytest.MonkeyPatch,
+    *, monkeypatch: pytest.MonkeyPatch, runtime_checks: bool
 ) -> None:
     """A real bank lower bound cannot be hidden behind a raw compiler peak."""
     width = 8192
@@ -143,15 +144,20 @@ def test_public_finite_bank_floor_refuses_before_any_chunk_allocation(
 
     monkeypatch.setattr(admission, "profile_simulation_chunk", observe_profile)
     monkeypatch.setattr(simulation, "_simulate_subject_chunk", _forbid_concrete)
-    with pytest.raises(ExecutionPlanningError, match="no anchor map fits"):
+    # Numerical preflight can exhaust this budget before bank profiling begins.
+    refusal = (
+        "No workspace-width candidate fits" if runtime_checks else "no anchor map fits"
+    )
+    with pytest.raises(ExecutionPlanningError, match=refusal):
         model.simulate(
             params=params,
             solution=solution,
             initial_conditions=initial,
             log_level="off",
+            runtime_checks=runtime_checks,
             seed=17,
         )
-    assert inspected == [width]
+    assert inspected == ([] if runtime_checks else [width])
 
 
 @pytest.mark.parametrize("refuse", [False, True])

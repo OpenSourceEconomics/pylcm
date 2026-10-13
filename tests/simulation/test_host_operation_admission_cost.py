@@ -55,17 +55,10 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from tests.simulation._callback_types import HostDispatch, WorkspacePlanning
 
-# The dissolution witness runs this many pure helper operations in one warm
-# forward call. The count is a property of the fixture's regimes and periods,
-# not of the admission route, and must not move when the route changes: 32
-# per-call operations (two of them the regime-selection law and its flags)
-# plus four per simulated (regime, period) pair (mask, lookup, fallback, site
-# key) over the five pairs the witness simulates, plus one realized regime-law
-# check for each of the two pairs that draw a next regime.
-_WITNESS_HELPER_OPERATIONS = 54
-# Regime selection also admits its user-law producers through the axis-free
-# plan before they run, outside the helper dispatch count.
-_WITNESS_PRODUCER_ADMISSIONS = 2
+# The checked dissolution witness includes numerical preflight and outcome flags.
+# User-law producers also enter the axis-free plan outside helper dispatch.
+_WITNESS_HELPER_OPERATIONS = 63
+_WITNESS_PRODUCER_ADMISSIONS = 5
 
 _WITNESS_SEED = 6606
 
@@ -129,8 +122,16 @@ class _CountingCompiler[Compiled]:
 # --------------------------------------------------------------- one admission route
 
 
+@pytest.mark.parametrize(
+    ("runtime_checks", "helper_operations", "producer_admissions"),
+    [(False, 55, 0), (True, _WITNESS_HELPER_OPERATIONS, _WITNESS_PRODUCER_ADMISSIONS)],
+)
 def test_every_budgeted_helper_admits_through_the_axis_free_plan(
+    *,
     monkeypatch: pytest.MonkeyPatch,
+    runtime_checks: bool,
+    helper_operations: int,
+    producer_admissions: int,
 ) -> None:
     """One warm forward call plans each helper once, and never on the frontier."""
     counts: dict[str, int] = {"dispatch": 0, "axis_free": 0, "frontier": 0}
@@ -170,7 +171,9 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
     )
 
     model, params, initial = dissolution(execution_config=_budget())
-    solution = model.solve(params=params, log_level="off")
+    solution = model.solve(
+        params=params, log_level="off", runtime_checks=runtime_checks
+    )
     for _ in range(2):
         jax.block_until_ready(
             model.simulate(
@@ -179,6 +182,7 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
                 solution=solution,
                 seed=_WITNESS_SEED,
                 log_level="off",
+                runtime_checks=runtime_checks,
             )
         )
     recording["on"] = True
@@ -189,14 +193,13 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
             solution=solution,
             seed=_WITNESS_SEED,
             log_level="off",
+            runtime_checks=runtime_checks,
         )
     )
     recording["on"] = False
 
-    assert counts["dispatch"] == _WITNESS_HELPER_OPERATIONS
-    assert (
-        counts["axis_free"] == _WITNESS_HELPER_OPERATIONS + _WITNESS_PRODUCER_ADMISSIONS
-    )
+    assert counts["dispatch"] == helper_operations
+    assert counts["axis_free"] == helper_operations + producer_admissions
     assert counts["frontier"] == 0
 
 

@@ -69,6 +69,7 @@ def validate_V[PartialSolution: PeriodToRegimeToVArr](
     period: int | None = None,
     entered_process_names: tuple[str, ...] = (),
     time_kind: Literal["age", "period"] = "age",
+    logger: logging.Logger | None = None,
 ) -> None:
     """Validate the value function array for NaN values.
 
@@ -93,6 +94,7 @@ def validate_V[PartialSolution: PeriodToRegimeToVArr](
             law. Named in the message, because leaving such a process's support
             is the one NaN cause the engine mints deliberately.
         time_kind: Meaning of the coordinate in diagnostics.
+        logger: Call-local output policy for diagnostic enrichment failures.
 
     The NaN reduction stays sharded via `v_array_has_nan` (jit-wrapped so GSPMD
     partitions it across the V-array's devices instead of gathering V onto the
@@ -131,7 +133,10 @@ def validate_V[PartialSolution: PeriodToRegimeToVArr](
                 time_kind=time_kind,
             )
         except Exception:
-            logging.getLogger("lcm").warning(
+            diagnostic_logger = (
+                logger if logger is not None else logging.getLogger("lcm")
+            )
+            diagnostic_logger.warning(
                 "Diagnostic enrichment failed; raising original NaN error",
                 exc_info=True,
             )

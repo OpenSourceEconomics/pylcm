@@ -723,7 +723,7 @@ the [Development](../development/benchmarking.md) chapter.
 
 ## Checklist
 
-- Validate at `log_level="debug"` before tuning.
+- Keep `runtime_checks=True` while tuning; use `log_level="debug"` for detail.
 - Make solver choice an economic-representation decision.
 - Refine grids against an accuracy target.
 - Distinguish true streaming controls, retained banks, inert requests, and active

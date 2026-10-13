@@ -32,78 +32,29 @@ there. Re-enable JIT once the issue is resolved.
 
 ## Log levels
 
-`log_level` controls console verbosity *and* the runtime-validation policy — how
-`solve()` / `simulate()` react to an invalid transition-probability ensemble or a NaN
-value function. See [Solving and Simulating](solving_and_simulating.md) for the full
-`log_level` × `log_path` behaviour table.
+`log_level` controls console output. `runtime_checks=True` independently enables
+numerical validation and raises on its first failure, including with `log_level="off"`.
+Use debug output to inspect timing and value statistics; keep runtime checks enabled
+while diagnosing a model. Construction, parameter schema and result-identity checks
+remain active even when numerical checks are explicitly disabled.
 
 ```python
-# Silent — no console output, no validation
-solution = model.solve(params=params, log_level="off")
-
-# Warnings only — invalid input is logged, the run continues
-solution = model.solve(params=params, log_level="warning")
-
-# Debug — validation raises, full diagnostics
-solution = model.solve(params=params, log_level="debug")
-value_functions = solution.values
-
-# Debug + snapshot persistence
+solution = model.solve(params=params, log_level="off", runtime_checks=True)
 solution = model.solve(params=params, log_level="debug", log_path="./debug/")
 ```
 
-`log_path` is optional at every level — including `"debug"`.
+Checks evaluate computed transition probabilities and NaN values before accepting a
+result. `runtime_checks=False` selects the numerical fast path at any verbosity.
+Applications with stronger finite-value requirements must retain their own infinity
+invariant. See [Solving and Simulating](solving_and_simulating.md) for the independent
+output and validation controls and snapshot behavior.
 
-### Run every production model at `"debug"` at least once
+### Diagnose with checks enabled
 
-`"off"` skips most runtime validation, and some of what it skips cannot be reconstructed
-from the output afterwards.
-
-Regime-transition probabilities are the exception. Every aggregation route normalizes
-the continuation by the mass it actually receives, so a regime transition putting
-probability on a regime outside its declared targets would otherwise drop that regime
-from the continuation and renormalize the rest: a model whose survival probability
-ranges from 0.999999 to 0.000001 would produce bit-identical values. pylcm therefore
-checks every regime-law row a solve reads on the grid, and every row a simulation draws
-from, at every log level, `"off"` included: each must be finite, in $[0, 1]$, of unit
-mass and zero outside its declared targets, and the error names the source regime, the
-age and, for mass outside the targets, the target regime.
-
-What `"off"` does skip — state-transition probabilities and the value-function
-diagnostics — surfaces at best as a NaN, which tells you the model is wrong but not
-which regime, which state, or which age. Run the model once at `log_level="debug"`, with
-the parameters you intend to use, and those checks report the offending inputs directly.
-
-```python
-# Do this once per model and parameter regime, before trusting any output.
-solution = model.solve(params=params, log_level="debug")
-```
-
-After that run passes, `"off"` is a reasonable choice for an estimation loop that
-re-solves the same model at many parameter vectors — validation costs roughly a fifth of
-a warm solve, so skipping it is worth real time. It is only safe because the structural
-question was already answered.
-
-### Never diagnose a failure below `"debug"`
-
-Unless the cause is **very** obvious, do not reason about a failure observed at `"off"`,
-`"warning"`, or `"progress"`. Reproduce it at `log_level="debug"` first and diagnose
-from that run. The lower levels are for models you already trust; the moment one
-misbehaves, the setting that made it cheap is also the setting that removed the
-information you need.
-
-The mass check above is the example to keep in mind. At `"off"` a non-unit regime mass
-reaches you as NaN in the value function and nothing else — no source regime, no target,
-no age, and no indication that transition probabilities are involved at all. From that
-observation the natural hypotheses are the ones you can see: the utility function at the
-edge of its domain, a constraint that admits no action, an interpolation running off the
-grid. Every one of them is wrong, and each is expensive to rule out. The same run at
-`"debug"` names the offending `(source regime, target regime, age)` in the exception
-message.
-
-The general form: `"off"` and `"warning"` change which failures are *visible* and how
-much of the failure survives into what you can inspect. A hypothesis formed from a
-degraded observation is a hypothesis about the log level as much as about the model.
+Keep `runtime_checks=True` during development and production validation. An explicit
+`False` trades those numerical checks for speed and can return invalid values or
+trajectories. Reproduce a failing parameter vector with checks enabled; debug logging
+adds value statistics, timings and core plan records without changing the verdict.
 
 ### Core plan records
 

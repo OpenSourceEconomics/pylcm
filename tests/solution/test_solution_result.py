@@ -32,6 +32,7 @@ from _lcm.typing import (
     ArtifactPayload,
     FlatParams,
 )
+from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -563,8 +564,13 @@ def test_all_persistable_retains_model_verifiable_egm_continuation() -> None:
     )
 
 
-def test_solve_retains_kernel_diagnostics_only_when_log_level_enables_them(
+@pytest.mark.parametrize("log_level", ["debug", "progress", "warning", "off"])
+@pytest.mark.parametrize("runtime_checks", [True, False])
+def test_solve_retains_kernel_diagnostics_only_when_runtime_checks_enabled(
+    *,
     monkeypatch: pytest.MonkeyPatch,
+    log_level: LogLevel,
+    runtime_checks: bool,
 ) -> None:
     original = backward_induction._run_period_kernel
 
@@ -595,12 +601,13 @@ def test_solve_retains_kernel_diagnostics_only_when_log_level_enables_them(
     model = _two_period_bequest_model()
     params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
-    enabled = model.solve(params=params, log_level="warning")
-    disabled = model.solve(params=params, log_level="off")
-
-    retained = enabled.diagnostics.project(SOLVER_DIAGNOSTICS)
-    assert retained
-    assert not disabled.diagnostics
+    result = model.solve(
+        params=params, log_level=log_level, runtime_checks=runtime_checks
+    )
+    retained = result.diagnostics.project(SOLVER_DIAGNOSTICS)
+    assert bool(retained) is runtime_checks
+    if not runtime_checks:
+        assert not result.diagnostics
     assert all(
         device.platform == "cpu"
         for regime_to_diagnostics in retained.values()
@@ -668,10 +675,13 @@ def test_direct_solution_simulation_processes_params_once(
     original = model._process_params
     call_count = 0
 
-    def _counted_process_params(raw_params: UserParams):
+    # keyword-only-exempt: primary-argument=raw_params
+    def _counted_process_params(
+        raw_params: UserParams, *, runtime_checks: bool = True
+    ) -> FlatParams:
         nonlocal call_count
         call_count += 1
-        return original(raw_params)
+        return original(raw_params, runtime_checks=runtime_checks)
 
     monkeypatch.setattr(model, "_process_params", _counted_process_params)
     model.simulate(

@@ -363,7 +363,8 @@ def _lossy_new_illiquid(
     clean map -- while the round trip has quantized the action the solve would
     later have to recover.
     """
-    hop = jnp.asarray(illiquid_investment).astype(jnp.float16).astype(jnp.float64)
+    action = jnp.asarray(illiquid_investment)
+    hop = action.astype(jnp.float16).astype(action.dtype)
     return illiquid + hop
 
 

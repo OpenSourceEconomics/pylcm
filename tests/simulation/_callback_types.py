@@ -139,6 +139,7 @@ class ChunkProfileInputs(TypedDict):
     widths: chunk_profiles.Mapping[str, int]
     independent_taste: bool
     log_level: chunk_profiles.LogLevel
+    runtime_checks: NotRequired[bool]
     policies: NotRequired[
         chunk_profiles.Mapping[
             int,
@@ -180,6 +181,7 @@ class ChunkProfileKeyInputs(TypedDict):
     widths: chunk_admission.Mapping[str, int]
     independent_taste: bool
     log_level: chunk_admission.LogLevel
+    runtime_checks: NotRequired[bool]
     group_sizes: NotRequired[tuple[int, ...] | None]
 
 

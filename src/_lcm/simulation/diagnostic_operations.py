@@ -91,6 +91,7 @@ def diagnostic_bindings(
     new_regime_ids: jax.ShapeDtypeStruct,
     sorted_ids: tuple[int, ...],
     log_level: LogLevel,
+    runtime_checks: bool = True,
 ) -> tuple[DiagnosticBinding, ...]:
     """Enumerate enabled diagnostics, including every possible NaN report.
 
@@ -99,10 +100,8 @@ def diagnostic_bindings(
     from predicted output multipliers. NaN reports are conditional at runtime;
     reserving each enabled regime's report is a conservative complete-period bound.
     """
-    if log_level == "off":
-        return ()
     bindings = []
-    if values:
+    if runtime_checks and values:
         bindings.append(
             DiagnosticBinding(
                 function=period_value_flags,

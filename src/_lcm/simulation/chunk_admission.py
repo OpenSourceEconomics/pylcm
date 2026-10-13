@@ -134,6 +134,7 @@ def prepare_simulation_chunks(
     retained_footprint: DeviceBufferFootprint,
     independent_taste: bool,
     log_level: LogLevel,
+    runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     max_compilation_workers: int | None = None,
@@ -220,6 +221,7 @@ def prepare_simulation_chunks(
         original_population=original_population,
         independent_taste=independent_taste,
         log_level=log_level,
+        runtime_checks=runtime_checks,
         resident=resident,
         devices=devices,
         max_compilation_workers=max_compilation_workers,
@@ -251,6 +253,7 @@ def _simulation_chunk_profile_key(
     widths: Mapping[str, int],
     independent_taste: bool,
     log_level: LogLevel,
+    runtime_checks: bool = True,
     group_sizes: tuple[int, ...] | None = None,
 ) -> tuple[Hashable, ...]:
     """Return the canonical, versioned cache key for `profile_simulation_chunk`.
@@ -313,6 +316,7 @@ def _simulation_chunk_profile_key(
     )
     diagnostics_and_precision = (
         log_level,
+        runtime_checks,
         independent_taste,
         jax.config.jax_default_prng_impl,
         jax.config.jax_enable_x64,
@@ -350,6 +354,7 @@ class _ChunkProfiler:
     original_population: int
     independent_taste: bool
     log_level: LogLevel
+    runtime_checks: bool = True
     resident: Mapping[jax.Device, int]
     devices: tuple[jax.Device, ...]
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None
@@ -426,6 +431,7 @@ class _ChunkProfiler:
             "widths": widths,
             "independent_taste": self.independent_taste,
             "log_level": self.log_level,
+            "runtime_checks": self.runtime_checks,
             "group_sizes": self.group_sizes,
         }
         return profile_cache_registry().get_or_build(

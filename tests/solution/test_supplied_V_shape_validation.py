@@ -7,8 +7,8 @@ contributes no axis at all.
 
 Solving and then simulating with the returned solution is the documented
 workflow, so the rank a solve produces is by definition the rank `simulate`
-accepts — at every log level, since `log_level` selects how loudly validation
-speaks and never what counts as valid. The rank check still has work to do:
+accepts. Structural rank validation applies at every output level and also
+when `runtime_checks=False`. The rank check still has work to do:
 an array of the wrong rank broadcasts rather than raising, so nothing
 downstream can recover it.
 """

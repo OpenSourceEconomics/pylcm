@@ -64,16 +64,16 @@ prose hides cases.
 
 ```python
 # Good — scannable
-# Gate falls out of the public log level:
-# - `"off"` ⇒ nothing (skips even the NaN fail-fast)
-# - `"warning"` / `"progress"` ⇒ NaN/Inf only
-# - `"debug"` ⇒ adds the min/max/mean trio
+# Checks and output have separate gates:
+# - `runtime_checks=True` ⇒ NaN/Inf reductions at every log level
+# - `runtime_checks=False` ⇒ skips optional NaN/Inf reductions
+# - `log_level="debug"` ⇒ adds the min/max/mean trio independently
 
 
 # Bad — buried in prose
-# Gate falls out of the public log level: `"off"` ⇒ nothing,
-# `"warning"` / `"progress"` ⇒ NaN/Inf only, `"debug"` ⇒ adds the
-# min/max/mean trio. `"off"` skips even the NaN fail-fast.
+# Checks and output have separate gates: `runtime_checks=True` ⇒ NaN/Inf
+# reductions at every log level, `runtime_checks=False` ⇒ skips optional
+# NaN/Inf reductions, and `log_level="debug"` ⇒ adds the min/max/mean trio.
 ```
 
 ## Precise Annotations

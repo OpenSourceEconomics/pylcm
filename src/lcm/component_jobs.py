@@ -408,8 +408,8 @@ def run_component_job(
         params: The parameters the plan was made with.
         directory: The plan directory.
         job: Index of the job in the plan.
-        log_level: Verbosity and runtime-validation policy of the solve and
-            simulation.
+        log_level: Console verbosity of the solve and simulation. Numerical
+            runtime checks remain enabled.
         initial_conditions: The planned population; required exactly when the
             plan simulates.
         max_compilation_workers: Maximum threads for parallel XLA compilation.
@@ -517,8 +517,8 @@ def collect_component_jobs(
         model: The block-major model the plan was made for.
         params: The parameters the plan was made with.
         directory: The plan directory.
-        log_level: Verbosity and runtime-validation policy. Must match the
-            workers' log level and recorded execution configuration.
+        log_level: Console verbosity. Must match the workers' log level and
+            recorded execution configuration. Numerical checks remain enabled.
         max_compilation_workers: Maximum threads for parallel XLA compilation.
 
     Returns:

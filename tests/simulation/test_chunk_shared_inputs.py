@@ -25,14 +25,15 @@ _N_SUBJECTS = 7
 
 
 @pytest.mark.parametrize("subject_width", [1, 3, 7])
+@pytest.mark.parametrize("runtime_checks", [False, True])
 def test_complete_spaces_are_call_local_across_subject_chunks(
-    *, monkeypatch: pytest.MonkeyPatch, subject_width: int
+    *, monkeypatch: pytest.MonkeyPatch, subject_width: int, runtime_checks: bool
 ) -> None:
     """Each regime's space is completed a fixed number of times per simulate call.
 
     The count does not depend on the subject-chunk width: each regime is
-    completed once for the simulation inputs. The regime-selection check
-    already passed for these params in `solve`, so simulate reuses it.
+    completed once for the simulation inputs. Enabled numerical preflight
+    also completes the nonterminal regime's space once, independently of chunks.
     """
     model = get_model(
         n_periods=2,
@@ -74,10 +75,11 @@ def test_complete_spaces_are_call_local_across_subject_chunks(
             },
             seed=17,
             log_level="off",
+            runtime_checks=runtime_checks,
         )
     assert (result.n_subjects, counts) == (
         _N_SUBJECTS,
-        {"working_life": 1, "dead": 1},
+        {"working_life": 2 if runtime_checks else 1, "dead": 1},
     )
 
 

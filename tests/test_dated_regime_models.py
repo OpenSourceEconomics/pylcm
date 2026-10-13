@@ -808,7 +808,11 @@ def _monthly_model(initial_nodes: UserInitialNodes) -> Model:
 
 
 def _monthly_start(
-    *, age: FloatND, log_level: LogLevel, initial_nodes: UserInitialNodes
+    *,
+    age: FloatND,
+    log_level: LogLevel,
+    initial_nodes: UserInitialNodes,
+    runtime_checks: bool = True,
 ) -> SimulationResult:
     return _monthly_model(initial_nodes).simulate(
         params={},
@@ -818,6 +822,7 @@ def _monthly_start(
         },
         seed=0,
         log_level=log_level,
+        runtime_checks=runtime_checks,
     )
 
 
@@ -854,16 +859,18 @@ def test_declared_monthly_start_simulates_from_its_period(
     assert result.to_dataframe()["period"].tolist() == [1]
 
 
-@pytest.mark.parametrize("log_level", ["off", "warning"])
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
 def test_off_grid_monthly_start_raises_at_every_log_level(
-    *, log_level: LogLevel
+    *, log_level: LogLevel, runtime_checks: bool
 ) -> None:
     """An age between two grid months is reported as off the age grid."""
-    with pytest.raises(ValueError, match="not valid age grid points"):
+    with pytest.raises(InvalidInitialConditionsError, match="Invalid age values"):
         _monthly_start(
             age=jnp.array([0.05]),
             log_level=log_level,
             initial_nodes={0: "end", Fraction(1, 12): "end"},
+            runtime_checks=runtime_checks,
         )
 
 

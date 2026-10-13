@@ -218,9 +218,11 @@ model's actual core programs declare.
   `simulate(solution=...)` validates and projects them. Automatic simulation threads
   them directly.
 - `log_level` is **required** on both `solve()` and `simulate()`
-  (`off < warning < progress < debug`). It governs all runtime validation: `"off"` skips
-  it, `"warning"` / `"progress"` warn and continue, `"debug"` raises. Start projects at
-  `"debug"`.
+  (`off < warning < progress < debug`) and controls console output.
+- `runtime_checks=True` is the default on both calls. Enabled numerical checks raise
+  at every log level, including `"off"`; set `runtime_checks=False` explicitly to skip
+  them. Construction, parameter schema, initial-condition structure and solution
+  identity checks remain active. Use `"debug"` for additional diagnostic statistics.
 - `model.validate_initial_conditions(initial_conditions=..., params=...)` and
   `model.initial_conditions_feasibility(initial_conditions=..., params=...)` check a
   population without solving or simulating; the second returns a per-subject boolean

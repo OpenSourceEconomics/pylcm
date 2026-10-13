@@ -26,7 +26,7 @@ def test_timed_batch_retains_order_and_excludes_warmup_compilations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Receipts contain every timed sample and only the timed calls' compile events."""
-    calls: list[str] = []
+    calls: list[tuple[str, bool]] = []
     clock = iter(
         (0, 100, 100, 300, 300, 301, 301, 305, 305, 308, 308, 310, 310, 312, 312, 318)
     )
@@ -34,8 +34,10 @@ def test_timed_batch_retains_order_and_excludes_warmup_compilations(
     def solve[Ignored](**_kwargs: Ignored) -> None:
         pass
 
-    def simulate[Ignored](*, log_level: str, **_kwargs: Ignored) -> SimpleNamespace:
-        calls.append(log_level)
+    def simulate[Ignored](
+        *, log_level: str, runtime_checks: bool, **_kwargs: Ignored
+    ) -> SimpleNamespace:
+        calls.append((log_level, runtime_checks))
         for event, repeats in (
             (TRACE_EVENT, 1),
             (LOWERING_EVENT, 2),
@@ -57,7 +59,7 @@ def test_timed_batch_retains_order_and_excludes_warmup_compilations(
         witness="receipt", log_level="progress", repeats=3, stub_preflight=False
     )
 
-    assert calls == ["off", "progress"] * 4
+    assert calls == [("off", False), ("progress", True)] * 4
     assert measurement.samples == (
         ("off", 1.0),
         ("progress", 4.0),
@@ -101,6 +103,7 @@ def test_receipt_preserves_observations_and_worker_identity(
     assert observed["nodeid"] == "tests/test_timing.py::test_wall_time[dissolution]"
     assert observed["witness"] == "dissolution"
     assert observed["stub_preflight"] is True
+    assert observed["runtime_checks"] == {"off": False, "progress": True}
     assert observed["worker_id"] == "gw3"
     assert observed["pid"] == os.getpid()
     assert observed["precision"] == (64 if jax.config.jax_enable_x64 else 32)
