@@ -27,6 +27,7 @@ class _FakeModel:
         *,
         params: UserParams,
         log_level: str,
+        runtime_checks: bool,
     ) -> object:  # noqa: PAN001 - opaque solution-identity sentinel.
         return object()
 
@@ -37,6 +38,7 @@ class _FakeModel:
         initial_conditions: UserInitialConditions,
         solution: object,  # noqa: PAN001 - opaque solution-identity sentinel.
         log_level: str,
+        runtime_checks: bool,
         seed: int,
     ) -> _FakeResult:
         self.simulate_calls += 1
