@@ -24,7 +24,8 @@ where it is read, and where the regime hands it to a reachable target that keeps
 it. They differ in two ways. Pruning takes every candidate target of a regime's
 transition as reachable and lets any kept name of the target count, where the
 usage check takes the targets the model graph reaches in the law's own phase and
-counts only a target that keeps the name as a state. And the usage check also
+counts only a target that keeps the name as a grid state of that phase, on an
+edge where no joint transition produces the state instead. And the usage check also
 counts, within the regime, every law of motion that is not a `fixed_transition`
 identity.
 """
@@ -349,7 +350,9 @@ def compute_kept_variables(
         targets_by_phase: Per phase slice and regime, the targets the model
             graph reaches from it at the demanded periods. A law of motion of
             that slice is a use only toward one of them that keeps the law's
-            output as a state; a same-named action of the target does not count.
+            output as a grid state of the same slice, and only where no joint
+            transition of the source produces that state on the edge; a
+            same-named action of the target does not count.
             `None` takes every candidate target of the lowered regime transition,
             which for a callable law is every regime, and lets any kept name of
             the target count.
@@ -883,7 +886,7 @@ def _phase_fixed_point(
             grown
             if targets_by_phase is None
             else {
-                name: names & frozenset(user_regimes[name].states)
+                name: names & frozenset(getattr(specs[name], phase_name).grid_states)
                 for name, names in grown.items()
             }
         )
@@ -900,7 +903,11 @@ def _phase_fixed_point(
                 phase_name=phase_name,
                 koopmans_aggregator=koopmans_aggregator,
                 candidate_targets=candidates_by_source[regime_name],
-                kept=handed_to,
+                kept=(
+                    handed_to
+                    if targets_by_phase is None
+                    else _without_joint_outputs(kept=handed_to, phase_slice=phase_slice)
+                ),
                 ages=ages,
                 active_periods=_representative_periods(
                     regime_name=regime_name,
@@ -923,6 +930,27 @@ def _phase_fixed_point(
                 changed = True
         if not changed:
             return MappingProxyType(grown)
+
+
+def _without_joint_outputs(
+    *,
+    kept: Mapping[RegimeName, frozenset[StateOrActionName]],
+    phase_slice: RegimePhaseSpec,
+) -> dict[RegimeName, frozenset[StateOrActionName]]:
+    """Drop from each target the states a joint transition of the source produces.
+
+    A joint transition owns its output cells toward its target, so the source's
+    ordinary law for such a state never runs on that edge and hands nothing over.
+    """
+    return {
+        target: names
+        - frozenset(
+            output
+            for kernel in phase_slice.joint_transitions.get(target, {}).values()
+            for output in kernel.outputs
+        )
+        for target, names in kept.items()
+    }
 
 
 def _representative_periods(

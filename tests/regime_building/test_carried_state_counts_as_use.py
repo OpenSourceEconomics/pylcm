@@ -20,6 +20,7 @@ from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
     DiscreteGrid,
+    JointTransition,
     LinSpacedGrid,
     Model,
     Phased,
@@ -84,6 +85,28 @@ def _utility_with_skill_action(
     *, consumption: ContinuousAction, skill: ScalarInt
 ) -> FloatND:
     return jnp.log(consumption) + 0.1 * skill
+
+
+def _skill_from_draw(draw: dict[str, ScalarInt]) -> ScalarInt:
+    return draw["skill"]
+
+
+def _even_odds() -> FloatND:
+    return jnp.array([0.5, 0.5])
+
+
+def _retired_with_skill_in_simulation_only() -> Regime:
+    return Regime(
+        actions={"consumption": CONSUMPTION_GRID},
+        states={
+            "wealth": WEALTH_GRID,
+            "skill": Phased(
+                solve=_reset_skill, simulate=DiscreteGrid(category_class=_Skill)
+            ),
+        },
+        state_transitions={"wealth": _next_wealth, "skill": fixed_transition("skill")},
+        functions={"utility": _utility_with_skill},
+    )
 
 
 def _utility_built_from_age_one(age: float) -> Callable[..., FloatND]:
@@ -293,6 +316,53 @@ def test_hand_over_in_the_phase_that_misses_the_reader_is_rejected() -> None:
                 simulate={"work": {"gone": 0}, "retired": {"dead": 1}},
             ),
         )
+
+
+@pytest.mark.parametrize(
+    ("work_reaches_retired_in", "accepted"),
+    [("solve", False), ("simulate", True)],
+)
+def test_hand_over_counts_only_where_the_target_has_the_state_on_its_grid(
+    *, work_reaches_retired_in: str, accepted: bool
+) -> None:
+    to_retired = {"work": {"retired": 0}, "retired": {"dead": (0, 1)}}
+    to_gone = {"work": {"gone": 0}, "retired": {"dead": (0, 1)}}
+    reaches_in_solve = work_reaches_retired_in == "solve"
+
+    def build() -> Model:
+        return _model(
+            regimes=_work_retired_dead()
+            | {"retired": _retired_with_skill_in_simulation_only()},
+            edges=Phased(
+                solve=to_retired if reaches_in_solve else to_gone,
+                simulate=to_gone if reaches_in_solve else to_retired,
+            ),
+            initial_nodes={0: ("work", "retired")},
+        )
+
+    if accepted:
+        assert "skill" in build().user_regimes["work"].states
+    else:
+        with pytest.raises(
+            ModelInitializationError,
+            match=r"never used in regime 'work': state \['skill'\]",
+        ):
+            build()
+
+
+def test_hand_over_replaced_by_a_joint_transition_is_rejected() -> None:
+    reset_by_draw = JointTransition(
+        support_size=2,
+        support={"skill": jnp.asarray([_Skill.low, _Skill.high], dtype=jnp.int32)},
+        probabilities=_even_odds,
+        outputs={"skill": _skill_from_draw},
+    )
+    work = _alive().replace(joint_transitions={"retired": {"draw": reset_by_draw}})
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"never used in regime 'work': state \['skill'\]",
+    ):
+        _model(regimes=_work_retired_dead() | {"work": work}, edges=CHAIN_EDGES)
 
 
 def test_hand_over_in_the_phase_that_reaches_the_reader_is_used() -> None:

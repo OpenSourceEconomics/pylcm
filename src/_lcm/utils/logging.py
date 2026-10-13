@@ -176,6 +176,24 @@ def get_logger(*, log_level: LogLevel, runtime_checks: bool = True) -> logging.L
     return _RunLogger(log_level=log_level, runtime_checks=runtime_checks)
 
 
+def get_call_logger(
+    *, log_level: LogLevel, runtime_checks: bool = True
+) -> logging.Logger:
+    """Build a call-local logger without changing the shared `lcm` output level.
+
+    Its records reach the application's output handlers, but later calls keep
+    whatever level the shared logger had.
+
+    Args:
+        log_level: Console verbosity of this call only.
+        runtime_checks: Whether numerical validation runs and raises on failure.
+
+    Returns:
+        Logger carrying independent output and numerical-validation controls.
+    """
+    return _RunLogger(log_level=log_level, runtime_checks=runtime_checks)
+
+
 def format_duration(*, seconds: float) -> str:
     """Format a duration in human-readable form.
 
