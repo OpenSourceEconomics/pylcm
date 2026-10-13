@@ -44,14 +44,14 @@ solution = model.solve(params=params, log_level="debug", log_path="./debug/")
 ```
 
 Checks evaluate computed transition probabilities and NaN values before accepting a
-result. `runtime_checks=False` selects the numerical fast path at any verbosity.
-Applications with stronger finite-value requirements must retain their own infinity
-invariant. See [Solving and Simulating](solving_and_simulating.md) for the independent
-output and validation controls and snapshot behavior.
+result. `runtime_checks=False`, the default, selects the numerical fast path at any
+verbosity. Applications with stronger finite-value requirements must retain their own
+infinity invariant. See [Solving and Simulating](solving_and_simulating.md) for the
+independent output and validation controls and snapshot behavior.
 
 ### Diagnose with checks enabled
 
-Keep `runtime_checks=True` during development and production validation. An explicit
+Keep `runtime_checks=True` during development and production validation. The default
 `False` trades those numerical checks for speed and can return invalid values or
 trajectories. Reproduce a failing parameter vector with checks enabled; debug logging
 adds value statistics, timings and core plan records without changing the verdict.
