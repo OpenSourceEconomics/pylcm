@@ -179,9 +179,6 @@ _B_EXTENT = 3
 #: Points of the continuous state both regimes retain.
 _N_WEALTH = 6
 
-#: A budget no placement of this model fits in, so admission refuses by name.
-_IMPOSSIBLE_BUDGET_BYTES = 64
-
 #: A budget every placement of this model fits in comfortably.
 _AMPLE_BUDGET_BYTES = 2**28
 
@@ -690,12 +687,14 @@ def _refusal_at(*, budget_bytes: int) -> str:
     """Return the two-axis model's refusal at one budget, empty if it solves."""
     from lcm.exceptions import ExecutionPlanningError  # noqa: PLC0415
 
+    # Runtime checks off: their off-grid count producers are admitted against the
+    # same budget, ahead of the core whose position is measured here.
     try:
         build_model(
             devices=tuple(range(_N_DEVICES)),
             sharded=("a", "b"),
             device_memory_bytes=budget_bytes,
-        ).solve(params=_PARAMS, log_level="off")
+        ).solve(params=_PARAMS, log_level="off", runtime_checks=False)
     except ExecutionPlanningError as refusal:
         return str(refusal)
     return ""
@@ -765,7 +764,9 @@ def report_admission() -> _AdmissionReport:
     }
     mutant_refusal = _refusal_without_transfer_scratch(budget_bytes=boundary)
 
-    budgeted_refusal = _refusal_at(budget_bytes=_IMPOSSIBLE_BUDGET_BYTES)
+    # One byte below the reading core's position: the model's inputs fit, so the
+    # transition preflight admits them and the cross-mesh read is what is refused.
+    budgeted_refusal = refusals[-1]
     resident = re.search(r"keeps (\d+) bytes resident", budgeted_refusal)
     mutant_resident = re.search(r"keeps (\d+) bytes resident", mutant_refusal)
 
