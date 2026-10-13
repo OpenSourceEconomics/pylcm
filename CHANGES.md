@@ -25,10 +25,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 - A regime-level state that a regime only carries, with `fixed_transition` or any other
   law of motion, toward a target it can reach is used when that target keeps the state.
-  The same rule already kept model-level states; both now share one closure. Chains
-  count, and a target reached only at ages the source never occupies does not. A
-  zero-weight read such as `0.0 * skill` is no longer needed to keep such a state. The
-  rejection message names the hand-over rule and the regimes the source can reach.
+  Model-level states were already kept this way by broadcast pruning, and the check
+  now runs the same closure. Its own rule is stricter than pruning's: the target must
+  be reached in the law's own phase, at ages the source occupies, and keep the state on
+  its grid in that phase, on an edge where no joint transition produces the state.
+  Chains count. A zero-weight read such as `0.0 * skill` is no longer needed to keep
+  such a state. The rejection message states the rule and the regimes each phase
+  reaches.
 
 ### Labelled profiles for age models
 
@@ -37,6 +40,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   exactly one of `period_to_label` and `age_to_label`; the validation is the same for
   both, and age keys must be finite numbers. A non-integer period key, including a
   boolean, raises `InvalidParamsError`, as it does for a `TimeVarying` coordinate.
+- A NumPy `TimeVarying` table keeps its dtype until the canonical cast, so an int64
+  value outside the int32 range raises the int32 overflow error, and a float64 value
+  that float32 cannot hold is reported with its supplied value, also with x64 disabled.
 
 ### Independent runtime checks
 
