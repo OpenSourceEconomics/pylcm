@@ -203,10 +203,18 @@ def _regime_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
     feasible_owner = _definition(
         tree=tree, name="_validate_regime_law_on_feasible_rows"
     )
-    feasible_evaluations = _calls(node=feasible_owner, name="_evaluate_feasible_rows")
+    feasible_evaluations = _calls(
+        node=feasible_owner, name="_evaluate_on_feasible_rows"
+    )
+    shared_evaluations = _calls(
+        node=_definition(tree=tree, name="_evaluate_on_feasible_rows"),
+        name="_evaluate_feasible_rows",
+    )
     if (
         len(feasible_evaluations) != 1
         or _keyword(call=feasible_evaluations[0], name="memory") != "memory"
+        or len(shared_evaluations) != 1
+        or _keyword(call=shared_evaluations[0], name="memory") != "memory"
     ):
         errors.append("feasible-row regime law must receive current memory")
     feasible_outputs = {
@@ -349,8 +357,14 @@ def test_regime_transition_admission_contract_is_complete() -> None:
         ),
         (
             "_validate_regime_law_on_feasible_rows",
-            "            | dict(scalar_kwargs)\n        ),\n        memory=memory,",
-            "            | dict(scalar_kwargs)\n        ),\n        memory=None,",
+            (
+                "        scalar_kwargs={**regime_params, **scalar_kwargs},\n"
+                "        memory=memory,"
+            ),
+            (
+                "        scalar_kwargs={**regime_params, **scalar_kwargs},\n"
+                "        memory=None,"
+            ),
             "feasible-row regime law must receive current memory",
         ),
         (

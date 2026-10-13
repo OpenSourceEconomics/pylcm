@@ -122,10 +122,13 @@ def _solve_with(
         n_consumption=12,
         execution_config=execution_config,
     )
+    # Runtime checks off: their untiled off-grid count producers are admitted
+    # against the same budget, ahead of the solve cores this search plans.
     return model.solve(
         params=nbegm_ride_along_toy.build_params(),
         retention=ResultRetention.VALUES,
         log_level=log_level,
+        runtime_checks=False,
     )
 
 
@@ -218,7 +221,7 @@ def test_bounded_search_logs_each_evaluation_with_its_decision(
 
     assert (
         "bounded width search regime 'dead', core 'main', period 3: evaluation 1 at "
-        "{'cell': 8} — 136 reservation plus 1224 resident bytes, admitted"
+        "{'cell': 8} — 172 reservation plus 1240 resident bytes, admitted"
         in caplog.text
     )
 

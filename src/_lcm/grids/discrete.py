@@ -461,14 +461,14 @@ def _as_float_query(*, value: ArrayLike, dtype: np.dtype) -> FloatND:
 
 
 def read_at_codes(
-    *, array: FloatND, positions: tuple[_CodeIndex | slice, ...]
-) -> FloatND:
-    """Return `array[positions]`, NaN wherever a code lies off its axis.
+    *, array: ValueND, positions: tuple[_CodeIndex | int | slice, ...]
+) -> ValueND:
+    """Return `array[positions]`, a fill value wherever a code lies off its axis.
 
-    A code outside `0..n-1`, including `MISSING_CAT_CODE` and `-1`, reads NaN.
-    Nothing is clamped onto an end node or wrapped onto the last one, so a read
-    of an off-grid next state cannot pass for a value.
+    A code outside `0..n-1`, including `MISSING_CAT_CODE` and `-1`, reads NaN
+    from a floating array and the dtype's fill value (the most negative signed
+    integer, for instance) from any other. Nothing is clamped onto an end node or
+    wrapped onto the last one, so a read of an off-grid next state cannot pass
+    for a value.
     """
-    return array.at[positions].get(
-        mode="fill", fill_value=jnp.nan, wrap_negative_indices=False
-    )
+    return array.at[positions].get(mode="fill", wrap_negative_indices=False)
