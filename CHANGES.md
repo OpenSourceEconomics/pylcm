@@ -5,6 +5,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Conditional continuous actions
+
+- `ConditionalAction(grid=..., active_when=..., inactive_value=...)` declares a
+  continuous action that is active only where named discrete actions of the regime take
+  listed values, and takes a node of its grid everywhere else. It is enforced as the
+  equivalent pin constraint, so results equal those of the hand-written constraint.
+
 ### Categories with characteristics
 
 - `characteristics(category_class=..., by_category=...)` checks a table that lists

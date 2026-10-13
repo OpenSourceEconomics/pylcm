@@ -41,6 +41,7 @@ from dags import get_ancestors
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
+from _lcm.regime_building.conditional_actions import add_conditional_action_pins
 from _lcm.regime_building.fixed_process_laws import StateDeclaration
 from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
@@ -181,6 +182,12 @@ def merge_model_slots(
             regime_slot=user_regime.actions,
             model_slot=model_slots.get("actions", {}),
         )
+        constraints, pin_errors = add_conditional_action_pins(
+            regime_name=regime_name,
+            actions=actions,
+            constraints=constraints,
+            functions=functions,
+        )
         errors.extend(
             (
                 *function_errors,
@@ -188,6 +195,7 @@ def merge_model_slots(
                 *state_errors,
                 *state_transition_errors,
                 *action_errors,
+                *pin_errors,
             )
         )
         if not errors:

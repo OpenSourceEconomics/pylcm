@@ -34,18 +34,24 @@ when the economics declares it.
 
 ## Continuous grids
 
-| Class                                                                  | Declaration                                           |
-| ---------------------------------------------------------------------- | ----------------------------------------------------- |
-| `LinSpacedGrid(start, stop, n_points)`                                 | Uniform linear spacing                                |
-| `LogSpacedGrid(start, stop, n_points)`                                 | Uniform spacing after log transform                   |
-| `IrregSpacedGrid(points)`                                              | Explicit sorted nodes                                 |
-| `PiecewiseLinSpacedGrid(start, stop, breakpoints, points_per_segment)` | Linear segments with independently controlled density |
-| `PiecewiseLogSpacedGrid(start, stop, breakpoints, points_per_segment)` | Log-spaced segments                                   |
-| `GridBreakpoint(value, owner=...)`                                     | Interior boundary and which adjacent segment owns it  |
+| Class                                                                  | Declaration                                             |
+| ---------------------------------------------------------------------- | ------------------------------------------------------- |
+| `LinSpacedGrid(start, stop, n_points)`                                 | Uniform linear spacing                                  |
+| `LogSpacedGrid(start, stop, n_points)`                                 | Uniform spacing after log transform                     |
+| `IrregSpacedGrid(points)`                                              | Explicit sorted nodes                                   |
+| `PiecewiseLinSpacedGrid(start, stop, breakpoints, points_per_segment)` | Linear segments with independently controlled density   |
+| `PiecewiseLogSpacedGrid(start, stop, breakpoints, points_per_segment)` | Log-spaced segments                                     |
+| `GridBreakpoint(value, owner=...)`                                     | Interior boundary and which adjacent segment owns it    |
+| `ConditionalAction(grid, active_when, inactive_value)`                 | Action grid used only under some discrete-action values |
 
 Piecewise grids control **grid density** at known locations. They do not declare an
 economic budget kink to a specialized solver. Use [case pieces](case_pieces.md) or a
 [piecewise-affine schedule](piecewise_affine.md) for that structure.
+
+`ConditionalAction` wraps a continuous action grid. The action ranges over the grid
+where every discrete action named in `active_when` takes one of its listed values, and
+takes `inactive_value`, which must be a node of the grid, everywhere else. See
+[Conditional actions](../user_guide/grids.md#conditional-actions).
 
 (api-stochastic-processes)=
 
