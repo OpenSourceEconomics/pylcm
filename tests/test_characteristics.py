@@ -143,6 +143,12 @@ def _columns_below_int32():
     )
 
 
+def _columns_holding_the_missing_code():
+    characteristics(
+        category_class=_Two, by_category={"a": {"x": 0}, "b": {"x": -(2**31)}}
+    )
+
+
 def _columns_for_a_plain_class():
     class _NotCategorical:
         a: int
@@ -172,6 +178,7 @@ def _columns_for_a_plain_class():
             "have the same characteristics",
         ),
         (_columns_below_int32, r"`b\.x`.*int32"),
+        (_columns_holding_the_missing_code, r"`b\.x`.*missing-category code"),
         (_columns_for_a_plain_class, "DataclassInstance"),
     ],
 )
@@ -277,13 +284,14 @@ def test_characteristics_match_row_entries_by_name_in_any_order():
     }
 
 
-def test_characteristics_accept_both_int32_endpoints():
-    """The smallest and largest int32 values are valid characteristics."""
+def test_characteristics_accept_the_int32_range_above_the_missing_code():
+    """Every int32 above the missing-category code is a valid characteristic."""
     columns = characteristics(
-        category_class=_Two, by_category={"a": {"x": -(2**31)}, "b": {"x": 2**31 - 1}}
+        category_class=_Two,
+        by_category={"a": {"x": -(2**31) + 1}, "b": {"x": 2**31 - 1}},
     )
 
-    np.testing.assert_array_equal(columns["x"], np.array([-(2**31), 2**31 - 1]))
+    np.testing.assert_array_equal(columns["x"], np.array([-(2**31) + 1, 2**31 - 1]))
 
 
 @categorical(ordered=False)
@@ -297,7 +305,7 @@ class _Signed:
 SIGNED = characteristics(
     category_class=_Signed,
     by_category={
-        "minimum": {"x": -(2**31)},
+        "minimum": {"x": -(2**31) + 1},
         "negative": {"x": -1},
         "zero": {"x": 0},
         "maximum": {"x": 2**31 - 1},
@@ -308,14 +316,16 @@ SIGNED = characteristics(
 @pytest.mark.parametrize("mode", ["eager", "jit"])
 def test_category_with_finds_int32_extremes_exactly(*, mode):
     """Signed queries at and next to the int32 endpoints find their own rows."""
-    queries = jnp.array([-(2**31), -1, 0, 1, 2**31 - 1], dtype=jnp.int32)
+    queries = jnp.array([-(2**31), -(2**31) + 1, -1, 0, 1, 2**31 - 1], dtype=jnp.int32)
 
     def lookup(values):
         return category_with(SIGNED, x=values)
 
     found = jax.jit(lookup)(queries) if mode == "jit" else lookup(queries)
 
-    np.testing.assert_array_equal(found, np.array([0, 1, 2, MISSING_CAT_CODE, 3]))
+    np.testing.assert_array_equal(
+        found, np.array([MISSING_CAT_CODE, 0, 1, 2, MISSING_CAT_CODE, 3])
+    )
 
 
 @pytest.mark.skipif(not X64_ENABLED, reason="int64 queries need x64")
@@ -380,6 +390,131 @@ def test_category_with_broadcasts_two_array_arguments(*, mode):
 
     np.testing.assert_array_equal(
         found, np.array([[0, MISSING_CAT_CODE], [1, MISSING_CAT_CODE]])
+    )
+
+
+def _exact_signed_codes(values):
+    """Return the code of each value in `SIGNED`, compared as Python integers."""
+    stored = {int(value): code for code, value in enumerate(SIGNED["x"].tolist())}
+    return np.array([stored.get(int(v), MISSING_CAT_CODE) for v in values], np.int32)
+
+
+def _signed_lookup(values):
+    return category_with(SIGNED, x=values)
+
+
+_TRANSFORMS = {
+    "eager": _signed_lookup,
+    "jit": jax.jit(_signed_lookup),
+    "vmap": jax.vmap(_signed_lookup),
+    "jit_vmap": jax.jit(jax.vmap(_signed_lookup)),
+}
+
+
+def _weak_batch(values):
+    """Stack weakly typed integer scalars into one weakly typed array."""
+    batch = jnp.stack([jnp.asarray(int(value)) for value in values])
+    assert batch.weak_type
+    return batch
+
+
+@pytest.mark.skipif(not X64_ENABLED, reason="64-bit queries need x64")
+@pytest.mark.parametrize("mode", ["eager", "jit"])
+@pytest.mark.parametrize("representation", ["python", "weak", "strong"])
+def test_category_with_a_wide_integer_cannot_alias_a_negative_characteristic(
+    *, mode, representation
+):
+    """`2**32 - 1` misses although its low 32 bits equal the stored -1."""
+    value = 2**32 - 1
+    if representation == "weak":
+        value = jnp.asarray(value)
+        assert value.weak_type
+    elif representation == "strong":
+        value = jnp.asarray(value, dtype=jnp.int64)
+
+    found = _signed_lookup(value) if mode == "eager" else jax.jit(_signed_lookup)(value)
+
+    assert (found.dtype, int(found)) == (jnp.int32, MISSING_CAT_CODE)
+
+
+@pytest.mark.skipif(not X64_ENABLED, reason="64-bit queries need x64")
+@pytest.mark.parametrize("mode", ["eager", "jit", "vmap", "jit_vmap"])
+@pytest.mark.parametrize("representation", ["weak", "strong"])
+def test_category_with_int64_neighbourhoods_of_every_characteristic(
+    *, mode, representation
+):
+    """Each stored value, its neighbours and its 32-bit aliases map exactly."""
+    values = sorted(
+        {
+            stored + k * 2**32 + offset
+            for stored in SIGNED["x"].tolist()
+            for k in (-2, -1, 0, 1, 2)
+            for offset in (-1, 0, 1)
+        }
+    )
+    queries = (
+        _weak_batch(values)
+        if representation == "weak"
+        else jnp.asarray(values, dtype=jnp.int64)
+    )
+
+    found = _TRANSFORMS[mode](queries)
+
+    np.testing.assert_array_equal(found, _exact_signed_codes(values))
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit", "vmap", "jit_vmap"])
+def test_category_with_small_weak_integers_map_exactly(*, mode):
+    """Weakly typed small integers find their rows at either precision."""
+    values = (-1, 0, 1, 2)
+
+    found = _TRANSFORMS[mode](_weak_batch(values))
+
+    np.testing.assert_array_equal(found, _exact_signed_codes(values))
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit", "vmap", "jit_vmap"])
+@pytest.mark.parametrize(
+    "dtype", [jnp.int8, jnp.int16, jnp.int32, jnp.int64, jnp.bool_]
+)
+def test_category_with_accepts_every_signed_width_and_bool(*, mode, dtype):
+    """Strong signed integers of any width, and bools, compare by value."""
+    if dtype == jnp.int64 and not X64_ENABLED:
+        pytest.skip("int64 needs x64")
+    values = (False, True) if dtype == jnp.bool_ else (-1, 0, 1, 2)
+
+    found = _TRANSFORMS[mode](jnp.asarray(values, dtype=dtype))
+
+    np.testing.assert_array_equal(found, _exact_signed_codes(values))
+
+
+@pytest.mark.skipif(not X64_ENABLED, reason="64-bit queries need x64")
+@pytest.mark.parametrize("mode", ["eager", "jit"])
+def test_category_with_wide_weak_values_broadcast_with_bool_flags(*, mode):
+    """A wide alias misses at every flag it broadcasts against."""
+    columns = characteristics(
+        category_class=_Signed,
+        by_category={
+            "minimum": {"x": -1, "flag": False},
+            "negative": {"x": -1, "flag": True},
+            "zero": {"x": 0, "flag": False},
+            "maximum": {"x": 0, "flag": True},
+        },
+    )
+
+    def lookup(*, values, flags):
+        return category_with(columns, x=values, flag=flags)
+
+    values = _weak_batch((-1, 2**32 - 1, 0)).reshape(3, 1)
+    flags = jnp.array([[False, True]])
+    found = (
+        jax.jit(lookup)(values=values, flags=flags)
+        if mode == "jit"
+        else lookup(values=values, flags=flags)
+    )
+
+    np.testing.assert_array_equal(
+        found, np.array([[0, 1], [MISSING_CAT_CODE, MISSING_CAT_CODE], [2, 3]])
     )
 
 

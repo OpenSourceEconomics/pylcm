@@ -18,9 +18,9 @@ an outcome grid and its transition mechanism.
 - `DiscreteGrid(category_class=Category)` turns that category class into a state or
   action grid.
 - `characteristics(category_class=Category, by_category=...)` checks a table of every
-  category's `int` or `bool` characteristics, keyed by category name in declaration
-  order, with the same characteristics in any order per row and unique per category, and
-  returns read-only arrays indexed by code.
+  category's `int` or `bool` characteristics (above the int32 minimum), keyed by
+  category name in declaration order, with the same characteristics in any order per row
+  and unique per category, and returns read-only arrays indexed by code.
 - `category_with(columns, **characteristics)` returns the int32 code of the category
   with the given characteristics, or the int32 minimum where none has them. The given
   characteristics must tell all categories apart, and array values must be bool or

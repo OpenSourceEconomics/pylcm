@@ -17,6 +17,7 @@ from beartype import beartype
 
 from _lcm.beartype_conf import CATEGORICAL_CONF
 from _lcm.grids.categorical import get_category_codes, validate_category_class
+from _lcm.grids.discrete import MISSING_CAT_CODE
 from _lcm.typing import DataclassInstance
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import CategoricalDefinitionError
@@ -24,10 +25,6 @@ from lcm.typing import IntND, ValueND
 
 # The value of one characteristic of one category, as written in the table.
 type CharacteristicValue = int | bool
-
-# The missing-category code; `initial_conditions` imports the grids, so the
-# value is restated here and a test pins it to the engine's sentinel.
-_MISSING_CODE = np.iinfo(np.int32).min
 
 _INT32_MIN = int(np.iinfo(np.int32).min)
 _INT32_MAX = int(np.iinfo(np.int32).max)
@@ -149,28 +146,36 @@ def category_with(
     return jnp.where(
         jnp.any(matches, axis=0),
         jnp.argmax(matches, axis=0).astype(jnp.int32),
-        jnp.int32(_MISSING_CODE),
+        jnp.int32(MISSING_CAT_CODE),
     )
 
 
 def _prepare_value(*, name: str, value: ValueND | int) -> ValueND | None:
     """Return `value` as an array that compares by its integer value.
 
-    A Python int outside int32 matches no characteristic and returns `None`.
-    Arrays must be bool or signed integers: JAX
-    compares an unsigned array with an int32 column in int32 when x64 is off,
-    which would let a large unsigned value match a negative characteristic.
+    - A Python int that int32 holds, other than the missing-category code, is
+      used as it is; any other Python int matches nothing and returns `None`.
+    - A signed-integer array keeps its own dtype and loses weak typing. A
+      weakly typed int64 compared with an int32 column would be narrowed to
+      int32 first, so a wide value could equal a stored one in its low 32
+      bits; a strongly typed int64 widens the column instead.
+    - Bools compare as they are. Unsigned and float arrays raise: with x64 off
+      JAX compares uint32 with int32 in int32.
     """
+    if isinstance(value, bool):
+        return jnp.asarray(value)
     if isinstance(value, int):
-        if _INT32_MIN <= value <= _INT32_MAX:
+        if _INT32_MIN < value <= _INT32_MAX:
             return jnp.asarray(value)
         return None
-    if value.dtype.kind not in {"b", "i"}:
+    if value.dtype.kind == "b":
+        return value
+    if value.dtype.kind != "i":
         raise CategoricalDefinitionError(
             f"category_with takes bool or signed integer values, but `{name}` has "
             f"dtype {value.dtype}."
         )
-    return value
+    return jnp.asarray(value, dtype=value.dtype)
 
 
 def _check_case_names(
@@ -235,9 +240,15 @@ def _check_column(*, name: str, values: Mapping[str, CharacteristicValue]) -> li
     if len({type(value) for value in values.values()}) > 1:
         return [f"Characteristic `{name}` mixes bool and int values."]
     return [
-        f"`{case}.{name}` is {value}, outside the int32 range of category codes."
+        (
+            f"`{case}.{name}` is {value}, the missing-category code, which no "
+            f"characteristic may take."
+            if value == _INT32_MIN
+            else f"`{case}.{name}` is {value}, outside the int32 range of category "
+            f"codes."
+        )
         for case, value in values.items()
-        if not _INT32_MIN <= value <= _INT32_MAX
+        if not _INT32_MIN < value <= _INT32_MAX
     ]
 
 

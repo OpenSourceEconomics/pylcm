@@ -54,7 +54,8 @@ The check raises when the table and the class disagree:
 
 - the table lists the categories of the class, in declaration order;
 - every category sets the same characteristics, in any order, each a Python `int` within
-  int32 or a `bool`;
+  int32 or a `bool`, and no characteristic is the int32 minimum, which marks a missing
+  category;
 - no two categories share all characteristics.
 
 The last rule makes each category equal to its combination of characteristics. Two
