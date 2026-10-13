@@ -28,6 +28,8 @@ from _lcm.egm.nbegm import PieceSet
 from _lcm.grids import DiscreteGrid
 from _lcm.regime_building.value_adapter import (
     AdaptableEntry,
+    AdapterMemo,
+    ValueAdapter,
     adapt_entry,
     collect_value_grids,
 )
@@ -113,6 +115,7 @@ def finalize_regimes(
     value_grids = collect_value_grids(
         regimes=user_regimes, laws=laws, derived_categoricals=derived_categoricals
     )
+    adapters: AdapterMemo = {}
     result: dict[RegimeName, FinalizedUserRegime] = {}
     for regime_name, user_regime in user_regimes.items():
         merged = _merge_derived_categoricals(
@@ -120,7 +123,12 @@ def finalize_regimes(
             user_regime=user_regime,
             derived_categoricals=derived_categoricals,
         )
-        functions = dict(user_regime.decomposed_functions)
+        # A finalized regime reused in another model holds the proxies this
+        # function built; it starts again from the functions the user wrote.
+        functions = {
+            name: _authored(func)
+            for name, func in user_regime.decomposed_functions.items()
+        }
         _compose_case_piece_outputs(functions=functions)
         _compose_margin_resources(
             regime_name=regime_name,
@@ -152,7 +160,10 @@ def finalize_regimes(
             engine_functions=cast(
                 "Mapping[FunctionName, UserFunction | Phased | None]",
                 _adapt_slot(
-                    slot=functions, value_grids=value_grids, encoded=frozenset(merged)
+                    slot=functions,
+                    value_grids=value_grids,
+                    encoded=frozenset(merged),
+                    adapters=adapters,
                 ),
             ),
             state_transitions=cast(
@@ -161,6 +172,7 @@ def finalize_regimes(
                     slot=user_regime.state_transitions,
                     value_grids=value_grids,
                     encoded=frozenset(user_regime.state_transitions),
+                    adapters=adapters,
                 ),
             ),
             constraints=cast(
@@ -169,10 +181,28 @@ def finalize_regimes(
                     slot=user_regime.constraints,
                     value_grids=value_grids,
                     encoded=frozenset(),
+                    adapters=adapters,
                 ),
             ),
             derived_categoricals=merged,
-            koopmans_aggregator=regime_koopmans_aggregator,
+            koopmans_aggregator=cast(
+                "UserFunction | Phased | None",
+                adapt_entry(
+                    entry=regime_koopmans_aggregator,
+                    value_grids=value_grids,
+                    encode=None,
+                    adapters=adapters,
+                ),
+            ),
+            selection_aggregator=cast(
+                "UserFunction | Phased | None",
+                adapt_entry(
+                    entry=user_regime.selection_aggregator,
+                    value_grids=value_grids,
+                    encode=None,
+                    adapters=adapters,
+                ),
+            ),
             certainty_equivalent=regime_certainty_equivalent,
         )
         error_messages = _validate_completeness(
@@ -189,11 +219,28 @@ def finalize_regimes(
     return MappingProxyType(result)
 
 
+def _authored(
+    func: UserFunction | Phased | None,
+) -> UserFunction | Phased | None:
+    """Return the function the user wrote beneath this module's own proxies.
+
+    Finalization wraps a value-reading function in a `ValueAdapter` and a case
+    function in an `_AnnotatedCaseFunction`; both are rebuilt from the user's
+    function, so a regime finalized again is not wrapped twice.
+    """
+    if isinstance(func, Phased):
+        return Phased(solve=_authored(func.solve), simulate=_authored(func.simulate))
+    while isinstance(func, ValueAdapter | _AnnotatedCaseFunction):
+        func = func.func if isinstance(func, ValueAdapter) else func.function
+    return func
+
+
 def _adapt_slot(
     *,
     slot: Mapping[str, AdaptableEntry],
     value_grids: Mapping[str, DiscreteGrid],
     encoded: frozenset[str],
+    adapters: AdapterMemo,
 ) -> MappingProxyType[str, AdaptableEntry]:
     """Adapt one regime slot; entries named in `encoded` return their grid's code."""
     return MappingProxyType(
@@ -202,6 +249,7 @@ def _adapt_slot(
                 entry=entry,
                 value_grids=value_grids,
                 encode=value_grids.get(name) if name in encoded else None,
+                adapters=adapters,
             )
             for name, entry in slot.items()
         }

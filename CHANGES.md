@@ -55,8 +55,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   combination, the conditional value `Qc`, the `choice_probabilities`
   `softmax(Qc / scale)` and the `conditional_actions` attaining `Qc`; `value` is their
   smoothed maximum. These describe the discrete choice `simulate` draws: `value` equals
-  the stored solve value at grid rows when both phases share the current utility and the
-  action grid is the declared one. Regimes solved by an EGM-family solver are refused.
+  the stored solve value at grid rows to numerical precision when both phases share the
+  current utility and Koopmans aggregator and the action grid is the declared one.
+  Regimes solved by an EGM-family solver are refused.
 
 ### Typed simulation random roots
 

@@ -145,7 +145,9 @@ class CollectiveHouseholdSolve:
         self._build()
 
     def execute_for_measurement(self):
-        self.model.solve(params=self.model_params, log_level="off")
+        self.model.solve(
+            params=self.model_params, log_level="off", runtime_checks=False
+        )
 
     def setup_cache(self) -> dict[str, float | list[float]]:
         return _gpu_mem.measure_combined_with_warm_samples(
@@ -205,7 +207,7 @@ class CollectiveHouseholdSimulate:
 
         self.model, self.model_params = _make_model()
         self.period_to_regime_to_V_arr = self.model.solve(
-            params=self.model_params, log_level="off"
+            params=self.model_params, log_level="off", runtime_checks=False
         )
         self.initial_conditions = collective_household.get_initial_conditions(
             n_subjects=n_subjects, model=self.model
@@ -226,6 +228,7 @@ class CollectiveHouseholdSimulate:
             initial_conditions=self.initial_conditions,
             solution=self.period_to_regime_to_V_arr,
             log_level="off",
+            runtime_checks=False,
             seed=0,
         )
 
@@ -300,7 +303,9 @@ class ReferenceChainSolve:
         self._build(depth)
 
     def execute_for_measurement(self):
-        self.model.solve(params=self.model_params, log_level="off")
+        self.model.solve(
+            params=self.model_params, log_level="off", runtime_checks=False
+        )
 
     def track_execution_time(self, depth):
         return statistics.median(
