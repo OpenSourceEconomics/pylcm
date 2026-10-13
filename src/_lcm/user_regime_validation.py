@@ -43,6 +43,7 @@ from _lcm.typing import (
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from _lcm.utils.functools import is_user_function
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from lcm.decision_value import DecisionValue
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
@@ -563,6 +564,12 @@ def _fail_if_gated_edge_source_out_of_scope(regime: Regime) -> None:
         raise NotImplementedError(
             "Gated edges on a taste-shock source regime are not implemented."
         )
+    if isinstance(regime.koopmans_aggregator, DecisionValue):
+        raise NotImplementedError(
+            "Gated edges on a source regime with a `DecisionValue` Koopmans "
+            "aggregator are not implemented: which of its two values the gate "
+            "compares is not yet defined."
+        )
     if aggregates_nonlinearly(regime.certainty_equivalent):
         raise NotImplementedError(
             "Gated edges on a certainty-equivalent source regime are not implemented."
@@ -1049,6 +1056,38 @@ def _koopmans_aggregator_errors(regime: Regime, *, law: RegimeLaw) -> tuple[str,
             "A terminal regime cannot declare `koopmans_aggregator`: there is "
             "no continuation value to aggregate."
         )
+    if isinstance(regime.koopmans_aggregator, DecisionValue):
+        error_messages.extend(_decision_value_errors(regime))
+    return tuple(error_messages)
+
+
+def _decision_value_errors(regime: Regime) -> tuple[str, ...]:
+    """Collect errors for a `DecisionValue` Koopmans aggregator.
+
+    - only `GridSearch` reduces the action product in concrete values, so only
+      it can choose with one aggregator and store another
+    - a collective regime chooses with its Pareto-weighted objective
+    - the extreme-value reduction does not yet read a second aggregator
+    """
+    error_messages: list[str] = []
+    if not isinstance(regime.solver, GridSearch):
+        error_messages.append(
+            f"The {type(regime.solver).__name__} solver does not support a "
+            "`DecisionValue` Koopmans aggregator: choosing with one aggregator "
+            "and storing another needs the full action product. Use "
+            "`solver=GridSearch()` for this regime."
+        )
+    if regime.stakeholders is not None:
+        error_messages.append(
+            "A collective regime cannot declare a `DecisionValue` Koopmans "
+            "aggregator: the household chooses with its Pareto-weighted "
+            "objective."
+        )
+    if regime.taste_shocks is not None:
+        error_messages.append(
+            "A regime cannot combine a `DecisionValue` Koopmans aggregator with "
+            "`taste_shocks` yet."
+        )
     return tuple(error_messages)
 
 
@@ -1064,8 +1103,7 @@ def _expected_utility_aggregator_errors(regime: Regime) -> tuple[str, ...]:
         regime.certainty_equivalent
     ):
         return ()
-    declared = regime.koopmans_aggregator
-    solve_W = declared.solve if isinstance(declared, Phased) else declared
+    solve_W = regime.get_koopmans_aggregator(phase="solve")
     if solve_W is None or isinstance(solve_W, LinearAggregator):
         return ()
     msg = (

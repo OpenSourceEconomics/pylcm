@@ -48,7 +48,15 @@ from _lcm.execution.core_program import (
     ValueRead,
 )
 from _lcm.regime_building.argmax import argmax_and_max
-from _lcm.regime_building.Q_and_F import QAndFParts, get_Q_and_F_parts
+from _lcm.regime_building.decision_value import (
+    DECISION_VALUE_LOOKUP_OUTPUT_ROLES,
+    DecisionValueWithActionParts,
+)
+from _lcm.regime_building.Q_and_F import (
+    QAndFParts,
+    get_Q_and_F_parts,
+    has_decision_profile,
+)
 from _lcm.simulation.gated_routing import (
     simulation_gate_fold,
     simulation_gate_route_delta,
@@ -216,7 +224,9 @@ def build_simulation_programs(
                     Q_and_F=kernel,
                     action_names=space.action_names,
                     body=(
-                        partial(
+                        DecisionValueWithActionParts
+                        if has_decision_profile(Q_and_F=kernel)
+                        else partial(
                             TasteShockLookup,
                             n_discrete_action_axes=len(space.discrete_actions),
                         )
@@ -237,7 +247,9 @@ def build_simulation_programs(
                 decision[period].requirements, reduced_axes=()
             ),
             output_roles=(
-                TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
+                DECISION_VALUE_LOOKUP_OUTPUT_ROLES
+                if has_decision_profile(Q_and_F=Q_and_F_functions[period])
+                else TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
                 if context.has_taste_shocks
                 else ACTION_VALUES_OUTPUT_ROLES
             ),

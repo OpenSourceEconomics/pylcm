@@ -50,6 +50,10 @@ from _lcm.typing import (
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args, is_user_function
 from lcm.collective import Gate
+from lcm.decision_value import (
+    koopmans_aggregator_variants,
+    resolve_koopmans_aggregator,
+)
 from lcm.exceptions import InvalidNameError, ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
@@ -915,8 +919,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
             for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
         }
-        if user_regime.koopmans_aggregator is not None:
-            consumers["koopmans_aggregator"] = user_regime.koopmans_aggregator
+        consumers |= _koopmans_consumers(user_regime=user_regime, phase=phase)
         for name, func in consumers.items():
             _fail_if_a_joint_node_is_read(
                 consumer_name=name,
@@ -1120,8 +1123,7 @@ def _fail_if_a_next_name_is_read_outside_a_transition(
             for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
         }
-        if user_regime.koopmans_aggregator is not None:
-            consumers["koopmans_aggregator"] = user_regime.koopmans_aggregator
+        consumers |= _koopmans_consumers(user_regime=user_regime, phase=phase)
         for name, func in consumers.items():
             _fail_if_a_next_name_is_read(
                 consumer_name=name,
@@ -1240,6 +1242,19 @@ def _fail_if_a_next_name_is_read(
     )
 
 
+def _koopmans_consumers(
+    *, user_regime: UserRegime, phase: Literal["solve", "simulate"]
+) -> dict[str, UserFunction]:
+    """Name the aggregators the Koopmans slot runs in `phase`, for read checks."""
+    value, decision = resolve_koopmans_aggregator(
+        declaration=user_regime.koopmans_aggregator, phase=phase
+    )
+    consumers = {} if value is None else {"koopmans_aggregator": value}
+    if decision is not None:
+        consumers["koopmans_aggregator (decision)"] = decision
+    return consumers
+
+
 def _add_koopmans_aggregator_params(
     *, function_params: dict[FunctionName, dict[str, str]], user_regime: UserRegime
 ) -> None:
@@ -1258,13 +1273,13 @@ def _add_koopmans_aggregator_params(
             "under the pseudo-function name 'koopmans_aggregator' in the "
             "params — this conflicts with a regime function of the same name."
         )
-    aggregator = user_regime.koopmans_aggregator
-    if isinstance(aggregator, Phased):
-        tree = _input_types({"koopmans_aggregator": aggregator.solve}) | _input_types(
-            {"koopmans_aggregator": aggregator.simulate}
-        )
-    else:
-        tree = _input_types({"koopmans_aggregator": aggregator})
+    # Every aggregator the slot runs reads its params from one namespace, so a
+    # name that two of them declare is one parameter.
+    tree: dict[str, str] = {}
+    for aggregator in reversed(
+        koopmans_aggregator_variants(declaration=user_regime.koopmans_aggregator)
+    ):
+        tree |= _input_types({"koopmans_aggregator": aggregator})
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
