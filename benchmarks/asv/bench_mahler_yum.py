@@ -55,6 +55,7 @@ class _MahlerYum:
             initial_conditions=self.initial_conditions,
             seed=self.simulation_seed,
             log_level="off",
+            runtime_checks=False,
         )
         self._compile_time = time.perf_counter() - start
 
@@ -67,6 +68,7 @@ class _MahlerYum:
             initial_conditions=self.initial_conditions,
             seed=self.simulation_seed,
             log_level="off",
+            runtime_checks=False,
         )
 
     def execute_gpu_memory_phase(
@@ -85,6 +87,7 @@ class _MahlerYum:
             solution = self.model.solve(
                 params=self.model_params,
                 log_level="off",
+                runtime_checks=False,
                 retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
             )
             solution.save(path=archive_path)
@@ -99,6 +102,7 @@ class _MahlerYum:
                 seed=self.simulation_seed,
                 solution=solution,
                 log_level="off",
+                runtime_checks=False,
             )
             return
         msg = f"Unknown GPU memory profile phase: {phase!r}."
