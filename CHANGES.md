@@ -5,6 +5,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Public `EULER_GAMMA` for location-0 taste shocks
+
+- `lcm.EULER_GAMMA` exports the Euler-Mascheroni constant. Adding
+  `scale * EULER_GAMMA` to Bellman utility reproduces location-0 shocks under
+  `LinearAggregator` when other uses of the original utility are preserved;
+  see the [location-0 recipe](docs/reference/model_and_regime.md#api-euler-gamma).
+
 ### Carrying a state to a regime that uses it counts as a use
 
 - A regime-level state that a regime only carries, with `fixed_transition` or any other
