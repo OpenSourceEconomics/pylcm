@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.typing import QAndFArg
@@ -51,3 +52,11 @@ class CountedGridSearch:
         if self.collective:
             return value, empty, empty_count, other_inf_count
         return value, empty_count, other_inf_count
+
+
+@jax.jit
+def add_feasibility_counts(
+    *, total: FeasibilityCounts, block: FeasibilityCounts
+) -> FeasibilityCounts:
+    """Add one invariant block's counts to the counts of the blocks before it."""
+    return total[0] + block[0], total[1] + block[1]

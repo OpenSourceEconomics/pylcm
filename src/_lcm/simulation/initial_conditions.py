@@ -369,6 +369,7 @@ def _preflight_memory(
         devices=devices,
         subject_devices=devices[:1],
         operations=_PREFLIGHT_OPERATIONS,
+        budget_note=execution.device_memory_cap_note(),
         producers=ProfiledSimulationOperations() if producers is None else producers,
         inputs=union_buffer_footprints(
             footprints=(

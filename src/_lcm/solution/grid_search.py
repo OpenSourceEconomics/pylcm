@@ -1027,6 +1027,9 @@ class _GridSearchPeriodKernel:
                 regime_name=argument_builder.regime_name,
                 period=period,
             )
+        # A program declaring the value alone publishes no feasibility counts.
+        if program.output_roles is VALUE:
+            return KernelOutput(value=cast("FloatND", out))
         if (
             cast("tuple[OutputRoleLeaf, ...]", program.output_roles)[1]
             is DISSOLUTION_FLAG
