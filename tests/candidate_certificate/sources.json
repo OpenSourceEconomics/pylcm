@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "6c9993704385e67c398d65352bd59e85e71b3f7d75e6cc7f4af3ecd845458b65",
+  "source_inventory_sha256": "5147ddcdc3330dba74a6950eb42cd036823d694cf94d9b74576a4ebfdb43eefb",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -166,7 +166,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "5979afeb4adb28f0a9bcaf743c5f87a0c13bb9d119bb1a42c9b37e9d6ffff564"
+      "sha256": "3c0cf68d0cf5039aaf6fab411007c2a8b230cedbed5d7ee28c55ce63e6818a90"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -286,7 +286,7 @@
     },
     {
       "path": "src/_lcm/simulation/programs.py",
-      "sha256": "5c8e7b06f2eafa4e9b99f3220f40cfd9e7a30525749120b70f87f55ce65e1f06"
+      "sha256": "d31a0703d2e493cc0d805b448cfca68b53bb58a8a2dc9e7402a4a971aed06c68"
     },
     {
       "path": "src/_lcm/simulation/random.py",
@@ -382,7 +382,7 @@
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
-      "sha256": "aa621ebf65dd7420916c3902d23a2dcc3d3754da259f75fc6166e5a3479419a8"
+      "sha256": "74d0ea9c0c01d51e8a15132e0ab1d215aa0f89fe2a57d91128ee0ee76d816a2c"
     },
     {
       "path": "src/_lcm/solution/logsumexp_action_reduction.py",

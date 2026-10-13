@@ -5,36 +5,46 @@ kernel evaluation: `Q_decision`, which the action maximizes, and `Q`, which is
 stored and published at that action. The reductions here mirror the dense ones
 in `max_Q_over_a` for that pair:
 
-- `argmax_and_readout` is the reduction itself, at one cell;
+- `argmax_and_readout` is the hard-max reduction at one cell, and
+  `decision_value_logsum` the extreme-value one;
 - `get_decision_value_Q_over_a` is the reduction over the action product, as
   simulation and policy lookup run it;
 - `get_decision_value_max_Q_over_a` maps it over the state product, with the
   same tiling and fold `get_max_Q_over_a` takes, as the solve runs it.
 """
 
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import ClassVar, cast
+from typing import ClassVar, NamedTuple, cast
 
 import jax.numpy as jnp
 from dags import with_signature
+from jax import Array
 
+from _lcm.logsum import logsum_and_softmax
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.max_Q_over_a import (
+    TASTE_SHOCK_SCALE_PARAM,
     _get_extra_param_names,
     _wrap_with_fold_reduction,
+    draw_taste_shock_noise,
 )
 from _lcm.regime_building.Q_and_F import QAndFParts, get_Q_and_F_parts
 from _lcm.simulation.program_types import (
     ACTION_INDEX,
     ACTION_PARTS_ROLES,
+    CHOICE_PROBABILITIES,
+    CONDITIONAL_ACTION_INDEX,
+    CONDITIONAL_VALUE,
     DECISION_PROFILE,
     DECISION_VALUE,
 )
 from _lcm.typing import (
     ActionName,
     MaxQOverAFunction,
+    PRNGKeyND,
     QAndFArg,
     RegimeName,
     StateName,
@@ -80,6 +90,8 @@ def get_decision_value_Q_over_a(
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
     publishes_index: bool,
+    n_discrete_action_axes: int = 0,
+    has_taste_shocks: bool = False,
 ) -> Callable[..., tuple[IntND, FloatND] | tuple[FloatND, BoolND]]:
     """Get the reduction over actions of a `DecisionValue` regime, at one cell.
 
@@ -89,6 +101,10 @@ def get_decision_value_Q_over_a(
         state_names: Tuple of state names.
         publishes_index: Whether to return `(index, value)`, as simulation
             needs, instead of `(value, empty)`, as the counted solve needs.
+            With taste shocks the index is a draw, keyed by `taste_shock_key`.
+        n_discrete_action_axes: Number of leading discrete-action axes, which
+            taste shocks smooth over.
+        has_taste_shocks: Whether the regime declares EV1 taste shocks.
 
     Returns:
         The reduction, taking the kernel's arguments.
@@ -103,8 +119,18 @@ def get_decision_value_Q_over_a(
         batch_sizes=dict.fromkeys(action_names, 0),
     )
     return with_signature(
-        _DecisionValueQOverA(parts=parts, publishes_index=publishes_index),
-        args=["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names],
+        _DecisionValueQOverA(
+            parts=parts,
+            publishes_index=publishes_index,
+            n_discrete_action_axes=n_discrete_action_axes if has_taste_shocks else None,
+        ),
+        args=[
+            "next_regime_to_V_arr",
+            *(("taste_shock_key",) if has_taste_shocks and publishes_index else ()),
+            *action_names,
+            *state_names,
+            *extra_param_names,
+        ],
         return_annotation=(
             "tuple[IntND, FloatND]" if publishes_index else "tuple[FloatND, BoolND]"
         ),
@@ -121,6 +147,8 @@ def get_decision_value_max_Q_over_a(
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
     broadcast_state_names: tuple[StateName, ...] = (),
+    n_discrete_action_axes: int = 0,
+    has_taste_shocks: bool = False,
     fold_state_names: tuple[StateName, ...] = (),
     fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
     fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
@@ -136,6 +164,8 @@ def get_decision_value_max_Q_over_a(
         action_names=action_names,
         state_names=state_names,
         publishes_index=False,
+        n_discrete_action_axes=n_discrete_action_axes,
+        has_taste_shocks=has_taste_shocks,
     )
     mapped = (
         tiled_productmap(
@@ -189,24 +219,118 @@ class _DecisionValueQOverA:
     publishes_index: bool
     """Whether to return the chosen flat index in place of the empty flag."""
 
+    n_discrete_action_axes: int | None
+    """Leading discrete-action axes the taste shocks smooth over, or `None`
+    for the hard maximum."""
+
     def __call__(
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: QAndFArg,
+        **states_actions_params: QAndFArg | PRNGKeyND,
     ) -> tuple[IntND, FloatND] | tuple[FloatND, BoolND]:
         """Return `(index, value)` or `(value, empty)` at this cell."""
+        taste_shock_key = states_actions_params.pop("taste_shock_key", None)
         parts = self.parts(
             next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
         )
-        index, value = argmax_and_readout(
-            selection=cast("FloatND", parts.Q_decision),
-            readout=parts.Q,
-            where=parts.F,
+        empty = ~jnp.any(parts.F)
+        if self.n_discrete_action_axes is None:
+            index, value = argmax_and_readout(
+                selection=cast("FloatND", parts.Q_decision),
+                readout=parts.Q,
+                where=parts.F,
+            )
+            return (index, value) if self.publishes_index else (value, empty)
+        conditional = get_conditional_profiles(
+            parts=parts, n_discrete_action_axes=self.n_discrete_action_axes
         )
-        if self.publishes_index:
-            return index, value
-        return value, ~jnp.any(parts.F)
+        scale = cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM])
+        if not self.publishes_index:
+            value, _ = decision_value_logsum(
+                conditional=conditional, scale=scale, parts=parts
+            )
+            return value, empty
+        # One draw per flat discrete combination, as the one-profile route
+        # draws, so the same key gives the same shocks.
+        noise = draw_taste_shock_noise(
+            key=cast("Array", taste_shock_key),
+            shape=(conditional.decision.size,),
+            scale=scale,
+        )
+        discrete = jnp.argmax(jnp.ravel(conditional.decision) + noise)
+        n_continuous = math.prod(parts.F.shape[self.n_discrete_action_axes :])
+        flat_index = (
+            discrete * n_continuous + jnp.ravel(conditional.continuous_index)[discrete]
+        )
+        return (
+            jnp.where(empty, -1, flat_index).astype(jnp.int32),
+            jnp.where(empty, -jnp.inf, jnp.ravel(conditional.value)[discrete]),
+        )
+
+
+class ConditionalProfiles(NamedTuple):
+    """Both profiles per discrete-action combination, at the decision's choice."""
+
+    decision: FloatND
+    """Max of the masked decision profile over the continuous actions; `-inf`
+    for a combination without a feasible continuous action."""
+
+    value: FloatND
+    """The value profile at that continuous choice."""
+
+    continuous_index: IntND
+    """Flat index of that continuous choice; zero where none is feasible."""
+
+
+def get_conditional_profiles(
+    *, parts: QAndFParts, n_discrete_action_axes: int
+) -> ConditionalProfiles:
+    """Choose the continuous actions on the decision profile, per combination."""
+    shape = parts.F.shape[:n_discrete_action_axes]
+    decision = jnp.where(parts.F, cast("FloatND", parts.Q_decision), -jnp.inf).reshape(
+        *shape, -1
+    )
+    continuous_index = jnp.argmax(decision, axis=-1)
+    return ConditionalProfiles(
+        decision=jnp.take_along_axis(decision, continuous_index[..., None], axis=-1)[
+            ..., 0
+        ],
+        value=jnp.take_along_axis(
+            parts.Q.reshape(*shape, -1), continuous_index[..., None], axis=-1
+        )[..., 0],
+        continuous_index=continuous_index.astype(jnp.int32),
+    )
+
+
+def decision_value_logsum(
+    *, conditional: ConditionalProfiles, scale: FloatND, parts: QAndFParts
+) -> tuple[FloatND, FloatND]:
+    """Return the expected stored value under EV1 shocks and the probabilities.
+
+    With `P = softmax(decision / scale)` over the feasible combinations, the
+    value is `scale * logsumexp(decision / scale) + sum_k P_k (value_k -
+    decision_k)`: the expected value of the stored profile at the noisy choice,
+    shock included. No feasible combination gives `-inf`; a NaN at any feasible
+    action, in either profile, gives NaN.
+    """
+    smoothed, probabilities = logsum_and_softmax(
+        values=conditional.decision,
+        scale=scale,
+        axes=tuple(range(conditional.decision.ndim)),
+    )
+    correction = jnp.sum(
+        probabilities
+        * jnp.where(
+            jnp.isneginf(conditional.decision),
+            0.0,
+            conditional.value - conditional.decision,
+        )
+    )
+    feasible_nan = jnp.any(
+        parts.F & (jnp.isnan(cast("FloatND", parts.Q_decision)) | jnp.isnan(parts.Q))
+    )
+    return jnp.where(feasible_nan, jnp.nan, smoothed + correction), probabilities
 
 
 # What the dense lookup of a `DecisionValue` regime publishes, in the order its
@@ -245,3 +369,58 @@ class DecisionValueWithActionParts:
             selection=Q_decision, readout=parts.Q, where=parts.F
         )
         return index, value, parts.Q, parts.F, parts.U, parts.CE, Q_decision
+
+
+# What the EV1 lookup of a `DecisionValue` regime publishes, in the order its
+# body returns them.
+DECISION_VALUE_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES = (
+    DECISION_VALUE,
+    CONDITIONAL_VALUE,
+    CHOICE_PROBABILITIES,
+    CONDITIONAL_ACTION_INDEX,
+    *ACTION_PARTS_ROLES,
+    DECISION_PROFILE,
+)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class DecisionValueTasteShockLookup:
+    """The EV1 lookup decision of a `DecisionValue` regime at one state cell.
+
+    Returns the expected stored value, the stored profile `Qc` and the choice
+    probability of each discrete-action combination, the flat index of the
+    continuous action chosen there, and `Q`, `F`, `U`, `CE` and `Q_decision`
+    over the action product.
+    """
+
+    __name__: ClassVar[str] = "decision_value_logsum_Q_over_a_with_action_parts"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    parts: Callable[..., QAndFParts]
+    """The kernel's parts, mapped over the action product."""
+
+    n_discrete_action_axes: int
+    """Number of leading discrete-action axes of the action product."""
+
+    def __call__(self, **kwargs: QAndFArg) -> tuple[FloatND | IntND | BoolND, ...]:
+        """Return the value, `Qc`, the probabilities, the index and the parts."""
+        parts = self.parts(**kwargs)
+        conditional = get_conditional_profiles(
+            parts=parts, n_discrete_action_axes=self.n_discrete_action_axes
+        )
+        value, probabilities = decision_value_logsum(
+            conditional=conditional,
+            scale=cast("FloatND", kwargs[TASTE_SHOCK_SCALE_PARAM]),
+            parts=parts,
+        )
+        return (
+            value,
+            conditional.value,
+            probabilities,
+            conditional.continuous_index,
+            parts.Q,
+            parts.F,
+            parts.U,
+            parts.CE,
+            cast("FloatND", parts.Q_decision),
+        )

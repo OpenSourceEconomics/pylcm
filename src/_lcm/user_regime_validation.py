@@ -1067,7 +1067,6 @@ def _decision_value_errors(regime: Regime) -> tuple[str, ...]:
     - only `GridSearch` reduces the action product in concrete values, so only
       it can choose with one aggregator and store another
     - a collective regime chooses with its Pareto-weighted objective
-    - the extreme-value reduction does not yet read a second aggregator
     """
     error_messages: list[str] = []
     if not isinstance(regime.solver, GridSearch):
@@ -1082,11 +1081,6 @@ def _decision_value_errors(regime: Regime) -> tuple[str, ...]:
             "A collective regime cannot declare a `DecisionValue` Koopmans "
             "aggregator: the household chooses with its Pareto-weighted "
             "objective."
-        )
-    if regime.taste_shocks is not None:
-        error_messages.append(
-            "A regime cannot combine a `DecisionValue` Koopmans aggregator with "
-            "`taste_shocks` yet."
         )
     return tuple(error_messages)
 

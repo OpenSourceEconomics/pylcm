@@ -391,6 +391,10 @@ class GridSearch(Solver):
                         cell_width_keyword=cell_width_keyword,
                         untiled_state_names=untiled_state_names,
                         broadcast_state_names=broadcast_state_names,
+                        n_discrete_action_axes=len(
+                            context.state_action_space.discrete_actions
+                        ),
+                        has_taste_shocks=context.has_taste_shocks,
                         fold_state_names=context.fold_state_names,
                         fold_weights=MappingProxyType(fold_weights),
                         fold_conditioning=MappingProxyType(fold_conditioning),

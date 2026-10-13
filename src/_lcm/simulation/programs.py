@@ -50,6 +50,8 @@ from _lcm.execution.core_program import (
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.decision_value import (
     DECISION_VALUE_LOOKUP_OUTPUT_ROLES,
+    DECISION_VALUE_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
+    DecisionValueTasteShockLookup,
     DecisionValueWithActionParts,
 )
 from _lcm.regime_building.Q_and_F import (
@@ -224,7 +226,13 @@ def build_simulation_programs(
                     Q_and_F=kernel,
                     action_names=space.action_names,
                     body=(
-                        DecisionValueWithActionParts
+                        partial(
+                            DecisionValueTasteShockLookup,
+                            n_discrete_action_axes=len(space.discrete_actions),
+                        )
+                        if has_decision_profile(Q_and_F=kernel)
+                        and context.has_taste_shocks
+                        else DecisionValueWithActionParts
                         if has_decision_profile(Q_and_F=kernel)
                         else partial(
                             TasteShockLookup,
@@ -247,7 +255,10 @@ def build_simulation_programs(
                 decision[period].requirements, reduced_axes=()
             ),
             output_roles=(
-                DECISION_VALUE_LOOKUP_OUTPUT_ROLES
+                DECISION_VALUE_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
+                if has_decision_profile(Q_and_F=Q_and_F_functions[period])
+                and context.has_taste_shocks
+                else DECISION_VALUE_LOOKUP_OUTPUT_ROLES
                 if has_decision_profile(Q_and_F=Q_and_F_functions[period])
                 else TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
                 if context.has_taste_shocks

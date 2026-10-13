@@ -8739,6 +8739,10 @@ def _build_per_subject_decisions_per_period(
                     action_names=state_action_space.action_names,
                     state_names=state_action_space.state_names,
                     publishes_index=True,
+                    n_discrete_action_axes=len(state_action_space.discrete_actions)
+                    if has_taste_shocks
+                    else 0,
+                    has_taste_shocks=has_taste_shocks,
                 ),
             )
         elif q_id not in built:

@@ -833,3 +833,175 @@ def test_invariant_blocking_solves_like_the_unblocked_model(*, period: int) -> N
         .solve(params=params, log_level="off")
         .value(period=period, regime="decide"),
     )
+
+
+SCALE = 0.3
+
+
+def _enumerate_ev1_values(*, beta_tilde: float) -> dict[int, np.ndarray]:
+    """Solve the EV1 model by enumeration.
+
+    The value is `scale * logsumexp(Q_dec / scale) + sum_k P_k (Q_k - Q_dec_k)`
+    over the feasible choices, with `P = softmax(Q_dec / scale)`.
+    """
+    values = {2: TERMINAL_VALUES}
+    for period in (1, 0):
+        V = np.empty(4)
+        for w in range(4):
+            choices = [(0.0, min(w + 1, 3))]
+            if w >= 1:
+                choices.insert(0, (SPEND_UTILITY, w - 1))
+            u = np.array([c[0] for c in choices])
+            ce = np.array([values[period + 1][c[1]] for c in choices])
+            perceived = u + beta_tilde * DELTA * ce
+            long_run_q = u + DELTA * ce
+            probabilities = np.exp(perceived / SCALE) / np.exp(perceived / SCALE).sum()
+            V[w] = SCALE * np.log(np.exp(perceived / SCALE).sum()) + probabilities @ (
+                long_run_q - perceived
+            )
+        values[period] = V
+    return values
+
+
+@pytest.mark.parametrize(
+    ("beta_tilde", "expected"),
+    [
+        (1.0, [0.9, 1.893979, 3.605445, 3.693979]),
+        (BETA, [0.9, 1.645361, 3.051903, 3.445361]),
+        (0.7, [0.9, 1.778744, 3.498829, 3.578744]),
+    ],
+)
+def test_ev1_enumeration_matches_the_hand_solution(
+    *, beta_tilde: float, expected: list[float]
+) -> None:
+    """The EV1 oracle reproduces the values computed by hand at scale 0.3."""
+    assert_array_almost_equal(
+        _enumerate_ev1_values(beta_tilde=beta_tilde)[1], expected, decimal=6
+    )
+
+
+def _ev1_model(
+    *, koopmans_aggregator: UserFunction | lcm.DecisionValue = PRESENT_BIAS
+) -> lcm.Model:
+    model = _model(koopmans_aggregator=koopmans_aggregator)
+    return lcm.Model(
+        n_periods=3,
+        regimes={
+            "decide": model.user_regimes["decide"].replace(
+                taste_shocks=lcm.ExtremeValueTasteShocks()
+            ),
+            "end": lcm.Regime(
+                states={"wealth": lcm.DiscreteGrid(Wealth)},
+                functions={"utility": terminal_utility},
+            ),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+        edges={
+            "decide": {
+                "decide": lcm.PeriodRange(exclusive_stop=1),
+                "end": lcm.Periods(values=(1,)),
+            }
+        },
+    )
+
+
+def _ev1_params(*, beta_tilde: float) -> UserParams:
+    return {
+        "decide": {
+            "koopmans_aggregator": {
+                "beta_tilde": beta_tilde,
+                "beta": BETA,
+                "delta": DELTA,
+            },
+            "taste_shocks": {"scale": SCALE},
+        }
+    }
+
+
+@pytest.mark.parametrize("period", [0, 1])
+@pytest.mark.parametrize("agent", list(AGENTS))
+def test_ev1_solve_stores_the_expected_value_at_the_noisy_decision(
+    *, agent: str, period: int
+) -> None:
+    """With taste shocks `V` is the expected `u + delta * CE` plus the chosen shock."""
+    beta_tilde = AGENTS[agent]
+    solution = _ev1_model().solve(
+        params=_ev1_params(beta_tilde=beta_tilde), log_level="off"
+    )
+    assert_array_almost_equal(
+        solution.value(period=period, regime="decide"),
+        _enumerate_ev1_values(beta_tilde=beta_tilde)[period],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("period", [0, 1])
+def test_ev1_identical_decision_and_value_solve_like_the_plain_aggregator(
+    *, period: int
+) -> None:
+    """With `decision = value` the EV1 solve equals the plain logsum."""
+    params: UserParams = {
+        "decide": {
+            "koopmans_aggregator": {"delta": DELTA},
+            "taste_shocks": {"scale": SCALE},
+        }
+    }
+    wrapped = _ev1_model(
+        koopmans_aggregator=lcm.DecisionValue(decision=long_run, value=long_run)
+    ).solve(params=params, log_level="off")
+    plain = _ev1_model(koopmans_aggregator=long_run).solve(
+        params=params, log_level="off"
+    )
+    assert_array_almost_equal(
+        wrapped.value(period=period, regime="decide"),
+        plain.value(period=period, regime="decide"),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def _naive_today_probabilities() -> np.ndarray:
+    """Today's naive self at period 0 and wealth one: spend versus save."""
+    V_1 = _enumerate_ev1_values(beta_tilde=1.0)[1]
+    current = np.array([SPEND_UTILITY + BETA * DELTA * V_1[0], BETA * DELTA * V_1[2]])
+    return np.exp(current / SCALE) / np.exp(current / SCALE).sum()
+
+
+def test_ev1_lookup_publishes_the_acting_selfs_choice_probabilities() -> None:
+    """Probabilities are `softmax(Q_decision / scale)` with today's beta."""
+    model = _ev1_model()
+    params = _ev1_params(beta_tilde=1.0)
+    got = model.lookup_policy(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        period=0,
+        regime_name="decide",
+        states={"wealth": jnp.array([Wealth.one])},
+    )
+    assert_array_almost_equal(
+        cast("FloatND", got.choice_probabilities)[0],
+        _naive_today_probabilities(),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_ev1_simulated_choices_follow_the_acting_selfs_probabilities() -> None:
+    """Simulated spend frequency at wealth one is within four standard errors."""
+    n_subjects = 4_000
+    df = (
+        _ev1_model()
+        .simulate(
+            params=_ev1_params(beta_tilde=1.0),
+            initial_conditions={
+                "wealth": jnp.full(n_subjects, Wealth.one),
+                "regime_id": jnp.full(n_subjects, RegimeId.decide),
+                "period": jnp.zeros(n_subjects, dtype=jnp.int32),
+            },
+            log_level="off",
+            seed=11,
+        )
+        .to_dataframe()
+    )
+    spend = _naive_today_probabilities()[0]
+    share = (df.loc[df["period"] == 0, "choice"] == "spend").mean()
+    assert abs(share - spend) < 4 * np.sqrt(spend * (1 - spend) / n_subjects)
