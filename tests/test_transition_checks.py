@@ -18,7 +18,8 @@ import numpy as np
 import pytest
 from typing_extensions import TypedDict
 
-from _lcm.engine import Regime
+from _lcm import transition_checks as transition_checks_module
+from _lcm.engine import Regime, _StochasticStateTransition
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.simulation import initial_conditions as initial_conditions_module
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
@@ -31,7 +32,15 @@ from _lcm.simulation.residency import (
 )
 from _lcm.solution import backward_induction as backward_induction_module
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams, FootprintTree, InitialConditions, RegimeNamesToIds
+from _lcm.typing import (
+    EconFunctionsMapping,
+    FlatParams,
+    FlatRegimeParams,
+    FootprintTree,
+    InitialConditions,
+    RegimeNamesToIds,
+    StateOrActionName,
+)
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -1306,6 +1315,7 @@ def test_shared_state_law_reads_each_phases_own_functions(
         fails=not _phase_demand_row_is_valid(row),
         period=0,
         target="realized" if per_target else None,
+        phase="simulate",
     )
 
 
@@ -1502,3 +1512,143 @@ def test_validate_transitions_accepts_law_valid_on_every_age_grid(
     assert _age_grid_invalid_rows(law=law, use_representative_grid=False) == []
     model = _age_grid_model(law_kind=law_kind, law=law)
     assert model.validate_transitions(params={"discount_factor": 0.95}) is None
+
+
+@categorical(ordered=False)
+class _LateEntryRegimeId:
+    source: ScalarInt
+    late: ScalarInt
+    terminal: ScalarInt
+
+
+_LATE_ENTRY_AGES = (0, 1, 2, 3)
+
+
+def _late_entry_model(*, bad_period: int) -> Model:
+    """Build a model whose regime `late` is solved earlier than it is simulated.
+
+    The solve phase reaches `late` from `source` at ages 0 and 1, so `late` is
+    solved at ages 1 and 2. The simulate phase reaches `late` only at age 1, so
+    simulated subjects occupy it at age 2 alone. The shared health law of `late`
+    reads `probability_row`, whose simulate variant is invalid at `bad_period`.
+    """
+    health = DiscreteGrid(category_class=_Health)
+    valid = StochasticTransition(
+        func=_phase_demand_probabilities(row=_PHASE_DEMAND_VALID_ROW, bad_period=0)
+    )
+    source = UserRegime(
+        states={"health": health},
+        state_transitions={"health": valid},
+        functions={"utility": _phase_demand_utility},
+    )
+    late = UserRegime(
+        states={"health": health},
+        state_transitions={"health": StochasticTransition(func=_phase_demand_from_row)},
+        functions={
+            "utility": _phase_demand_utility,
+            "probability_row": Phased(
+                solve=_phase_demand_probabilities(
+                    row=_PHASE_DEMAND_VALID_ROW, bad_period=bad_period
+                ),
+                simulate=_phase_demand_probabilities(
+                    row=(0.4, 0.5), bad_period=bad_period
+                ),
+            ),
+        },
+    )
+    terminal = UserRegime(
+        states={"health": health}, functions={"utility": _phase_demand_utility}
+    )
+    model = Model(
+        regimes={"source": source, "late": late, "terminal": terminal},
+        ages=AgeGrid(
+            start=_LATE_ENTRY_AGES[0], inclusive_stop=_LATE_ENTRY_AGES[-1], step="Y"
+        ),
+        regime_id_class=_LateEntryRegimeId,
+        initial_nodes={0: "source", 1: "source"},
+        edges=Phased(
+            solve={"source": {"late": (0, 1)}, "late": {"terminal": (1, 2)}},
+            simulate={
+                "source": {"terminal": (0,), "late": (1,)},
+                "late": {"terminal": (2,)},
+            },
+        ),
+    )
+    assert {
+        period
+        for period in range(len(_LATE_ENTRY_AGES))
+        if "late" in model.graph.simulation.active_regimes_by_period[period]
+    } == {2}
+    return model
+
+
+def test_shared_state_law_is_not_simulate_checked_where_no_subject_is() -> None:
+    """A simulate variant invalid only where no simulated subject is passes.
+
+    `late` is solved at age 1, but the simulation first reaches it at age 2,
+    so the simulate evaluation of its shared law has no demand at age 1.
+    """
+    assert (
+        _late_entry_model(bad_period=1).validate_transitions(
+            params={"discount_factor": 0.95}
+        )
+        is None
+    )
+
+
+def test_shared_state_law_simulate_failure_names_the_phase() -> None:
+    """A shared law failing only in its simulate evaluation names that phase."""
+    with pytest.raises(
+        InvalidStateTransitionProbabilitiesError,
+        match=r"state 'health' \(simulate phase\) in regime 'late' at age 2",
+    ):
+        _late_entry_model(bad_period=2).validate_transitions(
+            params={"discount_factor": 0.95}
+        )
+
+
+def test_validate_transitions_reports_an_unvalidated_law(
+    *, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A law the preflight cannot evaluate is reported, not silently accepted."""
+    through_functions = transition_checks_module._through_functions
+
+    def hide_bias(
+        *,
+        transition: _StochasticStateTransition,
+        regime_params: FlatRegimeParams,
+        functions: EconFunctionsMapping,
+        function_params: FlatRegimeParams,
+        inputs: frozenset[StateOrActionName],
+    ) -> tuple[_StochasticStateTransition, FlatRegimeParams]:
+        transition, regime_params = through_functions(
+            transition=transition,
+            regime_params=regime_params,
+            functions=functions,
+            function_params=function_params,
+            inputs=inputs,
+        )
+        return transition, MappingProxyType(
+            {
+                name: value
+                for name, value in regime_params.items()
+                if name != "transition_bias"
+            }
+        )
+
+    monkeypatch.setattr(transition_checks_module, "_through_functions", hide_bias)
+    model = _model_with_fixed_param_health_probs()
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model.validate_transitions(params={"discount_factor": 0.95})
+    skips = [r for r in caplog.records if "not numerically validated" in r.message]
+    assert len(skips) == 1
+
+
+def test_validate_transitions_leaves_the_shared_logger_level() -> None:
+    """The preflight does not change the level later `lcm` warnings pass through."""
+    shared = logging.getLogger("lcm")
+    shared.setLevel(logging.WARNING)
+    _model_with_state_probs(_good_health_probs).validate_transitions(
+        params={"discount_factor": 0.95}
+    )
+    assert shared.level == logging.WARNING
