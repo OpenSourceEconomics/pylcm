@@ -25,11 +25,14 @@ dissolution flags, diagnostics, metadata, and omission reasons remain in their l
 fields and addressed artifact stores.
 
 To inspect values with their state coordinates, use
-`solution.value_frame(period=0, regime="working")`. It returns state columns and `V`,
-with categorical labels by default; pass `use_labels=False` for integer codes.
-Collective values also identify the stakeholder. This explicitly materializes the whole
-grid. Use `model.lookup_policy` for values between grid nodes, with the same
-interpolation as simulation.
+`solution.value_array(period=0, regime="working")`. It returns an xarray `DataArray`
+with one named dimension per state, so `.sel(education="college")` picks a curve
+regardless of axis order. Discrete states carry categorical labels by default; pass
+`use_labels=False` for integer codes. Collective values also have a `stakeholder`
+dimension. `solution.value_frame(...)` returns the same values as a long DataFrame with
+state columns and `V`; it explicitly materializes the whole grid. Use
+`model.lookup_policy` for values between grid nodes, with the same interpolation as
+simulation.
 
 ### Retention and replay
 
