@@ -87,7 +87,9 @@ class _ConditionalActionPin:
     """The mask `conditions hold | action at its inactive node`, read by name.
 
     Every field is a plain number, string or tuple, so the model's durable
-    fingerprint covers the mask completely.
+    fingerprint covers the mask completely. A shipped callable dataclass is how the
+    fingerprint admits engine-built callables; a closure defined in this package is
+    wrapped by beartype, which the fingerprint refuses.
     """
 
     action_name: ActionName
@@ -112,11 +114,12 @@ class _ConditionalActionPin:
         active = jnp.asarray(True)  # noqa: FBT003
         for name, values in self.active_when:
             matches = jnp.asarray(False)  # noqa: FBT003
-            for value in values:
-                matches = matches | (actions[name] == value)
+            for listed in values:
+                matches = matches | (actions[name] == listed)
             active = active & matches
         # The action takes grid nodes only, so lying strictly between the midpoints
-        # around the inactive node identifies that node at every precision.
+        # around the inactive node identifies that node at every precision, also when
+        # the grid was declared at another precision than the solve runs at.
         action = actions[self.action_name]
         at_inactive_node = (action > self.lower_midpoint) & (
             action < self.upper_midpoint

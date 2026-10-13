@@ -32,6 +32,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    FunctionName,
     ScalarInt,
 )
 from tests.conftest import assert_agrees_to_ulp
@@ -92,18 +93,24 @@ def _hours_pin(inactive_value: float) -> Callable[..., BoolND]:
 
 def _get_model(*, conditional: bool, inactive_value: float = 0.0) -> Model:
     if conditional:
-        hours = ConditionalAction(
-            grid=HOURS_GRID,
-            active_when={"labor": Labor.yes},
-            inactive_value=inactive_value,
+        return _model_with_hours(
+            hours=ConditionalAction(
+                grid=HOURS_GRID,
+                active_when={"labor": Labor.yes},
+                inactive_value=inactive_value,
+            )
         )
-        constraints = {"borrowing": _borrowing}
-    else:
-        hours = HOURS_GRID
-        constraints = {
-            "borrowing": _borrowing,
-            "hours_only_when_working": _hours_pin(inactive_value),
-        }
+    return _model_with_hours(
+        hours=HOURS_GRID, extra_constraints={"hours_only": _hours_pin(inactive_value)}
+    )
+
+
+def _model_with_hours(
+    *,
+    hours: ContinuousGrid,
+    extra_constraints: dict[FunctionName, Callable[..., BoolND]] | None = None,
+) -> Model:
+    constraints = {"borrowing": _borrowing, **(extra_constraints or {})}
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     working = Regime(
         state_transitions={"wealth": _next_wealth},
@@ -252,29 +259,6 @@ def test_conditional_action_rejects_invalid_declarations(
         )
 
 
-def _model_with_hours(hours: ConditionalAction) -> Model:
-    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    working = Regime(
-        state_transitions={"wealth": _next_wealth},
-        actions={
-            "labor": DiscreteGrid(category_class=Labor),
-            "hours": hours,
-            "consumption": CONSUMPTION_GRID,
-        },
-        functions={"utility": _utility},
-        constraints={"borrowing": _borrowing},
-    )
-    dead = Regime(functions={"utility": _bequest})
-    return Model(
-        regimes={"working": working, "dead": dead},
-        states={"wealth": WEALTH_GRID},
-        ages=ages,
-        regime_id_class=RegimeId,
-        initial_nodes={ages.exact_values[0]: "working"},
-        edges={"working": {"working": (0, 1), "dead": 2}},
-    )
-
-
 @pytest.mark.parametrize(
     ("active_when", "match"),
     [
@@ -292,7 +276,7 @@ def test_model_rejects_conditions_the_regime_cannot_evaluate(
         grid=HOURS_GRID, active_when=active_when, inactive_value=0.0
     )
     with pytest.raises(ModelInitializationError, match=match):
-        _model_with_hours(hours)
+        _model_with_hours(hours=hours)
 
 
 @pytest.mark.parametrize("inactive_value", [0.0, 10.0])
@@ -316,21 +300,3 @@ def test_lookup_policy_matches_the_pin_constraint(inactive_value: float) -> None
         }
     for name, expected in looked_up[False].items():
         np.testing.assert_array_equal(looked_up[True][name], expected, err_msg=name)
-
-
-def test_lookup_policy_reports_inactive_hours_when_not_working() -> None:
-    """Looked-up hours equal the inactive value wherever the policy is not to work."""
-    model = _get_model(conditional=True, inactive_value=10.0)
-    solution = model.solve(params=PARAMS, log_level="off")
-    lookup = model.lookup_policy(
-        params=PARAMS,
-        solution=solution,
-        period=0,
-        regime_name="working",
-        states={"wealth": WEALTH_GRID.to_jax()},
-    )
-    assert lookup.actions is not None
-    labor = np.asarray(lookup.actions["labor"])
-    hours = np.asarray(lookup.actions["hours"])
-    not_working = hours[labor == Labor.no]
-    assert np.unique(not_working).tolist() == [10.0]

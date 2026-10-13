@@ -30,7 +30,7 @@ type UserDiscreteValues = (
 )
 
 
-@dataclass(frozen=True, kw_only=True, init=False, eq=True)
+@dataclass(frozen=True, kw_only=True, init=False)
 class ConditionalAction(ContinuousGrid):
     """A continuous action that is active only under some discrete-action values.
 
@@ -81,15 +81,6 @@ class ConditionalAction(ContinuousGrid):
         object.__setattr__(self, "active_when", conditions)
         object.__setattr__(self, "inactive_value", float(inactive_value))
         object.__setattr__(self, "inactive_index", inactive_index)
-
-    def __hash__(self) -> int:
-        return hash(
-            (
-                self.grid,
-                tuple(sorted(self.active_when.items(), key=lambda item: item[0])),
-                self.inactive_value,
-            )
-        )
 
     @property
     def off_grid(self) -> OffGrid:
