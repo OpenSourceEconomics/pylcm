@@ -586,13 +586,17 @@ def test_a_blocked_cold_solve_adds_only_view_selection_and_block_writes(
     """Binding a code, typing a start and allocating the full value compile nothing.
 
     The only programs a blocked solve asks for beyond the unblocked ones are
-    the selection of a stored value's block and the write of a block into the
-    complete value.
+    the selection of a stored value's block, the write of a block into the
+    complete value, and the sum of the blocks' feasibility counts.
     """
     blocked, unblocked = _blocked_and_unblocked_compile_requests(workload=workload)
 
     assert unblocked - blocked == collections.Counter()
-    assert set(blocked - unblocked) <= {"jit(_select_view_blocks)", "jit(_write_block)"}
+    assert set(blocked - unblocked) <= {
+        "jit(_select_view_blocks)",
+        "jit(_write_block)",
+        "jit(add_feasibility_counts)",
+    }
 
 
 def _planning_calls(

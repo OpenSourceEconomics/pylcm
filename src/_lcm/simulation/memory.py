@@ -82,6 +82,8 @@ class SimulationMemory:
     period_owner: PeriodSimulationReads | None = None
     ledger: OwnerLedger = field(default_factory=OwnerLedger, repr=False)
     """Call-local span metadata for every owner this scope binds."""
+    budget_note: str = ""
+    """Clause a transfer refusal appends: where the budget came from and remedies."""
 
     def __post_init__(self) -> None:
         """Start the call's held, period and snapshot bookkeeping empty."""
@@ -208,6 +210,7 @@ class SimulationMemory:
             scratch_bytes=dict.fromkeys(participating_devices, cost.temporary_bytes),
             budget_bytes=self.budget_bytes,
             devices=self.devices,
+            budget_note=self.budget_note,
         )
 
     def check_resident(self) -> None:
@@ -218,6 +221,7 @@ class SimulationMemory:
             scratch_bytes={},
             budget_bytes=self.budget_bytes,
             devices=self.devices,
+            budget_note=self.budget_note,
         )
 
     def run[T: PytreeValue](

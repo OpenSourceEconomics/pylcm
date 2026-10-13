@@ -180,7 +180,12 @@ def compiler_boundary(monkeypatch: pytest.MonkeyPatch) -> _CompilerBoundary:
 def wide_solution(tmp_path_factory: pytest.TempPathFactory) -> SolutionResult:
     model, params, _ = _inputs(budget=2**24, n_actions=1024)
     directory = tmp_path_factory.mktemp("feasibility-solution") / "solution"
-    model.solve(params=params, log_level="off").save(path=directory)
+    # Runtime checks off: the untiled off-grid count producer evaluates the costly
+    # constraint over every state-action pair at once, which this budget refuses;
+    # the solve cores themselves tile within it.
+    model.solve(params=params, log_level="off", runtime_checks=False).save(
+        path=directory
+    )
     return load_solution(path=directory)
 
 

@@ -180,10 +180,10 @@ def test_axis_width_gate_bounds_the_cancellation_entry_by_its_operands(
 ) -> None:
     """The cancellation entry may move by roundings of its two operands, no more.
 
-    The low-income, bad-health work value at period 2 is about -0.0246, the sum
-    of a flow utility near -0.217 and a continuation near 0.192. Eight spacings
-    of each operand are 128 of the entry's own steps: a 16-step move passes the
-    real parity test and a 512-step move fails it.
+    The low-income, bad-health work value at period 2 is about 0.283, the sum
+    of a flow utility near -0.217 and a continuation near 0.500. Eight spacings
+    of each operand are 20 of the entry's own steps, more than its own eight: a
+    16-step move passes the real parity test and a 512-step move fails it.
     """
     _, solution = axis_parity._solve_and_collect_widths(config=ExecutionConfig())
     assert solution._engine_view is not None

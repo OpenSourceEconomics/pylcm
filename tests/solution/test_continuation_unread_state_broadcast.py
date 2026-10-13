@@ -103,10 +103,11 @@ _WHOLE = "whole"
 _PLANNED = "planned"
 _CASES = tuple((n_habits, arm) for n_habits in (2, 3) for arm in (_WHOLE, _PLANNED))
 # `stablehlo.reduce(%x init: %c) applies stablehlo.<op> across dimensions = [..] :
-# (tensor<AxBx..xf32>, ...` — the reduction's body operation and its operand shape.
+# (tensor<AxBx..xf32>, ...` — the reduction's body operation, its operand shape
+# and the kind of its element type (`f`, `i`, ...).
 _REDUCE = re.compile(
     r"stablehlo\.reduce\(%[^ ]+ init: %[^)]+\) applies stablehlo\.(\w+) "
-    r"across dimensions = \[[\d, ]*\] : \(tensor<([\dx]*)x?[a-z]+\d+>"
+    r"across dimensions = \[[\d, ]*\] : \(tensor<([\dx]*)x?([a-z]+)\d+>"
 )
 
 
@@ -340,12 +341,16 @@ def _initial_conditions() -> dict[str, jax.Array]:
 def _reduce_shapes(
     *, lowered: tuple[str, ...], additive: bool
 ) -> list[tuple[str, str]]:
-    """Body operation and operand shape of every additive or other reduction."""
+    """Body operation and operand shape of every additive or other reduction.
+
+    Integer sums are left out: they are the solver's feasibility counts, which
+    count every state cell and so grow with every state by construction.
+    """
     return sorted(
         (operation, shape)
         for text in lowered
-        for operation, shape in _REDUCE.findall(text)
-        if (operation == "add") is additive
+        for operation, shape, kind in _REDUCE.findall(text)
+        if (operation == "add") is additive and not (additive and kind == "i")
     )
 
 

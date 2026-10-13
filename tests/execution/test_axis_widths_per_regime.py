@@ -172,9 +172,10 @@ def _bellman_operands(
     `V = u(c*) + E[V_retire(next period)]` with discount factor 1:
 
     - flow utility `u = log(c*) * (1 - 0.3 * (1 - health))`;
-    - continuation: the next-period retirement value at wealth `wealth - c*`,
-      linear in wealth (extrapolated below the grid), averaged over the
-      Gauss-Hermite income nodes and the two equally likely health states.
+    - continuation: the next-period retirement value at wealth
+      `wealth - c* + exp(income)`, linear in wealth (extrapolated beyond the
+      grid), averaged over the Gauss-Hermite income nodes and the two equally
+      likely health states.
 
     The optimal consumption `c*` is found by enumerating the feasible
     consumption grid. Arrays are indexed `(income, health, wealth)` like the
@@ -193,14 +194,15 @@ def _bellman_operands(
     for (income, health, wealth_index), solved in np.ndenumerate(leaf):
         candidates = []
         for choice in consumption:
-            if wealth[wealth_index] - choice + np.exp(nodes[income]) < 0:
+            next_wealth = wealth[wealth_index] - choice + np.exp(nodes[income])
+            if next_wealth < 0:
                 continue
             utility = np.log(choice) * (1.0 - 0.3 * (1.0 - health))
             expected_next = sum(
                 0.5
                 * weights[node]
                 * _interpolate(
-                    x=wealth[wealth_index] - choice,
+                    x=next_wealth,
                     grid=wealth,
                     values=following[node, next_health],
                 )
