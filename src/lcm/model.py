@@ -994,6 +994,7 @@ class Model:
             broadcast_variables=broadcast_variables,
             ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
+            targets_by_phase=schedules.targets_by_phase,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
         )
