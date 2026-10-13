@@ -174,6 +174,9 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     the state through one code's block, and the outputs are gathered back into
     original order.
     """
+    # `simulate` reaches this module through chunk admission, so import lazily.
+    from _lcm.simulation.simulate import _first_empty_action_row  # noqa: PLC0415
+
     if population < original_population or original_population <= 0 or n_subjects <= 0:
         raise ExecutionPlanningError("Chunk profiles need a valid positive population.")
     padded = (
@@ -400,6 +403,11 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                             subject_outputs=True,
                         ),
                     )
+                inventory.operation(
+                    function=_first_empty_action_row,
+                    arguments={"indices": indices, "in_regime": mask},
+                    subject_arg_names=("indices", "in_regime"),
+                )
                 decoder = decision.action_decoder
                 if decoder is None:
                     raise ExecutionPlanningError(
