@@ -132,9 +132,11 @@ def test_a_layout_replay_validates_every_recorded_compiled_sharding(tmp_path):
     )
     print("COMPARED", sum("compiled" in label for label in compared))
     """
-    # One output plus twelve inputs: the states, action, age and period, the
-    # continuation value, and the parameters the period's functions read.
-    assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "13"
+    # Three outputs plus twelve inputs. The outputs are the value and its
+    # empty-action and other-Inf state counts; the inputs are the states, action,
+    # age and period, the continuation value, and the parameters the period's
+    # functions read.
+    assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "15"
 
 
 def test_a_mismatched_recorded_output_sharding_is_refused_naming_both_values(tmp_path):
@@ -145,13 +147,13 @@ def test_a_mismatched_recorded_output_sharding_is_refused_naming_both_values(tmp
     def break_output_sharding(payload):
         layouts = payload[period_capture.LAYOUTS_KEY]
         core = layouts.cores["main"]
-        name, descriptor = core.compiled_output_shardings[0]
+        (name, descriptor), *counts = core.compiled_output_shardings
         broken = dataclasses.replace(descriptor, partition_spec=(None, None))
         payload[period_capture.LAYOUTS_KEY] = dataclasses.replace(
             layouts,
             cores={
                 "main": dataclasses.replace(
-                    core, compiled_output_shardings=((name, broken),)
+                    core, compiled_output_shardings=((name, broken), *counts)
                 )
             },
         )

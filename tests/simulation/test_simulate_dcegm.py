@@ -31,7 +31,7 @@ from lcm import (
     Transition,
     post_decision_lower_bound,
 )
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, UserParamsNode
 
 pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
 
@@ -63,11 +63,28 @@ CONSUMPTION_GRID_STEP = float(
     dcegm_variants.CONSUMPTION_GRID.to_jax()[1]
     - dcegm_variants.CONSUMPTION_GRID.to_jax()[0]
 )
+SMALLEST_CONSUMPTION = float(dcegm_variants.CONSUMPTION_GRID.to_jax()[0])
 
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
 ]
+
+
+def _pensioned_params(
+    *, n_periods: int, pension: float = SMALLEST_CONSUMPTION
+) -> dict[str, UserParamsNode]:
+    """Retirement-only params with a pension paid into next-period wealth.
+
+    Simulation refuses a reached state with no feasible action. Without income, a
+    subject who consumes all but a fraction of a grid step enters the next period
+    unable to afford the smallest consumption node; a pension of at least the
+    resources that node uses keeps every reached state feasible.
+    """
+    return {
+        **dcegm_variants.get_retirement_only_params(n_periods=n_periods),
+        "retirement": {"next_wealth": {"labor_income": pension}},
+    }
 
 
 def test_dcegm_simulated_consumption_matches_brute_force():
@@ -83,7 +100,7 @@ def test_dcegm_simulated_consumption_matches_brute_force():
     two grid steps over this horizon.
     """
     n_periods = 6
-    params = dcegm_variants.get_retirement_only_params(n_periods=n_periods)
+    params = _pensioned_params(n_periods=n_periods)
     n_subjects = 4
     initial_conditions = {
         "wealth": jnp.array([10.0, 50.0, 150.0, 300.0]),
@@ -270,7 +287,7 @@ def test_dcegm_simulate_consumes_the_provided_solution():
     model = dcegm_variants.get_retirement_only_model(
         solver="dcegm", n_periods=n_periods
     )
-    params = dcegm_variants.get_retirement_only_params(n_periods=n_periods)
+    params = _pensioned_params(n_periods=n_periods)
     solution = model.solve(params=params, log_level="debug")
     zeroed_values = MappingProxyType(
         {
@@ -356,7 +373,9 @@ def test_dcegm_simulation_evaluates_a_phase_resolved_savings_bound() -> None:
     n_periods = 4
     initial_wealth = 10.0
     model = _phase_variant_savings_model(n_periods)
-    params = dcegm_variants.get_retirement_only_params(n_periods=n_periods)
+    # Simulated savings spend twice the consumption, so the pension pays for two
+    # smallest nodes.
+    params = _pensioned_params(n_periods=n_periods, pension=2 * SMALLEST_CONSUMPTION)
     solution = model.solve(params=params, log_level="off")
     zeroed_values = MappingProxyType(
         {

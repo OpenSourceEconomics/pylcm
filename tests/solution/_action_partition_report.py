@@ -465,6 +465,9 @@ def _budget_report() -> dict[str, JSONValue]:
     from tests.execution.test_core_plan_record import _PlanRecords  # noqa: PLC0415
     from tests.test_models import many_actions  # noqa: PLC0415
 
+    # The ceiling is read off the solve cores' plan records, so the solves run
+    # without runtime checks: the off-grid landing counts those checks add are an
+    # untiled validation program admitted against the same budget, not a core.
     def solve(budget: int) -> SolutionResult:
         return many_actions.get_model(
             execution_config=ExecutionConfig(
@@ -473,7 +476,9 @@ def _budget_report() -> dict[str, JSONValue]:
                 action_partitions={"working": 4},
                 device_memory_bytes=budget,
             )
-        ).solve(params=many_actions.get_params(), log_level="debug")
+        ).solve(
+            params=many_actions.get_params(), log_level="debug", runtime_checks=False
+        )
 
     records = _PlanRecords()
     logger = logging.getLogger("lcm")

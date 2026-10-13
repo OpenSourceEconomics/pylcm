@@ -182,6 +182,7 @@ def prepare_simulation_chunks(
     )
     memory = SimulationMemory(
         budget_bytes=runtime.execution.device_memory_bytes,
+        budget_note=runtime.execution.device_memory_cap_note(),
         devices=devices,
         subject_devices=runtime.subject_devices,
         operations=runtime.operations,
