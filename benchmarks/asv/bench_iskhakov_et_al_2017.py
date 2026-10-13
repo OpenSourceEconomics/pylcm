@@ -296,7 +296,9 @@ class IskhakovEtAl2017Solve:
         self._build()
 
     def execute_for_measurement(self) -> None:
-        self.model.solve(params=self.model_params, log_level="off")
+        self.model.solve(
+            params=self.model_params, log_level="off", runtime_checks=False
+        )
 
     def setup_cache(self) -> dict[str, float | list[float]]:
         return _gpu_mem.measure_combined_with_warm_samples(
@@ -366,7 +368,9 @@ class IskhakovEtAl2017DCEGMSolve:
         self._build()
 
     def execute_for_measurement(self) -> None:
-        self.model.solve(params=self.model_params, log_level="off")
+        self.model.solve(
+            params=self.model_params, log_level="off", runtime_checks=False
+        )
 
     def setup_cache(self) -> dict[str, float | list[float]]:
         return _gpu_mem.measure_combined_with_warm_samples(
@@ -417,7 +421,7 @@ class IskhakovEtAl2017Simulate:
             consumption_n_points=_SIMULATE_CONSUMPTION_N_POINTS,
         )
         self.period_to_regime_to_V_arr = self.model.solve(
-            params=self.model_params, log_level="off"
+            params=self.model_params, log_level="off", runtime_checks=False
         )
         self.initial_conditions = _make_initial_conditions(_N_SUBJECTS)
 
@@ -430,6 +434,7 @@ class IskhakovEtAl2017Simulate:
             initial_conditions=self.initial_conditions,
             solution=self.period_to_regime_to_V_arr,
             log_level="off",
+            runtime_checks=False,
         )
 
     def setup_cache(self) -> dict[str, float | list[float]]:
@@ -493,7 +498,7 @@ class IskhakovEtAl2017DCEGMSimulate:
             solver="dcegm",
         )
         self.period_to_regime_to_V_arr = self.model.solve(
-            params=self.model_params, log_level="off"
+            params=self.model_params, log_level="off", runtime_checks=False
         )
         self.initial_conditions = _make_initial_conditions(_N_SUBJECTS)
 
@@ -506,6 +511,7 @@ class IskhakovEtAl2017DCEGMSimulate:
             initial_conditions=self.initial_conditions,
             solution=self.period_to_regime_to_V_arr,
             log_level="off",
+            runtime_checks=False,
         )
 
     def setup_cache(self) -> dict[str, float | list[float]]:

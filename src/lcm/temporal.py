@@ -108,10 +108,13 @@ class TimeVarying:
         missing = required - positions.keys()
         if missing:
             raise ValueError(f"Profile is missing mapped labels {list(missing)[:8]}.")
-        indices = jnp.asarray(
-            [positions[label] for label in mapping.values()], dtype=jnp.int32
+        indices = np.asarray([positions[label] for label in mapping.values()])
+        # A NumPy profile keeps its dtype, so model validation sees the exact values.
+        gathered = (
+            np.take(values, indices, axis=0)
+            if isinstance(values, np.ndarray)
+            else jnp.take(values, indices, axis=0)
         )
-        gathered = jnp.take(values, indices, axis=0)
         if period_to_label is not None:
             return cls(values=gathered, periods=tuple(period_to_label))
         return cls(values=gathered, ages=keys)
