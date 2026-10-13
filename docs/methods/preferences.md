@@ -67,9 +67,10 @@ With `value = u + δ·CE`, an objective `u + β̃δ·CE` in the solve and `u + �
 simulation, this covers the naive (`β̃ = 1`), sophisticated (`β̃ = β`) and partially
 naive (`β < β̃ < 1`) quasi-hyperbolic agents. For naive and partially naive agents the
 stored value is the agent's assessment of the policy it expects to follow, which differs
-from the long-run value of the policy it follows. The stored value is read off away from
-its own maximum, so grid error in the chosen action enters it at first order. Only
-`GridSearch` solves a `Decoupled` regime. See the executable
+from the long-run value of the policy it follows. PyLCM has no backward pass for that
+realized value; discounting the utilities along simulated paths estimates it. The stored
+value is read off away from its own maximum, so grid error in the chosen action enters
+it at first order. Only `GridSearch` solves a `Decoupled` regime. See the executable
 [beta-delta notebook](../explanations/beta_delta.ipynb).
 
 Solver support for nonlinear certainty equivalents is narrower than support for linear
