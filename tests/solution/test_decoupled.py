@@ -654,6 +654,8 @@ def test_simulation_rejects_an_objective_with_no_feasible_action(
             }
         },
         enable_jit=enable_jit,
+        # Device-memory admission needs compiled peaks, which an eager model lacks.
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
     )
     with pytest.raises(NoFeasibleActionError, match=r"period 1.*no feasible action"):
         model.simulate(
