@@ -11,7 +11,7 @@ from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
 from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.utils.ast_inspection import time_index_names
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
-from lcm.temporal import TimeVarying
+from lcm.temporal import TimeVarying, _validate_time_labels
 from lcm.typing import TimeLabel, UserAge, UserFunction, ValueND
 
 
@@ -53,31 +53,6 @@ def validate_temporal_variants(
                     "and unmanaged consumers. Use distinct parameter names."
                 )
     return names
-
-
-def _validate_time_labels(
-    *, labels: tuple[TimeLabel, ...], kind: str, name: str
-) -> None:
-    """Validate the schema before surplus observations can be discarded."""
-    if kind == "period" and any(
-        isinstance(v, (bool, np.bool_)) or not isinstance(v, (int, np.integer))
-        for v in labels
-    ):
-        raise InvalidParamsError(
-            f"{name}: period coordinates must be integers, excluding booleans."
-        )
-    if kind == "age":
-        try:
-            finite = all(
-                not isinstance(v, (bool, np.bool_, str)) and np.isfinite(float(v))
-                for v in labels
-            )
-        except TypeError, ValueError:
-            finite = False
-        if not finite:
-            raise InvalidParamsError(
-                f"{name}: age coordinates must be finite numeric labels."
-            )
 
 
 def time_gather_indices(
@@ -129,8 +104,12 @@ def align_time_varying(
     required_periods: tuple[int, ...],
     name: str,
     array_writer: CanonicalArrayWriter | None = None,
-) -> ValueND:
-    """Gather static coordinates while keeping numeric values differentiable."""
+) -> ValueND | np.ndarray:
+    """Gather static coordinates while keeping numeric values differentiable.
+
+    A NumPy table stays NumPy with its own dtype, so the canonical cast range-checks
+    the supplied values rather than values JAX already narrowed.
+    """
     labels = (
         value.periods
         if value.periods is not None
@@ -152,6 +131,13 @@ def align_time_varying(
         return array_writer(value=host, dtype=host.dtype, name=name)
     # Only structurally unread slots receive zeros. No required observation is
     # synthesized; coverage was checked before constructing a numeric array.
+    if isinstance(value.values, np.ndarray):
+        host = np.zeros(
+            (ages.n_periods, *value.values.shape[1:]), dtype=value.values.dtype
+        )
+        selected = np.asarray(indices) >= 0
+        host[selected] = value.values[np.asarray(indices)[selected]]
+        return host
     values = jnp.asarray(value.values)
     if not values.shape[0]:
         return jnp.zeros((ages.n_periods, *values.shape[1:]), dtype=values.dtype)
