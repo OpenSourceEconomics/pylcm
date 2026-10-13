@@ -393,11 +393,39 @@ def test_hand_over_along_an_edge_the_carrier_never_takes_is_rejected() -> None:
 def test_rejection_names_the_hand_over_rule_and_the_targets_inspected() -> None:
     with pytest.raises(
         ModelInitializationError,
-        match=r"carries .* to a reachable target that uses it.*\['gone'\]",
+        match=(
+            r"carries it with a law of motion to a target that the same phase "
+            r"reaches and that keeps it as a state; 'work' reaches \['gone'\] when "
+            r"solving and \['gone'\] when simulating\."
+        ),
     ):
         _model(
             regimes=_work_retired_dead(),
             edges={"work": {"gone": 0}, "retired": {"dead": 1}},
+        )
+
+
+def test_rejection_lists_the_targets_each_phase_reaches() -> None:
+    with pytest.raises(
+        ModelInitializationError,
+        match=(
+            r"'work' reaches \['retired'\] when solving and \['gone'\] when "
+            r"simulating\."
+        ),
+    ):
+        _model(
+            regimes=_work_retired_dead()
+            | {
+                "work": _alive(
+                    skill_law=Phased(
+                        solve=_reset_skill, simulate=fixed_transition("skill")
+                    )
+                )
+            },
+            edges=Phased(
+                solve={"work": {"retired": 0}, "retired": {"dead": 1}},
+                simulate={"work": {"gone": 0}, "retired": {"dead": 1}},
+            ),
         )
 
 
@@ -507,3 +535,21 @@ def test_simulation_side_markers_resolve_at_an_age_the_regime_is_visited() -> No
     )
 
     assert kept["work"] == {"wealth", "consumption", "skill"}
+
+
+def test_the_closure_keeps_a_handed_over_state_without_age_information() -> None:
+    regimes = _work_retired_dead()
+    laws, _ = bind_edge_laws(
+        edges=CHAIN_EDGES,
+        regimes=regimes,
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+    )
+
+    kept = compute_kept_variables(
+        user_regimes=regimes,
+        laws=laws,
+        candidates={"work": frozenset({"skill"})},
+        koopmans_aggregator=None,
+    )
+
+    assert "skill" in kept["work"]
