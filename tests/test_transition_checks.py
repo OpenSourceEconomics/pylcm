@@ -1256,11 +1256,15 @@ def test_per_target_state_laws_are_checked_where_their_phase_demands_them(
     model, demanded = _phase_demand_model(health_law=health_law)
     phases = ("solve", "simulate") if law_phase is None else (law_phase,)
     affected = {(phase, bad_period, bad_target) for phase in phases}
+    # A shared law failing on a simulate-only edge names the simulate phase.
+    failing_phases = {phase for phase, _, _ in demanded & affected}
     _assert_phase_demand_result(
         model=model,
         fails=bool(demanded & affected) and not _phase_demand_row_is_valid(row),
         period=bad_period,
-        phase=law_phase,
+        phase=law_phase
+        if law_phase is not None
+        else ("simulate" if failing_phases == {"simulate"} else None),
         target=bad_target,
     )
 
@@ -1351,7 +1355,7 @@ def test_shared_state_law_sweeps_the_carried_grid_beyond_the_imputation(
         not _phase_demand_row_is_valid((1.0 - good_at[node], good_at[node]))
         for node in _PHASE_DEMAND_CARRIED_NODES
     )
-    _assert_phase_demand_result(model=model, fails=fails, period=0)
+    _assert_phase_demand_result(model=model, fails=fails, period=0, phase="simulate")
 
 
 type _AgeGridLawKind = Literal["state", "joint"]
