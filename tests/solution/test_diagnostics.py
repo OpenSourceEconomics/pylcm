@@ -171,20 +171,20 @@ def test_runtime_check_logger_policy_survives_copy_and_pickle(
 
 
 @pytest.mark.parametrize("log_level", _LOG_LEVELS)
-def test_runtime_checks_solve_enabled_rejects_nan(log_level: LogLevel) -> None:
-    """Reject NaN value functions at every verbosity when runtime checks are on."""
+def test_runtime_checks_solve_default_rejects_nan(log_level: LogLevel) -> None:
+    """Reject NaN value functions by default at every verbosity."""
     model = _make_model()
     params = {**_HEALTHY_PARAMS, "discount_factor": float("nan")}
     with pytest.raises(InvalidValueFunctionError, match="alive"):
-        model.solve(params=params, log_level=log_level, runtime_checks=True)
+        model.solve(params=params, log_level=log_level)
 
 
 @pytest.mark.parametrize("log_level", _LOG_LEVELS)
-def test_runtime_checks_solve_default_allows_nan(log_level: LogLevel) -> None:
-    """Return NaN value functions unchecked by default."""
+def test_runtime_checks_solve_disabled_allows_nan(log_level: LogLevel) -> None:
+    """Allow NaN value functions only when runtime checks are disabled."""
     model = _make_model()
     params = {**_HEALTHY_PARAMS, "discount_factor": float("nan")}
-    solution = model.solve(params=params, log_level=log_level)
+    solution = model.solve(params=params, log_level=log_level, runtime_checks=False)
     assert any(
         bool(jnp.any(jnp.isnan(value)))
         for values in solution.values.values()
@@ -194,10 +194,10 @@ def test_runtime_checks_solve_default_allows_nan(log_level: LogLevel) -> None:
 
 @pytest.mark.parametrize("log_level", _LOG_LEVELS)
 @pytest.mark.parametrize("supplied_solution", [False, True])
-def test_runtime_checks_simulate_enabled_rejects_nan(
+def test_runtime_checks_simulate_default_rejects_nan(
     *, log_level: LogLevel, supplied_solution: bool
 ) -> None:
-    """Reject NaNs from an automatic solve or a supplied solution when checks are on."""
+    """Reject NaNs from an automatic solve or a supplied solution by default."""
     model = _make_model()
     params = {**_HEALTHY_PARAMS, "discount_factor": float("nan")}
     solution = (
@@ -211,17 +211,16 @@ def test_runtime_checks_simulate_enabled_rejects_nan(
             initial_conditions=_INITIAL_CONDITIONS,
             solution=solution,
             log_level=log_level,
-            runtime_checks=True,
             seed=0,
         )
 
 
 @pytest.mark.parametrize("log_level", _LOG_LEVELS)
 @pytest.mark.parametrize("supplied_solution", [False, True])
-def test_runtime_checks_simulate_default_allows_nan(
+def test_runtime_checks_simulate_disabled_allows_nan(
     *, log_level: LogLevel, supplied_solution: bool
 ) -> None:
-    """Simulation with NaN continuation values runs unchecked by default."""
+    """Disabling checks permits simulation with NaN continuation values."""
     model = _make_model()
     params = {**_HEALTHY_PARAMS, "discount_factor": float("nan")}
     solution = (
@@ -234,6 +233,7 @@ def test_runtime_checks_simulate_default_allows_nan(
         initial_conditions=_INITIAL_CONDITIONS,
         solution=solution,
         log_level=log_level,
+        runtime_checks=False,
         seed=0,
     )
     assert any(

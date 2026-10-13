@@ -122,12 +122,11 @@ HDF5 format, which cannot be passed to `simulate` as a complete solution.
 
 ### Log levels and runtime validation
 
-`log_level` is required and controls console output. `runtime_checks` is an independent
-switch on both `solve()` and `simulate()` and defaults to `False`. With
-`runtime_checks=True`, computed transition probabilities, NaN values and existing
-feasibility/replay checks are validated, and the first validation failure raises even
-with silent logging. Construction, parameter schema and solution-identity validation
-always run.
+`log_level` is required and controls console output. `runtime_checks=True` is the
+independent default on both `solve()` and `simulate()`: computed transition
+probabilities, NaN values and existing feasibility/replay checks are validated, and the
+first validation failure raises even with silent logging. Construction, parameter schema
+and solution-identity validation always run.
 
 ```python
 # Silent output with numerical checks enabled.
@@ -338,8 +337,7 @@ function while subjects start at different ages cannot be evaluated and raises
 
 ### Further arguments
 
-- `runtime_checks`: Numerical validation, disabled by default; when enabled, failures
-  raise.
+- `runtime_checks`: Numerical validation, enabled by default; failures raise.
 - `log_level`: Required. Console verbosity (same options and table as `solve()`).
   Initial-condition schema and regime validity are always checked; numerical feasibility
   follows `runtime_checks`.
