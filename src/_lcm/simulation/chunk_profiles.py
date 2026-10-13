@@ -25,7 +25,8 @@ from _lcm.execution.value_transfer import (
     classify_value_transfer,
     resolve_value_transfer,
 )
-from _lcm.grids import DiscreteGrid
+from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.simulation import (
     population_operations,
 )
@@ -97,6 +98,8 @@ from _lcm.simulation.taste_stream import (
 )
 from _lcm.simulation.transitions import (
     _advance_states_for_subjects,
+    _clip_next_states,
+    _count_realized_grid_state,
     _draw_random_regime_ids_from_scalars,
     _update_regime_ids,
 )
@@ -464,6 +467,8 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     width=n_subjects,
                     subject_rows=rows,
                     runtime_checks=runtime_checks,
+                    regimes=regimes,
+                    base_spaces=base_spaces,
                 )
             # The real period owner retains every committed carry until finish.
             add_bytes(
@@ -559,6 +564,8 @@ def _profile_next_subjects(
     width: int,
     subject_rows: jax.ShapeDtypeStruct | None = None,
     runtime_checks: bool = True,
+    regimes: Mapping[str, Regime] = MappingProxyType({}),
+    base_spaces: Mapping[str, StateActionSpace] = MappingProxyType({}),
 ) -> tuple[
     Mapping[str, Mapping[str, jax.ShapeDtypeStruct]],
     jax.ShapeDtypeStruct,
@@ -744,8 +751,111 @@ def _profile_next_subjects(
                 subject_outputs=True,
             ),
         )
+    carrier = _profile_clip_next_states(
+        inventory=inventory,
+        regime=regime,
+        regimes=regimes,
+        base_spaces=base_spaces,
+        targets=targets,
+        carrier=carrier,
+        mask=mask,
+        new_ids=new_ids,
+        scalar_int=scalar_int,
+        regime_names_to_ids=regime_names_to_ids,
+        next_period=period + 1,
+        runtime_checks=runtime_checks,
+    )
     key = split[2]
     return carrier, key, new_ids, own_roles
+
+
+def _profile_clip_next_states(
+    *,
+    inventory: ChunkProfileInventory,
+    regime: Regime,
+    regimes: Mapping[str, Regime],
+    base_spaces: Mapping[str, StateActionSpace],
+    targets: tuple[RegimeName, ...],
+    carrier: Mapping[str, Mapping[str, jax.ShapeDtypeStruct]],
+    mask: jax.ShapeDtypeStruct,
+    new_ids: jax.ShapeDtypeStruct,
+    scalar_int: jax.ShapeDtypeStruct,
+    regime_names_to_ids: RegimeNamesToIds,
+    next_period: int,
+    runtime_checks: bool,
+) -> Mapping[str, Mapping[str, jax.ShapeDtypeStruct]]:
+    """Profile `clip_next_states`: realized off-grid counts, then economic clipping.
+
+    The targets are the realized draw's and every gated fallback's, as the
+    simulation passes them; a count runs where runtime checks or a raise rule
+    ask for one, and the clip where any grid declares `off_grid="clip_state"`.
+    """
+    shared = simulation_value_sharding(
+        stored_sharding=mask.sharding, devices=inventory.runtime.subject_devices
+    )
+    points: dict[str, dict[str, ShapeDtypePytree]] = {}
+    for target in dict.fromkeys(
+        (
+            *targets,
+            *(
+                leg.realized_fallback.regime
+                for edge in regime.gated_edges.values()
+                for leg in edge.legs
+            ),
+        )
+    ):
+        if target not in carrier or target not in regimes:
+            continue
+        target_regime = regimes[target]
+        axes = target_regime.solution.period_state_axes
+        state_points = {
+            **(base_spaces[target].states if target in base_spaces else {}),
+            **({} if axes is None else axes.get(next_period, {})),
+        }
+        for state, values in carrier[target].items():
+            grid = target_regime.simulation.grids.get(state)
+            if not isinstance(grid, ContinuousGrid) or isinstance(
+                grid, _ContinuousStochasticProcess
+            ):
+                continue
+            check = runtime_checks or grid.off_grid == "raise"
+            if not check and grid.off_grid != "clip_state":
+                continue
+            nodes = abstract_tree(
+                tree=state_points[state] if state in state_points else grid.to_jax(),
+                sharding=shared,
+            )
+            if check:
+                inventory.operation(
+                    function=_count_realized_grid_state,
+                    arguments={
+                        "values": values,
+                        "points": nodes,
+                        "subjects": mask,
+                        "new_regime_ids": new_ids,
+                        "target_id": scalar_int,
+                    },
+                    subject_arg_names=("values", "subjects", "new_regime_ids"),
+                )
+            if grid.off_grid == "clip_state":
+                points.setdefault(target, {})[state] = nodes
+    if not points:
+        return carrier
+    return cast(
+        "Mapping[str, Mapping[str, jax.ShapeDtypeStruct]]",
+        inventory.operation(
+            function=_clip_next_states,
+            arguments={
+                "states": carrier,
+                "points": points,
+                "subjects": mask,
+                "new_regime_ids": new_ids,
+                "regime_ids": regime_names_to_ids,
+            },
+            subject_arg_names=("states", "subjects", "new_regime_ids"),
+            subject_outputs=True,
+        ),
+    )
 
 
 def _profile_population_roles(
