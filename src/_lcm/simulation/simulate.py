@@ -426,6 +426,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             )
             memory = SimulationMemory(
                 budget_bytes=runtime.execution.device_memory_bytes,
+                budget_note=runtime.execution.device_memory_cap_note(),
                 axis_widths=MappingProxyType({})
                 if prepared_chunks is None
                 else prepared_chunks.plan.profile.axis_widths,

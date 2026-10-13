@@ -1,5 +1,6 @@
 import dataclasses
 import logging
+import re
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
@@ -327,6 +328,50 @@ def _assert_exact_layout_values(
         assert by_regime.keys() == expected[period].keys()
         for regime, value in by_regime.items():
             np.testing.assert_array_equal(value, expected[period][regime])
+
+
+# A GridSearch core sums its int32 empty-action and other-Inf counts over every
+# state cell, so a state-sharded core reduces that one scalar pair across devices.
+_COUNTER_ALL_REDUCE = re.compile(
+    r"(%all-reduce[.\d]*) = \(s32\[\], s32\[\]\) all-reduce\("
+)
+_COLLECTIVES = (
+    "all-gather",
+    "all-reduce",
+    "all-to-all",
+    "collective-permute",
+    "reduce-scatter",
+)
+
+
+def _collectives_beyond_feasibility_counts(*, hlo: str) -> list[str]:
+    """Return every HLO line with a collective other than the scalar count pair."""
+    counter_names = set(_COUNTER_ALL_REDUCE.findall(hlo))
+    return [
+        line
+        for line in hlo.splitlines()
+        if any(collective in line for collective in _COLLECTIVES)
+        and not _COUNTER_ALL_REDUCE.search(line)
+        and not any(f"get-tuple-element({name})" in line for name in counter_names)
+    ]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "%all-reduce.3 = f64[] all-reduce(%x), to_apply=%add",
+        "%all-reduce.4 = (s32[], s32[], s32[]) all-reduce(%a, %b, %c)",
+        "%all-gather.1 = f64[8] all-gather(%v), dimensions={0}",
+    ],
+)
+def test_the_collective_check_reports_anything_but_the_count_pair(line: str) -> None:
+    """Only the scalar int32 count pair and its unpacking are exempt."""
+    counter = "%all-reduce.2 = (s32[], s32[]) all-reduce(%e, %o), to_apply=%sum"
+    unpack = "%get-tuple-element.7 = s32[] get-tuple-element(%all-reduce.2), index=0"
+
+    assert _collectives_beyond_feasibility_counts(
+        hlo=f"{counter}\n{unpack}\n{line}"
+    ) == [line]
 
 
 def _assert_exact_layout_grids(*, model: Model) -> None:
@@ -776,14 +821,8 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
     for core in captured:
         assert core.compiled.output_shardings == core.layout.out_shardings
     hlo = "\n".join(core.compiled.as_text().lower() for core in captured)
-    for collective in (
-        "all-gather",
-        "all-reduce",
-        "all-to-all",
-        "collective-permute",
-        "reduce-scatter",
-    ):
-        assert collective not in hlo
+    assert _COUNTER_ALL_REDUCE.search(hlo)
+    assert _collectives_beyond_feasibility_counts(hlo=hlo) == []
 
     assert model._regimes["working_life"].solution.state_names == (
         "type1",
@@ -869,14 +908,8 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
     _assert_exact_layout_values(values=distributed, retirement_reads_type2=False)
 
     hlo = core.compiled.as_text().lower()
-    for collective in (
-        "all-gather",
-        "all-reduce",
-        "all-to-all",
-        "collective-permute",
-        "reduce-scatter",
-    ):
-        assert collective not in hlo
+    assert _COUNTER_ALL_REDUCE.search(hlo)
+    assert _collectives_beyond_feasibility_counts(hlo=hlo) == []
 
 
 def _make_two_source_distributed_model() -> Model:
