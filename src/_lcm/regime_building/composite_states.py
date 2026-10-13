@@ -1,0 +1,551 @@
+"""Lower declared composite states to one generated discrete state each.
+
+A composite state replaces the axes of its member states by one axis whose codes
+index the member tuples reachable from the declared start codes. The lowering acts
+on the user regimes before anything else reads them:
+
+- a dense build of the declared model supplies the engine's own laws, constraint
+  pools and fixed parameters to `enumerate_reachable_states`;
+- every regime carrying the members holds the generated grid in their place, one
+  decoder function per member, so user functions keep reading member names, and
+  one law per carrying target that encodes the members' next values;
+- the `"masked"` variant also adds a constraint that makes each code infeasible at
+  the periods it cannot be reached in.
+
+Codes off the generated set read as `MISSING_CAT_CODE`, whose value read is NaN.
+"""
+
+import dataclasses
+import inspect
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, make_dataclass
+from types import MappingProxyType
+from typing import TYPE_CHECKING, cast
+
+import jax.numpy as jnp
+import numpy as np
+import pandas as pd
+from dags import concatenate_functions
+
+from _lcm.engine import Regime as EngineRegime
+from _lcm.grids import DiscreteGrid
+from _lcm.grids.categorical import categorical
+from _lcm.grids.discrete import MISSING_CAT_CODE
+from _lcm.identity_transition import _IdentityTransition
+from _lcm.params.processing import find_param_candidates
+from _lcm.regime_building.reachable_states import (
+    ReachableStates,
+    enumerate_reachable_states,
+)
+from _lcm.typing import (
+    DataclassInstance,
+    FlatRegimeParams,
+    ReferenceName,
+    RegimeName,
+    StateName,
+)
+from _lcm.utils.namespace import flatten_regime_namespace
+from lcm.composite_state import CompositeState, CompositeVariant
+from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
+from lcm.regime import Regime, StateTransitionEntry
+from lcm.transition import fixed_transition
+from lcm.typing import (
+    BoolND,
+    DiscreteState,
+    IntND,
+    ScalarInt,
+    UserInitialConditions,
+    UserParams,
+)
+
+if TYPE_CHECKING:
+    from lcm.model import Model
+else:
+    # The model imports this module, so the claw sees a wide fallback.
+    type Model = object
+
+
+@dataclass(frozen=True, kw_only=True)
+class CompositeLowering:
+    """The generated code set of one composite state and how it was built."""
+
+    name: StateName
+    """Name of the generated state."""
+
+    members: tuple[StateName, ...]
+    """Member states, in tuple order."""
+
+    variant: CompositeVariant
+    """How the code set serves every period."""
+
+    reachable: ReachableStates
+    """Forward sets per node and their closed union."""
+
+    table: np.ndarray
+    """Member codes of every composite code, shape `(n_codes, n_members)`."""
+
+    encoding: np.ndarray
+    """Composite code of every member tuple, `MISSING_CAT_CODE` off the set."""
+
+    carriers: frozenset[RegimeName]
+    """Regimes holding the composite state."""
+
+    member_labels: tuple[tuple[str, ...], ...]
+    """Category labels of every member, in code order."""
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        """Category labels of the composite codes, in code order."""
+        return tuple(f"h{code}" for code in range(len(self.table)))
+
+    def encode(self, members: tuple[int, ...]) -> int:
+        """Return the composite code of one member tuple."""
+        return int(self.encoding[members])
+
+    def encode_rows(self, codes: np.ndarray) -> np.ndarray:
+        """Return the composite codes of member-code rows, missing off the set."""
+        inside = np.all((codes >= 0) & (codes < np.asarray(self.encoding.shape)), 1)
+        out = np.full(len(codes), MISSING_CAT_CODE, dtype=np.int32)
+        out[inside] = self.encoding[tuple(codes[inside].T)]
+        return out
+
+
+def lower_composite_states(
+    *,
+    composite_states: Mapping[StateName, CompositeState],
+    regimes: Mapping[RegimeName, Regime],
+    fixed_params: UserParams,
+    build_dense_model: Callable[[], Model],
+) -> tuple[
+    MappingProxyType[RegimeName, Regime],
+    MappingProxyType[StateName, CompositeLowering],
+    frozenset[str],
+]:
+    """Replace each composite state's members by one generated state.
+
+    Args:
+        composite_states: Mapping of generated state names to their declarations.
+        regimes: Mapping of regime names to the declared user regimes.
+        fixed_params: Parameters fixed at model initialization.
+        build_dense_model: Build the declared model without composite states.
+
+    Returns:
+        The rewritten regimes, each composite state's lowering, and the flat
+        `fixed_params` keys consumed by member laws.
+
+    Raises:
+        ModelInitializationError: If more than one composite state is declared, a
+            generated name collides with a declared one, or the enumeration
+            refuses a member.
+
+    """
+    if not composite_states:
+        return MappingProxyType(dict(regimes)), MappingProxyType({}), frozenset()
+    if len(composite_states) > 1:
+        msg = f"Only one composite state is supported; got {sorted(composite_states)}."
+        raise ModelInitializationError(msg)
+    ((name, declaration),) = composite_states.items()
+    dense = build_dense_model()
+    engine = dense._regimes  # noqa: SLF001
+    reachable = enumerate_reachable_states(
+        regimes=engine,
+        initial_nodes=dense.graph.initial_nodes,
+        ages=dense._time,  # noqa: SLF001
+        state_names=declaration.members,
+        start_codes=declaration.start_codes,
+    )
+    codes = (
+        reachable.closed
+        if declaration.variant == "closed"
+        else tuple(sorted(set().union(*reachable.by_node.values())))
+    )
+    members = declaration.members
+    carriers = frozenset(
+        regime_name
+        for regime_name, regime in regimes.items()
+        if all(member in regime.states for member in members)
+    )
+    first = engine[min(carriers)].solution.grids
+    shape = tuple(len(cast("DiscreteGrid", first[member]).codes) for member in members)
+    table = np.asarray(codes, dtype=np.int32).reshape(len(codes), len(members))
+    encoding = np.full(shape, MISSING_CAT_CODE, dtype=np.int32)
+    encoding[tuple(table.T)] = np.arange(len(codes), dtype=np.int32)
+    lowering = CompositeLowering(
+        name=name,
+        members=members,
+        variant=declaration.variant,
+        reachable=reachable,
+        table=table,
+        encoding=encoding,
+        carriers=carriers,
+        member_labels=tuple(
+            tuple(cast("DiscreteGrid", first[member]).categories) for member in members
+        ),
+    )
+    grid = DiscreteGrid(_category_class(name=name, n_codes=len(codes)))
+    period_masks = (
+        _period_masks(lowering=lowering, n_periods=len(dense._time.exact_values))  # noqa: SLF001
+        if declaration.variant == "masked"
+        else {}
+    )
+    rewritten = {
+        regime_name: _rewrite_regime(
+            regime=regime,
+            regime_name=regime_name,
+            lowering=lowering,
+            grid=grid,
+            engine_transitions=_member_laws(
+                regime=engine[regime_name], members=members, carriers=carriers
+            ),
+            fixed=engine[regime_name].resolved_fixed_params,
+            period_mask=period_masks.get(regime_name),
+        )
+        if regime_name in carriers
+        else regime
+        for regime_name, regime in regimes.items()
+    }
+    consumed = _consumed_fixed_params(
+        engine=engine, carriers=carriers, fixed_params=fixed_params, members=members
+    )
+    return MappingProxyType(rewritten), MappingProxyType({name: lowering}), consumed
+
+
+def lower_composite_initial_conditions(
+    *,
+    initial_conditions: UserInitialConditions | pd.DataFrame,
+    lowerings: Mapping[StateName, CompositeLowering],
+) -> UserInitialConditions | pd.DataFrame:
+    """Replace member columns of initial conditions by composite codes.
+
+    Raises:
+        InvalidInitialConditionsError: If a member tuple has no composite code.
+
+    """
+    if not lowerings:
+        return initial_conditions
+    if isinstance(initial_conditions, pd.DataFrame):
+        return _lower_labelled_frame(frame=initial_conditions, lowerings=lowerings)
+    out = dict(initial_conditions)
+    for name, lowering in lowerings.items():
+        present = [member for member in lowering.members if member in out]
+        if not present:
+            continue
+        if len(present) != len(lowering.members):
+            missing = sorted(set(lowering.members) - set(present))
+            msg = f"Initial conditions give {present} but not {missing}."
+            raise InvalidInitialConditionsError(msg)
+        rows = np.stack(
+            [
+                np.asarray(out.pop(member), dtype=np.int64)
+                for member in lowering.members
+            ],
+            axis=1,
+        )
+        out[name] = jnp.asarray(_encode_or_fail(lowering=lowering, rows=rows))
+    return MappingProxyType(out)
+
+
+def _lower_labelled_frame(
+    *, frame: pd.DataFrame, lowerings: Mapping[StateName, CompositeLowering]
+) -> pd.DataFrame:
+    """Replace member label columns by composite labels where every member is set."""
+    out = frame.copy()
+    for name, lowering in lowerings.items():
+        if not any(member in out for member in lowering.members):
+            continue
+        members = out.reindex(columns=list(lowering.members))
+        given = members.notna().all(axis=1).to_numpy()
+        rows = np.stack(
+            [
+                pd.Categorical(members[member], categories=labels).codes
+                for member, labels in zip(
+                    lowering.members, lowering.member_labels, strict=True
+                )
+            ],
+            axis=1,
+        ).astype(np.int64)
+        composite = np.full(len(out), None, dtype=object)
+        codes = _encode_or_fail(lowering=lowering, rows=rows[given])
+        composite[given] = np.asarray(lowering.labels, dtype=object)[codes]
+        out = out.drop(columns=[m for m in lowering.members if m in out])
+        out[name] = composite
+    return out
+
+
+def _encode_or_fail(*, lowering: CompositeLowering, rows: np.ndarray) -> np.ndarray:
+    """Return the composite codes of member-code rows, refusing unreachable ones."""
+    composite = lowering.encode_rows(rows)
+    unknown = composite == MISSING_CAT_CODE
+    if unknown.any():
+        first = dict(
+            zip(lowering.members, rows[np.argmax(unknown)].tolist(), strict=True)
+        )
+        msg = (
+            f"{int(unknown.sum())} initial member tuples of "
+            f"{list(lowering.members)} are not reachable, e.g. {first}."
+        )
+        raise InvalidInitialConditionsError(msg)
+    return composite
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _MemberDecoder:
+    """Read one member's code off a composite code."""
+
+    column: IntND
+    """The member's code for every composite code."""
+
+    def __call__(self, **kwargs: IntND) -> IntND:
+        (code,) = kwargs.values()
+        return jnp.take(self.column, code, mode="fill", fill_value=MISSING_CAT_CODE)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _CompositeEncoder:
+    """Encode the members' next codes toward one target as a composite code."""
+
+    laws: Callable[..., tuple[IntND, ...]]
+    """The member laws, returning next member codes in member order."""
+
+    law_args: tuple[ReferenceName, ...]
+    """Arguments of `laws`."""
+
+    bound: FlatRegimeParams
+    """Fixed parameters `laws` reads, by flat name."""
+
+    encoding: IntND
+    """Composite code of every member tuple in C order, flattened."""
+
+    shape: tuple[int, ...]
+    """Number of codes of every member."""
+
+    def __call__(self, **kwargs: IntND) -> IntND:
+        values = kwargs | dict(self.bound)
+        nexts = self.laws(**{arg: values[arg] for arg in self.law_args})
+        return _read_flat(table=self.encoding, shape=self.shape, index=nexts)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ReachableAtPeriod:
+    """Whether a composite code is reachable at the period."""
+
+    mask: IntND
+    """Flattened table of shape `(n_periods, n_codes)`, one where reachable."""
+
+    shape: tuple[int, int]
+    """Number of periods and of composite codes."""
+
+    def __call__(self, **kwargs: IntND) -> BoolND:
+        code, period = kwargs.values()
+        reached = _read_flat(table=self.mask, shape=self.shape, index=(period, code))
+        return reached == 1
+
+
+def _read_flat(
+    *, table: IntND, shape: tuple[int, ...], index: tuple[IntND, ...]
+) -> IntND:
+    """Read a C-order flattened table, `MISSING_CAT_CODE` off its bounds."""
+    inside = jnp.ones((), dtype=bool)
+    flat = jnp.zeros((), dtype=jnp.int32)
+    for raw, size in zip(index, shape, strict=True):
+        position = jnp.asarray(raw, dtype=jnp.int32)
+        inside = inside & (position >= 0) & (position < size)
+        flat = flat * size + jnp.clip(position, 0, size - 1)
+    return jnp.where(inside, jnp.take(table, flat), MISSING_CAT_CODE)
+
+
+def _publish(
+    *,
+    target: object,  # noqa: PAN001 - any callable instance
+    args: Mapping[ReferenceName, object],  # noqa: PAN001 - annotation objects
+    name: str,
+    returns: object = DiscreteState,  # noqa: PAN001 - an annotation object
+) -> None:
+    """Give a callable instance the signature and annotations the DAG reads."""
+    signature = inspect.Signature(
+        [
+            inspect.Parameter(arg, inspect.Parameter.KEYWORD_ONLY, annotation=kind)
+            for arg, kind in args.items()
+        ],
+        return_annotation=returns,
+    )
+    object.__setattr__(target, "__signature__", signature)
+    object.__setattr__(target, "__annotations__", {**args, "return": returns})
+    object.__setattr__(target, "__name__", name)
+
+
+def _category_class(*, name: StateName, n_codes: int) -> type[DataclassInstance]:
+    labels = cast(
+        "type[DataclassInstance]",
+        make_dataclass(
+            name.title().replace("_", ""),
+            [(f"h{code}", ScalarInt) for code in range(n_codes)],
+        ),
+    )
+    return categorical(ordered=False)(labels)
+
+
+def _member_laws(
+    *,
+    regime: EngineRegime,
+    members: tuple[StateName, ...],
+    carriers: frozenset[RegimeName],
+) -> dict[RegimeName, dict[str, Callable[..., IntND]]]:
+    """Return the engine's member laws toward every carrying target."""
+    laws: dict[RegimeName, dict[str, Callable[..., IntND]]] = {}
+    for phase in (regime.solution, regime.simulation):
+        for target, bundle in phase.transitions.items():
+            if target in carriers and target not in laws:
+                laws[target] = {
+                    f"next_{member}": bundle[f"next_{member}"] for member in members
+                }
+    return laws
+
+
+def _rewrite_regime(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    lowering: CompositeLowering,
+    grid: DiscreteGrid,
+    engine_transitions: Mapping[RegimeName, Mapping[str, Callable[..., IntND]]],
+    fixed: FlatRegimeParams,
+    period_mask: np.ndarray | None,
+) -> Regime:
+    """Hold the composite state in place of the members in one carrying regime."""
+    name, members = lowering.name, lowering.members
+    taken = (set(regime.states) - set(members)) | set(regime.functions)
+    if name in taken or set(members) & set(regime.functions):
+        msg = (
+            f"Regime {regime_name!r} already declares {name!r} or a function named "
+            f"after a member of {list(members)}."
+        )
+        raise ModelInitializationError(msg)
+    functions = dict(regime.functions)
+    for column, member in enumerate(members):
+        decoder = _MemberDecoder(column=jnp.asarray(lowering.table[:, column]))
+        _publish(target=decoder, args={name: DiscreteState}, name=member)
+        functions[member] = decoder
+    transitions = {
+        state: law
+        for state, law in regime.state_transitions.items()
+        if state not in members
+    }
+    if regime.state_transitions:
+        transitions[name] = _composite_law(
+            name=name,
+            regime=regime,
+            members=members,
+            engine_transitions=engine_transitions,
+            fixed=fixed,
+            encoding=jnp.asarray(lowering.encoding),
+        )
+    constraints = dict(regime.constraints)
+    if period_mask is not None:
+        check = _ReachableAtPeriod(
+            mask=jnp.asarray(period_mask.ravel(), dtype=jnp.int32),
+            shape=(period_mask.shape[0], period_mask.shape[1]),
+        )
+        _publish(
+            target=check,
+            args={name: DiscreteState, "period": ScalarInt},
+            name=f"{name}_is_reachable",
+            returns=BoolND,
+        )
+        constraints[f"{name}_is_reachable"] = check
+    return dataclasses.replace(
+        regime,
+        states={name: grid}
+        | {state: g for state, g in regime.states.items() if state not in members},
+        functions=functions,
+        state_transitions=transitions,
+        constraints=constraints,
+    )
+
+
+def _composite_law(
+    *,
+    name: StateName,
+    regime: Regime,
+    members: tuple[StateName, ...],
+    engine_transitions: Mapping[RegimeName, Mapping[str, Callable[..., IntND]]],
+    fixed: FlatRegimeParams,
+    encoding: IntND,
+) -> StateTransitionEntry:
+    """Return the identity law, one encoder, or one encoder per target."""
+    if not engine_transitions or all(
+        isinstance(regime.state_transitions[member], _IdentityTransition)
+        for member in members
+    ):
+        return fixed_transition(name)
+    encoders = {}
+    for target, laws in engine_transitions.items():
+        combined = concatenate_functions(
+            functions=dict(laws),
+            targets=[f"next_{member}" for member in members],
+            return_type="tuple",
+            enforce_signature=False,
+            set_annotations=True,
+        )
+        parameters = inspect.signature(combined).parameters
+        encoder = _CompositeEncoder(
+            laws=combined,
+            law_args=tuple(parameters),
+            bound=MappingProxyType({a: fixed[a] for a in parameters if a in fixed}),
+            encoding=encoding.ravel(),
+            shape=tuple(encoding.shape),
+        )
+        _publish(
+            target=encoder,
+            args={
+                arg: (
+                    DiscreteState
+                    if parameter.annotation is inspect.Parameter.empty
+                    else parameter.annotation
+                )
+                for arg, parameter in parameters.items()
+                if arg not in fixed
+            },
+            name=f"next_{name}",
+        )
+        encoders[target] = encoder
+    return next(iter(encoders.values())) if len(encoders) == 1 else encoders
+
+
+def _period_masks(
+    *, lowering: CompositeLowering, n_periods: int
+) -> dict[RegimeName, np.ndarray]:
+    """Per carrying regime, which codes are reachable at which period."""
+    masks = {
+        regime_name: np.zeros((n_periods, len(lowering.table)), dtype=bool)
+        for regime_name in lowering.carriers
+    }
+    for (period, regime_name), tuples in lowering.reachable.by_node.items():
+        rows = np.asarray(sorted(tuples), dtype=np.int64)
+        masks[regime_name][period, lowering.encode_rows(rows)] = True
+    return masks
+
+
+def _consumed_fixed_params(
+    *,
+    engine: Mapping[RegimeName, EngineRegime],
+    carriers: frozenset[RegimeName],
+    fixed_params: UserParams,
+    members: tuple[StateName, ...],
+) -> frozenset[str]:
+    """Return the flat `fixed_params` keys that fill a slot of a member law.
+
+    The engine keys a law's fixed parameter as `<target>__next_<member>__<param>`
+    within its source regime, so the template slot is that key under the source.
+    """
+    params_flat = flatten_regime_namespace(fixed_params)
+    laws = {f"next_{member}" for member in members}
+    return frozenset(
+        candidate
+        for source in carriers
+        for key in engine[source].resolved_fixed_params
+        if laws & set(key.split("__"))
+        for candidate in find_param_candidates(
+            qname=f"{source}__{key}", params_flat=params_flat
+        )
+    )

@@ -113,6 +113,11 @@ from _lcm.regime_building.broadcast import (
     split_transition_only_folds,
     validate_model_slots,
 )
+from _lcm.regime_building.composite_states import (
+    CompositeLowering,
+    lower_composite_initial_conditions,
+    lower_composite_states,
+)
 from _lcm.regime_building.finalize import (
     FinalizedUserRegime,
     finalize_regimes,
@@ -303,6 +308,7 @@ from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.contract import ArtifactContractValue
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from lcm.composite_state import CompositeState
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidInitialConditionsError,
@@ -453,6 +459,7 @@ class _PickledModel(TypedDict):
     _declared_transitions: MappingProxyType[RegimeName, tuple[Transition, ...]]
     # An archive may hold the splits as a dict; restoration freezes them.
     _fixed_component_splits: Mapping[StateName, FixedComponentSplit]
+    _composite_states: NotRequired[Mapping[StateName, CompositeLowering]]
     _solution_model_instance_id: NotRequired[str]
     _declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     _cells_without_edges: MappingProxyType[tuple[RegimeName, int], DroppedCells]
@@ -769,6 +776,7 @@ class Model:
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
         initial_nodes: UserInitialNodes,
         edges: DeclaredModelEdges,
+        composite_states: Mapping[StateName, CompositeState] = MappingProxyType({}),
     ) -> None:
         """Initialize the Model.
 
@@ -834,8 +842,43 @@ class Model:
                 device axis, the per-device workspace budget, and fixed planner
                 axis widths. Resolved once here and read by both `solve()` and
                 `simulate()`; none of it enters the durable fingerprint.
+            composite_states: Mapping of generated state names to
+                `CompositeState` declarations. Each replaces the axes of its member
+                states by one axis over the member tuples reachable from its start
+                codes; user functions keep reading the members, and initial
+                conditions name the members. At most one composite state.
 
         """
+        # A composite state replaces its members by one generated state before
+        # anything reads the regimes; a dense build supplies the member laws.
+        regimes, self._composite_states, composite_consumed_params = (
+            lower_composite_states(
+                composite_states=composite_states,
+                regimes=regimes,
+                fixed_params=fixed_params,
+                build_dense_model=lambda: Model(
+                    description=description,
+                    ages=ages,
+                    n_periods=n_periods,
+                    regimes=regimes,
+                    regime_id_class=regime_id_class,
+                    enable_jit=False,
+                    durable_identity=False,
+                    fixed_params=fixed_params,
+                    derived_categoricals=derived_categoricals,
+                    functions=functions,
+                    constraints=constraints,
+                    states=states,
+                    state_transitions=state_transitions,
+                    actions=actions,
+                    koopmans_aggregator=koopmans_aggregator,
+                    certainty_equivalent=certainty_equivalent,
+                    execution_config=execution_config,
+                    initial_nodes=initial_nodes,
+                    edges=edges,
+                ),
+            )
+        )
         self.description = description
         self.durable_identity = durable_identity
         self._identity_process_id = os.getpid()
@@ -1113,7 +1156,9 @@ class Model:
             enable_jit=enable_jit,
             fixed_params=residual_fixed_params,
             params_already_consumed=(
-                params_consumed_by_binder | prepared_graph.consumed_param_keys
+                params_consumed_by_binder
+                | prepared_graph.consumed_param_keys
+                | composite_consumed_params
             ),
             prepared_structure=prepared_structure,
             phase_transitions=self.declared_transitions,
@@ -1332,6 +1377,7 @@ class Model:
             _edges=self._edges,
             _declared_transitions=self._declared_transitions,
             _fixed_component_splits=self._fixed_component_splits,
+            _composite_states=self._composite_states,
             _declared_edge_vocabulary=self._declared_edge_vocabulary,
             _cells_without_edges=self._cells_without_edges,
             _transition_only_shock_names=self._transition_only_shock_names,
@@ -1375,6 +1421,9 @@ class Model:
         )
         self._fixed_component_splits = MappingProxyType(
             dict(state["_fixed_component_splits"])
+        )
+        self._composite_states = MappingProxyType(
+            dict(state.get("_composite_states", {}))
         )
         if "durable_identity" not in state:
             self.durable_identity = True
@@ -3568,6 +3617,10 @@ class Model:
                     user_regimes=self.user_regimes,
                     regime_names_to_ids=self.regime_names_to_ids,
                 )
+                initial_conditions = lower_composite_initial_conditions(
+                    initial_conditions=initial_conditions,
+                    lowerings=self._composite_states,
+                )
                 initial_conditions = self._lower_joint_initial_conditions(
                     initial_conditions=initial_conditions,
                     flat_params=flat_params,
@@ -4647,6 +4700,10 @@ class Model:
             splits=self._fixed_component_splits,
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
+        )
+        initial_conditions = lower_composite_initial_conditions(
+            initial_conditions=initial_conditions,
+            lowerings=self._composite_states,
         )
         initial_conditions = self._lower_joint_initial_conditions(
             initial_conditions=initial_conditions,
