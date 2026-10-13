@@ -687,11 +687,11 @@ def _validate_all_variables_used(
                 + (
                     _hand_over_explanation(
                         regime_name=regime_name,
-                        reachable_targets=frozenset().union(
-                            *(
-                                by_regime.get(regime_name, frozenset())
-                                for by_regime in targets_by_phase.values()
-                            )
+                        solve_targets=targets_by_phase["solution"].get(
+                            regime_name, frozenset()
+                        ),
+                        simulate_targets=targets_by_phase["simulation"].get(
+                            regime_name, frozenset()
                         ),
                     )
                     if unused_states
@@ -708,18 +708,28 @@ def _validate_all_variables_used(
 
 
 def _hand_over_explanation(
-    *, regime_name: RegimeName, reachable_targets: frozenset[RegimeName]
+    *,
+    regime_name: RegimeName,
+    solve_targets: frozenset[RegimeName],
+    simulate_targets: frozenset[RegimeName],
 ) -> str:
-    """State the hand-over rule and name the targets it was checked against."""
+    """State the hand-over rule and name the targets each phase was checked against."""
     targets = (
-        f"the regimes reachable from '{regime_name}' are {sorted(reachable_targets)}"
-        if reachable_targets
+        f"'{regime_name}' reaches {_named_or_none(solve_targets)} when solving and "
+        f"{_named_or_none(simulate_targets)} when simulating"
+        if solve_targets or simulate_targets
         else f"'{regime_name}' reaches no regime"
     )
     return (
         f" A state also counts as used when '{regime_name}' carries it with a law "
-        f"of motion to a reachable target that uses it; {targets}."
+        f"of motion to a target that the same phase reaches and that keeps it as a "
+        f"state; {targets}."
     )
+
+
+def _named_or_none(names: frozenset[RegimeName]) -> str:
+    """Render regime names as a sorted list, or say there are none."""
+    return str(sorted(names)) if names else "no regime"
 
 
 def _removed_edge_explanation(
