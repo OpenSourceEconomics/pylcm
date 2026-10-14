@@ -39,7 +39,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   returned `PolicyLookup` has `actions=None` and adds, per state row and discrete-action
   combination, the conditional value `Qc`, the `choice_probabilities`
   `softmax(Qc / scale)` and the `conditional_actions` attaining `Qc`; `value` is their
-  smoothed maximum. These describe the discrete choice `simulate` draws: `value` equals
+  smoothed maximum; `keep_intermediates` adds `Q`, `F`, `U` and `CE` as elsewhere. These
+  describe the discrete choice `simulate` draws: `value` equals
   the stored solve value at grid rows to numerical precision when both phases share the
   current utility and Koopmans aggregator and the action grid is the declared one.
   Regimes solved by an EGM-family solver are refused.
@@ -56,22 +57,20 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - The Mahler initial-population factory accepts the same typed roots with its
   existing positional splits.
 
-### Labelled profiles for age models
+### Intermediates in policy lookup
 
-- `TimeVarying.from_profile()` accepts `age_to_label`, mapping each model age to a
-  source label. The result is labelled by age and serves models on an `AgeGrid`. Give
-  exactly one of `period_to_label` and `age_to_label`; the validation is the same for
-  both, and age keys must be finite numbers. `period_to_label` is unchanged.
-
-
-### Flow utility and continuation in policy lookup
-
-- `Model.lookup_policy(..., return_action_values=True)` also returns `U`, the flow
-  utility, and `CE`, the undiscounted certainty-equivalent continuation, per state row
-  and action, with the shape of `Q`. `Q == W(utility=U, CE=CE, ...)` for every Koopmans
-  aggregator, so `Q == U + discount_factor * CE` under `LinearAggregator`; a terminal
-  regime has `CE == 0`. `actions`, `value`, `Q`, `F`, `U` and `CE` come from one
-  evaluation of the regime's kernel.
+- `Model.lookup_policy(..., keep_intermediates=...)` replaces
+  `return_action_values=True`, which is removed. It takes any subset of `"Q"`, `"F"`,
+  `"U"` and `"CE"`, in any order, and fills only those fields of `PolicyLookup`; the
+  default `()` keeps none and runs the plain decision. `return_action_values=True`
+  becomes `keep_intermediates=("Q", "F", "U", "CE")`, or `("Q", "F")` for its former
+  output.
+- `U` is the flow utility and `CE` the undiscounted certainty-equivalent continuation,
+  per state row and action, with the shape of `Q`. `Q == W(utility=U, CE=CE, ...)` for
+  every Koopmans aggregator, so `Q == U + discount_factor * CE` under
+  `LinearAggregator`; a terminal regime has `CE == 0`. `actions`, `value` and the kept
+  intermediates come from one evaluation of the regime's kernel.
+- An unknown or repeated name raises `InvalidSimulationInputError`.
 
 ### Public `EULER_GAMMA` for location-0 taste shocks
 
@@ -84,27 +83,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 - A regime-level state that a regime only carries, with `fixed_transition` or any other
   law of motion, toward a target it can reach is used when that target keeps the state.
-  The same rule already kept model-level states; both now share one closure. Chains
-  count, and a target reached only at ages the source never occupies does not. A
-  zero-weight read such as `0.0 * skill` is no longer needed to keep such a state. The
-  rejection message names the hand-over rule and the regimes the source can reach.
-
-### Public `EULER_GAMMA` for location-0 taste shocks
-
-- `lcm.EULER_GAMMA` exports the Euler-Mascheroni constant (equal to
-  `numpy.euler_gamma`). pylcm's EV1 taste shocks are mean-zero; to reproduce
-  location-0 shocks, add `scale * EULER_GAMMA` to the utility of every action in each
-  taste-shock regime. The recipe is exact under `LinearAggregator`; under other
-  Koopmans aggregators it changes choice probabilities.
-
-### Flow utility and continuation in policy lookup
-
-- `Model.lookup_policy(..., return_action_values=True)` also returns `U`, the flow
-  utility, and `CE`, the undiscounted certainty-equivalent continuation, per state row
-  and action, with the shape of `Q`. `Q == W(utility=U, CE=CE, ...)` for every Koopmans
-  aggregator, so `Q == U + discount_factor * CE` under `LinearAggregator`; a terminal
-  regime has `CE == 0`. `actions`, `value`, `Q`, `F`, `U` and `CE` come from one
-  evaluation of the regime's kernel.
+  Model-level states were already kept this way by broadcast pruning, and the check
+  now runs the same closure. Its own rule is stricter than pruning's: the target must
+  be reached in the law's own phase, at ages the source occupies, and keep the state on
+  its grid in that phase, on an edge where no joint transition produces the state.
+  Chains count. A zero-weight read such as `0.0 * skill` is no longer needed to keep
+  such a state. The rejection message states the rule and the regimes each phase
+  reaches.
 
 ### Labelled profiles for age models
 
@@ -113,6 +98,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   exactly one of `period_to_label` and `age_to_label`; the validation is the same for
   both, and age keys must be finite numbers. A non-integer period key, including a
   boolean, raises `InvalidParamsError`, as it does for a `TimeVarying` coordinate.
+- A NumPy `TimeVarying` table keeps its dtype until the canonical cast, so an int64
+  value outside the int32 range raises the int32 overflow error, and a float64 value
+  that float32 cannot hold is reported with its supplied value, also with x64 disabled.
 
 ### Independent runtime checks
 

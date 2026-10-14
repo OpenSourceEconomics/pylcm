@@ -4,7 +4,7 @@ import inspect
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import wraps
-from typing import TYPE_CHECKING, cast, no_type_check
+from typing import TYPE_CHECKING, SupportsFloat, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +13,7 @@ from beartype import beartype
 
 from _lcm.beartype_conf import PARAMS_CONF
 from lcm.exceptions import InvalidParamsError
-from lcm.typing import AgeLabel, PeriodLabel, TimeLabel, ValueND
+from lcm.typing import AgeLabel, PeriodLabel, ValueND
 
 if TYPE_CHECKING:
     from _lcm.typing import EconFunctionArg
@@ -214,7 +214,7 @@ def time_varying_params(*names: str) -> _TemporalDecorator:
 
 
 def _validate_time_labels(
-    *, labels: tuple[TimeLabel, ...], kind: str, name: str
+    *, labels: tuple[Hashable, ...], kind: str, name: str
 ) -> None:
     """Validate the schema before surplus observations can be discarded."""
     if kind == "period" and any(
@@ -225,9 +225,11 @@ def _validate_time_labels(
             f"{name}: period coordinates must be integers, excluding booleans."
         )
     if kind == "age":
+        # Any label may arrive here; one that `float` rejects is not numeric.
         try:
             finite = all(
-                not isinstance(v, (bool, np.bool_, str)) and np.isfinite(float(v))
+                not isinstance(v, (bool, np.bool_, str))
+                and np.isfinite(float(cast("SupportsFloat", v)))
                 for v in labels
             )
         except TypeError, ValueError:
