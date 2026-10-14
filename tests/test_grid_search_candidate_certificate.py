@@ -823,6 +823,82 @@ def test_folded_kernel_mutation_is_rejected_after_byte_reseal(
     ) == (1, False, [_MAX_Q_SOURCE], True)
 
 
+_BACKWARD_SOURCE = "src/_lcm/solution/backward_induction.py"
+_COUNTER_SIZE = "size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)"
+_COUNTER_DEVICES = (
+    "sorted(frozenset().union(*(device_ids_by_regime[name] for name in active)))"
+)
+_COUNTER_RESERVATION_MUTATIONS = {
+    "zero_charge": (_COUNTER_SIZE, "size = 0"),
+    "half_pair": (
+        _COUNTER_SIZE,
+        "size = np.dtype(np.int32).itemsize * (len(active) + 1)",
+    ),
+    "omit_peer_devices": (_COUNTER_DEVICES, f"{_COUNTER_DEVICES}[:1]"),
+}
+
+
+def _copy_certified_sources(*, tmp_path: Path, mutation: str) -> tuple[str, ...]:
+    """Copy every certified source, applying one counter-reservation mutation."""
+    root = _SRC_ROOT.parent
+    marker, replacement = _COUNTER_RESERVATION_MUTATIONS[mutation]
+    source = (root / _BACKWARD_SOURCE).read_text(encoding="utf-8")
+    assert source.count(marker) == 1
+    sources = tuple(
+        verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
+    )
+    for relative in sources:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            source.replace(marker, replacement, 1)
+            if relative == _BACKWARD_SOURCE
+            else (root / relative).read_text(encoding="utf-8"),
+            encoding="utf-8",
+            # LF on every platform, so a plain `hashlib` digest of these bytes is
+            # the certificate's checkout-independent seal.
+            newline="\n",
+        )
+    return sources
+
+
+@pytest.mark.parametrize("mutation", tuple(_COUNTER_RESERVATION_MUTATIONS))
+def test_counter_reservation_mutation_is_rejected_after_byte_reseal(
+    *, mutation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resealing the source bytes cannot hide a changed counter-reservation body."""
+    sources = _copy_certified_sources(tmp_path=tmp_path, mutation=mutation)
+    monkeypatch.setattr(
+        "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
+        {
+            relative: hashlib.sha256((tmp_path / relative).read_bytes()).hexdigest()
+            for relative in sources
+        },
+    )
+
+    result = verify_direct_candidate_flow(repo_root=tmp_path)
+
+    assert (
+        any("source seal mismatch" in error for error in result["errors"]),
+        result["offending_paths"],
+        any("backward output-layout transport" in error for error in result["errors"]),
+    ) == (False, [_BACKWARD_SOURCE], True)
+
+
+def test_unresealed_counter_reservation_mutation_fails_the_byte_seal(
+    tmp_path: Path,
+) -> None:
+    """Without a reseal, a changed counter-reservation body fails the byte seal."""
+    _copy_certified_sources(tmp_path=tmp_path, mutation="zero_charge")
+
+    result = verify_direct_candidate_flow(repo_root=tmp_path)
+
+    assert any(
+        _BACKWARD_SOURCE in error and "source seal mismatch" in error
+        for error in result["errors"]
+    )
+
+
 def test_streamed_reducer_sources_are_literal_certificate_obligations():
     """The generated inventory owns every live streamed transport helper."""
     assert isinstance(_parse("src/_lcm/execution/core_program.py"), ast.Module)

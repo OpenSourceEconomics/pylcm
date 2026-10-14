@@ -683,7 +683,7 @@ def test_joint_normal_budgeted_runtime_typed_seed_preserves_physical_frame() -> 
         period=0,
         regime_name="working",
         states=states,
-        return_action_values=True,
+        keep_intermediates=("Q", "F", "U", "CE"),
     )
     assert parts.U is not None
     assert parts.CE is not None
