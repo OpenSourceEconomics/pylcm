@@ -38,6 +38,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    Intermediate,
     IntND,
     ScalarInt,
     UserFunction,
@@ -343,7 +344,10 @@ def test_phased_koopmans_aggregator_publishes_the_acting_selfs_value() -> None:
     )
 
 
-def _lookup(*, return_action_values: bool) -> lcm.PolicyLookup:
+ALL_INTERMEDIATES: tuple[Intermediate, ...] = ("Q", "F", "U", "CE", "Q_objective")
+
+
+def _lookup(*, keep_intermediates: tuple[Intermediate, ...]) -> lcm.PolicyLookup:
     model = _model()
     params = _params(beta_tilde=1.0)
     return model.lookup_policy(
@@ -352,28 +356,28 @@ def _lookup(*, return_action_values: bool) -> lcm.PolicyLookup:
         period=0,
         regime_name="decide",
         states={"wealth": jnp.array([0, 1, 2, 3])},
-        return_action_values=return_action_values,
+        keep_intermediates=keep_intermediates,
     )
 
 
-@pytest.mark.parametrize("return_action_values", [False, True])
+@pytest.mark.parametrize("keep_intermediates", [(), ALL_INTERMEDIATES])
 def test_lookup_chooses_with_the_simulate_variant(
-    *, return_action_values: bool
+    *, keep_intermediates: tuple[Intermediate, ...]
 ) -> None:
     """Lookup chooses like simulation, with today's `β`, not the solve's `β̃`."""
-    got = _lookup(return_action_values=return_action_values)
+    got = _lookup(keep_intermediates=keep_intermediates)
     actions = cast("Mapping[str, IntND]", got.actions)
     assert_array_equal(
         actions["choice"], [Choice.save, Choice.spend, Choice.spend, Choice.spend]
     )
 
 
-@pytest.mark.parametrize("return_action_values", [False, True])
+@pytest.mark.parametrize("keep_intermediates", [(), ALL_INTERMEDIATES])
 def test_lookup_publishes_the_stored_value_of_the_choice(
-    *, return_action_values: bool
+    *, keep_intermediates: tuple[Intermediate, ...]
 ) -> None:
     """The looked-up value is `u + δ·CE` at today's choice."""
-    got = _lookup(return_action_values=return_action_values)
+    got = _lookup(keep_intermediates=keep_intermediates)
     assert_array_almost_equal(
         got.value, NAIVE_LONG_RUN_VALUES, decimal=DECIMAL_PRECISION
     )
@@ -381,10 +385,24 @@ def test_lookup_publishes_the_stored_value_of_the_choice(
 
 def test_lookup_publishes_the_objective_profile() -> None:
     """`Q_objective` is today's `u + βδ·CE` per action; `Q` is `u + δ·CE`."""
-    got = _lookup(return_action_values=True)
+    got = _lookup(keep_intermediates=ALL_INTERMEDIATES)
     assert_array_almost_equal(
         cast("FloatND", got.Q_objective),
         cast("FloatND", got.U) + BETA * DELTA * cast("FloatND", got.CE),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_lookup_keeps_the_objective_profile_only_when_asked() -> None:
+    """`Q_objective` alone keeps no other part; the other parts alone omit it."""
+    alone = _lookup(keep_intermediates=("Q_objective",))
+    without = _lookup(keep_intermediates=("Q", "F", "U", "CE"))
+    assert alone.Q_objective is not None
+    assert alone.Q is None
+    assert without.Q_objective is None
+    assert_array_almost_equal(
+        alone.Q_objective,
+        cast("FloatND", _lookup(keep_intermediates=ALL_INTERMEDIATES).Q_objective),
         decimal=DECIMAL_PRECISION,
     )
 
@@ -399,7 +417,7 @@ def test_lookup_without_decoupled_publishes_no_objective_profile() -> None:
         period=0,
         regime_name="decide",
         states={"wealth": jnp.array([0, 1])},
-        return_action_values=True,
+        keep_intermediates=ALL_INTERMEDIATES,
     )
     assert got.Q_objective is None
 

@@ -8,7 +8,7 @@ builders here carry those counts through the same reductions the value takes:
 - over the actions, summed where the feasibility mask keeps an action, value
   constraints included;
 - through the fold and the state product, alongside the value;
-- over every state cell, into one int32 total per check, which the period
+- over every state cell, into one saturating int32 total per check, which the period
   kernel reads and raises on.
 
 Each wrapper evaluates the counting `Q_and_F` once and hands the value
@@ -44,6 +44,7 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
+from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d
 from _lcm.utils.functools import allow_args, allow_only_kwargs
 from lcm.exceptions import OffGridStateError
@@ -207,10 +208,8 @@ class LandingCountedGridSearch:
         )(**kwargs)
         return (
             *summary,
-            jnp.sum(
-                landing_counts,
-                axis=tuple(range(landing_counts.ndim - 1)),
-                dtype=jnp.int32,
+            sum_counts(
+                counts=landing_counts, axis=tuple(range(landing_counts.ndim - 1))
             ),
         )
 
@@ -240,10 +239,9 @@ def fail_on_reached_landings(
 def _feasible_landing_counts(*, F_arr: BoolND, landing_counts: IntND) -> IntND:
     """Sum per-action landing counts over the actions the mask keeps."""
     feasible = jnp.broadcast_to(F_arr, landing_counts.shape[:-1])
-    return jnp.sum(
-        jnp.where(feasible[..., None], landing_counts, 0),
+    return sum_counts(
+        counts=jnp.where(feasible[..., None], landing_counts, 0),
         axis=tuple(range(landing_counts.ndim - 1)),
-        dtype=jnp.int32,
     )
 
 

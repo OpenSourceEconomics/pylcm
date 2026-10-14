@@ -104,8 +104,12 @@ def align_time_varying(
     required_periods: tuple[int, ...],
     name: str,
     array_writer: CanonicalArrayWriter | None = None,
-) -> ValueND:
-    """Gather static coordinates while keeping numeric values differentiable."""
+) -> ValueND | np.ndarray:
+    """Gather static coordinates while keeping numeric values differentiable.
+
+    A NumPy table stays NumPy with its own dtype, so the canonical cast range-checks
+    the supplied values rather than values JAX already narrowed.
+    """
     labels = (
         value.periods
         if value.periods is not None
@@ -127,6 +131,13 @@ def align_time_varying(
         return array_writer(value=host, dtype=host.dtype, name=name)
     # Only structurally unread slots receive zeros. No required observation is
     # synthesized; coverage was checked before constructing a numeric array.
+    if isinstance(value.values, np.ndarray):
+        host = np.zeros(
+            (ages.n_periods, *value.values.shape[1:]), dtype=value.values.dtype
+        )
+        selected = np.asarray(indices) >= 0
+        host[selected] = value.values[np.asarray(indices)[selected]]
+        return host
     values = jnp.asarray(value.values)
     if not values.shape[0]:
         return jnp.zeros((ages.n_periods, *values.shape[1:]), dtype=values.dtype)
