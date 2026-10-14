@@ -28,7 +28,12 @@ from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
 from lcm.collective import CollectiveUtility, ValueDependentConstraint
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.regime import ConstraintEntry, FunctionEntry, StateTransitionEntry
+from lcm.regime import (
+    ConstraintEntry,
+    FunctionEntry,
+    StateEntry,
+    StateTransitionEntry,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction, JointTransition, StochasticTransition
 from lcm.typing import StateName, StateOrActionName, UserFunction, ValueND
@@ -113,7 +118,12 @@ def collect_value_grids(
                 "or all floats) must also match."
             )
     if value_grids:
-        _fail_if_unsupported_reader(regimes=regimes, laws=laws, value_grids=value_grids)
+        _fail_if_unsupported_reader(
+            regimes=regimes,
+            laws=laws,
+            value_grids=value_grids,
+            model_derived_categoricals=derived_categoricals,
+        )
     return MappingProxyType(value_grids)
 
 
@@ -333,13 +343,19 @@ def _fail_if_unsupported_reader(
     regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    model_derived_categoricals: Mapping[FunctionName, DiscreteGrid],
 ) -> None:
     """Raise where a value grid meets a declaration that would read its codes."""
     problems: list[str] = []
     for regime_name, regime in regimes.items():
         declared = {
             name
-            for name in (*regime.states, *regime.actions, *regime.derived_categoricals)
+            for name in (
+                *regime.states,
+                *regime.actions,
+                *regime.derived_categoricals,
+                *model_derived_categoricals,
+            )
             if name in value_grids
         }
         if declared and regime.stakeholders is not None:
@@ -348,8 +364,13 @@ def _fail_if_unsupported_reader(
             f"the imputation of the carried state '{name}' of '{regime_name}'"
             for name, entry in regime.states.items()
             if isinstance(entry, Phased)
-            and _imputation_meets_value_grids(
-                entry=entry, name=name, value_grids=value_grids
+            and (
+                _imputation_meets_value_grids(
+                    entry=entry, name=name, value_grids=value_grids
+                )
+                # A marker's published *args/**kwargs do not describe the
+                # concrete reader. Its supported part-2a outcome is refusal.
+                or (bool(declared) and _contains_age_specialized(entry))
             )
         )
         problems.extend(
@@ -364,14 +385,16 @@ def _fail_if_unsupported_reader(
             if isinstance(entry, Condition) and entry.dependencies & set(value_grids)
         )
         if declared:
-            problems.extend(
-                f"the age-specialized '{name}' of '{regime_name}'"
-                for name, entry in (
-                    *regime.decomposed_functions.items(),
-                    *regime.state_transitions.items(),
+            for slot_name, slot in (
+                ("function", regime.decomposed_functions),
+                ("constraint", regime.constraints),
+                ("state transition", regime.state_transitions),
+            ):
+                problems.extend(
+                    f"the age-specialized {slot_name} '{name}' of '{regime_name}'"
+                    for name, entry in slot.items()
+                    if _contains_age_specialized(entry)
                 )
-                if isinstance(entry, AgeSpecializedFunction)
-            )
     problems.extend(
         f"the regime transition law of '{regime_name}'"
         for regime_name, law in laws.items()
@@ -383,6 +406,19 @@ def _fail_if_unsupported_reader(
             + "; ".join(problems)
             + ". Declare these variables with a category class."
         )
+
+
+def _contains_age_specialized(entry: AdaptableEntry | StateEntry) -> bool:
+    """Inspect marker leaves, never the generic signature of a build-time marker."""
+    if isinstance(entry, Phased):
+        return _contains_age_specialized(entry.solve) or _contains_age_specialized(
+            entry.simulate
+        )
+    if isinstance(entry, Mapping):
+        return any(_contains_age_specialized(cell) for cell in entry.values())
+    if isinstance(entry, StochasticTransition):
+        return _contains_age_specialized(entry.func)
+    return isinstance(entry, AgeSpecializedFunction)
 
 
 def _value_names(value_grids: Mapping[StateOrActionName, DiscreteGrid]) -> set[str]:
