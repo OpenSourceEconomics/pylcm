@@ -1,11 +1,11 @@
 """Continuous actions that are active only under some values of discrete actions."""
 
+import math
 from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
 
-import jax.numpy as jnp
 import numpy as np
 
 from _lcm.grids.continuous import ContinuousGrid, IrregSpacedGrid
@@ -83,6 +83,19 @@ class ConditionalAction(ContinuousGrid):
         object.__setattr__(self, "inactive_index", inactive_index)
 
     @property
+    def inactive_midpoints(self) -> tuple[float, float]:
+        """Return the midpoints between the inactive node and its neighbours.
+
+        An action value strictly between them is the inactive node, at whatever
+        precision the grid's nodes are computed. Outer ends are infinite.
+        """
+        nodes = [float(node) for node in self.grid.to_jax()]
+        k = self.inactive_index
+        lower = -math.inf if k == 0 else (nodes[k - 1] + nodes[k]) / 2
+        upper = math.inf if k == len(nodes) - 1 else (nodes[k] + nodes[k + 1]) / 2
+        return lower, upper
+
+    @property
     def off_grid(self) -> OffGrid:
         """Return the lookup policy of the wrapped grid."""
         return self.grid.off_grid
@@ -97,7 +110,7 @@ class ConditionalAction(ContinuousGrid):
 
 
 def _fail_if_grid_is_not_plain(*, grid: ContinuousGrid) -> None:
-    if isinstance(grid, ConditionalAction) or not isinstance(grid, ContinuousGrid):
+    if isinstance(grid, ConditionalAction):
         raise GridInitializationError(
             "ConditionalAction must wrap a plain continuous grid such as "
             f"LinSpacedGrid; got {type(grid).__name__}."
@@ -142,16 +155,19 @@ def _as_python_number(value: UserDiscreteValue) -> DiscreteValue:
 
 
 def _find_inactive_index(*, grid: ContinuousGrid, inactive_value: float) -> int:
-    nodes = grid.to_jax()
-    matches = [int(i) for i in jnp.flatnonzero(nodes == inactive_value)]
-    if not matches:
+    """Return the position of the node `inactive_value` names.
+
+    A node matches when it equals `inactive_value` up to the rounding of the grid's
+    dtype (two units in the last place), so `0.9` names the float32 node
+    `0.9000000357` of `LinSpacedGrid(0, 1, 11)`. Nodes are strictly ascending and
+    far further apart than that, so at most one node matches.
+    """
+    nodes = np.asarray(grid.to_jax())
+    distance = np.abs(nodes.astype(np.float64) - inactive_value)
+    nearest = int(np.argmin(distance))
+    if distance[nearest] > 2 * np.spacing(np.abs(nodes[nearest])):
         raise GridInitializationError(
             f"The inactive value {inactive_value!r} is not a node of the grid; its "
             f"nodes are {[float(node) for node in nodes]}."
         )
-    if len(matches) > 1:
-        raise GridInitializationError(
-            f"The inactive value {inactive_value!r} matches the grid nodes at "
-            f"positions {matches}; it must match exactly one."
-        )
-    return matches[0]
+    return nearest

@@ -7,8 +7,7 @@ to the regime's constraints once model-level slots are merged, so every discrete
 action a condition names is known.
 """
 
-import math
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
 import jax.numpy as jnp
@@ -18,7 +17,15 @@ from dags.annotations import ensure_annotations_are_strings
 from _lcm.grids.conditional_action import ConditionalAction
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.typing import ConstraintFunction
-from lcm.regime import ActionEntry, ConstraintEntry, FunctionEntry
+from lcm.collective import CollectiveUtility, ValueDependentConstraint
+from lcm.phased import Phased
+from lcm.regime import (
+    ActionEntry,
+    ConstraintEntry,
+    FunctionEntry,
+    StateTransitionEntry,
+)
+from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -27,7 +34,11 @@ from lcm.typing import (
     IntND,
     ReferenceName,
     RegimeName,
+    UserFunction,
 )
+
+# A regime entry whose callables may read a conditional action's arguments.
+type _Reader = FunctionEntry | ConstraintEntry | StateTransitionEntry
 
 
 def add_conditional_action_pins(
@@ -35,7 +46,7 @@ def add_conditional_action_pins(
     regime_name: RegimeName,
     actions: Mapping[ActionName, ActionEntry],
     constraints: Mapping[FunctionName, ConstraintEntry],
-    functions: Mapping[FunctionName, FunctionEntry],
+    readers: tuple[_Reader, ...],
 ) -> tuple[dict[FunctionName, ConstraintEntry], list[str]]:
     """Add one pin constraint per conditional action of a merged regime.
 
@@ -44,8 +55,8 @@ def add_conditional_action_pins(
         actions: Mapping of the regime's merged action names to their grids.
         constraints: Mapping of the regime's merged constraint names to
             constraints.
-        functions: Mapping of the regime's merged function names to functions,
-            read for the annotations the pins copy.
+        readers: The regime's merged functions, constraints and state
+            transitions, read for the annotations the pins copy.
 
     Returns:
         Tuple of the constraints with the pins added and the error messages for
@@ -77,7 +88,7 @@ def add_conditional_action_pins(
             pinned[pin_name] = _create_pin(
                 action_name=action_name,
                 action=grid,
-                callables=(*functions.values(), *constraints.values()),
+                readers=readers,
             )
     return pinned, errors
 
@@ -105,6 +116,7 @@ class _ConditionalActionPin:
     """Midpoint between the inactive node and the node above it, or +inf."""
 
     def __post_init__(self) -> None:
+        # `with_signature` names its wrapper after the wrapped callable.
         object.__setattr__(self, "__name__", f"conditional_action_{self.action_name}")
         object.__setattr__(
             self, "__qualname__", f"conditional_action_{self.action_name}"
@@ -131,17 +143,14 @@ def _create_pin(
     *,
     action_name: ActionName,
     action: ConditionalAction,
-    callables: tuple[FunctionEntry | ConstraintEntry, ...],
+    readers: tuple[_Reader, ...],
 ) -> ConstraintFunction:
     arg_names = (*action.active_when, action_name)
-    nodes = [float(node) for node in action.to_jax()]
-    k = action.inactive_index
-    lower_midpoint = -math.inf if k == 0 else (nodes[k - 1] + nodes[k]) / 2
-    upper_midpoint = math.inf if k == len(nodes) - 1 else (nodes[k] + nodes[k + 1]) / 2
+    lower_midpoint, upper_midpoint = action.inactive_midpoints
     return with_signature(  # ty: ignore[invalid-return-type]
         args={
             name: _find_annotation(
-                callables=callables,
+                readers=readers,
                 arg_name=name,
                 default="ContinuousAction" if name == action_name else "DiscreteAction",
             )
@@ -196,19 +205,33 @@ def _values_taken(*, grid: DiscreteGrid) -> frozenset[int | float]:
 
 def _find_annotation(
     *,
-    callables: tuple[FunctionEntry | ConstraintEntry, ...],
+    readers: tuple[_Reader, ...],
     arg_name: ReferenceName,
     default: str,
 ) -> str:
     """Return the annotation the regime's callables use for one argument.
 
     Every reader of a variable must agree on its annotation, so the pin copies it
-    from the first callable that declares the argument.
+    from the first callable that declares the argument. A phased entry is read
+    through both of its variants and a per-target mapping through its values. An
+    age-specialized function builds its callable per age, so it is not read.
     """
-    for func in callables:
-        if not callable(func):
-            continue
+    for func in _callables(readers):
         annotations = ensure_annotations_are_strings(get_annotations(func))
         if arg_name in annotations:
             return annotations[arg_name]
     return default
+
+
+def _callables(readers: tuple[_Reader, ...]) -> Iterator[UserFunction]:
+    for reader in readers:
+        if isinstance(reader, Phased):
+            yield from _callables((reader.solve, reader.simulate))
+        elif isinstance(reader, Mapping):
+            yield from _callables(tuple(reader.values()))
+        elif isinstance(reader, CollectiveUtility):
+            yield from _callables(tuple(reader.utilities.values()))
+        elif isinstance(reader, ValueDependentConstraint):
+            yield reader.predicate
+        elif callable(reader) and not isinstance(reader, AgeSpecializedFunction):
+            yield reader

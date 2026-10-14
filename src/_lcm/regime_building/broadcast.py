@@ -186,7 +186,11 @@ def merge_model_slots(
             regime_name=regime_name,
             actions=actions,
             constraints=constraints,
-            functions=functions,
+            readers=(
+                *functions.values(),
+                *constraints.values(),
+                *state_transitions.values(),
+            ),
         )
         errors.extend(
             (
