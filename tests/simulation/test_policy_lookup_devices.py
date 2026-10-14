@@ -21,6 +21,9 @@ import pytest
 
 from lcm.typing import ReferenceName
 
+# Rows of an intermediate as JSON nests them: one level per array axis.
+type _Rows = list[float | bool | _Rows]
+
 
 class LookupReport(TypedDict, total=False):
     outcome: str
@@ -29,6 +32,10 @@ class LookupReport(TypedDict, total=False):
     value_copies: int
     values: list[float]
     actions: list[int]
+    Q: _Rows | None
+    F: _Rows | None
+    U: _Rows | None
+    CE: _Rows | None
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -71,9 +78,9 @@ _SCRIPT = textwrap.dedent(
         keep_intermediates=keep_intermediates,
     )
     outputs = {"actions": sorted(got.actions), "value": np.asarray(got.value).tolist()}
-    if keep_intermediates:
-        outputs["Q"] = np.asarray(got.Q).tolist()
-        outputs["F"] = np.asarray(got.F).tolist()
+    for name in keep_intermediates:
+        kept = getattr(got, name)
+        outputs[name] = None if kept is None else np.asarray(kept).tolist()
     print("LOOKUP-ROWS", json.dumps(outputs))
     """
 )
@@ -137,9 +144,9 @@ _STATEFUL_SCRIPT = textwrap.dedent(
         },
         "value": np.asarray(got.value).tolist(),
     }
-    if keep_intermediates:
-        outputs["Q"] = np.asarray(got.Q).tolist()
-        outputs["F"] = np.asarray(got.F).tolist()
+    for name in keep_intermediates:
+        kept = getattr(got, name)
+        outputs[name] = None if kept is None else np.asarray(kept).tolist()
     print("LOOKUP-ROWS", json.dumps(outputs))
     """
 )
@@ -438,9 +445,16 @@ def test_budgeted_stateless_lookup_returns_one_row_of_value(*, n_devices: int) -
 def test_budgeted_stateless_lookup_returns_one_row_of_action_values(
     *, n_devices: int
 ) -> None:
-    """With action values requested, `Q` and `F` carry the same one row."""
+    """With all intermediates requested, each carries the same one row."""
     got = _lookup_on_devices(n_devices=n_devices, keep_all_intermediates=True)
-    assert got == {"actions": [], "value": [0.0], "Q": [0.0], "F": [True]}
+    assert got == {
+        "actions": [],
+        "value": [0.0],
+        "Q": [0.0],
+        "F": [True],
+        "U": [0.0],
+        "CE": [0.0],
+    }
 
 
 @pytest.mark.parametrize("keep_all_intermediates", [False, True])
@@ -484,6 +498,31 @@ def test_subject_sharded_lookup_of_uneven_rows_matches_one_device(
         extra_args=("default", "3"),
     )
     assert got == expected
+
+
+@pytest.mark.parametrize("execution", ["subjects", "subjects-budgeted"])
+@pytest.mark.parametrize("n_devices", [2, 8])
+def test_subject_sharded_lookup_keeps_one_row_of_every_intermediate_per_query(
+    *, n_devices: int, execution: str
+) -> None:
+    """Three rows split over the subject devices keep three rows of each intermediate.
+
+    The comparison with the one-device rows cannot see an intermediate that is
+    dropped on both sides, so the rows are counted on their own.
+    """
+    got = _lookup_on_devices(
+        n_devices=n_devices,
+        keep_all_intermediates=True,
+        script=_STATEFUL_SCRIPT,
+        extra_args=(execution, "3"),
+    )
+    rows = {
+        "Q": len(got.get("Q") or ()),
+        "F": len(got.get("F") or ()),
+        "U": len(got.get("U") or ()),
+        "CE": len(got.get("CE") or ()),
+    }
+    assert rows == {"Q": 3, "F": 3, "U": 3, "CE": 3}
 
 
 @pytest.mark.parametrize("keep_all_intermediates", [False, True])
