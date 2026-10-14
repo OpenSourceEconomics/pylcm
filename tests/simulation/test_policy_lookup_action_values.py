@@ -8,17 +8,27 @@ utility and `CE` the undiscounted certainty-equivalent continuation that the
 regime's Koopmans aggregator combines into `Q`.
 """
 
+import dataclasses
+import gc
+import itertools
+import weakref
+
+import cloudpickle
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import lcm.model
 from _lcm.simulation.program_types import (
+    ACTION_FEASIBILITY,
     ACTION_INDEX,
+    ACTION_VALUES,
     CONTINUATION_CE,
     DECISION_VALUE,
+    FLOW_UTILITY,
 )
 from _lcm.simulation.programs import with_kept_action_parts
+from _lcm.simulation.runtime import SimulationRuntime
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -145,7 +155,9 @@ def test_lookup_keeps_exactly_the_requested_intermediates(
 def test_kept_parts_program_publishes_only_the_kept_parts(solved):
     model, _, _ = solved
     program = model._regimes["working_life"].simulation.programs.action_values[0]
-    kept = with_kept_action_parts(program=program, roles=frozenset({CONTINUATION_CE}))
+    kept = with_kept_action_parts(
+        program=program, roles=frozenset({CONTINUATION_CE}), cache={}
+    )
     assert kept.output_roles == (ACTION_INDEX, DECISION_VALUE, CONTINUATION_CE)
 
 
@@ -791,3 +803,169 @@ def test_actionless_row_with_infeasible_state_keeps_its_raw_parts() -> None:
         np.stack([np.asarray(x, dtype=float) for x in (got.Q, got.U, got.CE, got.F)]),
         np.array([[2.0, 1.0], [2.0, 1.0], [0.0, 0.0], [1.0, 0.0]]),
     )
+
+
+# Lifetime of the derived lookup programs. Each `Model` owns the programs its
+# lookups derive, so they live exactly as long as it does and a rebuilt model
+# leaves nothing behind.
+DERIVED_CACHES = {
+    "kept_parts": "_kept_parts_programs",
+    "action_extents": "_action_extent_programs",
+}
+
+
+def solve_small_model():
+    grid = LinSpacedGrid(start=1, stop=5, n_points=5)
+    model = get_model(n_periods=3, wealth_grid=grid, consumption_grid=grid)
+    params = get_params(n_periods=3)
+    return model, params, model.solve(params=params, log_level="off")
+
+
+def lookup_deriving(*, solved, kind, reverse=False):
+    """Look up period 0 with options that derive one program of `kind`."""
+    model, params, solution = solved
+    options = (
+        {"keep_intermediates": ("F", "Q") if reverse else ("Q", "F")}
+        if kind == "kept_parts"
+        else {"action_grids": {"consumption": jnp.asarray([1.0, 2.0, 3.0])}}
+    )
+    return model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="working_life",
+        states={"wealth": jnp.asarray([4.0, 5.0])},
+        **options,
+    )
+
+
+def only_derived_entry(*, model, kind):
+    """The one `(source, derived)` pair the model's `kind` cache holds."""
+    ((key, (source, derived)),) = getattr(model, DERIVED_CACHES[kind]).items()
+    assert key[0] == id(source)
+    assert derived is not source
+    return source, derived
+
+
+def weak_observers_of_one_model(*, kind):
+    """Weak references to a looked-up model and its derived programs, nothing else."""
+    solved = solve_small_model()
+    lookup_deriving(solved=solved, kind=kind)
+    source, derived = only_derived_entry(model=solved[0], kind=kind)
+    return {
+        "model": weakref.ref(solved[0]),
+        "source": weakref.ref(source),
+        "source_function": weakref.ref(source.function),
+        "derived": weakref.ref(derived),
+        "derived_function": weakref.ref(derived.function),
+    }
+
+
+@pytest.mark.parametrize("kind", DERIVED_CACHES)
+def test_derived_lookup_programs_are_released_with_their_model(kind):
+    refs = weak_observers_of_one_model(kind=kind)
+    gc.collect()
+    assert {name: ref() is None for name, ref in refs.items()} == dict.fromkeys(
+        refs, True
+    )
+
+
+@pytest.mark.parametrize("kind", DERIVED_CACHES)
+def test_repeated_lookups_of_a_live_model_reuse_its_derived_program(kind):
+    solved = solve_small_model()
+    first = lookup_deriving(solved=solved, kind=kind)
+    source, derived = only_derived_entry(model=solved[0], kind=kind)
+    second = lookup_deriving(solved=solved, kind=kind, reverse=True)
+    assert only_derived_entry(model=solved[0], kind=kind) == (source, derived)
+    np.testing.assert_array_equal(np.asarray(second.value), np.asarray(first.value))
+
+
+@pytest.mark.parametrize("kind", DERIVED_CACHES)
+def test_two_models_derive_their_own_programs(kind):
+    one, two = solve_small_model(), solve_small_model()
+    lookup_deriving(solved=one, kind=kind)
+    lookup_deriving(solved=two, kind=kind)
+    _, derived_one = only_derived_entry(model=one[0], kind=kind)
+    _, derived_two = only_derived_entry(model=two[0], kind=kind)
+    assert derived_one is not derived_two
+    released = weakref.ref(derived_one)
+    del one, derived_one
+    gc.collect()
+    assert released() is None
+    assert only_derived_entry(model=two[0], kind=kind)[1] is derived_two
+
+
+def test_programs_sharing_a_function_derive_distinct_programs():
+    """The cache tells source programs apart by identity, not by their function.
+
+    A stored source keeps its identity from being reused while its entry lives.
+    """
+    model, _, _ = solve_small_model()
+    source = model._regimes["working_life"].simulation.programs.action_values[0]
+    twin = dataclasses.replace(source, name=f"{source.name}_twin")
+    roles = frozenset({ACTION_VALUES, ACTION_FEASIBILITY})
+    cache = {}
+    derived = with_kept_action_parts(program=source, roles=roles, cache=cache)
+    derived_twin = with_kept_action_parts(program=twin, roles=roles, cache=cache)
+    assert twin.function is source.function
+    assert derived_twin is not derived
+    assert derived_twin.name == twin.name
+    twin_id = id(twin)
+    del twin, derived_twin
+    gc.collect()
+    assert id(cache[(twin_id, roles)][0]) == twin_id
+
+
+def test_each_proper_subset_of_parts_derives_one_program():
+    model, _, _ = solve_small_model()
+    source = model._regimes["working_life"].simulation.programs.action_values[0]
+    parts = (ACTION_VALUES, ACTION_FEASIBILITY, FLOW_UTILITY, CONTINUATION_CE)
+    cache = {}
+    for size in (1, 2, 3):
+        for subset in itertools.combinations(parts, size):
+            roles = frozenset(subset)
+            derived = with_kept_action_parts(program=source, roles=roles, cache=cache)
+            again = with_kept_action_parts(program=source, roles=roles, cache=cache)
+            assert again is derived
+    assert len(cache) == 14
+    every = with_kept_action_parts(program=source, roles=frozenset(parts), cache=cache)
+    assert every is source
+    assert len(cache) == 14
+
+
+def test_a_restored_model_starts_with_empty_derived_caches():
+    solved = solve_small_model()
+    for kind in DERIVED_CACHES:
+        lookup_deriving(solved=solved, kind=kind)
+    model = solved[0]
+    state = model.__getstate__()
+    restored = cloudpickle.loads(cloudpickle.dumps(model))
+    for attribute in DERIVED_CACHES.values():
+        assert attribute not in state
+        assert getattr(model, attribute)
+        assert getattr(restored, attribute) == {}
+
+
+@pytest.mark.parametrize("kind", DERIVED_CACHES)
+def test_derived_program_is_chosen_under_the_model_lock_and_dispatched_outside_it(
+    *, kind, monkeypatch
+):
+    solved = solve_small_model()
+    model = solved[0]
+    name = "with_kept_action_parts" if kind == "kept_parts" else "_with_action_extents"
+    derive = getattr(lcm.model, name)
+    dispatch = SimulationRuntime.dispatch
+    locked_when_derived, locked_when_dispatched = [], []
+
+    def observed_derive(**kwargs):
+        locked_when_derived.append(model._simulate_compile_lock.locked())
+        return derive(**kwargs)
+
+    def observed_dispatch(self, **kwargs):
+        locked_when_dispatched.append(model._simulate_compile_lock.locked())
+        return dispatch(self, **kwargs)
+
+    monkeypatch.setattr(lcm.model, name, observed_derive)
+    monkeypatch.setattr(SimulationRuntime, "dispatch", observed_dispatch)
+    lookup_deriving(solved=solved, kind=kind)
+    assert (locked_when_derived, set(locked_when_dispatched)) == ([True], {False})

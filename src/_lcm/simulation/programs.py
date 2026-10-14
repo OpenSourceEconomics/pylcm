@@ -765,16 +765,15 @@ ACTION_PART_ROLES = (ACTION_VALUES, ACTION_FEASIBILITY, FLOW_UTILITY, CONTINUATI
 # returns them: the decision's own pair, then each part over the action product.
 ACTION_VALUES_OUTPUT_ROLES = (ACTION_INDEX, DECISION_VALUE, *ACTION_PART_ROLES)
 
-# Keyed by the source program's identity and the kept parts; the source is held
-# alongside so the identity cannot be recycled while its entry lives.
-# ponytail: unbounded, one small entry per (parts program, kept subset).
-_KEPT_PARTS_PROGRAMS: dict[
+# Derived programs keyed by the source program's identity and the kept parts. The
+# source is held alongside so its identity cannot be reused while the entry lives.
+type KeptPartsPrograms = dict[
     tuple[int, frozenset[str]], tuple[CoreProgram, CoreProgram]
-] = {}
+]
 
 
 def with_kept_action_parts(
-    *, program: CoreProgram, roles: frozenset[str]
+    *, program: CoreProgram, roles: frozenset[str], cache: KeptPartsPrograms
 ) -> CoreProgram:
     """Return a dense decision with its parts that publishes only the parts in `roles`.
 
@@ -782,7 +781,8 @@ def with_kept_action_parts(
     order of `ACTION_PART_ROLES`. The selection is made at each state cell, so a
     dropped part is never stacked over the subjects. Keeping every part returns
     `program` unchanged; one object per kept subset keeps the executor's
-    compiled-route cache warm.
+    compiled-route cache warm. `cache` belongs to the owner of `program`, so the
+    derived programs live exactly as long as it does; the owner serializes calls.
     """
     unknown = roles - set(ACTION_PART_ROLES)
     if unknown:
@@ -793,9 +793,9 @@ def with_kept_action_parts(
     if roles == set(ACTION_PART_ROLES):
         return program
     key = (id(program), roles)
-    if key not in _KEPT_PARTS_PROGRAMS:
+    if key not in cache:
         kept = tuple(role for role in ACTION_PART_ROLES if role in roles)
-        _KEPT_PARTS_PROGRAMS[key] = (
+        cache[key] = (
             program,
             dataclasses.replace(
                 program,
@@ -810,7 +810,7 @@ def with_kept_action_parts(
                 output_roles=(ACTION_INDEX, DECISION_VALUE, *kept),
             ),
         )
-    return _KEPT_PARTS_PROGRAMS[key][1]
+    return cache[key][1]
 
 
 def _select_cell_outputs(
