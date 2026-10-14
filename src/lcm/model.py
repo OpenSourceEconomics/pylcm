@@ -160,7 +160,6 @@ from _lcm.simulation.program_arguments import decision_arguments
 from _lcm.simulation.program_types import (
     ACTION_FEASIBILITY,
     ACTION_INDEX,
-    ACTION_PARTS_ROLES,
     ACTION_VALUES,
     CHOICE_PROBABILITIES,
     CONDITIONAL_ACTION_INDEX,
@@ -4321,9 +4320,7 @@ class Model:
                 with_kept_action_parts(
                     program=programs.action_values[period],
                     roles=frozenset(
-                        _INTERMEDIATE_ROLES[name]
-                        for name in keep_intermediates
-                        if _INTERMEDIATE_ROLES[name] in ACTION_PARTS_ROLES
+                        _INTERMEDIATE_ROLES[name] for name in keep_intermediates
                     ),
                     cache=self._kept_parts_programs,
                 )
@@ -4407,11 +4404,7 @@ class Model:
                 Qc=by_role.get(CONDITIONAL_VALUE),
                 choice_probabilities=by_role.get(CHOICE_PROBABILITIES),
                 conditional_actions=actions if regime.has_taste_shocks else None,
-                Q_objective=(
-                    by_role.get(OBJECTIVE_PROFILE)
-                    if "Q_objective" in keep_intermediates
-                    else None
-                ),
+                Q_objective=by_role.get(OBJECTIVE_PROFILE),
             ),
             n_rows=n_query_rows,
             allocations=allocations,
@@ -4984,7 +4977,6 @@ _INTERMEDIATE_ROLES: MappingProxyType[Intermediate, str] = MappingProxyType(
         "F": ACTION_FEASIBILITY,
         "U": FLOW_UTILITY,
         "CE": CONTINUATION_CE,
-        # Published beside the parts by a `Decoupled` regime's lookup only.
         "Q_objective": OBJECTIVE_PROFILE,
     }
 )

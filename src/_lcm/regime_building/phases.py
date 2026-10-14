@@ -173,9 +173,7 @@ def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedReg
             joint_transitions=solve_joint_transitions,
             regime_transition=solve_transition,
             koopmans_aggregator=cast("UserFunction | None", solve_aggregator),
-            objective_aggregator=(
-                None if aggregator_errors else user_regime.get_objective_aggregator()
-            ),
+            objective_aggregator=user_regime.get_objective_aggregator(),
         ),
         simulation=_build_phase_spec(
             constraints=constraints,
@@ -185,11 +183,7 @@ def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedReg
             joint_transitions=simulate_joint_transitions,
             regime_transition=simulate_transition,
             koopmans_aggregator=cast("UserFunction | None", simulate_aggregator),
-            objective_aggregator=(
-                None
-                if aggregator_errors
-                else user_regime.get_objective_aggregator(phase="simulate")
-            ),
+            objective_aggregator=user_regime.get_objective_aggregator(phase="simulate"),
         ),
     )
 

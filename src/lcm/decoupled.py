@@ -24,34 +24,14 @@ class Decoupled:
 
     - `objective` ranks the actions: the action taken maximizes it over the
       feasible set, or, with taste shocks, it sets the choice probabilities.
-    - `value` gives the value stored and passed back: the solve stores `value`
-      at the chosen action, and simulation and policy lookup publish it.
+      It may be `Phased`, so the solve and simulation can choose differently.
+    - `value` is stored at the chosen action and passed back; simulation and
+      policy lookup publish it. With taste shocks the stored value is its
+      expectation at the noisy choice, including the chosen action's shock.
 
-    With taste shocks the stored value is the expected `value` at the choice,
-    including the chosen action's shock. Under extreme-value shocks of scale
-    `scale` this is
-    `scale * logsumexp(Q_objective / scale) + sum_k P_k (Q_value_k - Q_objective_k)`
-    with `P = softmax(Q_objective / scale)`.
-
-    `objective` may be `Phased`: its `solve` variant is how the selves the solve
-    anticipates choose, its `simulate` variant how the acting self chooses.
-    `value` is the same in both phases.
-
-    The leading use is quasi-hyperbolic discounting. With
-    `value = u + δ·CE`, a solve variant `u + β̃δ·CE` and a simulate variant
-    `u + βδ·CE`, `β̃ = 1` is the naive agent, `β̃ = β` the sophisticated agent
-    and `β < β̃ < 1` the partially naive agent. The stored value is then the
-    long-run value of the policy the agent expects its future selves to follow.
-    For naive and partially naive agents it is the agent's self-assessment;
-    the policy it actually follows has a different long-run value.
-
-    The stored value is read off at the objective's choice, away from the
-    value's own maximum, so grid error in the chosen action enters it at first
-    order. Expect to need finer grids than for an ordinary aggregator.
-
-    A `Phased` Koopmans aggregator, `Phased(solve=f, simulate=g)`, is the
-    special case `Decoupled(objective=Phased(solve=f, simulate=g), value=f)`
-    for the choices it makes; it publishes `g` instead of `f` in simulation.
+    Quasi-hyperbolic (naive, sophisticated and partially naive) agents are the
+    leading use; `docs/methods/preferences.md` states the recipe and its
+    caveats, and the beta-delta explanation notebook works it through.
     """
 
     __slots__ = ("objective", "value")

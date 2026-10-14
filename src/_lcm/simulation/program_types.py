@@ -49,6 +49,9 @@ CONDITIONAL_ACTION_INDEX = "conditional_action_index"
 # What every policy-lookup program publishes after its own outputs: the kernel's
 # parts over the action product.
 ACTION_PARTS_ROLES = (ACTION_VALUES, ACTION_FEASIBILITY, FLOW_UTILITY, CONTINUATION_CE)
+# The parts a policy lookup may keep: the kernel's parts, and the objective profile a
+# `Decoupled` regime publishes beside them.
+LOOKUP_PART_ROLES = (*ACTION_PARTS_ROLES, OBJECTIVE_PROFILE)
 NEXT_STATE = "next_state"
 REGIME_TRANSITION_PROB = "regime_transition_prob"
 GATED_CONTINUATION = "gated_continuation"
