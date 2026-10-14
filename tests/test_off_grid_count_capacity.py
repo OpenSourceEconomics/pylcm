@@ -147,6 +147,13 @@ def test_sum_counts_agrees_with_python_integers(
     assert result == _expected(sum(int(value) for value in values))
 
 
+def test_sum_counts_with_a_unit_bound_counts_zero_one_integers_exactly() -> None:
+    counts = jnp.asarray(
+        np.random.default_rng(seed=0).integers(0, 2, size=1 << 17), dtype=jnp.int32
+    )
+    assert int(sum_counts(counts=counts, largest=1)) == int(np.sum(counts))
+
+
 def test_sum_counts_keeps_exact_totals_on_the_digit_path() -> None:
     counts = jnp.full((1 << 16,), 1 << 14, dtype=jnp.int32)
     assert int(sum_counts(counts=counts)) == 1 << 30

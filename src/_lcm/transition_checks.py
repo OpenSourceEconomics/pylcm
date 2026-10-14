@@ -621,6 +621,7 @@ def _off_grid_target_counts(
             scalar_kwargs=scalar_kwargs,
             grid_names=grid_names,
             func=point_call,
+            largest_count=1,
         )
     arguments = {"grid_args": available, "scalar_kwargs": scalar_kwargs}
 
@@ -633,6 +634,7 @@ def _off_grid_target_counts(
                     grid_names=grid_names,
                     func=point_call,
                     block_rows=block_rows,
+                    largest_count=1,
                 ),
                 arguments=arguments,
                 memory=memory,
@@ -741,7 +743,6 @@ def _build_off_grid_cell(
             func=reader, names=frozenset(inspect.signature(reader).parameters)
         ),
         target=target,
-        n_lotteries=len(lotteries),
     )
 
 
@@ -752,8 +753,14 @@ def _off_grid_counts_law(
     grid_names: tuple[StateOrActionName, ...],
     func: Callable[..., IntND],
     block_rows: int | None = None,
+    largest_count: int | None = None,
 ) -> IntND:
     """Reduce saturating integer counts block by block inside one producer.
+
+    `func` returns one point's counts with the checked states and the
+    (raw, non-finite) pair as its last two axes; every leading axis is summed.
+    `largest_count` is a static bound on each of its elements, which keeps a
+    block's sum a single exact int32 reduction wherever the bound allows.
 
     The trailing axes whose product fits `block_rows` (default
     `_OFF_GRID_BLOCK_ROWS`) are evaluated together; a loop walks the remaining
@@ -769,8 +776,14 @@ def _off_grid_counts_law(
     """
     rows = _OFF_GRID_BLOCK_ROWS if block_rows is None else block_rows
     point = _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
+
+    def reduce_rows(counts: IntND) -> IntND:
+        return sum_counts(
+            counts=counts, axis=tuple(range(counts.ndim - 2)), largest=largest_count
+        )
+
     if not grid_names:
-        return point()
+        return reduce_rows(point())
     axes = tuple(jnp.asarray(grid_args[name]) for name in grid_names)
     split = len(axes)
     block = 1
@@ -788,10 +801,11 @@ def _off_grid_counts_law(
             )
         )
         if not inner:
-            return point(*fixed)
+            return reduce_rows(point(*fixed))
         mesh = jnp.meshgrid(*inner, indexing="ij")
-        rows = jax.vmap(partial(point, *fixed))(*(array.ravel() for array in mesh))
-        return sum_counts(counts=rows, axis=0)
+        return reduce_rows(
+            jax.vmap(partial(point, *fixed))(*(array.ravel() for array in mesh))
+        )
 
     if not outer:
         return count_block(jnp.int32(0))
@@ -838,6 +852,10 @@ class _OffGridNode:
         reached = kwargs["__off_grid_reached"]
         for name, weight in self.lotteries:
             reached = reached & is_live(kwargs[weight][kwargs[name].astype(jnp.int32)])
+        # The caller's sum relies on each node contributing at most one landing.
+        if any(jnp.ndim(kwargs[f"next_{state}"]) for state in self.states):
+            msg = "An off-grid node count reads one landing per state."
+            raise ValueError(msg)
         return jnp.stack(
             [
                 jnp.stack(
@@ -859,7 +877,11 @@ class _OffGridNode:
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _OffGridCell:
-    """Evaluate one feasible economic cell and reduce its reached raw nodes."""
+    """Evaluate one feasible economic cell and count each of its reached nodes.
+
+    The result keeps the lottery axes, one zero-or-one count per node, so the
+    caller sums them together with the cells in one reduction.
+    """
 
     next_inputs: Callable[..., Mapping[str, FloatND | IntND]]
     weights: Callable[..., Mapping[str, FloatND | IntND]]
@@ -867,14 +889,13 @@ class _OffGridCell:
     regime_law: Callable[..., Mapping[RegimeName, FloatND]]
     reader: Callable[..., IntND]
     target: RegimeName
-    n_lotteries: int
 
     @no_type_check
     def __call__(self, **kwargs: EconFunctionArg) -> IntND:
         reached = self.feasibility(**kwargs) & is_live(
             self.regime_law(**kwargs)[self.target]
         )
-        rows = self.reader(
+        return self.reader(
             **{
                 **kwargs,
                 **self.next_inputs(**kwargs),
@@ -882,7 +903,6 @@ class _OffGridCell:
                 "__off_grid_reached": reached,
             }
         )
-        return sum_counts(counts=rows, axis=tuple(range(self.n_lotteries)))
 
 
 def _validate_transition_sequence(

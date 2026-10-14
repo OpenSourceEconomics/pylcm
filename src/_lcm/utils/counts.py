@@ -37,7 +37,10 @@ def add_counts(*, left: IntND, right: IntND) -> IntND:
 
 
 def sum_counts(
-    *, counts: IntND | BoolND, axis: int | Sequence[int] | None = None
+    *,
+    counts: IntND | BoolND,
+    axis: int | Sequence[int] | None = None,
+    largest: int | None = None,
 ) -> IntND:
     """Sum non-negative counts (or booleans) over `axis`, saturating at the capacity.
 
@@ -49,6 +52,8 @@ def sum_counts(
     Args:
         counts: Non-negative integer counts, or booleans counted as zero or one.
         axis: The axes to reduce; `None` reduces all of them.
+        largest: A static bound on every element that the caller guarantees;
+            `None` means one for booleans and `COUNT_CAPACITY` otherwise.
 
     Returns:
         The int32 totals, exact below `COUNT_CAPACITY` and equal to it otherwise.
@@ -59,7 +64,12 @@ def sum_counts(
 
     """
     counts = jnp.asarray(counts)
-    largest_element = 1 if counts.dtype == jnp.bool_ else COUNT_CAPACITY
+    if largest is not None:
+        largest_element = largest
+    elif counts.dtype == jnp.bool_:
+        largest_element = 1
+    else:
+        largest_element = COUNT_CAPACITY
     counts = counts.astype(jnp.int32)
     if axis is None:
         axes = tuple(range(counts.ndim))
