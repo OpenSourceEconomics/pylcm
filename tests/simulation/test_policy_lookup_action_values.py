@@ -163,13 +163,30 @@ def test_kept_parts_program_publishes_only_the_kept_parts(solved):
 
 @pytest.mark.parametrize(
     ("keep_intermediates", "match"),
-    [(("V",), "keep_intermediates"), (("Q", "Q"), "at most once")],
+    [
+        (("V",), "keep_intermediates"),
+        (("Q", "V"), "keep_intermediates"),
+        (("V", "Q"), "keep_intermediates"),
+        (("Q", "F", "U", "CE", "V"), "keep_intermediates"),
+        (("Q", "Q"), "at most once"),
+    ],
 )
 def test_lookup_refuses_unknown_or_repeated_intermediates(
     *, solved, keep_intermediates, match
 ):
     with pytest.raises(InvalidSimulationInputError, match=match):
         lookup(solved=solved, period=0, keep_intermediates=keep_intermediates)
+
+
+# The public type check samples one entry per call, so each input is refused
+# many times to catch a call that reports a different error.
+@pytest.mark.parametrize("keep_intermediates", [("Q", ["U"]), ("Q", 1)])
+def test_lookup_refuses_non_string_intermediates_on_every_call(
+    *, solved, keep_intermediates
+):
+    for _ in range(30):
+        with pytest.raises(InvalidSimulationInputError, match="keep_intermediates"):
+            lookup(solved=solved, period=0, keep_intermediates=keep_intermediates)
 
 
 @pytest.mark.parametrize("period", [0, LAST_ALIVE_PERIOD])

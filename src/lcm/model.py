@@ -85,7 +85,12 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
-from _lcm.processes.ar1 import RouwenhorstAR1Process, TauchenAR1Process, _AR1Process
+from _lcm.processes.ar1 import (
+    RouwenhorstAR1Process,
+    TauchenAR1Process,
+    _AR1Process,
+    _TauchenOnNodesProcess,
+)
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
@@ -3957,7 +3962,7 @@ class Model:
                 f"edges; {regime_name!r} declares one."
             )
             raise InvalidSimulationInputError(msg)
-        _fail_if_repeated_intermediates(keep_intermediates=keep_intermediates)
+        _fail_if_invalid_intermediates(keep_intermediates=keep_intermediates)
         if keep_intermediates and regime.stakeholders is not None:
             msg = (
                 "Policy lookup keeps intermediates for singleton regimes only; "
@@ -4674,12 +4679,29 @@ _INTERMEDIATE_ROLES: MappingProxyType[Intermediate, str] = MappingProxyType(
 )
 
 
-def _fail_if_repeated_intermediates(
-    *, keep_intermediates: tuple[Intermediate, ...]
+def _fail_if_invalid_intermediates(
+    *,
+    keep_intermediates: tuple[object, ...],  # noqa: PAN001 - checked entry by entry
 ) -> None:
-    """Raise if `keep_intermediates` names one intermediate more than once."""
+    """Raise if `keep_intermediates` names an unknown intermediate or one twice.
+
+    The public type check samples a single entry of the tuple, so every entry is
+    checked here. Entries are typed `object`, so that this check, not the internal
+    type check, reports an entry that is not a string.
+    """
+    unknown = tuple(
+        name
+        for name in keep_intermediates
+        if not (isinstance(name, str) and name in _INTERMEDIATE_ROLES)
+    )
+    if unknown:
+        msg = (
+            f"keep_intermediates names unknown intermediates {unknown}; choose "
+            f"from {tuple(_INTERMEDIATE_ROLES)}."
+        )
+        raise InvalidSimulationInputError(msg)
     repeated = sorted(
-        {name for name in keep_intermediates if keep_intermediates.count(name) > 1}
+        {str(name) for name in keep_intermediates if keep_intermediates.count(name) > 1}
     )
     if repeated:
         msg = f"Policy lookup keeps each intermediate at most once; got {repeated}."
@@ -4921,7 +4943,11 @@ def _supports_unsharded_continuous_process(grid: Grid) -> bool:
         iid = cast("NormalIIDProcess | LogNormalIIDProcess", grid)
         if iid.fold or not iid.gauss_hermite:
             return False
-    elif type(grid) not in (RouwenhorstAR1Process, TauchenAR1Process):
+    elif type(grid) not in (
+        RouwenhorstAR1Process,
+        TauchenAR1Process,
+        _TauchenOnNodesProcess,
+    ):
         return False
     process = cast("_ContinuousStochasticProcess", grid)
     return process.is_fully_specified and process.state_conditioned is None

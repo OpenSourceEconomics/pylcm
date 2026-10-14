@@ -123,6 +123,31 @@ Gauss-Hermite supports even counts here too. Only odd counts include the uncondi
 mean. Transition probabilities still use midpoint CDF bins, rather than quadrature
 weights.
 
+### Tauchen on supplied nodes
+
+Use `TauchenAR1Process.on_nodes` when the physical state grid is supplied by a
+calibration, or the process has a unit root and cannot place a stationary grid:
+
+```python
+TauchenAR1Process.on_nodes(
+    nodes=(-1.2, -0.5, 0.0, 0.5, 1.2),
+    rho=None,
+    sigma=None,
+)
+```
+
+The state takes these physical values directly. Nodes must contain at least two finite,
+strictly increasing values that remain distinct at the working precision. Transition
+probabilities integrate the conditional normal with mean `mu + rho * y` over bins
+separated by adjacent midpoints; the first and last bins include the tails. `mu`
+defaults to zero. Set `rho`, `sigma`, or `mu` to `None` to supply that law parameter at
+solve or simulation time. The nodes remain fixed as parameters vary, and `rho=1` is
+supported. Simulation draws the continuous AR(1) law, as for ordinary Tauchen; it does
+not draw a categorical node code.
+
+This factory does not reproduce a row-normalized density-at-nodes rule. Use an explicit
+categorical transition when that discrete law is the intended model.
+
 ### RouwenhorstAR1Process
 
 Discretization via @rouwenhorst1995 / @kopecky2010. Better for highly persistent

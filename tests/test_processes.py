@@ -1,27 +1,36 @@
 import json
+import math
 import os
 import shutil
 import subprocess
 import textwrap
+from fractions import Fraction
+from functools import partial
+from itertools import pairwise
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 import pandas as pd
 import pytest
-from jax import jit
+from jax import jacrev, jit, vmap
 from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 from quantecon.markov.approximation import rouwenhorst as qe_rouwenhorst
 from quantecon.markov.approximation import tauchen as qe_tauchen
+from scipy.integrate import quad
 from scipy.special import ndtr
+from scipy.stats import norm
 from typing_extensions import TypedDict
 
 from _lcm.config import TEST_DATA
 from _lcm.processes.ar1 import _AR1Process
+from _lcm.processes.state_conditioned import conditioned_row
 from _lcm.typing import DataclassInstance
+from _lcm.utils.logging import LogLevel
 from lcm import (
+    AgeGrid,
     InitialNodes,
     LogNormalIIDProcess,
     Model,
@@ -35,6 +44,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import GridInitializationError
+from lcm.execution import ExecutionConfig
 from lcm.solver_api import SolutionResult
 from lcm.typing import (
     ContinuousState,
@@ -1081,3 +1091,501 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
     assert all(
         order == ["next_gamma", "next_alpha", "next_beta"] for order in observed
     ), (hash_seed, observed)
+
+
+@pytest.mark.parametrize("rho", [-1.2, -1.0, 0.0, 0.8, 1.0, 1.2])
+@pytest.mark.parametrize("mu", [-0.3, 0.0, 0.4])
+def test_tauchen_on_nodes_matches_integrated_normal(*, rho: float, mu: float) -> None:
+    """Physical node bins integrate the conditional normal, including unit roots."""
+    nodes = (-1.4, -0.3, 0.2, 1.1)
+    sigma = 0.6
+    process = TauchenAR1Process.on_nodes(nodes=nodes, rho=rho, sigma=sigma, mu=mu)
+    boundaries = [
+        -np.inf,
+        *[(a + b) / 2 for a, b in pairwise(nodes)],
+        np.inf,
+    ]
+    expected = np.asarray(
+        [
+            [
+                quad(
+                    partial(norm.pdf, loc=mu + rho * source, scale=sigma),
+                    lower,
+                    upper,
+                    epsabs=1e-13,
+                    epsrel=1e-13,
+                )[0]
+                for lower, upper in pairwise(boundaries)
+            ]
+            for source in nodes
+        ]
+    )
+    got = process.get_transition_probs()
+    aaae(got, expected, decimal=DECIMAL_PRECISION)
+    aaae(got.sum(axis=1), np.ones(len(nodes)), decimal=DECIMAL_PRECISION)
+    np.testing.assert_array_equal(process.to_jax(), jnp.asarray(nodes))
+
+
+@pytest.mark.parametrize("gauss_hermite", [False, True])
+def test_tauchen_on_default_nodes_matches_stationary_process(
+    *,
+    gauss_hermite: bool,
+) -> None:
+    """Supplied stationary nodes preserve Tauchen probabilities with a drift."""
+    ordinary = TauchenAR1Process(
+        n_points=5,
+        gauss_hermite=gauss_hermite,
+        n_std=None if gauss_hermite else 3.0,
+        rho=0.6,
+        sigma=0.4,
+        mu=0.3,
+    )
+    process = TauchenAR1Process.on_nodes(
+        nodes=tuple(float(x) for x in ordinary.to_jax()), rho=0.6, sigma=0.4, mu=0.3
+    )
+    aaae(
+        process.get_transition_probs(),
+        ordinary.get_transition_probs(),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize(
+    "nodes",
+    [(), (0.0,), (0.0, 0.0), (1.0, -1.0), (0.0, float("nan")), (0.0, float("inf"))],
+)
+def test_tauchen_on_nodes_rejects_invalid_grid(nodes: tuple[float, ...]) -> None:
+    """Supplied nodes require a finite strictly increasing interpolation axis."""
+    with pytest.raises(GridInitializationError, match="nodes"):
+        TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=0.3)
+
+
+# The public type check samples one entry per call, so each input is refused
+# many times to catch a call that accepts it or names the private class.
+@pytest.mark.parametrize("nodes", [(-1.0, "0.0", 1.0), (-1.0, None, 1.0)])
+def test_tauchen_on_nodes_refuses_non_numeric_nodes_on_every_call(nodes) -> None:
+    for _ in range(30):
+        with pytest.raises(GridInitializationError, match="on_nodes"):
+            TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=0.3)
+
+
+def test_tauchen_on_nodes_runtime_parameters_keep_fixed_coordinates() -> None:
+    """Runtime law parameters leave the supplied physical grid observable."""
+    process = TauchenAR1Process.on_nodes(nodes=(-1.0, 0.0, 2.0))
+    assert process.params_to_pass_at_runtime == ("rho", "sigma")
+    np.testing.assert_array_equal(process.to_jax(), jnp.asarray([-1.0, 0.0, 2.0]))
+    aaae(
+        process.get_coordinate(jnp.asarray([-0.5, 1.0])),
+        jnp.asarray([0.5, 1.5]),
+        decimal=DECIMAL_PRECISION,
+    )
+    compiled = jit(process.compute_transition_probs)
+    params = {
+        "rho": jnp.asarray(1.0),
+        "sigma": jnp.asarray(0.3),
+        "mu": jnp.asarray(0.0),
+    }
+    aaae(
+        compiled(**params),
+        process.compute_transition_probs(**params),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("runtime", [False, True])
+@pytest.mark.parametrize("log_level", ["off", "warning"])
+@pytest.mark.parametrize("budget", [None, 2**28])
+def test_tauchen_on_nodes_unit_root_native_solve_and_simulate(
+    *, runtime: bool, log_level: LogLevel, budget: int | None
+) -> None:
+    """Native checked Bellman integration uses physical nodes and a unit-root law."""
+
+    def income_squared(income: ContinuousState) -> FloatND:
+        return income**2
+
+    nodes = (-2.0, -0.5, 0.0, 0.8, 2.0)
+    process = TauchenAR1Process.on_nodes(
+        nodes=nodes, rho=None if runtime else 1.0, sigma=None if runtime else 0.1
+    )
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"income": process}, functions={"utility": income_squared}
+            ),
+            "dead": Regime(
+                states={"income": process}, functions={"utility": income_squared}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
+        execution_config=ExecutionConfig(device_memory_bytes=budget),
+    )
+    params = {
+        "alive": {
+            "discount_factor": 1.0,
+            **({"income": {"rho": 1.0, "sigma": 0.1}} if runtime else {}),
+        },
+        "dead": {"income": {"rho": 1.0, "sigma": 0.1}} if runtime else {},
+    }
+    solution = model.solve(params=params, log_level=log_level, runtime_checks=True)
+    expected = jnp.asarray(nodes) ** 2
+    weights = process.compute_transition_probs(
+        rho=jnp.asarray(1.0), sigma=jnp.asarray(0.1), mu=jnp.asarray(0.0)
+    )
+    aaae(solution.values[1]["dead"], expected, decimal=DECIMAL_PRECISION)
+    aaae(
+        solution.values[0]["alive"],
+        expected + weights @ expected,
+        decimal=DECIMAL_PRECISION,
+    )
+    result = model.simulate(
+        params=params,
+        solution=solution,
+        log_level=log_level,
+        runtime_checks=True,
+        initial_conditions={
+            "income": jnp.zeros(400),
+            "age": jnp.zeros(400),
+            "regime_id": jnp.full(400, RegimeId.alive),
+        },
+        seed=42,
+    ).to_dataframe()
+    draws = result.loc[result["age"] == 1.0, "income"].to_numpy()
+    assert len(draws) == 400
+    assert np.isfinite(draws).all()
+    assert abs(draws.mean()) < 0.025
+    assert 0.075 < draws.std() < 0.125
+
+
+@pytest.mark.parametrize("rho", [1, 1.0])
+def test_tauchen_on_nodes_integer_parameters_match_float_parameters(rho: float) -> None:
+    """Canonical integer scalars preserve the physical conditional law."""
+    nodes = (-1.0, 0.0, 2.0)
+    actual = TauchenAR1Process.on_nodes(nodes=nodes, rho=rho, sigma=1, mu=0)
+    expected = TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=1.0, mu=0.0)
+    aaae(
+        actual.get_transition_probs(),
+        expected.get_transition_probs(),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("rho", [float("inf"), float("nan")])
+def test_tauchen_on_nodes_rejects_nonfinite_persistence(rho: float) -> None:
+    """Given nodes remove the stationary-grid restriction, not a finite-law boundary."""
+    with pytest.raises(GridInitializationError, match="rho must be finite"):
+        TauchenAR1Process.on_nodes(nodes=(-1.0, 1.0), rho=rho, sigma=0.1)
+
+
+def test_tauchen_on_nodes_validates_active_precision() -> None:
+    """Nodes that collapse at the working precision cannot be interpolated."""
+    epsilon = float(np.finfo(np.float64 if X64_ENABLED else np.float32).eps)
+    with pytest.raises(GridInitializationError, match="active precision"):
+        TauchenAR1Process.on_nodes(nodes=(1.0, 1.0 + epsilon / 4), rho=1.0, sigma=0.1)
+
+
+def test_tauchen_on_nodes_scale_derivative_matches_normal_bins() -> None:
+    """Runtime innovation-scale derivatives follow the analytic normal-bin law."""
+    nodes = (-1.4, -0.3, 0.2, 1.1)
+    process = TauchenAR1Process.on_nodes(nodes=nodes)
+    rho, mu, sigma = 1.0, 0.3, 0.4
+
+    def matrix(scale: ScalarFloat) -> FloatND:
+        return process.compute_transition_probs(
+            rho=jnp.asarray(rho), mu=jnp.asarray(mu), sigma=scale
+        )
+
+    points = np.asarray(nodes)
+    edges = (points[:-1] + points[1:]) / 2
+    z = (edges[None, :] - mu - rho * points[:, None]) / sigma
+    edge_derivatives = -z * norm.pdf(z) / sigma
+    expected = np.concatenate(
+        [
+            edge_derivatives[:, :1],
+            np.diff(edge_derivatives, axis=1),
+            -edge_derivatives[:, -1:],
+        ],
+        axis=1,
+    )
+    aaae(jit(jacrev(matrix))(jnp.asarray(sigma)), expected, decimal=DECIMAL_PRECISION)
+
+
+def test_tauchen_on_nodes_batched_runtime_scale_matches_normal_bins() -> None:
+    """Batched runtime scales preserve independently integrated physical-bin rows."""
+    nodes = (-1.4, -0.3, 0.2, 1.1)
+    process = TauchenAR1Process.on_nodes(nodes=nodes)
+
+    def matrix(scale: ScalarFloat) -> FloatND:
+        return process.compute_transition_probs(
+            rho=jnp.asarray(1.0), mu=jnp.asarray(0.3), sigma=scale
+        )
+
+    scales = (0.2, 0.4, 0.7)
+    points = np.asarray(nodes)
+    edges = (points[:-1] + points[1:]) / 2
+    expected = []
+    for sigma in scales:
+        cumulative = norm.cdf((edges[None, :] - 0.3 - points[:, None]) / sigma)
+        expected.append(
+            np.concatenate(
+                [
+                    cumulative[:, :1],
+                    np.diff(cumulative, axis=1),
+                    1 - cumulative[:, -1:],
+                ],
+                axis=1,
+            )
+        )
+    aaae(
+        jit(vmap(matrix))(jnp.asarray(scales)),
+        np.asarray(expected),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def _exact_normal_bin_matrix(
+    *, nodes: tuple[float, ...], rho: float, mu: float, sigma: float
+) -> np.ndarray:
+    """Integrate the represented law over exactly centred midpoint bins.
+
+    Rational arithmetic forms every standardized boundary
+    $((a+b)/2 - \\mu - \\rho y) / \\sigma$ from the represented inputs before a
+    single conversion to float, and a scalar `math.erfc` evaluates the CDF. Neither
+    step shares arithmetic with the production row builders.
+    """
+    return np.asarray(
+        [
+            np.diff([0.0, *[_scalar_normal_cdf(float(z)) for z in row], 1.0])
+            for row in _exact_standardized_edges(
+                nodes=nodes, rho=rho, mu=mu, sigma=sigma
+            )
+        ]
+    )
+
+
+def _exact_standardized_edges(
+    *, nodes: tuple[float, ...], rho: float, mu: float, sigma: float
+) -> tuple[tuple[Fraction, ...], ...]:
+    """Centre exact rational midpoints on each source's conditional mean."""
+    exact_nodes = tuple(Fraction(value) for value in nodes)
+    return tuple(
+        tuple(
+            ((left + right) / 2 - Fraction(mu) - Fraction(rho) * source)
+            / Fraction(sigma)
+            for left, right in pairwise(exact_nodes)
+        )
+        for source in exact_nodes
+    )
+
+
+def _scalar_normal_cdf(z: float) -> float:
+    return 0.5 * math.erfc(-z / math.sqrt(2.0))
+
+
+def _scalar_normal_pdf(z: float) -> float:
+    return math.exp(-0.5 * z * z) / math.sqrt(2.0 * math.pi)
+
+
+def _adjacent_nodes(
+    *, sign: float, offset_exponent: int
+) -> tuple[tuple[float, float], float]:
+    """Return two adjacent representable nodes and their exact positive spacing."""
+    mantissa_bits = 52 if X64_ENABLED else 23
+    offset = math.ldexp(1.0, offset_exponent)
+    step = math.ldexp(1.0, offset_exponent - mantissa_bits)
+    low, high = sorted((sign * offset, sign * (offset + step)))
+    return (low, high), step
+
+
+type _MatrixRoute = Literal["fixed", "runtime_eager", "runtime_jit"]
+
+
+def _on_nodes_matrix(
+    *,
+    nodes: tuple[float, ...],
+    rho: float,
+    mu: float,
+    sigma: float,
+    route: _MatrixRoute,
+) -> FloatND:
+    """Evaluate the supplied-node matrix with a fixed or fully runtime law."""
+    if route == "fixed":
+        return TauchenAR1Process.on_nodes(
+            nodes=nodes, rho=rho, mu=mu, sigma=sigma
+        ).get_transition_probs()
+    process = TauchenAR1Process.on_nodes(nodes=nodes, rho=None, mu=None, sigma=None)
+    evaluate = (
+        jit(process.compute_transition_probs)
+        if route == "runtime_jit"
+        else process.compute_transition_probs
+    )
+    return evaluate(rho=jnp.asarray(rho), mu=jnp.asarray(mu), sigma=jnp.asarray(sigma))
+
+
+@pytest.mark.parametrize("route", ["fixed", "runtime_eager", "runtime_jit"])
+def test_tauchen_on_adjacent_nodes_keeps_the_half_cell(route: _MatrixRoute) -> None:
+    """Rows at adjacent nodes are (Phi(2), 1 - Phi(2)) and (Phi(-2), 1 - Phi(-2))."""
+    nodes, step = _adjacent_nodes(sign=1.0, offset_exponent=0)
+    expected = _exact_normal_bin_matrix(nodes=nodes, rho=1.0, mu=0.0, sigma=step / 4)
+    actual = _on_nodes_matrix(nodes=nodes, rho=1.0, mu=0.0, sigma=step / 4, route=route)
+    aaae(actual, expected, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize(
+    ("sign", "offset_exponent"), [(1.0, 0), (-1.0, 0), (1.0, 16), (-1.0, -8)]
+)
+@pytest.mark.parametrize("sigma_in_steps", [0.25, 1.0])
+@pytest.mark.parametrize("route", ["fixed", "runtime_eager", "runtime_jit"])
+def test_tauchen_on_adjacent_offset_nodes_match_exact_bins(
+    *, sign: float, offset_exponent: int, sigma_in_steps: float, route: _MatrixRoute
+) -> None:
+    """Both signs and several offsets keep the half-cell of an adjacent node pair."""
+    nodes, step = _adjacent_nodes(sign=sign, offset_exponent=offset_exponent)
+    sigma = step * sigma_in_steps
+    expected = _exact_normal_bin_matrix(nodes=nodes, rho=1.0, mu=0.0, sigma=sigma)
+    actual = _on_nodes_matrix(nodes=nodes, rho=1.0, mu=0.0, sigma=sigma, route=route)
+    aaae(actual, expected, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+@pytest.mark.parametrize("route", ["fixed", "runtime_eager", "runtime_jit"])
+def test_tauchen_on_nodes_with_overflowing_endpoint_sum_split_at_midpoint(
+    *, sign: float, route: _MatrixRoute
+) -> None:
+    """A finite midpoint whose endpoints' sum overflows still splits mass evenly."""
+    scale = math.ldexp(1.0, 1023 if X64_ENABLED else 127)
+    low, high = sorted((sign * scale, sign * 1.5 * scale))
+    mu, sigma = sign * 1.25 * scale, scale / 4
+    actual = _on_nodes_matrix(
+        nodes=(low, high), rho=0.0, mu=mu, sigma=sigma, route=route
+    )
+    aaae(actual, np.full((2, 2), 0.5), decimal=DECIMAL_PRECISION)
+
+
+def test_tauchen_on_adjacent_nodes_batched_scales_match_exact_bins() -> None:
+    """Every vmapped scale integrates over the same exactly centred midpoint."""
+    nodes, step = _adjacent_nodes(sign=1.0, offset_exponent=0)
+    process = TauchenAR1Process.on_nodes(nodes=nodes)
+    scales = (step / 4, step / 2, step)
+
+    def matrix(scale: ScalarFloat) -> FloatND:
+        return process.compute_transition_probs(
+            rho=jnp.asarray(1.0), mu=jnp.asarray(0.0), sigma=scale
+        )
+
+    expected = np.stack(
+        [
+            _exact_normal_bin_matrix(nodes=nodes, rho=1.0, mu=0.0, sigma=scale)
+            for scale in scales
+        ]
+    )
+    aaae(jit(vmap(matrix))(jnp.asarray(scales)), expected, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_tauchen_on_adjacent_nodes_scale_derivative_matches_exact_bins(
+    sign: float,
+) -> None:
+    """The derivative in the scale in cell widths uses the centred half-cell."""
+    nodes, step = _adjacent_nodes(sign=sign, offset_exponent=0)
+    process = TauchenAR1Process.on_nodes(nodes=nodes)
+    ratio = 0.25
+
+    def matrix(scale_in_steps: ScalarFloat) -> FloatND:
+        return process.compute_transition_probs(
+            rho=jnp.asarray(1.0), mu=jnp.asarray(0.0), sigma=step * scale_in_steps
+        )
+
+    edges = _exact_standardized_edges(nodes=nodes, rho=1.0, mu=0.0, sigma=step * ratio)
+    expected = np.asarray(
+        [
+            np.diff(
+                [
+                    0.0,
+                    *[-float(z) * _scalar_normal_pdf(float(z)) / ratio for z in row],
+                    0.0,
+                ]
+            )
+            for row in edges
+        ]
+    )
+    aaae(jit(jacrev(matrix))(jnp.asarray(ratio)), expected, decimal=DECIMAL_PRECISION)
+
+
+def test_tauchen_on_adjacent_nodes_preserve_a_finite_margin_choice() -> None:
+    """A certain payoff of 1/4 beats the lottery paying one at the upper node."""
+    nodes, step = _adjacent_nodes(sign=1.0, offset_exponent=0)
+    upper_mass = TauchenAR1Process.on_nodes(
+        nodes=nodes, rho=1.0, mu=0.0, sigma=step / 4
+    ).get_transition_probs()[0, 1]
+    assert int(np.argmax([0.25, float(upper_mass)])) == 0
+
+
+@pytest.mark.parametrize("family", ["tauchen", "iid_normal"])
+def test_state_conditioned_rows_on_adjacent_nodes_match_exact_bins(
+    family: Literal["tauchen", "iid_normal"],
+) -> None:
+    """State-conditioned rows centre adjacent-node midpoints exactly, too."""
+    nodes, step = _adjacent_nodes(sign=1.0, offset_exponent=0)
+    sigma = step / 4
+    rho = 1.0 if family == "tauchen" else 0.0
+    mu = 0.0 if family == "tauchen" else nodes[0]
+    expected = _exact_normal_bin_matrix(nodes=nodes, rho=rho, mu=mu, sigma=sigma)
+    rows = [
+        conditioned_row(
+            family=family,
+            nodes=jnp.asarray(nodes),
+            sigma=jnp.asarray(sigma),
+            from_value=jnp.asarray(source),
+            mu=jnp.asarray(mu),
+            rho=jnp.asarray(rho),
+        )
+        for source in nodes
+    ]
+    aaae(np.stack(rows), expected, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("runtime", [False, True])
+def test_tauchen_on_adjacent_nodes_two_period_value_uses_exact_bins(
+    *, runtime: bool
+) -> None:
+    """The first-period value is the exact-bin expectation of terminal payoffs 0, 1."""
+    nodes, step = _adjacent_nodes(sign=1.0, offset_exponent=0)
+    sigma = step / 4
+    process = TauchenAR1Process.on_nodes(
+        nodes=nodes, rho=None if runtime else 1.0, sigma=None if runtime else sigma
+    )
+
+    def no_current_payoff(income: ContinuousState) -> FloatND:
+        return jnp.zeros_like(income)
+
+    def terminal_payoff(income: ContinuousState) -> FloatND:
+        return (income - 1.0) / step
+
+    model = Model(
+        regimes={
+            "alive": Regime(
+                states={"income": process}, functions={"utility": no_current_payoff}
+            ),
+            "dead": Regime(
+                states={"income": process}, functions={"utility": terminal_payoff}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
+    )
+    law = {"income": {"rho": 1.0, "sigma": sigma}} if runtime else {}
+    solution = model.solve(
+        params={"alive": {"discount_factor": 1.0, **law}, "dead": law},
+        log_level="off",
+        runtime_checks=True,
+    )
+    expected = _exact_normal_bin_matrix(
+        nodes=nodes, rho=1.0, mu=0.0, sigma=sigma
+    ) @ np.asarray([0.0, 1.0])
+    aaae(solution.values[0]["alive"], expected, decimal=DECIMAL_PRECISION)
