@@ -1282,6 +1282,66 @@ def test_warm_public_solve_reuses_the_admitted_off_grid_count() -> None:
     assert (cold.compile_requests > 0, warm.compile_requests) == (True, 0)
 
 
+def test_off_grid_count_loop_hides_its_trip_count_from_the_compiler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The block loop's bound is opaque, so compile time does not grow with it.
+
+    A loop whose trip count the compiler knows has its dynamic-slice offsets
+    evaluated once per iteration by XLA's GPU pipeline, which makes compiling a
+    count over many blocks take longer than running it.
+    """
+    monkeypatch.setattr(transition_checks, "_OFF_GRID_BLOCK_ROWS", 4)
+    axes = {"x": jnp.linspace(0.0, 1.0, 50), "y": jnp.linspace(0.0, 1.0, 4)}
+    hlo = (
+        jax.jit(
+            partial(
+                transition_checks._off_grid_counts_law,
+                grid_names=tuple(axes),
+                func=_exterior_sum_point_xy,
+            )
+        )
+        .lower(grid_args=axes, scalar_kwargs={"limit": 1.0})
+        .compile()
+        .as_text()
+    )
+    assert "known_trip_count" not in str(hlo)
+
+
+def _exterior_sum_point_xy(*, x: FloatND, y: FloatND, limit: float) -> IntND:
+    return jnp.stack([jnp.stack([(x + y > limit).astype(jnp.int32), jnp.int32(0)])])
+
+
+def test_budgeted_off_grid_count_narrows_its_block_until_admitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An inadmissible block is retried at half the rows before the count runs."""
+    tried = []
+    admit = transition_checks._evaluate_admitted_transition_producer
+
+    def _refuse_wide_blocks(
+        *,
+        function: partial[IntND],
+        arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
+        memory: SimulationMemory,
+    ) -> IntND:
+        rows = function.keywords["block_rows"]
+        tried.append(rows)
+        if rows > 2 * transition_checks._OFF_GRID_BLOCK_ROWS:
+            raise ExecutionPlanningError("compiler reservation exceeds the budget")
+        return cast(
+            "IntND", admit(function=function, arguments=arguments, memory=memory)
+        )
+
+    monkeypatch.setattr(
+        transition_checks, "_evaluate_admitted_transition_producer", _refuse_wide_blocks
+    )
+    _wide_model(device_memory_bytes=2**28).validate_transitions(
+        params={"discount_factor": 1.0, "reward": 2.0}
+    )
+    assert tried == [2000 * 100, 100_000, 50_000, 25_000]
+
+
 @categorical(ordered=False)
 class _EGMRegimeId:
     working: ScalarInt
