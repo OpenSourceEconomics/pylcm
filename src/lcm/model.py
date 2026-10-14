@@ -3732,11 +3732,7 @@ class Model:
                             if isinstance(taste_shock_seed, jax.Array)
                             else "threefry2x32"
                         ),
-                        prng_impl=(
-                            str(jax.random.key_impl(seed))
-                            if isinstance(seed, jax.Array)
-                            else jax.config.jax_default_prng_impl
-                        ),
+                        prng_impl="threefry2x32",
                         log_level=log_level,
                         runtime_checks=runtime_checks,
                         process_grid_resolver=process_grid_resolver,

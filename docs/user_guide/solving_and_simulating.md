@@ -341,9 +341,12 @@ function while subjects start at different ages cannot be evaluated and raises
 - `log_level`: Required. Console verbosity (same options and table as `solve()`).
   Initial-condition schema and regime validity are always checked; numerical feasibility
   follows `runtime_checks`.
-- `seed=None`: Integer random seed or scalar typed `jax.random.key`. Typed roots retain
-  their PRNG implementation. Collective dissolution gates consume their addressed replay
-  artifacts from `solution`; the automatic-solve path retains and threads them itself.
+- `seed=None`: Integer random seed or scalar typed Threefry key
+  (`jax.random.key(..., impl="threefry2x32")`, the JAX default). An integer becomes a
+  Threefry key whatever `jax_default_prng_impl` says; other key implementations are
+  refused, because their draws would change with the subject chunk width. Collective
+  dissolution gates consume their addressed replay artifacts from `solution`; the
+  automatic-solve path retains and threads them itself.
 - `taste_shock_seed=None`: Optional independent integer seed or scalar typed key for
   common taste shocks across counterfactual models. Omit it to keep the ordinary `seed`
   behavior.
@@ -353,9 +356,9 @@ function while subjects start at different ages cannot be evaluated and raises
   compilation. Used only on the automatic-solve path, i.e. when `solution` is omitted.
   `None` uses the number of physical CPU cores.
 
-Typed roots are consumed directly; integer seeds retain their existing streams. Raw
-uint32 keys from `jax.random.PRNGKey` and batched typed keys are refused. Derive scalar
-role roots with `fold_in`:
+Typed roots are consumed directly; integer seeds keep their Threefry streams. Raw uint32
+keys from `jax.random.PRNGKey` and batched typed keys are refused. Derive scalar role
+roots with `fold_in`:
 
 ```python
 import jax

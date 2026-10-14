@@ -262,8 +262,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             built-in solver routes.
         simulation_output_dtypes: Mapping of variable name to `pd.CategoricalDtype`,
             used for building simulation metadata.
-        seed: Random number seed; will be passed to `jax.random.key`. If not provided,
-            a random seed will be generated.
+        seed: Integer seed or scalar Threefry key of the ordinary stream. An integer
+            becomes a Threefry key. If not provided, a random seed is generated.
         taste_shock_seed: Independent taste seed, or None for the ordinary stream.
         subject_batch_size: Concrete outer subject chunk extent, resolved by
             `Model.simulate` from ExecutionConfig and whole-chunk admission.
