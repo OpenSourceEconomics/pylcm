@@ -398,12 +398,12 @@ _SOURCE_SEALS = {
     LIVENESS_SOURCE: "056bda4d48f26768ed8615925ce8ff89665bb8eed94b59d69f02701a95943dff",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
     WORKSPACE_PLANNING_SOURCE: "c5cb4ef56e436e5620ef16575fb6f2a92a6c5a5162e3ef005acb855ce259d493",
-    SIMULATION_PROGRAMS_SOURCE: "849b87c55de2a6a03cf65f8db659bb828b8b7bd82d11b1b387058a29aaa43fcc",
-    SIMULATION_PROGRAM_TYPES_SOURCE: "99793b9203d1f8fa0e811f8aaaedf904508691cc657dd8206c73a79f1251b708",
+    SIMULATION_PROGRAMS_SOURCE: "af8f3f1ef273300a9597964a00f0f55f5915c9ed47218b89b26fce50754ab39b",
+    SIMULATION_PROGRAM_TYPES_SOURCE: "884bd44a3fc6bc0738102ffbb041f12d68b62bc7feeacaa780970da30d667eda",
     SIMULATION_RUNTIME_SOURCE: "743031ba65c4ab17888b8f593d28f183261678c04bda69c7a76f1b54da76a2de",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "681a7fe6d5a31497945ade5190da4134abd344d92bf5905345f5547d296c693a",
-    COLLECTIVE_SOURCE: "3b7f2efb763c8334e9a70eaab00f7037c2dd990d0b310929d959d8919059c810",
+    ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
+    COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
     MAX_Q_SOURCE: "d3a6aa921d6c7f18763804c328f374b036787c4eda4b6acacbd974aa66789c3c",
     PROCESSING_SOURCE: "db23ab13cbdf3662c0dae199ab7437116c61dfc05e477bc12645a9011ec0cf2a",
     GRID_SEARCH_SOURCE: "a656fc90438850ea4c61fe02062a118454de966a81dd7ff7be92b8de34958aea",
@@ -426,12 +426,12 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "8d6e5e05994b1d5f836af4943dd11e1894d45c6f7a10e1017e091aba3fb9ab92",
     SIMULATION_TRANSITIONS_SOURCE: "1b2f18af63637bd0e856df76d9efcf60b9331e2144ae40115f410bfdd5ab37c2",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "bc5f4d2b4b11ec6334c0f893ca9b716622a6a2c2acccaa4186f1d1fd33e72f5f",
+    MODEL_SOURCE: "8db749f3f852c99727866be7fe2253c90627aa6f6575ba6b8325239ae9167309",
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
     BACKWARD_INDUCTION_SOURCE: "b06a093bc535610add24a808bc8f87953987faea76e13d30e763d00118714190",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
     INITIAL_CONDITIONS_SOURCE: "83332bd20c43e530c73272ba835cb8bf4a59cd2113f17e117bae856998cccc4d",
-    RESULT_SOURCE: "a771be307f5adfeb61148265451a1cbab202d53833f289eccac7f741d924d616",
+    RESULT_SOURCE: "90aef72078273514aab54a02db61791a1644cead6c5d1c5db3a08822996583bf",
     RESULT_DATAFRAME_SOURCE: "d4dd248500cb96179f378430236c0201d221f377f62ec63689eb5234431376a5",
     RESULT_METADATA_SOURCE: "b775c7cda25a3d7c53e6bc08499b24e2a277d95b5a2cef6e7fce5512cf208591",
     ADDITIONAL_TARGETS_SOURCE: "2fbc68874058f430f6037cc2d059cd18cf579bab7912ff03e467e4416e6e58ef",
@@ -994,12 +994,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "edebb0139bcf3e6049f3a086192fe23211c5f95ec92b34d76c0f2e843ddc2808",
+        "81331839acddd5aae59788895fbccecf8dbb4faca9451a477991ebae8be05d64",
         {
             "_validate_sharded_state_capability": "76a10f69e8f6acb1150617100119e1f61ad7ed4b759f4849c8ee7536f44f3f4c",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "010d0912f99362d5263f864bc1b89291f487589689e36a22d7789eafa2aae9f9",
+            "Model.__init__": "16739f1a057c7a8f7d1edf8945c98e4094f7169891da23d5ec130b127679686d",
             "Model.simulate": "ccce7497df14c2c278bcee92cf308682fee0fe622000939aafcdf7482ae95e4e",
             "Model._open_entry_allocations": "eef364fb50a07f87d74caf5d7f84b2a3f6ba7e66c3d84b4a25e9bf8d73c4b543",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
@@ -1791,9 +1791,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
-        "b0a12526d3de2c1a6313649cc1e0406a461811637d3cd5652ddab4d3b7efe180",
+        "cf8166e36b2f4c4a76dadc2a156965b2f0488d13944a46344c1580aeb46dd484",
         {
-            "build_simulation_programs": "5abc9f5eaf0211642d45521ec3232e21fffa5a79bde6fac36b4d25bfbca06ca0",
+            "build_simulation_programs": "b0ebe4410cbd8246e2010800e346ed8e1db08b840e99b6010e81a5ff02537951",
             "_decision_programs": "bd9e88a1511edb65636d9d154c56a64e78a33b094321803cef6355b4c6bec629",
             "attach_gated_simulation_programs": "e92be1be5b6628706b2a2c7cdfb749b3936ade622d352161fb72d9d949a59cfa",
             "gated_simulation_programs_ready": "fe5419d6b84ba1929acf26cde8dc2feedf9589a2345925a1ae6de25fde674def",
@@ -1812,7 +1812,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_PROGRAM_TYPES_SOURCE: (
-        "a4a162db3811fff8b7d880906837a21dcb53c39dad3dfc555562606f96082c8f",
+        "ea6a08452f2323e331b5ededcd136732146b43fbf7302a408e5b052ac20e58d5",
         {
             "SimulationProgramExecutor.dispatch": "cc42079ac6d204e3b4e22b058c24d7db4ac41c8269fd276a5ad224cb5bd2a7c7",
             "SimulationPrograms.declared_axis_names": "1451b9d993c5de21035c9a25f9aa19ba953d2e8dfebb5f952bda617d2fa69b81",
@@ -6418,10 +6418,9 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
 elif isinstance(axis, int):
     axis = (axis,)
 if a.ndim == 0 or len(axis) == 0:
-    return jnp.array(0, dtype=jnp.int32), a
-if a.ndim != 0:
-    a = _move_axes_to_back(a=a, axes=axis)
-    a = _flatten_last_n_axes(a=a, n=len(axis))
+    return _argmax_and_max_of_one_candidate(a=a, where=where, initial=initial)
+a = _move_axes_to_back(a=a, axes=axis)
+a = _flatten_last_n_axes(a=a, n=len(axis))
 if where is not None and where.ndim != 0:
     where = _move_axes_to_back(a=where, axes=axis)
     where = _flatten_last_n_axes(a=where, n=len(axis))

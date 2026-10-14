@@ -144,7 +144,16 @@ from _lcm.simulation.initial_conditions import (
 )
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.program_arguments import decision_arguments
-from _lcm.simulation.program_types import SimulationProgramExecutor
+from _lcm.simulation.program_types import (
+    ACTION_FEASIBILITY,
+    ACTION_INDEX,
+    ACTION_VALUES,
+    CONTINUATION_CE,
+    DECISION_VALUE,
+    FLOW_UTILITY,
+    SimulationProgramExecutor,
+)
+from _lcm.simulation.programs import KeptPartsPrograms, with_kept_action_parts
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -339,6 +348,7 @@ from lcm.transition import (
 from lcm.typing import (
     Bool1D,
     FloatND,
+    Intermediate,
     IntND,
     Phase,
     UserFacingParamsTemplate,
@@ -704,7 +714,16 @@ class Model:
     """
 
     _simulate_compile_lock: threading.Lock
-    """Serialize creation of runtime executors for each subject shape."""
+    """Serialize creation of runtime executors for each subject shape, and of the
+    programs policy lookup derives from them."""
+
+    _kept_parts_programs: KeptPartsPrograms
+    """Lookup decisions publishing only some parts, derived once per source program
+    and kept subset; released with the model."""
+
+    _action_extent_programs: _ActionExtentPrograms
+    """Lookup decisions streaming restricted action grids, derived once per source
+    program and extents; released with the model."""
 
     @beartype(conf=MODEL_CONF)
     def __init__(  # noqa: PLR0915
@@ -840,6 +859,8 @@ class Model:
         self._simulate_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
+        self._kept_parts_programs = {}
+        self._action_extent_programs = {}
         # In-memory result provenance. Kept in pickle state so a model and a
         # result round-tripped together remain compatible, but deliberately not
         # presented as a durable model-content fingerprint.
@@ -1273,11 +1294,12 @@ class Model:
     def __getstate__(self) -> _PickledModel:
         """Return the attributes a restored model needs.
 
-        Leaves out runtime executors and their lock, declared-authority state,
-        the parameter projection, the creating process, the published initial
-        nodes, and sealed bindings that name this process's namespaces and
-        closure cells. `__setstate__` rebuilds them. The attributes an archive may
-        lack are written only when the model holds them.
+        Leaves out runtime executors, the lookup programs derived from them and
+        their lock, declared-authority state, the parameter projection, the
+        creating process, the published initial nodes, and sealed bindings that
+        name this process's namespaces and closure cells. `__setstate__` rebuilds
+        them. The attributes an archive may lack are written only when the model
+        holds them.
         """
         state = _PickledModel(
             description=self.description,
@@ -1346,6 +1368,8 @@ class Model:
         self._simulate_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
+        self._kept_parts_programs = {}
+        self._action_extent_programs = {}
         self._declared_authority_cache = OrderedDict()
         self._declared_authority_lock = threading.Lock()
         self._gather_checks = {}
@@ -3870,6 +3894,7 @@ class Model:
             )
             raise ExecutionPlanningError(msg)
 
+    @beartype(conf=SIMULATION_INPUT_CONF)
     def lookup_policy(
         self,
         *,
@@ -3879,7 +3904,7 @@ class Model:
         regime_name: RegimeName,
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None = None,
-        return_action_values: bool = False,
+        keep_intermediates: tuple[Intermediate, ...] = (),
     ) -> PolicyLookup:
         """Return the optimal actions and value at given states of one regime-period.
 
@@ -3901,15 +3926,21 @@ class Model:
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
-            return_action_values: Whether to also return the action values `Q`
-                and their feasibility `F` over the (possibly restricted) action
-                grid, from the same decision program. Not supported for a
-                collective regime.
+            keep_intermediates: Which intermediates of the decision to keep over
+                the (possibly restricted) action grid, in any order: the action
+                values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and
+                the certainty-equivalent continuation `"CE"`, all from the one
+                kernel evaluation the decision maximizes over. They leave the
+                actions and value unchanged. `Q`, `U` and `CE` are unmasked; `F`
+                says which of their entries the decision admits. Any non-empty
+                choice materializes the whole action product, even where the
+                decision alone streams over it. Not supported for a collective
+                regime.
 
         Returns:
             The argmax action value per action name and the max of Q over the
-            (possibly restricted) action grid, one entry per state row; with
-            `return_action_values`, also `Q` and `F`.
+            (possibly restricted) action grid, one entry per state row, and the
+            intermediates named in `keep_intermediates`; the others are `None`.
 
         """
         self._check_identity_runtime()
@@ -3926,9 +3957,10 @@ class Model:
                 f"edges; {regime_name!r} declares one."
             )
             raise InvalidSimulationInputError(msg)
-        if return_action_values and regime.stakeholders is not None:
+        _fail_if_repeated_intermediates(keep_intermediates=keep_intermediates)
+        if keep_intermediates and regime.stakeholders is not None:
             msg = (
-                "Policy lookup returns action values for singleton regimes only; "
+                "Policy lookup keeps intermediates for singleton regimes only; "
                 f"{regime_name!r} is a collective regime."
             )
             raise InvalidSimulationInputError(msg)
@@ -3966,7 +3998,7 @@ class Model:
                 states=states,
                 action_grids=action_grids,
                 allocations=allocations,
-                return_action_values=return_action_values,
+                keep_intermediates=frozenset(keep_intermediates),
                 n_query_rows=(
                     n_rows
                     if states and len(next(iter(states.values()))) != n_rows
@@ -3987,7 +4019,7 @@ class Model:
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None,
         allocations: SimulationEntryAllocations | None,
-        return_action_values: bool,
+        keep_intermediates: frozenset[Intermediate],
         n_query_rows: int | None,
     ) -> PolicyLookup:
         """Run a validated lookup under the call's entry owner, if budgeted.
@@ -4112,17 +4144,28 @@ class Model:
                 ),
             )
             executor = unit
+        # Taken after the runtime regimes above, which take the same lock, and
+        # released before dispatch.
+        with self._simulate_compile_lock:
+            program = (
+                with_kept_action_parts(
+                    program=programs.action_values[period],
+                    roles=frozenset(
+                        _INTERMEDIATE_ROLES[name] for name in keep_intermediates
+                    ),
+                    cache=self._kept_parts_programs,
+                )
+                if keep_intermediates
+                else _with_action_extents(
+                    program=programs.decision[period],
+                    extents=tuple(len(grids[n]) for n in space.action_names),
+                    cache=self._action_extent_programs,
+                )
+            )
         outputs = cast(
             "tuple[jax.Array, ...]",
             executor.dispatch(
-                program=(
-                    programs.action_values[period]
-                    if return_action_values
-                    else _with_action_extents(
-                        program=programs.decision[period],
-                        extents=tuple(len(grids[n]) for n in space.action_names),
-                    )
-                ),
+                program=program,
                 period=period,
                 n_subjects=n_rows,
                 arguments=decision_arguments(
@@ -4143,8 +4186,10 @@ class Model:
             # once, for the one row an empty query stands for; every output gets
             # that row here.
             outputs = tuple(output[None] for output in outputs)
-        indices, value = outputs[:2]
-        Q, F = outputs[2:] if return_action_values else (None, None)
+        # Both lookup programs publish a flat tuple, one role per output.
+        roles = cast("tuple[str, ...]", program.output_roles)
+        by_role = dict(zip(roles, outputs, strict=True))
+        indices, value = by_role[ACTION_INDEX], by_role[DECISION_VALUE]
         lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
         if unit is None or allocations is None:
             actions = _lookup_values_from_indices(
@@ -4172,7 +4217,14 @@ class Model:
             jax.block_until_ready(actions)
             unit.close()
         return _trim_lookup_rows(
-            lookup=PolicyLookup(actions=actions, value=value, Q=Q, F=F),
+            lookup=PolicyLookup(
+                actions=actions,
+                value=value,
+                Q=by_role.get(ACTION_VALUES),
+                F=by_role.get(ACTION_FEASIBILITY),
+                U=by_role.get(FLOW_UTILITY),
+                CE=by_role.get(CONTINUATION_CE),
+            ),
             n_rows=n_query_rows,
             allocations=allocations,
             unit=unit,
@@ -4611,29 +4663,56 @@ class Model:
         return flat_params
 
 
-# Keyed by the source program's identity; the source is held alongside so the
-# identity cannot be recycled while its entry lives.
-# ponytail: unbounded, one small entry per (decision program, restricted extents).
-_ACTION_EXTENT_PROGRAMS: dict[
+# The output role each intermediate a policy lookup can keep is published under.
+_INTERMEDIATE_ROLES: MappingProxyType[Intermediate, str] = MappingProxyType(
+    {
+        "Q": ACTION_VALUES,
+        "F": ACTION_FEASIBILITY,
+        "U": FLOW_UTILITY,
+        "CE": CONTINUATION_CE,
+    }
+)
+
+
+def _fail_if_repeated_intermediates(
+    *, keep_intermediates: tuple[Intermediate, ...]
+) -> None:
+    """Raise if `keep_intermediates` names one intermediate more than once."""
+    repeated = sorted(
+        {name for name in keep_intermediates if keep_intermediates.count(name) > 1}
+    )
+    if repeated:
+        msg = f"Policy lookup keeps each intermediate at most once; got {repeated}."
+        raise InvalidSimulationInputError(msg)
+
+
+# Derived programs keyed by the source program's identity and extents. The source
+# is held alongside so its identity cannot be reused while the entry lives.
+type _ActionExtentPrograms = dict[
     tuple[int, tuple[int, ...]], tuple[CoreProgram, CoreProgram]
-] = {}
+]
 
 
 def _with_action_extents(
-    *, program: CoreProgram, extents: tuple[int, ...]
+    *,
+    program: CoreProgram,
+    extents: tuple[int, ...],
+    cache: _ActionExtentPrograms,
 ) -> CoreProgram:
     """Return `program` with its streamed action axis declared at `extents`.
 
     A dense decision program declares no action axis and is returned unchanged.
     One object per extents keeps the executor's compiled-route cache warm.
+    `cache` belongs to the owner of `program`, so the derived programs live exactly
+    as long as it does; the owner serializes calls.
     """
     reduced = program.requirements.reduced_axes
     if not reduced or reduced[0].coordinate_extents == extents:
         return program
     key = (id(program), extents)
-    if key not in _ACTION_EXTENT_PROGRAMS:
+    if key not in cache:
         axis = dataclasses.replace(reduced[0], coordinate_extents=extents)
-        _ACTION_EXTENT_PROGRAMS[key] = (
+        cache[key] = (
             program,
             dataclasses.replace(
                 program,
@@ -4642,7 +4721,7 @@ def _with_action_extents(
                 ),
             ),
         )
-    return _ACTION_EXTENT_PROGRAMS[key][1]
+    return cache[key][1]
 
 
 def _fail_if_off_grid(
@@ -5061,6 +5140,8 @@ def _trim_lookup_rows(
             value=lookup.value[:n_rows],
             Q=None if lookup.Q is None else lookup.Q[:n_rows],
             F=None if lookup.F is None else lookup.F[:n_rows],
+            U=None if lookup.U is None else lookup.U[:n_rows],
+            CE=None if lookup.CE is None else lookup.CE[:n_rows],
         )
     return _admit_trimmed_lookup_rows(
         lookup=lookup,
@@ -5104,7 +5185,7 @@ def _admit_trimmed_lookup_rows(
                     call_roots=(
                         call_roots,
                         tuple(lookup.actions.values()),
-                        (lookup.value, lookup.Q, lookup.F),
+                        (lookup.value, lookup.Q, lookup.F, lookup.U, lookup.CE),
                         kept,
                     ),
                 ),
@@ -5122,6 +5203,8 @@ def _admit_trimmed_lookup_rows(
         value=trim(lookup.value),
         Q=None if lookup.Q is None else trim(lookup.Q),
         F=None if lookup.F is None else trim(lookup.F),
+        U=None if lookup.U is None else trim(lookup.U),
+        CE=None if lookup.CE is None else trim(lookup.CE),
     )
 
 

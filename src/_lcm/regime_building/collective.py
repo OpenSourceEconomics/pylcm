@@ -204,8 +204,8 @@ def _gather_along_actions(
     the last axis, so `argmax_flat` indexes into that flattened action space with
     the state axes as its shape. Reproduce the same layout on `q` and take along it.
 
-    With no action axis to reduce, `argmax_and_max` returns `q`'s own maximum —
-    the array itself — so the gather is the identity here too.
+    With no action axis, there is one candidate per retained cell, so gathering
+    is the identity. The caller applies the dissolution mask separately.
     """
     if not action_axes:
         return q

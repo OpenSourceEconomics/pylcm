@@ -9,8 +9,10 @@ serve:
 - `route`: the regime-transition probabilities the realized draw reads.
 
 A hard-max singleton regime also publishes `action_values`, the dense decision
-that additionally returns the action values and feasibility it maximizes over.
-Only policy lookup dispatches it, so it compiles only when requested.
+that additionally returns, from the one kernel evaluation it maximizes over, the
+action values, their feasibility, the flow utility and the certainty-equivalent
+continuation. Only policy lookup dispatches it, so it compiles only when
+requested.
 
 Every family tiles the subject axis, so the engine owns the width each body runs
 at. A decision whose solve counterpart streams its action product declares that
@@ -44,7 +46,8 @@ from _lcm.execution.core_program import (
     ReducedAxis,
     ValueRead,
 )
-from _lcm.regime_building.max_Q_over_a import _HardMaxArgmaxQOverA
+from _lcm.regime_building.argmax import argmax_and_max
+from _lcm.regime_building.Q_and_F import QAndFParts, get_Q_and_F_parts
 from _lcm.simulation.gated_routing import (
     simulation_gate_fold,
     simulation_gate_route_delta,
@@ -53,8 +56,10 @@ from _lcm.simulation.program_types import (
     ACTION_FEASIBILITY,
     ACTION_INDEX,
     ACTION_VALUES,
+    CONTINUATION_CE,
     DECISION_PROGRAM,
     DECISION_VALUE,
+    FLOW_UTILITY,
     GATE_FOLD_PROGRAM,
     GATE_ROUTE_PROGRAM,
     GATED_CONTINUATION,
@@ -94,6 +99,7 @@ from _lcm.typing import (
     StateOrActionName,
     StatesPerRegime,
 )
+from _lcm.utils.dispatchers import productmap
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import (
     Bool1D,
@@ -191,19 +197,24 @@ def build_simulation_programs(
         else {}
     )
 
-    # The dense decision with its action values, even where the decision
-    # streams: same reads and subject tiling, no reduced action axis. A
-    # taste-shock draw or a household argmax publishes no such pair.
+    # The dense decision with its parts, even where the decision streams: same
+    # reads and subject tiling, no reduced action axis. A taste-shock draw or a
+    # household argmax publishes no such parts.
     action_value_bodies: dict[int, Callable[..., PytreeValue]] = {}
     action_values: dict[int, CoreProgram] = {}
     is_hard_max_singleton = (
         not context.has_taste_shocks and context.stakeholders is None
     )
     for period in decision if is_hard_max_singleton else ():
-        group = id(Q_and_F_functions[period])
+        kernel = Q_and_F_functions[period]
+        group = id(kernel)
         if group not in action_value_bodies:
             action_value_bodies[group] = _SubjectTiled(
-                func=_with_action_values(reducer=per_subject_decisions[period]),
+                func=_decision_with_action_parts(
+                    Q_and_F=kernel,
+                    reducer=per_subject_decisions[period],
+                    action_names=context.state_action_space.action_names,
+                ),
                 subject_arg_names=_decision_subject_arg_names(context=context),
             )
         action_values[period] = dataclasses.replace(
@@ -212,12 +223,7 @@ def build_simulation_programs(
             requirements=dataclasses.replace(
                 decision[period].requirements, reduced_axes=()
             ),
-            output_roles=(
-                ACTION_INDEX,
-                DECISION_VALUE,
-                ACTION_VALUES,
-                ACTION_FEASIBILITY,
-            ),
+            output_roles=ACTION_VALUES_OUTPUT_ROLES,
         )
 
     transition_bodies: dict[int, Callable[..., PytreeValue]] = {}
@@ -751,53 +757,162 @@ def _decision_body(
     return _SubjectTiled(func=cell, subject_arg_names=subject_arg_names)
 
 
-def _with_action_values(
-    *, reducer: Callable[..., PytreeValue]
-) -> Callable[..., PytreeValue]:
-    """Return `reducer` extended by the `Q` and `F` it maximizes over.
+# The parts the dense decision with its parts publishes after its own pair, in
+# the order its body returns them.
+ACTION_PART_ROLES = (ACTION_VALUES, ACTION_FEASIBILITY, FLOW_UTILITY, CONTINUATION_CE)
 
-    `reducer` is the dense hard-max decision, a signature wrapper around one
-    `_HardMaxArgmaxQOverA`; the result takes the same arguments.
+# What the dense decision with its parts publishes, in the order its body
+# returns them: the decision's own pair, then each part over the action product.
+ACTION_VALUES_OUTPUT_ROLES = (ACTION_INDEX, DECISION_VALUE, *ACTION_PART_ROLES)
+
+# Derived programs keyed by the source program's identity and the kept parts. The
+# source is held alongside so its identity cannot be reused while the entry lives.
+type KeptPartsPrograms = dict[
+    tuple[int, frozenset[str]], tuple[CoreProgram, CoreProgram]
+]
+
+
+def with_kept_action_parts(
+    *, program: CoreProgram, roles: frozenset[str], cache: KeptPartsPrograms
+) -> CoreProgram:
+    """Return a dense decision with its parts that publishes only the parts in `roles`.
+
+    The decision's own pair is always published, followed by the kept parts in the
+    order of `ACTION_PART_ROLES`. The selection is made at each state cell, so a
+    dropped part is never stacked over the subjects. Keeping every part returns
+    `program` unchanged; one object per kept subset keeps the executor's
+    compiled-route cache warm. `cache` belongs to the owner of `program`, so the
+    derived programs live exactly as long as it does; the owner serializes calls.
     """
-    kernel = getattr(reducer, "__wrapped__", None)
-    if not isinstance(kernel, _HardMaxArgmaxQOverA):
-        msg = f"Expected a wrapped hard-max decision reducer, got {kernel!r}."
-        raise ExecutionPlanningError(msg)
+    unknown = roles - set(ACTION_PART_ROLES)
+    if unknown:
+        msg = (
+            f"Unknown action part roles {sorted(unknown)}; known: {ACTION_PART_ROLES}."
+        )
+        raise ValueError(msg)
+    if roles == set(ACTION_PART_ROLES):
+        return program
+    key = (id(program), roles)
+    if key not in cache:
+        kept = tuple(role for role in ACTION_PART_ROLES if role in roles)
+        cache[key] = (
+            program,
+            dataclasses.replace(
+                program,
+                function=_select_cell_outputs(
+                    function=program.function,
+                    positions=(
+                        0,
+                        1,
+                        *(2 + ACTION_PART_ROLES.index(role) for role in kept),
+                    ),
+                ),
+                output_roles=(ACTION_INDEX, DECISION_VALUE, *kept),
+            ),
+        )
+    return cache[key][1]
+
+
+def _select_cell_outputs(
+    *, function: Callable[..., PytreeValue], positions: tuple[int, ...]
+) -> Callable[..., PytreeValue]:
+    """Return `function` with its tiled cell body publishing only `positions`.
+
+    `function` is a subject-tiled body, possibly under the keyword bindings the
+    model layer wraps around it; the bindings are kept around the new body.
+    """
+    bindings: list[Mapping[str, PytreeValue]] = []
+    inner = function
+    while isinstance(inner, partial):
+        if inner.args:
+            msg = "A simulation body takes keyword bindings only."
+            raise TypeError(msg)
+        bindings.append(inner.keywords)
+        inner = inner.func
+    tiled = cast("_SubjectTiled", inner)
+    selected: Callable[..., PytreeValue] = dataclasses.replace(
+        tiled,
+        func=with_signature(
+            _SelectedOutputs(body=tiled.func, positions=positions),
+            args=list(inspect.signature(tiled.func).parameters),
+            enforce=False,
+        ),
+    )
+    for keywords in reversed(bindings):
+        selected = partial(selected, **keywords)
+    return selected
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _SelectedOutputs:
+    """A cell body that publishes only some of the outputs of another."""
+
+    __name__: ClassVar[str] = "argmax_and_max_Q_over_a_with_kept_parts"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    body: Callable[..., PytreeValue]
+    """The cell body whose output tuple is selected from."""
+
+    positions: tuple[int, ...]
+    """Positions of the published outputs in the output tuple of `body`."""
+
+    def __call__(self, **kwargs: PytreeValue) -> tuple[PytreeValue, ...]:
+        """Return the outputs of `body` at `positions`."""
+        outputs = cast("tuple[PytreeValue, ...]", self.body(**kwargs))
+        return tuple(outputs[position] for position in self.positions)
+
+
+def _decision_with_action_parts(
+    *,
+    Q_and_F: QAndFFunction,
+    reducer: Callable[..., PytreeValue],
+    action_names: tuple[ActionName, ...],
+) -> Callable[..., PytreeValue]:
+    """Return the dense hard-max decision extended by the parts it maximizes over.
+
+    The result takes the arguments of `reducer`, the dense hard-max decision
+    over `Q_and_F`, and evaluates the parts form of `Q_and_F` once over the
+    action product. Its argmax and max are those `reducer` takes, of the same
+    `Q` over the same `F`.
+    """
+    parts = productmap(
+        func=get_Q_and_F_parts(Q_and_F=Q_and_F),
+        variables=action_names,
+        batch_sizes=dict.fromkeys(action_names, 0),
+    )
     return with_signature(
-        _DecisionWithActionValues(decision=reducer, Q_and_F=kernel.Q_and_F),
+        _DecisionWithActionParts(parts=parts),
         args=list(inspect.signature(reducer).parameters),
-        return_annotation="tuple[IntND, FloatND, FloatND, BoolND]",
+        return_annotation=("tuple[IntND, FloatND, FloatND, BoolND, FloatND, FloatND]"),
         enforce=False,
     )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
-class _DecisionWithActionValues:
-    """The dense hard-max decision at one state cell, with its action values.
+class _DecisionWithActionParts:
+    """The dense hard-max decision at one state cell, with the parts it maximizes.
 
-    Returns the decision's own chosen flat index and value, followed by the raw
-    action values `Q` and feasibility `F` over the action product, from the
-    `Q_and_F` the decision maximizes. `Q` is unmasked: an infeasible entry holds
-    the value the action would have; the decision masks it with `F`.
+    Returns the chosen flat index and its value, followed by the action values
+    `Q`, their feasibility `F`, the flow utility `U` and the certainty-equivalent
+    continuation `CE` over the action product, all from one evaluation of the
+    regime's kernel. `Q`, `U` and `CE` are unmasked: an infeasible entry holds
+    what the action would have; the decision masks `Q` with `F`.
     """
 
-    __name__: ClassVar[str] = "argmax_and_max_Q_over_a_with_action_values"
+    __name__: ClassVar[str] = "argmax_and_max_Q_over_a_with_action_parts"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    decision: Callable[..., PytreeValue]
-    """The dense hard-max decision reducer."""
-
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
-    """The decision's own action value and feasibility over the action product."""
+    parts: Callable[..., QAndFParts]
+    """The kernel's parts, mapped over the action product."""
 
     def __call__(
         self,
         **kwargs: PytreeValue,
-    ) -> tuple[IntND, FloatND, FloatND, BoolND]:
-        """Return the chosen flat index, its value, and `Q` and `F`."""
-        index, value = cast("tuple[IntND, FloatND]", self.decision(**kwargs))
-        Q_arr, F_arr = self.Q_and_F(**kwargs)
-        return index, value, Q_arr, F_arr
+    ) -> tuple[IntND, FloatND, FloatND, BoolND, FloatND, FloatND]:
+        """Return the chosen flat index, its value, and `Q`, `F`, `U` and `CE`."""
+        parts = self.parts(**kwargs)
+        index, value = argmax_and_max(a=parts.Q, where=parts.F, initial=-jnp.inf)
+        return index, value, parts.Q, parts.F, parts.U, parts.CE
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)

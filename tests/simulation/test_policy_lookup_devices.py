@@ -45,7 +45,7 @@ _SCRIPT = textwrap.dedent(
     from tests.test_models.deterministic.regression import get_model, get_params
 
     n_devices = int(sys.argv[1])
-    return_action_values = sys.argv[2] == "1"
+    keep_intermediates = ("Q", "F", "U", "CE") if sys.argv[2] == "1" else ()
     assert jax.device_count() == n_devices, jax.devices()
 
     grid = LinSpacedGrid(start=1, stop=3, n_points=3)
@@ -68,10 +68,10 @@ _SCRIPT = textwrap.dedent(
         period=1,
         regime_name="dead",
         states={},
-        return_action_values=return_action_values,
+        keep_intermediates=keep_intermediates,
     )
     outputs = {"actions": sorted(got.actions), "value": np.asarray(got.value).tolist()}
-    if return_action_values:
+    if keep_intermediates:
         outputs["Q"] = np.asarray(got.Q).tolist()
         outputs["F"] = np.asarray(got.F).tolist()
     print("LOOKUP-ROWS", json.dumps(outputs))
@@ -93,7 +93,7 @@ _STATEFUL_SCRIPT = textwrap.dedent(
     from lcm import ExecutionConfig
 
     n_devices = int(sys.argv[1])
-    return_action_values = sys.argv[2] == "1"
+    keep_intermediates = ("Q", "F", "U", "CE") if sys.argv[2] == "1" else ()
     execution = sys.argv[3]
     n_rows = int(sys.argv[4])
     assert jax.device_count() == n_devices, jax.devices()
@@ -129,7 +129,7 @@ _STATEFUL_SCRIPT = textwrap.dedent(
         period=3,
         regime_name="working_life",
         states={"wealth": jnp.asarray(wealth[:n_rows])},
-        return_action_values=return_action_values,
+        keep_intermediates=keep_intermediates,
     )
     outputs = {
         "actions": {
@@ -137,7 +137,7 @@ _STATEFUL_SCRIPT = textwrap.dedent(
         },
         "value": np.asarray(got.value).tolist(),
     }
-    if return_action_values:
+    if keep_intermediates:
         outputs["Q"] = np.asarray(got.Q).tolist()
         outputs["F"] = np.asarray(got.F).tolist()
     print("LOOKUP-ROWS", json.dumps(outputs))
@@ -160,7 +160,7 @@ _ADMISSION_SCRIPT = textwrap.dedent(
     from tests.test_models.deterministic.regression import get_model, get_params
 
     n_devices = int(sys.argv[1])
-    return_action_values = sys.argv[2] == "1"
+    keep_intermediates = ("Q", "F", "U", "CE") if sys.argv[2] == "1" else ()
     assert jax.device_count() == n_devices, jax.devices()
     budget = 2**22
     first, second = jax.devices()[:2]
@@ -234,7 +234,7 @@ _ADMISSION_SCRIPT = textwrap.dedent(
                     regime_name="working_life",
                     states=states,
                     action_grids=action_grids,
-                    return_action_values=return_action_values,
+                    keep_intermediates=keep_intermediates,
                 )
         except _Copied:
             outcome = "copied"
@@ -280,7 +280,7 @@ _ALIGNED_SCRIPT = textwrap.dedent(
     from tests.test_models.deterministic.regression import get_model, get_params
 
     n_devices = int(sys.argv[1])
-    return_action_values = sys.argv[2] == "1"
+    keep_intermediates = ("Q", "F", "U", "CE") if sys.argv[2] == "1" else ()
     assert jax.device_count() == n_devices, jax.devices()
 
     model = get_model(
@@ -318,7 +318,7 @@ _ALIGNED_SCRIPT = textwrap.dedent(
         period=2,
         regime_name="working_life",
         states={"wealth": jnp.asarray(wealth[:2])},
-        return_action_values=return_action_values,
+        keep_intermediates=keep_intermediates,
     )
     outputs = {"rows": len(np.asarray(got.value)), "value_copies": len(puts)}
     print("LOOKUP-ROWS", json.dumps(outputs))
@@ -340,11 +340,11 @@ _TRIM_SCRIPT = textwrap.dedent(
     from tests.test_models.deterministic.regression import get_model, get_params
 
     n_devices = int(sys.argv[1])
-    return_action_values = sys.argv[2] == "1"
+    keep_intermediates = ("Q", "F") if sys.argv[2] == "1" else ()
     n_rows = int(sys.argv[3])
     assert jax.device_count() == n_devices, jax.devices()
     budget = 4_718_592
-    # Q's bytes do not depend on the float precision.
+    # The bytes of Q do not depend on the float precision.
     n_actions = 800_000 // jnp.zeros(()).dtype.itemsize
 
     grid = LinSpacedGrid(start=1, stop=3, n_points=3)
@@ -370,13 +370,15 @@ _TRIM_SCRIPT = textwrap.dedent(
             regime_name="working_life",
             states={"wealth": jnp.linspace(1.0, 3.0, n_rows)},
             action_grids={"consumption": jnp.ones(n_actions)},
-            return_action_values=return_action_values,
+            keep_intermediates=keep_intermediates,
         )
     except ExecutionPlanningError:
         outputs = {"outcome": "refused"}
     else:
         per_device = Counter()
-        for leaf in jax.tree.leaves((got.actions, got.value, got.Q, got.F)):
+        for leaf in jax.tree.leaves(
+            (got.actions, got.value, got.Q, got.F, got.U, got.CE)
+        ):
             for shard in leaf.addressable_shards:
                 per_device[shard.device] += shard.data.nbytes
         outputs = {
@@ -392,7 +394,7 @@ _TRIM_SCRIPT = textwrap.dedent(
 def _lookup_on_devices(
     *,
     n_devices: int,
-    return_action_values: bool,
+    keep_all_intermediates: bool,
     script: str = _SCRIPT,
     extra_args: tuple[ReferenceName, ...] = (),
 ) -> LookupReport:
@@ -408,7 +410,7 @@ def _lookup_on_devices(
             "-c",
             script,
             str(n_devices),
-            str(int(return_action_values)),
+            str(int(keep_all_intermediates)),
             *extra_args,
         ],
         capture_output=True,
@@ -428,7 +430,7 @@ def _lookup_on_devices(
 @pytest.mark.parametrize("n_devices", [1, 2, 8])
 def test_budgeted_stateless_lookup_returns_one_row_of_value(*, n_devices: int) -> None:
     """The terminal `dead` regime's empty query is one row of zero on any devices."""
-    got = _lookup_on_devices(n_devices=n_devices, return_action_values=False)
+    got = _lookup_on_devices(n_devices=n_devices, keep_all_intermediates=False)
     assert got == {"actions": [], "value": [0.0]}
 
 
@@ -437,57 +439,57 @@ def test_budgeted_stateless_lookup_returns_one_row_of_action_values(
     *, n_devices: int
 ) -> None:
     """With action values requested, `Q` and `F` carry the same one row."""
-    got = _lookup_on_devices(n_devices=n_devices, return_action_values=True)
+    got = _lookup_on_devices(n_devices=n_devices, keep_all_intermediates=True)
     assert got == {"actions": [], "value": [0.0], "Q": [0.0], "F": [True]}
 
 
-@pytest.mark.parametrize("return_action_values", [False, True])
+@pytest.mark.parametrize("keep_all_intermediates", [False, True])
 @pytest.mark.parametrize("n_devices", [2, 8])
 def test_stateful_lookup_on_several_devices_matches_one_device(
-    *, n_devices: int, return_action_values: bool
+    *, n_devices: int, keep_all_intermediates: bool
 ) -> None:
     """A default-config model's stateful lookup gives the one-device rows."""
     got = _lookup_on_devices(
         n_devices=n_devices,
-        return_action_values=return_action_values,
+        keep_all_intermediates=keep_all_intermediates,
         script=_STATEFUL_SCRIPT,
         extra_args=("default", "2"),
     )
     expected = _lookup_on_devices(
         n_devices=1,
-        return_action_values=return_action_values,
+        keep_all_intermediates=keep_all_intermediates,
         script=_STATEFUL_SCRIPT,
         extra_args=("default", "2"),
     )
     assert got == expected
 
 
-@pytest.mark.parametrize("return_action_values", [False, True])
+@pytest.mark.parametrize("keep_all_intermediates", [False, True])
 @pytest.mark.parametrize("execution", ["subjects", "subjects-budgeted"])
 @pytest.mark.parametrize("n_devices", [2, 8])
 def test_subject_sharded_lookup_of_uneven_rows_matches_one_device(
-    *, n_devices: int, execution: str, return_action_values: bool
+    *, n_devices: int, execution: str, keep_all_intermediates: bool
 ) -> None:
     """Three rows split over the subject devices give the three one-device rows."""
     got = _lookup_on_devices(
         n_devices=n_devices,
-        return_action_values=return_action_values,
+        keep_all_intermediates=keep_all_intermediates,
         script=_STATEFUL_SCRIPT,
         extra_args=(execution, "3"),
     )
     expected = _lookup_on_devices(
         n_devices=1,
-        return_action_values=return_action_values,
+        keep_all_intermediates=keep_all_intermediates,
         script=_STATEFUL_SCRIPT,
         extra_args=("default", "3"),
     )
     assert got == expected
 
 
-@pytest.mark.parametrize("return_action_values", [False, True])
+@pytest.mark.parametrize("keep_all_intermediates", [False, True])
 @pytest.mark.parametrize("n_devices", [2, 8])
 def test_budgeted_lookup_refuses_a_value_copy_before_making_it(
-    *, n_devices: int, return_action_values: bool
+    *, n_devices: int, keep_all_intermediates: bool
 ) -> None:
     """Admission refuses the next-period value copy before any copy is made.
 
@@ -498,7 +500,7 @@ def test_budgeted_lookup_refuses_a_value_copy_before_making_it(
     """
     got = _lookup_on_devices(
         n_devices=n_devices,
-        return_action_values=return_action_values,
+        keep_all_intermediates=keep_all_intermediates,
         script=_ADMISSION_SCRIPT,
     )
     assert got == {
@@ -508,14 +510,14 @@ def test_budgeted_lookup_refuses_a_value_copy_before_making_it(
     }
 
 
-@pytest.mark.parametrize("return_action_values", [False, True])
+@pytest.mark.parametrize("keep_all_intermediates", [False, True])
 def test_budgeted_lookup_reads_values_in_place_on_one_device(
-    *, return_action_values: bool
+    *, keep_all_intermediates: bool
 ) -> None:
     """On one device the solved values are read where they are, without a copy."""
     got = _lookup_on_devices(
         n_devices=1,
-        return_action_values=return_action_values,
+        keep_all_intermediates=keep_all_intermediates,
         script=_ALIGNED_SCRIPT,
     )
     assert got == {"rows": 2, "value_copies": 0}
@@ -539,7 +541,7 @@ def test_budgeted_lookup_admits_trimming_padded_rows_within_the_budget(
     """
     got = _lookup_on_devices(
         n_devices=8,
-        return_action_values=True,
+        keep_all_intermediates=True,
         script=_TRIM_SCRIPT,
         extra_args=(str(n_rows),),
     )

@@ -69,6 +69,24 @@ class PolicyLookup:
     F: BoolND | None = None
     """Feasibility of each entry of `Q`, same shape, or `None` unless requested."""
 
+    U: FloatND | None = None
+    """Flow utility of each entry of `Q`, same shape, or `None` unless requested.
+
+    The regime's `utility` at the queried state and action, raw and unmasked
+    like `Q`.
+    """
+
+    CE: FloatND | None = None
+    """Continuation of each entry of `Q`, same shape, or `None` unless requested.
+
+    The certainty equivalent of next period's value, undiscounted: the `CE` that
+    the regime's Koopmans aggregator combines with `U` into
+    `Q == W(utility=U, CE=CE, ...)`. Under `LinearAggregator`,
+    `Q == U + discount_factor * CE`. Zero in a terminal regime, where `Q == U`.
+    An aggregator that reads a regime function, such as a type-specific discount
+    factor, also needs that function's value to rebuild `Q` from `U` and `CE`.
+    """
+
 
 class SimulationResult:
     """Result object from model simulation with deferred DataFrame computation."""
