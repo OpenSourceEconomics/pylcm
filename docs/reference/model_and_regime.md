@@ -132,6 +132,29 @@ Legacy bare pairs and selector mappings remain accepted in age models. Period mo
 require `InitialNodes(by_period=...)`. `ByAge` and `ByPeriod` select transition laws;
 they do not supply initial-node regime names.
 
+(api-composite-state)=
+
+## `CompositeState`
+
+`Model(composite_states={"history": CompositeState(members=(...), start_codes={...})})`
+replaces the axes of deterministic discrete member states by one generated discrete
+state, `history`, whose codes index the member tuples reachable from the start codes.
+Solve and simulate run on those tuples only, so the value function no longer spans the
+full product of the members.
+
+- Members are discrete states that every carrying regime holds on the same grid. Their
+  laws must be deterministic and read only discrete variables, the period, the age and
+  fixed parameters; a law that reads anything else is refused by name. A constraint that
+  reads a continuous variable or a free parameter is not used to prune tuples.
+- User functions keep reading the member names. Initial conditions name the members, as
+  code arrays or as labels in a DataFrame; a start tuple the declaration never reaches
+  raises `InvalidInitialConditionsError`. Members reach `to_dataframe` through
+  `additional_targets`.
+- `variant="closed"` (the default) closes the code set under every period's laws.
+  `variant="masked"` keeps the forward-reachable tuples only and makes each code
+  infeasible at the periods it cannot be reached in.
+- A model declares at most one composite state.
+
 (api-period-candidate-lowering)=
 
 ## Lower one production candidate
