@@ -12,7 +12,7 @@ import jax.numpy as jnp
 
 import lcm
 from lcm import LinSpacedGrid, Model
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND, UserParamsNode
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
@@ -96,7 +96,7 @@ def build_params(
     cliff: float = 6.0,
     tax_rate: float = 0.3,
     exemption: float = 16.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the mixed jump-and-kink one-asset toy.
 
     The cliff (jump) precedes the exemption (kink), so the schedule's declared

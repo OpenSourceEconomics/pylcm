@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import jax.numpy as jnp
 import pytest
 
@@ -141,7 +143,7 @@ def test_regime_transition_must_be_callable():
     """Binding a non-callable regime transition law is rejected."""
     regime = UserRegime(states={}, actions={}, functions={"utility": lambda: 0})
     with pytest.raises(RegimeInitializationError, match="transition"):
-        validate_regime_law(regime, law=bind_regime_law(42))
+        validate_regime_law(regime, law=bind_regime_law(42))  # ty: ignore[invalid-argument-type]
 
 
 def test_model_requires_terminal_regime(binary_category_class):
@@ -251,6 +253,43 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
     # regime id should be created from dict keys in order
     assert model.regime_names_to_ids["alive"] == 0
     assert model.regime_names_to_ids["dead"] == 1
+
+
+def test_model_rejects_a_regime_id_class_whose_codes_are_not_scalar_ints(
+    binary_category_class,
+):
+    """A regime id class whose codes are not `ScalarInt`s is a definition error."""
+
+    @dataclass(frozen=True)
+    class RegimeId:
+        alive: int = 0
+        dead: str = "one"
+
+    alive = UserRegime(
+        states={"health": DiscreteGrid(category_class=binary_category_class)},
+        state_transitions={"health": lambda health: health},
+        functions={"utility": lambda health: health},
+    )
+    dead = UserRegime(
+        states={"health": DiscreteGrid(category_class=binary_category_class)},
+        functions={"utility": lambda health: health * 0},
+    )
+
+    with pytest.raises(
+        ModelInitializationError,
+        match=(
+            r"regime_id_class is not a valid category class\. Field values of the "
+            r"category_class must be `ScalarInt` \(0-d int32 jax scalars\)\. The "
+            r"values to the following fields are not: \['alive', 'dead'\]"
+        ),
+    ):
+        Model(
+            regimes={"alive": alive, "dead": dead},
+            ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+            regime_id_class=RegimeId,
+            initial_nodes={0: "alive"},
+            edges={"alive": {"dead": 0}},
+        )
 
 
 def test_model_regime_name_validation(binary_category_class):

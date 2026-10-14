@@ -9,9 +9,8 @@ program) the policy. Agreement with the direct scalar oracle is
 """
 
 import inspect
-from collections.abc import Mapping
 from functools import partial
-from typing import Any
+from typing import TypedDict, Unpack
 
 import jax
 import numpy as np
@@ -20,16 +19,34 @@ import pytest
 from _lcm.execution.compiler_memory import compiler_memory_bytes
 from _lcm.execution.core_program import (
     CoreBuildContext,
+    CoreProgramGraphAware,
+    MaterializedCoreProgram,
     core_program_graph,
     materialize_core_program,
     resolve_core_program,
 )
+from _lcm.solution.contract import PeriodKernel
+from _lcm.typing import PytreeValue
+from lcm import ExecutionConfig, Model
 from tests.conftest import invariance_tolerances
+from tests.solution._nbegm_direct_oracle import OracleContext
 from tests.solution._nbegm_direct_oracle import ride_along_kernel as _ride_along_kernel
 from tests.test_models import nbegm_ride_along_toy
+from tests.test_models.nbegm_common import NBEGMKwargs
 
 
-def _assert_same_result(*, actual: object, expected: object) -> None:
+class _RideOverrides(TypedDict, total=False):
+    per_kind_discount: bool
+    per_kind_crra: bool
+    n_consumption: int
+    liquid_max: float
+    savings_max: float
+    nbegm_overrides: NBEGMKwargs | None
+    distributed_kind: bool
+    execution_config: ExecutionConfig
+
+
+def _assert_same_result(*, actual: PytreeValue, expected: PytreeValue) -> None:
     """Check exact structure and working-dtype numerical invariance separately."""
     assert jax.tree.structure(actual) == jax.tree.structure(expected)
     for actual_leaf, expected_leaf in zip(
@@ -46,7 +63,7 @@ def _assert_same_result(*, actual: object, expected: object) -> None:
             np.testing.assert_array_equal(actual_arr, expected_arr)
 
 
-def _ride_model(**overrides: Any) -> Any:
+def _ride_model(**overrides: Unpack[_RideOverrides]) -> Model:
     return nbegm_ride_along_toy.build_model(
         variant="nbegm",
         n_periods=3,
@@ -56,7 +73,9 @@ def _ride_model(**overrides: Any) -> Any:
     )
 
 
-def _materialize(*, kernel: Any, context: Mapping[str, Any], name: str) -> Any:
+def _materialize(
+    *, kernel: PeriodKernel | CoreProgramGraphAware, context: OracleContext, name: str
+) -> MaterializedCoreProgram:
     return materialize_core_program(
         program=core_program_graph(kernel=kernel)[name],
         context=CoreBuildContext(**context),
@@ -65,11 +84,11 @@ def _materialize(*, kernel: Any, context: Mapping[str, Any], name: str) -> Any:
 
 def _run(
     *,
-    kernel: Any,
-    context: Mapping[str, Any],
+    kernel: PeriodKernel | CoreProgramGraphAware,
+    context: OracleContext,
     name: str,
     cell_width: int | None = None,
-) -> tuple:
+) -> tuple[PytreeValue, ...]:
     materialized = _materialize(kernel=kernel, context=context, name=name)
     resolved = resolve_core_program(
         program=materialized,

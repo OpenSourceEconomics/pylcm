@@ -15,6 +15,8 @@ import numpy as np
 
 from _lcm.simulation.host_operations import StaticArgument, _abstract_operand
 from _lcm.simulation.memory import SimulationMemory
+from _lcm.typing import HostArray
+from lcm.typing import ReferenceName, ValueND
 
 
 def concatenate_arrays(
@@ -64,7 +66,7 @@ def take_rows(
 def _run_assembly(
     *,
     memory: SimulationMemory,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, ValueND | HostArray | tuple[ValueND, ...]],
     static_arguments: Mapping[str, StaticArgument],
     function: Callable[..., jax.Array] | None = None,
 ) -> jax.Array:

@@ -1,5 +1,7 @@
 """Actual complete device footprints control asynchronous solve completion."""
 
+from types import MappingProxyType
+
 import jax
 import pytest
 
@@ -89,7 +91,7 @@ def test_actual_execution_and_copy_endpoints_determine_completion(  # noqa: PLR0
     first = PlannedCore(
         compiled=producer,
         name="producer",
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         layout=resolve_output_layout(
             core_key="producer", value_template=work, state_order=(), output_roles=VALUE
         ),
@@ -98,7 +100,7 @@ def test_actual_execution_and_copy_endpoints_determine_completion(  # noqa: PLR0
     second = PlannedCore(
         compiled=consumer,
         name="consumer",
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         layout=resolve_output_layout(
             core_key="consumer",
             value_template=output_template,
@@ -121,15 +123,17 @@ def test_actual_execution_and_copy_endpoints_determine_completion(  # noqa: PLR0
     pending: jax.Array | None = None
 
     def observe(
-        executable: jax.stages.Compiled, *args: object, **kwargs: object
-    ) -> object:
+        executable: jax.stages.Compiled, *args: jax.Array, **kwargs: jax.Array
+    ) -> jax.Array:
         if executable is consumer:
             assert pending is not None
             before_dispatch.append(_is_ready(array=pending))
         return call(executable, *args, **kwargs)
 
     # keyword-only-exempt: library-callback=jax.device_put
-    def observe_copy(value: object, device: object) -> object:
+    def observe_copy(
+        value: jax.Array, device: jax.Device | jax.sharding.Sharding | None
+    ) -> jax.Array:
         if value is source:
             assert pending is not None
             before_copy.append(_is_ready(array=pending))

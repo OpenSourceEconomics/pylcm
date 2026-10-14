@@ -48,7 +48,7 @@ _KNOWN_BACKLOG_FILES = frozenset(
 )
 
 
-def _backlog_entries() -> dict[str, dict]:
+def _backlog_entries() -> dict[str, ci_workloads._CeilingBacklog]:
     manifest = ci_workloads.load_manifest()
     return {entry["file"]: entry for entry in manifest["per_test_ceiling_backlog"]}
 

@@ -9,12 +9,14 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NoReturn
 
 import cloudpickle
 import jax
 import jax.numpy as jnp
 import pytest
 
+from _lcm.engine import Regime
 from _lcm.execution.compiler_memory import (
     CompilerMemoryBytes,
     compiler_memory_bytes,
@@ -22,7 +24,15 @@ from _lcm.execution.compiler_memory import (
 from _lcm.solution import period_replay
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from _lcm.time import ModelTime
+from _lcm.typing import ArgumentTree
 from lcm import AgeGrid
+
+
+class _StandInRegime(Regime):
+    """An engine `Regime` with no fields, for payloads whose regime is never read."""
+
+    def __init__(self) -> None:
+        """Leave every field unset; the code under test only passes it through."""
 
 
 class _CompileOnlyExecutable:
@@ -45,7 +55,7 @@ class _CompileOnlyExecutable:
     def memory_analysis(self) -> SimpleNamespace:
         return self.stats
 
-    def __call__(self, **_kwargs: object) -> None:
+    def __call__(self, **_kwargs: ArgumentTree) -> NoReturn:
         self.executed = True
         raise AssertionError("the memory analyzer executed a compiled core")
 
@@ -94,7 +104,7 @@ def test_core_memory_analyzer_compiles_but_never_executes(
         period_replay, "_compile_cores_for_one_period", fake_production_compile
     )
     payload = {
-        "regime": object(),
+        "regime": _StandInRegime(),
         "period": 1,
         "core_tile_widths": {},
         "kernel_kwargs": {
@@ -145,3 +155,30 @@ def test_compiler_memory_bytes_normalizes_real_and_unsupported_backends() -> Non
 
     assert compiler_memory_bytes(compiled=UnsupportedExecutable(raises=False)) is None
     assert compiler_memory_bytes(compiled=UnsupportedExecutable(raises=True)) is None
+
+
+class _ReportingExecutable[Report]:
+    def __init__(self, *, report: Report) -> None:
+        self.report = report
+
+    def memory_analysis(self) -> Report:
+        """Return the supplied report without normalizing its structure."""
+        return self.report
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        SimpleNamespace(peak_memory_in_bytes=1, temp_size_in_bytes=2),
+        {"peak_memory_in_bytes": 1},
+        [SimpleNamespace(peak_memory_in_bytes=1)],
+    ],
+    ids=("missing-counters", "string-keyed-record", "record-sequence"),
+)
+def test_compiler_memory_bytes_gives_no_report_for_a_non_record(
+    report: SimpleNamespace | dict[str, int] | list[SimpleNamespace],
+) -> None:
+    """Only a report exposing every counter pylcm reads yields byte counts."""
+    executable = _ReportingExecutable(report=report)
+    # Deliberately supply reports that violate the compiler-memory protocol.
+    assert compiler_memory_bytes(compiled=executable) is None  # ty: ignore[invalid-argument-type]

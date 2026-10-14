@@ -1,17 +1,25 @@
 """Finite host dispatch releases folded values while keeping required carry banks."""
 
 import weakref
-from typing import NamedTuple
+from typing import NamedTuple, Unpack
 
 import jax
 import numpy as np
 import pytest
 
+from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
 from _lcm.solution.nnbegm import _FiniteNNBEGMPeriodKernel
 from lcm import ExecutionConfig
 from lcm.solver_api import EGM_CONTINUATION, KernelOutput, ResultRetention
+from tests.solution.test_nbegm_retention_specialization import _NativeKernelKwargs
 from tests.test_models import n_nbegm_toy as toy
+
+
+class _OuterKwargs(_NativeKernelKwargs):
+    replay_capability: OuterReplayCapability
+    keeper_result: KernelOutput
+    retain_replay: bool
 
 
 class _ObservedSolve(NamedTuple):
@@ -27,24 +35,26 @@ def _observe_solve(
     live_values: list[int] = []
     value_refs: list[weakref.ReferenceType] = []
     publication: list[tuple[np.ndarray, tuple[np.ndarray, ...]]] = []
-    active_adjuster: object | None = None
+    active_adjuster: _RideAlongNBEGMPeriodKernel | None = None
     original_inner = _RideAlongNBEGMPeriodKernel.__call__
     original_outer = _FiniteNNBEGMPeriodKernel._solve_outer
 
     def record_inner(
-        self: _RideAlongNBEGMPeriodKernel, **kwargs: object
+        self: _RideAlongNBEGMPeriodKernel, **kwargs: Unpack[_NativeKernelKwargs]
     ) -> KernelOutput:
         if self is active_adjuster:
             live_values.append(sum(ref() is not None for ref in value_refs))
-        result = original_inner(self, **kwargs)  # ty: ignore[invalid-argument-type]
+        result = original_inner(self, **kwargs)
         if self is active_adjuster:
             value_refs.append(weakref.ref(result.value))
         return result
 
-    def record_outer(self: _FiniteNNBEGMPeriodKernel, **kwargs: object) -> KernelOutput:
+    def record_outer(
+        self: _FiniteNNBEGMPeriodKernel, **kwargs: Unpack[_OuterKwargs]
+    ) -> KernelOutput:
         nonlocal active_adjuster
         active_adjuster = self.adjuster_kernel
-        result = original_outer(self, **kwargs)  # ty: ignore[invalid-argument-type]
+        result = original_outer(self, **kwargs)
         publication.append(
             (
                 np.array(result.value),

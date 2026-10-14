@@ -31,7 +31,15 @@ from lcm.exceptions import (
     PyLCMError,
     RegimeInitializationError,
 )
-from lcm.typing import DiscreteAction, DiscreteState, FloatND, ScalarInt
+from lcm.regime import StateEntry, StateTransitionEntry
+from lcm.typing import (
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+    StateName,
+    UserParamsNode,
+)
 from tests.conftest import DECIMAL_PRECISION
 
 _AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
@@ -94,8 +102,8 @@ def _weight_by_choice(choice: DiscreteAction) -> FloatND:
 def _build_model(
     *,
     objective: ParetoObjective | None,
-    states: dict | None = None,
-    state_transitions: dict | None = None,
+    states: dict[StateName, StateEntry] | None = None,
+    state_transitions: dict[StateName, StateTransitionEntry] | None = None,
     utility_f=_utility_f,
     utility_m=_utility_m,
 ) -> Model:
@@ -125,7 +133,7 @@ def _build_model(
     )
 
 
-def _params(**pareto: float) -> dict:
+def _params(**pareto: float) -> dict[str, UserParamsNode]:
     return {
         "couple": {
             "koopmans_aggregator": {"discount_factor": 1.0},
@@ -397,7 +405,7 @@ def _utility_child(choice: DiscreteAction) -> FloatND:
     return jnp.where(choice == Choice.a, 1.0, 0.0)
 
 
-def _three_params() -> dict:
+def _three_params() -> dict[str, UserParamsNode]:
     return {
         "household": {"koopmans_aggregator": {"discount_factor": 1.0}},
         "household_terminal": {},

@@ -216,8 +216,9 @@ def is_good_health(health: DiscreteState) -> IntND:
 
 State (and regime) transition probabilities are validated automatically during
 `model.solve()` and `model.simulate()`: their shape, $[0, 1]$ range, and rows summing to
-1 are checked on a sweep over the regime's grids. Whether a failure raises or only warns
-is controlled by `log_level` — see [Solving and Simulating](solving_and_simulating.md).
+1 are checked on a sweep over the regime's grids when `runtime_checks=True`, the
+default. Failures raise independently of console verbosity — see
+[Solving and Simulating](solving_and_simulating.md).
 
 Regime transition probabilities are validated automatically during `model.solve()` and
 `model.simulate()`, so this helper covers only state transitions.

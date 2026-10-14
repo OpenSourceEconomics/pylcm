@@ -4,10 +4,12 @@
 
 import sys
 from collections.abc import Iterator
+from typing import Never
 
 import pytest
 
 from benchmarks.asv import _gpu_mem, bench_aca_baseline
+from lcm.typing import RegimeName, StateName
 
 
 class _FakeAcaBenchmark:
@@ -58,7 +60,7 @@ def test_aca_timing_asv_surface_contains_only_the_combined_trackers(
         combined_calls.append(bench_class)
         return measured
 
-    def _refuse_profile(**_: object) -> dict[str, int]:
+    def _refuse_profile[T](**_: T) -> dict[str, int]:
         pytest.fail("selecting the timing class must not run the GPU-memory profile")
 
     monkeypatch.setattr(_gpu_mem, "measure_combined", _measure)
@@ -119,9 +121,9 @@ def test_aca_build_uses_the_default_execution_config(
     import lcm
     from _lcm.execution import execution_plan
 
-    captured: dict[str, object] = {}
+    captured: dict[str, str] = {}
 
-    def _create_benchmark_model(**kwargs: object) -> object:
+    def _create_benchmark_model(**kwargs: str) -> Never:
         captured.update(kwargs)
         raise _BuildStoppedError
 
@@ -148,3 +150,48 @@ def test_aca_build_uses_the_default_execution_config(
         bench_aca_baseline._build()
 
     assert captured == {"pref_type_grid": "pref_type_grid"}
+
+
+class _AcaFoldPreflightModel:
+    user_regimes = {"living": None}
+
+    def __init__(self, *, folded: bool) -> None:
+        self.folded = folded
+
+    def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
+        assert regime_name == "living"
+        return ("assets",) if self.folded else ("assets", "hcc_transitory")
+
+
+@pytest.mark.parametrize("folded", [False, True])
+def test_aca_preflight_requires_folded_health_cost_value_axes(
+    *, monkeypatch: pytest.MonkeyPatch, folded: bool
+) -> None:
+    """Measurements require the health-cost shock to be absent from value axes."""
+    from benchmarks import preflight
+
+    model = _AcaFoldPreflightModel(folded=folded)
+    monkeypatch.setattr(bench_aca_baseline, "_build", lambda: (model, {}, {}))
+
+    if folded:
+        preflight.main()
+    else:
+        with pytest.raises(AssertionError, match="hcc_transitory"):
+            preflight.main()
+
+
+@pytest.mark.parametrize("regime_names", [(), ("dead",)])
+def test_aca_preflight_requires_living_health_cost_regimes(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    regime_names: tuple[RegimeName, ...],
+) -> None:
+    """An empty living-regime selection cannot certify a folded ACA benchmark."""
+    from benchmarks import preflight
+
+    model = _AcaFoldPreflightModel(folded=True)
+    model.user_regimes = dict.fromkeys(regime_names)
+    monkeypatch.setattr(bench_aca_baseline, "_build", lambda: (model, {}, {}))
+
+    with pytest.raises(AssertionError, match="hcc_transitory"):
+        preflight.main()

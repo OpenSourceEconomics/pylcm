@@ -4,20 +4,25 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
 from _lcm.engine import Regime
 from _lcm.execution.core_program import ProgramScope, core_program_graph
-from _lcm.params.edges import flat_namespaces
+from _lcm.grids import DiscreteGrid
+from _lcm.params.edges import flat_namespaces, regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
 from _lcm.typing import (
+    ArtifactPayload,
     FlatParams,
+    HostArray,
+    ParamsLeaf,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
@@ -31,6 +36,9 @@ from lcm.solver_api import (
     ArtifactChannel,
     ArtifactKey,
     ArtifactRef,
+    AxisDescriptor,
+    AxisRole,
+    CategoryDomain,
     OmissionReason,
     PersistencePolicy,
     ResultRetention,
@@ -46,12 +54,12 @@ if TYPE_CHECKING:
 else:
     # The block-major retention imports the solve engine, which imports this
     # module; the runtime check of this private bridge accepts any owner.
-    RetainedComponentValues = Any
+    type RetainedComponentValues = object
     # The beartype import claw resolves annotations at runtime. Importing the
     # concrete type here would close the artifacts -> authority -> artifacts cycle;
     # static checking keeps the precise type above while runtime checks the rest of
     # this private bridge's fully concrete signature.
-    SolutionAuthority = Any
+    type SolutionAuthority = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -76,11 +84,11 @@ class OwnedSolutionView:
     """The published replay policies consumed by a declared route."""
     dissolution_flags: PeriodToRegimeToDissolutionFlags
     """The retained per-period, per-collective-regime dissolution flags."""
-    replay_artifacts: Mapping[ArtifactRef, object]
+    replay_artifacts: MappingProxyType[ArtifactRef, ArtifactPayload]
     """Every retained replay-channel payload, by reference, for plugin routes."""
     authority: SolutionAuthority
     """The solution authority bound to this solve."""
-    component_values: object | None = None
+    component_values: RetainedComponentValues | None = None
     """The host retention behind a block-major result's values, else `None`.
 
     A block-major result keeps no complete value on a device: `values` is
@@ -100,6 +108,8 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     model_fingerprint: str,
     durable_identity: bool = True,
     authority: SolutionAuthority,
+    flat_params: FlatParams,
+    process_grid_resolver: ProcessGridResolver | None = None,
     component_values: RetainedComponentValues | None = None,
 ) -> SolutionResult:
     """Label existing engine outputs without changing their numerical meaning.
@@ -117,12 +127,14 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         if component_values is None
         else component_values.coordinates
     )
-    replay: dict[ArtifactRef, object] = dict(internal_result.replay_artifacts)
-    retained_continuations: dict[ArtifactRef, object] = dict(
+    replay: dict[ArtifactRef, ArtifactPayload] = dict(internal_result.replay_artifacts)
+    retained_continuations: dict[ArtifactRef, ArtifactPayload] = dict(
         internal_result.retained_continuations
     )
-    auxiliary: dict[ArtifactRef, object] = dict(internal_result.auxiliary_artifacts)
-    diagnostics: dict[ArtifactRef, object] = {}
+    auxiliary: dict[ArtifactRef, ArtifactPayload] = dict(
+        internal_result.auxiliary_artifacts
+    )
+    diagnostics: dict[ArtifactRef, ArtifactPayload] = {}
     omissions: dict[ArtifactRef, OmissionReason] = {}
     declared_replay_policies: PeriodToRegimeToSimulationPolicy = MappingProxyType(
         {
@@ -312,6 +324,29 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                         shape=authority.values[(period, regime_name)].shape,
                         dtype=authority.values[(period, regime_name)].dtype,
                         axis_names=(authority.values[(period, regime_name)].axis_names),
+                        named_axes=_value_axes(
+                            regime=regimes[regime_name],
+                            period=period,
+                            axis_names=authority.values[
+                                (period, regime_name)
+                            ].axis_names,
+                            flat_params=flat_params,
+                            process_grid_resolver=process_grid_resolver,
+                        ),
+                        categorical_domains={
+                            name: CategoryDomain(
+                                labels=grid.categories,
+                                codes=grid.codes,
+                                ordered=grid.ordered,
+                            )
+                            for name, grid in regimes[
+                                regime_name
+                            ].solution.grids.items()
+                            if isinstance(grid, DiscreteGrid)
+                            and name in regimes[regime_name].solution.state_names
+                            and name
+                            in authority.values[(period, regime_name)].axis_names
+                        },
                     )
                     for period, regime_name in value_coordinates
                 }
@@ -371,7 +406,14 @@ def fingerprint_flat_params(flat_params: FlatParams) -> str:
     return digest.hexdigest()
 
 
-def _update_digest_token(*, digest: Any, chunk: str | bytes) -> None:  # noqa: ANN401
+@runtime_checkable
+class _Digest(Protocol):
+    """A running `hashlib` digest; the module exposes no public class for one."""
+
+    def update(self, data: bytes, /) -> None: ...
+
+
+def _update_digest_token(*, digest: _Digest, chunk: str | bytes) -> None:
     """Feed one length-prefixed token into the digest."""
     payload = chunk.encode() if isinstance(chunk, str) else chunk
     digest.update(len(payload).to_bytes(8, byteorder="big"))
@@ -380,8 +422,8 @@ def _update_digest_token(*, digest: Any, chunk: str | bytes) -> None:  # noqa: A
 
 def _update_digest_value(
     *,
-    digest: Any,  # noqa: ANN401
-    value: Any,  # noqa: ANN401
+    digest: _Digest,
+    value: ParamsLeaf | HostArray,
     path: tuple[str, ...],
 ) -> None:
     """Feed one parameter leaf, with its tree path and container boundaries."""
@@ -425,16 +467,52 @@ def _canonical_value_axis_names(*, regime: Regime) -> tuple[str, ...]:
     )
 
 
+def _value_axes(
+    *,
+    regime: Regime,
+    period: int,
+    axis_names: tuple[str, ...],
+    flat_params: FlatParams,
+    process_grid_resolver: ProcessGridResolver | None,
+) -> tuple[AxisDescriptor, ...]:
+    """Snapshot the solve's resolved nodes without retaining device buffers."""
+    states = regime.solution.state_action_space(
+        regime_params=regime_kernel_params(flat_params, regime_name=regime.name),
+        process_grid_resolver=process_grid_resolver,
+    ).states
+    period_axes = regime.solution.period_state_axes
+    if period_axes is not None:
+        states = {**states, **period_axes.get(period, {})}
+    axes = []
+    for index, name in enumerate(axis_names):
+        stakeholder = regime.stakeholders is not None and index == len(axis_names) - 1
+        if stakeholder:
+            if regime.stakeholders is None:
+                raise ValueError("A stakeholder value axis requires stakeholder names.")
+            coordinates = regime.stakeholders
+        else:
+            coordinates = tuple(np.asarray(states[name]).tolist())
+        axes.append(
+            AxisDescriptor(
+                name=name,
+                length=len(coordinates),
+                role=AxisRole.STAKEHOLDER if stakeholder else AxisRole.STATE,
+                coordinates=coordinates,
+            )
+        )
+    return tuple(axes)
+
+
 def _graph_publishes_replay(*, regime: Regime, period: int) -> bool:
     """Return whether the period's kernel declares a replay-scoped program."""
     graph = core_program_graph(kernel=regime.solution.period_kernels[period])
     return any(program.scope is ProgramScope.REPLAY for program in graph.values())
 
 
-def _add_nested_artifacts(
+def _add_nested_artifacts[Payload](
     *,
-    target: dict[ArtifactRef, object],
-    nested: Mapping[int, Mapping[RegimeName, object]],
+    target: dict[ArtifactRef, Payload],
+    nested: Mapping[int, Mapping[RegimeName, Payload]],
     key: ArtifactKey,
 ) -> None:
     """Flatten one existing period/regime mapping into addressed artifacts."""

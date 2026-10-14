@@ -7,7 +7,7 @@ affected subjects' choice sets rather than published.
 
 Dropping silently would hide a shrunken choice set, so the drop is reported --
 aggregated to one message carrying the counts, never one per candidate. The
-public log level decides what the report does, and `"off"` still drops.
+Runtime checks reject a dropped candidate independently of console verbosity.
 """
 
 import logging
@@ -19,7 +19,7 @@ from _lcm.simulation.simulate import (
     _announce_dropped_outer_candidates,
     map_coordinates,
 )
-from _lcm.utils.logging import get_logger
+from _lcm.utils.logging import LogLevel, get_logger
 from lcm.exceptions import UnrepresentableOuterCandidateError
 
 
@@ -30,13 +30,14 @@ def _masks():
     return live, dropped
 
 
-def test_debug_raises_and_names_the_counts() -> None:
-    """At `log_level="debug"` a drop stops the run and reports how many."""
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_runtime_checks_raise_and_name_the_counts(log_level: LogLevel) -> None:
+    """Enabled checks stop a drop and report its counts at every verbosity."""
     live, dropped = _masks()
 
     with pytest.raises(UnrepresentableOuterCandidateError) as report:
         _announce_dropped_outer_candidates(
-            logger=get_logger(log_level="debug"),
+            logger=get_logger(log_level=log_level),
             dropped=dropped,
             n_live=live,
             regime_name="working",
@@ -49,21 +50,23 @@ def test_debug_raises_and_names_the_counts() -> None:
     assert "period 3" in message
 
 
-@pytest.mark.parametrize("log_level", ["warning", "progress"])
-def test_warning_levels_report_the_drop_and_continue(*, log_level, caplog) -> None:
-    """At `"warning"` and `"progress"` the drop is logged and the run goes on."""
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_runtime_checks_disabled_allow_the_drop(
+    *, log_level: LogLevel, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Disabled checks permit dropped candidates at every verbosity."""
     live, dropped = _masks()
 
     with caplog.at_level(logging.WARNING):
         _announce_dropped_outer_candidates(
-            logger=get_logger(log_level=log_level),
+            logger=get_logger(log_level=log_level, runtime_checks=False),
             dropped=dropped,
             n_live=live,
             regime_name="working",
             period=3,
         )
 
-    assert "2 of 6" in caplog.text
+    assert caplog.text == ""
 
 
 def test_off_is_silent_while_the_candidates_are_still_dropped(caplog) -> None:
@@ -76,7 +79,7 @@ def test_off_is_silent_while_the_candidates_are_still_dropped(caplog) -> None:
 
     with caplog.at_level(logging.DEBUG):
         _announce_dropped_outer_candidates(
-            logger=get_logger(log_level="off"),
+            logger=get_logger(log_level="off", runtime_checks=False),
             dropped=dropped,
             n_live=live,
             regime_name="working",

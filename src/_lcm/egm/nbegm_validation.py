@@ -20,10 +20,13 @@ import ast
 import inspect
 import textwrap
 import warnings
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable, Iterator
 from typing import Literal
 
 import jax
+from jax.extend.core import Jaxpr, JaxprEqn
+
+from lcm.typing import FloatND, UserFunction
 
 type CheckMode = Literal["smooth_user", "boundary"]
 
@@ -92,7 +95,7 @@ _SMOOTH_FORBIDDEN_PRIMS = frozenset(
 )
 
 
-def find_ast_violations(*, func: Callable[..., object], mode: CheckMode) -> list[str]:
+def find_ast_violations(*, func: UserFunction, mode: CheckMode) -> list[str]:
     """Find AST-level smoothness violations in a user function's source.
 
     Args:
@@ -120,8 +123,8 @@ def find_ast_violations(*, func: Callable[..., object], mode: CheckMode) -> list
 
 def find_jaxpr_violations(
     *,
-    func: Callable[..., object],
-    abstract_args: Iterable[object],
+    func: UserFunction,
+    abstract_args: Iterable[FloatND | float],
     mode: CheckMode,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> list[str]:
@@ -172,7 +175,7 @@ def find_jaxpr_violations(
         ]
     violations: list[str] = []
     for eqn in _iter_jaxpr_eqns(jaxpr):
-        prim = eqn.primitive.name  # ty: ignore[unresolved-attribute]
+        prim = eqn.primitive.name
         if prim in _SMOOTH_FORBIDDEN_PRIMS:
             violations.append(
                 f"JAX primitive `{prim}` in {name!r} indicates hidden piecewise "
@@ -182,7 +185,7 @@ def find_jaxpr_violations(
     return violations
 
 
-def is_smooth_helper(func: Callable[..., object]) -> bool:
+def is_smooth_helper(func: UserFunction) -> bool:
     """Return whether a node is an `lcm.smooth_helper`-attested numerical helper."""
     return getattr(func, "__lcm_smooth_helper__", False) is True
 
@@ -248,10 +251,10 @@ def _call_name(node: ast.expr) -> str | None:
     return None
 
 
-def _iter_jaxpr_eqns(jaxpr_like: object) -> Iterator[object]:
+def _iter_jaxpr_eqns(jaxpr_like: Jaxpr) -> Iterator[JaxprEqn]:
     """Yield every equation of a closed jaxpr and any jaxprs nested in its params."""
     jaxpr = getattr(jaxpr_like, "jaxpr", jaxpr_like)
-    for eqn in jaxpr.eqns:  # ty: ignore[unresolved-attribute]
+    for eqn in jaxpr.eqns:
         yield eqn
         for value in eqn.params.values():
             if hasattr(value, "jaxpr"):

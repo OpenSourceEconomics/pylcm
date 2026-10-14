@@ -4,7 +4,6 @@ import hashlib
 import logging
 from collections.abc import Hashable, Mapping
 from types import MappingProxyType
-from typing import cast
 
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.regime_building.processing import Regime
@@ -29,7 +28,7 @@ from _lcm.solution.lowering_descriptors import (
     describe_lowering_value,
 )
 from _lcm.time import TimeAxis
-from _lcm.typing import FlatParams
+from _lcm.typing import FlatParams, LoweringDescriptor
 from lcm.exceptions import ExecutionPlanningError
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.solver_api import ArtifactRef, ResultRetention
@@ -46,7 +45,7 @@ def lower_period_candidate(
     retention: ResultRetention,
     persistable_artifact_refs: frozenset[ArtifactRef],
     program_fingerprint: str,
-    authority: Mapping[str, object],
+    authority: Mapping[str, LoweringDescriptor],
     logger: logging.Logger,
 ) -> LoweredPeriodCandidate:
     """Resolve the unchanged graph, then lower only the exact requested primary.
@@ -186,10 +185,7 @@ def _find_candidate_rank(
     remaining = frontier.frontiers.get(triple)
     if remaining is not None:
         for rank, entry_widths in enumerate(remaining.widths):
-            if (
-                entry_widths is not None
-                and _width_key(widths=cast("Mapping[str, int]", entry_widths)) == widths
-            ):
+            if _width_key(widths=entry_widths) == widths:
                 return rank
     raise ExecutionPlanningError(
         "Candidate widths are absent from the ranked frontier."

@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Self, cast
+from typing import NotRequired, Self, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -12,6 +12,8 @@ import pytest
 
 from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.solution import backward_induction
+from _lcm.time import TimeAxis
+from _lcm.typing import ArgumentTree, FlatParams, PytreeValue
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -20,7 +22,13 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.solver_api import KernelOutput, ResultRetention, SolverExecutionCapabilities
+from lcm.solver_api import (
+    ArtifactKey,
+    ContinuationArtifact,
+    KernelOutput,
+    ResultRetention,
+    SolverExecutionCapabilities,
+)
 from lcm.solvers import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -33,14 +41,33 @@ from lcm.solvers import (
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    StateActionSpace,
     StateAxesLeading,
 )
-from lcm.typing import ScalarInt
+from lcm.typing import FloatND, ReferenceName, RegimeName, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution import test_donation_solve as counter_fixture
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_solver_api_out_of_tree import _WEALTH
 from tests.test_solver_api_out_of_tree import RegimeId as CounterRegimeId
+
+
+class _BindKwargs(TypedDict):
+    cores: MappingProxyType[str, backward_induction.PlannedCore]
+    cache: backward_induction.PeriodTransferCache
+    pending_work: NotRequired[backward_induction.PendingSolveWork | None]
+
+
+class _ExtraKernelKwargs(TypedDict):
+    regime_name: NotRequired[RegimeName]
+    logger: backward_induction.logging.Logger
+    next_edge_to_V_arr: NotRequired[
+        MappingProxyType[backward_induction._EdgeKey, FloatND]
+    ]
+    period_solution: NotRequired[Mapping[RegimeName, FloatND]]
+    retain_replay: NotRequired[bool]
+    selected_artifact_keys: NotRequired[frozenset[ArtifactKey]]
+
 
 _SIZE = 1024
 _BUDGET = 128 * 1024 * 1024
@@ -64,16 +91,22 @@ def _consume(*, previous_value: jax.Array, previous_matrix: jax.Array) -> jax.Ar
     return previous_value + jnp.sum(previous_matrix) / previous_matrix.size
 
 
-def _producer_arguments(context: CoreBuildContext) -> Mapping[str, object]:
-    space = cast("Any", context.state_action_space)
-    params = cast("Mapping[str, Mapping[str, object]]", context.flat_params)
+def _producer_arguments(
+    context: CoreBuildContext,
+) -> Mapping[ReferenceName, PytreeValue]:
+    space = context.state_action_space
+    assert space is not None
+    work = context.flat_params["working"]["utility__work"]
+    assert isinstance(work, jax.Array)
     return {
         "wealth": space.states["wealth"],
-        "work": params["working"]["utility__work"],
+        "work": work,
     }
 
 
-def _consumer_arguments(_context: CoreBuildContext) -> Mapping[str, object]:
+def _consumer_arguments(
+    _context: CoreBuildContext,
+) -> Mapping[ReferenceName, PytreeValue]:
     return {}
 
 
@@ -84,21 +117,21 @@ class _TwoProgramKernel:
     def core_programs(self) -> Mapping[str, CoreProgram]:
         return self.programs
 
-    def with_fixed_params(self, *, fixed_flat_params: object) -> Self:
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> Self:
         del fixed_flat_params
         return self
 
     def __call__(
         self,
         *,
-        compiled_cores: Mapping[str, Callable[..., object]],
-        state_action_space: object,
-        next_regime_to_V_arr: Mapping[str, object],
-        next_regime_to_continuation: Mapping[str, object],
-        flat_params: Mapping[str, object],
+        compiled_cores: Mapping[str, Callable[..., PytreeValue]],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationArtifact],
+        flat_params: FlatParams,
         period: int,
-        ages: object,
-        **_unused: object,
+        ages: TimeAxis,
+        **_unused: Unpack[_ExtraKernelKwargs],
     ) -> KernelOutput:
         context = CoreBuildContext(
             state_action_space=state_action_space,
@@ -225,7 +258,7 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
     returned: list[jax.Array] = []
     events: list[str] = []
 
-    def record_completion(leaves: list[object]) -> None:
+    def record_completion(leaves: list[PytreeValue]) -> None:
         events.extend(
             f"complete:{index}"
             for leaf in leaves
@@ -237,18 +270,20 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
         record_completion([array])
         return original_complete(array)
 
-    def complete_tree(tree: object) -> object:
+    def complete_tree[Tree](tree: Tree) -> Tree:
         record_completion(jax.tree.leaves(tree))
         return original_complete_tree(tree)
 
-    def bind(**kwargs: Any) -> Any:
+    def bind(
+        **kwargs: Unpack[_BindKwargs],
+    ) -> MappingProxyType[str, backward_induction.PlannedCore]:
         cores = original_bind(**kwargs)
         names.update({id(core.compiled): name for name, core in cores.items()})
         return cores
 
     def observe(
-        compiled: jax.stages.Compiled, *args: object, **kwargs: object
-    ) -> object:
+        compiled: jax.stages.Compiled, *args: ArgumentTree, **kwargs: ArgumentTree
+    ) -> PytreeValue:
         name = names.get(id(compiled))
         if name == "consumer":
             events.append("consumer_entry")
@@ -312,7 +347,9 @@ def test_budgeted_real_donor_and_template_fallback_leave_no_stale_witness(
     donation_by_executable: dict[int, tuple[str, ...]] = {}
     dispatches: list[tuple[int, tuple[str, ...], bool]] = []
 
-    def observe_bind(**kwargs: Any) -> Any:
+    def observe_bind(
+        **kwargs: Unpack[_BindKwargs],
+    ) -> MappingProxyType[str, backward_induction.PlannedCore]:
         # Cached declarations never receive this solve's concrete owner.
         assert all(core.pending_work is None for core in kwargs["cores"].values())
         cores = bind(**kwargs)
@@ -323,8 +360,8 @@ def test_budgeted_real_donor_and_template_fallback_leave_no_stale_witness(
         return cores
 
     def observe_call(
-        executable: jax.stages.Compiled, *args: object, **kwargs: object
-    ) -> object:
+        executable: jax.stages.Compiled, *args: ArgumentTree, **kwargs: ArgumentTree
+    ) -> PytreeValue:
         count = kwargs.get("count")
         if isinstance(count, jax.Array):
             kept = compiler_input_paths(compiled=executable, arguments=kwargs)

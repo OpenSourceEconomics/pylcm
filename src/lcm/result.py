@@ -3,11 +3,11 @@
 import gc
 import operator
 import sys
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal
 
 import cloudpickle
 import jax
@@ -29,17 +29,23 @@ from _lcm.simulation.result_dataframe import (
 )
 from _lcm.simulation.result_metadata import ResultMetadata, _compute_metadata
 from _lcm.time import TimeAxis
-from _lcm.typing import ActionName, FlatParams, RegimeName, StateName
+from _lcm.typing import ActionName, ArrayTree, FlatParams, RegimeName, StateName
 from lcm._solver_api.entries import _LazyEntry
 from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, FloatND, FunctionName
 
 if TYPE_CHECKING:
-    _PeriodValuesBoundary: TypeAlias = Mapping[int, Mapping[RegimeName, FloatND]]  # noqa: UP040
+    from lcm.solver_api import SolutionResult
+
+    type _PeriodValuesBoundary = Mapping[int, Mapping[RegimeName, FloatND]]
+    type _SolutionResultBoundary = SolutionResult
 else:
     # A block-major simulation holds a `ValueStore` whose values are assembled
     # only when read; the runtime annotation check must not read them all.
-    _PeriodValuesBoundary = object
+    type _PeriodValuesBoundary = object
+    # The solution a simulation keeps is the caller-visible result it replayed,
+    # whose lazy contents the runtime annotation check must not inspect.
+    type _SolutionResultBoundary = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -62,6 +68,24 @@ class PolicyLookup:
 
     F: BoolND | None = None
     """Feasibility of each entry of `Q`, same shape, or `None` unless requested."""
+
+    U: FloatND | None = None
+    """Flow utility of each entry of `Q`, same shape, or `None` unless requested.
+
+    The regime's `utility` at the queried state and action, raw and unmasked
+    like `Q`.
+    """
+
+    CE: FloatND | None = None
+    """Continuation of each entry of `Q`, same shape, or `None` unless requested.
+
+    The certainty equivalent of next period's value, undiscounted: the `CE` that
+    the regime's Koopmans aggregator combines with `U` into
+    `Q == W(utility=U, CE=CE, ...)`. Under `LinearAggregator`,
+    `Q == U + discount_factor * CE`. Zero in a terminal regime, where `Q == U`.
+    An aggregator that reads a regime function, such as a type-specific discount
+    factor, also needs that function's value to rebuild `Q` from `U` and `CE`.
+    """
 
 
 class SimulationResult:
@@ -90,7 +114,7 @@ class SimulationResult:
         self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
         self._subject_batch_size = subject_batch_size
-        self._solution: object | None = None
+        self._solution: _SolutionResultBoundary | None = None
         self._durable_identity = True
         self._plan_summary: SimulationPlanSummary | None = None
         # The original rows of a simulation of selected codes, which holds
@@ -103,7 +127,7 @@ class SimulationResult:
             ages=ages,
             nested_policy_regimes=nested_policy_regimes,
         )
-        self._available_targets = sorted(_collect_all_available_targets(regimes))
+        self._available_targets = tuple(sorted(_collect_all_available_targets(regimes)))
 
     @property
     def raw_results(
@@ -134,7 +158,7 @@ class SimulationResult:
         return self._period_to_regime_to_V_arr
 
     @property
-    def solution(self) -> object | None:
+    def solution(self) -> _SolutionResultBoundary | None:
         """The complete `SolutionResult` this simulation replayed.
 
         The result `Model.simulate` consumed, whether the caller passed it or
@@ -155,17 +179,17 @@ class SimulationResult:
         return self._plan_summary
 
     @property
-    def regime_names(self) -> list[RegimeName]:
+    def regime_names(self) -> tuple[RegimeName, ...]:
         """Names of all regimes."""
         return self._metadata.regime_names
 
     @property
-    def state_names(self) -> list[StateName]:
+    def state_names(self) -> tuple[StateName, ...]:
         """Names of all state variables (union across regimes)."""
         return self._metadata.state_names
 
     @property
-    def action_names(self) -> list[ActionName]:
+    def action_names(self) -> tuple[ActionName, ...]:
         """Names of all action variables (union across regimes)."""
         return self._metadata.action_names
 
@@ -180,7 +204,7 @@ class SimulationResult:
         return self._metadata.n_subjects
 
     @property
-    def available_targets(self) -> list[str]:
+    def available_targets(self) -> tuple[FunctionName, ...]:
         """Names of all available additional targets.
 
         These can be passed to `to_dataframe(additional_targets=...)`. Includes utility
@@ -192,7 +216,7 @@ class SimulationResult:
     def to_dataframe(
         self,
         *,
-        additional_targets: list[str] | Literal["all"] | None = None,
+        additional_targets: Sequence[FunctionName] | Literal["all"] | None = None,
         use_labels: bool = True,
         terminal_rows: Literal["first", "all"] = "first",
     ) -> pd.DataFrame:
@@ -201,7 +225,7 @@ class SimulationResult:
         Args:
             additional_targets: Targets to compute. Can be:
                 - None (default): No additional targets
-                - list[str]: Specific target names to compute
+                - Sequence[FunctionName]: Specific target names to compute
                 - "all": Compute all available targets (see `available_targets`)
                 Targets can be any function defined in a regime. Each target is
                 computed for the regimes where it exists; rows from regimes without
@@ -252,7 +276,7 @@ class SimulationResult:
         self,
         *,
         directory: Path,
-        df_additional_targets: list[str] | Literal["all"] | None = None,
+        df_additional_targets: Sequence[FunctionName] | Literal["all"] | None = None,
         df_use_labels: bool = True,
     ) -> Path:
         """Persist the result to a directory.
@@ -283,7 +307,7 @@ class SimulationResult:
             df_additional_targets: Targets passed through to `to_dataframe`
                 when projecting the on-disk arrow file. `None` (default)
                 writes only the base columns (states, actions, regime, age,
-                period, V_arr). Pass a list of target names to bake specific
+                period, V_arr). Pass a sequence of target names to bake specific
                 DAG outputs into the artifact, or `"all"` to include every
                 available target — the latter can grow the file by an order
                 of magnitude on large models with many DAG leaves.
@@ -316,6 +340,10 @@ class SimulationResult:
                 "An ephemeral simulation result cannot be persisted; "
                 "export its dataframe instead."
             )
+        df_additional_targets = _resolve_targets(
+            additional_targets=df_additional_targets,
+            available_targets=self.available_targets,
+        )
         target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
 
@@ -444,8 +472,15 @@ class SimulationResult:
         instance._flat_params = metadata.flat_params  # noqa: SLF001
         instance._period_to_regime_to_V_arr = period_to_regime_to_V_arr  # noqa: SLF001
         instance._ages = metadata.ages  # noqa: SLF001
-        instance._metadata = metadata.result_metadata  # noqa: SLF001
-        instance._available_targets = metadata.available_targets  # noqa: SLF001
+        # An archive may hold the name listings as lists; loading freezes them.
+        saved_names = metadata.result_metadata
+        instance._metadata = replace(  # noqa: SLF001
+            saved_names,
+            regime_names=tuple(saved_names.regime_names),
+            state_names=tuple(saved_names.state_names),
+            action_names=tuple(saved_names.action_names),
+        )
+        instance._available_targets = tuple(metadata.available_targets)  # noqa: SLF001
         instance._subject_batch_size = metadata.subject_batch_size  # noqa: SLF001
         instance._subject_rows = metadata.subject_rows  # noqa: SLF001
         instance._solution = None  # noqa: SLF001
@@ -483,7 +518,7 @@ class _SavedMetadata:
     result_metadata: ResultMetadata
     """Pre-computed metadata; rebuilt to avoid re-deriving from regimes."""
 
-    available_targets: list[str]
+    available_targets: tuple[FunctionName, ...]
     """Names of all additional targets exposed via `to_dataframe`."""
 
     subject_batch_size: int | None = None
@@ -529,7 +564,7 @@ def _keep_first_terminal_row(
     return df.loc[keep].reset_index(drop=True)
 
 
-def _coerce_jax_scalar_for_arrow(value: object) -> object:
+def _coerce_jax_scalar_for_arrow[T](value: T) -> T | bool | int | float:
     """Convert a 0-d JAX array to a Python scalar; pass everything else through."""
     if isinstance(value, jax.Array) and value.ndim == 0:
         return value.item()
@@ -538,8 +573,8 @@ def _coerce_jax_scalar_for_arrow(value: object) -> object:
 
 def _collect_array_tree_leaf_sizes(
     *,
-    tree: dict[str, Any],
-) -> list[_ArrayTreeLeaf]:
+    tree: Mapping[str, ArrayTree],
+) -> tuple[_ArrayTreeLeaf, ...]:
     """Walk `tree` and return one `_ArrayTreeLeaf` per `jax.Array` leaf.
 
     Results come back sorted by `n_bytes` descending so callers can log the
@@ -548,13 +583,12 @@ def _collect_array_tree_leaf_sizes(
     """
     leaves: list[_ArrayTreeLeaf] = []
     _walk_tree(node=tree, path_parts=(), leaves=leaves)
-    leaves.sort(key=operator.attrgetter("n_bytes"), reverse=True)
-    return leaves
+    return tuple(sorted(leaves, key=operator.attrgetter("n_bytes"), reverse=True))
 
 
 def _walk_tree(
     *,
-    node: object,
+    node: ArrayTree,
     path_parts: tuple[str, ...],
     leaves: list[_ArrayTreeLeaf],
 ) -> None:
@@ -576,14 +610,14 @@ def _walk_tree(
 
 def _log_top_array_tree_leaves(
     *,
-    tree: dict[str, Any],
+    tree: Mapping[str, ArrayTree],
     top_k: int,
     label: str,
 ) -> None:
     """Emit the `top_k` biggest `jax.Array` leaves plus aggregate tree size.
 
-    Writes directly to `sys.stderr` so the lines surface even when the
-    `lcm` logger is silenced (`log_level="off"` raises it to CRITICAL).
+    Writes directly to `sys.stderr` so the lines surface even during a
+    silent run (`log_level="off"`).
     Each line carries path, shape, dtype, and size in GiB; the leading
     line reports total leaf count and aggregate bytes.
     """
@@ -645,11 +679,13 @@ def _load_period_to_regime_to_V_arr(
     return _array_tree_to_period_V(array_tree)
 
 
-def _restore_array_tree(*, input_dir: Path) -> dict[str, Any]:
+def _restore_array_tree(*, input_dir: Path) -> Mapping[str, ArrayTree]:
     """Restore recorded placements using explicit CPU backend device lookup."""
     checkpointer = ocp.StandardCheckpointer()
 
-    def restore_target(leaf: object) -> object:
+    def restore_target(
+        leaf: ocp.metadata.value.Metadata,
+    ) -> ocp.metadata.value.Metadata | jax.ShapeDtypeStruct:
         if not isinstance(leaf, ocp.metadata.value.ArrayMetadata):
             return leaf
         sharding = leaf.sharding
@@ -684,7 +720,7 @@ def _raw_results_to_array_tree(
     raw_results: MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
-) -> dict[str, dict[str, dict[str, Any]]]:
+) -> dict[RegimeName, dict[str, dict[str, ArrayTree]]]:
     """Convert raw results into a plain-dict tree of JAX arrays.
 
     Periods are stringified so orbax can use them as path components.
@@ -706,34 +742,65 @@ def _raw_results_to_array_tree(
 
 
 def _array_tree_to_raw_results(
-    tree: dict[str, dict[str, dict[str, Any]]],
+    tree: ArrayTree,
 ) -> MappingProxyType[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]]:
     """Inverse of `_raw_results_to_array_tree`."""
     return MappingProxyType(
         {
             regime_name: MappingProxyType(
                 {
-                    int(period): PeriodRegimeSimulationData(
-                        V_arr=period_dict["V_arr"],
-                        actions=MappingProxyType(period_dict["actions"]),
-                        states=MappingProxyType(period_dict["states"]),
-                        in_regime=period_dict["in_regime"],
-                        own_stakeholder=period_dict.get(
-                            "own_stakeholder",
-                            jnp.full_like(
-                                period_dict["in_regime"], NO_ROLE, dtype=jnp.int32
-                            ),
-                        ),
-                        nested_policy_fallback=period_dict.get(
-                            "nested_policy_fallback",
-                            jnp.zeros_like(period_dict["in_regime"], dtype=bool),
-                        ),
-                    )
-                    for period, period_dict in regime_dict.items()
+                    int(period): _restored_period_data(_restored_level(period_tree))
+                    for period, period_tree in _restored_level(regime_tree).items()
                 }
             )
-            for regime_name, regime_dict in tree.items()
+            for regime_name, regime_tree in _restored_level(tree).items()
         }
+    )
+
+
+def _restored_period_data(tree: Mapping[str, ArrayTree]) -> PeriodRegimeSimulationData:
+    """Rebuild one period's simulation data from its restored checkpoint level.
+
+    A checkpoint without the stakeholder or fallback leaves gets the values a
+    singleton regime without nested replay records.
+    """
+    in_regime = _restored_array(tree["in_regime"])
+    own_stakeholder = tree.get("own_stakeholder")
+    nested_policy_fallback = tree.get("nested_policy_fallback")
+    return PeriodRegimeSimulationData(
+        V_arr=_restored_array(tree["V_arr"]),
+        actions=_restored_arrays(tree["actions"]),
+        states=_restored_arrays(tree["states"]),
+        in_regime=in_regime,
+        own_stakeholder=jnp.full_like(in_regime, NO_ROLE, dtype=jnp.int32)
+        if own_stakeholder is None
+        else _restored_array(own_stakeholder),
+        nested_policy_fallback=jnp.zeros_like(in_regime, dtype=bool)
+        if nested_policy_fallback is None
+        else _restored_array(nested_policy_fallback),
+    )
+
+
+def _restored_level(node: ArrayTree) -> Mapping[str, ArrayTree]:
+    """Return one mapping level of a restored checkpoint tree."""
+    if not isinstance(node, Mapping):
+        msg = f"Checkpoint holds {type(node).__name__} where a mapping was saved"
+        raise TypeError(msg)
+    return node
+
+
+def _restored_array(node: ArrayTree) -> jax.Array:
+    """Return one array leaf of a restored checkpoint tree."""
+    if not isinstance(node, jax.Array):
+        msg = f"Checkpoint holds {type(node).__name__} where an array was saved"
+        raise TypeError(msg)
+    return node
+
+
+def _restored_arrays(node: ArrayTree) -> MappingProxyType[str, jax.Array]:
+    """Return a restored mapping level whose values are array leaves."""
+    return MappingProxyType(
+        {name: _restored_array(leaf) for name, leaf in _restored_level(node).items()}
     )
 
 
@@ -781,12 +848,12 @@ def _host_or_device_value(
 
 
 def _array_tree_to_period_V(
-    tree: dict[str, dict[RegimeName, FloatND]],
+    tree: Mapping[str, ArrayTree],
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
     """Inverse of `_period_V_to_array_tree`."""
     return MappingProxyType(
         {
-            int(period): MappingProxyType(regime_dict)
-            for period, regime_dict in tree.items()
+            int(period): _restored_arrays(regime_tree)
+            for period, regime_tree in tree.items()
         }
     )

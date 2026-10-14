@@ -12,7 +12,7 @@ from _lcm.ages import _is_integer_valued, _parse_step, _validate_age_grid
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.utils.functools import allow_args
 from lcm.exceptions import GridInitializationError
-from lcm.typing import AgeStep, Float1D, Int1D, UserAge
+from lcm.typing import Age, AgeStep, Float1D, Int1D, UserAge
 
 
 class AgeGrid:
@@ -198,7 +198,7 @@ class AgeGrid:
             Tuple of period indices where predicate(age) is True.
 
         """
-        _convert: Callable[[object], int | float] = int if self._is_integer else float  # ty: ignore[invalid-assignment]
+        _convert: Callable[[Age], int | float] = int if self._is_integer else float
         # Active predicates are name-bound DAG functions; the unary age-grid
         # boundary therefore adapts either positional or keyword-only signatures.
         positional_predicate = allow_args(predicate)

@@ -39,6 +39,7 @@ from lcm import (
     categorical,
 )
 from lcm.certainty_equivalent import CertaintyEquivalent, QuasiArithmeticMean
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 
@@ -139,9 +140,13 @@ def _model(
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 
 
-def _source_value(*, model: Model, log_level: LogLevel = "off") -> FloatND:
+def _source_value(
+    *, model: Model, log_level: LogLevel = "off", runtime_checks: bool = True
+) -> FloatND:
     return jnp.asarray(
-        model.solve(params=_PARAMS, log_level=log_level).values[0]["source"]
+        model.solve(
+            params=_PARAMS, log_level=log_level, runtime_checks=runtime_checks
+        ).values[0]["source"]
     )
 
 
@@ -266,7 +271,10 @@ def test_a_negative_weight_below_the_normal_range_is_refused_at_unit_mass() -> N
     """
     model = _model(rare_probability=_negative_smallest_subnormal)
 
-    assert bool(jnp.all(jnp.isnan(_source_value(model=model))))
+    with pytest.raises(InvalidValueFunctionError, match="NaN"):
+        _source_value(model=model)
+    # Inspect the native distribution guard's invalid-value sentinel.
+    assert bool(jnp.all(jnp.isnan(_source_value(model=model, runtime_checks=False))))
 
 
 def _pays_the_smallest_normal(shock: ScalarFloat) -> FloatND:

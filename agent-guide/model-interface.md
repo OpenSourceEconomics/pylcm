@@ -218,9 +218,11 @@ model's actual core programs declare.
   `simulate(solution=...)` validates and projects them. Automatic simulation threads
   them directly.
 - `log_level` is **required** on both `solve()` and `simulate()`
-  (`off < warning < progress < debug`). It governs all runtime validation: `"off"` skips
-  it, `"warning"` / `"progress"` warn and continue, `"debug"` raises. Start projects at
-  `"debug"`.
+  (`off < warning < progress < debug`) and controls console output.
+- `runtime_checks=True` is the default on both calls. Enabled numerical checks raise
+  at every log level, including `"off"`; set `runtime_checks=False` explicitly to skip
+  them. Construction, parameter schema, initial-condition structure and solution
+  identity checks remain active. Use `"debug"` for additional diagnostic statistics.
 - `model.validate_initial_conditions(initial_conditions=..., params=...)` and
   `model.initial_conditions_feasibility(initial_conditions=..., params=...)` check a
   population without solving or simulating; the second returns a per-subject boolean
@@ -231,6 +233,13 @@ model's actual core programs declare.
   admission or padding; the verdict does not depend on that. Unsupported checks
   (age-specialized constraint ancestors with subjects at several ages) raise
   `UnsupportedOperationError`.
+
+`model.validate_transitions(params=params)` runs the transition preflight used by
+`solve(runtime_checks=True)` without backward induction. It returns `None` on success
+and raises the same first diagnostic for invalid regime probabilities, stochastic state
+laws or joint transition supports and probabilities. It checks active periods and phase
+grids with numerical checks always enabled and no console output. Utilities, solver
+outputs and general deterministic next-state finiteness are outside this preflight.
 
 ### Derived Categoricals
 

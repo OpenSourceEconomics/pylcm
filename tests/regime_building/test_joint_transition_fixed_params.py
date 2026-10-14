@@ -21,7 +21,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.regime import Regime
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import FloatND, ScalarInt, UserParamsNode
 
 _VALID_TABLE = jnp.asarray([0.25, 0.75])
 _INVALID_TABLE = jnp.asarray([1.2, -0.2])
@@ -54,12 +54,12 @@ def _next_wealth_from_match(match: dict[str, FloatND]) -> FloatND:
     return match["value"]
 
 
-def _table_path(table: FloatND) -> dict:
+def _table_path(table: FloatND) -> dict[str, UserParamsNode]:
     """The table at its declaration path below the source regime."""
     return {"working": {"working": {"match": _probabilities(table)}}}
 
 
-def _probabilities(table: FloatND) -> dict:
+def _probabilities(table: FloatND) -> dict[str, UserParamsNode]:
     return {"probabilities": {"match_table": table}}
 
 

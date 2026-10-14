@@ -1526,7 +1526,7 @@ def test_convert_series_cross_grid_transition() -> None:
         },
     }
     internal = broadcast_to_template(
-        params=params, template=model.get_params_template(), required=False
+        params=params, template=model._params_template, required=False
     )
     assert model.ages is not None
     result = convert_series_in_params(

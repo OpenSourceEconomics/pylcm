@@ -15,6 +15,7 @@ from typing import cast
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from jax import Array
 
 from _lcm.params.edges import edge_params, regime_kernel_params
@@ -40,15 +41,20 @@ from lcm.exceptions import (
     InvalidParamsError,
     ModelInitializationError,
 )
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserFunction,
     UserParams,
 )
+
+type TemplateNode = str | Mapping[str, TemplateNode]
+
 
 _AGES = AgeGrid(start=60, inclusive_stop=63, step="Y")
 _WEALTH = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
@@ -469,9 +475,9 @@ def test_kernel_params_refuse_a_key_both_the_regime_and_its_edges_hold():
     """A source's kernels cannot bind one key from two namespaces."""
     flat_params = MappingProxyType(
         {
-            "working": MappingProxyType({"dead__rate": 1.0}),
+            "working": MappingProxyType({"dead__rate": jnp.array(1.0)}),
             "edges": MappingProxyType(
-                {"working": MappingProxyType({"dead__rate": 2.0})}
+                {"working": MappingProxyType({"dead__rate": jnp.array(2.0)})}
             ),
         }
     )
@@ -481,8 +487,13 @@ def test_kernel_params_refuse_a_key_both_the_regime_and_its_edges_hold():
 
 def test_edge_callables_refuse_a_value_that_is_no_law_form():
     """A declared law cell that is neither a law nor a callable is named by type."""
-    with pytest.raises(TypeError, match="'float'"):
-        list(iter_edge_callables(law={"dead": 0.5}, path=()))
+    with pytest.raises(BeartypeCallHintParamViolation, match=r"value float 0\.5"):
+        list(
+            iter_edge_callables(
+                law={"dead": 0.5},  # ty: ignore[invalid-argument-type]
+                path=(),
+            )
+        )
 
 
 def test_invalid_law_argument_name_is_reported_at_its_edges_path():
@@ -519,7 +530,7 @@ def test_parametrized_coarse_case_beside_per_target_cases_is_rejected():
         )
 
 
-def _leaf_paths(branch: Mapping[str, object]) -> set[tuple[str, ...]]:
+def _leaf_paths(branch: Mapping[str, TemplateNode]) -> set[tuple[str, ...]]:
     """Return the path of every leaf of a params-template branch.
 
     Args:
@@ -629,7 +640,7 @@ _LATE_LAW = {
 def _mortal_model(
     *,
     ages: AgeGrid = _AGES,
-    law: object = None,
+    law: TransitionLaw | None = None,
     fixed_params: UserParams | None = None,
 ) -> Model:
     """Working regime that survives a year at a time, then dies at the last age.
@@ -711,7 +722,7 @@ def _horizon_retirement_model(*, n_periods: int) -> Model:
     retires; the declaration is the same at every horizon.
     """
     last_source_age = 58 + n_periods
-    targets: dict[str, AgeRange] = {"retired": AgeRange(start=60)}
+    targets: dict[RegimeName, AgeRange] = {"retired": AgeRange(start=60)}
     if last_source_age > 60:
         targets["working"] = AgeRange(start=60, exclusive_stop=last_source_age)
     return Model(
@@ -763,7 +774,7 @@ def _dormant_selector_model(*, variable: str, n_periods: int) -> Model:
     """
     last_age = n_periods - 1
     last_source_age = last_age - 1
-    targets: dict[str, AgeRange] = {"dead": AgeRange(start=0)}
+    targets: dict[RegimeName, AgeRange] = {"dead": AgeRange(start=0)}
     if last_source_age > 0:
         targets["alive"] = AgeRange(start=0, exclusive_stop=last_source_age)
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
@@ -811,7 +822,7 @@ def _dormant_scored_selector_model(*, function_level: str, n_periods: int) -> Mo
     """
     last_age = n_periods - 1
     last_source_age = last_age - 1
-    targets: dict[str, AgeRange] = {"dead": AgeRange(start=0)}
+    targets: dict[RegimeName, AgeRange] = {"dead": AgeRange(start=0)}
     if last_source_age > 0:
         targets["alive"] = AgeRange(start=0, exclusive_stop=last_source_age)
     on_regime = function_level == "regime"
@@ -905,7 +916,9 @@ class _EdgesNamedId:
     dead: ScalarInt
 
 
-def _named_model(*, regime_name: str, functions: Mapping[str, UserFunction]) -> Model:
+def _named_model(
+    *, regime_name: RegimeName, functions: Mapping[str, UserFunction]
+) -> Model:
     """A source regime with the given name and functions, then a terminal one."""
     source = Regime(
         states={"wealth": _WEALTH},

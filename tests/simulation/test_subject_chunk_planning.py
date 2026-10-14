@@ -1,13 +1,14 @@
 """Execution widths bound the complete forward population dispatched at once."""
 
 import inspect
-from typing import Any
+from typing import Unpack
 
 import jax.numpy as jnp
 import pytest
 
 import _lcm.simulation.simulate as simulation
 from lcm import ExecutionConfig, LinSpacedGrid, Model
+from tests.simulation._callback_types import ChunkResults, SimulationChunkInputs
 from tests.test_models.deterministic.regression import (
     RegimeId,
     get_model,
@@ -39,9 +40,12 @@ def test_a_fixed_subject_width_bounds_complete_dispatched_chunks(
     windows: list[tuple[int, int]] = []
     run_chunk = simulation._simulate_subject_chunk
 
-    def observe_chunk(**kwargs: Any) -> object:
+    def observe_chunk(**kwargs: Unpack[SimulationChunkInputs]) -> ChunkResults:
         chunks.append(int(kwargs["initial_regime_ids"].shape[0]))
         window = kwargs["subject_slice"]
+        assert isinstance(window, slice)
+        assert isinstance(window.start, int)
+        assert isinstance(window.stop, int)
         windows.append((window.start, window.stop))
         assert kwargs["original_n_subjects"] == 7
         return run_chunk(**kwargs)

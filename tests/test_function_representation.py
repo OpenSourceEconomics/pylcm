@@ -1,6 +1,7 @@
 from dataclasses import make_dataclass
 from functools import partial
 from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import pytest
@@ -14,6 +15,7 @@ from _lcm.regime_building.V import (
     _get_lookup_function,
     get_V_interpolator,
 )
+from _lcm.typing import DataclassInstance
 from _lcm.utils.dispatchers import productmap
 from lcm import LinSpacedGrid
 from lcm.typing import ScalarInt
@@ -21,7 +23,11 @@ from lcm.typing import ScalarInt
 
 @pytest.fixture
 def binary_discrete_grid():
-    cls = make_dataclass("BinaryCategory", [("a", ScalarInt), ("b", ScalarInt)])
+    # `make_dataclass` is typed as returning a bare `type`.
+    cls = cast(
+        "type[DataclassInstance]",
+        make_dataclass("BinaryCategory", [("a", ScalarInt), ("b", ScalarInt)]),
+    )
     type.__setattr__(cls, "a", jnp.int32(0))
     type.__setattr__(cls, "b", jnp.int32(1))
     return DiscreteGrid(category_class=cls)

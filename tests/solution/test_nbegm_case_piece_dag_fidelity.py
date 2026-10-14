@@ -19,7 +19,7 @@ import pytest
 
 from lcm import LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, UserParamsNode
 from tests.test_models import nbegm_medicaid_toy as toy
 from tests.test_models.nbegm_common import (
     crra_utility,
@@ -125,16 +125,26 @@ def _build(
 
 
 def _params(
-    *, utility_extra: dict | None = None, law_extra: dict | None = None
-) -> dict:
+    *,
+    utility_extra: dict[str, float] | None = None,
+    law_extra: dict[str, float] | None = None,
+) -> dict[str, UserParamsNode]:
     """The toy's parameters, with any extra flat params merged into their function.
 
     Deep-copied because the toy caches its parameter tree.
     """
     params = copy.deepcopy(toy.build_params())
-    params["alive"]["utility"].update(utility_extra or {})
+    alive = params["alive"]
+    assert isinstance(alive, dict)
+    utility_params = alive["utility"]
+    assert isinstance(utility_params, dict)
+    utility_params.update(utility_extra or {})
     for target in ("alive", "dead"):
-        params["alive"][target]["next_liquid"].update(law_extra or {})
+        target_params = alive[target]
+        assert isinstance(target_params, dict)
+        next_liquid_params = target_params["next_liquid"]
+        assert isinstance(next_liquid_params, dict)
+        next_liquid_params.update(law_extra or {})
     return params
 
 

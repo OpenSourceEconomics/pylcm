@@ -6,28 +6,40 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import NotRequired, Unpack
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
+from typing_extensions import TypedDict
 
+from _lcm.typing import JSONValue, RegimeName, StateName
 from benchmarks.grid_search_pair import (
+    _ArrayManifest,
     _assert_pair_identity,
     _assert_scenario_execution_target,
+    _CheckoutDigests,
     _compare_array_manifests,
     _compare_measurement_identity,
     _compare_value_artifacts,
+    _CompiledCore,
+    _Device,
+    _DeviceMemory,
+    _KernelRow,
     _max_ulp_distance,
     _metric_summary,
+    _MetricSummary,
     _pair_summary,
     _parser,
     _pixi_context,
+    _RouteMetadata,
     _sha256_files,
     _validate_checkout,
     _validate_required_evidence,
     _validate_worker_environment,
     _worker_command,
     _worker_env,
+    _WorkerMetrics,
 )
 from benchmarks.grid_search_pair_scenarios import SCENARIOS, TARGET_SCENARIO_SOURCES
 from benchmarks.grid_search_pair_worker import (
@@ -39,7 +51,20 @@ from benchmarks.grid_search_pair_worker import (
 )
 
 
-def _write_npz(path: Path, **arrays: Any) -> None:
+class _RouteArguments(TypedDict, total=False):
+    folded_regimes: tuple[str, ...]
+    collective_regimes: tuple[str, ...]
+    distributed_regimes: tuple[str, ...]
+    taste_shock_regimes: tuple[str, ...]
+    gs_vd_regimes: tuple[str, ...]
+
+
+class _NpzArrays(TypedDict, closed=True):
+    value: NDArray[np.float32 | np.float64]
+    flag: NotRequired[NDArray[np.bool_]]
+
+
+def _write_npz(path: Path, **arrays: Unpack[_NpzArrays]) -> None:
     np.savez(path, **arrays)
 
 
@@ -55,14 +80,14 @@ def _run_git(checkout: Path, *arguments: str) -> str:
 
 def _kernel(
     *,
-    regime: str,
+    regime: RegimeName,
     execution_disposition: str = "legacy-unplanned",
     disposition_reason: str | None = "legacy_adapter",
     collective: bool = False,
     has_taste_shocks: bool = False,
-    fold_state_names: tuple[str, ...] = (),
+    fold_state_names: tuple[StateName, ...] = (),
     action_extent: int = 10,
-) -> dict[str, Any]:
+) -> _KernelRow:
     return {
         "regime": regime,
         "period": 0,
@@ -79,7 +104,7 @@ def _kernel(
 
 def _set_execution(
     *,
-    row: dict[str, Any],
+    row: _KernelRow,
     disposition: str,
     reason: str | None,
     streams_actions: bool = True,
@@ -91,13 +116,13 @@ def _set_execution(
 
 def _routes(
     *,
-    kernels: list[dict[str, Any]],
+    kernels: list[_KernelRow],
     folded_regimes: tuple[str, ...] = (),
     collective_regimes: tuple[str, ...] = (),
     distributed_regimes: tuple[str, ...] = (),
     taste_shock_regimes: tuple[str, ...] = (),
     gs_vd_regimes: tuple[str, ...] = (),
-) -> dict[str, Any]:
+) -> _RouteMetadata:
     return {
         "kernels": kernels,
         "streamed_kernel_count": sum(row["streamed"] for row in kernels),
@@ -109,7 +134,7 @@ def _routes(
     }
 
 
-def _measurement_identity_fixture(*, routes: dict[str, Any]) -> dict[str, Any]:
+def _measurement_identity_fixture(*, routes: _RouteMetadata) -> _WorkerMetrics:
     return {
         "dimensions": {
             "n_periods": 2,
@@ -322,9 +347,9 @@ def test_scenario_registry_contains_closure_and_aca_frontier_rows() -> None:
 def test_execution_disposition_must_cover_every_named_nontrivial_target_kernel(
     *,
     scenario: str,
-    target: dict[str, Any],
-    decoy: dict[str, Any],
-    route_kwargs: dict[str, Any],
+    target: _KernelRow,
+    decoy: _KernelRow,
+    route_kwargs: _RouteArguments,
 ) -> None:
     second_target = deepcopy(target)
     second_target["period"] = 1
@@ -809,21 +834,21 @@ ENTRY main {
 
 
 def test_required_evidence_distinguishes_cpu_na_from_gpu_peak() -> None:
-    core = {
+    core: _CompiledCore = {
         "label": "working/0",
         "hlo": {"text_bytes": 10, "instruction_count": 1},
         "compiler_memory": None,
         "compiler_memory_status": "unavailable",
         "compiler_memory_reason": "not supported",
     }
-    cpu_device = {"id": 0, "platform": "cpu", "kind": "cpu"}
-    cpu_memory = {
+    cpu_device: _Device = {"id": 0, "platform": "cpu", "kind": "cpu"}
+    cpu_memory: _DeviceMemory = {
         **cpu_device,
         "peak_bytes_in_use": None,
         "status": "not_applicable",
         "reason": "Device peak memory is only defined for GPU rows.",
     }
-    metrics: dict[str, Any] = {
+    metrics: _WorkerMetrics = {
         "compiled_cores": [core],
         "devices": [cpu_device],
         "memory": {
@@ -861,7 +886,7 @@ def test_required_evidence_distinguishes_cpu_na_from_gpu_peak() -> None:
 
 def test_worker_environment_requires_its_exact_fresh_cache(tmp_path: Path) -> None:
     cache = tmp_path / "fresh-cache"
-    metrics: dict[str, Any] = {
+    metrics: _WorkerMetrics = {
         "environment": {
             "JAX_COMPILATION_CACHE_DIR": str(cache),
             "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
@@ -877,6 +902,7 @@ def test_worker_environment_requires_its_exact_fresh_cache(tmp_path: Path) -> No
         _validate_worker_environment(metrics=wrong, expected_cache_dir=cache)
 
     wrong = deepcopy(metrics)
+    assert wrong["environment"]["XLA_FLAGS"] is not None
     wrong["environment"]["XLA_FLAGS"] += " --xla_gpu_autotune_level=0"
     with pytest.raises(RuntimeError, match="exactly once"):
         _validate_worker_environment(metrics=wrong, expected_cache_dir=cache)
@@ -910,17 +936,19 @@ def test_value_parity_records_bitwise_and_tolerated_float_agreement(
 
 
 def test_array_manifest_requires_exact_shape_dtype_and_sharding() -> None:
-    single = {
+    single: dict[str, JSONValue] = {
         "kind": "SingleDeviceSharding",
         "platform": "cpu",
         "device_id": 0,
         "memory_kind": "device",
     }
-    base = [{"key": "value/0/r", "shape": [2], "dtype": "float64", "sharding": single}]
+    base: list[_ArrayManifest] = [
+        {"key": "value/0/r", "shape": [2], "dtype": "float64", "sharding": single}
+    ]
     result = _compare_array_manifests(base=base, head=base)
     assert result["all_passed"]
 
-    changed = [
+    changed: list[_ArrayManifest] = [
         {
             **base[0],
             "sharding": {**single, "device_id": 1},
@@ -931,7 +959,9 @@ def test_array_manifest_requires_exact_shape_dtype_and_sharding() -> None:
 
 
 @pytest.mark.parametrize("dtype", [np.dtype("float32"), np.dtype("float64")])
-def test_max_ulp_distance_uses_exact_ordered_ieee_bits(dtype: np.dtype) -> None:
+def test_max_ulp_distance_uses_exact_ordered_ieee_bits(
+    dtype: np.dtype[np.float32 | np.float64],
+) -> None:
     expected = np.array([-1.0, -0.0, 0.0, 1.0], dtype=dtype)
     actual = expected.copy()
     actual[-1] = np.nextafter(actual[-1], dtype.type(2.0))
@@ -956,7 +986,7 @@ def test_max_ulp_distance_uses_exact_ordered_ieee_bits(dtype: np.dtype) -> None:
     ],
 )
 def test_value_parity_fails_closed_on_structural_or_numerical_drift(
-    *, tmp_path: Path, head_array: np.ndarray, match: str
+    *, tmp_path: Path, head_array: NDArray[np.float32 | np.float64], match: str
 ) -> None:
     base = tmp_path / "base.npz"
     head = tmp_path / "head.npz"
@@ -968,12 +998,12 @@ def test_value_parity_fails_closed_on_structural_or_numerical_drift(
 
 
 def test_pair_identity_requires_distinct_revisions_and_equal_sources() -> None:
-    base = {
+    base: _CheckoutDigests = {
         "revision": "a" * 40,
         "lock_digest": "lock",
         "scenario_sources": {"model.py": "same"},
     }
-    head = {
+    head: _CheckoutDigests = {
         "revision": "b" * 40,
         "lock_digest": "lock",
         "scenario_sources": {"model.py": "same"},
@@ -992,7 +1022,7 @@ def test_pair_identity_requires_distinct_revisions_and_equal_sources() -> None:
 
 
 def test_metric_summary_preserves_raw_samples_and_uses_per_core_maxima() -> None:
-    metrics = {
+    metrics: _WorkerMetrics = {
         "timing_ns": {
             "cold_solve": 100,
             "aot_compile_calls": [80, 5, 6, 7],
@@ -1046,7 +1076,7 @@ def test_metric_summary_preserves_raw_samples_and_uses_per_core_maxima() -> None
 
 
 def test_pair_summary_requires_dense_base_and_allows_deliberately_dense_head() -> None:
-    common = {
+    common: _MetricSummary = {
         "cold_solve_ns": 100,
         "cold_aot_compile_ns": 80,
         "warm_solve_median_ns": 20,

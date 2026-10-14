@@ -11,13 +11,254 @@ import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from math import prod
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from benchmarks.grid_search_pair_scenarios import (
     EXTERNAL_HARNESS_SOURCES,
     SCENARIOS,
     TARGET_SCENARIO_SOURCES,
 )
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
+
+    from _lcm.typing import ActionName, JSONValue, RegimeName, StateName
+
+
+type SourcePath = str
+
+type GitArgument = str
+
+
+class _CheckoutDigests(TypedDict):
+    revision: str
+    lock_digest: str
+    scenario_sources: dict[SourcePath, str]
+
+
+class CheckoutIdentity(_CheckoutDigests):
+    checkout: Path
+
+
+class _KernelExecution(TypedDict):
+    streamed: bool
+    execution_disposition: str
+    disposition_reason: str | None
+
+
+class _KernelRow(_KernelExecution):
+    regime: RegimeName
+    period: int
+    action_names: list[ActionName]
+    action_extents: list[int]
+    collective: bool
+    has_taste_shocks: bool
+    fold_state_names: list[StateName]
+
+
+class _RouteMetadata(TypedDict, total=False):
+    kernels: list[_KernelRow]
+    streamed_kernel_count: int
+    folded_regimes: list[str]
+    collective_regimes: list[str]
+    distributed_regimes: list[str]
+    taste_shock_regimes: list[str]
+    gs_vd_regimes: list[str]
+
+
+class _Environment(TypedDict):
+    JAX_COMPILATION_CACHE_DIR: str | None
+    XLA_PYTHON_CLIENT_PREALLOCATE: str | None
+    XLA_PYTHON_CLIENT_MEM_FRACTION: str | None
+    XLA_FLAGS: str | None
+
+
+class _VersionShimSeed(TypedDict):
+    module: str
+    origin: str
+    exports: list[str]
+    version: str
+    version_tuple: list[int | str]
+    commit_id: None
+
+
+class _VersionShim(_VersionShimSeed):
+    sha256: str
+
+
+class _Device(TypedDict):
+    id: int
+    platform: str
+    kind: str
+
+
+class _DeviceMemory(TypedDict, total=False):
+    id: int
+    platform: str
+    kind: str
+    peak_bytes_in_use: int | None
+    status: str
+    reason: str | None
+
+
+class _ProcMemory(TypedDict, total=False):
+    rss_bytes: int | None
+    hwm_bytes: int | None
+
+
+class _Memory(TypedDict, total=False):
+    before_solve: _ProcMemory
+    through_warm: _ProcMemory
+    after_hlo_and_serialization: _ProcMemory
+    device: list[_DeviceMemory]
+
+
+class _AsyncCommunicationCounts(TypedDict):
+    synchronous: int
+    starts: int
+    dones: int
+    deduplicated_async: int
+
+
+class _HloCensus(TypedDict, total=False):
+    sha256: str
+    text_bytes: int
+    line_count: int
+    instruction_count: int
+    op_counts: dict[str, int]
+    async_communication_counts: dict[str, _AsyncCommunicationCounts]
+    communication_collective_count: int
+
+
+class _CompiledCore(TypedDict, total=False):
+    label: str
+    hlo_file: str
+    hlo: _HloCensus
+    compiler_memory: dict[str, int | None] | None
+    compiler_memory_status: str
+    compiler_memory_reason: str | None
+
+
+class _Timing(TypedDict, total=False):
+    build: int
+    cold_solve: int
+    aot_compile_calls: list[int]
+    warm_solve: list[int]
+
+
+class _RegimeDimensions(TypedDict):
+    active_periods: list[int]
+    solution_grid_extents: dict[str, int]
+
+
+class _Dimensions(TypedDict):
+    n_periods: int
+    regimes: dict[str, _RegimeDimensions]
+
+
+class _ArrayManifest(TypedDict):
+    key: str
+    shape: list[int]
+    dtype: str
+    sharding: dict[str, JSONValue]
+    sha256: NotRequired[str]
+
+
+class _WorkerMetrics(TypedDict, total=False):
+    schema_version: str
+    scenario: str
+    revision: str
+    harness_revision: str
+    checkout: str
+    harness_digest: str
+    scenario_digest: str
+    lock_digest: str
+    target_lcm_file: str
+    version_shim: _VersionShim
+    precision: int
+    pixi: dict[str, str]
+    jax_enable_x64: bool
+    executed_float_dtype: str
+    python: str
+    jax_version: str
+    jaxlib_version: str
+    devices: list[_Device]
+    environment: _Environment
+    timing_ns: _Timing
+    memory: _Memory
+    routes: _RouteMetadata
+    dimensions: _Dimensions
+    tile_plans: list[dict[str, JSONValue]]
+    compiled_cores: list[_CompiledCore]
+    arrays: list[_ArrayManifest]
+
+
+class _MetricSummary(TypedDict, total=False):
+    cold_solve_ns: int
+    cold_aot_compile_ns: int
+    warm_solve_ns: list[int]
+    warm_solve_median_ns: int
+    rss_hwm_through_warm_bytes: int | None
+    compiler_peak_bytes: int | None
+    compiler_temp_bytes: int | None
+    device_peak_bytes: int | None
+    hlo_text_bytes: int
+    hlo_instruction_count: int
+    communication_collective_count: int
+    streamed_kernel_count: int
+    tile_plans: list[dict[str, JSONValue]]
+
+
+class _PairSummary(TypedDict):
+    base: _MetricSummary
+    head: _MetricSummary
+    head_over_base: dict[str, float | None]
+
+
+class _ValueParityRow(TypedDict):
+    key: str
+    shape: list[int]
+    dtype: str
+    bitwise_equal: bool
+    parity: bool
+    rtol: float
+    atol: float
+    max_abs: float
+    max_rel: float
+    max_ulp: int
+
+
+class _ValueParity(TypedDict):
+    all_passed: bool
+    all_bitwise_equal: bool
+    arrays: list[_ValueParityRow]
+
+
+class _ManifestParity(TypedDict):
+    all_passed: bool
+    arrays: list[_ArrayManifest]
+
+
+type _RuntimeIdentity = dict[str, str | bool | _VersionShim]
+
+
+class _MeasurementIdentity(TypedDict):
+    dimensions: _Dimensions
+    routes: dict[str, JSONValue]
+    runtime: _RuntimeIdentity
+    devices: list[_Device]
+    behavioral_environment: dict[str, str | None]
+
+
+class _PairRecord(TypedDict):
+    scenario: str
+    repeat: int
+    measurement_identity: _MeasurementIdentity
+    parity: _ValueParity
+    layout_contract: _ManifestParity
+    metrics: _PairSummary
+
 
 _FULL_REVISION = re.compile(r"[0-9a-f]{40}")
 _AUTOTUNE_OFF = "--xla_gpu_autotune_level=0"
@@ -72,7 +313,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _git(*, checkout: Path, args: Sequence[str]) -> str:
+def _git(*, checkout: Path, args: Sequence[GitArgument]) -> str:
     result = subprocess.run(
         ["git", "-C", str(checkout), *args],
         capture_output=True,
@@ -106,7 +347,7 @@ def _sha256_files(*, root: Path, relative_paths: Iterable[str]) -> str:
     return digest.hexdigest()
 
 
-def _validate_checkout(*, checkout: Path, expected_revision: str) -> dict[str, Any]:
+def _validate_checkout(*, checkout: Path, expected_revision: str) -> CheckoutIdentity:
     checkout = checkout.resolve()
     if _FULL_REVISION.fullmatch(expected_revision) is None:
         raise ValueError(
@@ -140,7 +381,7 @@ def _validate_checkout(*, checkout: Path, expected_revision: str) -> dict[str, A
     }
 
 
-def _assert_pair_identity(*, base: Mapping[str, Any], head: Mapping[str, Any]) -> None:
+def _assert_pair_identity(*, base: _CheckoutDigests, head: _CheckoutDigests) -> None:
     if base["revision"] == head["revision"]:
         raise RuntimeError("Base and head revisions must differ.")
     if base["lock_digest"] != head["lock_digest"]:
@@ -225,12 +466,12 @@ def _run_worker(
     pixi: Mapping[str, str],
     harness_digest: str,
     scenario_digest: str,
-    identity: Mapping[str, Any],
+    identity: CheckoutIdentity,
     scenario: str,
     precision: str,
     backend: str,
     output: Path,
-) -> dict[str, Any]:
+) -> _WorkerMetrics:
     if output.exists():
         raise FileExistsError(output)
     with tempfile.TemporaryDirectory(prefix="pylcm-grid-pair-cache-") as cache:
@@ -289,7 +530,7 @@ def _run_worker(
     metrics_path = output / "metrics.json"
     if not metrics_path.is_file() or not (output / "values.npz").is_file():
         raise RuntimeError(f"Worker omitted required artifacts in {output}.")
-    metrics = json.loads(metrics_path.read_text())
+    metrics: _WorkerMetrics = json.loads(metrics_path.read_text())
     expected = {
         "scenario": scenario,
         "revision": identity["revision"],
@@ -321,7 +562,7 @@ def _run_worker(
 
 
 def _validate_worker_environment(
-    *, metrics: Mapping[str, Any], expected_cache_dir: Path
+    *, metrics: _WorkerMetrics, expected_cache_dir: Path
 ) -> None:
     environment = metrics["environment"]
     cache = environment.get("JAX_COMPILATION_CACHE_DIR")
@@ -343,7 +584,7 @@ def _validate_worker_environment(
         raise RuntimeError("Worker must disable GPU autotuning exactly once.")
 
 
-def _validate_compiled_evidence(cores: Sequence[Mapping[str, Any]]) -> None:
+def _validate_compiled_evidence(cores: Sequence[_CompiledCore]) -> None:
     if not cores:
         raise RuntimeError("Worker returned no compiled-core/HLO evidence.")
     for core in cores:
@@ -363,8 +604,8 @@ def _validate_compiled_evidence(cores: Sequence[Mapping[str, Any]]) -> None:
 
 def _validate_device_evidence(
     *,
-    devices: Sequence[Mapping[str, Any]],
-    device_memory: Sequence[Mapping[str, Any]],
+    devices: Sequence[_Device],
+    device_memory: Sequence[_DeviceMemory],
 ) -> None:
     if len(devices) != len(device_memory):
         raise RuntimeError("Device-memory evidence does not cover every device.")
@@ -397,7 +638,7 @@ def _validate_device_evidence(
             raise RuntimeError(f"Unsupported measurement platform: {platform!r}.")
 
 
-def _validate_required_evidence(metrics: Mapping[str, Any]) -> None:
+def _validate_required_evidence(metrics: _WorkerMetrics) -> None:
     _validate_compiled_evidence(metrics["compiled_cores"])
     hwm = metrics["memory"]["through_warm"]["hwm_bytes"]
     if hwm is None or hwm <= 0:
@@ -408,14 +649,14 @@ def _validate_required_evidence(metrics: Mapping[str, Any]) -> None:
     )
 
 
-def _route_identity(routes: Mapping[str, Any]) -> dict[str, Any]:
+def _route_identity(routes: _RouteMetadata) -> dict[str, JSONValue]:
     expected_route_keys = {"kernels", "streamed_kernel_count", *_ROUTE_TOPOLOGY_FIELDS}
     if set(routes) != expected_route_keys:
         raise RuntimeError(
             "Unexpected route-evidence schema: "
             f"{sorted(set(routes) ^ expected_route_keys)!r}."
         )
-    kernels = []
+    kernels: list[JSONValue] = []
     expected_kernel_keys = set(_KERNEL_ROUTE_FIELDS)
     for row in routes["kernels"]:
         if set(row) != expected_kernel_keys:
@@ -445,7 +686,7 @@ def _route_identity(routes: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _behavioral_environment(environment: Mapping[str, Any]) -> dict[str, Any]:
+def _behavioral_environment(environment: _Environment) -> dict[str, str | None]:
     expected = {"JAX_COMPILATION_CACHE_DIR", *_BEHAVIORAL_ENV_FIELDS}
     if set(environment) != expected:
         raise RuntimeError(
@@ -456,9 +697,9 @@ def _behavioral_environment(environment: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _compare_measurement_identity(
-    *, base: Mapping[str, Any], head: Mapping[str, Any]
-) -> dict[str, Any]:
-    base_identity = {
+    *, base: _WorkerMetrics, head: _WorkerMetrics
+) -> _MeasurementIdentity:
+    base_identity: _MeasurementIdentity = {
         "dimensions": base["dimensions"],
         "routes": _route_identity(base["routes"]),
         "runtime": {
@@ -474,7 +715,7 @@ def _compare_measurement_identity(
         "devices": base["devices"],
         "behavioral_environment": _behavioral_environment(base["environment"]),
     }
-    head_identity = {
+    head_identity: _MeasurementIdentity = {
         "dimensions": head["dimensions"],
         "routes": _route_identity(head["routes"]),
         "runtime": {
@@ -490,7 +731,14 @@ def _compare_measurement_identity(
         "devices": head["devices"],
         "behavioral_environment": _behavioral_environment(head["environment"]),
     }
-    for field, base_value in base_identity.items():
+    for field in (
+        "dimensions",
+        "routes",
+        "runtime",
+        "devices",
+        "behavioral_environment",
+    ):
+        base_value = base_identity[field]
         if base_value != head_identity[field]:
             raise RuntimeError(
                 f"Base/head measurement {field} differs: "
@@ -500,7 +748,7 @@ def _compare_measurement_identity(
 
 
 def _is_scenario_target(
-    *, scenario: str, row: Mapping[str, Any], routes: Mapping[str, Any]
+    *, scenario: str, row: _KernelRow, routes: _RouteMetadata
 ) -> bool:
     if scenario == "singleton-ev1":
         return bool(row["has_taste_shocks"])
@@ -528,7 +776,7 @@ def _is_scenario_target(
     raise RuntimeError(f"Unknown paired scenario: {scenario!r}.")
 
 
-def _validate_route_execution_metadata(*, side: str, routes: Mapping[str, Any]) -> None:
+def _validate_route_execution_metadata(*, side: str, routes: _RouteMetadata) -> None:
     """Require internally consistent execution evidence from one checkout."""
     observed = sum(bool(row["streamed"]) for row in routes["kernels"])
     if routes["streamed_kernel_count"] != observed:
@@ -551,7 +799,7 @@ def _validate_route_execution_metadata(*, side: str, routes: Mapping[str, Any]) 
 
 
 def _assert_scenario_execution_target(
-    *, scenario: str, base_routes: Mapping[str, Any], head_routes: Mapping[str, Any]
+    *, scenario: str, base_routes: _RouteMetadata, head_routes: _RouteMetadata
 ) -> None:
     for side, routes in (("base", base_routes), ("head", head_routes)):
         _validate_route_execution_metadata(side=side, routes=routes)
@@ -590,7 +838,7 @@ def _assert_scenario_execution_target(
         )
 
 
-def _float_tolerances(dtype: Any) -> tuple[float, float]:
+def _float_tolerances(dtype: np.dtype[np.float32 | np.float64]) -> tuple[float, float]:
     import numpy as np
 
     if dtype == np.dtype("float32"):
@@ -601,25 +849,32 @@ def _float_tolerances(dtype: Any) -> tuple[float, float]:
     raise TypeError(msg)
 
 
-def _max_ulp_distance(*, expected: Any, actual: Any, finite: Any) -> int:
+def _max_ulp_distance(
+    *,
+    expected: NDArray[np.float32 | np.float64],
+    actual: NDArray[np.float32 | np.float64],
+    finite: NDArray[np.bool_],
+) -> int:
     """Return exact ordered-bit distance over finite float32/float64 leaves."""
     import numpy as np
 
     if expected.dtype == np.dtype("float32"):
-        unsigned_dtype = np.dtype("uint32")
+        unsigned_dtype: np.dtype[np.uint32 | np.uint64] = np.dtypes.UInt32DType()
     elif expected.dtype == np.dtype("float64"):
-        unsigned_dtype = np.dtype("uint64")
+        unsigned_dtype = np.dtypes.UInt64DType()
     else:
         msg = f"Unsupported floating dtype in ULP metric: {expected.dtype}."
         raise TypeError(msg)
     if not np.any(finite):
         return 0
 
-    def ordered_bits(values: Any) -> Any:
+    def ordered_bits(
+        values: NDArray[np.float32 | np.float64],
+    ) -> NDArray[np.uint32 | np.uint64]:
         # Signed zero is one numeric value. Map the remaining IEEE sign-magnitude
         # encodings into monotonically ordered unsigned integers.
         normalized = np.where(values == 0, values.dtype.type(0), values)
-        bits = normalized.view(unsigned_dtype)
+        bits: NDArray[np.uint32 | np.uint64] = normalized.view(unsigned_dtype)
         sign = np.array(1 << (8 * unsigned_dtype.itemsize - 1), dtype=unsigned_dtype)
         return np.where(bits & sign, np.bitwise_not(bits), bits | sign)
 
@@ -631,10 +886,10 @@ def _max_ulp_distance(*, expected: Any, actual: Any, finite: Any) -> int:
     return int(distances.max(initial=0))
 
 
-def _compare_value_artifacts(*, base_path: Path, head_path: Path) -> dict[str, Any]:
+def _compare_value_artifacts(*, base_path: Path, head_path: Path) -> _ValueParity:
     import numpy as np
 
-    records: list[dict[str, Any]] = []
+    records: list[_ValueParityRow] = []
     with (
         np.load(base_path, allow_pickle=False) as base,
         np.load(head_path, allow_pickle=False) as head,
@@ -709,8 +964,8 @@ def _compare_value_artifacts(*, base_path: Path, head_path: Path) -> dict[str, A
 
 
 def _compare_array_manifests(
-    *, base: Sequence[Mapping[str, Any]], head: Sequence[Mapping[str, Any]]
-) -> dict[str, Any]:
+    *, base: Sequence[_ArrayManifest], head: Sequence[_ArrayManifest]
+) -> _ManifestParity:
     base_by_key = {row["key"]: row for row in base}
     head_by_key = {row["key"]: row for row in head}
     if len(base_by_key) != len(base) or len(head_by_key) != len(head):
@@ -721,7 +976,7 @@ def _compare_array_manifests(
             f"base-only={sorted(base_by_key.keys() - head_by_key.keys())!r}, "
             f"head-only={sorted(head_by_key.keys() - base_by_key.keys())!r}."
         )
-    records = []
+    records: list[_ArrayManifest] = []
     for key in sorted(base_by_key):
         expected = base_by_key[key]
         actual = head_by_key[key]
@@ -741,26 +996,26 @@ def _compare_array_manifests(
     return {"all_passed": True, "arrays": records}
 
 
-def _compiler_peak(*, metrics: Mapping[str, Any], field: str) -> int | None:
+def _compiler_peak(*, metrics: _WorkerMetrics, field: str) -> int | None:
     values = [
-        core["compiler_memory"][field]
+        value
         for core in metrics["compiled_cores"]
-        if core["compiler_memory"] is not None
-        and core["compiler_memory"].get(field) is not None
+        if (memory := core["compiler_memory"]) is not None
+        and (value := memory.get(field)) is not None
     ]
     return max(values) if values else None
 
 
-def _device_peak(metrics: Mapping[str, Any]) -> int | None:
+def _device_peak(metrics: _WorkerMetrics) -> int | None:
     values = [
-        row["peak_bytes_in_use"]
+        peak
         for row in metrics["memory"]["device"]
-        if row["peak_bytes_in_use"] is not None
+        if (peak := row["peak_bytes_in_use"]) is not None
     ]
     return max(values) if values else None
 
 
-def _metric_summary(metrics: Mapping[str, Any]) -> dict[str, Any]:
+def _metric_summary(metrics: _WorkerMetrics) -> _MetricSummary:
     compile_calls = metrics["timing_ns"]["aot_compile_calls"]
     if len(compile_calls) != 4:
         raise RuntimeError(
@@ -802,9 +1057,7 @@ def _ratio(*, head: int | None, base: int | None) -> float | None:
     return head / base
 
 
-def _pair_summary(
-    *, base: Mapping[str, Any], head: Mapping[str, Any]
-) -> dict[str, Any]:
+def _pair_summary(*, base: _MetricSummary, head: _MetricSummary) -> _PairSummary:
     if base["streamed_kernel_count"] != 0:
         raise RuntimeError(
             "The F base unexpectedly contains streamed GridSearch kernels."
@@ -821,8 +1074,8 @@ def _pair_summary(
         "hlo_instruction_count",
     )
     return {
-        "base": dict(base),
-        "head": dict(head),
+        "base": {**base},
+        "head": {**head},
         "head_over_base": {key: _ratio(head=head[key], base=base[key]) for key in keys},
     }
 
@@ -869,8 +1122,8 @@ def main(argv: list[str] | None = None) -> None:
             )
     output.mkdir(parents=True)
 
-    raw: dict[tuple[str, int, str], dict[str, Any]] = {}
-    pairs: list[dict[str, Any]] = []
+    raw: dict[tuple[str, int, str], _WorkerMetrics] = {}
+    pairs: list[_PairRecord] = []
     identities = {"base": base, "head": head}
     selected_scenarios = tuple(args.scenarios or SCENARIOS)
     for repeat in range(args.repeats):

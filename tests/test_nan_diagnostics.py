@@ -1,13 +1,18 @@
 """Tests for lazy NaN diagnostic enrichment in validate_V."""
 
+from collections.abc import Mapping
 from types import MappingProxyType
+from typing import NoReturn, cast
 
 import jax.numpy as jnp
 import pytest
+from typing_extensions import TypedDict
 
 from _lcm.engine import StateActionSpace
 from _lcm.grids import LinSpacedGrid
-from _lcm.solution.validate_V import validate_V
+from _lcm.solution.validate_V import _Reductions, validate_V
+from _lcm.typing import JSONValue
+from _lcm.utils.logging import LogLevel
 from lcm import Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
@@ -18,6 +23,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParams,
 )
 
 
@@ -49,7 +55,7 @@ def test_diagnostic_arrays_have_state_action_grid_shape():
     n_wealth, n_consumption = 3, 2
     sas = _make_state_action_space(n_wealth=n_wealth, n_consumption=n_consumption)
 
-    def mock_compute_intermediates(**kwargs: jnp.ndarray) -> dict:  # noqa: ARG001
+    def mock_compute_intermediates(**kwargs: jnp.ndarray) -> _Reductions:  # noqa: ARG001
         # Return the fused-reduction dict the real closure produces after
         # productmap-wrapping + on-device reduction.
         return {
@@ -84,15 +90,15 @@ def test_diagnostic_arrays_have_state_action_grid_shape():
 
     exc = exc_info.value
     assert exc.diagnostics is not None
-    diagnostics: dict = exc.diagnostics  # ty: ignore[invalid-assignment]
-    u_by_dim = diagnostics["U_nan_fraction"]["by_dim"]
+    diagnostics: Mapping[str, JSONValue] = exc.diagnostics
+    u_by_dim = cast("_MetricSummary", diagnostics["U_nan_fraction"])["by_dim"]
     assert "wealth" in u_by_dim, f"Expected 'wealth' in by_dim, got: {u_by_dim}"
     assert "consumption" in u_by_dim, (
         f"Expected 'consumption' in by_dim, got: {u_by_dim}"
     )
 
 
-def _build_nan_model() -> tuple[Model, dict]:
+def _build_nan_model() -> tuple[Model, UserParams]:
     """Build a minimal model that produces NaN in V during backward induction."""
 
     @categorical(ordered=False)
@@ -142,12 +148,10 @@ def _build_nan_model() -> tuple[Model, dict]:
     return model, params
 
 
-def _build_always_nan_model() -> tuple[Model, dict]:
+def _build_always_nan_model() -> tuple[Model, UserParams]:
     """Build a model whose utility is unconditionally NaN.
 
-    Used to test that the NaN/Inf validation in `simulate` honours `log_level`.
-    At `log_level="debug"` the NaN-bearing V_arr must flow through without
-    raising; at `"warning"`/`"debug"` validation fires.
+    Used to test checked and explicitly unchecked simulation independently of output.
     """
 
     @categorical(ordered=False)
@@ -192,13 +196,30 @@ def _build_always_nan_model() -> tuple[Model, dict]:
     return model, params
 
 
-def test_simulate_log_level_warning_does_not_raise_on_nan_V_arr() -> None:
-    """`simulate(log_level="warning")` warns rather than raising on NaN V_arr.
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_simulate_runtime_checks_reject_nan_at_every_log_level(
+    log_level: LogLevel,
+) -> None:
+    """Automatic solve rejects NaN independently of diagnostic verbosity."""
+    model, params = _build_always_nan_model()
+    initial_conditions = {
+        "wealth": jnp.array([1.5]),
+        "age": jnp.array([0.0]),
+        "regime_id": jnp.zeros(1, dtype=jnp.int32),
+    }
+    with pytest.raises(InvalidValueFunctionError, match="NaN"):
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            log_level=log_level,
+        )
 
-    Mirrors `solve(log_level="warning")`: NaN is reported as a warning and
-    the run completes, so the caller gets back a (NaN-bearing) result rather
-    than an exception. Only `log_level="debug"` raises.
-    """
+
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_simulate_runtime_checks_false_permits_nan_at_every_log_level(
+    log_level: LogLevel,
+) -> None:
+    """Explicitly disabled checks permit NaN independently of output level."""
     model, params = _build_always_nan_model()
     initial_conditions = {
         "wealth": jnp.array([1.5]),
@@ -208,33 +229,16 @@ def test_simulate_log_level_warning_does_not_raise_on_nan_V_arr() -> None:
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        log_level="warning",
+        log_level=log_level,
+        runtime_checks=False,
     )
     assert set(result._raw_results) == {"non_terminal", "terminal"}
 
 
-def test_simulate_log_level_off_skips_nan_validation() -> None:
-    """`simulate(log_level="off")` runs to completion on a NaN-bearing V_arr.
-
-    Mirrors `solve(log_level="off")`: at `"off"` no NaN check fires, so the
-    NaN flows through to the result without raising. The caller has opted
-    out of validation and is responsible for handling NaN downstream.
-    """
-    model, params = _build_always_nan_model()
-    initial_conditions = {
-        "wealth": jnp.array([1.5]),
-        "age": jnp.array([0.0]),
-        "regime_id": jnp.zeros(1, dtype=jnp.int32),
-    }
-    result = model.simulate(
-        params=params,
-        initial_conditions=initial_conditions,
-        log_level="off",
-    )
-    assert set(result._raw_results) == {"non_terminal", "terminal"}
-
-
-def test_nan_diagnostics_end_to_end() -> None:
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_nan_diagnostics_end_to_end(
+    *, log_level: LogLevel, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Real model: `model.solve()` attaches a diagnostics dict when V has NaN.
 
     This exercises the full build → productmap → reduction → summarize
@@ -245,7 +249,12 @@ def test_nan_diagnostics_end_to_end() -> None:
     model, params = _build_nan_model()
 
     with pytest.raises(InvalidValueFunctionError) as exc_info:
-        model.solve(log_level="debug", params=params)
+        model.solve(log_level=log_level, params=params)
+
+    if log_level == "off":
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
 
     exc = exc_info.value
     assert exc.diagnostics is not None, (
@@ -253,9 +262,9 @@ def test_nan_diagnostics_end_to_end() -> None:
         "Likely cause: compute_intermediates closure returns a tuple but "
         "_summarize_diagnostics expects a dict — see _wrap_with_reduction."
     )
-    diagnostics: dict = exc.diagnostics  # ty: ignore[invalid-assignment]
+    diagnostics: Mapping[str, JSONValue] = exc.diagnostics
     assert "U_nan_fraction" in diagnostics
-    by_dim = diagnostics["U_nan_fraction"]["by_dim"]
+    by_dim = cast("_MetricSummary", diagnostics["U_nan_fraction"])["by_dim"]
     assert "wealth" in by_dim
     assert "consumption" in by_dim
 
@@ -264,7 +273,7 @@ def test_diagnostic_failure_preserves_original_error():
     """If diagnostics crash, the original InvalidValueFunctionError survives."""
     sas = _make_state_action_space()
 
-    def broken_compute_intermediates(**kwargs: jnp.ndarray) -> None:  # noqa: ARG001
+    def broken_compute_intermediates(**kwargs: jnp.ndarray) -> NoReturn:  # noqa: ARG001
         msg = "intentional diagnostic failure"
         raise RuntimeError(msg)
 
@@ -281,3 +290,8 @@ def test_diagnostic_failure_preserves_original_error():
             ),
             flat_params=MappingProxyType({}),
         )
+
+
+class _MetricSummary(TypedDict):
+    overall: float
+    by_dim: dict[str, list[float]]

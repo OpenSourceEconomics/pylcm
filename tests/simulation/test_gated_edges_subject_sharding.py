@@ -16,7 +16,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -24,7 +24,10 @@ import numpy as np
 import pytest
 
 import tests.conftest
+from lcm import Model
 from lcm.execution import ExecutionConfig
+from lcm.result import SimulationResult
+from lcm.typing import UserInitialConditions
 
 _REPO_ROOT = Path(__file__).parent.parent.parent
 
@@ -35,7 +38,14 @@ _N_DEVICES = 4
 _N_SUBJECTS = 8
 
 
-def _initial_conditions(*, model: Any) -> dict[str, Any]:
+class _GatedReport(TypedDict):
+    refusal: str
+    exact_mismatches: list[str]
+    value_mismatches: list[str]
+    n_subjects: int | None
+
+
+def _initial_conditions(*, model: Model) -> UserInitialConditions:
     """Seed both legs of the edge across the gated model's wage grid."""
     roles = model.stakeholder_names_to_ids
     return {
@@ -50,7 +60,7 @@ def _initial_conditions(*, model: Any) -> dict[str, Any]:
     }
 
 
-def _simulated(*, execution_config: ExecutionConfig | None) -> Any:
+def _simulated(*, execution_config: ExecutionConfig | None) -> SimulationResult:
     """Solve and simulate the collective dissolution model on one placement."""
     from benchmarks.asv._simulation_witnesses import dissolution  # noqa: PLC0415
 
@@ -64,7 +74,7 @@ def _simulated(*, execution_config: ExecutionConfig | None) -> Any:
     )
 
 
-def report_subject_sharded_gated_edges(*, decimal: int) -> dict[str, Any]:
+def report_subject_sharded_gated_edges(*, decimal: int) -> _GatedReport:
     """Report how the subject-sharded gated simulation differs from one device.
 
     Args:
@@ -125,7 +135,7 @@ def report_subject_sharded_gated_edges(*, decimal: int) -> dict[str, Any]:
     }
 
 
-def _run_in_four_device_process(*, entry_point: str) -> dict[str, Any]:
+def _run_in_four_device_process(*, entry_point: str) -> _GatedReport:
     """Run one module-level report function on four CPU devices and return it.
 
     The child carries this run's float policy — `jax_enable_x64`, the matmul
@@ -166,34 +176,34 @@ def _run_in_four_device_process(*, entry_point: str) -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def sharded_gated_edges() -> dict[str, Any]:
+def sharded_gated_edges() -> _GatedReport:
     """Return the gated subject-sharding report from one four-device process."""
     return _run_in_four_device_process(entry_point="report_subject_sharded_gated_edges")
 
 
 def test_a_gated_edge_model_accepts_subject_sharding(
-    sharded_gated_edges: dict[str, Any],
+    sharded_gated_edges: _GatedReport,
 ) -> None:
     """The gate fold and gate route both declare what subject sharding needs."""
     assert sharded_gated_edges["refusal"] == ""
 
 
 def test_subject_sharded_gated_routing_keeps_every_subject(
-    sharded_gated_edges: dict[str, Any],
+    sharded_gated_edges: _GatedReport,
 ) -> None:
     """Padding the population over the devices publishes the seeded rows only."""
     assert sharded_gated_edges["n_subjects"] == _N_SUBJECTS
 
 
 def test_subject_sharded_gated_routing_takes_the_same_branches(
-    sharded_gated_edges: dict[str, Any],
+    sharded_gated_edges: _GatedReport,
 ) -> None:
     """Regime ids, roles and every other integer leaf are branch decisions."""
     assert sharded_gated_edges["exact_mismatches"] == []
 
 
 def test_subject_sharded_gated_simulation_publishes_the_same_values(
-    sharded_gated_edges: dict[str, Any],
+    sharded_gated_edges: _GatedReport,
 ) -> None:
     """Partitioning subjects moves no published float beyond the precision."""
     assert sharded_gated_edges["value_mismatches"] == []

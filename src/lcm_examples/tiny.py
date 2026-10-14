@@ -27,6 +27,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 
 
@@ -174,7 +175,7 @@ def get_params(
     *,
     n_periods: int = 3,
     step: str = "20Y",
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get default parameters for the tiny model.
 
     Args:

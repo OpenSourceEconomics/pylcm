@@ -5,7 +5,9 @@ every reachable target into one function of states, actions and params.
 `get_Q_and_F_terminal`, `get_Q_and_F_collective` and the terminal collective
 variant are the specializations the regimes that need them get instead, and
 `get_compute_intermediates` publishes the same chain's intermediates for the
-NaN diagnostics.
+NaN diagnostics. `get_Q_and_F_parts` publishes, from one evaluation of a
+singleton kernel, the flow utility, feasibility, certainty-equivalent
+continuation and action value that kernel returns `Q` and `F` from.
 """
 
 import dataclasses
@@ -14,13 +16,14 @@ import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, cast, no_type_check
+from typing import NamedTuple, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
 from dags import (
     concatenate_functions,
     get_annotations,
+    with_signature,
 )
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
@@ -34,6 +37,10 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
+)
+from _lcm.regime_building.shock_average import (
+    get_shock_average_reader,
+    plan_shock_average,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
@@ -50,19 +57,24 @@ from _lcm.transition_plans import (
     TargetTransitionPlans,
 )
 from _lcm.typing import (
+    ArrayTree,
     ConstraintFunction,
     ConstraintFunctionsMapping,
     EconFunction,
+    EconFunctionArg,
     EconFunctionsMapping,
-    NextStateSimulationFunction,
+    NextStateSolutionFunction,
+    ParamsLeaf,
+    QAndFArg,
     QAndFFunction,
+    QAndFKwargs,
+    QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
     TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
-    _ParamsLeaf,
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
@@ -72,13 +84,49 @@ from _lcm.zero_safe import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
+    ActionName,
     BoolND,
     ContinuousState,
     DiscreteState,
     Float1D,
     FloatND,
+    Int1D,
     IntND,
+    ReferenceName,
+    UserFunction,
 )
+
+# What a diagnostic intermediates closure returns at a cell: utility,
+# feasibility (a Python `bool` for a regime without constraints), the
+# continuation `CE`, `Q`, and the active regimes' transition probabilities.
+type Intermediates = tuple[
+    FloatND, BoolND | bool, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
+]
+
+# What the utilities-and-feasibility DAG returns at a cell: each felicity, then
+# the feasibility mask (a Python `bool` for a regime without constraints).
+type UtilitiesAndF = tuple[FloatND | IntND | BoolND | bool, ...]
+
+
+class QAndFParts(NamedTuple):
+    """One evaluation of a singleton action-value kernel, at one cell.
+
+    `Q` is `W(utility=U, CE=CE, **W_params)`, the regime's Koopmans aggregator
+    applied to the other two values. A terminal regime has no continuation, so
+    its `CE` is zero and its `Q` is `U`.
+    """
+
+    U: FloatND
+    """Flow utility, the regime's `utility` target."""
+
+    F: BoolND
+    """Feasibility of the cell."""
+
+    CE: FloatND
+    """Certainty-equivalent continuation, undiscounted: the `CE` argument of `W`."""
+
+    Q: FloatND
+    """Action value."""
 
 
 def _compare_swap_values(
@@ -262,7 +310,7 @@ def _normalized_regime_mixture(
 
 def get_Q_and_F(
     *,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
@@ -356,6 +404,7 @@ def get_Q_and_F(
     # reduces to that one sub-DAG.
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
     compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
+        flat_param_names=flat_param_names,
         # `continuation_pool`, NOT `functions`: the continuation is priced under
         # the perceived (solve-phase) law, helpers included. In the solve phase the
         # two are the same object; only simulate passes them apart.
@@ -397,7 +446,7 @@ def get_Q_and_F(
 
 
 def _continuation_reads(
-    *, deps: tuple[Callable[..., Any], ...], arg_names: frozenset[str]
+    *, deps: tuple[Callable[..., ArrayTree], ...], arg_names: frozenset[ReferenceName]
 ) -> frozenset[str] | None:
     """Every argument `compute_CE` reads from the cell, or `None` if unknowable.
 
@@ -420,19 +469,42 @@ def _continuation_reads(
     return frozenset(parameter.name for parameter in parameters) | arg_names
 
 
+def get_Q_and_F_parts(*, Q_and_F: QAndFFunction) -> Callable[..., QAndFParts]:
+    """Return the parts form of a singleton `Q_and_F` kernel.
+
+    The result takes the kernel's own arguments and returns `QAndFParts` from
+    the same evaluation the kernel returns `(Q, F)` from, so its `Q` and `F` are
+    the kernel's.
+
+    Args:
+        Q_and_F: A kernel built by `get_Q_and_F` or `get_Q_and_F_terminal`.
+
+    Returns:
+        The kernel's `parts` method, with the kernel's published signature.
+
+    """
+    kernel = cast("_QAndF | _TerminalQAndF", Q_and_F)
+    return with_signature(
+        kernel.parts,
+        args=list(inspect.signature(kernel).parameters),
+        return_annotation="QAndFParts",
+        enforce=False,
+    )
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _QAndF:
     """State-action value and feasibility of a non-terminal period at one cell."""
 
-    U_and_F: Callable[..., tuple[Any, ...]]
+    U_and_F: Callable[..., UtilitiesAndF]
     """Utility and feasibility at the cell."""
     compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
     """The continuation aggregator."""
     koopmans_aggregator: EconFunction
     """The regime's Bellman aggregator `W`."""
-    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    build_W_kwargs: Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]
     """Assembles `W`'s further arguments from the cell."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
     continuation_reads: frozenset[str] | None
     """Every argument the continuation reads from the cell, or `None` if unknown.
@@ -456,7 +528,7 @@ class _QAndF:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: _ParamsLeaf,
+        **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
@@ -467,6 +539,29 @@ class _QAndF:
 
         Returns:
             A tuple containing the arrays with state-action values and feasibilities.
+
+        """
+        parts = self.parts(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
+        return parts.Q, parts.F
+
+    @no_type_check
+    def parts(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: QAndFArg,
+    ) -> QAndFParts:
+        """Calculate utility, feasibility, continuation and action value at a cell.
+
+        Args:
+            next_regime_to_V_arr: The next period's value function array.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            The flow utility, feasibility, certainty-equivalent continuation and
+            state-action value.
 
         """
         # F_arr is built here, before and independently of Q (it never reads
@@ -488,13 +583,18 @@ class _QAndF:
         )
 
         # Handle cases when there is only one state.
-        # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
-        return jnp.asarray(Q_arr), jnp.asarray(F_arr)
+        # In that case, the parts are scalars, but we require arrays as output.
+        return QAndFParts(
+            U=jnp.asarray(U_arr),
+            F=jnp.asarray(F_arr),
+            CE=jnp.asarray(CE),
+            Q=jnp.asarray(Q_arr),
+        )
 
 
 def get_compute_intermediates(
     *,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
@@ -509,7 +609,7 @@ def get_compute_intermediates(
     gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
         {}
     ),
-) -> Callable:
+) -> Callable[..., Intermediates]:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
     Mirrors `get_Q_and_F` but returns all intermediates instead of just
@@ -555,6 +655,7 @@ def get_compute_intermediates(
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
     compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
+        flat_param_names=flat_param_names,
         functions=functions,
         period_targets=period_targets,
         scalar_targets=scalar_targets,
@@ -593,15 +694,15 @@ def get_compute_intermediates(
 class _ComputeIntermediates:
     """Every `Q_and_F` intermediate of a non-terminal period at one cell."""
 
-    U_and_F: Callable[..., tuple[Any, ...]]
+    U_and_F: Callable[..., UtilitiesAndF]
     """Utility and feasibility at the cell."""
     compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
     """The continuation aggregator."""
     koopmans_aggregator: EconFunction
     """The regime's Bellman aggregator `W`."""
-    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    build_W_kwargs: Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]
     """Assembles `W`'s further arguments from the cell."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -619,10 +720,8 @@ class _ComputeIntermediates:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: _ParamsLeaf,
-    ) -> tuple[
-        FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
-    ]:
+        **states_actions_params: ParamsLeaf,
+    ) -> Intermediates:
         """Compute all Q_and_F intermediates."""
         U_arr, F_arr = self.U_and_F(**states_actions_params)
         CE, active_regime_probs = self.compute_CE(
@@ -642,7 +741,7 @@ class _ComputeIntermediates:
 
 def get_Q_and_F_terminal(
     *,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
 ) -> QAndFFunction:
@@ -678,9 +777,9 @@ def get_Q_and_F_terminal(
 class _TerminalQAndF:
     """State-action value and feasibility of a terminal period at one cell."""
 
-    U_and_F: Callable[..., tuple[Any, ...]]
+    U_and_F: Callable[..., UtilitiesAndF]
     """Utility and feasibility at the cell."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -694,8 +793,8 @@ class _TerminalQAndF:
     @no_type_check
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
-        **states_actions_params: _ParamsLeaf,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
 
@@ -710,13 +809,41 @@ class _TerminalQAndF:
             mask (F).
 
         """
+        parts = self.parts(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
+        return parts.Q, parts.F
+
+    @no_type_check
+    def parts(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
+        **states_actions_params: QAndFArg,
+    ) -> QAndFParts:
+        """Calculate utility, feasibility, continuation and action value at a cell.
+
+        A terminal period has no continuation: `CE` is zero and `Q` is `U`.
+
+        Args:
+            next_regime_to_V_arr: Unused in the terminal period.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
+
+        Returns:
+            The flow utility, feasibility, zero continuation and state-action
+            value.
+
+        """
         U_arr, F_arr = self.U_and_F(**states_actions_params)
-        return jnp.asarray(U_arr), jnp.asarray(F_arr)
+        U_arr = jnp.asarray(U_arr)
+        return QAndFParts(
+            U=U_arr, F=jnp.asarray(F_arr), CE=jnp.zeros_like(U_arr), Q=U_arr
+        )
 
 
 def get_Q_and_F_terminal_collective(
     *,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     stakeholders: tuple[str, ...],
@@ -806,11 +933,11 @@ def get_Q_and_F_terminal_collective(
 class _TerminalCollectiveQAndF:
     """Stacked per-stakeholder terminal payoffs and the shared feasibility at a cell."""
 
-    utilities_and_F: Callable[..., tuple[Any, ...]]
+    utilities_and_F: Callable[..., UtilitiesAndF]
     """Every stakeholder's utility and the shared feasibility at the cell."""
     value_constraint_machinery: _ValueConstraintMachinery
     """The value-constraint readers and evaluators."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -825,7 +952,7 @@ class _TerminalCollectiveQAndF:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
-        **states_actions_params: _ParamsLeaf,
+        **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Stacked per-stakeholder utilities and the shared feasibility mask.
 
@@ -936,7 +1063,7 @@ class ProjectedLandingReader:
     state_args: tuple[StateName, ...]
     """Target states the projection reads, supplied at the landing point."""
 
-    other_args: tuple[str, ...]
+    other_args: tuple[ReferenceName, ...]
     """The reader's remaining arguments — params and the same-period mappings."""
 
 
@@ -1001,8 +1128,11 @@ class ResolvedProjectedRegimeValue:
     regime: RegimeName
     """Name of the reference regime whose same-period V is read."""
 
-    projection: Mapping[StateName, Callable[..., Any]]
-    """Per-reference-state projection functions (user vocabulary, DAG-resolved)."""
+    projection: Mapping[StateName, UserFunction]
+    """Per-reference-state projection functions (user vocabulary, DAG-resolved).
+
+    This is the mapping the author declared on the reference.
+    """
 
     stakeholder_index: int | None
     """Index into the reference V's trailing stakeholder axis, or `None`."""
@@ -1018,7 +1148,7 @@ class ResolvedProjectedRegimeValue:
 
 def projection_func_or_fail(
     *, ref: ResolvedProjectedRegimeValue, state_name: StateName
-) -> Callable[..., Any]:
+) -> UserFunction:
     """Return the coordinate function a reference's projection gives one state.
 
     Model build rejects an incomplete projection before any kernel exists, so
@@ -1056,8 +1186,8 @@ def _build_same_period_ref_reader(
     deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction] = (
         MappingProxyType({})
     ),
-    v_mapping_arg: str = SAME_PERIOD_V_ARG,
-    params_mapping_arg: str = SAME_PERIOD_PARAMS_ARG,
+    v_mapping_arg: ReferenceName = SAME_PERIOD_V_ARG,
+    params_mapping_arg: ReferenceName = SAME_PERIOD_PARAMS_ARG,
 ) -> Callable[..., FloatND]:
     """Build the reader of one same-period reference value at a (state, action) cell.
 
@@ -1158,8 +1288,8 @@ def _build_same_period_ref_reader(
     return _SamePeriodReferenceReader(
         ref=ref,
         v_interpolation_info=v_interpolation_info,
-        projection_funcs=projection_funcs,
-        projection_args=projection_args,
+        projection_funcs=MappingProxyType(projection_funcs),
+        projection_args=MappingProxyType(projection_args),
         interpolator=interpolator,
         interpolator_extra_qnames=interpolator_extra_qnames,
         v_mapping_arg=v_mapping_arg,
@@ -1176,19 +1306,19 @@ class _SamePeriodReferenceReader:
     """The resolved reference declaration."""
     v_interpolation_info: VInterpolationInfo
     """V-interpolation info of the reference regime."""
-    projection_funcs: Mapping[StateName, Callable[..., FloatND]]
+    projection_funcs: MappingProxyType[StateName, Callable[..., FloatND]]
     """Per reference state, its projection concatenated with the DAG."""
-    projection_args: Mapping[StateName, tuple[str, ...]]
+    projection_args: MappingProxyType[StateName, tuple[str, ...]]
     """Per reference state, the arguments its projection reads."""
     interpolator: Callable[..., FloatND]
     """Interpolates the reference regime's V at the projected coordinates."""
-    interpolator_extra_qnames: Mapping[str, str]
+    interpolator_extra_qnames: MappingProxyType[str, str]
     """Mapping of the interpolator's runtime grid helpers to their reference qnames."""
-    v_mapping_arg: str
+    v_mapping_arg: ReferenceName
     """Keyword carrying the mapping of reference regimes to V arrays."""
-    params_mapping_arg: str
+    params_mapping_arg: ReferenceName
     """Keyword carrying the mapping of reference regimes to their params."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -1200,7 +1330,7 @@ class _SamePeriodReferenceReader:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+    def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
         regime_to_V = cast("Mapping[RegimeName, FloatND]", kwargs[self.v_mapping_arg])
         V_ref = regime_to_V[self.ref.regime]
         if self.ref.stakeholder_index is not None:
@@ -1226,7 +1356,7 @@ class _SamePeriodReferenceReader:
 
 def _reference_interpolator_param_qnames(
     *,
-    extra_args: set[str],
+    extra_args: frozenset[ReferenceName],
     ref: ResolvedProjectedRegimeValue,
 ) -> MappingProxyType[str, str]:
     """Map each extra interpolator input to its qname in the REFERENCE namespace.
@@ -1269,9 +1399,9 @@ def _reference_interpolator_param_qnames(
 def _lookup_reference_params(
     *,
     qnames: Mapping[str, str],
-    regime_to_params: object,
+    regime_to_params: Mapping[RegimeName, Mapping[str, ParamsLeaf]],
     ref_regime: RegimeName,
-) -> dict[str, _ParamsLeaf]:
+) -> MappingProxyType[str, ParamsLeaf]:
     """Resolve a reader's interpolation helpers in the REFERENCE regime's params.
 
     See `SAME_PERIOD_PARAMS_ARG`.
@@ -1281,20 +1411,17 @@ def _lookup_reference_params(
             do not carry a helper the reference regime's own grid needs.
     """
     if not qnames:
-        return {}
-    params_per_regime = cast(
-        "Mapping[RegimeName, Mapping[str, _ParamsLeaf]]", regime_to_params
-    )
-    if ref_regime not in params_per_regime:
+        return MappingProxyType({})
+    if ref_regime not in regime_to_params:
         msg = (
             f"Reading regime '{ref_regime}''s same-period V requires that "
             f"regime's own params (it declares runtime grid points), but "
             f"'{ref_regime}' is missing from '{SAME_PERIOD_PARAMS_ARG}' "
-            f"(present: {sorted(params_per_regime)})."
+            f"(present: {sorted(regime_to_params)})."
         )
         raise KeyError(msg)
-    ref_params = params_per_regime[ref_regime]
-    resolved: dict[str, _ParamsLeaf] = {}
+    ref_params = regime_to_params[ref_regime]
+    resolved: dict[str, ParamsLeaf] = {}
     for arg, qname in qnames.items():
         if qname not in ref_params:
             msg = (
@@ -1304,12 +1431,12 @@ def _lookup_reference_params(
             )
             raise KeyError(msg)
         resolved[arg] = ref_params[qname]
-    return resolved
+    return MappingProxyType(resolved)
 
 
 def get_Q_and_F_collective(
     *,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
@@ -1516,17 +1643,17 @@ def get_Q_and_F_collective(
 class _CollectiveQAndF:
     """Per-stakeholder state-action values and the shared feasibility at one cell."""
 
-    utilities_and_F: Callable[..., tuple[Any, ...]]
+    utilities_and_F: Callable[..., UtilitiesAndF]
     """Every stakeholder's utility and the shared feasibility at the cell."""
     compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
     """The continuation aggregator."""
     koopmans_aggregator: EconFunction
     """The regime's Bellman aggregator `W`."""
-    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    build_W_kwargs: Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]
     """Assembles `W`'s further arguments from the cell."""
     value_constraint_machinery: _ValueConstraintMachinery
     """The value-constraint readers and evaluators."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -1541,7 +1668,7 @@ class _CollectiveQAndF:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: _ParamsLeaf,
+        **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Per-stakeholder state-action values and the shared feasibility mask.
 
@@ -1607,19 +1734,19 @@ class _CollectiveQAndF:
 class _ValueConstraintMachinery:
     """Prebuilt value-constraint machinery closed over by a collective `Q_and_F`."""
 
-    reference_readers: Mapping[str, Callable[..., FloatND]]
+    reference_readers: MappingProxyType[str, Callable[..., FloatND]]
     """Per reference-value name, the same-period reference reader."""
 
-    reference_reader_args: Mapping[str, tuple[str, ...]]
+    reference_reader_args: MappingProxyType[ReferenceName, tuple[str, ...]]
     """Each reader's argument names (fetched off the cell kwargs)."""
 
-    evaluators: Mapping[str, Callable[..., BoolND]]
+    evaluators: MappingProxyType[str, Callable[..., BoolND]]
     """Per value-constraint name, the DAG-concatenated predicate."""
 
-    evaluator_args: Mapping[str, tuple[str, ...]]
+    evaluator_args: MappingProxyType[ReferenceName, tuple[str, ...]]
     """Each evaluator's argument names (split engine-supplied vs cell kwargs)."""
 
-    q_value_index: Mapping[str, int]
+    q_value_index: MappingProxyType[str, int]
     """`Q_<s>` argument name -> index on the trailing stakeholder axis."""
 
     engine_supplied_names: frozenset[str]
@@ -1666,7 +1793,7 @@ def _build_value_constraint_machinery(
 
     """
     reference_readers: dict[str, Callable[..., FloatND]] = {}
-    reference_reader_args: dict[str, tuple[str, ...]] = {}
+    reference_reader_args: dict[ReferenceName, tuple[str, ...]] = {}
     for ref_name, ref in same_period_refs.items():
         reader = _build_same_period_ref_reader(
             ref=ref,
@@ -1678,7 +1805,7 @@ def _build_value_constraint_machinery(
 
     dag_pool = {k: v for k, v in functions.items() if k != "H"}
     evaluators: dict[str, Callable[..., BoolND]] = {}
-    evaluator_args: dict[str, tuple[str, ...]] = {}
+    evaluator_args: dict[ReferenceName, tuple[str, ...]] = {}
     for constraint_name, predicate in value_constraints.items():
         combined = {**dag_pool, constraint_name: predicate}
         evaluator = concatenate_functions(
@@ -1706,9 +1833,7 @@ def _apply_value_constraints(
     machinery: _ValueConstraintMachinery,
     Q_arr: FloatND,
     F_arr: BoolND,
-    # `object` values: besides ordinary `_ParamsLeaf` leaves, the cell kwargs
-    # carry the same-period V mapping under `SAME_PERIOD_V_ARG`.
-    states_actions_params: Mapping[str, object],
+    states_actions_params: QAndFKwargs,
 ) -> BoolND:
     """AND every value constraint into the feasibility of one (state, action) cell.
 
@@ -1729,7 +1854,7 @@ def _apply_value_constraints(
         for ref_name, reader in machinery.reference_readers.items()
     }
     for constraint_name, evaluate in machinery.evaluators.items():
-        predicate_kwargs: dict[str, object] = {}
+        predicate_kwargs: dict[ReferenceName, QAndFArg] = {}
         for arg in machinery.evaluator_args[constraint_name]:
             if arg in machinery.q_value_index:
                 predicate_kwargs[arg] = Q_arr[..., machinery.q_value_index[arg]]
@@ -1790,7 +1915,7 @@ class _StakeholderSlicedInterpolator:
     """Name of the interpolator's value-array argument."""
     n_stakeholders: int
     """Number of stakeholder slices on the trailing axis."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -1802,7 +1927,7 @@ class _StakeholderSlicedInterpolator:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+    def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
         stacked_V_arr = cast("FloatND", kwargs.pop(self.V_arr_name))
         return jnp.stack(
             [
@@ -1819,8 +1944,8 @@ def evaluate_projected_readers(
     *,
     readers: tuple[ProjectedLandingReader, ...],
     landing_states: Mapping[StateName, ContinuousState | DiscreteState],
-    other_values: Mapping[str, object],
-) -> dict[str, FloatND]:
+    other_values: QAndFKwargs,
+) -> MappingProxyType[str, FloatND]:
     """Read each projected reference at one landing point.
 
     A gate reference and a leg fallback name another regime's value at
@@ -1842,13 +1967,15 @@ def evaluate_projected_readers(
         Dict of reader name to the value read at the landing.
 
     """
-    return {
-        reader.name: reader.reader(
-            **{arg: landing_states[arg] for arg in reader.state_args},
-            **{arg: other_values[arg] for arg in reader.other_args},
-        )
-        for reader in readers
-    }
+    return MappingProxyType(
+        {
+            reader.name: reader.reader(
+                **{arg: landing_states[arg] for arg in reader.state_args},
+                **{arg: other_values[arg] for arg in reader.other_args},
+            )
+            for reader in readers
+        }
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1870,7 +1997,7 @@ class _NodeDrawResolution:
     resolved_names: frozenset[TransitionFunctionName]
     """The `next_<state>` names `resolve_at_node` returns."""
 
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """Arguments `resolve_at_node` must be called with."""
 
 
@@ -2006,7 +2133,7 @@ def _get_pointwise_gated_interpolator(
         interpolator_args=interpolator_args,
         context_args=frozenset(context_args),
         reader_names=frozenset(reader_names),
-        landing_names=landing_names,
+        landing_names=MappingProxyType(landing_names),
         last_period=last_period,
         target_ages=target_ages,
         resolve_at_node=resolve_at_node,
@@ -2029,15 +2156,15 @@ class _PointwiseGatedInterpolator:
     """Length of the stacked leaf's trailing axis."""
     combine: Callable[..., FloatND]
     """The edge's gate, applied to the interpolated channels."""
-    combine_args: tuple[str, ...]
+    combine_args: tuple[ReferenceName, ...]
     """Every argument `combine` reads."""
-    interpolator_args: tuple[str, ...]
+    interpolator_args: tuple[ReferenceName, ...]
     """Every argument the base interpolator reads."""
-    context_args: frozenset[str]
+    context_args: frozenset[ReferenceName]
     """Engine context the gate or a reader names, bound to the target's period."""
     reader_names: frozenset[str]
     """Names of the projected readers."""
-    landing_names: Mapping[str, str]
+    landing_names: MappingProxyType[str, str]
     """Per state read at the landing, its `next_<state>` coordinate name."""
     last_period: int
     """The last model period, clipping the target period."""
@@ -2045,13 +2172,13 @@ class _PointwiseGatedInterpolator:
     """Age at each model period."""
     resolve_at_node: Callable[..., Mapping[str, FloatND]] | None
     """Resolves draw-dependent laws at the node, or `None`."""
-    resolver_arg_names: tuple[str, ...]
+    resolver_arg_names: tuple[ReferenceName, ...]
     """Arguments `resolve_at_node` is called with."""
     resolved_landing: frozenset[str]
     """Landing coordinates the node resolution produces."""
     projected_readers: tuple[ProjectedLandingReader, ...]
     """Gate references and leg fallbacks, evaluated at the landing."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -2063,7 +2190,7 @@ class _PointwiseGatedInterpolator:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+    def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
         stacked = cast("FloatND", kwargs[self.V_arr_name])
         interpolator_kwargs = {
             name: kwargs[name]
@@ -2184,9 +2311,10 @@ def _get_compute_CE(
     gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
         {}
     ),
+    flat_param_names: frozenset[QualifiedName] | None = None,
 ) -> tuple[
     Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]],
-    tuple[Callable[..., Any], ...],
+    tuple[Callable[..., ArrayTree], ...],
     frozenset[str],
 ]:
     """Build the closure that aggregates next period's value into `CE`.
@@ -2238,6 +2366,9 @@ def _get_compute_CE(
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation spec that target's leaf is read under. A target absent
             from it is read as an ordinary value function.
+        flat_param_names: The regime's flat parameter names, which an additive
+            shock may read besides its conditioners and the draws. `None` skips
+            that check.
 
     Returns:
         Tuple of the closure returning `(CE, active_regime_probs)`, the
@@ -2246,6 +2377,18 @@ def _get_compute_CE(
         formed inside the node axes.
 
     """
+    # The plain expectation reduces each target on its own; every other
+    # certainty equivalent needs the whole joint lottery in one piece, because
+    # its transform has to be applied before any expectation is taken.
+    # `LinearExpectation.aggregate` states the same quantity over the flattened
+    # lottery, but reducing per target is materially cheaper.
+    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
+    # different quantity, and the per-target route would silently discard the
+    # override.
+    reduces_per_target = (
+        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
+    )
+
     continuations = {
         target_regime_name: _build_target_continuation(
             target_regime_name=target_regime_name,
@@ -2256,10 +2399,9 @@ def _get_compute_CE(
             co_map_state_names=co_map_state_names,
             n_stakeholders=n_stakeholders,
             gated_continuation=gated_continuations.get(target_regime_name),
-            restore_original_layout=(
-                certainty_equivalent is None
-                or type(certainty_equivalent) is LinearExpectation
-            ),
+            restore_original_layout=reduces_per_target,
+            allow_shock_average=reduces_per_target,
+            allowed_shock_inputs=flat_param_names,
         )
         for target_regime_name in period_targets
     }
@@ -2292,17 +2434,6 @@ def _get_compute_CE(
         for target_regime_name, reader in gated_scalar_readers.items()
     }
 
-    # The plain expectation reduces each target on its own; every other
-    # certainty equivalent needs the whole joint lottery in one piece, because
-    # its transform has to be applied before any expectation is taken.
-    # `LinearExpectation.aggregate` states the same quantity over the flattened
-    # lottery, but reducing per target is materially cheaper.
-    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
-    # different quantity, and the per-target route would silently discard the
-    # override.
-    reduces_per_target = (
-        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
-    )
     ce_flat_param_names = (
         MappingProxyType({})
         if certainty_equivalent is None
@@ -2353,17 +2484,17 @@ class _ComputeCE:
     """Reachable targets carrying state, in graph order."""
     scalar_targets: tuple[RegimeName, ...]
     """Reachable targets carrying no state."""
-    continuations: Mapping[RegimeName, _TargetContinuation]
+    continuations: MappingProxyType[RegimeName, _TargetContinuation]
     """Per stateful target, everything built once for its continuation."""
-    gated_scalar_readers: Mapping[RegimeName, Callable[..., FloatND]]
+    gated_scalar_readers: MappingProxyType[RegimeName, Callable[..., FloatND]]
     """Per gated stateless target, the reader applying its gate to the channel stack."""
-    gated_scalar_arg_names: Mapping[RegimeName, tuple[str, ...]]
+    gated_scalar_arg_names: MappingProxyType[RegimeName, tuple[str, ...]]
     """Per gated stateless target, the reader's arguments besides the value array."""
     reduces_per_target: bool
     """Whether each target is reduced on its own (the plain expectation)."""
     certainty_equivalent: CertaintyEquivalent | None
     """The certainty equivalent, or `None` for the plain expectation."""
-    ce_flat_param_names: Mapping[str, str]
+    ce_flat_param_names: MappingProxyType[str, str]
     """The certainty equivalent's flat parameter names."""
     co_map_next_names: frozenset[str]
     """`next_`-prefixed names of the co-mapped states, which carry no coordinate."""
@@ -2376,7 +2507,7 @@ class _ComputeCE:
         *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         zero: FloatND,
-        states_actions_params: Mapping[str, Any],
+        states_actions_params: QAndFKwargs,
     ) -> tuple[FloatND, MappingProxyType[RegimeName, FloatND]]:
         """Aggregate the continuation lottery into `CE` at one state-action point.
 
@@ -2423,13 +2554,24 @@ class _ComputeCE:
         # a nonlinear continuation is the one that would be lost. Each consumer
         # below takes the pairs and reduces them where the spread costs
         # nothing.
+        target_marginals = {
+            target_regime_name: self.continuations[target_regime_name].lottery_weights(
+                **states_actions_params
+            )
+            for target_regime_name in self.period_targets
+        }
         target_lotteries = {
             target_regime_name: self.continuations[
                 target_regime_name
             ].joint_lottery_weights(
-                **self.continuations[target_regime_name].lottery_weights(
-                    **states_actions_params
-                )
+                **{
+                    name: weight
+                    for name, weight in target_marginals[target_regime_name].items()
+                    if name
+                    not in self.continuations[
+                        target_regime_name
+                    ].integrated_weight_names
+                }
             )
             for target_regime_name in self.period_targets
         }
@@ -2538,6 +2680,10 @@ class _ComputeCE:
                 **interpolator_coordinates,
                 next_V_arr=next_values,
                 **extra_kw,
+                **{
+                    name: target_marginals[target_regime_name][name]
+                    for name in continuation.integrated_weight_names
+                },
             )
 
             # A node the target's own lottery gives zero probability is never
@@ -2683,7 +2829,7 @@ class _ComputeCE:
 class _TargetContinuation:
     """Everything built once for one reachable target's continuation."""
 
-    next_states: NextStateSimulationFunction
+    next_states: NextStateSolutionFunction
     """Next-period states of this target at one state-action point."""
 
     lottery_weights: Callable[..., dict[str, FloatND | IntND]]
@@ -2699,7 +2845,7 @@ class _TargetContinuation:
     nodes inside the interpolator, so the surface carries genuine draws only.
     """
 
-    extra_param_names: frozenset[str]
+    extra_param_names: frozenset[QualifiedName | ActionName]
     """Arguments `next_V` needs beyond the next states and the value array.
 
     Examples are a grid whose points arrive at runtime (`wealth__points` for an
@@ -2726,6 +2872,15 @@ class _TargetContinuation:
 
     lottery_axis_names: tuple[TransitionFunctionName, ...] = ()
     """Stochastic `next_<state>` names, in the order their axes appear."""
+
+    integrated_weight_names: tuple[str, ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Weights of draws averaged into the value `next_V` reads, not mapped over.
+
+    An additive shock's transition-local draws carry no node axis: `next_V`
+    takes their marginal weights and averages over them itself.
+    """
 
     draw_dependent_names: frozenset[TransitionFunctionName] = frozenset()
     """Laws resolved on a node axis, one value per node of a sibling draw."""
@@ -2892,7 +3047,7 @@ def _get_interpolator_resolving_draws(
     functions: EconFunctionsMapping,
     stochastic_names: tuple[TransitionFunctionName, ...],
     draw_dependent_names: tuple[TransitionFunctionName, ...],
-    node_values: MappingProxyType[TransitionFunctionName, Any],
+    node_values: MappingProxyType[TransitionFunctionName, Int1D | Float1D],
     support_provider_names: MappingProxyType[TransitionFunctionName, str],
 ) -> _NodeDrawResolution:
     """Wrap the interpolator so draw-dependent laws resolve on the node axis.
@@ -2979,15 +3134,15 @@ class _ResolveAtNode:
 
     read_as_a_draw: tuple[TransitionFunctionName, ...]
     """Stochastic laws whose node value a dependent law reads."""
-    support_provider_names: Mapping[TransitionFunctionName, str]
+    support_provider_names: MappingProxyType[TransitionFunctionName, str]
     """Per joint lottery, the DAG node supplying its support."""
-    node_values: Mapping[TransitionFunctionName, Any]
+    node_values: MappingProxyType[TransitionFunctionName, Int1D | Float1D]
     """Per stochastic law, its nodes indexed by the draw's value."""
     resolve: Callable[..., Mapping[str, FloatND]]
     """The dependent laws, concatenated with the DAG."""
-    resolver_args: frozenset[str]
+    resolver_args: frozenset[ReferenceName]
     """Every argument `resolve` reads."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -2999,8 +3154,8 @@ class _ResolveAtNode:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Mapping[str, FloatND]:  # noqa: ANN401
-        drawn: dict[str, Any] = {}
+    def __call__(self, **kwargs: EconFunctionArg | ArrayTree) -> Mapping[str, FloatND]:
+        drawn: dict[TransitionFunctionName, ArrayTree] = {}
         for name in self.read_as_a_draw:
             index = kwargs[name].astype(jnp.int32)
             if name in self.support_provider_names:
@@ -3026,13 +3181,13 @@ class _InterpolateAtNode:
 
     resolve_at_this_node: _ResolveAtNode
     """The node resolution of the draw-dependent laws."""
-    resolver_arg_names: frozenset[str]
+    resolver_arg_names: frozenset[ReferenceName]
     """Arguments the node resolution is called with."""
     next_V_interpolator: Callable[..., FloatND]
     """The target's value-function interpolator."""
-    interpolator_args: frozenset[str]
+    interpolator_args: frozenset[ReferenceName]
     """Every argument the interpolator reads."""
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
     def __post_init__(self) -> None:
@@ -3044,7 +3199,7 @@ class _InterpolateAtNode:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> FloatND:  # noqa: ANN401
+    def __call__(self, **kwargs: EconFunctionArg | ArrayTree) -> FloatND:
         resolved = self.resolve_at_this_node(
             **{k: v for k, v in kwargs.items() if k in self.resolver_arg_names}
         )
@@ -3063,8 +3218,10 @@ def _build_target_continuation(
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
     n_stakeholders: int | None,
+    allow_shock_average: bool,
     gated_continuation: GatedContinuationSpec | None = None,
     restore_original_layout: bool = False,
+    allowed_shock_inputs: frozenset[str] | None = None,
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
@@ -3092,6 +3249,12 @@ def _build_target_continuation(
         gated_continuation: How to turn this target's stacked operand channels
             into one value per leg at the landing point, or `None` when the
             target's leaf is an ordinary value function.
+        allow_shock_average: Whether the source uses the exact linear expectation,
+            so a transition-local draw may be averaged before the certainty
+            equivalent is applied. Other specifications retain draw enumeration.
+        allowed_shock_inputs: Names an additive shock may read besides its
+            conditioners, the draws and the time coordinates: the source's
+            parameters. `None` skips that check.
 
     Returns:
         The target's continuation machinery.
@@ -3235,13 +3398,70 @@ def _build_target_continuation(
             dependencies_by_law=dependencies_by_law,
             v_interpolation_info=v_interpolation_info,
         )
+    # A law declared as an additive shock transition is read through the value
+    # averaged over the transition-local draws its shock reads: those draws leave
+    # the node axes, and the law leaves the laws resolved at a node.
+    shock_average = plan_shock_average(
+        target_regime_name=target_regime_name,
+        bundle=bundle,
+        functions=functions,
+        transition_plans=transition_plans,
+        v_interpolation_info=v_interpolation_info,
+        lottery_variables=lottery_variables,
+        dependencies_by_law=dependencies_by_law,
+        allowed_inputs=allowed_shock_inputs,
+        co_map_state_names=co_map_state_names,
+    )
+    # Validate the additive declaration even when its averaging route is ineligible.
+    if not allow_shock_average:
+        shock_average = None
+    averaged_inputs: tuple[str, ...] = ()
+    integrated_weight_names: tuple[str, ...] = ()
+    if shock_average is not None:
+        if (
+            gated_continuation is not None
+            or n_stakeholders is not None
+            or basis_variables
+            or original_layouts
+        ):
+            msg = (
+                f"The additive shock transition toward regime '{target_regime_name}' "
+                "cannot be averaged on a gated, collective, entered or factored "
+                "continuation; declare the law as a plain function instead."
+            )
+            raise ModelInitializationError(msg)
+        next_V_interpolator = get_shock_average_reader(
+            plan=shock_average,
+            functions=functions,
+            target_regime_name=target_regime_name,
+            transition_plans=transition_plans,
+            v_interpolation_info=v_interpolation_info,
+            co_map_state_names=co_map_state_names,
+            V_arr_name=V_arr_name,
+        )
+        node_variables = tuple(
+            name
+            for name in lottery_variables
+            if name not in shock_average.integrated_draws
+        )
+        dependent_coordinate_names = tuple(
+            name for name in dependencies_by_law if name != shock_average.law_name
+        )
+        averaged_inputs = (
+            shock_average.law.base,
+            *shock_average.function_conditioners,
+        )
+        integrated_weight_names = tuple(
+            transition_plans[target_regime_name].lotteries[name].weight_name
+            for name in shock_average.integrated_draws
+        )
     draw_resolution: _NodeDrawResolution | None = None
     if dependent_coordinate_names:
         draw_resolution = _get_interpolator_resolving_draws(
             next_V_interpolator=next_V_interpolator,
             bundle=bundle,
             functions=functions,
-            stochastic_names=lottery_variables,
+            stochastic_names=node_variables,
             draw_dependent_names=dependent_coordinate_names,
             node_values=node_values,
             support_provider_names=support_provider_names,
@@ -3281,13 +3501,24 @@ def _build_target_continuation(
         next_states=get_next_state_function_for_solution(
             functions=functions,
             transitions=bundle,
-            targets=[key for key in bundle if key not in dependencies_by_law],
+            targets=[
+                *(
+                    key
+                    for key in bundle
+                    if key not in dependencies_by_law
+                    and (
+                        shock_average is None
+                        or key not in shock_average.integrated_draws
+                    )
+                ),
+                *averaged_inputs,
+            ],
         ),
         lottery_weights=lottery_weights,
         joint_lottery_weights=_get_joint_weights_function(
-            regime_name=target_regime_name, variables=lottery_variables
+            regime_name=target_regime_name, variables=node_variables
         ),
-        lottery_axis_names=lottery_variables,
+        lottery_axis_names=node_variables,
         fixed_value_axes=fixed_value_axes,
         original_node_axes=original_axes if reader_does_arithmetic else (),
         original_value_axes=() if reader_does_arithmetic else original_axes,
@@ -3300,9 +3531,14 @@ def _build_target_continuation(
         # parameters of its own, and naming them here is how they reach the
         # kernel.
         extra_param_names=frozenset(
-            get_union_of_args([mapped_interpolator]) - set(bundle) - {V_arr_name}
+            get_union_of_args([mapped_interpolator])
+            - set(bundle)
+            - {V_arr_name}
+            - set(averaged_inputs)
+            - set(integrated_weight_names)
         ),
-        has_lottery_axes=bool(lottery_variables),
+        integrated_weight_names=integrated_weight_names,
+        has_lottery_axes=bool(node_variables),
         draw_dependent_names=frozenset(dependencies_by_law),
         co_mapped_landing_names=_co_mapped_landing_names(
             mapped_interpolator=mapped_interpolator,
@@ -3556,7 +3792,7 @@ def _as_lottery(
 
 def _get_arg_names_of_Q_and_F(
     *,
-    deps: list[Callable[..., Any]],
+    deps: list[Callable[..., ArrayTree]],
     include: frozenset[str] = frozenset(),
     exclude: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:
@@ -3613,7 +3849,7 @@ def _get_joint_weights_function(
 class _OuterJointWeights:
     """The outer product of one target's lottery marginals at one node."""
 
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """The `weight_<target>__next_<state>` names, one per lottery axis."""
 
     def __post_init__(self) -> None:
@@ -3644,7 +3880,7 @@ def _get_U_and_F(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     utility_names: tuple[str, ...] = ("utility",),
-) -> Callable[..., tuple[Any, ...]]:
+) -> Callable[..., UtilitiesAndF]:
     """Get the instantaneous utilities and the one feasibility function.
 
     Note:
@@ -3728,7 +3964,7 @@ def _aggregate_joint_lottery(
     lottery_weights: Sequence[FloatND],
     lottery_shifts: Sequence[IntND],
     ce_flat_param_names: Mapping[str, str],
-    states_actions_params: Mapping[str, Any],
+    states_actions_params: QAndFKwargs,
 ) -> FloatND:
     """Aggregate the continuation nodes of every retained target in one piece.
 
@@ -3835,8 +4071,8 @@ def _unit_regime_mass_or_nan(
 
 def _publish_signature(
     *,
-    target: object,
-    arg_names: tuple[str, ...],
+    target: Callable[..., ArrayTree],
+    arg_names: tuple[ReferenceName, ...],
     return_annotation: str | type[inspect.Signature.empty],
     name: str,
 ) -> None:

@@ -27,7 +27,7 @@ from _lcm.simulation.programs import (
     _SubjectTiled,
 )
 from _lcm.solution.contract import SolverBuildContext
-from _lcm.typing import ArgmaxQOverAFunction, QAndFFunction
+from _lcm.typing import ArgmaxQOverAFunction, PytreeValue, QAndFFunction
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm import (
     AgeGrid,
@@ -40,39 +40,41 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import ACTION_PRODUCT_AXIS
+
+# A regime whose solve kernel streams its action product, and one whose
+# collective kernel keeps the canonical dense reducer and whose routing a host
+# loop drives through the gated-edge folds.
 from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
     FloatND,
     IntND,
+    RegimeName,
     ScalarInt,
 )
 from tests.conftest import assert_agrees_to_ulp
 from tests.simulation._profile_comparison import assert_values_agree
 from tests.test_models import taste_shocks_toy
 
-# A regime whose solve kernel streams its action product, and one whose
-# collective kernel keeps the canonical dense reducer and whose routing a host
-# loop drives through the gated-edge folds.
 _STREAMED = ("multi_regime", "work")
 _COLLECTIVE = ("dissolution", "married")
 
 
-def _programs(*, witness: str, regime: str) -> SimulationPrograms:
+def _programs(*, witness: str, regime: RegimeName) -> SimulationPrograms:
     """Return one regime's declared program families."""
     model, _, _ = WITNESSES[witness]()
     return model._regimes[regime].simulation.programs
 
 
-def _program(*, witness: str, regime: str, family: str) -> CoreProgram:
+def _program(*, witness: str, regime: RegimeName, family: str) -> CoreProgram:
     """Return the first program of one regime's declared family."""
     family_programs = getattr(_programs(witness=witness, regime=regime), family)
     programs = cast("Mapping[int, CoreProgram]", family_programs)
     return programs[next(iter(programs))]
 
 
-def _cell_body(*, program: CoreProgram) -> Callable[..., object]:
+def _cell_body(*, program: CoreProgram) -> Callable[..., PytreeValue]:
     """Return the per-subject body one tiled program evaluates."""
     return cast("_SubjectTiled", program.function).func
 
@@ -161,7 +163,7 @@ def test_gate_blind_probability_program_declares_no_value_reads() -> None:
     [(*_STREAMED, "decision"), (*_COLLECTIVE, "decision")],
 )
 def test_value_read_occurrences_name_the_simulation_program(
-    *, witness: str, regime: str, family: str
+    *, witness: str, regime: RegimeName, family: str
 ) -> None:
     """Each read belongs to the actual forward core that consumes its argument."""
     programs = cast(
@@ -297,11 +299,11 @@ def _two_target_model() -> Model:
 
 
 def _cell_arguments(
-    *, model: Model, regime: str, period: int, body: Callable[..., object]
-) -> dict[str, object]:
+    *, model: Model, regime: RegimeName, period: int, body: Callable[..., PytreeValue]
+) -> dict[str, jax.Array]:
     """Bind one subject's cell of a simulation body, from the regime's grids."""
     grids = dict(model._regimes[regime].simulation.grids)
-    arguments: dict[str, object] = {}
+    arguments: dict[str, jax.Array] = {}
     for name in inspect.signature(body).parameters:
         if name == "period":
             arguments[name] = jnp.int32(period)
@@ -456,7 +458,7 @@ def test_a_body_with_no_per_subject_argument_is_called_once() -> None:
 
 def _toy_Q_and_F(
     *,
-    next_regime_to_V_arr: Mapping[str, FloatND],
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
     consumption: FloatND,
     work: FloatND,
     wealth: FloatND,

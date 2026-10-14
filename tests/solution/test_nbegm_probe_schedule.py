@@ -13,7 +13,7 @@ on every criterion evaluation. `probe_schedule` decides how often they run:
 """
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 import pytest
@@ -39,7 +39,9 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
+    UserParams,
 )
 from tests.test_models import nbegm_ride_discrete_toy as ride_toy
 
@@ -59,7 +61,7 @@ class _Kind:
 type ProbeSchedule = Literal["first_solve", "every_solve", "never"]
 
 
-def _run_probes(*, model: Model, params: dict | None = None) -> None:
+def _run_probes(*, model: Model, params: UserParams | None = None) -> None:
     """Run the solver's parameter-dependent preconditions, and nothing else."""
     check_solver_params(
         regimes=model._regimes,
@@ -129,17 +131,25 @@ def _single_power_model(*, probe_schedule: ProbeSchedule) -> Model:
     )
 
 
-def _single_power_params(*, model: Model, flow_offset: float) -> dict[str, Any]:
+type _FilledNode = float | dict[str, _FilledNode]
+type _TemplateNode = str | Mapping[str, _TemplateNode]
+
+
+def _single_power_params(*, model: Model, flow_offset: float) -> dict[str, _FilledNode]:
     """Fill the model's parameter template and set the flow offset."""
 
-    def _fill(node: object) -> object:
+    def _fill(node: _TemplateNode) -> _FilledNode:
         if isinstance(node, Mapping):
             return {key: _fill(value) for key, value in node.items()}
         return 1.0
 
     params = _fill(model.get_params_template())
     assert isinstance(params, dict)
-    params["alive"]["utility"]["flow_offset"] = flow_offset
+    alive = params["alive"]
+    assert isinstance(alive, dict)
+    utility = alive["utility"]
+    assert isinstance(utility, dict)
+    utility["flow_offset"] = flow_offset
     return params
 
 
@@ -154,22 +164,40 @@ _NO_PROBE_RAN = (
 
 
 def _counting_model(
-    monkeypatch: pytest.MonkeyPatch, **solver_kwargs: Any
+    *, monkeypatch: pytest.MonkeyPatch, probe_schedule: ProbeSchedule
 ) -> tuple[Model, list[int]]:
     """Build a probe-clean NB-EGM toy whose constancy probe counts its calls."""
     calls: list[int] = []
     original = nbegm_module._fail_if_liquid_reading_next_state_varies_within_interval
 
-    def _counted(**kwargs: Any) -> None:
+    def _counted(
+        *,
+        continuation_plan: nbegm_module.ContinuationPlan,
+        liquid_name: str,
+        regime_name: RegimeName,
+        probe_arguments: nbegm_module._ProbeArguments,
+        probe_failure: Literal["reject", "assume_declared"] = "reject",
+        derivative_programs: Mapping[
+            nbegm_module._ContinuationLaw, nbegm_module._LawProbeProgram
+        ]
+        | None = None,
+    ) -> None:
         calls.append(1)
-        return original(**kwargs)
+        return original(
+            continuation_plan=continuation_plan,
+            liquid_name=liquid_name,
+            regime_name=regime_name,
+            probe_arguments=probe_arguments,
+            probe_failure=probe_failure,
+            derivative_programs=derivative_programs,
+        )
 
     monkeypatch.setattr(
         nbegm_module,
         "_fail_if_liquid_reading_next_state_varies_within_interval",
         _counted,
     )
-    model = ride_toy.build_model(variant="nbegm", **solver_kwargs)
+    model = ride_toy.build_model(variant="nbegm", probe_schedule=probe_schedule)
     return model, calls
 
 
@@ -233,7 +261,9 @@ def test_first_solve_runs_the_preconditions_once_across_two_solves(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The second solve reuses the first solve's verdict."""
-    model, calls = _counting_model(monkeypatch, probe_schedule="first_solve")
+    model, calls = _counting_model(
+        monkeypatch=monkeypatch, probe_schedule="first_solve"
+    )
 
     _run_probes(model=model)
     after_one_solve = len(calls)
@@ -247,7 +277,9 @@ def test_every_solve_runs_the_preconditions_on_each_solve(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Each draw is re-checked when the model asks for it."""
-    model, calls = _counting_model(monkeypatch, probe_schedule="every_solve")
+    model, calls = _counting_model(
+        monkeypatch=monkeypatch, probe_schedule="every_solve"
+    )
 
     _run_probes(model=model)
     after_one_solve = len(calls)
@@ -261,7 +293,7 @@ def test_never_runs_no_precondition_at_all(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Skipping the preconditions costs nothing and checks nothing."""
-    model, calls = _counting_model(monkeypatch, probe_schedule="never")
+    model, calls = _counting_model(monkeypatch=monkeypatch, probe_schedule="never")
 
     _run_probes(model=model)
 

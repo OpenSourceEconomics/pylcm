@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Never, Unpack
 
 import jax
 import numpy as np
@@ -16,23 +16,28 @@ from _lcm.solution import backward_induction
 from lcm import ExecutionConfig
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ResultRetention
+from tests.solution._callback_types import (
+    CandidateResidentKwargs,
+    CompileFunctionsKwargs,
+    RunPeriodKernelKwargs,
+)
 from tests.test_models import nbegm_ride_along_toy
 
 
 def test_budget_admits_both_real_variants_before_any_donating_dispatch(
     *,
     monkeypatch: pytest.MonkeyPatch,
-    record_testsuite_property: Callable[[str, object], None],
+    record_testsuite_property: Callable[[str, int | str], None],
 ) -> None:
     records: dict[
         tuple[int, tuple[tuple[str, int], ...]],
-        list[tuple[Any, CompilerMemoryReservation, int]],
+        list[tuple[jax.stages.Compiled, CompilerMemoryReservation, int]],
     ] = {}
     resident = backward_induction._candidate_resident_bytes
     compile_all = backward_induction._compile_all_functions
     completed = []
 
-    def observe_residency(**kwargs: Any) -> int:
+    def observe_residency(**kwargs: Unpack[CandidateResidentKwargs]) -> int:
         actual = resident(**kwargs)
         executable = kwargs["compiled"]
         widths = kwargs["program"].tile_widths
@@ -43,7 +48,9 @@ def test_budget_admits_both_real_variants_before_any_donating_dispatch(
         )
         return actual
 
-    def observe_compilation(**kwargs: Any) -> Any:
+    def observe_compilation(
+        **kwargs: Unpack[CompileFunctionsKwargs],
+    ) -> backward_induction._CompiledPrograms:
         result = compile_all(**kwargs)
         completed.append(result)
         return result
@@ -129,7 +136,7 @@ def test_budget_admits_both_real_variants_before_any_donating_dispatch(
         assert fallback.donated_arguments == ()
     records.clear()
 
-    def forbid_dispatch(**_kwargs: object) -> object:
+    def forbid_dispatch(**_kwargs: Unpack[RunPeriodKernelKwargs]) -> Never:
         raise AssertionError("An inadmissible ordinary alternative reached execution.")
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", forbid_dispatch)

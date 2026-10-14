@@ -71,11 +71,13 @@ class SimulationChunkProfile:
     n_subjects: int
     padded_population: int
     stages: tuple[SimulationStageProfile, ...]
-    fixed_reservation: Mapping[jax.Device, int]
-    output_reservation: Mapping[jax.Device, int]
-    axis_widths: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
+    fixed_reservation: MappingProxyType[jax.Device, int]
+    output_reservation: MappingProxyType[jax.Device, int]
+    axis_widths: MappingProxyType[str, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Common inner specialization, clamped to each declared program's extent."""
-    setup_reservation: Mapping[jax.Device, int] = field(
+    setup_reservation: MappingProxyType[jax.Device, int] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Part of fixed storage fulfilled by additional padding and population metadata."""
@@ -83,7 +85,7 @@ class SimulationChunkProfile:
     """CPU assembly profiles reported separately from a GPU memory ceiling."""
 
     def __post_init__(self) -> None:
-        """Freeze independently owned metadata without capturing profile inputs."""
+        """Validate the chunk extent, its reservations and its specialization."""
         if (
             type(self.n_subjects) is not int
             or self.n_subjects <= 0
@@ -102,7 +104,6 @@ class SimulationChunkProfile:
                 raise ExecutionPlanningError(
                     "Simulation chunk reservations need nonnegative integer bytes."
                 )
-            object.__setattr__(self, name, MappingProxyType(dict(costs)))
         if any(
             value > self.fixed_reservation.get(device, 0)
             for device, value in self.setup_reservation.items()
@@ -117,9 +118,6 @@ class SimulationChunkProfile:
             raise ExecutionPlanningError(
                 "A chunk specialization requires named positive widths."
             )
-        object.__setattr__(
-            self, "axis_widths", MappingProxyType(dict(self.axis_widths))
-        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -189,14 +187,8 @@ class SimulationChunkPlan:
     """Selected code and per-device required bytes; feasibility is call-local."""
 
     profile: SimulationChunkProfile
-    required_bytes: Mapping[jax.Device, int]
+    required_bytes: MappingProxyType[jax.Device, int]
     receipt: IndependentChunkReceipt | None = None
-
-    def __post_init__(self) -> None:
-        """Own the accepted integer inventory rather than a mutable caller mapping."""
-        object.__setattr__(
-            self, "required_bytes", MappingProxyType(dict(self.required_bytes))
-        )
 
 
 @runtime_checkable
@@ -234,7 +226,9 @@ def plan_simulation_chunks(
             "Simulation chunk candidates must be distinct positive decreasing extents."
         )
     resident = resident_bytes_by_device(
-        live=live, arguments=DeviceBufferFootprint(spans={}), devices=devices
+        live=live,
+        arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
+        devices=devices,
     )
     if max(resident.values()) > budget_bytes:
         raise ExecutionPlanningError(
@@ -259,7 +253,7 @@ def _required_bytes(
     profile: SimulationChunkProfile,
     resident: Mapping[jax.Device, int],
     devices: tuple[jax.Device, ...],
-) -> Mapping[jax.Device, int]:
+) -> MappingProxyType[jax.Device, int]:
     """Sum device owners before comparing each stage's compiler reservation."""
     selected = set(devices)
     if profile.host_stages and (

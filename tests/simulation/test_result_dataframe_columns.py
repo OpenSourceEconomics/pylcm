@@ -173,7 +173,7 @@ def test_reorder_columns_requires_the_row_identifying_columns(missing_column):
     ).drop(columns=[missing_column])
 
     with pytest.raises(KeyError, match=missing_column):
-        _reorder_columns(df=frame, state_names=["wage"], action_names=[])
+        _reorder_columns(df=frame, state_names=("wage",), action_names=())
 
 
 def _make_reverse_alphabetical_collective_model() -> Model:

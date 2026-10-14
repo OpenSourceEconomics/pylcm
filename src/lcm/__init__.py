@@ -89,6 +89,8 @@ _beartype_utilfunctest.print = lambda *_args, **_kwargs: None  # ty: ignore[unre
 beartype_package("_lcm", conf=INTERNAL_CONF)
 beartype_package("lcm", conf=INTERNAL_CONF)
 
+from _lcm.additive_shock_transition import AdditiveShockTransition  # noqa: E402
+from _lcm.logsum import EULER_GAMMA  # noqa: E402
 from _lcm.variables import (  # noqa: E402
     _bind_forward_refs as _bind_variables_forward_refs,
 )
@@ -224,6 +226,8 @@ jax.tree_util.register_pytree_node(
 )
 
 __all__ = [
+    "EULER_GAMMA",
+    "AdditiveShockTransition",
     "AgeGrid",
     "AgeRange",
     "AgeSpecializedFunction",

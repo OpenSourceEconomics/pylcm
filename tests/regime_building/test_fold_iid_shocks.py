@@ -24,7 +24,7 @@ own module, `test_fold_repeated_iid_shock.py`.
 """
 
 import functools
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
 import jax
@@ -33,6 +33,7 @@ import numpy as np
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.engine import Regime as EngineRegime
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.max_Q_over_a import _select_fold_reducer
 from _lcm.regime_building.processing import process_regimes
@@ -40,8 +41,9 @@ from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
 )
 from _lcm.regime_building.zero_safe import zero_safe_average
-from _lcm.regime_law import bind_regime_law
+from _lcm.regime_law import RegimeLawDeclaration, bind_regime_law
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import FlatParams, PeriodToRegimeToVArr, RegimeNamesToIds
 from _lcm.user_regime_validation import validate_regime_law
 from _lcm.utils.logging import get_logger
 from lcm import (
@@ -61,8 +63,9 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.processes import RouwenhorstAR1Process
+from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition, Transition
-from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from lcm.typing import DiscreteAction, FloatND, RegimeName, ScalarInt
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
@@ -135,7 +138,7 @@ def _make_regimes(
     return {"period0": period0, "terminal": terminal}
 
 
-def _to_terminal_laws() -> dict[str, object]:
+def _to_terminal_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
     """`period0` moves deterministically into the terminal `terminal` after age 0."""
     return {
         "period0": ByAge(
@@ -151,8 +154,10 @@ def _to_terminal_laws() -> dict[str, object]:
 
 # keyword-only-exempt: primary-argument=regimes
 def _solve(
-    regimes: dict[str, Regime], *, laws: Mapping[str, object]
-) -> MappingProxyType:
+    regimes: dict[str, Regime],
+    *,
+    laws: Mapping[RegimeName, RegimeLawDeclaration | Transition],
+) -> PeriodToRegimeToVArr:
     processed = _process(regimes=regimes, laws=laws)
     _bi_result = solve(
         program_fingerprint="test_fold_iid_shocks",
@@ -234,8 +239,10 @@ def test_fold_default_path_is_byte_identical():
     omitted = _make_regimes_fold_omitted()["period0"].states["wage_shock"]
     explicit = _make_regimes(fold=False)["period0"].states["wage_shock"]
     # Guard the guard: the default is what makes the omitted branch meaningful.
-    assert omitted.fold is False  # ty: ignore[unresolved-attribute]
-    assert explicit.fold is False  # ty: ignore[unresolved-attribute]
+    assert isinstance(omitted, NormalIIDProcess)
+    assert isinstance(explicit, NormalIIDProcess)
+    assert omitted.fold is False
+    assert explicit.fold is False
     assert omitted == explicit  # identical spec, reached two different ways
 
     default_V = _solve(_make_regimes_fold_omitted(), laws=_to_terminal_laws())
@@ -441,11 +448,11 @@ def test_fold_on_dated_regime_law_conditioning_shock_is_rejected():
 def _process(
     *,
     regimes: dict[str, Regime],
-    laws: Mapping[str, object],
+    laws: Mapping[RegimeName, RegimeLawDeclaration | Transition],
     ages: AgeGrid = _AGES,
-    regime_names_to_ids: MappingProxyType = _REGIME_NAMES_TO_IDS,
+    regime_names_to_ids: RegimeNamesToIds = _REGIME_NAMES_TO_IDS,
     enable_jit: bool = False,
-) -> MappingProxyType:
+) -> MappingProxyType[RegimeName, EngineRegime]:
     """Run one regime dict and its laws through the full build."""
     bound = bind_laws(laws)
     finalized = finalize_regimes(
@@ -466,7 +473,7 @@ def _process(
     )
 
 
-def _discounted_params(*regime_names: str) -> MappingProxyType:
+def _discounted_params(*regime_names: RegimeName) -> FlatParams:
     """Flat params giving every named regime the module's discount factor."""
     return MappingProxyType(
         {
@@ -537,8 +544,11 @@ def test_a_folded_target_shock_the_source_also_carries_needs_no_continuation_axi
 
 
 def _solve_jit(
-    *, regimes: dict[str, Regime], laws: Mapping[str, object], enable_jit: bool
-) -> MappingProxyType:
+    *,
+    regimes: dict[str, Regime],
+    laws: Mapping[RegimeName, RegimeLawDeclaration | Transition],
+    enable_jit: bool,
+) -> PeriodToRegimeToVArr:
     """`_solve`, but with `enable_jit` under the caller's control.
 
     The fold's exactness contract must hold on BOTH paths, and they are not
@@ -738,7 +748,7 @@ def test_select_fold_reducer_rejects_non_concrete_weights():
     kernel for every axis.
     """
 
-    def _build(w: FloatND) -> object:
+    def _build(w: FloatND) -> Callable[..., FloatND]:
         return _select_fold_reducer(weight=w, name="s")
 
     with pytest.raises(ValueError, match="not concrete at kernel-build time"):
@@ -1159,7 +1169,7 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
 
     def _laws(
         transition: DeterministicTransition | Mapping[str, StochasticTransition],
-    ) -> dict[str, object]:
+    ) -> dict[RegimeName, RegimeLawDeclaration | Transition]:
         return {
             "period0": ByAge(cases={AgeRange(exclusive_stop=1): transition}),
             "terminal": None,
@@ -1199,7 +1209,7 @@ class _RouteRegimeId:
 
 
 def _make_route_to_folded_target_regimes() -> tuple[
-    dict[str, Regime], dict[str, object]
+    dict[str, Regime], dict[RegimeName, RegimeLawDeclaration | Transition]
 ]:
     """Binary-action source routes to a folded-only target B or a worthless C.
 
@@ -1267,8 +1277,11 @@ def _make_route_to_folded_target_regimes() -> tuple[
 
 
 def _solve_route(
-    *, regimes: dict[str, Regime], laws: Mapping[str, object], discount: float
-) -> MappingProxyType:
+    *,
+    regimes: dict[str, Regime],
+    laws: Mapping[RegimeName, RegimeLawDeclaration | Transition],
+    discount: float,
+) -> PeriodToRegimeToVArr:
     processed = _process(
         regimes=regimes,
         laws=laws,
@@ -1357,7 +1370,7 @@ def test_folded_only_per_target_target_is_enumerable_in_transitions():
 
 
 def _make_route_to_folded_target_regimes_stateful() -> tuple[
-    dict[str, Regime], dict[str, object]
+    dict[str, Regime], dict[RegimeName, RegimeLawDeclaration | Transition]
 ]:
     """`_make_route_to_folded_target_regimes` with an inert `wealth` state on `src`.
 
@@ -1419,8 +1432,11 @@ def _make_route_to_folded_target_regimes_stateful() -> tuple[
 
 
 def _simulate_route(
-    *, regimes: dict[str, Regime], laws: Mapping[str, object], discount: float
-) -> tuple[MappingProxyType, object]:
+    *,
+    regimes: dict[str, Regime],
+    laws: Mapping[RegimeName, RegimeLawDeclaration | Transition],
+    discount: float,
+) -> tuple[PeriodToRegimeToVArr, SimulationResult]:
     """Solve then simulate the route-to-folded-target model; return the sim result."""
     from _lcm.simulation.simulate import simulate  # noqa: PLC0415
 
@@ -1496,7 +1512,7 @@ def test_folded_only_per_target_continuation_enters_simulated_value():
     np.testing.assert_allclose(np.asarray(solution[0]["src"]), discount, atol=1e-5)
     # The simulated period-0 decision must reflect the folded-only continuation:
     # route to B (work code 1), recomputed value = discount * 1.0.
-    period_0 = result.raw_results["src"][0]  # ty: ignore[unresolved-attribute]
+    period_0 = result.raw_results["src"][0]
     np.testing.assert_array_equal(np.asarray(period_0.actions["work"]), [1])
     np.testing.assert_allclose(
         np.asarray(period_0.V_arr).reshape(-1), [discount], atol=1e-5

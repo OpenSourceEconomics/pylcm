@@ -10,6 +10,8 @@ are named, so a limit can never be quietly replaced by whichever value the
 grid happens to start at.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
@@ -39,6 +41,8 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
     UserFunction,
+    UserParams,
+    UserParamsNode,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -225,7 +229,10 @@ def test_a_plain_callable_borrowing_constraint_is_refused() -> None:
         )
 
 
-def _filled_params(model: Model) -> dict:
+type _TemplateNode = str | int | float | Mapping[str, _TemplateNode]
+
+
+def _filled_params(model: Model) -> UserParams:
     """Fill every free leaf of the params template with a usable number.
 
     A free leaf carries its annotation as a string rather than `None`, so the
@@ -234,14 +241,16 @@ def _filled_params(model: Model) -> dict:
     """
     template = model.get_params_template()
 
-    def fill(*, node: object, name: str = "") -> object:
-        if isinstance(node, dict):
+    def fill(*, node: _TemplateNode, name: str = "") -> UserParamsNode:
+        if isinstance(node, Mapping):
             return {key: fill(node=value, name=key) for key, value in node.items()}
         if isinstance(node, bool) or not isinstance(node, int | float):
             return 0.0 if name == "_age" else 0.95
         return node
 
-    return fill(node=template)  # ty: ignore[invalid-return-type]
+    filled = fill(node=template)
+    assert isinstance(filled, Mapping)
+    return filled
 
 
 def test_declaring_the_bound_does_not_change_the_solution() -> None:
@@ -339,7 +348,7 @@ def test_grid_search_keeps_the_declaration_as_a_real_constraint() -> None:
     assert max(gaps) > 0.0
 
 
-def _replace_constraints(*, constraints: dict) -> Model:
+def _replace_constraints(*, constraints: dict[str, UserFunction]) -> Model:
     """Build the grid-search model with an explicitly supplied constraint pool."""
     saving_regime = Regime(
         actions={

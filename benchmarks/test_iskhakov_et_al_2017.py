@@ -14,13 +14,21 @@ _CLASSES = [
 
 @pytest.mark.parametrize(("benchmark_class", "expected_version"), _CLASSES)
 def test_each_class_reads_its_shared_cache_for_all_three_trackers(
-    *, monkeypatch: pytest.MonkeyPatch, benchmark_class: type, expected_version: str
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    benchmark_class: type[
+        bench_iskhakov_et_al_2017.IskhakovEtAl2017Solve
+        | bench_iskhakov_et_al_2017.IskhakovEtAl2017DCEGMSolve
+        | bench_iskhakov_et_al_2017.IskhakovEtAl2017Simulate
+        | bench_iskhakov_et_al_2017.IskhakovEtAl2017DCEGMSimulate
+    ],
+    expected_version: str,
 ) -> None:
     """setup_cache is the sole producer; the three trackers only read it."""
     calls: list[tuple[str, str]] = []
 
     def _fake_measure_combined_with_warm_samples(
-        *, bench_module, bench_class, warm_samples
+        *, bench_module: str, bench_class: str, warm_samples: int
     ):
         calls.append((bench_module, bench_class))
         return {

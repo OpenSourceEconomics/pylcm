@@ -3,7 +3,6 @@
 import gc
 import weakref
 from functools import partial
-from typing import Any
 
 import jax
 import numpy as np
@@ -11,6 +10,7 @@ import pytest
 
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.solution.negm import _KEEPER_CARRY, _KEEPER_VALUE
+from _lcm.typing import PytreeValue
 from lcm import Model
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import n_nbegm_toy as toy
@@ -28,7 +28,9 @@ def test_public_eager_negm_consumes_actual_keeper_outputs(
     handoffs: list[int] = []
     original = PlannedCore.__call__
 
-    def observe(core: PlannedCore, *args: object, **kwargs: Any) -> object:
+    def observe(
+        core: PlannedCore, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         if core.name == "outer_sweep":
             leaves = jax.tree.leaves((kwargs[_KEEPER_VALUE], kwargs[_KEEPER_CARRY]))
             assert len(leaves) == len(keeper_refs) > 1

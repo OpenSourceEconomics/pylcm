@@ -11,7 +11,7 @@ separate lets this module stay free of any dependency on the user-facing
 `Regime`.
 """
 
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Collection, Mapping
 from typing import Literal, TypeAliasType, cast
 
 from dags.tree import QNAME_DELIMITER
@@ -27,25 +27,13 @@ from lcm.phased import Phased
 from lcm.transition import AgeSpecializedGrid
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
-type _StateLaw = (
-    UserFunction
-    | Callable
-    | Phased
-    | Mapping[RegimeName, UserFunction | Callable | Phased]
-)
+type _StateLaw = UserFunction | Phased | Mapping[RegimeName, UserFunction | Phased]
 
 
 def collect_state_transitions(
     *,
     states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
-    state_transitions: Mapping[
-        StateName,
-        UserFunction
-        | Callable
-        | Phased
-        | Mapping[RegimeName, UserFunction | Callable | Phased]
-        | None,
-    ],
+    state_transitions: Mapping[StateName, _StateLaw | None],
     joint_output_names: Collection[StateName] = (),
     phase: Literal["solve", "simulate"] | None = None,
 ) -> dict[TransitionFunctionName, UserFunction | Phased]:
@@ -121,10 +109,7 @@ def _add_raw_transition(
     *,
     transitions: dict[TransitionFunctionName, UserFunction | Phased],
     name: StateName,
-    raw: UserFunction
-    | Callable
-    | Phased
-    | Mapping[RegimeName, UserFunction | Callable | Phased],
+    raw: _StateLaw,
 ) -> None:
     """Add a single raw transition entry to the transitions dict.
 
@@ -173,9 +158,8 @@ def _add_raw_transition(
             transitions[key] = cast("UserFunction", law)
 
 
-def _phase_cell(*, side: object, target: RegimeName) -> UserFunction | None:
+def _phase_cell(*, side: _StateLaw | None, target: RegimeName) -> UserFunction | None:
     """Return one phase side's law for `target`: its cell, or the bare law broadcast."""
     if isinstance(side, Mapping):
-        by_target = cast("Mapping[RegimeName, object]", side)
-        return cast("UserFunction | None", by_target.get(target))
+        return cast("UserFunction | None", side.get(target))
     return cast("UserFunction", side)

@@ -1,5 +1,7 @@
 """Small executable models for learning specialized consumption-saving regimes."""
 
+from typing import Literal
+
 import jax.numpy as jnp
 
 import lcm
@@ -25,7 +27,10 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     FloatND,
+    IntND,
     ScalarInt,
+    StateName,
+    UserParamsNode,
 )
 
 
@@ -205,7 +210,7 @@ def build_kinked_tax_model(
     )
 
 
-def kinked_tax_params() -> dict:
+def kinked_tax_params() -> dict[str, UserParamsNode]:
     """Parameters for the kinked-tax example."""
     return {
         "working": {
@@ -217,7 +222,9 @@ def kinked_tax_params() -> dict:
     }
 
 
-def kinked_tax_initial_conditions() -> dict:
+def kinked_tax_initial_conditions() -> dict[
+    StateName | Literal["regime_id"], FloatND | IntND
+]:
     """Two subjects on opposite sides of the tax exemption."""
     return {
         "age": jnp.array([0, 0]),
@@ -349,7 +356,7 @@ def build_nested_model(*, enable_jit: bool = True) -> Model:
     )
 
 
-def example_params() -> dict:
+def example_params() -> dict[str, UserParamsNode]:
     """Parameters shared by both examples."""
     return {
         "working": {"koopmans_aggregator": {"discount_factor": 0.95}},
@@ -357,7 +364,9 @@ def example_params() -> dict:
     }
 
 
-def example_initial_conditions(*, nested: bool = False) -> dict:
+def example_initial_conditions(
+    *, nested: bool = False
+) -> dict[StateName | Literal["regime_id"], FloatND | IntND]:
     """Two subjects at the start of either example."""
     conditions = {
         "age": jnp.array([0, 0]),

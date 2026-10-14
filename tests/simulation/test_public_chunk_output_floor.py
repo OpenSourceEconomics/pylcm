@@ -1,7 +1,8 @@
 """A real public call cannot narrow away its complete retained CPU result bank."""
 
 import dataclasses
-from typing import Any
+from collections.abc import Mapping
+from typing import Never, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -9,8 +10,10 @@ import pytest
 
 import _lcm.simulation.simulate as simulation
 from _lcm.simulation.chunk_admission import _ChunkProfiler
+from _lcm.simulation.chunk_planning import SimulationChunkProfile
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError
+from tests.simulation._callback_types import ChunkResults, SimulationChunkInputs
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
@@ -34,7 +37,7 @@ def test_public_chunk_selection_refuses_the_irreducible_retained_output_floor(
     full_chunks: list[int] = []
     run_chunk = simulation._simulate_subject_chunk
 
-    def observe_chunk(**call: Any) -> object:
+    def observe_chunk(**call: Unpack[SimulationChunkInputs]) -> ChunkResults:
         full_chunks.append(call["initial_regime_ids"].shape[0])
         return run_chunk(**call)
 
@@ -72,12 +75,12 @@ def test_public_chunk_selection_refuses_the_irreducible_retained_output_floor(
 
     # keyword-only-exempt: library-callback=_ChunkProfiler.profile_widths
     def observe_profile(
-        self: _ChunkProfiler, *, n_subjects: int, widths: Any
-    ) -> object:
+        self: _ChunkProfiler, *, n_subjects: int, widths: Mapping[str, int]
+    ) -> SimulationChunkProfile:
         candidates.append(n_subjects)
         return profile_widths(self, n_subjects=n_subjects, widths=widths)
 
-    def forbid_chunk(**_call: object) -> object:
+    def forbid_chunk[Ignored](**_call: Ignored) -> Never:
         raise AssertionError("A chunk allocated before its retained output bank fit")
 
     monkeypatch.setattr(_ChunkProfiler, "profile_widths", observe_profile)

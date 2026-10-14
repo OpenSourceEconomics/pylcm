@@ -1,7 +1,5 @@
 """Contracts between the CPU workflow and supported platform capabilities."""
 
-from __future__ import annotations
-
 import shlex
 from pathlib import Path
 
@@ -9,6 +7,7 @@ import pytest
 import yaml
 
 from tests.ci import ci_workloads
+from tests.ci._workflow_types import Workflow, WorkflowStep
 from tests.ci.cpu_suite_invocations import (
     EIGHT_DEVICE_TEST_FILES,
     FOUR_DEVICE_TEST_FILES,
@@ -21,7 +20,7 @@ from tests.ci.cpu_suite_invocations import (
 _REPO_ROOT = Path(__file__).parents[2]
 
 
-def _workflow() -> dict:
+def _workflow() -> Workflow:
     return yaml.safe_load(
         (_REPO_ROOT / ".github/workflows/cpu.yml").read_text(encoding="utf-8")
     )
@@ -338,7 +337,7 @@ def test_eight_device_witness_has_one_fresh_full_policy_invocation(
     assert '"$skipped" -ne 0' in run
 
 
-def _assert_unchained(*, step: dict) -> None:
+def _assert_unchained(*, step: WorkflowStep) -> None:
     """Fail unless this step's single pytest invocation stands on its own.
 
     `&&` alone is not the test: the shared `check_population` helper legitimately

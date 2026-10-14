@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from functools import partial
-from typing import Any
+from typing import Unpack
 
 import jax
 import jax.numpy as jnp
@@ -17,28 +17,29 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
 )
 from _lcm.solution import backward_induction
+from _lcm.typing import FootprintTree
 from lcm import ExecutionConfig
+from tests.simulation._callback_types import WholeInputValidation
 from tests.solution.test_solution_result import _small_grid_search_inputs
 
 
 def _record_initial(
     *,
     recorded: list[Mapping[str, jax.Array]],
-    original: Callable[..., object],
-    initial_conditions: Mapping[str, jax.Array],
-    **arguments: Any,
-) -> object:
-    recorded.append(initial_conditions)
-    return original(initial_conditions=initial_conditions, **arguments)
+    original: Callable[..., None],
+    **arguments: Unpack[WholeInputValidation],
+) -> None:
+    recorded.append(arguments["initial_conditions"])
+    return original(**arguments)
 
 
 def _inspect_fixed_inventory(
     *,
-    original_inputs: object,
+    original_inputs: FootprintTree,
     normalized: list[Mapping[str, jax.Array]],
     calls: list[bool],
     original: Callable[..., Mapping[int, int]],
-    tree: object,
+    tree: FootprintTree,
 ) -> Mapping[int, int]:
     assert len(normalized) == 1
     expected = measure_buffer_footprint(tree=(original_inputs, normalized[0]))

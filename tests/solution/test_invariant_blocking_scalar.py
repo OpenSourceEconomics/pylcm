@@ -418,9 +418,9 @@ def test_no_axis_bound_program_still_declares_planned_value_reads() -> None:
 )
 def test_scalar_block_equals_literal_typewise_bellman_equation(
     *,
-    flow: tuple,
-    terminal: tuple,
-    expected: tuple,
+    flow: tuple[int, int, int],
+    terminal: tuple[int, int, int],
+    expected: tuple[int, int, int],
 ) -> None:
     dtype = np.dtype("float64" if jax.config.jax_enable_x64 else "float32")
     params = {

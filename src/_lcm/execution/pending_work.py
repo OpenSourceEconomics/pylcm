@@ -14,7 +14,8 @@ from _lcm.execution.value_transfer import (
     TransferCache,
     apply_value_transfer_plan,
 )
-from lcm.typing import ValueND
+from _lcm.typing import PytreeValue
+from lcm.typing import ReferenceName, ValueND
 
 
 @runtime_checkable
@@ -53,7 +54,7 @@ class PendingSolveWork:
         ]
         _drain(records=selected)
 
-    def record(self, *, outputs: object, devices: AbstractSet[jax.Device]) -> None:
+    def record(self, *, outputs: PytreeValue, devices: AbstractSet[jax.Device]) -> None:
         """Own every returned array before a later output contract can raise."""
         arrays = tuple(
             {
@@ -116,7 +117,7 @@ class _MaterializedCopies:
         """Hand copies to the solve owner without obscuring a dispatch error."""
         active_error = sys.exception()
         try:
-            owner.record(outputs=self.arrays, devices=devices)
+            owner.record(outputs=tuple(self.arrays), devices=devices)
         except Exception as cleanup_error:
             if active_error is None:
                 raise
@@ -132,11 +133,11 @@ def execute_with_pending_work(
     *,
     owner: PendingSolveWork,
     compiled: jax.stages.Compiled,
-    arguments: Mapping[str, object],
+    arguments: Mapping[ReferenceName, PytreeValue],
     transfers: tuple[ResolvedValueTransfer, ...],
     cache: TransferCache | None,
     donates: bool,
-) -> object:
+) -> PytreeValue:
     """Admit one asynchronous executable into a call-local completion lifetime.
 
     Before transfers, all concrete argument devices are conservative potential

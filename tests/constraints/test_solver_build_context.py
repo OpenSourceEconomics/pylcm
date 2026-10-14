@@ -14,6 +14,7 @@ from _lcm.constraints.routes import (
     ConstraintRouteKey,
     ConstraintSite,
 )
+from _lcm.egm.nbegm_constraint_boundaries import NBEGMFeasibilityBoundaryProgram
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     SolutionKernels,
@@ -60,7 +61,14 @@ class _BoundaryRecordingGridSearch(GridSearch):
         ) -> CompileBoundary:
             return CompileBoundary(
                 constraint=bound.constraint,
-                program=BoundaryProgram(surfaces=(), payload="compiled"),
+                program=BoundaryProgram(
+                    surfaces=(),
+                    payload=NBEGMFeasibilityBoundaryProgram(
+                        constraint_name=bound.constraint.name,
+                        liquid_state="liquid",
+                        surfaces=(),
+                    ),
+                ),
             )
 
         return (

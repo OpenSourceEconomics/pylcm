@@ -137,7 +137,7 @@ import math
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -190,8 +190,10 @@ from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
     EconFunction,
+    EconFunctionArg,
     EconFunctionsMapping,
     EGMStepFunction,
+    QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
@@ -204,6 +206,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, MSSEnvelope
 from lcm.typing import (
     BoolND,
+    DiscreteAction,
     Float1D,
     FloatND,
     IntND,
@@ -228,7 +231,7 @@ def build_egm_step_functions(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     solution_reachability: PhaseReachability,
-    flat_param_names: frozenset[str],
+    flat_param_names: frozenset[QualifiedName],
     regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
     state_action_space: StateActionSpace,
     has_taste_shocks: bool,
@@ -564,7 +567,7 @@ def _get_egm_step(
     n_carry_rows: int,
     own_discrete_state_names: tuple[StateName, ...],
     own_passive_state_names: tuple[StateName, ...],
-    own_discrete_action_values: MappingProxyType[ActionName, Any],
+    own_discrete_action_values: MappingProxyType[ActionName, DiscreteAction],
     own_runtime_process_names: tuple[StateName, ...],
     euler_axis_in_V: int,
     has_taste_shocks: bool,
@@ -657,7 +660,7 @@ class _EGMStep:
     own_passive_state_names: tuple[StateName, ...]
     """The regime's passive continuous states in carry-axis order."""
 
-    own_discrete_action_values: MappingProxyType[ActionName, Any]
+    own_discrete_action_values: MappingProxyType[ActionName, DiscreteAction]
     """The regime's discrete actions and their grid values."""
 
     own_runtime_process_names: tuple[StateName, ...]
@@ -672,7 +675,7 @@ class _EGMStep:
         _lcm_savings_point_width: int | None = None,
         _lcm_euler_point_width: int | None = None,
         _lcm_envelope_cell_width: int = 1,
-        **kwargs: Any,  # noqa: ANN401
+        **kwargs: EconFunctionArg,
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
         """Run the DC-EGM step and publish V on the exogenous grid.
 
@@ -890,7 +893,7 @@ def _map_combo_product(
     block = tile_block_size(width=cell_width, extent=extent)
     if not block:
         return productmap(
-            func=func,  # ty: ignore[invalid-argument-type]
+            func=func,
             variables=combo_var_names,
             batch_sizes=dict.fromkeys(combo_var_names, 0),
         )(**combo_axis_values)
@@ -898,7 +901,7 @@ def _map_combo_product(
     splayed = tuple(name for name in combo_var_names if name in state_names)
     vmapped = tuple(name for name in combo_var_names if name not in state_names)
     inner = productmap(
-        func=func,  # ty: ignore[invalid-argument-type]
+        func=func,
         variables=vmapped,
         batch_sizes=dict.fromkeys(vmapped, 0),
     )
@@ -974,7 +977,7 @@ def _build_kernel_pieces(
     n_carry_rows: int,
     own_discrete_state_names: tuple[StateName, ...],
     own_passive_state_names: tuple[StateName, ...],
-    own_discrete_action_values: MappingProxyType[ActionName, Any],
+    own_discrete_action_values: MappingProxyType[ActionName, DiscreteAction],
     euler_axis_in_V: int,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     age_values: FloatND | IntND,
@@ -1075,6 +1078,6 @@ class _ComboFeasibility:
     constraints_func: Callable[..., Mapping[str, BoolND]]
     """The concatenated constraint DAG, returning every constraint by name."""
 
-    def __call__(self, **combo_pool: Any) -> ScalarBool:  # noqa: ANN401
+    def __call__(self, **combo_pool: EconFunctionArg) -> ScalarBool:
         outputs = self.constraints_func(**combo_pool)
         return jnp.all(jnp.stack([jnp.asarray(out) for out in outputs.values()]))

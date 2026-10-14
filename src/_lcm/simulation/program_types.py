@@ -16,8 +16,10 @@ from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 from _lcm.execution.core_program import CoreBuildContext, CoreProgram, TiledOutputAxis
+from _lcm.execution.output_layout import OutputRoleTree
 from _lcm.simulation.subject_groups import SubjectGroupingRoute
-from _lcm.typing import RegimeName, StateOrActionName
+from _lcm.typing import PytreeValue, RegimeName, ShapeDtypePytree, StateOrActionName
+from lcm.typing import ReferenceName
 
 # Planner name of the per-subject axis every simulation program tiles.
 SUBJECT_AXIS = "subject"
@@ -37,6 +39,8 @@ ACTION_INDEX = "action_index"
 DECISION_VALUE = "decision_value"
 ACTION_VALUES = "action_values"
 ACTION_FEASIBILITY = "action_feasibility"
+FLOW_UTILITY = "flow_utility"
+CONTINUATION_CE = "continuation_ce"
 NEXT_STATE = "next_state"
 REGIME_TRANSITION_PROB = "regime_transition_prob"
 GATED_CONTINUATION = "gated_continuation"
@@ -58,15 +62,8 @@ UNRESOLVED_SUBJECT_EXTENT = 1
 class SimulationBuildContext(CoreBuildContext):
     """Complete dynamic arguments for one forward program invocation."""
 
-    call_arguments: Mapping[str, object]
+    call_arguments: MappingProxyType[ReferenceName, PytreeValue | ShapeDtypePytree]
     """Subject states, action operands, parameters, keys and addressed value reads."""
-
-    def __post_init__(self) -> None:
-        """Snapshot the call arguments together with the common core context."""
-        super().__post_init__()
-        object.__setattr__(
-            self, "call_arguments", MappingProxyType(dict(self.call_arguments))
-        )
 
 
 @runtime_checkable
@@ -77,10 +74,10 @@ class SimulationProgramExecutor(Protocol):
         self,
         *,
         program: CoreProgram,
-        arguments: Mapping[str, object],
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
         n_subjects: int,
-    ) -> object:
+    ) -> PytreeValue:
         """Select and invoke the executable for this argument signature."""
         ...
 
@@ -89,13 +86,13 @@ class SimulationProgramExecutor(Protocol):
 class _PerSubjectFunction:
     """One simulation body at a single subject's state cell."""
 
-    function: Callable[..., object]
+    function: Callable[..., PytreeValue]
     """The body, taking one subject's states and actions as scalars."""
 
-    subject_arg_names: tuple[str, ...]
+    subject_arg_names: tuple[ReferenceName, ...]
     """Arguments carrying a per-subject leading axis, which the tile splits."""
 
-    output_roles: object
+    output_roles: OutputRoleTree
     """Role tree of the same structure as the body's output, one role per leaf."""
 
 
@@ -144,32 +141,17 @@ class SimulationPrograms:
     action_values: MappingProxyType[int, CoreProgram] = dataclasses.field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Period to the dense decision that also publishes the action values and
-    feasibility it maximizes over, for policy lookup; empty for a regime with
-    taste shocks or stakeholders. Compiled only when dispatched."""
+    """Period to the dense decision that also publishes, from the one kernel
+    evaluation it maximizes over, the action values, their feasibility, the flow
+    utility and the certainty-equivalent continuation, for policy lookup; empty
+    for a regime with taste shocks or stakeholders. Compiled only when
+    dispatched."""
 
     grouping: SubjectGroupingRoute | None = None
     """The invariant state forward simulation groups subjects by, or `None`."""
 
     executor: SimulationProgramExecutor | None = None
     """Call-local lowering and dispatch owner, absent from model declarations."""
-
-    def __post_init__(self) -> None:
-        """Snapshot the caller-owned program mappings."""
-        for field in (
-            "type_local_decision",
-            "action_values",
-            "decision",
-            "transition",
-            "route",
-            "gate_fold",
-            "gate_route",
-            "policy_prepare",
-            "policy_rank",
-        ):
-            object.__setattr__(
-                self, field, MappingProxyType(dict(getattr(self, field)))
-            )
 
     @property
     def forward_decision(self) -> MappingProxyType[int, CoreProgram]:

@@ -11,8 +11,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, cast
 
 import cloudpickle
 
@@ -51,24 +50,33 @@ if TYPE_CHECKING:
     from lcm.result import SimulationResult
 
     # Type-checker view: full precision.
-    _ModelOrNone = Model | None
-    _SimulationResultOrNone = SimulationResult | None
-    _SolutionResultBoundary: TypeAlias = SolutionResult  # noqa: UP040
+    type _ModelOrNone = Model | None
+    type _SimulationResultOrNone = SimulationResult | None
+    type _SolutionResultBoundary = SolutionResult
+    type _ModelClass = type[Model]
+    type _SimulationResultClass = type[SimulationResult]
 else:
     # Runtime view used by beartype's annotation evaluator. `Model` and
     # `SimulationResult` cannot be imported here (circular), so collapse
-    # to `Any`. The snapshot dataclasses are serialization carriers; the
+    # to `object`. The snapshot dataclasses are serialization carriers; the
     # API surface that needs strict checking is the snapshot writers,
     # which beartype polices via their own parameters.
-    _ModelOrNone = Any
-    _SimulationResultOrNone = Any
-    _SolutionResultBoundary = object
+    type _ModelOrNone = object
+    type _SimulationResultOrNone = object
+    type _SolutionResultBoundary = object
+    type _ModelClass = type[object]
+    type _SimulationResultClass = type[object]
+
+# A field a debug snapshot pickles.
+type _PickledField = (
+    _ModelOrNone | UserParams | InitialConditions | _SimulationResultOrNone
+)
 
 
 def _bind_forward_refs(
     *,
-    model_cls: type,
-    simulation_result_cls: type,
+    model_cls: _ModelClass,
+    simulation_result_cls: _SimulationResultClass,
 ) -> None:
     """Forward `Model` / `SimulationResult` bindings to `_lcm.persistence.snapshots`."""
     _bind_snapshot_forward_refs(
@@ -152,24 +160,23 @@ def load_snapshot(
 
     fields = metadata["fields"]
 
-    loaded: dict[str, Any] = {"platform": saved_platform}
-
-    # Load pickle fields
+    # Load pickle fields; an excluded or absent field stays `None`.
+    pickled: dict[str, _PickledField] = {}
     for field_name in fields:
-        if field_name in exclude:
-            loaded[field_name] = None
-            continue
         pkl_path = path / f"{field_name}.pkl"
-        if pkl_path.exists():
+        if field_name not in exclude and pkl_path.exists():
             with pkl_path.open("rb") as fh:
-                loaded[field_name] = cloudpickle.load(fh)
+                pickled[field_name] = cloudpickle.load(fh)
+    # Each pickle holds the value its field name declares.
+    model = cast("_ModelOrNone", pickled.get("model"))
+    params = cast("UserParams | None", pickled.get("params"))
 
     # Load period_to_regime_to_V_arr from HDF5 if not excluded
+    values: PeriodToRegimeToVArr | None = None
     h5_path = path / "arrays.h5"
     if h5_path.exists() and "period_to_regime_to_V_arr" not in exclude:
-        loaded["period_to_regime_to_V_arr"] = _load_h5(h5_path)
+        values = _load_h5(h5_path)
     elif "period_to_regime_to_V_arr" not in exclude:
-        loaded["period_to_regime_to_V_arr"] = None
         logger.warning(
             "arrays.h5 not found in %s; period_to_regime_to_V_arr set to None",
             path,
@@ -177,18 +184,20 @@ def load_snapshot(
 
     if snapshot_type == "solve":
         return SolveSnapshot(
-            model=loaded.get("model"),
-            params=loaded.get("params"),
-            period_to_regime_to_V_arr=loaded.get("period_to_regime_to_V_arr"),
+            model=model,
+            params=params,
+            period_to_regime_to_V_arr=values,
             platform=saved_platform,
         )
     if snapshot_type == "simulate":
         return SimulateSnapshot(
-            model=loaded.get("model"),
-            params=loaded.get("params"),
-            initial_conditions=loaded.get("initial_conditions"),
-            period_to_regime_to_V_arr=loaded.get("period_to_regime_to_V_arr"),
-            result=loaded.get("result"),
+            model=model,
+            params=params,
+            initial_conditions=cast(
+                "InitialConditions | None", pickled.get("initial_conditions")
+            ),
+            period_to_regime_to_V_arr=values,
+            result=cast("_SimulationResultOrNone", pickled.get("result")),
             platform=saved_platform,
         )
     msg = f"Unknown snapshot_type: {snapshot_type!r}"
@@ -236,9 +245,7 @@ def load_solution(
     return load_solution_archive(path=path, verify_checksums=verify_checksums)
 
 
-def load_legacy_solution(
-    *, path: Path
-) -> MappingProxyType[int, MappingProxyType[str, Any]]:
+def load_legacy_solution(*, path: Path) -> PeriodToRegimeToVArr:
     """Load a pre-schema value-only HDF5 file for explicit migration.
 
     Legacy files carry no model fingerprint, artifact schemas, omissions, or

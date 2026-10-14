@@ -12,7 +12,6 @@ import dataclasses
 import inspect
 import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -34,7 +33,7 @@ _QUALIFIED_PUBLIC_MODULES = {
 }
 
 
-def _public_constructors() -> dict[str, Any]:
+def _public_constructors() -> dict[str, PublicConstructor]:
     """Map each documented public class name to the class object."""
     modules = (
         lcm,
@@ -43,7 +42,7 @@ def _public_constructors() -> dict[str, Any]:
         lcm.outer_search,
         lcm.consumption_savings_regime,
     )
-    found: dict[str, Any] = {}
+    found: dict[str, PublicConstructor] = {}
     for module in modules:
         for name in getattr(module, "__all__", ()):
             obj = getattr(module, name, None)
@@ -52,7 +51,7 @@ def _public_constructors() -> dict[str, Any]:
     return found
 
 
-def _accepted_keywords(cls: type) -> set[str] | None:
+def _accepted_keywords(cls: PublicConstructor) -> set[str] | None:
     """Return explicit constructor keywords, or `None` for open `**kwargs`."""
     if dataclasses.is_dataclass(cls):
         return {field.name for field in dataclasses.fields(cls)}
@@ -184,3 +183,7 @@ def test_the_field_probe_resolves_real_fields(*, cls, expected):
 
     assert accepted is not None
     assert expected in accepted
+
+
+# Public classes have no shared constructor base or signature.
+type PublicConstructor = type[object]  # noqa: PAN001 - reflection covers heterogeneous exported classes

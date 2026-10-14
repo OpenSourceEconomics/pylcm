@@ -35,6 +35,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
+from lcm.regime import StateTransitionEntry
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -157,7 +158,7 @@ def _next_regime(age: float) -> ScalarInt:
 
 def _model(
     *,
-    pref_law: object = None,
+    pref_law: StateTransitionEntry = None,
     terminal_reads_type: bool = True,
     typed_health: bool = False,
     sharded_states: tuple[str, ...] = (),

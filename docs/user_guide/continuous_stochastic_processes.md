@@ -46,6 +46,9 @@ NormalIIDProcess(n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0)
 - `n_std`: Number of standard deviations for the grid boundary. Mutually exclusive with
   `gauss_hermite=True`.
 
+With `gauss_hermite=True`, positive even and odd `n_points` are supported. The examples
+use odd counts, which include a node at the mean; even counts have no mean node.
+
 ### LogNormalIIDProcess
 
 Discretized log-normal distribution where $\ln X \sim N(\mu, \sigma^2)$.
@@ -115,6 +118,10 @@ TauchenAR1Process(
 - `gauss_hermite`: If `True`, use Gauss-Hermite quadrature nodes.
 - `n_std`: Number of unconditional standard deviations for the grid boundary. Mutually
   exclusive with `gauss_hermite=True`.
+
+Gauss-Hermite supports even counts here too. Only odd counts include the unconditional
+mean. Transition probabilities still use midpoint CDF bins, rather than quadrature
+weights.
 
 ### RouwenhorstAR1Process
 
@@ -225,6 +232,8 @@ income_shock = NormalIIDProcess(
 )
 ```
 
+### Shocks observed before the within-period decision
+
 Folding removes the process axis from each stored value function; it does **not** remove
 the shock from the economic model. The solve evaluates every shock node, evaluates the
 feasible action choice at that node, and only then averages the resulting values with
@@ -250,7 +259,8 @@ This is a narrow exact reduction. Model construction enforces all of the followi
 - the regime is singleton and uses `GridSearch`;
 - every distribution parameter is fixed when the process is constructed, because fold
   weights are built with the kernels rather than read from runtime params;
-- continuation uses the linear expectation, with no nonlinear certainty equivalent;
+- continuation uses an absent or exact `LinearExpectation`, excluding nonlinear
+  certainty equivalents and custom subclasses;
 - the regime has no EV1 taste shocks;
 - no next-state or next-regime transition, including a transitive helper dependency,
   reads the folded shock's realized node;
@@ -261,8 +271,8 @@ This is a narrow exact reduction. Model construction enforces all of the followi
   readers need its per-node value even when their projections do not name the folded
   shock.
 
-Those rules characterize a shock that is drawn, used for the within-period decision, and
-discarded before the value is stored. If its realization changes a later state, selects
+Those rules describe a shock observed before the within-period decision and averaged
+after optimizing at each realization. If that realization changes a later state, selects
 a regime, or is needed by a value-dependent endpoint, retain the ordinary unfolded axis.
 
 A folded `StateConditioned` IID shock has one further timing restriction. Within a
@@ -274,6 +284,88 @@ toward a different target. The shock entering period $t$ was drawn using the cat
 $t-1$, whereas the fold gathers a quadrature row along the category visible at $t$;
 those rows are the same only when the conditioner cannot move into the fold. A model
 that needs a moving conditioner there must use `fold=False`.
+
+### Shocks realized after choices and used only by a transition
+
+A folded IID shock without a conditioning state that nothing in a regime reads within
+the period — not utility, constraints, the regime transition or any law — is
+*transition-only* there. Only a law's read of its draw `next_<shock>` remains, for
+example a bill realized after the period's choices and taken off end-of-period wealth.
+Such a shock is no state of that regime: its value carries no axis and the period is not
+evaluated per node. No initial realization is required for that regime. A supplied
+column is ignored only when no simulation regime retains that name as a state; if
+another regime uses it within the period, entrants to that regime must seed it.
+
+Every edge whose laws read the draw takes it from the process's own nodes and weights,
+and the source's continuation enumerates those outcomes. This timing permits the draw to
+change a next state. It also preserves nonlinear certainty equivalents, which apply
+their transform to each realized continuation value before averaging. A law may not read
+the draw toward a target that folds the shock and does read it within its period; model
+construction refuses that combination because the target's averaged value and the
+source's draw would be correlated.
+
+### Precomputing continuation values for an additive transition
+
+When such a shock is added to a continuous state, declare the law as
+`lcm.AdditiveShockTransition(base=..., shock=..., conditioners=...)` instead of a
+function computing `base + shock`. The law is `next_<state> = base + shock`, so a bill
+enters as its negative:
+
+```python
+def negative_medical_bill(medical_bill):
+    return -medical_bill
+
+
+state_transitions = {
+    "wealth": lcm.AdditiveShockTransition(
+        base="wealth_before_bill",
+        shock="negative_medical_bill",
+        conditioners={"is_insured": (False, True)},
+    ),
+}
+```
+
+With an exact `LinearExpectation` (including the model's default), the continuation
+precomputes a shock-averaged target table once per period,
+`W(z) = sum_k w_k V(z + shock_k)`, and reuses it across state–choice combinations at
+`z = wealth_before_bill`. This saves repeated interpolation at every shock draw for
+every source point. The additive formula makes this precomputation possible.
+
+The averaged draws are those the transition alone makes with probabilities that read
+only parameters and time. A draw the target stores, or one whose probabilities depend on
+the source point, keeps its node axis. With linear interpolation the value is linear
+between its grid points `a_j`, so `W` is linear between the merged points
+`{a_j - shock_k}` and is stored there: the result is exact up to rounding, not an
+approximation on the target's grid. The base may not read a draw, and the shock may read
+nothing but its conditioners, the draws, the period or age, and parameters. Each
+conditioner is a function or discrete variable of the source with the finite support
+given; declared conditioners the shock does not read are ignored.
+
+Precomputation admits the exact `LinSpacedGrid` and `IrregSpacedGrid` classes for the
+target's shocked state. Their interpolation and extrapolation are linear in the physical
+state between the represented knots and along the endpoint segments. Other grids,
+including `LogSpacedGrid`, piecewise grids and custom subclasses, retain ordinary
+outcome enumeration. This preserves their existing coordinate semantics, including
+extrapolation outside the target grid.
+
+Eligibility uses the exact `LinearExpectation` class, rather than its subclasses.
+`PowerMean`, `QuasiArithmeticMean`, and custom certainty equivalents retain ordinary
+outcome enumeration, including subclasses of `LinearExpectation` that override its
+meaning. The same boundary applies to certainty equivalents supplied on the model or
+regime and survives archiving models built with these rules. Model archives preserve
+their economic closures and continuation logic; rebuild from declarations when adopting
+different solver numerics. This fallback does not relax the regime constructor's
+separate folding restrictions: a folded state combined with an explicit nonlinear regime
+certainty equivalent or custom `LinearExpectation` subclass is rejected before
+transition-only pruning. The additive declaration's dependency checks still run before
+fallback; an invalid decomposition raises a construction error. On the linear averaging
+route, gated, collective, entered or factored continuations are unsupported and raise a
+construction error; use a plain `base + shock` function there.
+
+The merged-point table and interpolation weights require temporary storage that grows
+with the target grid, integrated shock support, conditioners and retained draws. They
+can cost more memory than direct enumeration on small source grids; the runtime and
+peak-memory benefit require a paired comparison of otherwise equivalent models.
 
 (state-conditioned-shock-size)=
 

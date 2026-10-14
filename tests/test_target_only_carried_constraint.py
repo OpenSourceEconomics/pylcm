@@ -29,6 +29,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime as UserRegime
+from lcm.transition import ModelEdges
 from lcm.typing import FloatND, ScalarInt
 
 BEQUEST_SCALE = 0.8
@@ -116,7 +117,7 @@ def _model(
     working: UserRegime,
     retired: UserRegime,
     values_bequest: bool = False,
-    edges: object = _EDGES,
+    edges: ModelEdges = _EDGES,
 ) -> Model:
     return Model(
         regimes={
@@ -160,7 +161,7 @@ def _working() -> UserRegime:
 
 
 def _solve_working_V(model: Model) -> list[FloatND]:
-    params = cast("dict", model.get_params_template())
+    params = cast("dict[str, dict[str, dict[str, float]]]", model.get_params_template())
     for regime_params in params.values():
         aggregator = regime_params.get("koopmans_aggregator")
         if aggregator is not None and "discount_factor" in aggregator:

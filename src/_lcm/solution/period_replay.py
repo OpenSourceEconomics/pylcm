@@ -16,17 +16,18 @@ and reports `layout`.
 """
 
 import dataclasses
+import logging
 import time
 from collections.abc import Hashable, Mapping, MutableMapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Literal, NotRequired, TypedDict, TypeGuard, cast
 
 import cloudpickle
 import jax
 import numpy as np
 
-from _lcm.engine import StateActionSpace, _RegimeSharding
+from _lcm.engine import Regime, StateActionSpace, _RegimeSharding
 from _lcm.execution.abstract_program_inputs import abstract_program_inputs
 from _lcm.execution.compiler_memory import (
     CompilerMemoryBytes,
@@ -75,6 +76,8 @@ from _lcm.solution.period_capture import (
     LAYOUTS_KEY,
     CoreLayoutDescriptor,
     LeafLayoutDescriptor,
+    PeriodCompileInputs,
+    PeriodKernelKwargs,
     PeriodLayouts,
     ShardingDescriptor,
     _describe_transfer,
@@ -83,9 +86,10 @@ from _lcm.solution.period_capture import (
     rebuild_sharding,
 )
 from _lcm.time import TimeAxis, age_at
-from _lcm.typing import FlatParams, RegimeName
+from _lcm.typing import FlatParams, RegimeName, ValueND
 from lcm.exceptions import ExecutionPlanningError
-from lcm.solver_api import KernelOutput
+from lcm.solver_api import ArtifactKey, KernelOutput
+from lcm.typing import ContinuousState, DiscreteState
 
 # How faithfully a replay reproduced the captured run:
 # - `logical` — leaves agree in tree, shape and dtype; placement is the
@@ -96,6 +100,38 @@ from lcm.solver_api import KernelOutput
 #   ownership, and is admitted under them. No entry point in this module
 #   produces it; the label exists so a layout-faithful replay is not read as one.
 type PeriodReplayScope = Literal["logical", "layout", "resource"]
+
+# One leaf of flattened period kernel kwargs: an array, or one of the values the
+# kwargs carry that are not pytrees themselves.
+type _KernelKwargsLeaf = (
+    ValueND
+    | StateActionSpace
+    | TimeAxis
+    | logging.Logger
+    | frozenset[ArtifactKey]
+    | str
+    | int
+    | bool
+)
+
+
+class PeriodCapturePayload(TypedDict):
+    """What a period capture records, as replay reads it back."""
+
+    regime: Regime
+    """The captured regime."""
+
+    period: int
+    """Index of the captured period in the model horizon."""
+
+    kernel_kwargs: PeriodKernelKwargs
+    """The arguments the period adapter was called with."""
+
+    core_tile_widths: Mapping[str, Mapping[str, int]]
+    """Width per execution axis of every core, keyed by core name."""
+
+    layouts: NotRequired[PeriodLayouts]
+    """The device layout the period ran on, when the capture recorded one."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -231,25 +267,54 @@ def analyze_period_core_memory(*, directory: Path) -> PeriodCoreMemoryAnalysis:
     )
 
 
-def _load_capture_payload(*, directory: Path) -> dict[str, Any]:
+def _load_capture_payload(*, directory: Path) -> PeriodCapturePayload:
     """Load one period's captured regime, inputs, widths and layout block."""
     with (directory / _PAYLOAD_NAME).open("rb") as stream:
         payload = cloudpickle.load(stream)
-    if not isinstance(payload, dict):
+    if not _is_period_capture_payload(payload):
         msg = "A period capture payload must be a dictionary."
         raise TypeError(msg)
-    if "core_tile_widths" not in payload:
-        msg = "Period capture is missing required 'core_tile_widths'."
-        raise ValueError(msg)
-    loaded = dict(payload)
+    loaded = payload.copy()
     loaded["core_tile_widths"] = _normalize_core_tile_widths(
         raw=payload["core_tile_widths"]
     )
     return loaded
 
 
+def _is_period_capture_payload(
+    obj: object,  # noqa: PAN001 - an unpickled payload is any object until narrowed
+    /,
+) -> TypeGuard[PeriodCapturePayload]:
+    """Whether `obj` is a dictionary holding every required capture entry.
+
+    Returns `False` for anything but a dictionary. A dictionary that lacks a
+    required entry, or holds one at the wrong top-level type, is refused naming
+    that entry. The optional `layouts` block is checked where it is read, by
+    `_require_period_layouts`.
+    """
+    if not isinstance(obj, dict):
+        return False
+    for key in ("regime", "period", "kernel_kwargs", "core_tile_widths"):
+        if key not in obj:
+            msg = f"Period capture is missing required {key!r}."
+            raise ValueError(msg)
+    for key, valid in (
+        ("regime", isinstance(obj["regime"], Regime)),
+        ("period", isinstance(obj["period"], int)),
+        ("kernel_kwargs", isinstance(obj["kernel_kwargs"], dict)),
+        ("core_tile_widths", isinstance(obj["core_tile_widths"], Mapping)),
+    ):
+        if not valid:
+            msg = (
+                f"Period capture entry {key!r} has the wrong type "
+                f"({type(obj[key]).__name__})."
+            )
+            raise TypeError(msg)
+    return True
+
+
 def _normalize_core_tile_widths(
-    *, raw: object
+    *, raw: Mapping[str, Mapping[str, int]]
 ) -> MappingProxyType[str, MappingProxyType[str, int]]:
     """Validate and freeze the portable width map stored in a capture."""
     if not isinstance(raw, Mapping):
@@ -292,7 +357,7 @@ def _normalize_core_tile_widths(
 
 def _require_exact_core_tile_widths(
     *,
-    raw: object,
+    raw: Mapping[str, Mapping[str, int]],
     core_names: tuple[str, ...],
 ) -> MappingProxyType[str, MappingProxyType[str, int]]:
     """Require one captured width map for every selected replay core."""
@@ -312,7 +377,7 @@ def _require_exact_core_tile_widths(
 
 def _project_axis_widths(
     *,
-    program: Any,  # noqa: ANN401 - the materialized CoreProgram, circular to import
+    program: MaterializedCoreProgram,
     axis_widths: Mapping[str, int],
 ) -> MappingProxyType[str, int]:
     """Bind one program's declared axes from a model-wide width mapping.
@@ -331,10 +396,10 @@ def _project_axis_widths(
 
 def _compile_cores_for_one_period(
     *,
-    regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
+    regime: Regime,
     period: int,
-    kernel_kwargs: dict[str, Any],
-    core_tile_widths: object,
+    kernel_kwargs: PeriodCompileInputs,
+    core_tile_widths: Mapping[str, Mapping[str, int]],
     core_donations: Mapping[str, tuple[str, ...]] = MappingProxyType({}),
     recorded_core_layouts: Mapping[str, CoreLayoutDescriptor] | None = None,
     replay_devices_by_id: Mapping[int, jax.Device] = MappingProxyType({}),
@@ -405,7 +470,7 @@ def _compile_cores_for_one_period(
             if captured_widths is not None
             else _project_axis_widths(program=materialized, axis_widths=declared_widths)
         )
-        source_value_template = context.next_regime_to_V_arr[
+        source_value_template = kernel_kwargs["next_regime_to_V_arr"][
             kernel_kwargs["regime_name"]
         ]
         input_transfer_plan = (
@@ -426,7 +491,7 @@ def _compile_cores_for_one_period(
             materialized = abstract_program_inputs(
                 program=materialized,
                 transfers=input_transfer_plan,
-                execution_sharding=cast("jax.Array", source_value_template).sharding,
+                execution_sharding=source_value_template.sharding,
             )
         resolved = _resolve_program_for_execution(
             program=materialized,
@@ -498,9 +563,9 @@ def _compile_cores_for_one_period(
 
 def _core_build_context_for_one_period(
     *,
-    regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
+    regime: Regime,
     period: int,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: PeriodCompileInputs,
 ) -> CoreBuildContext:
     """Build the immutable program context shared by replay and memory analysis."""
     # A source declaring gated edges reads its targets' folded continuation in
@@ -522,10 +587,7 @@ def _core_build_context_for_one_period(
         flat_params=kernel_kwargs["flat_params"],
         period=period,
         ages=kernel_kwargs["ages"],
-        edge_regime_to_V_arr=cast(
-            "Mapping[str, object] | None",
-            edge_kwargs.get("edge_regime_to_V_arr"),
-        ),
+        edge_regime_to_V_arr=edge_kwargs.get("edge_regime_to_V_arr"),
     )
 
 
@@ -595,8 +657,8 @@ def replay_period_on_recorded_layout(
 
 
 def prepare_recorded_period(
-    *, payload: Mapping[str, Any], directory: Path, devices: Sequence[jax.Device]
-) -> tuple[dict[str, Any], MappingProxyType[str, PlannedCore]]:
+    *, payload: PeriodCapturePayload, directory: Path, devices: Sequence[jax.Device]
+) -> tuple[PeriodKernelKwargs, MappingProxyType[str, PlannedCore]]:
     """Restore and check the recorded layout without executing the period."""
     layouts = _require_period_layouts(payload=payload, directory=directory)
     recorded_cores = _require_recorded_cores(layouts=layouts, directory=directory)
@@ -645,7 +707,7 @@ def prepare_recorded_period(
 
 
 def _require_period_layouts(
-    *, payload: Mapping[str, Any], directory: Path
+    *, payload: PeriodCapturePayload, directory: Path
 ) -> PeriodLayouts:
     """Return the capture's layout block, refusing a capture that has none."""
     layouts = payload.get(LAYOUTS_KEY)
@@ -816,10 +878,10 @@ def _restore_input_transfer_plan(
 
 def _restore_recorded_layout(
     *,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: PeriodKernelKwargs,
     leaves: tuple[LeafLayoutDescriptor, ...],
     device_by_recorded_id: Mapping[int, jax.Device],
-) -> dict[str, Any]:
+) -> PeriodKernelKwargs:
     """Place every array leaf back on its recorded sharding and check it landed.
 
     The placement is checked leaf by leaf rather than trusted: `device_put` onto
@@ -834,7 +896,7 @@ def _restore_recorded_layout(
     """
     flat, treedef = jax.tree_util.tree_flatten_with_path(kernel_kwargs)
     by_path = {descriptor.tree_path: descriptor for descriptor in leaves}
-    restored: list[Any] = []
+    restored: list[_KernelKwargsLeaf] = []
     for path, leaf in flat:
         key = jax.tree_util.keystr(path)
         descriptor = by_path.get(key)
@@ -864,12 +926,12 @@ def _restore_recorded_layout(
             label=f"restored input {key}",
         )
         restored.append(placed)
-    return cast("dict[str, Any]", jax.tree.unflatten(treedef, restored))
+    return cast("PeriodKernelKwargs", jax.tree.unflatten(treedef, restored))
 
 
 def _restore_state_action_space_layout(
-    *, kernel_kwargs: dict[str, Any]
-) -> dict[str, Any]:
+    *, kernel_kwargs: PeriodKernelKwargs
+) -> PeriodKernelKwargs:
     """Place the state-action space's grids where the solve's builder put them.
 
     The state-action space is not a pytree, so a capture records no descriptor
@@ -899,10 +961,13 @@ def _restore_state_action_space_layout(
             distributed_state_names=tuple(template_sharding.mesh.axis_names),
         )
         if isinstance(template_sharding, jax.NamedSharding)
+        and isinstance(template_sharding.mesh, jax.sharding.Mesh)
         else None
     )
 
-    def placed(*, name: str, grid: Any) -> Any:  # noqa: ANN401
+    def placed(
+        *, name: str, grid: ContinuousState | DiscreteState
+    ) -> ContinuousState | DiscreteState:
         points = regime_params.get(f"{name}__points")
         if points is not None:
             if not np.array_equal(np.asarray(points), np.asarray(grid)):
@@ -911,7 +976,7 @@ def _restore_state_action_space_layout(
                     f"from its runtime parameter '{name}__points'."
                 )
                 raise ValueError(msg)
-            grid = points
+            grid = cast("ContinuousState | DiscreteState", points)
         if plan is not None and name in plan.distributed_state_names:
             return jax.device_put(grid, plan.state_sharding(name))
         return grid
@@ -1035,7 +1100,7 @@ def _assert_named_shardings_match(
 
 def _assert_recorded_sharding(
     *,
-    actual: object,
+    actual: jax.sharding.Sharding | ShardingDescriptor,
     recorded: ShardingDescriptor,
     label: str,
 ) -> None:
@@ -1094,13 +1159,13 @@ class DeclaredCoreCompilation:
     memory: CompilerMemoryBytes | None
     """The compiler's per-field memory report, or `None` when unavailable."""
 
-    compiled: Any
+    compiled: jax.stages.Compiled
     """The compiled executable, for a caller that reads its text or its report."""
 
 
 def compile_declared_period_cores(
     *,
-    regimes: MappingProxyType[RegimeName, Any],
+    regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: TimeAxis,
     regime_name: RegimeName,
@@ -1157,7 +1222,7 @@ def compile_declared_period_cores(
             process_grid_resolver=process_grid_resolver,
         )
     )
-    kernel_kwargs = {
+    kernel_kwargs: PeriodCompileInputs = {
         "regime_name": regime_name,
         "period": period,
         "state_action_space": base_spaces[regime_name],
@@ -1199,10 +1264,10 @@ def compile_declared_period_cores(
 
 def _require_declared_regime(
     *,
-    regimes: Mapping[RegimeName, Any],
+    regimes: Mapping[RegimeName, Regime],
     regime_name: RegimeName,
     period: int,
-) -> Any:  # noqa: ANN401 - the canonical Regime, circular to import here
+) -> Regime:
     """Return the regime, refusing a name or a period it does not declare."""
     if regime_name not in regimes:
         msg = (
@@ -1222,9 +1287,9 @@ def _require_declared_regime(
 
 def _declared_axis_names(
     *,
-    regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
+    regime: Regime,
     period: int,
-    kernel_kwargs: dict[str, Any],
+    kernel_kwargs: PeriodCompileInputs,
 ) -> frozenset[str]:
     """Collect the execution axes this period's cores declare.
 
@@ -1274,6 +1339,10 @@ def _declared_compilation(
     timing: tuple[float, float],
 ) -> DeclaredCoreCompilation:
     """Read one compiled core's walls and memory report into a record."""
+    compiled = core.compiled
+    if not isinstance(compiled, jax.stages.Compiled):
+        msg = f"Core {core_name!r} carries no compiled JAX executable."
+        raise TypeError(msg)
     reservation = compiler_memory_reservation(
         compiled=core.compiled, widths=core.tile_widths
     )
@@ -1291,5 +1360,5 @@ def _declared_compilation(
         reservation_bytes=reservation_bytes,
         peak_bytes=peak_bytes,
         memory=compiler_memory_bytes(compiled=core.compiled),
-        compiled=core.compiled,
+        compiled=compiled,
     )

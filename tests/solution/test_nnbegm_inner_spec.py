@@ -159,18 +159,10 @@ def test_nested_regime_binds_both_margins_without_an_inner_spec() -> None:
     )
 
 
-def test_non_nbegm_inner_is_rejected_by_explicit_structural_guard() -> None:
-    """A non-NBEGM inner is refused by an explicit check, not only by a type hint.
-
-    The guard is called directly: wherever runtime type checking is active the
-    constructor's own annotation refuses the value first, which would leave the
-    explicit check unexercised.
-    """
-    with pytest.raises(
-        RegimeInitializationError,
-        match=r"NNBEGM\.inner must be an NBEGM",
-    ):
-        _fail_if_inner_is_not_nbegm(GridSearch())
+def test_non_nbegm_inner_is_rejected_by_the_structural_guard() -> None:
+    """The guard refuses a non-NBEGM inner with `RegimeInitializationError`."""
+    with pytest.raises(RegimeInitializationError, match="inner"):
+        _fail_if_inner_is_not_nbegm(GridSearch())  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize(

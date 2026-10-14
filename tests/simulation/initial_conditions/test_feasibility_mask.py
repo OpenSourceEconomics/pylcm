@@ -276,7 +276,7 @@ def test_budgeted_simulate_accepts_action_free_regime_without_serial_validation(
     diagnostic validator is never consulted.
     """
 
-    def forbidden(**kwargs: object) -> None:
+    def forbidden[Ignored](**kwargs: Ignored) -> None:
         del kwargs
         pytest.fail("Serial validation ran for a valid action-free population.")
 

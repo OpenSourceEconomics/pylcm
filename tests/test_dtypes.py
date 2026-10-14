@@ -20,7 +20,7 @@ pytestmark = pytest.mark.filterwarnings(
     [7, np.asarray([0, 1, -3], dtype=np.int64)],
     ids=["python-int", "int64-array"],
 )
-def test_safe_to_int_dtype_returns_int32(value: object):
+def test_safe_to_int_dtype_returns_int32(value: int | np.ndarray):
     """`safe_to_int_dtype` returns a `jnp.int32` array for any in-range int input."""
     out = safe_to_int_dtype(value=value, name="x")
     assert out.dtype == jnp.int32
@@ -35,7 +35,7 @@ def test_safe_to_int_dtype_returns_int32(value: object):
     ids=["python-int", "int64-array"],
 )
 def test_safe_to_int_dtype_preserves_in_range_values(
-    *, value: object, expected: object
+    *, value: int | np.ndarray, expected: int | list[int]
 ):
     """`safe_to_int_dtype` preserves element values for in-range inputs."""
     out = safe_to_int_dtype(value=value, name="x")

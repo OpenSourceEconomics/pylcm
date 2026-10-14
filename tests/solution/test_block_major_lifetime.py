@@ -18,10 +18,10 @@ import dataclasses
 import gc
 import logging
 import weakref
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Unpack
 
 import jax
 import jax.numpy as jnp
@@ -32,6 +32,7 @@ from beartype.roar import BeartypeCallHintParamViolation
 import tests.conftest as test_config
 from _lcm.execution.core_program import core_program_graph
 from _lcm.solution import backward_induction, block_major
+from _lcm.typing import HostArray, PytreeValue
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -56,10 +57,13 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
+    UserParams,
 )
 from tests.simulation import test_type_grouped_simulation as life_cycle
 from tests.solution import test_invariant_blocking as stage3
+from tests.solution.test_pipelined_lowering import _CompileKwargs
 from tests.test_models import independent_types
 
 _BLOCK_MAJOR = InvariantBlockSchedule.BLOCK_MAJOR
@@ -105,7 +109,7 @@ def _life_cycle_model(
 
 def _workload(
     *, name: str, schedule: InvariantBlockSchedule | None
-) -> tuple[Model, dict]:
+) -> tuple[Model, UserParams]:
     if name == "life_cycle":
         return (
             _life_cycle_model(schedule=schedule),
@@ -117,13 +121,16 @@ def _workload(
 _WORKLOADS = ("independent_types", "sector_typed_terminal", "life_cycle")
 
 
-def _leaf_bytes(leaf: object) -> tuple[str, tuple[int, ...], bytes]:
+def _leaf_bytes(leaf: PytreeValue) -> tuple[str, tuple[int, ...], bytes]:
     array = np.asarray(leaf)
     return array.dtype.str, array.shape, array.tobytes()
 
 
 def _assert_value_bytes_equal(
-    *, got: Mapping, want: Mapping, ordered: bool = True
+    *,
+    got: Mapping[int, Mapping[RegimeName, FloatND]],
+    want: Mapping[int, Mapping[RegimeName, FloatND]],
+    ordered: bool = True,
 ) -> None:
     """Require the same coordinates and, at each, the same dtype, shape and bytes.
 
@@ -147,7 +154,7 @@ def _assert_value_bytes_equal(
     assert mismatched == []
 
 
-def _solution(*, model: Model, params: Mapping) -> SolutionResult:
+def _solution(*, model: Model, params: UserParams) -> SolutionResult:
     return model.solve(params=params, log_level="off")
 
 
@@ -173,13 +180,18 @@ class _Assemblies:
     """Count every full value a retained owner assembles on the host."""
 
     def __init__(self, *, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.calls: list[tuple[int, str]] = []
+        self.calls: list[tuple[int, RegimeName]] = []
         assemble = block_major.RetainedComponentValues.assemble_host_value
 
         calls = self.calls
 
         # keyword-only-exempt: library-callback=pytest.MonkeyPatch.setattr
-        def counted(self: Any, *, period: int, regime: str) -> np.ndarray:
+        def counted(
+            self: block_major.RetainedComponentValues,
+            *,
+            period: int,
+            regime: RegimeName,
+        ) -> HostArray:
             calls.append((period, regime))
             return assemble(self, period=period, regime=regime)
 
@@ -345,7 +357,7 @@ def test_materializing_every_value_returns_the_period_major_values() -> None:
 def _simulate(
     *,
     model: Model,
-    params: Mapping,
+    params: UserParams,
     initial: Mapping[str, np.ndarray],
     solution: SolutionResult | None,
     seed: int = 7,
@@ -367,7 +379,7 @@ _POPULATIONS = (
 
 
 def _reference_panels(
-    *, params: Mapping, initial: Mapping[str, np.ndarray], combined: bool
+    *, params: UserParams, initial: Mapping[str, np.ndarray], combined: bool
 ) -> dict[str, SimulationResult]:
     """Simulate the period-major and the unblocked routes, split or combined."""
     panels = {}
@@ -722,14 +734,19 @@ def _record_component_blocks(
     retain = block_major.RetainedComponentValues.retain
 
     # keyword-only-exempt: library-callback=pytest.MonkeyPatch.setattr
-    def recording(self: Any, *, code: int, blocks: Mapping, **kwargs: Any) -> None:
+    def recording(
+        self: block_major.RetainedComponentValues,
+        *,
+        code: int,
+        blocks: MappingProxyType[int, MappingProxyType[str, jax.Array]],
+    ) -> None:
         recorded.extend(
             (code, block) for regimes in blocks.values() for block in regimes.values()
         )
         if code == fail_on_code:
             msg = "injected component failure"
             raise RuntimeError(msg)
-        retain(self, code=code, blocks=blocks, **kwargs)
+        retain(self, code=code, blocks=blocks)
 
     monkeypatch.setattr(block_major.RetainedComponentValues, "retain", recording)
     return recorded
@@ -1007,12 +1024,14 @@ def test_block_major_simulation_without_grouping_is_refused() -> None:
 
 
 def _count_compiles(
-    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: Mapping
+    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: UserParams
 ) -> int:
-    calls: list[object] = []
+    calls: list[Hashable] = []
     compile_and_log = backward_induction._compile_and_log
 
-    def counted(**kwargs: Any) -> object:
+    def counted(
+        **kwargs: Unpack[_CompileKwargs],
+    ) -> tuple[Hashable, jax.stages.Compiled]:
         calls.append(kwargs["lowering_key"])
         return compile_and_log(**kwargs)
 
@@ -1113,3 +1132,14 @@ def test_a_block_major_solve_logs_its_retention_record(
     assert len(records) == 1
     assert isinstance(records[0], block_major.ComponentRetentionRecord)
     assert records[0].codes == (0, 1, 2)
+
+
+def test_value_bytes_by_device_are_a_read_only_mapping() -> None:
+    """The per-device bytes of complete values come back as a read-only mapping."""
+    layout = block_major.ValueLayout(
+        shape=(3,),
+        axis=0,
+        sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+    )
+    totals = block_major._bytes_by_device(layouts=(layout,), item_bytes=4)
+    assert type(totals) is MappingProxyType

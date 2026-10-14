@@ -396,7 +396,29 @@ solution = model.solve(
 )
 
 V_working = solution.value(period=0, regime="working")
+values = solution.value_array(period=0, regime="working")
+curve = values.sel(education="college")
+frame = curve.to_dataframe().reset_index()
+full_frame = solution.value_frame(period=0, regime="working")
+codes = solution.value_frame(period=0, regime="working", use_labels=False)
 ```
+
+`value_array` returns an xarray `DataArray` named `V` with one dimension per axis in
+`metadata.value_schemas[(period, regime)].axis_names` order. Axis names must be unique
+and cannot be `V`, which is reserved for the value. Discrete states carry their labels
+as a categorical coordinate in declaration order, with the ordering matching simulation;
+`use_labels=False` keeps integer codes. Collective regimes also have a `stakeholder`
+dimension, and a regime without states yields a zero-dimensional array. Coordinates are
+the resolved grid nodes used by the solve, including parameter-dependent process grids
+and period-specialized grids, and remain available after saving and loading. The array
+wraps the stored value without copying it to the host, so select the slice you need
+before converting it to a table.
+
+`value_frame` is the same array in long form: a pandas DataFrame with one column per
+dimension followed by `V`. It materializes every grid point, so the frame can be large.
+For values between nodes, use `Model.lookup_policy`, which uses the same interpolation
+as simulation. The coordinate-bearing value schema uses solution schema version 3;
+archives from a different schema version are refused by the existing compatibility gate.
 
 The result and its supporting types live in the lightweight `lcm.solver_api` submodule;
 they are not re-exported from the top-level `lcm` namespace. The retention modes are:
@@ -464,15 +486,15 @@ rebuilds immutable authority from the canonical model, canonical parameters, and
 installed consuming route, then checks values, repeated metadata, and materialized
 artifacts independently.
 
-Solver diagnostics follow `log_level`, independently of retention. Each retained
-diagnostics payload is described by a model-verifiable descriptor the solve generates
-from the payload itself, so it is saved with the result and reads back from an archive
-without a model; a consuming model admits the descriptor after checking that it names
-only the published fields with the dtypes they carry. A continuation is always available
-to the backward graph that requires it, regardless of result retention. It remains in
-the returned result only under `ALL_PERSISTABLE_ARTIFACTS` and only when its model-built
-authority declares `MODEL_VERIFIABLE`; otherwise the result records `NOT_REQUESTED` or
-`NOT_PERSISTED`.
+Solver numerical diagnostics follow `runtime_checks`, independently of retention. Each
+retained diagnostics payload is described by a model-verifiable descriptor the solve
+generates from the payload itself, so it is saved with the result and reads back from an
+archive without a model; a consuming model admits the descriptor after checking that it
+names only the published fields with the dtypes they carry. A continuation is always
+available to the backward graph that requires it, regardless of result retention. It
+remains in the returned result only under `ALL_PERSISTABLE_ARTIFACTS` and only when its
+model-built authority declares `MODEL_VERIFIABLE`; otherwise the result records
+`NOT_REQUESTED` or `NOT_PERSISTED`.
 
 A retention also selects what a solve computes. Every built-in kernel publishes its
 programs with a scope and, for replay or additive artifact programs, exact
@@ -540,9 +562,9 @@ compatibility.
 ## Simulation
 
 `model.simulate(...)` accepts parameters, initial conditions, an optional complete
-`SolutionResult` as `solution=...`, and a required `log_level`. Omitting `solution`
-solves first. Bare value mappings and separate policy or dissolution-flag inputs are not
-accepted.
+`SolutionResult` as `solution=...`, a required `log_level`, and `runtime_checks=True`.
+Omitting `solution` solves first. Bare value mappings and separate policy or
+dissolution-flag inputs are not accepted.
 
 How a `SolutionResult` is consumed follows its provenance. A result the same model
 instance solved in this process, for the same canonical parameters, is consumed by
@@ -614,17 +636,14 @@ or a DataFrame with a `regime_name` column.
 
 ## Validation and logging
 
-`log_level` controls both output and runtime validation:
-
-| Level        | Behavior                                                      |
-| ------------ | ------------------------------------------------------------- |
-| `"off"`      | Silent; runtime probability and non-finite checks skipped     |
-| `"warning"`  | Validate, warn, continue                                      |
-| `"progress"` | Warning behavior plus timings                                 |
-| `"debug"`    | Validate and raise at first failure; include value statistics |
-
-Start model development at `"debug"`. Reduce validation only after the model is trusted
-and the cost matters.
+`log_level` controls console output: `off` is silent, `warning` prints warnings,
+`progress` adds timing, and `debug` adds value statistics. `runtime_checks=True`
+independently enables numerical probability, NaN and existing feasibility/replay checks
+and raises on failure at every verbosity. `runtime_checks=False` explicitly skips those
+checks, including during automatic solving. Construction, parameter schema,
+initial-condition structure and solution-identity validation always run. Infinity-only
+value diagnostics remain warnings; an application requiring all stored values finite
+must retain that stronger invariant.
 
 `model.simulate(...)` also reports the resolved execution plan it dispatched: the
 forward route (`"legacy"` or `"subjects"`), the ordered subject devices and their
@@ -647,7 +666,7 @@ preallocates; with `XLA_PYTHON_CLIENT_PREALLOCATE=false` pass an explicit
 
 ## `PolicyLookup`
 
-`Model.lookup_policy(params=..., solution=..., period=..., regime_name=..., states=..., action_grids=None, return_action_values=False)`
+`Model.lookup_policy(params=..., solution=..., period=..., regime_name=..., states=..., action_grids=None, keep_intermediates=())`
 evaluates the decision that simulate takes at caller-supplied states of one demanded
 period and regime. It returns a `PolicyLookup` with `actions`, a mapping from action
 name to the chosen grid values, and `value`, the maximised value at each state.
@@ -656,23 +675,40 @@ restricted `action_grids` values must lie on their grids. `Model.state_names` gi
 axis order of `solution.values[period][regime]`, and `Model.state_grid` gives a state's
 grid nodes after runtime parameters.
 
-With `return_action_values=True`, the lookup also fills `Q` and `F` from the same
-decision program: the action values and their feasibility over the (possibly restricted)
-action grid, with one leading row per state and one axis per action in the order of
-`actions`. `Q` is raw: an infeasible entry holds the value the action would have, which
-can exceed `value`, and `value` is the max of `Q` over the entries `F` admits. Both are
-`None` by default. Collective regimes refuse the option. A lookup over a restricted grid
-compiles its own program, so its `Q` and `value` can differ in the last bits from the
-matching slice of a full-grid lookup's `Q`.
+`keep_intermediates` names the intermediates of the decision to keep, in any order: the
+action values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and the
+certainty-equivalent continuation `"CE"`. Each kept one fills the field of that name
+over the (possibly restricted) action grid, with one leading row per state and one axis
+per action in the order of `actions`; the others stay `None`, as all four do by default.
+All come from the one kernel evaluation the decision maximizes over, and keeping them
+leaves `actions` and `value` unchanged. Collective regimes refuse the option.
+
+`Q`, `U` and `CE` are raw: an infeasible entry holds what the action would have, so a
+`Q` entry can exceed `value`, and `value` is the max of `Q` over the entries `F` admits.
+Keep `"F"` alongside any of them to know which entries the decision admits. `U` is the
+regime's flow utility. `CE` is the certainty equivalent of next period's value,
+undiscounted: the `CE` argument the regime's Koopmans aggregator receives, so
+`Q == W(utility=U, CE=CE, ...)` for every aggregator, and
+`Q == U + discount_factor * CE` under `LinearAggregator`. A terminal regime has
+`CE == 0` and `Q == U`. When the aggregator reads a regime function, such as a
+type-specific discount factor, rebuilding `Q` from `U` and `CE` also needs that
+function's value.
+
+Each kept intermediate holds one float or bool per state row and action. Any non-empty
+`keep_intermediates` evaluates the whole action product at once, even where the decision
+alone streams over it, so it costs more memory than the arrays it returns. A lookup over
+a restricted grid compiles its own program, so its `Q` and `value` can differ in the
+last bits from the matching slice of a full-grid lookup's `Q`.
 
 (api-simulation-result)=
 
 ## `SimulationResult`
 
 `to_dataframe(additional_targets=None, use_labels=True, terminal_rows="first")`
-materializes a flat DataFrame. `additional_targets` accepts selected DAG outputs or
-`"all"`. `terminal_rows="all"` retains every frozen absorbing row; the default keeps
-only terminal entry.
+materializes a flat DataFrame. `additional_targets` accepts a sequence of selected DAG
+output names (including the tuple `result.available_targets`), `"all"`, or `None`. Other
+bare strings raise `InvalidAdditionalTargetsError`. `terminal_rows="all"` retains every
+frozen absorbing row; the default keeps only terminal entry.
 
 Inspection properties include `regime_names`, `state_names`, `action_names`,
 `n_periods`, `n_subjects`, `available_targets`, `raw_results`, `flat_params`, and

@@ -1,6 +1,7 @@
 from types import MappingProxyType
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.dtypes import canonical_float_dtype
@@ -25,7 +26,7 @@ from lcm.exceptions import (
     InvalidStateTransitionProbabilitiesError,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.typing import DiscreteAction, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import DiscreteAction, FloatND, ScalarFloat, ScalarInt, UserParams
 from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
 
@@ -245,7 +246,7 @@ def _next_regime_only_fails_for_leave(action: DiscreteAction) -> FloatND:
     )
 
 
-def _build_action_dependent_model() -> tuple[Model, dict]:
+def _build_action_dependent_model() -> tuple[Model, UserParams]:
     """Build a minimal model whose transition bug only shows for the second action."""
     active = UserRegime(
         actions={
@@ -273,7 +274,7 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
             )
         },
     )
-    params: dict = {"discount_factor": 0.95}
+    params: UserParams = {"discount_factor": 0.95}
     return model, params
 
 
@@ -291,7 +292,7 @@ def test_regime_transition_validation_passes_period_as_int32():
     int64 inside `jax.vmap`, breaking any consumer that dtype-checks its
     `period` slot (e.g. a beartyped `Period` hint).
     """
-    seen_period_dtypes: list = []
+    seen_period_dtypes: list[np.dtype | None] = []
 
     def _transition_recording_period(
         *, action: DiscreteAction, period: ScalarInt
@@ -483,3 +484,13 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
             ages=model.ages,
             logger=logger,
         )
+
+
+def test_validate_transitions_sweeps_every_action_and_matches_solve() -> None:
+    """A law valid at the first action still fails the no-solve public check."""
+    model, params = _build_action_dependent_model()
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as preflight:
+        model.validate_transitions(params=params)
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as solve:
+        model.solve(params=params, log_level="off")
+    assert str(preflight.value) == str(solve.value)

@@ -57,12 +57,12 @@ from _lcm.solution.solver_diagnostics import (
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.time import TimeAxis
 from _lcm.typing import (
-    ContinuousState,
-    DiscreteState,
+    ArtifactPayload,
     FlatParams,
     RegimeName,
     StateName,
 )
+from lcm._solver_api.identity import ArtifactRuntimeType
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     SIMULATION_POLICY,
@@ -92,6 +92,7 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
     _snapshot_artifact_template_once,
 )
+from lcm.typing import ActionName, FloatND, IntND
 
 _EGM_CONTINUATION_ROUTE = ReplayRouteIdentity(
     route_id="pylcm.egm_continuation",
@@ -109,7 +110,7 @@ _NNBEGM_CANDIDATE_AXIS = "pylcm:nnbegm:outer_candidate"
 class ValueCellDescriptor:
     """Canonical representation of one model value cell."""
 
-    payload_type: type[object]
+    payload_type: type[Array]
     shape: tuple[int, ...]
     dtype: str
     axis_names: tuple[str, ...]
@@ -120,7 +121,7 @@ class ReplayCellDescriptor:
     """Canonical representation and route of one replay-artifact cell."""
 
     ref: ArtifactRef
-    payload_type: type[object] | tuple[type[object], ...] | None
+    payload_type: ArtifactRuntimeType | tuple[ArtifactRuntimeType, ...] | None
     route: EGMPolicyRead | NNBEGMPolicyRead | None
     shape: tuple[int, ...] | None
     dtype: str | None
@@ -233,13 +234,15 @@ def _snapshot_value_cell_descriptor(
     )
 
 
-def _snapshot_authority_value_coordinate(coordinate: object) -> tuple[int, RegimeName]:
+def _snapshot_authority_value_coordinate(
+    coordinate: tuple[int, RegimeName],
+) -> tuple[int, RegimeName]:
     if type(coordinate) is not tuple or len(coordinate) != 2:  # noqa: PLR2004
         raise TypeError("Value authority coordinates must be exact pairs.")
     period, regime_name = coordinate
     _require_nonnegative_exact_int(value=period, label="value authority period")
     _require_nonempty_exact_str(value=regime_name, label="value authority regime")
-    return cast("int", period), cast("RegimeName", regime_name)
+    return period, regime_name
 
 
 def _snapshot_replay_cell_descriptor(
@@ -602,69 +605,68 @@ def _snapshot_declared_outer_inverse(
     )
 
 
-def _require_exact_mapping(*, value: object, label: str) -> None:
+def _require_exact_mapping[Key, Value](
+    *, value: Mapping[Key, Value], label: str
+) -> None:
     if type(value) is not MappingProxyType:
         raise TypeError(f"{label} must be an immutable exact mapping.")
 
 
-def _require_exact_tuple(*, value: object, label: str) -> None:
+def _require_exact_tuple[Item](*, value: tuple[Item, ...], label: str) -> None:
     if type(value) is not tuple:
         raise TypeError(f"{label} must be an exact tuple.")
 
 
-def _require_nonempty_exact_str(*, value: object, label: str) -> None:
+def _require_nonempty_exact_str(*, value: str, label: str) -> None:
     if type(value) is not str:
         raise TypeError(f"{label} must be an exact str.")
     if not value:
         raise ValueError(f"{label} must not be empty.")
 
 
-def _require_nonnegative_exact_int(*, value: object, label: str) -> None:
+def _require_nonnegative_exact_int(*, value: int, label: str) -> None:
     if type(value) is not int:
         raise TypeError(f"{label} must be an exact int.")
     if value < 0:
         raise ValueError(f"{label} must be nonnegative.")
 
 
-def _require_exact_float(*, value: object, label: str) -> None:
+def _require_exact_float(*, value: float, label: str) -> None:
     if type(value) is not float:
         raise TypeError(f"{label} must be an exact float.")
 
 
-def _require_exact_names(*, value: object, label: str) -> None:
+def _require_exact_names(*, value: tuple[str, ...], label: str) -> None:
     _require_exact_tuple(value=value, label=label)
-    names = cast("tuple[object, ...]", value)
-    if any(type(name) is not str or not name for name in names):
+    if any(type(name) is not str or not name for name in value):
         raise TypeError(f"{label} must contain nonempty exact strs.")
 
 
-def _require_exact_shape(*, value: object, label: str) -> None:
+def _require_exact_shape(*, value: tuple[int, ...], label: str) -> None:
     _require_exact_tuple(value=value, label=label)
-    shape = cast("tuple[object, ...]", value)
-    if any(type(size) is not int for size in shape):
+    if any(type(size) is not int for size in value):
         raise TypeError(f"{label} must contain exact ints.")
-    if any(cast("int", size) < 0 for size in shape):
+    if any(size < 0 for size in value):
         raise ValueError(f"{label} must contain nonnegative sizes.")
 
 
-def _require_exact_ints(*, value: object, label: str) -> None:
+def _require_exact_ints(*, value: tuple[int, ...], label: str) -> None:
     _require_exact_tuple(value=value, label=label)
-    items = cast("tuple[object, ...]", value)
-    if any(type(item) is not int for item in items):
+    if any(type(item) is not int for item in value):
         raise TypeError(f"{label} must contain exact ints.")
 
 
-def _require_exact_floats(*, value: object, label: str) -> None:
+def _require_exact_floats(*, value: tuple[float, ...], label: str) -> None:
     _require_exact_tuple(value=value, label=label)
-    items = cast("tuple[object, ...]", value)
-    if any(type(item) is not float for item in items):
+    if any(type(item) is not float for item in value):
         raise TypeError(f"{label} must contain exact floats.")
 
 
-def _require_exact_period_lengths(*, value: object, label: str) -> None:
+def _require_exact_period_lengths(
+    *, value: Mapping[int, tuple[int, ...]], label: str
+) -> None:
     _require_exact_mapping(value=value, label=label)
-    mapping = cast("MappingProxyType[object, object]", value)
-    for period, lengths in mapping.items():
+    for period, lengths in value.items():
         _require_nonnegative_exact_int(value=period, label=f"{label} period")
         _require_exact_shape(value=lengths, label=f"{label} lengths")
 
@@ -673,7 +675,7 @@ def _require_exact_period_lengths(*, value: object, label: str) -> None:
 class _ArtifactLayout:
     """Exact semantic layout supplied to the generic PyTree authority builder."""
 
-    leaf_axis_names: dict[TreePath, tuple[str, ...]]
+    leaf_axis_names: MappingProxyType[TreePath, tuple[str, ...]]
     axes: tuple[AxisAuthority, ...]
     state_roles: tuple[str, ...] = ()
     action_roles: tuple[str, ...] = ()
@@ -743,16 +745,18 @@ def build_solution_authority(  # noqa: PLR0915
                 regime=regime,
                 period=period,
             )
-            custom_authorities = {
-                key: _bind_model_owned_artifact_facts(
-                    authority=custom_authority,
-                    regime=regime,
-                    state_action_space=state_action_space,
-                )
-                for key, custom_authority in (
-                    regime.solution.artifact_authorities.items()
-                )
-            }
+            custom_authorities = MappingProxyType(
+                {
+                    key: _bind_model_owned_artifact_facts(
+                        authority=custom_authority,
+                        regime=regime,
+                        state_action_space=state_action_space,
+                    )
+                    for key, custom_authority in (
+                        regime.solution.artifact_authorities.items()
+                    )
+                }
+            )
             _validate_custom_continuation_authorities(
                 regime_name=regime_name,
                 period=period,
@@ -925,7 +929,7 @@ def build_solution_authority(  # noqa: PLR0915
                     persistence=PersistencePolicy.MODEL_VERIFIABLE,
                     payload_runtime_type=Array,
                     template=jnp.zeros(flag_shape, dtype=bool),
-                    leaf_axis_names={(): flag_axis_names},
+                    leaf_axis_names=MappingProxyType({(): flag_axis_names}),
                     axes=flag_axes,
                     state_roles=tuple(
                         name
@@ -1047,7 +1051,7 @@ def _validate_custom_continuation_authorities(
     regime_name: RegimeName,
     period: int,
     continuation_spec: ContinuationSpec | None,
-    custom_authorities: dict[ArtifactKey, ArtifactAuthority],
+    custom_authorities: MappingProxyType[ArtifactKey, ArtifactAuthority],
 ) -> None:
     """Require a custom continuation authority to agree with its producer spec.
 
@@ -1125,8 +1129,8 @@ def _validate_custom_continuation_authorities(
 def _validate_external_route_authorities(
     *,
     external_route: ExecutableReplayRoute | None,
-    authorities: dict[ArtifactKey, ArtifactAuthority],
-    producer_payload_types: MappingProxyType[ArtifactKey, type[object]],
+    authorities: MappingProxyType[ArtifactKey, ArtifactAuthority],
+    producer_payload_types: MappingProxyType[ArtifactKey, ArtifactRuntimeType],
     context: ReplayModelContext,
 ) -> None:
     """Bind an external route only to replay authorities built with the solver."""
@@ -1195,7 +1199,7 @@ def _validate_external_route_authorities(
 def _validate_required_external_producers(
     *,
     required_artifacts: frozenset[ArtifactKey],
-    producer_payload_types: MappingProxyType[ArtifactKey, type[object]],
+    producer_payload_types: MappingProxyType[ArtifactKey, ArtifactRuntimeType],
 ) -> None:
     """Require each external-route input to be published by a core program."""
     missing = required_artifacts - producer_payload_types.keys()
@@ -1208,13 +1212,13 @@ def _validate_required_external_producers(
 
 def _period_artifact_payload_types(
     *, regime: Regime, period: int
-) -> MappingProxyType[ArtifactKey, type[object]]:
+) -> MappingProxyType[ArtifactKey, ArtifactRuntimeType]:
     """Return every exact retained payload type from one validated producer graph."""
     graph = core_program_graph(kernel=regime.solution.period_kernels[period])
     keys = sorted(
         {key for program in graph.values() for key in program.retained_artifact_keys}
     )
-    payload_types: dict[ArtifactKey, type[object]] = {}
+    payload_types: dict[ArtifactKey, ArtifactRuntimeType] = {}
     for key in keys:
         payload_type = retained_artifact_payload_type(graph=graph, key=key)
         if payload_type is None:  # pragma: no cover - graph validation owns this case
@@ -1229,9 +1233,9 @@ def _validate_artifact_producer_types(
     *,
     regime_name: RegimeName,
     period: int,
-    producer_payload_types: MappingProxyType[ArtifactKey, type[object]],
-    custom_authorities: dict[ArtifactKey, ArtifactAuthority],
-    built_in_policy_type: type[object] | None,
+    producer_payload_types: MappingProxyType[ArtifactKey, ArtifactRuntimeType],
+    custom_authorities: MappingProxyType[ArtifactKey, ArtifactAuthority],
+    built_in_policy_type: ArtifactRuntimeType | None,
     external_route: ExecutableReplayRoute | None,
 ) -> None:
     """Require producer declarations to agree with every consuming authority."""
@@ -1320,7 +1324,7 @@ def _policy_artifact_layout(
             template_snapshot=template_snapshot,
             period=period,
         )
-    return _ArtifactLayout(leaf_axis_names={}, axes=())
+    return _ArtifactLayout(leaf_axis_names=MappingProxyType({}), axes=())
 
 
 def _egm_policy_artifact_layout(
@@ -1362,8 +1366,9 @@ def _egm_policy_artifact_layout(
         ),
     )
     axis_names = (*row_names, "pylcm:egm:node")
+    leaf_axes: dict[TreePath, tuple[str, ...]] = dict.fromkeys(paths, axis_names)
     return _ArtifactLayout(
-        leaf_axis_names=dict.fromkeys(paths, axis_names),
+        leaf_axis_names=MappingProxyType(leaf_axes),
         axes=axes,
         state_roles=row_state_names,
         action_roles=_unique_names((policy_read.action_name, *row_action_names)),
@@ -1440,7 +1445,7 @@ def _finite_nnbegm_policy_artifact_layout(
             )
         )
     return _ArtifactLayout(
-        leaf_axis_names=leaf_axes,
+        leaf_axis_names=MappingProxyType(leaf_axes),
         axes=tuple(axes),
         state_roles=policy_read.state_names,
         action_roles=_unique_names(
@@ -1519,7 +1524,7 @@ def _nested_policy_artifact_layout(
             ),
         )
     return _ArtifactLayout(
-        leaf_axis_names=leaf_axes,
+        leaf_axis_names=MappingProxyType(leaf_axes),
         axes=tuple(axes),
         state_roles=_unique_names((*row_state_names, policy_read.outer_state_name)),
         action_roles=_unique_names(
@@ -1635,7 +1640,7 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
     )
     policy_read = regime.simulation.egm_policy_read
     if template.policy is None:
-        policy_action_names: tuple[str, ...] = ()
+        policy_action_names: tuple[ActionName, ...] = ()
     elif isinstance(policy_read, EGMPolicyRead):
         policy_action_names = (policy_read.action_name,)
     elif isinstance(policy_read, NNBEGMPolicyRead):
@@ -1649,7 +1654,7 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
         policy_action_names = continuous_actions
     action_roles = _unique_names((*row_action_names, *policy_action_names))
     return _ArtifactLayout(
-        leaf_axis_names=leaf_axes,
+        leaf_axis_names=MappingProxyType(leaf_axes),
         axes=tuple(axes),
         state_roles=state_roles,
         action_roles=action_roles,
@@ -1689,7 +1694,7 @@ def _declared_carry_trailing_state(
     *,
     regime: Regime,
     state_action_space: StateActionSpace,
-    row_state_names: tuple[str, ...],
+    row_state_names: tuple[StateName, ...],
 ) -> str | None:
     """Return the one model state used as a carry's shared abscissa."""
     if not state_action_space.states and not row_state_names and regime.terminal:
@@ -1719,8 +1724,8 @@ def _model_role_axes(
     *,
     names: tuple[str, ...],
     lengths: tuple[int, ...],
-    state_names: tuple[str, ...],
-    action_names: tuple[str, ...],
+    state_names: tuple[StateName, ...],
+    action_names: tuple[ActionName, ...],
 ) -> tuple[AxisAuthority, ...]:
     """Build deferred-coordinate axes for exact model state/action roles."""
     if len(names) != len(lengths):
@@ -1749,9 +1754,9 @@ def _authority_from_template(
     key: ArtifactKey,
     channel: ArtifactChannel,
     persistence: PersistencePolicy,
-    payload_runtime_type: type[object],
-    template: object | None,
-    leaf_axis_names: dict[TreePath, tuple[str, ...]] | None = None,
+    payload_runtime_type: ArtifactRuntimeType,
+    template: ArtifactPayload | None,
+    leaf_axis_names: MappingProxyType[TreePath, tuple[str, ...]] | None = None,
     axes: tuple[AxisAuthority, ...] | None = None,
     state_roles: tuple[str, ...] = (),
     action_roles: tuple[str, ...] = (),
@@ -1763,7 +1768,7 @@ def _authority_from_template(
     """Observe one engine template once, then build its exact authority."""
     if template is None:
         template_snapshot = None
-        containers: dict[TreePath, type[object]] = {}
+        containers: Mapping[TreePath, ArtifactRuntimeType] = {}
     else:
         template_snapshot, containers = _snapshot_artifact_template_once(
             template=template,
@@ -1792,10 +1797,10 @@ def _authority_from_observed_template(
     key: ArtifactKey,
     channel: ArtifactChannel,
     persistence: PersistencePolicy,
-    payload_runtime_type: type[object],
+    payload_runtime_type: ArtifactRuntimeType,
     template_snapshot: _CanonicalArtifactTemplate | None,
-    container_runtime_types: dict[TreePath, type[object]],
-    leaf_axis_names: dict[TreePath, tuple[str, ...]] | None = None,
+    container_runtime_types: Mapping[TreePath, ArtifactRuntimeType],
+    leaf_axis_names: MappingProxyType[TreePath, tuple[str, ...]] | None = None,
     axes: tuple[AxisAuthority, ...] | None = None,
     state_roles: tuple[str, ...] = (),
     action_roles: tuple[str, ...] = (),
@@ -1901,7 +1906,7 @@ def _authority_from_observed_template(
     )
 
 
-def _payload_type_id(payload_runtime_type: type[object]) -> str:
+def _payload_type_id(payload_runtime_type: ArtifactRuntimeType) -> str:
     """Return one stable descriptive type id without importing plugin code later."""
     if payload_runtime_type is Array:
         return "jax.Array"
@@ -1993,7 +1998,7 @@ def _bind_model_owned_artifact_facts(  # noqa: C901
     )
 
 
-def _json_coordinates(nodes: object) -> tuple[bool | int | float | str, ...]:
+def _json_coordinates(nodes: FloatND | IntND) -> tuple[bool | int | float | str, ...]:
     """Convert model grid nodes to immutable, exact transport scalars."""
     array = np.asarray(nodes)
     if array.ndim != 1:
@@ -2020,10 +2025,7 @@ def _state_action_space_for_period(
     period_states = regime.solution.period_state_axes.get(period)
     if not period_states:
         return base
-    states = cast(
-        "MappingProxyType[StateName, ContinuousState | DiscreteState]",
-        MappingProxyType(dict(base.states) | dict(period_states)),
-    )
+    states = MappingProxyType(dict(base.states) | dict(period_states))
     return base.replace(states=states)
 
 
@@ -2045,14 +2047,18 @@ def _replay_model_context_from_state_action_space(
         period=period,
         state_names=tuple(state_action_space.state_names),
         action_names=tuple(state_action_space.action_names),
-        state_nodes={
-            name: jnp.asarray(nodes)
-            for name, nodes in state_action_space.states.items()
-        },
-        action_nodes={
-            name: jnp.asarray(nodes)
-            for name, nodes in state_action_space.actions.items()
-        },
+        state_nodes=MappingProxyType(
+            {
+                name: jnp.asarray(nodes)
+                for name, nodes in state_action_space.states.items()
+            }
+        ),
+        action_nodes=MappingProxyType(
+            {
+                name: jnp.asarray(nodes)
+                for name, nodes in state_action_space.actions.items()
+            }
+        ),
     )
 
 
@@ -2430,7 +2436,7 @@ def _policy_persistence_and_template(
     policy_read: EGMPolicyRead | NNBEGMPolicyRead | None,
     policy_shape: tuple[int, ...] | None,
     expected_replay_capability: OuterReplayCapability | None,
-) -> tuple[PersistencePolicy, object | None]:
+) -> tuple[PersistencePolicy, EGMSimPolicy | NNBEGMSimPolicy | None]:
     """Return the route's persistence policy and model-built PyTree template."""
     if isinstance(policy_read, EGMPolicyRead):
         if policy_shape is None:

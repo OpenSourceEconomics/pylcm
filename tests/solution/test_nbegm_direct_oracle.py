@@ -12,21 +12,27 @@ import pkgutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType, ModuleType
+from typing import NoReturn, TypedDict
 
 import numpy as np
 import pytest
 
 import tests.test_models as test_models_package
 from _lcm.egm import continuation as continuation_module
+from _lcm.egm.carry import EGMCarry
 from _lcm.egm.upper_envelope import query as query_module
 from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
+from _lcm.typing import ArgumentTree
+from lcm import Model
 from lcm.solvers import NBEGM
+from lcm.typing import FunctionName, RegimeName, UserParams
 from tests.conftest import DECIMAL_PRECISION
 from tests.solution import _nbegm_oracle_routes as routes
 from tests.solution import test_nbegm_epstein_zin as epstein_zin_model
 from tests.solution._nbegm_direct_oracle import (
     ChildPeriodContext,
+    OracleContext,
     child_period_context,
     direct_oracle_period,
     nnbegm_inner_contexts,
@@ -59,13 +65,19 @@ class _Route:
     """One ride-along route: how to build its model and reach its kernel."""
 
     name: str
-    build_model: Callable[[], Any]
-    build_params: Callable[[], Any]
-    regime_name: str = "alive"
+    build_model: Callable[[], Model]
+    build_params: Callable[[], UserParams]
+    regime_name: RegimeName = "alive"
     period: int | None = None
 
 
-_SMALL: dict[str, Any] = {"n_liquid": 12, "n_savings": 16, "n_consumption": 24}
+class _SmallGrid(TypedDict):
+    n_liquid: int
+    n_savings: int
+    n_consumption: int
+
+
+_SMALL: _SmallGrid = {"n_liquid": 12, "n_savings": 16, "n_consumption": 24}
 
 _ROUTES = (
     _Route(
@@ -411,7 +423,7 @@ def _tolerance() -> float:
     return 100.0 * 10.0**-DECIMAL_PRECISION
 
 
-def _assert_agrees(*, got: Any, expected: Any, label: str) -> None:
+def _assert_agrees(*, got: ArgumentTree, expected: np.ndarray, label: str) -> None:
     got_arr = np.asarray(got, dtype=np.float64)
     expected_arr = np.asarray(expected, dtype=np.float64)
     assert got_arr.shape == expected_arr.shape, label
@@ -435,6 +447,7 @@ def test_direct_oracle_matches_the_tiled_core(route: _Route) -> None:
         regime_name=route.regime_name,
         period=route.period,
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     _assert_kernel_agrees_with_oracle(
         kernel=kernel,
@@ -473,7 +486,7 @@ def test_direct_oracle_covers_the_nnbegm_inner_contexts(route: _Route) -> None:
 
 
 def _assert_agrees_up_to_ties(
-    *, got: Any, expected: np.ndarray, alternatives: np.ndarray, label: str
+    *, got: ArgumentTree, expected: np.ndarray, alternatives: np.ndarray, label: str
 ) -> None:
     """A winner-dependent channel agrees, or is that of a candidate tied in value.
 
@@ -496,10 +509,14 @@ def _assert_agrees_up_to_ties(
 
 
 def _assert_kernel_agrees_with_oracle(
-    *, kernel: Any, context: dict[str, Any], child: ChildPeriodContext | None
+    *,
+    kernel: _RideAlongNBEGMPeriodKernel,
+    context: OracleContext,
+    child: ChildPeriodContext | None,
 ) -> None:
     outputs = run_production_kernel(kernel=kernel, context=context)
     value, carry, policy, *banks = outputs
+    assert isinstance(carry, EGMCarry)
     oracle = direct_oracle_period(
         kernel=kernel,
         context=context,
@@ -525,6 +542,7 @@ def _assert_kernel_agrees_with_oracle(
     )
     assert (carry.breakpoints is None) == (oracle.carry.breakpoints is None)
     if carry.breakpoints is not None:
+        assert oracle.carry.breakpoints is not None
         _assert_agrees(
             got=carry.breakpoints,
             expected=oracle.carry.breakpoints,
@@ -532,11 +550,13 @@ def _assert_kernel_agrees_with_oracle(
         )
     assert (carry.policy is None) == (oracle.carry.policy is None)
     if carry.policy is not None:
+        assert oracle.carry.policy is not None
         _assert_agrees(
             got=carry.policy, expected=oracle.carry.policy, label="carry policy"
         )
     assert bool(banks) == (oracle.branch_value is not None)
     if banks:
+        assert oracle.branch_value is not None
         branch_value, branch_inner_action = banks
         _assert_agrees(
             got=branch_value, expected=oracle.branch_value, label="branch value"
@@ -556,7 +576,7 @@ def test_direct_oracle_is_independent_of_the_production_expectation(
 ) -> None:
     """The oracle runs with the production continuation read and envelope disabled."""
 
-    def refuse(*_args: Any, **_kwargs: Any) -> Any:
+    def refuse(*_args: object, **_kwargs: object) -> NoReturn:  # noqa: PAN001 - Rejects every invocation of the patched production callbacks.
         msg = "the oracle must not reach production solver code"
         raise AssertionError(msg)
 
@@ -564,6 +584,7 @@ def test_direct_oracle_is_independent_of_the_production_expectation(
     kernel, context = ride_along_kernel(
         model=model, params=nbegm_ride_along_toy.build_params()
     )
+    assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
     monkeypatch.setattr(continuation_module, "bind_continuation", refuse)
     monkeypatch.setattr(query_module, "envelope_at_query", refuse)
     oracle = direct_oracle_period(
@@ -591,6 +612,7 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
         )
         params = nbegm_jump_ride_along_toy.build_params()
         kernel, context = ride_along_kernel(model=model, params=params, period=1)
+        assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
         assert kernel.cliff_candidates
         mutated_kernel = replace(kernel, cliff_candidates=False)
         value, *_rest = run_production_kernel(kernel=kernel, context=context)
@@ -610,6 +632,7 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
         kernel, context = ride_along_kernel(
             model=model, params=params, regime_name="alive_a", period=1
         )
+        assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
         child = child_period_context(
             model=model, context=context, regime_name="alive_a"
         )
@@ -622,6 +645,7 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
         )
         params = nbegm_stochastic_node_toy.build_params()
         kernel, context = ride_along_kernel(model=model, params=params, period=0)
+        assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
         child = child_period_context(model=model, context=context)
         plan = kernel.continuation_plan
         (target,) = plan.stateful_targets
@@ -633,7 +657,9 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
                 values[:-1] for values in read.stochastic_node_values
             ),
         )
-        mutated_plan = replace(plan, child_reads={target: mutated_read})
+        mutated_plan = replace(
+            plan, child_reads=MappingProxyType({target: mutated_read})
+        )
     mutated_kernel = replace(kernel, continuation_plan=mutated_plan)
     value, *_rest = run_production_kernel(kernel=kernel, context=context)
     oracle = direct_oracle_period(kernel=mutated_kernel, context=context, child=child)
@@ -645,13 +671,13 @@ _SOURCE = Path(__file__).read_text()
 _TABLES = _SOURCE[_SOURCE.index("_ROUTES = (") : _SOURCE.index("def _tolerance")]
 
 
-def _declared_routes(*, source: str = _SOURCE) -> dict[str, routes.RouteIdentity]:
+def _declared_routes(*, source_code: str = _SOURCE) -> dict[str, routes.RouteIdentity]:
     return {
         **routes.declared_route_identities(
-            source=source, table_name="_ROUTES", context=routes.RIDE_ALONG
+            source=source_code, table_name="_ROUTES", context=routes.RIDE_ALONG
         ),
         **routes.declared_route_identities(
-            source=source, table_name="_NNBEGM_ROUTES", context=routes.NNBEGM_INNER
+            source=source_code, table_name="_NNBEGM_ROUTES", context=routes.NNBEGM_INNER
         ),
     }
 
@@ -738,7 +764,8 @@ def test_the_route_census_detects_a_mutated_route_table(
     mutated = _SOURCE.replace(_TABLES, _TABLES.replace(old, new))
 
     discrepancies = routes.census_discrepancies(
-        declared=_declared_routes(source=mutated), supported=routes.SUPPORTED_ROUTES
+        declared=_declared_routes(source_code=mutated),
+        supported=routes.SUPPORTED_ROUTES,
     )
 
     assert any(expected_kind in item for item in discrepancies), discrepancies
@@ -757,7 +784,7 @@ def test_an_unreadable_route_table_is_a_census_failure_not_an_empty_census() -> 
     )
 
     with pytest.raises(TypeError, match="statically visible builder"):
-        _declared_routes(source=mutated)
+        _declared_routes(source_code=mutated)
 
 
 @pytest.mark.parametrize(
@@ -766,7 +793,7 @@ def test_an_unreadable_route_table_is_a_census_failure_not_an_empty_census() -> 
     ids=[relpath.rsplit("/", 1)[-1] for relpath, _, _ in routes.POSITIVE_WITNESSES],
 )
 def test_every_positive_ride_discrete_witness_has_a_route_with_its_flags(
-    *, relpath: str, function: str, flags: Mapping[str, object]
+    *, relpath: str, function: FunctionName, flags: Mapping[str, bool]
 ) -> None:
     """A production-path test of the ride-discrete toy is covered by the oracle.
 
@@ -815,13 +842,19 @@ def test_every_test_model_module_that_builds_a_ride_along_kernel_is_routed() -> 
     )
 
 
-def _builds_a_ride_along_kernel(module: Any) -> bool:
+def _builds_a_ride_along_kernel(module: ModuleType) -> bool:
     build_model = getattr(module, "build_model", None)
     if build_model is None:
         return False
     parameters = inspect.signature(build_model).parameters
-    kwargs: dict[str, Any] = {
-        name: size for name, size in _SMALL.items() if name in parameters
+    kwargs: dict[str, int | str] = {
+        name: size
+        for name, size in (
+            ("n_liquid", _SMALL["n_liquid"]),
+            ("n_savings", _SMALL["n_savings"]),
+            ("n_consumption", _SMALL["n_consumption"]),
+        )
+        if name in parameters
     }
     if "variant" in parameters:
         kwargs["variant"] = "nbegm"

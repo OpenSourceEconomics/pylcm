@@ -11,6 +11,7 @@ import jax
 
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import require_transfer_headroom
+from _lcm.typing import PytreeByPeriod
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -21,7 +22,7 @@ def chunk_host_device(*, subject_devices: tuple[jax.Device, ...]) -> jax.Device:
     return jax.devices("cpu")[0]
 
 
-def offload_chunk[T](
+def offload_chunk[T: PytreeByPeriod](
     *, tree: T, host_device: jax.Device, memory: SimulationMemory | None
 ) -> T:
     """Check source/destination/scratch overlap before the actual device copy."""
@@ -57,9 +58,9 @@ def offload_chunk[T](
     return result
 
 
-def _copy_reservation(
+def _copy_reservation[T](
     *,
-    tree: object,
+    tree: T,
     host_device: jax.Device,
     host_excluded: bool,
     devices: tuple[jax.Device, ...],

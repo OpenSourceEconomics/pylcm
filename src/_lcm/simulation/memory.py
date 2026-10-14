@@ -12,7 +12,7 @@ not control â€” a period owner's materialized reads, a caller's transient tree â
 re-measured conservatively on every snapshot.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import cast
@@ -32,6 +32,8 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_reads import PeriodSimulationReads
+from _lcm.typing import ArrayTree, PytreeByPeriod, PytreeValue, RegimeName
+from lcm.typing import ReferenceName
 
 # Fields already holding measured spans; the ledger binds them without a walk.
 _LEDGER_FOOTPRINT_FIELDS = ("inputs", "outputs", "chunk_inputs")
@@ -45,10 +47,10 @@ _HELD_PREFIX = "held:"
 type _Footprint = DeviceBufferFootprint
 
 # Shared immutable metadata for an owner set holding no device payload.
-_EMPTY_FOOTPRINT = DeviceBufferFootprint(spans={})
+_EMPTY_FOOTPRINT = DeviceBufferFootprint(spans=MappingProxyType({}))
 
 
-def _is_empty(*, tree: object) -> bool:
+def _is_empty(*, tree: PytreeValue) -> bool:
     """Recognize the empty transient tree without touching a numeric leaf."""
     return type(tree) is tuple and len(tree) == 0
 
@@ -66,29 +68,30 @@ class SimulationMemory:
         default_factory=ProfiledSimulationOperations, repr=False
     )
     """Executables of user-law producers; a Model passes its own owner."""
-    axis_widths: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
+    axis_widths: MappingProxyType[str, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     outputs: DeviceBufferFootprint = field(
-        default_factory=lambda: DeviceBufferFootprint(spans={})
+        default_factory=lambda: DeviceBufferFootprint(spans=MappingProxyType({}))
     )
     chunk_inputs: DeviceBufferFootprint = field(
-        default_factory=lambda: DeviceBufferFootprint(spans={})
+        default_factory=lambda: DeviceBufferFootprint(spans=MappingProxyType({}))
     )
-    unit_inputs: object = ()
-    derived: object = ()
+    unit_inputs: ArrayTree = ()
+    derived: PytreeValue = ()
     period_owner: PeriodSimulationReads | None = None
     ledger: OwnerLedger = field(default_factory=OwnerLedger, repr=False)
     """Call-local span metadata for every owner this scope binds."""
 
     def __post_init__(self) -> None:
-        """Own the call's selected common specialization independently of its caller."""
-        self._held: list[object] = []
-        self._period_generation: object = None
+        """Start the call's held, period and snapshot bookkeeping empty."""
+        self._held: list[PytreeByPeriod] = []
+        self._period_generation: int | None = None
         self._period_footprint = _EMPTY_FOOTPRINT
         self._period_stable = True
         self._snapshots: dict[
-            tuple[jax.Device, ...] | None, tuple[tuple[int, object], _Footprint]
+            tuple[jax.Device, ...] | None, tuple[tuple[int, int | None], _Footprint]
         ] = {}
-        self.axis_widths = MappingProxyType(dict(self.axis_widths))
         # The dataclass assigned the owner fields before `ledger` existed, so bind
         # their initial values now; every later assignment goes through the hook.
         for name in (*_LEDGER_FOOTPRINT_FIELDS, *_LEDGER_TREE_FIELDS):
@@ -108,16 +111,17 @@ class SimulationMemory:
         if name in _LEDGER_FOOTPRINT_FIELDS:
             self.ledger.bind(owner=name, footprint=cast("DeviceBufferFootprint", value))
         elif name in _LEDGER_TREE_FIELDS:
+            tree = cast("PytreeValue", value)
             if name == "unit_inputs":
                 # Rebinding the unit roots has always discarded the temporaries
                 # held since the previous rebinding; release their owners too.
                 self._held = []
                 self.ledger.release_prefix(prefix=_HELD_PREFIX)
-            if _is_empty(tree=value):
+            if _is_empty(tree=tree):
                 # Releasing an owner set needs no measurement, only an epoch.
                 self.ledger.bind(owner=name, footprint=_EMPTY_FOOTPRINT)
             else:
-                self.ledger.measure(owner=name, tree=value)
+                self.ledger.measure(owner=name, tree=tree)
         elif name == "period_owner":
             self._period_generation = None
             self._period_footprint = _EMPTY_FOOTPRINT
@@ -125,14 +129,14 @@ class SimulationMemory:
             self.ledger.bump()
 
     @property
-    def residency_epoch(self) -> tuple[int, object]:
+    def residency_epoch(self) -> tuple[int, int | None]:
         """Identify the current ownership epoch, including the period owner's."""
         return (self.ledger.epoch, self._period_generation)
 
     def snapshot(
         self,
         *,
-        additional: object = (),
+        additional: PytreeValue = (),
         devices: tuple[jax.Device, ...] | None = None,
     ) -> DeviceBufferFootprint:
         """Drain known transfers and inventory the current explicit live roots."""
@@ -158,29 +162,31 @@ class SimulationMemory:
             devices=devices,
         )
 
-    def budget_snapshot(self, *, additional: object = ()) -> DeviceBufferFootprint:
+    def budget_snapshot(self, *, additional: PytreeValue = ()) -> DeviceBufferFootprint:
         """Read current live roots while projecting retained admission metadata."""
         return self.snapshot(additional=additional, devices=self.devices)
 
-    def set_chunk_inputs(self, *, tree: object) -> None:
+    def set_chunk_inputs(self, *, tree: PytreeValue) -> None:
         """Replace a chunk's grids/params while its actual owners remain alive."""
         self.chunk_inputs = measure_buffer_footprint(tree=tree)
 
-    def publish(self, *, tree: object) -> None:
+    def publish(self, *, tree: PytreeValue) -> None:
         """Record results whose actual owners survive the period."""
         self.outputs = union_buffer_footprints(
             footprints=(self.outputs, measure_buffer_footprint(tree=tree))
         )
 
-    def replace_outputs(self, *, tree: object) -> None:
+    def replace_outputs(
+        self, *, tree: Sequence[Mapping[RegimeName, PytreeByPeriod]]
+    ) -> None:
         """Reset publication metadata after offload and release of the old owners."""
-        self.outputs = measure_buffer_footprint(tree=tree)
+        self.outputs = measure_buffer_footprint(tree=tuple(tree))
 
-    def set_derived(self, tree: object) -> None:
+    def set_derived(self, tree: PytreeValue) -> None:
         """Replace the current host adapter's live derived-input snapshot."""
         self.derived = tree
 
-    def hold(self, tree: object) -> None:
+    def hold(self, tree: PytreeByPeriod) -> None:
         """Keep host intermediates alive and counted through the unit's commit.
 
         The owner joins the unit's live list and its spans are measured once here,
@@ -214,12 +220,12 @@ class SimulationMemory:
             devices=self.devices,
         )
 
-    def run[T](
+    def run[T: PytreeValue](
         self,
         *,
         function: Callable[..., T],
-        arguments: Mapping[str, object],
-        subject_arg_names: tuple[str, ...] = (),
+        arguments: Mapping[ReferenceName, PytreeValue],
+        subject_arg_names: tuple[ReferenceName, ...] = (),
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
         subject_outputs: bool = False,
     ) -> T:
@@ -269,12 +275,12 @@ class SimulationMemory:
         return footprint
 
 
-def run_simulation_operation[T](
+def run_simulation_operation[T: PytreeValue](
     *,
     memory: SimulationMemory | None,
     function: Callable[..., T],
-    arguments: Mapping[str, object],
-    subject_arg_names: tuple[str, ...] = (),
+    arguments: Mapping[ReferenceName, PytreeValue],
+    subject_arg_names: tuple[ReferenceName, ...] = (),
     static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
     subject_outputs: bool = False,
 ) -> T:

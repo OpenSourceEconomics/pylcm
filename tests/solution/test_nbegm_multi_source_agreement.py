@@ -13,6 +13,7 @@ from collections.abc import Mapping
 import jax.numpy as jnp
 import numpy as np
 
+from lcm.typing import FloatND, RegimeName
 from tests.test_models import nbegm_multi_source_jump_toy as jump_toy
 from tests.test_models import nbegm_multi_source_toy as toy
 
@@ -22,7 +23,9 @@ _LIQUID = jnp.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 
-def _solve(*, variant: str, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(
+    *, variant: str, n_consumption: int = 120
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the two-derived-variable budget toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -67,7 +70,9 @@ def _interior_away_from_jump(kind: int) -> np.ndarray:
     return np.asarray(edge & (jnp.abs(_LIQUID - _JUMP_PREIMAGE[kind]) > 0.75))
 
 
-def _solve_jump(*, variant: str, n_consumption: int = 160) -> Mapping[int, Mapping]:
+def _solve_jump(
+    *, variant: str, n_consumption: int = 160
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     """Solve the mixed jump-and-kink two-variable toy on the comparison grids."""
     model = jump_toy.build_model(
         variant=variant,

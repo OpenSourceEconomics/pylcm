@@ -2,20 +2,28 @@
 
 Exercises the pre-solve numerical sweep over `StochasticTransition` state
 transitions, the process-time AST subscript-order check, and the way the
-`log_level` validation policy turns failures into warnings or raises.
+Enabled runtime checks raise independently of console verbosity.
 """
 
 import logging
-from collections.abc import Callable
+import math
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType
+from typing import Literal, NotRequired, Unpack
+from unittest.mock import Mock
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from typing_extensions import TypedDict
 
+from _lcm import transition_checks as transition_checks_module
+from _lcm.engine import Regime, _StochasticStateTransition
+from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.simulation import initial_conditions as initial_conditions_module
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
+from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -23,11 +31,23 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
 )
 from _lcm.solution import backward_induction as backward_induction_module
+from _lcm.time import TimeAxis
+from _lcm.typing import (
+    EconFunctionsMapping,
+    FlatParams,
+    FlatRegimeParams,
+    FootprintTree,
+    InitialConditions,
+    RegimeNamesToIds,
+    StateOrActionName,
+)
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    AgeSpecializedGrid,
     DiscreteGrid,
     ExecutionConfig,
+    JointTransition,
     LinSpacedGrid,
     Model,
     Phased,
@@ -35,7 +55,11 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidStateTransitionProbabilitiesError
+from lcm.exceptions import (
+    InvalidStateTransitionProbabilitiesError,
+    InvalidValueFunctionError,
+)
+from lcm.regime import FunctionEntry, StateEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -43,6 +67,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 
@@ -184,31 +209,36 @@ def test_runtime_check_raises_on_rows_not_summing_to_one() -> None:
         model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
-def test_log_level_off_skips_runtime_check() -> None:
-    """A model whose state probs violate sum-to-1 still solves at log_level='off'."""
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_runtime_checks_disabled_skip_probability_check(log_level: LogLevel) -> None:
+    """Disabled runtime checks permit non-unit state probabilities at every level."""
 
     def bad_sum_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
         return jnp.array([0.5, 0.2])
 
     model = _model_with_state_probs(bad_sum_probs)
-    # With log_level='off' the runtime numerical check is skipped — solve
-    # returns a (numerically dubious) V_arr rather than raising.
-    model.solve(params={"discount_factor": 0.95}, log_level="off")
+    model.solve(
+        params={"discount_factor": 0.95},
+        log_level=log_level,
+        runtime_checks=False,
+    )
 
 
-@pytest.mark.parametrize("log_level", ["warning", "progress"])
-def test_warn_levels_log_invalid_probs_and_continue(
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_runtime_checks_reject_invalid_probs_at_every_level(
     *, log_level: LogLevel, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """At 'warning'/'progress', invalid state probs log a warning; solve continues."""
+    """Enabled checks reject non-unit state probabilities at every verbosity."""
 
     def bad_sum_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
         return jnp.array([0.5, 0.2])
 
     model = _model_with_state_probs(bad_sum_probs)
-    with caplog.at_level(logging.WARNING, logger="lcm"):
+    with (
+        caplog.at_level(logging.WARNING, logger="lcm"),
+        pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"),
+    ):
         model.solve(params={"discount_factor": 0.95}, log_level=log_level)
-    assert "sum to 1" in caplog.text
 
 
 def test_subscript_order_swap_raises_at_process_time() -> None:
@@ -368,18 +398,18 @@ def test_snapshot_written_only_at_debug_on_valid_solve(
     assert bool(snapshots) is expect_snapshot
 
 
-def test_warn_mode_writes_snapshot_on_nan_failure(tmp_path: Path) -> None:
-    """At `"warning"` with `log_path` set, a NaN solve writes a snapshot.
-
-    Pins the "one per warned failure" snapshot-table cell: warn mode does not
-    raise, so the snapshot is the only on-disk record of the failed solve.
-    """
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_runtime_checks_write_snapshot_on_nan_failure(
+    *, tmp_path: Path, log_level: LogLevel
+) -> None:
+    """Enabled NaN checks save the failure snapshot even with silent logging."""
     model = _model_with_state_probs(_good_health_probs)
-    model.solve(
-        params={"discount_factor": float("nan")},
-        log_level="warning",
-        log_path=tmp_path,
-    )
+    with pytest.raises(InvalidValueFunctionError):
+        model.solve(
+            params={"discount_factor": float("nan")},
+            log_level=log_level,
+            log_path=tmp_path,
+        )
     assert list(tmp_path.glob("solve_snapshot_*"))
 
 
@@ -597,7 +627,7 @@ def _income(wealth: ContinuousState) -> FloatND:
 
 
 def _model_with_function_reading_health_probs(
-    *, next_health_func, phased: bool = False, **model_options: Any
+    *, next_health_func, phased: bool = False, **model_options: Unpack[_ModelOptions]
 ) -> Model:
     """Build a model whose `health` law reads regime-function outputs.
 
@@ -735,7 +765,9 @@ def _health_from_stray_share(
     return _health_from_share(health=health, carried_share=2.0 * carried_share - 0.5)
 
 
-def _model_with_carried_share_health_probs(*, simulate_law: Callable) -> Model:
+def _model_with_carried_share_health_probs(
+    *, simulate_law: Callable[..., FloatND]
+) -> Model:
     """Build a model whose `health` laws read the carried state `carried_share`.
 
     `carried_share` is the function `0.5` in the solve phase and the grid
@@ -889,7 +921,7 @@ def test_simulation_preflight_charges_derived_categorical_codes(
     memories: list[SimulationMemory] = []
     original = initial_conditions_module._preflight_memory
 
-    def record(**arguments: Any) -> SimulationMemory | None:
+    def record(**arguments: Unpack[_PreflightKwargs]) -> SimulationMemory | None:
         memory = original(**arguments)
         assert memory is not None
         memories.append(memory)
@@ -917,10 +949,12 @@ def test_solve_fixed_inventory_charges_derived_categorical_codes(
     """A standalone budgeted solve counts the code arrays among its fixed owners."""
     model = _budgeted_model_with_derived_law(phased=phased)
     codes = _derived_code_footprint(model=model, phased=phased)
-    trees: list[object] = []
-    original: Callable[..., object] = backward_induction_module.concrete_device_bytes
+    trees: list[FootprintTree] = []
+    original: Callable[..., MappingProxyType[int, int]] = (
+        backward_induction_module.concrete_device_bytes
+    )
 
-    def record(*, tree: object) -> object:
+    def record(*, tree: FootprintTree) -> MappingProxyType[int, int]:
         trees.append(tree)
         return original(tree=tree)
 
@@ -934,3 +968,691 @@ def test_solve_fixed_inventory_charges_derived_categorical_codes(
         )
         for tree in trees
     ] == [0] * len(trees)
+
+
+class _ModelOptions(TypedDict):
+    execution_config: NotRequired[ExecutionConfig]
+
+
+class _PreflightKwargs(TypedDict, closed=True):
+    execution: ResolvedExecution | None
+    retained_footprint: DeviceBufferFootprint | None
+    producers: NotRequired[ProfiledSimulationOperations | None]
+    initial_conditions: InitialConditions
+    flat_params: FlatParams
+    regimes: MappingProxyType[RegimeName, Regime]
+    regime_names_to_ids: RegimeNamesToIds
+    ages: TimeAxis
+
+
+def test_validate_transitions_returns_none_without_backward_induction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public preflight accepts valid laws without entering the solver."""
+
+    def valid_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.array([0.4, 0.6])
+
+    solver = Mock(side_effect=AssertionError("Transition validation entered solver"))
+    monkeypatch.setattr(Model, "_solve_from_flat_params", solver)
+    model = _model_with_state_probs(valid_probs)
+    assert model.validate_transitions(params={"discount_factor": 0.95}) is None
+    solver.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "probabilities", [[0.4, 0.5], [1.1, -0.1], [float("nan"), 1.0]]
+)
+def test_validate_transitions_matches_solve_failure(probabilities: list[float]) -> None:
+    """Preflight and solve preserve the first failing law's diagnostic."""
+
+    def bad_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.asarray(probabilities)
+
+    model = _model_with_state_probs(bad_probs)
+    params = {"discount_factor": 0.95}
+    with pytest.raises(InvalidStateTransitionProbabilitiesError) as preflight:
+        model.validate_transitions(params=params)
+    with pytest.raises(InvalidStateTransitionProbabilitiesError) as solve:
+        model.solve(params=params, log_level="off")
+    assert str(preflight.value) == str(solve.value)
+    assert "state 'health'" in str(preflight.value)
+    assert "regime 'alive'" in str(preflight.value)
+    assert "age 0" in str(preflight.value)
+
+
+def test_validate_transitions_checks_later_periods_and_new_params() -> None:
+    """A successful call does not hide an invalid later-period parameterization."""
+
+    def health_probs(*, health: DiscreteState, period: int, mass: float) -> FloatND:  # noqa: ARG001
+        return jnp.array([0.4, jnp.where(period == 1, mass - 0.4, 0.6)])
+
+    prototype = _model_with_state_probs(health_probs)
+    model = Model(
+        regimes=prototype.user_regimes,
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        regime_id_class=_RegimeId,
+        initial_nodes={0: "alive"},
+        edges={"alive": {"alive": (0, 1), "terminal": 2}},
+    )
+    assert (
+        model.validate_transitions(params={"discount_factor": 0.95, "mass": 1.0})
+        is None
+    )
+    with pytest.raises(
+        InvalidStateTransitionProbabilitiesError, match=r"age 1.*sum to 1"
+    ):
+        model.validate_transitions(params={"discount_factor": 0.95, "mass": 0.9})
+
+
+@categorical(ordered=False)
+class _PhaseDemandRegimeId:
+    source: ScalarInt
+    perceived: ScalarInt
+    realized: ScalarInt
+
+
+_PHASE_DEMAND_AGES = (0, 1, 2)
+_PHASE_DEMAND_EDGES = {
+    "solve": {"source": {"perceived": (0, 1)}},
+    "simulate": {"source": {"realized": (0,), "perceived": (1,)}},
+}
+_PHASE_DEMAND_VALID_ROW = (0.4, 0.6)
+_PHASE_DEMAND_CARRIED_NODES = (0.0, 1.0)
+
+
+def _phase_demand_utility(health: DiscreteState) -> FloatND:
+    return jnp.asarray(health, dtype=float)
+
+
+def _phase_demand_half() -> ContinuousState:
+    return jnp.asarray(0.5)
+
+
+def _phase_demand_model(
+    *,
+    health_law: StateTransitionEntry,
+    functions: Mapping[str, FunctionEntry] | None = None,
+    carried: bool = False,
+) -> tuple[Model, frozenset[tuple[str, int, str]]]:
+    """Build a model whose solve and simulate phases demand different targets.
+
+    `source` reaches `perceived` at ages 0 and 1 in the solve phase, and
+    `realized` at age 0 and `perceived` at age 1 in the simulate phase. Returns
+    the model and its demanded `(phase, period, target)` triples, derived from
+    the declared edges and checked against the model's own graphs.
+    """
+    states: dict[str, StateEntry] = {"health": DiscreteGrid(category_class=_Health)}
+    transitions: dict[str, StateTransitionEntry] = {"health": health_law}
+    if carried:
+        states["carried_share"] = Phased(
+            solve=_phase_demand_half,
+            simulate=LinSpacedGrid(
+                start=_PHASE_DEMAND_CARRIED_NODES[0],
+                stop=_PHASE_DEMAND_CARRIED_NODES[-1],
+                n_points=len(_PHASE_DEMAND_CARRIED_NODES),
+            ),
+        )
+        transitions["carried_share"] = fixed_transition("carried_share")
+    source = UserRegime(
+        states=states,
+        state_transitions=transitions,
+        functions={"utility": _phase_demand_utility, **(functions or {})},
+    )
+    terminal = UserRegime(
+        states={"health": DiscreteGrid(category_class=_Health)},
+        functions={"utility": _phase_demand_utility},
+    )
+    model = Model(
+        regimes={"source": source, "perceived": terminal, "realized": terminal},
+        ages=AgeGrid(
+            start=_PHASE_DEMAND_AGES[0],
+            inclusive_stop=_PHASE_DEMAND_AGES[-1],
+            step="Y",
+        ),
+        regime_id_class=_PhaseDemandRegimeId,
+        initial_nodes={0: "source", 1: "source"},
+        edges=Phased(
+            solve=_PHASE_DEMAND_EDGES["solve"],
+            simulate=_PHASE_DEMAND_EDGES["simulate"],
+        ),
+    )
+    period_by_age = {age: period for period, age in enumerate(_PHASE_DEMAND_AGES)}
+    demanded = frozenset(
+        (phase, period_by_age[age], target)
+        for phase, edges in _PHASE_DEMAND_EDGES.items()
+        for target, ages in edges["source"].items()
+        for age in ages
+    )
+    observed = frozenset(
+        (phase, period, target)
+        for phase, graph in (
+            ("solve", model.graph.solution),
+            ("simulate", model.graph.simulation),
+        )
+        for period in range(len(_PHASE_DEMAND_AGES) - 1)
+        for target in graph.targets(period=period, source="source")
+    )
+    assert observed == demanded
+    return model, demanded
+
+
+def _phase_demand_row_is_valid(row: tuple[float, float]) -> bool:
+    """Check a two-outcome row independently of the production validator."""
+    array = np.asarray(row, dtype=float)
+    return bool(
+        np.isfinite(array).all()
+        and (array >= 0).all()
+        and (array <= 1).all()
+        and np.isclose(array.sum(), 1.0, atol=1e-6, rtol=0.0)
+    )
+
+
+def _phase_demand_probabilities(
+    *, row: tuple[float, float], bad_period: int
+) -> Callable[..., FloatND]:
+    def probabilities(
+        *,
+        health: DiscreteState,  # noqa: ARG001
+        period: int,
+    ) -> FloatND:
+        return jnp.where(
+            period == bad_period,
+            jnp.asarray(row),
+            jnp.asarray(_PHASE_DEMAND_VALID_ROW),
+        )
+
+    return probabilities
+
+
+def _assert_phase_demand_result(
+    *,
+    model: Model,
+    fails: bool,
+    period: int,
+    phase: str | None = None,
+    target: RegimeName | None = None,
+) -> None:
+    if not fails:
+        assert model.validate_transitions(params={"discount_factor": 0.95}) is None
+        return
+    with pytest.raises(InvalidStateTransitionProbabilitiesError) as caught:
+        model.validate_transitions(params={"discount_factor": 0.95})
+    label = "state 'health'"
+    qualifiers = [
+        *([f"target regime '{target}'"] if target is not None else []),
+        *([f"{phase} phase"] if phase is not None else []),
+    ]
+    if qualifiers:
+        label += f" ({', '.join(qualifiers)})"
+    assert f"{label} in regime 'source' at age {_PHASE_DEMAND_AGES[period]}" in str(
+        caught.value
+    )
+
+
+def _phase_demand_from_row(*, probability_row: FloatND) -> FloatND:
+    return probability_row
+
+
+def _phase_demand_from_forwarded_row(*, forwarded_row: FloatND) -> FloatND:
+    return forwarded_row
+
+
+@pytest.mark.parametrize(
+    ("law_phase", "bad_period", "bad_target", "row"),
+    [
+        pytest.param("solve", 0, "perceived", (0.4, 0.5), id="solve-retained"),
+        pytest.param("simulate", 0, "realized", (0.4, 0.5), id="simulate-mass"),
+        pytest.param("simulate", 0, "realized", (1.1, -0.1), id="simulate-range"),
+        pytest.param("simulate", 0, "realized", (float("nan"), 1.0), id="simulate-nan"),
+        pytest.param("simulate", 1, "perceived", (0.4, 0.5), id="simulate-later"),
+        pytest.param("simulate", 0, "perceived", (0.4, 0.5), id="other-phase-only"),
+        pytest.param("simulate", 1, "realized", (0.4, 0.5), id="other-period-only"),
+        pytest.param(None, 0, "realized", (0.4, 0.5), id="shared-simulate-only"),
+        pytest.param(None, 1, "realized", (0.4, 0.5), id="shared-unused-period"),
+        pytest.param(None, 0, "perceived", (0.4, 0.5), id="shared-solve-only"),
+        pytest.param("simulate", 0, "realized", (0.4, 0.6), id="phased-valid"),
+        pytest.param(None, 0, "realized", (0.4, 0.6), id="shared-valid"),
+    ],
+)
+def test_per_target_state_laws_are_checked_where_their_phase_demands_them(
+    *,
+    law_phase: str | None,
+    bad_period: int,
+    bad_target: RegimeName,
+    row: tuple[float, float],
+) -> None:
+    """A per-target law is validated exactly at its phase's demanded edges.
+
+    An explicitly phased law is checked against its own phase's targets at
+    each period; a shared law against each phase's targets separately. An
+    invalid row on an edge no phase demands is never a failure.
+    """
+
+    def law(*, target: RegimeName, phase: str | None) -> StochasticTransition:
+        selected = (
+            row
+            if (target, phase) == (bad_target, law_phase)
+            else _PHASE_DEMAND_VALID_ROW
+        )
+        return StochasticTransition(
+            func=_phase_demand_probabilities(row=selected, bad_period=bad_period)
+        )
+
+    health_law: StateTransitionEntry
+    if law_phase is None:
+        health_law = {
+            target: law(target=target, phase=None)
+            for target in ("perceived", "realized")
+        }
+    else:
+        health_law = Phased(
+            solve={"perceived": law(target="perceived", phase="solve")},
+            simulate={
+                target: law(target=target, phase="simulate")
+                for target in ("perceived", "realized")
+            },
+        )
+    model, demanded = _phase_demand_model(health_law=health_law)
+    phases = ("solve", "simulate") if law_phase is None else (law_phase,)
+    affected = {(phase, bad_period, bad_target) for phase in phases}
+    # A shared law failing on a simulate-only edge names the simulate phase.
+    failing_phases = {phase for phase, _, _ in demanded & affected}
+    _assert_phase_demand_result(
+        model=model,
+        fails=bool(demanded & affected) and not _phase_demand_row_is_valid(row),
+        period=bad_period,
+        phase=law_phase
+        if law_phase is not None
+        else ("simulate" if failing_phases == {"simulate"} else None),
+        target=bad_target,
+    )
+
+
+@pytest.mark.parametrize(
+    ("per_target", "indirect", "row"),
+    [
+        pytest.param(False, False, (0.4, 0.5), id="coarse-direct-helper"),
+        pytest.param(True, False, (0.4, 0.5), id="target-direct-helper"),
+        pytest.param(True, True, (0.4, 0.5), id="target-indirect-helper"),
+        pytest.param(True, True, (0.4, 0.6), id="target-indirect-valid"),
+    ],
+)
+def test_shared_state_law_reads_each_phases_own_functions(
+    *,
+    per_target: bool,
+    indirect: bool,
+    row: tuple[float, float],
+) -> None:
+    """A shared law reading a phased function is checked with each phase's variant.
+
+    The simulate variant of `probability_row`, read directly or through another
+    function, governs the simulate phase's demanded edge at age 0.
+    """
+    functions: dict[str, FunctionEntry] = {
+        "probability_row": Phased(
+            solve=_phase_demand_probabilities(
+                row=_PHASE_DEMAND_VALID_ROW, bad_period=0
+            ),
+            simulate=_phase_demand_probabilities(row=row, bad_period=0),
+        )
+    }
+    if indirect:
+        functions["forwarded_row"] = _phase_demand_from_row
+    transition = StochasticTransition(
+        func=_phase_demand_from_forwarded_row if indirect else _phase_demand_from_row
+    )
+    health_law = (
+        dict.fromkeys(("perceived", "realized"), transition)
+        if per_target
+        else transition
+    )
+    model, demanded = _phase_demand_model(health_law=health_law, functions=functions)
+    affected = {
+        (phase, period, target)
+        for phase, period, target in demanded
+        if phase == "simulate" and period == 0
+    }
+    assert affected == {("simulate", 0, "realized")}
+    _assert_phase_demand_result(
+        model=model,
+        fails=not _phase_demand_row_is_valid(row),
+        period=0,
+        target="realized" if per_target else None,
+        phase="simulate",
+    )
+
+
+@pytest.mark.parametrize("invalid", [False, True], ids=["valid-grid", "late-node"])
+def test_shared_state_law_sweeps_the_carried_grid_beyond_the_imputation(
+    *,
+    invalid: bool,
+) -> None:
+    """A shared law reading a carried state is checked on its whole simulate grid.
+
+    The solve imputation 0.5 and the first carried node 0.0 give valid rows; the
+    invalid law fails only at the later carried node 1.0.
+    """
+
+    def health_probabilities(*, carried_share: ContinuousState) -> FloatND:
+        good = (
+            jnp.where(carried_share > 0.75, 1.2, carried_share)
+            if invalid
+            else carried_share
+        )
+        return jnp.stack([1.0 - good, good])
+
+    model, _ = _phase_demand_model(
+        health_law=StochasticTransition(func=health_probabilities), carried=True
+    )
+    good_at = {
+        node: 1.2 if invalid and node > 0.75 else node
+        for node in (0.5, *_PHASE_DEMAND_CARRIED_NODES)
+    }
+    assert _phase_demand_row_is_valid((1.0 - good_at[0.5], good_at[0.5]))
+    assert _phase_demand_row_is_valid((1.0 - good_at[0.0], good_at[0.0]))
+    fails = any(
+        not _phase_demand_row_is_valid((1.0 - good_at[node], good_at[node]))
+        for node in _PHASE_DEMAND_CARRIED_NODES
+    )
+    _assert_phase_demand_result(model=model, fails=fails, period=0, phase="simulate")
+
+
+type _AgeGridLawKind = Literal["state", "joint"]
+type _AgeGridCase = Literal[
+    "invalid_current_nodes", "invalid_representative_nodes", "valid_everywhere"
+]
+
+
+def _age_grid_wealth(age: float) -> LinSpacedGrid:
+    """Age 0 -> [1, 2], age 1 -> [11, 12], age 2 -> [21, 22]."""
+    return LinSpacedGrid(start=1.0 + 10.0 * age, stop=2.0 + 10.0 * age, n_points=2)
+
+
+_AGE_GRID_WEALTH = AgeSpecializedGrid(build=_age_grid_wealth, signature=lambda age: age)
+
+
+def _age_grid_probabilities(case: _AgeGridCase) -> Callable[..., FloatND]:
+    def law(*, wealth: ContinuousState, period: int) -> FloatND:
+        if case == "invalid_current_nodes":
+            bad = (period == 1) & (wealth > 10.0)
+        elif case == "invalid_representative_nodes":
+            bad = (period == 1) & (wealth < 10.0)
+        else:
+            bad = jnp.zeros((), dtype=bool)
+        return jnp.stack((jnp.asarray(0.4), jnp.where(bad, 0.5, 0.6)))
+
+    return law
+
+
+def _age_grid_next_wealth(*, wealth: ContinuousState) -> FloatND:
+    return wealth + 10.0
+
+
+def _age_grid_health_from_draw(draw: dict[str, ScalarInt]) -> ScalarInt:
+    return draw["health"]
+
+
+def _age_grid_utility(
+    *, wealth: ContinuousState, health: DiscreteState, consumption: ContinuousAction
+) -> FloatND:
+    return wealth + 0.01 * consumption + jnp.where(health == _Health.good, 0.1, 0.0)
+
+
+def _age_grid_terminal_utility(
+    *, wealth: ContinuousState, health: DiscreteState
+) -> FloatND:
+    return wealth + jnp.where(health == _Health.good, 0.1, 0.0)
+
+
+def _age_grid_model(*, law_kind: _AgeGridLawKind, law: Callable[..., FloatND]) -> Model:
+    """Build a model whose wealth nodes move with age and land on the next grid."""
+    states = {
+        "wealth": _AGE_GRID_WEALTH,
+        "health": DiscreteGrid(category_class=_Health),
+    }
+    actions = {"consumption": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)}
+    functions = {"utility": _age_grid_utility}
+    if law_kind == "state":
+        alive = UserRegime(
+            states=states,
+            actions=actions,
+            functions=functions,
+            state_transitions={
+                "wealth": _age_grid_next_wealth,
+                "health": StochasticTransition(func=law),
+            },
+        )
+    else:
+        joint = JointTransition(
+            support_size=2,
+            support={
+                "health": jnp.asarray([_Health.bad, _Health.good], dtype=jnp.int32)
+            },
+            probabilities=law,
+            outputs={"health": _age_grid_health_from_draw},
+        )
+        alive = UserRegime(
+            states=states,
+            actions=actions,
+            functions=functions,
+            state_transitions={"wealth": _age_grid_next_wealth},
+            joint_transitions={"alive": {"draw": joint}, "terminal": {"draw": joint}},
+        )
+    terminal = UserRegime(
+        states={
+            "wealth": _age_grid_wealth(3.0),
+            "health": DiscreteGrid(category_class=_Health),
+        },
+        functions={"utility": _age_grid_terminal_utility},
+    )
+    return Model(
+        regimes={"alive": alive, "terminal": terminal},
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        regime_id_class=_RegimeId,
+        initial_nodes={0: "alive"},
+        edges={"alive": {"alive": (0, 1), "terminal": 2}},
+    )
+
+
+def _age_grid_invalid_rows(
+    *, law: Callable[..., FloatND], use_representative_grid: bool
+) -> list[tuple[int, float]]:
+    """Enumerate the factory's nodes and check each row with `math.fsum`."""
+    invalid = []
+    for period in (0, 1, 2):
+        age = 0.0 if use_representative_grid else float(period)
+        for node in _AGE_GRID_WEALTH.build(age).to_jax().tolist():
+            row = law(wealth=jnp.asarray(node), period=period).tolist()
+            valid = all(
+                math.isfinite(value) and 0.0 <= value <= 1.0 for value in row
+            ) and math.isclose(math.fsum(row), 1.0, rel_tol=0.0, abs_tol=1e-6)
+            if not valid:
+                invalid.append((period, float(node)))
+    return invalid
+
+
+@pytest.mark.parametrize("law_kind", ["state", "joint"])
+def test_validate_transitions_rejects_law_invalid_only_on_current_age_nodes(
+    *,
+    law_kind: _AgeGridLawKind,
+) -> None:
+    """A law invalid only at age 1's own wealth nodes is refused."""
+    law = _age_grid_probabilities("invalid_current_nodes")
+    assert _age_grid_invalid_rows(law=law, use_representative_grid=False) == [
+        (1, 11.0),
+        (1, 12.0),
+    ]
+    assert _age_grid_invalid_rows(law=law, use_representative_grid=True) == []
+    with pytest.raises(InvalidStateTransitionProbabilitiesError):
+        _age_grid_model(law_kind=law_kind, law=law).validate_transitions(
+            params={"discount_factor": 0.95}
+        )
+
+
+@pytest.mark.parametrize("law_kind", ["state", "joint"])
+def test_validate_transitions_accepts_law_invalid_only_off_the_current_grid(
+    *,
+    law_kind: _AgeGridLawKind,
+) -> None:
+    """A law invalid only at another age's wealth nodes is accepted at age 1."""
+    law = _age_grid_probabilities("invalid_representative_nodes")
+    assert _age_grid_invalid_rows(law=law, use_representative_grid=False) == []
+    assert _age_grid_invalid_rows(law=law, use_representative_grid=True) == [
+        (1, 1.0),
+        (1, 2.0),
+    ]
+    model = _age_grid_model(law_kind=law_kind, law=law)
+    assert model.validate_transitions(params={"discount_factor": 0.95}) is None
+
+
+@pytest.mark.parametrize("law_kind", ["state", "joint"])
+def test_validate_transitions_accepts_law_valid_on_every_age_grid(
+    *,
+    law_kind: _AgeGridLawKind,
+) -> None:
+    """A law with unit mass at every node of every age's grid is accepted."""
+    law = _age_grid_probabilities("valid_everywhere")
+    assert _age_grid_invalid_rows(law=law, use_representative_grid=False) == []
+    model = _age_grid_model(law_kind=law_kind, law=law)
+    assert model.validate_transitions(params={"discount_factor": 0.95}) is None
+
+
+@categorical(ordered=False)
+class _LateEntryRegimeId:
+    source: ScalarInt
+    late: ScalarInt
+    terminal: ScalarInt
+
+
+_LATE_ENTRY_AGES = (0, 1, 2, 3)
+
+
+def _late_entry_model(*, bad_period: int) -> Model:
+    """Build a model whose regime `late` is solved earlier than it is simulated.
+
+    The solve phase reaches `late` from `source` at ages 0 and 1, so `late` is
+    solved at ages 1 and 2. The simulate phase reaches `late` only at age 1, so
+    simulated subjects occupy it at age 2 alone. The shared health law of `late`
+    reads `probability_row`, whose simulate variant is invalid at `bad_period`.
+    """
+    health = DiscreteGrid(category_class=_Health)
+    valid = StochasticTransition(
+        func=_phase_demand_probabilities(row=_PHASE_DEMAND_VALID_ROW, bad_period=0)
+    )
+    source = UserRegime(
+        states={"health": health},
+        state_transitions={"health": valid},
+        functions={"utility": _phase_demand_utility},
+    )
+    late = UserRegime(
+        states={"health": health},
+        state_transitions={"health": StochasticTransition(func=_phase_demand_from_row)},
+        functions={
+            "utility": _phase_demand_utility,
+            "probability_row": Phased(
+                solve=_phase_demand_probabilities(
+                    row=_PHASE_DEMAND_VALID_ROW, bad_period=bad_period
+                ),
+                simulate=_phase_demand_probabilities(
+                    row=(0.4, 0.5), bad_period=bad_period
+                ),
+            ),
+        },
+    )
+    terminal = UserRegime(
+        states={"health": health}, functions={"utility": _phase_demand_utility}
+    )
+    model = Model(
+        regimes={"source": source, "late": late, "terminal": terminal},
+        ages=AgeGrid(
+            start=_LATE_ENTRY_AGES[0], inclusive_stop=_LATE_ENTRY_AGES[-1], step="Y"
+        ),
+        regime_id_class=_LateEntryRegimeId,
+        initial_nodes={0: "source", 1: "source"},
+        edges=Phased(
+            solve={"source": {"late": (0, 1)}, "late": {"terminal": (1, 2)}},
+            simulate={
+                "source": {"terminal": (0,), "late": (1,)},
+                "late": {"terminal": (2,)},
+            },
+        ),
+    )
+    assert {
+        period
+        for period in range(len(_LATE_ENTRY_AGES))
+        if "late" in model.graph.simulation.active_regimes_by_period[period]
+    } == {2}
+    return model
+
+
+def test_shared_state_law_is_not_simulate_checked_where_no_subject_is() -> None:
+    """A simulate variant invalid only where no simulated subject is passes.
+
+    `late` is solved at age 1, but the simulation first reaches it at age 2,
+    so the simulate evaluation of its shared law has no demand at age 1.
+    """
+    assert (
+        _late_entry_model(bad_period=1).validate_transitions(
+            params={"discount_factor": 0.95}
+        )
+        is None
+    )
+
+
+def test_shared_state_law_simulate_failure_names_the_phase() -> None:
+    """A shared law failing only in its simulate evaluation names that phase."""
+    with pytest.raises(
+        InvalidStateTransitionProbabilitiesError,
+        match=r"state 'health' \(simulate phase\) in regime 'late' at age 2",
+    ):
+        _late_entry_model(bad_period=2).validate_transitions(
+            params={"discount_factor": 0.95}
+        )
+
+
+def test_validate_transitions_reports_an_unvalidated_law(
+    *, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A law the preflight cannot evaluate is reported, not silently accepted."""
+    through_functions = transition_checks_module._through_functions
+
+    def hide_bias(
+        *,
+        transition: _StochasticStateTransition,
+        regime_params: FlatRegimeParams,
+        functions: EconFunctionsMapping,
+        function_params: FlatRegimeParams,
+        inputs: frozenset[StateOrActionName],
+    ) -> tuple[_StochasticStateTransition, FlatRegimeParams]:
+        transition, regime_params = through_functions(
+            transition=transition,
+            regime_params=regime_params,
+            functions=functions,
+            function_params=function_params,
+            inputs=inputs,
+        )
+        return transition, MappingProxyType(
+            {
+                name: value
+                for name, value in regime_params.items()
+                if name != "transition_bias"
+            }
+        )
+
+    monkeypatch.setattr(transition_checks_module, "_through_functions", hide_bias)
+    model = _model_with_fixed_param_health_probs()
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model.validate_transitions(params={"discount_factor": 0.95})
+    skips = [r for r in caplog.records if "not numerically validated" in r.message]
+    assert len(skips) == 1
+
+
+def test_validate_transitions_leaves_the_shared_logger_level() -> None:
+    """The preflight does not change the level later `lcm` warnings pass through."""
+    shared = logging.getLogger("lcm")
+    shared.setLevel(logging.WARNING)
+    _model_with_state_probs(_good_health_probs).validate_transitions(
+        params={"discount_factor": 0.95}
+    )
+    assert shared.level == logging.WARNING

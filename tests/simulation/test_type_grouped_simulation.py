@@ -13,6 +13,7 @@ ungrouped route.
 import dataclasses
 from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
@@ -48,6 +49,8 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParams,
+    UserParamsNode,
 )
 
 _LAST_AGE = 4
@@ -238,7 +241,7 @@ def _model(
     )
 
 
-def _params(*, typed_dead: bool, scale: float = 1.0) -> dict:
+def _params(*, typed_dead: bool, scale: float = 1.0) -> dict[str, UserParamsNode]:
     return {
         "discount_factor": 0.9,
         "work": {"utility": {"weight": jnp.asarray([1.0, 1.4, 0.7]) * scale}},
@@ -271,7 +274,7 @@ def _initial(
     }
 
 
-def _leaf_bytes(leaf: object) -> tuple[str, tuple[int, ...], bytes]:
+def _leaf_bytes(leaf: jax.Array | np.ndarray) -> tuple[str, tuple[int, ...], bytes]:
     array = np.asarray(leaf)
     return array.dtype.str, array.shape, array.tobytes()
 
@@ -364,7 +367,7 @@ def _subject_grouping(*, result: SimulationResult) -> str | None:
 
 
 def _archived_solution(
-    *, model: Model, params: Mapping, directory: Path
+    *, model: Model, params: UserParams, directory: Path
 ) -> SolutionResult:
     """Solve once and reload from an archive, so two models read the same values."""
     path = model.solve(params=params, log_level="off").save(
@@ -378,7 +381,7 @@ def _archived_solution(
 def _simulate(
     *,
     model: Model,
-    params: Mapping,
+    params: UserParams,
     initial: Mapping[str, np.ndarray],
     solution: SolutionResult,
     seed: int = 7,
@@ -405,7 +408,7 @@ def test_plan_groups_original_rows_by_code_and_restores_their_order() -> None:
     )
 
     route = SubjectGroupingRoute(
-        state_name="pref_type", codes=(0, 1, 2), value_axis_names={}
+        state_name="pref_type", codes=(0, 1, 2), value_axis_names=MappingProxyType({})
     )
     codes = np.asarray((0, 2, 0, 0, 2, 0, 0, 2, 0, 0, 7), dtype=np.int32)
     plan = plan_subject_groups(route=route, codes=codes, n_real=11, width=3)

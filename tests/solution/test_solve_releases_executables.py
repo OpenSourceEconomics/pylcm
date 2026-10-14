@@ -44,7 +44,7 @@ def _live_compiled_executables() -> int:
     return sum(_is_compiled_executable(obj) for obj in gc.get_objects())
 
 
-def _is_compiled_executable(obj: object) -> bool:
+def _is_compiled_executable(obj: object) -> bool:  # noqa: PAN001 - the garbage collector returns arbitrary Python objects
     """Return whether `obj` is a compiled executable.
 
     A dead weak proxy raises `ReferenceError` on any attribute access, including

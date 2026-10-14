@@ -15,7 +15,7 @@ precedence at the call sites they cover.
 
 """
 
-from beartype import BeartypeConf, BeartypeStrategy
+from beartype import BeartypeConf
 
 from lcm.exceptions import (
     CategoricalDefinitionError,
@@ -28,16 +28,13 @@ from lcm.exceptions import (
 
 
 def _conf(exc: type[Exception]) -> BeartypeConf:
-    # `On` strategy: full O(n) container validation so every bad entry in a
-    # mapping/sequence is reported, not just one sampled element. The
-    # decorated entry points are called rarely (construction, solve,
-    # simulate), so per-call cost is invisible.
+    # beartype's default strategy checks one sampled entry of each mapping or
+    # sequence per call, so a bad entry elsewhere in a container can pass.
     # `is_pep484_tower=True`: respect the PEP-484 numeric tower so `int`
     # satisfies `float`-typed parameters (matches the implicit numeric
     # conversion that Python and ruff's PYI041 both assume).
     return BeartypeConf(
         violation_param_type=exc,
-        strategy=BeartypeStrategy.On,
         is_pep484_tower=True,
     )
 
@@ -67,7 +64,4 @@ SIMULATION_INPUT_CONF = _conf(InvalidSimulationInputError)
 # `@beartype(conf=...)` decorators on top to map violations to project
 # exceptions; those decorators take precedence at the call sites they
 # cover.
-INTERNAL_CONF = BeartypeConf(
-    strategy=BeartypeStrategy.On,
-    is_pep484_tower=True,
-)
+INTERNAL_CONF = BeartypeConf(is_pep484_tower=True)

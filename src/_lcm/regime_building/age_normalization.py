@@ -30,7 +30,7 @@ import inspect
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, TypeVar, cast
+from typing import NoReturn, TypeVar, cast, overload
 
 from jax import numpy as jnp
 
@@ -44,6 +44,7 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_specialization import (
     INVARIANT,
+    NodeTree,
     _describe_trait_mismatch,
     _grid_traits,
     _GridTraits,
@@ -55,14 +56,29 @@ from _lcm.regime_building.phases import PhasedRegimeSpec, RegimePhaseSpec
 from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.time import TimeAxis, specialization_coordinate_at
-from _lcm.typing import EconFunction, FunctionName, RegimeName, StateName
+from _lcm.transition_plans import TargetTransitionPlan
+from _lcm.typing import (
+    ConstraintFunction,
+    EconFunction,
+    EconFunctionArg,
+    FunctionName,
+    RegimeName,
+    RegimeTransitionFunction,
+    StateName,
+    TransitionFunction,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
+from lcm.regime import ConstraintEntry, FunctionEntry, StateEntry
 from lcm.transition import AgeSpecializedFunction, AgeSpecializedGrid
 from lcm.typing import Float1D, UserFunction
 
 T = TypeVar("T")
 K = TypeVar("K", bound=Hashable)
+
+# A value of a regime's `functions`, `constraints` or `states`, where a function
+# marker may stand bare or as a `Phased` side.
+type _RegimeEntry = FunctionEntry | ConstraintEntry | StateEntry
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -87,7 +103,7 @@ class PeriodizedUserFunction:
         """Return the dedup signature for `period`."""
         return self.signature_by_period[period]
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
+    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> NoReturn:  # noqa: ARG002
         msg = (
             "PeriodizedUserFunction is an internal model-build object and must be "
             "resolved by period before DAG construction."
@@ -117,12 +133,28 @@ class PeriodizedEconFunction:
         """Return the dedup signature for `period`."""
         return self.signature_by_period[period]
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
+    def __call__(self, *args: EconFunctionArg, **kwargs: EconFunctionArg) -> NoReturn:  # noqa: ARG002
         msg = (
             "PeriodizedEconFunction is an internal model-build object and must be "
             "resolved by period before DAG tracing."
         )
         raise TypeError(msg)
+
+
+# A leaf of the function, constraint and transition trees a phase holds: a
+# function, a periodized family of functions, a transition plan, or an optional
+# function the regime does not declare.
+type PeriodizableNode = (
+    EconFunction
+    | ConstraintFunction
+    | TransitionFunction
+    | RegimeTransitionFunction
+    | UserFunction
+    | PeriodizedUserFunction
+    | PeriodizedEconFunction
+    | TargetTransitionPlan
+    | None
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -198,14 +230,14 @@ class AgeNormalizationResult:
     period_regimes: PeriodRegimes | None
 
 
-def resolve_periodized_node(*, node: object, period: int) -> object:
+def resolve_periodized_node(*, node: PeriodizableNode, period: int) -> PeriodizableNode:
     """Return a periodized function's concrete callable for `period`; else it."""
     if isinstance(node, (PeriodizedUserFunction, PeriodizedEconFunction)):
         return node.resolve(period)
     return node
 
 
-def periodized_node_signature(*, node: object, period: int) -> Hashable:
+def periodized_node_signature(*, node: PeriodizableNode, period: int) -> Hashable:
     """`node`'s period signature: its explicit signature, or `INVARIANT`."""
     if isinstance(node, (PeriodizedUserFunction, PeriodizedEconFunction)):
         return node.signature(period)
@@ -213,8 +245,8 @@ def periodized_node_signature(*, node: object, period: int) -> Hashable:
 
 
 def resolve_periodized_nodes(
-    *, mapping: Mapping[str, object], period: int
-) -> Mapping[str, object]:
+    *, mapping: Mapping[str, PeriodizableNode], period: int
+) -> Mapping[str, PeriodizableNode]:
     """Resolve every periodized function in a flat mapping at `period`.
 
     Returns the input unchanged when it holds no periodized node, so an
@@ -235,17 +267,20 @@ def resolve_periodized_nodes(
 
 def resolve_periodized_pools_by_period(
     *,
-    functions: Mapping[str, object],
-    constraints: Mapping[str, object],
+    functions: Mapping[str, PeriodizableNode],
+    constraints: Mapping[str, PeriodizableNode],
     periods: tuple[int, ...],
-) -> MappingProxyType[int, tuple[Mapping[str, object], Mapping[str, object]]]:
+) -> MappingProxyType[
+    int, tuple[Mapping[str, PeriodizableNode], Mapping[str, PeriodizableNode]]
+]:
     """Resolve a function pool and a constraint pool at each of `periods`.
 
     Periods whose explicit signatures agree on both pools share one resolved
     pair, so a consumer keyed by object identity builds once per signature.
     """
     pools_by_signature: dict[
-        Hashable, tuple[Mapping[str, object], Mapping[str, object]]
+        Hashable,
+        tuple[Mapping[str, PeriodizableNode], Mapping[str, PeriodizableNode]],
     ] = {}
     pools_by_period = {}
     for period in periods:
@@ -263,8 +298,8 @@ def resolve_periodized_pools_by_period(
 
 
 def resolve_periodized_tree(
-    *, tree: Mapping[str, object], period: int
-) -> Mapping[str, object]:
+    *, tree: NodeTree[PeriodizableNode], period: int
+) -> NodeTree[PeriodizableNode]:
     """Resolve periodized leaves recursively while preserving mapping structure."""
     if not any(
         isinstance(node, (Mapping, PeriodizedUserFunction, PeriodizedEconFunction))
@@ -283,7 +318,9 @@ def resolve_periodized_tree(
     )
 
 
-def periodized_tree_signature(*, tree: Mapping[str, object], period: int) -> Hashable:
+def periodized_tree_signature(
+    *, tree: NodeTree[PeriodizableNode], period: int
+) -> Hashable:
     """Fingerprint a (possibly nested) mapping of nodes at `period`.
 
     Recurse into `Mapping` values and emit sorted `(path, signature)` pairs, so a
@@ -302,7 +339,7 @@ class _PeriodizedNodeSignature:
     period: int
     """The period every node is fingerprinted at."""
 
-    def __call__(self, node: object) -> Hashable:
+    def __call__(self, node: PeriodizableNode) -> Hashable:
         return periodized_node_signature(node=node, period=self.period)
 
 
@@ -413,13 +450,13 @@ def continuation_group_key(
     *,
     phase_reachability: PhaseReachability,
     source_regime_name: RegimeName,
-    functions: Mapping[str, object],
-    constraints: Mapping[str, object],
+    functions: Mapping[str, PeriodizableNode],
+    constraints: Mapping[str, PeriodizableNode],
     grid_schedule: AgeGridSchedule | None,
     continuation_info: (
         Callable[[int], MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
-    continuation_functions: Mapping[str, object] | None = None,
+    continuation_functions: Mapping[str, PeriodizableNode] | None = None,
     gated_reference_regimes: Mapping[RegimeName, tuple[RegimeName, ...]] = (
         MappingProxyType({})
     ),
@@ -481,9 +518,9 @@ class _ContinuationGroupKey:
     """Static reachability graph for the phase."""
     source_regime_name: RegimeName
     """Name of the regime whose periods are grouped."""
-    functions: Mapping[str, object]
+    functions: Mapping[str, PeriodizableNode]
     """Mapping of function names to functions, for the policy signature."""
-    constraints: Mapping[str, object]
+    constraints: Mapping[str, PeriodizableNode]
     """Mapping of constraint names to functions, for the policy signature."""
     grid_schedule: AgeGridSchedule | None
     """Age-grid schedule, or `None` when no state is age-specialized."""
@@ -491,7 +528,7 @@ class _ContinuationGroupKey:
         Callable[[int], MappingProxyType[RegimeName, VInterpolationInfo]] | None
     )
     """Per-period continuation interpolation info, or `None` to omit the partition."""
-    continuation_functions: Mapping[str, object] | None
+    continuation_functions: Mapping[str, PeriodizableNode] | None
     """The perceived continuation pool when it differs from `functions`."""
     gated_reference_regimes: Mapping[RegimeName, tuple[RegimeName, ...]]
     """Mapping of gated-edge targets to the regimes the edge's gate and legs read."""
@@ -737,12 +774,33 @@ def _resolve_grid_marker(
     )
 
 
+@overload
 def _representative_function(
     *,
-    value: object,
+    value: FunctionEntry,
     function_cache: dict[int, _ResolvedFunctionMarker],
     period: int | None = None,
-) -> object:
+) -> FunctionEntry: ...
+@overload
+def _representative_function(
+    *,
+    value: ConstraintEntry,
+    function_cache: dict[int, _ResolvedFunctionMarker],
+    period: int | None = None,
+) -> ConstraintEntry: ...
+@overload
+def _representative_function(
+    *,
+    value: StateEntry,
+    function_cache: dict[int, _ResolvedFunctionMarker],
+    period: int | None = None,
+) -> StateEntry: ...
+def _representative_function(
+    *,
+    value: _RegimeEntry,
+    function_cache: dict[int, _ResolvedFunctionMarker],
+    period: int | None = None,
+) -> _RegimeEntry:
     """Replace an age-function marker (bare or inside `Phased`) by its concrete.
 
     Returns the marker's concrete callable for `period` — the first-active-period
@@ -835,9 +893,11 @@ def _representative_regime(
     )
 
 
-def _periodize_functions(
-    *, mapping: Mapping[str, object], function_cache: dict[int, _ResolvedFunctionMarker]
-) -> MappingProxyType[str, object]:
+def _periodize_functions[V](
+    *,
+    mapping: Mapping[FunctionName, V],
+    function_cache: dict[int, _ResolvedFunctionMarker],
+) -> MappingProxyType[FunctionName, V | PeriodizedUserFunction]:
     """Replace every age-function marker in a phase-slice mapping.
 
     Phase slices come from `normalize_regime_phases`, so `Phased` is already
@@ -907,11 +967,8 @@ def _rewrite_phase_slice(
     }
     return dataclasses.replace(
         phase_slice,
-        functions=cast(
-            "MappingProxyType",
-            _periodize_functions(
-                mapping=phase_slice.functions, function_cache=function_cache
-            ),
+        functions=_periodize_functions(
+            mapping=phase_slice.functions, function_cache=function_cache
         ),
         constraints=_periodize_constraints(
             constraints=phase_slice.constraints, function_cache=function_cache
@@ -975,7 +1032,7 @@ def _marker_ids_in_slice(*, phase_slice: RegimePhaseSpec) -> frozenset[int]:
 
 
 def _visit_function_marker(
-    *, value: object, markers: dict[int, AgeSpecializedFunction]
+    *, value: _RegimeEntry, markers: dict[int, AgeSpecializedFunction]
 ) -> None:
     """Record `value` in `markers` if it is (or a `Phased` side of it is) a marker."""
     if isinstance(value, AgeSpecializedFunction):

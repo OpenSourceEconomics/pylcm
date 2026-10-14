@@ -37,7 +37,6 @@ import json
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 from tests.ci import ci_workloads
 from tests.ci.shard_test_files import assign_weighted_test_files, general_shard_files
@@ -46,7 +45,7 @@ MANIFEST_PATH = Path(__file__).with_name("ci-workloads.json")
 _INDENT = 1
 
 
-def render(manifest: Mapping[str, Any]) -> str:
+def render[ManifestValue](manifest: Mapping[str, ManifestValue]) -> str:
     """Render the manifest exactly as the committed file is written.
 
     The committed file round-trips through `indent=1, ensure_ascii=False`, so a
@@ -57,7 +56,7 @@ def render(manifest: Mapping[str, Any]) -> str:
 
 
 def unaccounted_test_files(
-    *, repo_root: Path, manifest: Mapping[str, Any]
+    *, repo_root: Path, manifest: ci_workloads.WorkloadManifest
 ) -> tuple[str, ...]:
     """Return test files that no invocation selects and no exclusion names."""
     present = {
@@ -70,10 +69,13 @@ def unaccounted_test_files(
 
 
 def regenerate(
-    *, repo_root: Path, manifest: Mapping[str, Any], additions: Sequence[str]
-) -> dict[str, Any]:
+    *,
+    repo_root: Path,
+    manifest: ci_workloads.WorkloadManifest,
+    additions: Sequence[str],
+) -> ci_workloads.WorkloadManifest:
     """Return the manifest with `additions` registered and the shards re-derived."""
-    updated = json.loads(json.dumps(dict(manifest)))
+    updated: ci_workloads.WorkloadManifest = json.loads(json.dumps(dict(manifest)))
     weighted = set(updated["file_weights"])
     for key in ("general_shard_universe", "unweighted_files"):
         if key == "unweighted_files":

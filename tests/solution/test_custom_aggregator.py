@@ -1,6 +1,6 @@
 """Test that a custom Koopmans aggregator can be used in a model."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import jax.numpy as jnp
@@ -26,6 +26,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateEntry, StateTransitionEntry
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -33,8 +34,12 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    FunctionName,
     Period,
     ScalarInt,
+    StateName,
+    UserFunction,
+    _UserFacingTemplateNode,
 )
 from tests.conftest import bind_laws
 
@@ -136,7 +141,7 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
     `_validate_all_variables_used` treating aggregator-DAG targets as reachable
     so `pref_type` counts as used without any workaround in `utility`.
     """
-    functions: dict[str, Callable] = {
+    functions: dict[FunctionName, UserFunction] = {
         "utility": utility,
         "labor_income": labor_income,
         "is_working": is_working,
@@ -144,13 +149,13 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
     if with_pref_type:
         functions["discount_factor"] = discount_factor_from_type
 
-    working_life_states: dict = {
+    working_life_states: dict[StateName, StateEntry] = {
         "wealth": LinSpacedGrid(start=0.5, stop=10, n_points=30),
     }
-    working_life_state_transitions: dict = {
+    working_life_state_transitions: dict[StateName, StateTransitionEntry] = {
         "wealth": next_wealth,
     }
-    dead_states: dict = {}
+    dead_states: dict[StateName, StateEntry] = {}
     if with_pref_type:
         working_life_states["pref_type"] = DiscreteGrid(category_class=PrefType)
         working_life_state_transitions["pref_type"] = fixed_transition("pref_type")
@@ -640,7 +645,9 @@ class _AgeVaryingDiscountAggregator:
         return utility + discount_factor[period] * CE
 
 
-def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
+def _solve_with_age_varying_discount(
+    koopmans_aggregator: UserFunction | Phased,
+) -> FloatND:
     """Solve a two-regime model whose discount factor is a `Series` over ages."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
@@ -648,7 +655,7 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         functions={"utility": lambda consumption: consumption},
-        koopmans_aggregator=koopmans_aggregator,  # ty: ignore[invalid-argument-type]
+        koopmans_aggregator=koopmans_aggregator,
     )
     dead = UserRegime(
         states={"wealth": wealth},
@@ -691,8 +698,8 @@ def test_callable_object_aggregator_indexing_a_series_matches_the_function_form(
 
 
 def _solve_with_aggregator_slot(
-    *, koopmans_aggregator: object, aggregator_params: dict[str, float]
-) -> tuple[Mapping[str, object], FloatND]:
+    *, koopmans_aggregator: UserFunction | Phased, aggregator_params: dict[str, float]
+) -> tuple[Mapping[str, _UserFacingTemplateNode], FloatND]:
     """Return the aggregator params template and `alive`'s first V array."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
@@ -700,7 +707,7 @@ def _solve_with_aggregator_slot(
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         functions={"utility": lambda consumption: consumption},
-        koopmans_aggregator=koopmans_aggregator,  # ty: ignore[invalid-argument-type]
+        koopmans_aggregator=koopmans_aggregator,
         certainty_equivalent=PowerMean(),
     )
     dead = UserRegime(

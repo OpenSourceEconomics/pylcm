@@ -6,11 +6,11 @@ top-level eager JAXPR stages through the same admitted operation boundary. Call-
 bindings, temporary arrays, and grids never enter the code cache.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from functools import cache, partial
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -43,6 +43,7 @@ from _lcm.processes.iid import (
 )
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
+    StaticArgument,
     _operation_memory,
     _OperationCompiler,
 )
@@ -54,8 +55,68 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.solution.backward_induction import _lowering_key
+from _lcm.typing import HostArray
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import Float1D, ScalarFloat, ScalarInt, ValueND
+from lcm.typing import (
+    Float1D,
+    ParameterName,
+    ReferenceName,
+    ScalarFloat,
+    ScalarInt,
+    ValueND,
+)
+
+# A numerical process operand: a runtime parameter, a fixed host scalar or array,
+# a constant captured by the traced support graph, or a completed stage's output.
+type ProcessValue = ValueND | HostArray | np.generic | int | float | complex
+
+# A support's identity: the process, sharding, operand ids or bytes and weak-type
+# flags, nested in tuples that serve as dictionary keys.
+type _SupportKey = tuple[Hashable, ...]
+
+# The canonical content of one operand: dtype string, shape and raw bytes.
+type _OperandBytes = tuple[str, tuple[int, ...], bytes]
+
+# Each fixed process field's name, Python type and content, `None` when unset.
+type _FixedIdentity = tuple[
+    tuple[ParameterName, type[float | int | None], _OperandBytes | None], ...
+]
+
+# A JAXPR atom's static array contract: shape, dtype string and weak type.
+type _AvalSchema = tuple[tuple[int, ...], str, bool]
+
+# A JAXPR atom, named by its binder index or literal content rather than spelling.
+type _AtomSchema = (
+    tuple[Literal["literal"], _AvalSchema, _OperandBytes]
+    | tuple[Literal["drop"], _AvalSchema]
+    | tuple[Literal["variable"], int, _AvalSchema]
+)
+
+if TYPE_CHECKING:
+    # A nested graph's schema, held by an equation's static parameters.
+    type _NestedJaxprSchema = _JaxprSchema
+else:
+    # The schemas recurse through nested graphs; the claw checks the outer levels
+    # and leaves the nested schema to ty.
+    type _NestedJaxprSchema = object
+
+# One primitive: name, input and output atoms, effects and static parameters.
+type _EquationSchema = tuple[
+    str,
+    tuple[_AtomSchema, ...],
+    tuple[_AtomSchema, ...],
+    tuple[str, ...],
+    tuple[tuple[str, _NestedJaxprSchema | str], ...],
+]
+
+# A graph: constant and input avals, effects, equations and outputs.
+type _JaxprSchema = tuple[
+    tuple[_AvalSchema, ...],
+    tuple[_AvalSchema, ...],
+    tuple[str, ...],
+    tuple[_EquationSchema, ...],
+    tuple[_AtomSchema, ...],
+]
 
 type _GridStage = Literal[
     "uniform",
@@ -110,7 +171,7 @@ class _GridBinding:
 
     parameters: Mapping[str, ScalarFloat | ScalarInt]
     """Exact runtime operands held for this binding."""
-    key: tuple[object, ...]
+    key: _SupportKey
     """Canonical support identity, independent of equivalent parameter copies."""
 
 
@@ -118,7 +179,7 @@ class _GridBinding:
 class _LiteralOperand:
     """One validated scalar or vector literal embedded in a traced stage."""
 
-    value: object
+    value: ProcessValue
 
 
 type _ProcessOperand = int | _LiteralOperand
@@ -140,7 +201,7 @@ class _ProcessStage:
 class _ProcessRecipe:
     """Validated producer dataflow, detached from the mutable traced JAXPR."""
 
-    initial_values: tuple[object, ...]
+    initial_values: tuple[ProcessValue, ...]
     stages: tuple[_ProcessStage, ...]
     result: _ProcessOperand
 
@@ -159,13 +220,15 @@ class SimulationProcessGrids:
         default_factory=_shared_uniform_operations
     )
     """Shared executable profiles that retain no concrete bindings."""
-    grids: dict[tuple[object, ...], Float1D] = field(default_factory=dict)
+    grids: dict[_SupportKey, Float1D] = field(default_factory=dict)
     """Ready supports held through all entry, solve and forward consumers."""
-    bindings: dict[tuple[object, ...], _GridBinding] = field(default_factory=dict)
+    bindings: dict[_SupportKey, _GridBinding] = field(default_factory=dict)
     """Exact operand owners for the synchronization-free identity lookup."""
     sealed: bool = False
     """Whether every supported producer has completed entry admission."""
-    temporary_roots: list[object] = field(default_factory=list)
+    temporary_roots: list[ValueND | Mapping[ParameterName, ValueND]] = field(
+        default_factory=list
+    )
     """Placed operands and completed stages held until support publication."""
 
     def supports(self, spec: _ContinuousStochasticProcess) -> bool:
@@ -178,7 +241,13 @@ class SimulationProcessGrids:
         )
 
     @property
-    def array_roots(self) -> tuple[object, ...]:
+    def array_roots(
+        self,
+    ) -> tuple[
+        tuple[Float1D, ...],
+        tuple[Mapping[str, ScalarFloat | ScalarInt], ...],
+        tuple[ValueND | Mapping[ParameterName, ValueND], ...],
+    ]:
         """Expose every support and identity-binding owner to memory accounting."""
         return (
             tuple(self.grids.values()),
@@ -286,7 +355,7 @@ class SimulationProcessGrids:
     def _produce_normal(
         self,
         *,
-        parameters: Mapping[str, object],
+        parameters: Mapping[ParameterName, ProcessValue],
         n_points: int,
         required: jax.sharding.Sharding,
     ) -> Float1D:
@@ -295,18 +364,22 @@ class SimulationProcessGrids:
             device for device in self.devices if device in required.device_set
         )
         current = self.snapshot()
-        placed = place_simulation_arguments(
-            arguments=parameters,
-            subject_arg_names=(),
-            value_reads=(),
-            devices=execution_devices,
-            budget_bytes=self.budget_bytes,
-            live_footprint=current,
-            budget_devices=tuple(dict.fromkeys((*self.devices, *current.spans))),
+        # Placement uploads every numerical operand as a device array.
+        placed = cast(
+            "Mapping[ParameterName, ValueND]",
+            place_simulation_arguments(
+                arguments=parameters,
+                subject_arg_names=(),
+                value_reads=(),
+                devices=execution_devices,
+                budget_bytes=self.budget_bytes,
+                live_footprint=current,
+                budget_devices=tuple(dict.fromkeys((*self.devices, *current.spans))),
+            ),
         )
         self.temporary_roots.append(placed)
         try:
-            endpoints: dict[str, object] = {}
+            endpoints: dict[ParameterName, ValueND] = {}
             for endpoint, stage in (("start", "subtract"), ("stop", "add")):
                 offset = self._produce(
                     parameters={"left": placed["n_std"], "right": placed["sigma"]},
@@ -336,7 +409,7 @@ class SimulationProcessGrids:
         self,
         *,
         spec: _ContinuousStochasticProcess,
-        parameters: Mapping[str, object],
+        parameters: Mapping[ParameterName, ProcessValue],
         required: jax.sharding.Sharding,
     ) -> Float1D:
         """Replay exact eager primitive boundaries through admitted operations."""
@@ -382,7 +455,7 @@ class SimulationProcessGrids:
     def _produce(
         self,
         *,
-        parameters: Mapping[str, object],
+        parameters: Mapping[ParameterName, ProcessValue],
         n_points: int,
         required: jax.sharding.Sharding,
         stage: _GridStage = "uniform",
@@ -408,7 +481,9 @@ class SimulationProcessGrids:
         argument_buffers = measure_buffer_footprint(tree=placed)
         live = union_buffer_footprints(footprints=(self.snapshot(), argument_buffers))
         abstract = jax.tree.map(_abstract_grid_parameter, dict(placed))
-        static: Mapping[str, object] = MappingProxyType({"n_points": n_points})
+        static: MappingProxyType[ReferenceName, StaticArgument] = MappingProxyType(
+            {"n_points": n_points}
+        )
         function: Callable[..., ValueND] = _compute_uniform_grid
         if process_stage:
             function = _compute_process_stage
@@ -464,9 +539,9 @@ class SimulationProcessGrids:
 
 def _uniform_parameters(
     *, spec: UniformIIDProcess, parameters: Mapping[str, ScalarFloat | ScalarInt]
-) -> Mapping[str, object]:
+) -> Mapping[ParameterName, ProcessValue]:
     """Mirror process scalar dtypes on the host before admitted device placement."""
-    complete: dict[str, object] = dict(parameters)
+    complete: dict[ParameterName, ProcessValue] = dict(parameters)
     for name in ("start", "stop"):
         value = getattr(spec, name)
         if value is not None:
@@ -479,9 +554,9 @@ def _uniform_parameters(
 
 def _normal_parameters(
     *, spec: NormalIIDProcess, parameters: Mapping[str, ScalarFloat | ScalarInt]
-) -> Mapping[str, object]:
+) -> Mapping[ParameterName, ProcessValue]:
     """Preserve weak fixed floats and canonical strong fixed integers on upload."""
-    complete: dict[str, object] = dict(parameters)
+    complete: dict[ParameterName, ProcessValue] = dict(parameters)
     for name in ("mu", "sigma", "n_std"):
         value = getattr(spec, name)
         if value is not None:
@@ -493,7 +568,7 @@ def _normal_parameters(
     return MappingProxyType(complete)
 
 
-def _normal_fixed_identity(spec: NormalIIDProcess) -> tuple[object, ...]:
+def _normal_fixed_identity(spec: NormalIIDProcess) -> _FixedIdentity:
     """Distinguish fixed scalar types and signed zero before binding reuse."""
     return tuple(
         (name, type(value), None if value is None else _parameter_bytes(value))
@@ -506,9 +581,9 @@ def _complete_process_parameters(
     *,
     spec: _ContinuousStochasticProcess,
     parameters: Mapping[str, ScalarFloat | ScalarInt],
-) -> Mapping[str, object]:
+) -> Mapping[ParameterName, ProcessValue]:
     """Complete runtime operands with fixed host scalars before device admission."""
-    complete: dict[str, object] = dict(parameters)
+    complete: dict[ParameterName, ProcessValue] = dict(parameters)
     for name in spec._param_field_names:  # noqa: SLF001
         value = getattr(spec, name)
         if value is not None:
@@ -522,7 +597,7 @@ def _complete_process_parameters(
 
 def _process_fixed_identity(
     spec: _ContinuousStochasticProcess,
-) -> tuple[object, ...]:
+) -> _FixedIdentity:
     """Distinguish fixed scalar types and bytes before binding reuse."""
     return tuple(
         (name, type(value), None if value is None else _parameter_bytes(value))
@@ -531,33 +606,30 @@ def _process_fixed_identity(
     )
 
 
-def _staged_parameter_is_weak(value: object) -> bool:
+def _staged_parameter_is_weak(value: ProcessValue) -> bool:
     """Preserve host and JAX weak typing in composite support identity."""
     return type(value) in (bool, int, float) or bool(getattr(value, "weak_type", False))
 
 
 def _process_grid_call(
-    *values: object,
+    *values: ScalarFloat | ScalarInt,
     spec: _ContinuousStochasticProcess,
-    parameter_names: tuple[str, ...],
+    parameter_names: tuple[ParameterName, ...],
 ) -> Float1D:
     """Rebind positional trace values to their declared parameter names.
 
     Module-level so the beartype claw decorates it once at import instead of on
     every `_trace_process_jaxpr` call; see `_lcm/utils/functools.py`.
     """
-    arguments = cast(
-        "dict[str, ScalarFloat | ScalarInt]",
-        dict(zip(parameter_names, values, strict=True)),
-    )
+    arguments = dict(zip(parameter_names, values, strict=True))
     return spec.compute_gridpoints(**arguments)
 
 
 def _trace_process_jaxpr(
     *,
     spec: _ContinuousStochasticProcess,
-    parameter_names: tuple[str, ...],
-    parameter_values: tuple[object, ...],
+    parameter_names: tuple[ParameterName, ...],
+    parameter_values: tuple[ProcessValue, ...],
 ) -> Jaxpr:
     """Trace an explicit positional binding for deterministic input ordering.
 
@@ -580,7 +652,7 @@ def _trace_process_jaxpr(
 def _process_jaxpr(
     *,
     spec: _ContinuousStochasticProcess,
-    parameter_names: tuple[str, ...],
+    parameter_names: tuple[ParameterName, ...],
     parameter_types: tuple[jax.ShapeDtypeStruct, ...],
 ) -> Jaxpr:
     """Trace the process once per parameter type signature."""
@@ -589,7 +661,7 @@ def _process_jaxpr(
 
 
 def _validated_process_recipe(  # noqa: C901
-    *, closed: Jaxpr, parameter_values: tuple[object, ...], n_points: int
+    *, closed: Jaxpr, parameter_values: tuple[ProcessValue, ...], n_points: int
 ) -> _ProcessRecipe:
     """Validate the complete eager graph before exposing any dispatch recipe."""
     try:
@@ -677,7 +749,7 @@ def _validated_process_recipe(  # noqa: C901
 
 
 def _validate_attached_process_value(
-    *, value: object, variable: Var, host_constant: bool
+    *, value: ProcessValue, variable: Var, host_constant: bool
 ) -> None:
     """Match each attached value to its binder before any stage can dispatch."""
     if host_constant and (
@@ -803,13 +875,13 @@ def _validate_linspace_jaxpr(*, equation: JaxprEqn, n_points: int) -> None:
         )
 
 
-def _jaxpr_schema(jaxpr: Jaxpr) -> tuple[object, ...]:
+def _jaxpr_schema(jaxpr: Jaxpr) -> _JaxprSchema:
     """Describe graph dataflow canonically, independent of variable spellings."""
     variables = {
         variable: index
         for index, variable in enumerate((*jaxpr.constvars, *jaxpr.invars))
     }
-    equations: list[tuple[object, ...]] = []
+    equations: list[_EquationSchema] = []
     for equation in jaxpr.eqns:
         for variable in equation.outvars:
             if isinstance(variable, Var):
@@ -826,7 +898,7 @@ def _jaxpr_schema(jaxpr: Jaxpr) -> tuple[object, ...]:
     )
 
 
-def _root_equation_schema(equation: JaxprEqn) -> tuple[object, ...]:
+def _root_equation_schema(equation: JaxprEqn) -> _EquationSchema:
     """Canonicalize one outer equation and every nested graph it owns."""
     variables: dict[Var, int] = {}
     for atom in equation.invars:
@@ -840,7 +912,7 @@ def _root_equation_schema(equation: JaxprEqn) -> tuple[object, ...]:
 
 def _equation_schema(
     *, equation: JaxprEqn, variables: Mapping[Var, int]
-) -> tuple[object, ...]:
+) -> _EquationSchema:
     """Capture one primitive's complete abstract and static contract."""
     return (
         equation.primitive.name,
@@ -867,7 +939,7 @@ def _equation_schema(
 
 def _graph_atom_schema(
     *, atom: Var | DropVar | JaxprLiteral, variables: Mapping[Var, int]
-) -> tuple[object, ...]:
+) -> _AtomSchema:
     """Name graph variables by canonical binder index and literals by value."""
     if isinstance(atom, JaxprLiteral):
         return "literal", _aval_schema(atom), _parameter_bytes(atom.val)
@@ -880,7 +952,7 @@ def _graph_atom_schema(
 
 def _aval_schema(
     atom: Var | DropVar | JaxprLiteral,
-) -> tuple[tuple[int, ...], str, bool]:
+) -> _AvalSchema:
     """Return the static array contract attached to one JAXPR atom."""
     return (
         _aval_shape(atom),
@@ -906,21 +978,23 @@ def _aval_dtype(atom: Var | DropVar | JaxprLiteral) -> str:
 
 
 def _read_process_operand(
-    *, operand: _ProcessOperand, environment: list[object]
-) -> object:
+    *, operand: _ProcessOperand, environment: list[ProcessValue]
+) -> ProcessValue:
     """Read one validated environment slot or embedded literal."""
     return (
         operand.value if isinstance(operand, _LiteralOperand) else environment[operand]
     )
 
 
-def _parameter_bytes(value: object) -> tuple[str, tuple[int, ...], bytes]:
+def _parameter_bytes(value: ProcessValue) -> _OperandBytes:
     """Read canonical support content once per previously unseen operand binding."""
     array = np.asarray(value)
     return array.dtype.str, array.shape, array.tobytes()
 
 
-def _abstract_grid_parameter(value: object) -> object:
+def _abstract_grid_parameter(
+    value: ProcessValue,
+) -> jax.ShapeDtypeStruct | ProcessValue:
     """Retain exact placed shape and weak type without a concrete array owner."""
     if isinstance(value, jax.Array):
         return jax.ShapeDtypeStruct(

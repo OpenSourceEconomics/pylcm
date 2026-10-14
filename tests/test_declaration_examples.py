@@ -193,7 +193,7 @@ def _python_files() -> list[Path]:
     ]
 
 
-def _string_constants(*, source: str) -> list[str]:
+def _string_constants(*, source: PythonSource) -> list[str]:
     return [
         node.value
         for node in ast.walk(ast.parse(source))
@@ -201,7 +201,7 @@ def _string_constants(*, source: str) -> list[str]:
     ]
 
 
-def _string_code_spans(*, source: str) -> list[str]:
+def _string_code_spans(*, source: PythonSource) -> list[str]:
     return [
         span
         for text in _string_constants(source=source)
@@ -209,7 +209,7 @@ def _string_code_spans(*, source: str) -> list[str]:
     ]
 
 
-def _notebook_markdown(*, source: str) -> list[str]:
+def _notebook_markdown(*, source: PythonSource) -> list[str]:
     return [
         "".join(cell["source"])
         if isinstance(cell["source"], list)
@@ -217,3 +217,6 @@ def _notebook_markdown(*, source: str) -> list[str]:
         for cell in json.loads(source)["cells"]
         if cell.get("cell_type") == "markdown"
     ]
+
+
+type PythonSource = str

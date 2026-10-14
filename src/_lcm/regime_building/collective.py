@@ -26,11 +26,11 @@ from _lcm.regime_building.argmax import (
     _move_axes_to_back,
     argmax_and_max,
 )
-from _lcm.typing import FunctionName, RegimeName, StateName, _ParamsLeaf
-from _lcm.utils.functools import get_union_of_args
+from _lcm.typing import FunctionName, ParamsLeaf, QualifiedName, RegimeName, StateName
+from _lcm.utils.functools import get_union_of_args, is_user_function
 from _lcm.zero_safe import sum_in_value_order, zero_safe_weighted_term
 from lcm.collective import ParetoObjective
-from lcm.typing import BoolND, FloatND, IntND, UserFunction
+from lcm.typing import BoolND, FloatND, IntND, ReferenceName, UserFunction
 
 # Up to this many stakeholders, the scalarization's reduction order is not a choice:
 # one term is returned as-is and two admit a single association. From three terms on,
@@ -204,8 +204,8 @@ def _gather_along_actions(
     the last axis, so `argmax_flat` indexes into that flattened action space with
     the state axes as its shape. Reproduce the same layout on `q` and take along it.
 
-    With no action axis to reduce, `argmax_and_max` returns `q`'s own maximum —
-    the array itself — so the gather is the identity here too.
+    With no action axis, there is one candidate per retained cell, so gathering
+    is the identity. The caller applies the dissolution mask separately.
     """
     if not action_axes:
         return q
@@ -276,10 +276,10 @@ class ParetoWeights:
     the check that a declaration is a Pareto weighting has to see it as written.
     """
 
-    arg_names: tuple[str, ...]
+    arg_names: tuple[ReferenceName, ...]
     """States, `period` / `age`, and qualified params `compute` reads."""
 
-    param_names: tuple[str, ...]
+    param_names: tuple[QualifiedName, ...]
     """The subset of `arg_names` supplied from the regime's flat params."""
 
     normalization: str
@@ -331,11 +331,11 @@ def build_pareto_weights(
         else objective.weights
     )
     context = frozenset({"period", "age"})
-    per_stakeholder: dict[str, tuple[Callable[..., FloatND], tuple[str, ...]]] = {}
-    param_names: set[str] = set()
+    per_stakeholder: dict[str, tuple[UserFunction, tuple[str, ...]]] = {}
+    param_names: set[QualifiedName] = set()
     for name in stakeholders:
         weight = declared[name]
-        if not callable(weight):
+        if not is_user_function(weight):
             per_stakeholder[name] = (_constant_weight(float(weight)), ())
             continue
         imputation_params: frozenset[str] = frozenset()
@@ -371,14 +371,14 @@ def build_pareto_weights(
     normalization = "pointwise" if objective is None else objective.normalization
 
     @with_signature(args=list(arg_names), return_annotation="dict")
-    def declared_weights(**kwargs: _ParamsLeaf) -> dict[str, FloatND]:
+    def declared_weights(**kwargs: ParamsLeaf) -> dict[str, FloatND]:
         return {
             name: jnp.asarray(func(**{arg: kwargs[arg] for arg in args}))
             for name, (func, args) in per_stakeholder.items()
         }
 
     @with_signature(args=list(arg_names), return_annotation="dict")
-    def compute(**kwargs: _ParamsLeaf) -> dict[str, FloatND]:
+    def compute(**kwargs: ParamsLeaf) -> dict[str, FloatND]:
         raw = declared_weights(**kwargs)
         if normalization == "pointwise" and len(raw) > 1:
             stacked = jnp.stack(jnp.broadcast_arrays(*raw.values()), axis=0)

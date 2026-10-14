@@ -5,8 +5,6 @@ future implementation helper serves as the expected-result oracle.
 """
 
 import dataclasses
-import logging
-from collections.abc import Callable
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -18,6 +16,7 @@ from _lcm.params.processing import process_params
 from _lcm.simulation.initial_conditions import validate_simulation_inputs
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
+    ConstraintFunction,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     InitialConditions,
@@ -41,6 +40,8 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
+    ScalarFloat,
     ScalarInt,
 )
 from tests.simulation.initial_conditions._models import (
@@ -95,7 +96,7 @@ def test_earlier_initial_errors_prevent_every_feasibility_build(
     if missing:
         del initial["wealth"]
 
-    def forbidden(**_kwargs: object) -> None:
+    def forbidden[Ignored](**_kwargs: Ignored) -> None:
         raise AssertionError("A feasibility builder was reached before validation.")
 
     monkeypatch.setattr(initial_module, "_get_feasibility", forbidden)
@@ -140,7 +141,7 @@ def test_unused_regime_feasibility_is_neither_built_nor_traced(
 
     def observe(
         *, functions: EconFunctionsMapping, constraints: ConstraintFunctionsMapping
-    ) -> Callable[..., object]:
+    ) -> ConstraintFunction:
         assert constraints is not unused, "Unused-regime constraints were composed."
         visited.append(constraints)
         return original(functions=functions, constraints=constraints)
@@ -200,8 +201,11 @@ def test_changed_transition_params_are_validated_again_on_the_same_model() -> No
     regime = model._regimes["alive"]
 
     def bound_probs(
-        *, probability: FloatND, age: object, period: object
-    ) -> MappingProxyType:
+        *,
+        probability: FloatND,
+        age: float | ScalarInt | ScalarFloat,
+        period: int | ScalarInt,
+    ) -> MappingProxyType[RegimeName, FloatND]:
         del age, period
         return MappingProxyType({"terminal": probability})
 
@@ -354,8 +358,9 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
 
 
 @pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+@pytest.mark.parametrize("runtime_checks", [False, True])
 def test_earlier_transition_failure_precedes_a_later_python_exception(
-    *, log_level: LogLevel, caplog: pytest.LogCaptureFixture
+    *, log_level: LogLevel, caplog: pytest.LogCaptureFixture, runtime_checks: bool
 ) -> None:
     """Transition errors publish per item, unlike initial feasibility aggregation."""
     armed = False
@@ -369,7 +374,9 @@ def test_earlier_transition_failure_precedes_a_later_python_exception(
     model = _model_with_state_probs(state_law)
     regime = model._regimes["alive"]
 
-    def invalid_regime_probs(*, age: object, period: object) -> MappingProxyType:
+    def invalid_regime_probs(
+        *, age: float | ScalarInt | ScalarFloat, period: int | ScalarInt
+    ) -> MappingProxyType[RegimeName, FloatND]:
         del age, period
         return MappingProxyType({"terminal": jnp.array(-1.0)})
 
@@ -391,29 +398,18 @@ def test_earlier_transition_failure_precedes_a_later_python_exception(
         params={"discount_factor": 0.95}, params_template=model._params_template
     )
     armed = True
-    logger = get_logger(log_level=log_level)
+    logger = get_logger(log_level=log_level, runtime_checks=runtime_checks)
     caplog.clear()
     assert model.ages is not None
-    if log_level == "off":
+    if not runtime_checks:
         validate_transitions(
             regimes=regimes, flat_params=flat_params, ages=model.ages, logger=logger
         )
         assert not caplog.records
         return
-    expected = (
-        InvalidRegimeTransitionProbabilitiesError if log_level == "debug" else TypeError
-    )
-    with pytest.raises(expected) as caught:
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as caught:
         validate_transitions(
             regimes=regimes, flat_params=flat_params, ages=model.ages, logger=logger
         )
-    if log_level == "debug":
-        assert "contain values outside [0, 1]" in str(caught.value)
-        assert not caplog.records
-    else:
-        assert str(caught.value) == "later transition sentinel"
-        warnings = [
-            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
-        ]
-        assert len(warnings) == 1
-        assert "contain values outside [0, 1]" in warnings[0]
+    assert "contain values outside [0, 1]" in str(caught.value)
+    assert not caplog.records

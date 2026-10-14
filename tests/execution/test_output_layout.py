@@ -2,12 +2,14 @@
 
 import functools
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.execution.core_program import (
@@ -240,7 +242,7 @@ def test_lowering_key_reads_the_program_identity_not_the_bound_callable() -> Non
     claim, so equal identities give one key and distinct identities give two.
     """
 
-    def core(_static_policy: object, /) -> object:
+    def core[Policy](_static_policy: Policy, /) -> Policy:
         return _static_policy
 
     identity = ("program", "fingerprint", "regime", "main", ("signature",), None)
@@ -395,7 +397,7 @@ def test_published_value_placement_is_asserted_not_repaired():
     core = PlannedCore(
         compiled=lambda **_kwargs: replicated,
         layout=layout,
-        tile_widths={},
+        tile_widths=MappingProxyType({}),
         name="main",
     )
 
@@ -407,9 +409,10 @@ def test_the_loop_publishes_values_only_through_planned_cores():
     """A compiled core without a resolved layout cannot publish a value."""
     template = _template()
 
-    with pytest.raises(TypeError, match="PlannedCore"):
+    with pytest.raises(BeartypeCallHintParamViolation, match="PlannedCore"):
         _publish_kernel_value(
-            value=template, compiled_cores={"main": lambda **_kwargs: template}
+            value=template,
+            compiled_cores={"main": lambda **_kwargs: template},  # ty: ignore[invalid-argument-type]
         )
 
 
@@ -484,7 +487,9 @@ def test_a_registered_pytree_of_roles_with_none_leaves_resolves_lowers_and_runs(
         output_roles=_carry_roles(),
     )
 
-    _, carry_shardings = cast("tuple[object, EGMCarry]", resolved.out_shardings)
+    _, carry_shardings = cast(
+        "tuple[jax.sharding.Sharding | None, EGMCarry]", resolved.out_shardings
+    )
     assert isinstance(carry_shardings, EGMCarry)
     assert carry_shardings.breakpoints is None
     assert carry_shardings.policy is None
@@ -599,3 +604,27 @@ def test_assert_value_leaf_layout_checks_only_the_value_leaf():
     )
     with pytest.raises(AssertionError, match="output sharding"):
         assert_value_leaf_layout(value=replicated, layout=resolved)
+
+
+@pytest.mark.parametrize("field_name", ["tile_widths", "internal_input_templates"])
+def test_planned_core_refuses_a_plain_dict_for_its_mappings(field_name: str) -> None:
+    """A planned core holds read-only mappings; a plain dict is refused."""
+    template = _template()
+    layout = resolve_output_layout(
+        core_key="main",
+        value_template=template,
+        state_order=("kind", "wealth"),
+        output_roles=VALUE,
+    )
+    arguments = {
+        "tile_widths": MappingProxyType({}),
+        "internal_input_templates": MappingProxyType({}),
+        field_name: {},
+    }
+    with pytest.raises(BeartypeCallHintParamViolation, match=field_name):
+        PlannedCore(
+            compiled=lambda **_kwargs: template,
+            layout=layout,
+            name="main",
+            **arguments,  # ty: ignore[invalid-argument-type]
+        )

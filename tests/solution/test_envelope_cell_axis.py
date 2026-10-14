@@ -3,13 +3,14 @@
 import dataclasses
 import functools
 from collections.abc import Hashable, Mapping
-from typing import Any
+from typing import NotRequired, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.carry import EGMCarry
 from _lcm.egm.upper_envelope import segment_envelope
 from _lcm.execution.core_program import core_program_graph
 from _lcm.solution import backward_induction
@@ -27,6 +28,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import DCEGM, NEGM, EnvelopeConfig, ExactEnvelope, FUESEnvelope
 from lcm.typing import ContinuousState, FloatND, ScalarFloat
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
+from tests.solution._callback_types import CompileFunctionsKwargs
 from tests.test_models import n_nbegm_toy
 from tests.test_models.deterministic.dcegm_variants import dcegm_retirement
 from tests.test_models.deterministic.retirement_only import (
@@ -35,6 +37,28 @@ from tests.test_models.deterministic.retirement_only import (
     get_params,
     next_regime_from_retirement,
 )
+
+
+class _LoweringKeysKwargs(TypedDict):
+    resolved_programs: Mapping[
+        backward_induction._CoreCandidate, backward_induction.ResolvedCoreProgram
+    ]
+    internal_templates: Mapping[
+        backward_induction._CoreCandidate,
+        Mapping[backward_induction.ReferenceName, backward_induction.ShapeDtypePytree],
+    ]
+    layouts: Mapping[
+        backward_induction._CoreTriple, backward_induction.ResolvedOutputLayout
+    ]
+    donations: Mapping[
+        backward_induction._CoreCandidate,
+        tuple[backward_induction.ResolvedDonation, ...],
+    ]
+    regimes: backward_induction.MappingProxyType[
+        backward_induction.RegimeName, backward_induction.Regime
+    ]
+    program_fingerprint: str
+    argument_keys: NotRequired[dict[backward_induction._CoreTriple, Hashable] | None]
 
 
 def _law_reading_current_wealth(
@@ -109,9 +133,30 @@ def test_the_envelope_cell_loop_accepts_a_planner_width(
     observed: set[int] = set()
     original = segment_envelope._sub_cells_per_node_cell
 
-    def observe(*, cell_width: int, **kwargs: Any) -> object:
+    def observe(
+        *,
+        cell_left: segment_envelope.Float1D,
+        cell_right: segment_envelope.Float1D,
+        cell_live: segment_envelope.BoolND,
+        runs: segment_envelope._RunNodes,
+        endog_grid: segment_envelope.Float1D,
+        value: segment_envelope.Float1D,
+        max_runs: int,
+        n_refined: int,
+        cell_width: int,
+    ) -> segment_envelope._SubCells:
         observed.add(cell_width)
-        return original(cell_width=cell_width, **kwargs)
+        return original(
+            cell_left=cell_left,
+            cell_right=cell_right,
+            cell_live=cell_live,
+            runs=runs,
+            endog_grid=endog_grid,
+            value=value,
+            max_runs=max_runs,
+            n_refined=n_refined,
+            cell_width=cell_width,
+        )
 
     monkeypatch.setattr(segment_envelope, "_sub_cells_per_node_cell", observe)
     model = _model(
@@ -188,19 +233,26 @@ def test_fues_compiler_option_reaches_actual_lowering_keys(
     compiled_programs: list[backward_induction._CompiledPrograms] = []
     original_compile = backward_induction._compile_all_functions
 
-    def observe_compile(**kwargs: Any) -> backward_induction._CompiledPrograms:
+    def observe_compile(
+        **kwargs: Unpack[CompileFunctionsKwargs],
+    ) -> backward_induction._CompiledPrograms:
         result = original_compile(**kwargs)
         compiled_programs.append(result)
         return result
 
-    def observe(**kwargs: Any) -> dict:
+    def observe(
+        **kwargs: Unpack[_LoweringKeysKwargs],
+    ) -> dict[backward_induction._CoreCandidate, Hashable]:
         keys = original(**kwargs)
         programs = kwargs["resolved_programs"]
         # Change only options on the actual resolved programs; all remaining
         # identity, argument, placement, layout and donation inputs stay fixed.
-        alternatives = {}
+        alternatives: dict[
+            tuple[tuple[str, int], ...],
+            dict[backward_induction._CoreCandidate, Hashable],
+        ] = {}
         for options in ((("scan_unroll", 1),), (("scan_unroll", 2),), ()):
-            alternative_kwargs: dict[str, Any] = dict(kwargs)
+            alternative_kwargs: _LoweringKeysKwargs = {**kwargs}
             alternative_kwargs["resolved_programs"] = {
                 candidate: dataclasses.replace(program, compiler_options=options)
                 for candidate, program in programs.items()
@@ -258,7 +310,7 @@ def _nested_model(
         outer_grid=LinSpacedGrid(start=0.0, stop=15.0, n_points=3),
     )
 
-    def build_solver(**_kwargs: object) -> NEGM:
+    def build_solver[UnusedArgument](**_kwargs: UnusedArgument) -> NEGM:
         return configured
 
     monkeypatch.setattr(n_nbegm_toy, "build_solver", build_solver)
@@ -289,11 +341,15 @@ def test_nested_adjuster_dispatch_receives_the_planned_envelope_width(
 ) -> None:
     """The sweep dispatches its inner solve with the same planner-owned width."""
     original = nested_solver._NodeSolver.__call__
-    observed: set[object] = set()
+    observed: set[int] = set()
 
     # keyword-only-exempt: library-callback=jax.lax.map
-    def observe(self: nested_solver._NodeSolver, node: ScalarFloat) -> object:
-        observed.add(self.adjuster_arguments.get("_lcm_envelope_cell_width", 1))
+    def observe(
+        self: nested_solver._NodeSolver, node: ScalarFloat
+    ) -> tuple[FloatND, EGMCarry]:
+        width = self.adjuster_arguments.get("_lcm_envelope_cell_width", 1)
+        assert isinstance(width, int)
+        observed.add(width)
         return original(self, node)
 
     monkeypatch.setattr(nested_solver._NodeSolver, "__call__", observe)

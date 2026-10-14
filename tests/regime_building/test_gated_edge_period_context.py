@@ -1,5 +1,6 @@
 """Gated-edge callables receive the context of the period they price."""
 
+from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -27,8 +28,11 @@ from lcm.typing import (
     FloatND,
     ScalarFloat,
     ScalarInt,
+    UserInitialConditions,
 )
 from tests.conftest import DECIMAL_PRECISION
+
+type _TemplateNode = str | Mapping[str, _TemplateNode]
 
 _BETA = 0.5
 _AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
@@ -227,7 +231,7 @@ def _make_model(
     )
 
 
-def _initial_conditions(model: Model) -> MappingProxyType:
+def _initial_conditions(model: Model) -> UserInitialConditions:
     return MappingProxyType(
         {
             "x": jnp.asarray([0.0, 2.0]),
@@ -264,7 +268,7 @@ def _solve_and_simulate(
     return solution, simulation
 
 
-def _leaf_paths(*, node: object, prefix: tuple[str, ...] = ()) -> set[str]:
+def _leaf_paths(*, node: _TemplateNode, prefix: tuple[str, ...] = ()) -> set[str]:
     if isinstance(node, dict):
         return {
             path

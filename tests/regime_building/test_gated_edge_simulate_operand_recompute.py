@@ -92,6 +92,7 @@ from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.gated_edges import SOURCE_PARAMS
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_V_ARG
+from _lcm.regime_law import RegimeLawDeclaration
 from _lcm.simulation.gated_routing import (
     _call_vmapped_with_accepted_kwargs,
     route_gated_edges,
@@ -113,7 +114,14 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.transition import StochasticTransition
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    RegimeName,
+    ScalarInt,
+)
 from tests.regime_building.test_collective_regime_simulate import _solve_and_process
 from tests.regime_building.test_simulate_gate_param_and_leg_selection import (
     exposed_param_name,
@@ -169,7 +177,9 @@ def _value_gate(*, V_target: FloatND, V_ref: FloatND) -> BoolND:
     return V_target > V_ref
 
 
-def _make_regimes() -> tuple[dict[str, Regime], dict[str, object]]:
+def _make_regimes() -> tuple[
+    dict[str, Regime], dict[RegimeName, RegimeLawDeclaration | Transition]
+]:
     """The fixture regimes and their laws, `None` for a terminal regime."""
     src = Regime(
         states={"x": _X2},
@@ -389,7 +399,9 @@ def _threshold_gate(*, V_target: FloatND, gate_threshold: FloatND) -> BoolND:
     return V_target > gate_threshold
 
 
-def _make_curved_regimes() -> tuple[dict[str, Regime], dict[str, object]]:
+def _make_curved_regimes() -> tuple[
+    dict[str, Regime], dict[RegimeName, RegimeLawDeclaration | Transition]
+]:
     """The curved-target regimes and their laws, `None` for a terminal regime."""
     src = Regime(
         states={"x": _X2},

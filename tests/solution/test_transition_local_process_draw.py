@@ -55,8 +55,8 @@ from tests.test_models.nbegm_common import (
     utility,
 )
 
-Solver = Literal["brute", "dcegm", "nbegm"]
-Process = Literal["iid", "ar1", "markov"]
+type Solver = Literal["brute", "dcegm", "nbegm"]
+type Process = Literal["iid", "ar1", "markov"]
 
 INCOME_SCALE = 0.5
 BASE_INCOME = 1.0

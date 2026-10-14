@@ -19,7 +19,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ScalarInt
+from lcm.typing import ScalarInt, UserParamsNode
 from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
     WEALTH_GRID,
@@ -93,7 +93,7 @@ def get_params(
     n_periods: int,
     discount_factor: float = 0.98,
     interest_rate: float = 0.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     return {
         "discount_factor": discount_factor,
         "interest_rate": interest_rate,

@@ -12,7 +12,7 @@ import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal, cast
+from typing import ClassVar, Literal, TypedDict, Unpack, cast
 
 from beartype import beartype
 
@@ -42,6 +42,62 @@ from lcm.transition import (
 )
 from lcm.typing import UserFunction
 
+# One `Regime.states` value; `None` masks a model-level state of the same name.
+type StateEntry = Grid | Phased | AgeSpecializedGrid | None
+
+# One `Regime.state_transitions` value: a law, a stochastic law, a phase pair, or
+# a per-target mapping of laws; `None` masks a model-level law. `Phased` inside a
+# per-target mapping passes the type check so the validator can reject it with
+# the outermost-only explanation.
+type StateTransitionEntry = (
+    UserFunction
+    | StochasticTransition
+    | Phased
+    | Mapping[RegimeName, UserFunction | StochasticTransition | Phased]
+    | None
+)
+
+# One `Regime.actions` value; `None` masks a model-level action.
+type ActionEntry = Grid | None
+
+# One `Regime.functions` value; `None` masks a model-level function.
+type FunctionEntry = UserFunction | Phased | CollectiveUtility | None
+
+# One `Regime.constraints` value; `None` masks a model-level constraint. `Phased`
+# passes the type check so the validator can reject it with an explanation.
+type ConstraintEntry = ConstraintLike | Phased | ValueDependentConstraint | None
+
+
+class _SlotsBesideFunctions(TypedDict, total=False):
+    """The replaceable slots other than `functions`, each with its declared type.
+
+    `Regime.with_engine_functions` writes `functions` itself and takes these
+    beside it.
+    """
+
+    states: Mapping[StateName, StateEntry]
+    state_transitions: Mapping[StateName, StateTransitionEntry]
+    joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition | Phased]]
+    actions: Mapping[ActionName, ActionEntry]
+    constraints: Mapping[FunctionName, ConstraintEntry]
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid]
+    solver: _solvers.Solver
+    taste_shocks: ExtremeValueTasteShocks | None
+    koopmans_aggregator: UserFunction | Phased | None
+    certainty_equivalent: CertaintyEquivalent | None
+    description: str
+
+
+class RegimeReplacement(_SlotsBesideFunctions, total=False):
+    """The slots `Regime.replace` may replace, each with its declared type.
+
+    These are the slots a regime is constructed from. The derived slots
+    (`stakeholders`, `pareto_objective`, `value_constraints` and
+    `same_period_refs`) are read off a regime and are not among them.
+    """
+
+    functions: Mapping[FunctionName, FunctionEntry]
+
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
@@ -67,8 +123,7 @@ class Regime:
 
     _accepts_margin_solver: ClassVar[bool] = False
 
-    # `None` masks a model-level entry of the same name.
-    states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None] = field(
+    states: Mapping[StateName, StateEntry] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of state variable names to grids or phase-variant declarations.
@@ -83,16 +138,9 @@ class Regime:
     model build.
     """
 
-    state_transitions: Mapping[
-        StateName,
-        UserFunction
-        | StochasticTransition
-        | Phased
-        # `Phased` inside a per-target dict passes the type check so the
-        # validator can reject it with the outermost-only explanation.
-        | Mapping[RegimeName, UserFunction | StochasticTransition | Phased]
-        | None,
-    ] = field(default_factory=lambda: MappingProxyType({}))
+    state_transitions: Mapping[StateName, StateTransitionEntry] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of state names to transition functions or per-target dicts.
 
     Every non-process target-state cell must have exactly one producer: an ordinary
@@ -125,14 +173,14 @@ class Regime:
     finite, in `[0, 1]`, and unit mass.
     """
 
-    actions: Mapping[ActionName, Grid | None] = field(
+    actions: Mapping[ActionName, ActionEntry] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of action variable names to grid objects."""
 
-    functions: Mapping[
-        FunctionName, UserFunction | Phased | CollectiveUtility | None
-    ] = field(default_factory=lambda: MappingProxyType({}))
+    functions: Mapping[FunctionName, FunctionEntry] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of function names to callables; must include 'utility'.
 
     `Phased` gives each phase its own implementation. A collective regime
@@ -141,11 +189,9 @@ class Regime:
     bodies under `utility_<s>` for the engine.
     """
 
-    # `Phased` passes the type check so the validator can reject it with an
-    # explanation (constraints are phase-invariant).
-    constraints: Mapping[
-        FunctionName, ConstraintLike | Phased | ValueDependentConstraint | None
-    ] = field(default_factory=lambda: MappingProxyType({}))
+    constraints: Mapping[FunctionName, ConstraintEntry] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of constraint names to constraints.
 
     A constraint is either a `Condition` built from `lcm.ref`, or an ordinary
@@ -297,7 +343,7 @@ class Regime:
     singleton regime.
     """
 
-    value_constraints: Mapping[FunctionName, UserFunction] = field(
+    value_constraints: MappingProxyType[FunctionName, UserFunction] = field(
         init=False, default_factory=lambda: MappingProxyType({})
     )
     """Value-aware feasibility predicates for a collective regime.
@@ -344,7 +390,7 @@ class Regime:
     predicates read `Q_<s>`, which a singleton regime does not carry.
     """
 
-    same_period_refs: Mapping[str, ProjectedRegimeValue] = field(
+    same_period_refs: MappingProxyType[str, ProjectedRegimeValue] = field(
         init=False, default_factory=lambda: MappingProxyType({})
     )
     """Same-period cross-regime reference values read by `value_constraints`.
@@ -422,7 +468,7 @@ class Regime:
     @property
     def decomposed_constraints(
         self,
-    ) -> Mapping[FunctionName, ConstraintLike | Phased | None]:
+    ) -> MappingProxyType[FunctionName, ConstraintLike | Phased | None]:
         """`constraints` with every `ValueDependentConstraint` taken apart.
 
         A value-dependent constraint's predicate belongs to
@@ -480,8 +526,10 @@ class Regime:
                         "One name is one reference; rename one of them."
                     )
                 same_period_refs[ref_name] = reference
-        object.__setattr__(self, "value_constraints", value_constraints)
-        object.__setattr__(self, "same_period_refs", same_period_refs)
+        object.__setattr__(
+            self, "value_constraints", MappingProxyType(value_constraints)
+        )
+        object.__setattr__(self, "same_period_refs", MappingProxyType(same_period_refs))
 
     def _fail_if_egm_solver_has_no_margin_declaration(self) -> None:
         if self._accepts_margin_solver:
@@ -614,7 +662,7 @@ class Regime:
         self,
         *,
         engine_functions: Mapping[FunctionName, UserFunction | Phased | None],
-        **other_slots: Any,  # noqa: ANN401
+        **other_slots: Unpack[_SlotsBesideFunctions],
     ) -> Regime:
         """Overlay engine-composed functions without disturbing the declarations.
 
@@ -685,7 +733,7 @@ class Regime:
             )
         return written
 
-    def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
+    def replace(self, **kwargs: Unpack[RegimeReplacement]) -> Regime:
         """Replace the attributes of the regime.
 
         Replacing a slot that carries a `CollectiveUtility` or
@@ -711,7 +759,7 @@ class Regime:
 
 
 def decompose_functions(
-    functions: Mapping[FunctionName, UserFunction | Phased | CollectiveUtility | None],
+    functions: Mapping[FunctionName, FunctionEntry],
 ) -> Mapping[FunctionName, UserFunction | Phased | None]:
     """Replace a `CollectiveUtility` by one utility entry per stakeholder.
 
@@ -753,10 +801,8 @@ def decompose_functions(
 
 
 def decompose_constraints(
-    constraints: Mapping[
-        FunctionName, ConstraintLike | Phased | ValueDependentConstraint | None
-    ],
-) -> Mapping[FunctionName, ConstraintLike | Phased | None]:
+    constraints: Mapping[FunctionName, ConstraintEntry],
+) -> MappingProxyType[FunctionName, ConstraintLike | Phased | None]:
     """Drop the value-dependent declarations from a regime's constraints.
 
     Args:
@@ -778,7 +824,7 @@ def decompose_constraints(
 
 
 def _resolve_phase_variant(
-    *, value: object, phase: Literal["solve", "simulate"]
+    *, value: UserFunction | Phased | None, phase: Literal["solve", "simulate"]
 ) -> UserFunction:
     """Return the variant of a possibly `Phased` entry that applies in `phase`."""
     if isinstance(value, Phased):

@@ -54,7 +54,6 @@ from collections.abc import Mapping
 from dataclasses import replace
 from inspect import signature
 from types import MappingProxyType
-from typing import Any, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -84,6 +83,7 @@ from _lcm.regime_building.Q_and_F import (
     evaluate_projected_readers,
 )
 from _lcm.regime_building.V import create_v_interpolation_info, get_V_interpolator
+from _lcm.regime_law import RegimeLawDeclaration
 from _lcm.simulation.gated_routing import (
     _call_vmapped_with_accepted_kwargs,
     bind_provenance_params,
@@ -118,6 +118,8 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    ReferenceName,
+    RegimeName,
     ScalarInt,
     UserFunction,
 )
@@ -163,10 +165,14 @@ def _u_identity(x: ContinuousState) -> FloatND:
 
 
 # A topology's regimes and the law `Model(edges=...)` binds for each.
-type _Spec = tuple[dict[str, Regime], dict[str, object]]
+type _Spec = tuple[
+    dict[str, Regime], dict[RegimeName, RegimeLawDeclaration | Transition]
+]
 
 
-def _split(bound: Mapping[str, tuple[Regime, object]]) -> _Spec:
+def _split(
+    bound: Mapping[str, tuple[Regime, RegimeLawDeclaration | Transition]],
+) -> _Spec:
     """Separate each regime from its law between regimes (`None` if terminal)."""
     return (
         {name: regime for name, (regime, _) in bound.items()},
@@ -175,7 +181,10 @@ def _split(bound: Mapping[str, tuple[Regime, object]]) -> _Spec:
 
 
 def _process(
-    *, regimes_dict: Mapping[str, Regime], laws: Mapping[str, object], ages: AgeGrid
+    *,
+    regimes_dict: Mapping[str, Regime],
+    laws: Mapping[RegimeName, RegimeLawDeclaration | Transition],
+    ages: AgeGrid,
 ):
     """Finalize and process the regimes under their bound laws."""
     regime_names_to_ids = MappingProxyType(
@@ -751,9 +760,7 @@ def _same_period_wbar(*, regimes, flat_params, solution):
     )
     supplied = {
         **{name: jnp.asarray(grid) for name, grid in target_nodes.states.items()},
-        **cast(
-            "Mapping[str, Any]", regime_kernel_params(flat_params, regime_name="src")
-        ),
+        **regime_kernel_params(flat_params, regime_name="src"),
         "period": jnp.int32(1),
         "age": jnp.asarray(_AGES.period_to_age(1)),
     }
@@ -784,7 +791,7 @@ def _same_period_wbar(*, regimes, flat_params, solution):
     projected = evaluate_projected_readers(
         readers=mapped_readers,
         landing_states={
-            arg: supplied[arg]
+            arg: target_nodes.states[arg]
             for reader in edge_fold.projected_readers
             for arg in reader.state_args
         },
@@ -1772,7 +1779,7 @@ _FENCE_DAG_POOL = MappingProxyType(
     ],
 )
 def test_fence_edge_consumer_rejects_every_argument_naming_a_target_node(
-    *, seed_args: tuple[str, ...], named_nodes: str
+    *, seed_args: tuple[ReferenceName, ...], named_nodes: str
 ) -> None:
     """A consumer argument naming a target-DAG node is refused, and the message
     lists exactly the named nodes, however deep a parameter sits below them."""
@@ -1802,7 +1809,7 @@ def test_fence_edge_consumer_rejects_every_argument_naming_a_target_node(
     ],
 )
 def test_fence_edge_consumer_accepts_arguments_naming_no_target_node(
-    seed_args: tuple[str, ...],
+    seed_args: tuple[ReferenceName, ...],
 ) -> None:
     """Arguments that name no target-DAG node pass, including a source parameter
     spelled like a parameter some target helper reads."""

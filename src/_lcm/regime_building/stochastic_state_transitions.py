@@ -12,7 +12,7 @@ user-facing `Regime`.
 """
 
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -23,7 +23,9 @@ from _lcm.utils.ast_inspection import _get_func_indexing_params
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StateEntry, StateTransitionEntry
 from lcm.transition import StochasticTransition
+from lcm.typing import FloatND, Phase, StateName
 
 
 def collect_stochastic_state_transitions(
@@ -116,8 +118,8 @@ def _phase_key(
 
 
 def _phase_variants(
-    entry: object,
-) -> tuple[tuple[object, Literal["solve", "simulate"] | None], ...]:
+    entry: StateTransitionEntry,
+) -> tuple[tuple[StateTransitionEntry, Phase | None], ...]:
     """The laws carried by one `state_transitions` entry, tagged by phase.
 
     A phase-invariant entry yields itself untagged; a `Phased` entry yields both
@@ -133,7 +135,7 @@ def _add_stochastic_entry(
     entries: dict[TransitionFunctionName, _StochasticStateTransition],
     key: TransitionFunctionName,
     markov: StochasticTransition,
-    state_name: str,
+    state_name: StateName,
     target_regime_name: RegimeName | None,
     phase: Literal["solve", "simulate"] | None,
     user_regime: UserRegime,
@@ -184,11 +186,11 @@ def _add_stochastic_entry(
 
 def _find_state_grid(
     *,
-    state_name: str,
+    state_name: StateName,
     target_regime_name: RegimeName | None,
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
-) -> object:
+) -> StateEntry:
     """Look up the state's grid for outcome-axis sizing.
 
     For a per-target dict entry the **target** regime's grid is authoritative:
@@ -215,9 +217,9 @@ def _find_state_grid(
 
 def _check_subscript_order(
     *,
-    func: object,
+    func: Callable[..., FloatND],
     indexing_params: tuple[str, ...],
-    state_name: str,
+    state_name: StateName,
 ) -> None:
     """Raise if `probs_array[…]` subscripts don't match signature order.
 
@@ -227,7 +229,7 @@ def _check_subscript_order(
     """
     if not indexing_params:
         return
-    sig = inspect.signature(func)  # ty: ignore[invalid-argument-type]
+    sig = inspect.signature(func)
     sig_order = tuple(
         p for p in sig.parameters if p != "probs_array" and p in indexing_params
     )

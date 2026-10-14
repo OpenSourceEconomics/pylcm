@@ -27,6 +27,23 @@ Per-target state-transition mappings must cover exactly the reachable targets th
 the state. Reachability comes from `Model.edges`; extra or missing target handoffs are
 errors.
 
+(api-additive-shock-transitions)=
+
+## Additive shock transitions
+
+`AdditiveShockTransition(base="base", shock="shock", conditioners={...})` declares a
+continuous-state law `next_<state> = base + shock` in `state_transitions`. Both names
+refer to functions of the source regime. The shock may read next period's stochastic
+draws; the base must not read them. `conditioners` declares the finite integer or
+Boolean support of every source function or discrete variable that the shock reads. Its
+other inputs must be draws, time coordinates, or parameters.
+
+The solve averages the target's value over the shock on the merged points
+`{a_j - shock_k}`, where `a_j` are the target's continuous-state nodes, and reads that
+average at the base. This preserves the piecewise-linear interpolation of the target's
+value while avoiding a separate interpolation at every shock draw for each source
+state-action point.
+
 (api-regime-transitions)=
 
 ## Regime transitions and graph support
@@ -239,15 +256,14 @@ for every active period and both phases. Callable supports may change values, bu
 pytree structure, leaf event shapes, and dtypes must stay fixed across periods and
 phases. Each support leaf has leading axis `support_size` and contains finite numeric or
 Boolean values. Probability rows have exactly `support_size` entries, are finite and in
-`[0, 1]`, and sum to one. `log_level="debug"` rejects invalid mass;
-`log_level="warning"` and `"progress"` warn and continue; `log_level="off"` skips the
-check. Any path that continues into aggregation normalizes the probability mass it
-receives.
+`[0, 1]`, and sum to one. `runtime_checks=True` rejects invalid mass at every log level;
+`runtime_checks=False` skips numerical preflight. Construction validation always runs.
+Any path that continues into aggregation normalizes the probability mass it receives.
 
 The solve variant is validated on solve grids. The simulation variant is validated on
 simulation grids, including the domain of a carried-only state that its probability
-function reads. At `log_level="debug"`, a phase law that cannot be evaluated and checked
-is refused rather than treated as valid.
+function reads. With runtime checks enabled, a phase law that cannot be evaluated and
+checked is refused rather than treated as valid.
 
 ### Parameter paths
 

@@ -1,7 +1,7 @@
 """An outer reservation fixes code even when instantaneous residency is smaller."""
 
 from types import MappingProxyType
-from typing import Any
+from typing import NotRequired, TypedDict, Unpack
 
 import jax
 import numpy as np
@@ -11,14 +11,25 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    MaterializedCoreProgram,
     TiledOutputAxis,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.residency import measure_buffer_footprint
-from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
+from _lcm.simulation.runtime import (
+    CompiledSimulationProgram,
+    SimulationDispatchContext,
+    SimulationRuntime,
+)
 from lcm.exceptions import ExecutionPlanningError
+
+
+class _MaterializedPreparation(TypedDict):
+    program: MaterializedCoreProgram
+    n_subjects: int
+    residency: NotRequired[SimulationDispatchContext | None]
 
 
 def _increment(*, x: jax.Array) -> jax.Array:
@@ -70,7 +81,9 @@ def test_actual_dispatch_preserves_the_outer_reserved_width(
     selected: list[int] = []
     prepare = SimulationRuntime._prepare_materialized
 
-    def observe(self: SimulationRuntime, **call: Any) -> object:
+    def observe(
+        self: SimulationRuntime, **call: Unpack[_MaterializedPreparation]
+    ) -> CompiledSimulationProgram:
         compiled = prepare(self, **call)
         selected.append(compiled.widths["subject"])
         return compiled
@@ -90,13 +103,12 @@ def test_actual_dispatch_preserves_the_outer_reserved_width(
     assert selected == [8], (
         "The current-residency counterfactual must choose wider code"
     )
-    caller_widths = {"subject": 2}
+    reserved_widths = MappingProxyType({"subject": 2})
     reserved = SimulationDispatchContext(
         live_footprint=context.live_footprint,
         budget_devices=context.budget_devices,
-        axis_widths=caller_widths,
+        axis_widths=reserved_widths,
     )
-    caller_widths["subject"] = 8
     actual = runtime.dispatch(
         program=program,
         arguments={"x": source},
@@ -123,7 +135,7 @@ def test_reserved_width_conflicting_with_explicit_configuration_is_refused() -> 
             residency=SimulationDispatchContext(
                 live_footprint=lambda: measure_buffer_footprint(tree=source),
                 budget_devices=runtime.subject_devices,
-                axis_widths={"subject": 2},
+                axis_widths=MappingProxyType({"subject": 2}),
             ),
         )
     assert not runtime.cache

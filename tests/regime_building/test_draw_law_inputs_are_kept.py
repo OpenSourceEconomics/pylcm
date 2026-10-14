@@ -14,6 +14,7 @@ inputs. Every case holds at both float precisions, eager and compiled.
 
 import contextlib
 from collections.abc import Generator
+from functools import partial
 from typing import Literal
 
 import jax
@@ -25,12 +26,14 @@ from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
     DiscreteGrid,
+    JointTransition,
     LinSpacedGrid,
     Model,
     Phased,
     StochasticTransition,
     categorical,
 )
+from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.regime import Regime
 from lcm.typing import (
     ContinuousState,
@@ -77,6 +80,85 @@ def _build_high_probability(age: float) -> UserFunction:  # noqa: ARG001
 
 def _same_at_every_age(age: float) -> str:  # noqa: ARG001
     return "high_probability"
+
+
+# keyword-only-exempt: library-callback=AgeSpecializedFunction
+def _build_joint_probability(
+    age: float, *, reverse: bool, invalid: bool
+) -> UserFunction:
+    high = 1.25 if invalid and age == 1 else 0.25 + 0.25 * age
+    if reverse and not invalid:
+        high = 1.0 - high
+
+    def probability() -> FloatND:
+        return jnp.asarray(high)
+
+    return probability
+
+
+def _age_signature(age: float) -> float:
+    return age
+
+
+def _wealth_from_joint(match: FloatND) -> ContinuousState:
+    return match
+
+
+@pytest.mark.parametrize("invalid_phase", [None, "solve", "simulate"])
+def test_joint_helper_resolves_each_source_period_and_phase(
+    invalid_phase: Literal["solve", "simulate"] | None,
+) -> None:
+    helpers = {
+        phase: AgeSpecializedFunction(
+            build=partial(
+                _build_joint_probability,
+                reverse=phase == "simulate",
+                invalid=phase == invalid_phase,
+            ),
+            signature=_age_signature,
+        )
+        for phase in ("solve", "simulate")
+    }
+    model = Model(
+        regimes={
+            "source": Regime(
+                functions={
+                    "utility": _zero,
+                    "high_probability": Phased(
+                        solve=helpers["solve"], simulate=helpers["simulate"]
+                    ),
+                },
+                joint_transitions={
+                    "dead": {
+                        "match": JointTransition(
+                            support_size=2,
+                            support=jnp.asarray([0.0, 1.0]),
+                            probabilities=_shock_probs_through_helper,
+                            outputs={"wealth": _wealth_from_joint},
+                        )
+                    }
+                },
+            ),
+            "dead": Regime(
+                states={"wealth": LinSpacedGrid(start=0, stop=1, n_points=2)},
+                functions={"utility": _wealth_utility},
+            ),
+        },
+        regime_id_class=_RegimeId,
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        initial_nodes={0: "source", 1: "source"},
+        edges={"source": {"dead": (0, 1)}},
+    )
+    if invalid_phase is not None:
+        with pytest.raises(
+            InvalidStateTransitionProbabilitiesError,
+            match=rf"{invalid_phase} phase.*age 1\)",
+        ):
+            model.solve(params={"discount_factor": 1.0}, log_level="off")
+    else:
+        solution = model.solve(params={"discount_factor": 1.0}, log_level="off")
+        for period, expected in ((0, 0.25), (1, 0.5)):
+            np.testing.assert_array_equal(solution.values[period]["source"], expected)
 
 
 def _shock_probs_two_drivers(

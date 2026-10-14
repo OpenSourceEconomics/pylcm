@@ -21,6 +21,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     feasible,
@@ -147,7 +148,7 @@ def build_params(
     mixed_schedule: bool = False,
     tax_bracket: float = 18.0,
     tax_rate: float = 0.2,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the discrete-choice-plus-cliff one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
     tax_params = {"tax_exemption": tax_exemption, "tax_lump": tax_lump}

@@ -41,6 +41,8 @@ survival, preference heterogeneity — is imported unchanged from the
 brute-force module, so the two configurations cannot drift apart silently.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 
 from lcm import (
@@ -67,6 +69,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     Period,
+    UserParamsNode,
 )
 from lcm_examples.mahler_yum_2024 import (
     _WEALTH_GRID_POINTS,
@@ -492,6 +495,8 @@ def create_mahler_yum_model(
     )
 
 
-def adapt_params_to_paper_mode(model_params: dict) -> dict:
+def adapt_params_to_paper_mode(
+    model_params: Mapping[str, UserParamsNode],
+) -> dict[str, UserParamsNode]:
     """Copy the optimized model parameter mapping for paper mode."""
     return dict(model_params)

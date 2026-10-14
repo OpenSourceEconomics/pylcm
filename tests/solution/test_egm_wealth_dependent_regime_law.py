@@ -22,6 +22,7 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import EGM, GridSearch
+from lcm.transition import ModelEdges
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.solution import test_egm_solver as egm_toy
 
@@ -71,7 +72,7 @@ def _per_target_wealth_law() -> ByAge:
     )
 
 
-def _build_model(*, edges: object, reads_last_age: bool = True) -> Model:
+def _build_model(*, edges: ModelEdges, reads_last_age: bool = True) -> Model:
     """Build the EGM lifecycle that saves at ages 0 and 1 and stops at age 2.
 
     `reads_last_age` fixes the `last_age` parameter the wealth laws read; a

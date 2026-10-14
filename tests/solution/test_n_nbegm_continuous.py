@@ -12,7 +12,7 @@ converged mesh.
 """
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Unpack, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -24,6 +24,7 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from lcm.solver_api import SIMULATION_POLICY, SOLVER_DIAGNOSTICS
 from lcm.solvers import AdaptiveOuterMesh
 from lcm.typing import FloatND
+from tests.solution.test_nbegm_retention_specialization import _NativeKernelKwargs
 from tests.test_models import n_nbegm_toy as toy
 
 if TYPE_CHECKING:
@@ -56,10 +57,10 @@ def _solve(
 
     def recording_call(
         self: solvers_mod._NNBEGMPeriodKernel,
-        **kwargs: object,
+        **kwargs: Unpack[_NativeKernelKwargs],
     ) -> KernelOutput:
-        result = original_call(self, **kwargs)  # ty: ignore[invalid-argument-type]
-        recorded[cast("int", kwargs["period"])] = result
+        result = original_call(self, **kwargs)
+        recorded[kwargs["period"]] = result
         return result
 
     monkeypatch.setattr(solvers_mod._NNBEGMPeriodKernel, "__call__", recording_call)

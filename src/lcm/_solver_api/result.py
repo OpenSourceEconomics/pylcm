@@ -6,13 +6,17 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
-    TypeAlias,
-    cast,
 )
+
+import numpy as np
+import pandas as pd
+import xarray as xr
+from beartype import beartype
 
 from lcm._solver_api.authority import (
     ArtifactAuthority,
 )
+from lcm._solver_api.beartype_conf import SOLVER_API_CONF
 from lcm._solver_api.contract import (
     ArtifactRef,
     OmissionReason,
@@ -21,31 +25,39 @@ from lcm._solver_api.contract import (
 from lcm._solver_api.stores import (
     ArtifactStore,
     ValueStore,
-    _ArtifactStoreBoundary,
     _FloatValueBoundary,
-    _RegimeNameBoundary,
     _require_exact_artifact_ref,
     _traverse_public_mapping_items,
-    _ValuePeriodBoundary,
 )
 from lcm.typing import FloatND, RegimeName
 
 if TYPE_CHECKING:
-    _SolutionValuesInput: TypeAlias = (  # noqa: UP040
-        Mapping[int, Mapping[RegimeName, FloatND]] | ValueStore
-    )
-    _SolutionOmissionsInput: TypeAlias = Mapping[  # noqa: UP040
-        ArtifactRef, OmissionReason
-    ]
+    from _lcm.solution.artifacts import OwnedSolutionView
+    from lcm.model import _ResolvedSolution
+
+    type _SolutionValuesInput = Mapping[int, Mapping[RegimeName, FloatND]] | ValueStore
+    type _SolutionOmissionsInput = Mapping[ArtifactRef, OmissionReason]
+    type _EngineView = OwnedSolutionView
+    # Engine replay inputs a consuming model resolved from this result, keyed by
+    # that model's instance and the parameter fingerprint it consumed under. The
+    # model fills this memo as it consumes the result, so it is a mutable dict.
+    type _ConsumedViews = dict[tuple[str, str], _ResolvedSolution]
 else:
     # The public static contract stays precise above. At runtime the package-wide
     # beartype claw must not traverse these mappings: a ValueStore can contain lazy
     # archive entries whose checksum and payload validation belong to explicit
     # materialization, while omission validation belongs to result/save preflight.
-    _SolutionValuesInput = object
-    _SolutionOmissionsInput = object
+    type _SolutionValuesInput = object
+    type _SolutionOmissionsInput = object
+    # The engine's view class lives in the engine, which the solver API does not
+    # import at runtime.
+    type _EngineView = object
+    # The resolved replay inputs are defined by the model, which imports the solver
+    # API.
+    type _ConsumedViews = object
 
 
+@beartype(conf=SOLVER_API_CONF)
 @dataclass(frozen=True, kw_only=True)
 class SolutionResult:
     """Labelled value functions, retained artifacts, and omission records."""
@@ -54,25 +66,23 @@ class SolutionResult:
     """Value function of every solved cell, keyed by period then regime."""
     metadata: SolutionMetadata
     """Identity, retention, and schema facts of the solve."""
-    retained_continuations: _ArtifactStoreBoundary = field(
-        default_factory=ArtifactStore
-    )
+    retained_continuations: ArtifactStore = field(default_factory=ArtifactStore)
     """Continuation payloads kept for persistence, addressed by cell and key."""
-    replay_artifacts: _ArtifactStoreBoundary = field(default_factory=ArtifactStore)
+    replay_artifacts: ArtifactStore = field(default_factory=ArtifactStore)
     """Payloads simulation replays decisions from, addressed by cell and key."""
-    auxiliary_artifacts: _ArtifactStoreBoundary = field(default_factory=ArtifactStore)
+    auxiliary_artifacts: ArtifactStore = field(default_factory=ArtifactStore)
     """Additional solver-published payloads, addressed by cell and key."""
-    omissions: _SolutionOmissionsInput = field(default_factory=dict)
+    omissions: _SolutionOmissionsInput = MappingProxyType({})
     """Why each accounted-for artifact that is absent was left out."""
-    diagnostics: _ArtifactStoreBoundary = field(default_factory=ArtifactStore)
+    diagnostics: ArtifactStore = field(default_factory=ArtifactStore)
     """Solver diagnostics kept according to the solve's log level."""
-    _artifact_authority: Mapping[ArtifactRef, ArtifactAuthority] = field(
-        default_factory=lambda: MappingProxyType({}),
+    _artifact_authority: MappingProxyType[ArtifactRef, ArtifactAuthority] = field(
+        default=MappingProxyType({}),
         init=False,
         repr=False,
         compare=False,
     )
-    _engine_view: object | None = field(
+    _engine_view: _EngineView | None = field(
         default=None,
         init=False,
         repr=False,
@@ -81,7 +91,7 @@ class SolutionResult:
     """The producing model's by-reference view of this result, when the engine
     built it in this process; `None` for every other provenance and for any
     copy made through `dataclasses.replace`."""
-    _consumed_views: dict[object, object] = field(
+    _consumed_views: _ConsumedViews = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -102,9 +112,7 @@ class SolutionResult:
                     f"SolutionResult.{field_name} must be an exact ArtifactStore."
                 )
         values = (
-            self.values
-            if type(self.values) is ValueStore
-            else ValueStore(cast("Mapping", self.values))
+            self.values if type(self.values) is ValueStore else ValueStore(self.values)
         )
         object.__setattr__(self, "values", values)
         omissions: dict[ArtifactRef, OmissionReason] = {}
@@ -127,8 +135,8 @@ class SolutionResult:
     def value(
         self,
         *,
-        period: _ValuePeriodBoundary,
-        regime: _RegimeNameBoundary,
+        period: int,
+        regime: RegimeName,
     ) -> _FloatValueBoundary:
         """Return one value-function array by its explicit coordinates."""
         return self.values[period][regime]
@@ -138,3 +146,65 @@ class SolutionResult:
         from lcm.persistence import save_solution  # noqa: PLC0415
 
         return save_solution(solution=self, path=path)
+
+    def value_array(
+        self, *, period: int, regime: RegimeName, use_labels: bool = True
+    ) -> xr.DataArray:
+        """Return one value-function array with its state coordinates, named `V`.
+
+        Dimensions follow the stored value schema's axis order, including a
+        trailing `stakeholder` dimension for collective values; a regime without
+        states yields a zero-dimensional array. Coordinates are the resolved
+        process and period-specific grid nodes used by this solve. With
+        `use_labels=True`, discrete states carry their labels as an (ordered)
+        categorical index in declaration order, matching simulation labels;
+        otherwise they carry integer codes. Axis names must be unique and must
+        not be `V`.
+
+        The array wraps the stored value as is, so a device-resident value stays
+        on its device until it is converted. Select coordinates with `.sel`
+        before converting to a table to keep the conversion small.
+        """
+        value = self.value(period=period, regime=regime)
+        schema = self.metadata.value_schemas[period, regime]
+        if "V" in schema.axis_names or len(set(schema.axis_names)) != len(
+            schema.axis_names
+        ):
+            raise ValueError("Value axes must be unique and must not be named 'V'.")
+        if len(schema.named_axes) != value.ndim:
+            raise ValueError("This value schema does not retain grid coordinates.")
+        if value.shape != schema.shape:
+            raise ValueError("Value shape differs from its stored schema.")
+        coordinates: dict[str, pd.Index] = {}
+        for axis in schema.named_axes:
+            nodes = pd.Index(np.asarray(axis.coordinates))
+            domain = schema.categorical_domains.get(axis.name)
+            if use_labels and domain is not None:
+                nodes = pd.CategoricalIndex(
+                    pd.Categorical.from_codes(
+                        pd.Index(domain.codes).get_indexer(nodes),
+                        categories=pd.Index(domain.labels),
+                        ordered=domain.ordered,
+                    )
+                )
+            coordinates[axis.name] = nodes
+        return xr.DataArray(value, dims=schema.axis_names, coords=coordinates, name="V")
+
+    def value_frame(
+        self, *, period: int, regime: RegimeName, use_labels: bool = True
+    ) -> pd.DataFrame:
+        """Return grid values in long form, with state columns followed by `V`.
+
+        The frame is `value_array(...)` in long form: one column per dimension,
+        in the same order and with the same coordinates and categorical labels,
+        followed by `V`.
+
+        This explicit call materializes one row per grid point and stakeholder,
+        so large grids produce large frames; select a slice of `value_array`
+        first to convert only part of it. For values between nodes, use
+        `Model.lookup_policy`, which uses simulation's interpolation.
+        """
+        array = self.value_array(period=period, regime=regime, use_labels=use_labels)
+        if not array.dims:
+            return pd.DataFrame({"V": np.asarray(array).reshape(-1)})
+        return array.to_dataframe().reset_index()

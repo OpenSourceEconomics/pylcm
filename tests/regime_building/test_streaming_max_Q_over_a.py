@@ -2,8 +2,9 @@
 
 import functools
 import inspect
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import NotRequired, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -27,6 +28,44 @@ from _lcm.solution.grid_search import (
     _classify_action_streaming,
     _supports_action_streaming,
 )
+from _lcm.typing import QAndFFunction, QAndFKwargs
+from lcm.typing import ActionName, BoolND, FloatND, RegimeName, StateName
+
+
+class _KernelKwargs(TypedDict):
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    batch_sizes: dict[StateName, int]
+    action_names: tuple[ActionName, ...]
+    state_names: tuple[StateName, ...]
+    n_discrete_action_axes: NotRequired[int]
+    has_taste_shocks: NotRequired[bool]
+    co_map_state_names: NotRequired[tuple[StateName, ...]]
+    co_map_v_arr_in_axes: NotRequired[
+        tuple[MappingProxyType[RegimeName, int | None], ...]
+    ]
+    stakeholders: NotRequired[tuple[str, ...] | None]
+    pareto_weights: NotRequired[ParetoWeights | None]
+    fold_state_names: NotRequired[tuple[StateName, ...]]
+    fold_weights: NotRequired[Mapping[StateName, FloatND]]
+    fold_conditioning: NotRequired[Mapping[StateName, StateName]]
+    cell_width_keyword: NotRequired[str | None]
+    untiled_state_names: NotRequired[tuple[StateName, ...]]
+    broadcast_state_names: NotRequired[tuple[StateName, ...]]
+
+
+class _RouteOverrides(TypedDict, total=False):
+    action_names: tuple[ActionName, ...]
+    actions_grid_shapes: tuple[int, ...]
+    discrete_actions: tuple[ActionName, ...]
+    Q_and_F: QAndFFunction
+    has_taste_shocks: bool
+    stakeholders: tuple[str, ...] | None
+    fold_state_names: tuple[StateName, ...]
+    co_map_state_names: tuple[StateName, ...]
+    same_period_ref_regimes: tuple[RegimeName, ...]
+    edge_reference_regimes: tuple[RegimeName, ...]
+    edge_target_regimes: tuple[RegimeName, ...]
+    enable_jit: bool
 
 
 def _Q_and_F(
@@ -436,7 +475,7 @@ def _co_map_arguments():
 
 
 def _co_map_kernels():
-    kwargs = {
+    kwargs: _KernelKwargs = {
         "Q_and_F": _co_mapped_Q_and_F,
         "batch_sizes": {"kind": 0, "region": 0, "row": 0},
         "action_names": ("action",),
@@ -461,9 +500,7 @@ def _co_map_kernels():
             ),
         ),
     }
-    return get_max_Q_over_a(**cast("Any", kwargs)), get_streaming_max_Q_over_a(
-        **cast("Any", kwargs)
-    )
+    return get_max_Q_over_a(**kwargs), get_streaming_max_Q_over_a(**kwargs)
 
 
 @pytest.mark.parametrize("block_width", [1, 3])
@@ -550,7 +587,7 @@ def test_ev1_co_mapped_streaming_hard_maxes_branches_before_logsum(
             }
         ),
     )
-    kernel_kwargs = {
+    kernel_kwargs: _KernelKwargs = {
         "Q_and_F": _co_mapped_ev1_Q_and_F,
         "batch_sizes": {"kind": 0, "region": 0, "row": 0},
         "action_names": ("discrete", "continuous"),
@@ -560,9 +597,9 @@ def test_ev1_co_mapped_streaming_hard_maxes_branches_before_logsum(
         "co_map_state_names": ("kind", "region"),
         "co_map_v_arr_in_axes": co_map_v_arr_in_axes,
     }
-    dense = get_max_Q_over_a(**cast("Any", kernel_kwargs))
+    dense = get_max_Q_over_a(**kernel_kwargs)
     streamed = functools.partial(
-        get_streaming_max_Q_over_a(**cast("Any", kernel_kwargs)),
+        get_streaming_max_Q_over_a(**kernel_kwargs),
         _lcm_action_block_width=block_width,
     )
     arguments = _co_map_arguments()
@@ -951,7 +988,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
     ],
 )
 def test_action_streaming_route_classification_matrix(
-    *, overrides: dict[str, Any], expected: _ActionStreamingDisposition
+    *, overrides: _RouteOverrides, expected: _ActionStreamingDisposition
 ) -> None:
     context = _action_streaming_route_context(**overrides)
 
@@ -994,7 +1031,12 @@ def _fold_Q_and_F(
     return value, jnp.ones((), dtype=bool)
 
 
-def _evaluate_kernel(*, func: Any, arguments: dict[str, Any], execution: str):
+def _evaluate_kernel(
+    *,
+    func: Callable[..., FloatND | tuple[FloatND, BoolND]],
+    arguments: QAndFKwargs,
+    execution: str,
+):
     if execution == "eager":
         return func(**arguments)
     jitted = jax.jit(func)
@@ -1028,7 +1070,7 @@ def test_multi_fold_singleton_hard_max_streaming_matches_dense(
             "shock_inner": jnp.asarray([0.2, 0.3, 0.5], dtype=jnp.float32),
         }
     )
-    kernel_kwargs = {
+    kernel_kwargs: _KernelKwargs = {
         "Q_and_F": _multi_fold_Q_and_F,
         "batch_sizes": {"row": 0, "shock_outer": 0, "shock_inner": 0},
         "action_names": ("action",),
@@ -1036,9 +1078,9 @@ def test_multi_fold_singleton_hard_max_streaming_matches_dense(
         "fold_state_names": ("shock_outer", "shock_inner"),
         "fold_weights": fold_weights,
     }
-    dense = get_max_Q_over_a(**cast("Any", kernel_kwargs))
+    dense = get_max_Q_over_a(**kernel_kwargs)
     streamed = functools.partial(
-        get_streaming_max_Q_over_a(**cast("Any", kernel_kwargs)),
+        get_streaming_max_Q_over_a(**kernel_kwargs),
         _lcm_action_block_width=block_width,
     )
     arguments = {
@@ -1090,15 +1132,15 @@ def test_streaming_width_keyword_stays_separate_from_Q_parameter(
     *, block_width: int, execution: str
 ) -> None:
     selected_width_keyword = "_lcm_action_block_width_1"
-    kernel_kwargs = {
+    kernel_kwargs: _KernelKwargs = {
         "Q_and_F": _parameter_width_collision_Q_and_F,
         "batch_sizes": {},
         "action_names": ("action",),
         "state_names": (),
     }
-    dense = get_max_Q_over_a(**cast("Any", kernel_kwargs))
+    dense = get_max_Q_over_a(**kernel_kwargs)
     raw_streamed = get_streaming_max_Q_over_a(
-        **cast("Any", kernel_kwargs),
+        **kernel_kwargs,
         action_width_keyword=selected_width_keyword,
     )
     signature = inspect.signature(raw_streamed)
@@ -1157,7 +1199,7 @@ def test_folded_streaming_width_keyword_stays_separate_from_Q_parameter(
 ) -> None:
     selected_width_keyword = "_lcm_action_block_width_1"
     fold_weights = jnp.asarray([0.25, 0.75], dtype=jnp.float32)
-    kernel_kwargs = {
+    kernel_kwargs: _KernelKwargs = {
         "Q_and_F": _folded_parameter_width_collision_Q_and_F,
         "batch_sizes": {"shock": 0},
         "action_names": ("action",),
@@ -1165,9 +1207,9 @@ def test_folded_streaming_width_keyword_stays_separate_from_Q_parameter(
         "fold_state_names": ("shock",),
         "fold_weights": MappingProxyType({"shock": fold_weights}),
     }
-    dense = get_max_Q_over_a(**cast("Any", kernel_kwargs))
+    dense = get_max_Q_over_a(**kernel_kwargs)
     raw_streamed = get_streaming_max_Q_over_a(
-        **cast("Any", kernel_kwargs),
+        **kernel_kwargs,
         action_width_keyword=selected_width_keyword,
     )
     signature = inspect.signature(raw_streamed)
@@ -1206,7 +1248,7 @@ def test_folded_co_map_streaming_reduces_inside_the_device_local_state_maps(
     *, block_width: int, execution: str
 ) -> None:
     fold_weights = jnp.asarray([0.0, 0.4, 0.6], dtype=jnp.float32)
-    kernel_kwargs = {
+    kernel_kwargs: _KernelKwargs = {
         "Q_and_F": _co_mapped_Q_and_F,
         "batch_sizes": {"kind": 0, "region": 0, "row": 0},
         "action_names": ("action",),
@@ -1233,9 +1275,9 @@ def test_folded_co_map_streaming_reduces_inside_the_device_local_state_maps(
         "fold_state_names": ("row",),
         "fold_weights": MappingProxyType({"row": fold_weights}),
     }
-    dense = get_max_Q_over_a(**cast("Any", kernel_kwargs))
+    dense = get_max_Q_over_a(**kernel_kwargs)
     streamed = functools.partial(
-        get_streaming_max_Q_over_a(**cast("Any", kernel_kwargs)),
+        get_streaming_max_Q_over_a(**kernel_kwargs),
         _lcm_action_block_width=block_width,
     )
     arguments = _co_map_arguments()
@@ -1305,7 +1347,7 @@ def test_folded_singleton_streams_action_max_before_exact_quadrature(
     poison_zero_weight_node: bool,
     oracle: tuple[float, float],
 ) -> None:
-    kernel_kwargs = {
+    kernel_kwargs: _KernelKwargs = {
         "Q_and_F": _fold_Q_and_F,
         "batch_sizes": {"risk_type": 0, "shock": 0},
         "action_names": ("action",),
@@ -1318,9 +1360,9 @@ def test_folded_singleton_streams_action_max_before_exact_quadrature(
             {"shock": "risk_type"} if conditioned else {}
         ),
     }
-    dense = get_max_Q_over_a(**cast("Any", kernel_kwargs))
+    dense = get_max_Q_over_a(**kernel_kwargs)
     streamed = functools.partial(
-        get_streaming_max_Q_over_a(**cast("Any", kernel_kwargs)),
+        get_streaming_max_Q_over_a(**kernel_kwargs),
         _lcm_action_block_width=block_width,
     )
     arguments = {

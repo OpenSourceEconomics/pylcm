@@ -10,9 +10,10 @@ worker count, and every program is traced under the caller's settings.
 import contextvars
 import re
 import threading
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import ExitStack, contextmanager
 from fractions import Fraction
+from typing import Never, NotRequired, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -28,7 +29,25 @@ from lcm import (
 )
 from lcm.execution import ExecutionConfig
 from lcm.solver_api import SolutionResult
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, RegimeName, ScalarInt
+from tests.execution._jax_callback_types import (
+    CompileOptions,
+    CompilerOptions,
+    LowerOptions,
+)
+
+type TraceSettings = tuple[str, str | None, bool]
+type TraceObservation = tuple[int, str, str, str | None, bool]
+
+
+class _PanelRow(TypedDict):
+    subject_id: int
+    period: int
+    regime_name: RegimeName
+    wealth: float
+    value: float
+    saving: NotRequired[float]
+
 
 _PARAMS = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
 
@@ -122,14 +141,14 @@ def _simulate_under_scoped_standard_promotion(
         jax.config.update("jax_numpy_dtype_promotion", previous)
 
 
-def _reference_rows(wealths: Sequence[float]) -> list[dict[str, object]]:
+def _reference_rows(wealths: Sequence[float]) -> list[_PanelRow]:
     """Return the panel rows of the two-period economy in exact arithmetic.
 
     With discount factor zero, saving in {1, 2}, utility `w + a + 1`, next wealth
     `w + a` and terminal utility `w`, saving 2 is the unique optimum for every
     initial wealth in [1, 3]; next wealth then stays on the model's grid.
     """
-    rows: list[dict[str, object]] = []
+    rows: list[_PanelRow] = []
     for subject, value in enumerate(wealths):
         wealth = Fraction(value)
         utility, saving = max((wealth + action + 1, action) for action in (1, 2))
@@ -201,7 +220,7 @@ def test_parallel_planning_under_scoped_promotion_matches_the_exact_reference(
 
 
 @contextmanager
-def _scoped_settings(*, setting: str) -> Generator[tuple[object, object, object]]:
+def _scoped_settings(*, setting: str) -> Generator[TraceSettings]:
     """Scope JAX trace settings that differ from the process-wide ones.
 
     Yields the effective promotion, matmul precision and x64 inside the scope.
@@ -233,7 +252,7 @@ def _scoped_settings(*, setting: str) -> Generator[tuple[object, object, object]
 
 def _simulate_recording_traces(
     *, monkeypatch: pytest.MonkeyPatch, workers: int
-) -> list[tuple[int, str, object, object, object]]:
+) -> list[TraceObservation]:
     """Solve serially, then simulate with `workers` compile threads.
 
     Returns, for every program lowered by the simulation, the lowering thread,
@@ -242,12 +261,12 @@ def _simulate_recording_traces(
     """
     model = _model()
     solution = model.solve(params=_PARAMS, log_level="off", max_compilation_workers=1)
-    traces: list[tuple[int, str, object, object, object]] = []
+    traces: list[TraceObservation] = []
     lower_body = jax.stages.Traced.lower
 
     def record_and_lower(
-        self: jax.stages.Traced, *args: object, **kwargs: object
-    ) -> object:
+        self: jax.stages.Traced, *args: Never, **kwargs: Unpack[LowerOptions]
+    ) -> jax.stages.Lowered:
         traces.append(
             (
                 threading.get_ident(),
@@ -257,7 +276,7 @@ def _simulate_recording_traces(
                 jax.config.jax_enable_x64,
             )
         )
-        return lower_body(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+        return lower_body(self, *args, **kwargs)
 
     with monkeypatch.context() as patch:
         patch.setattr(jax.stages.Traced, "lower", record_and_lower)
@@ -301,16 +320,19 @@ class _CompileFailedError(Exception):
     """A compile on the worker pool failed."""
 
 
-def _raise_on_pool_threads(caller: int) -> object:
+def _raise_on_pool_threads(caller: int) -> Callable[..., jax.stages.Compiled]:
     """Return a `Lowered.compile` that fails on every thread but `caller`."""
     compile_body = jax.stages.Lowered.compile
 
+    # keyword-only-exempt: library-callback=jax.stages.Lowered.compile
     def compile_or_fail(
-        self: jax.stages.Lowered, *args: object, **kwargs: object
-    ) -> object:
+        self: jax.stages.Lowered,
+        compiler_options: CompilerOptions | None = None,
+        **kwargs: Unpack[CompileOptions],
+    ) -> jax.stages.Compiled:
         if threading.get_ident() != caller:
             raise _CompileFailedError("the pool refused to compile")
-        return compile_body(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+        return compile_body(self, compiler_options, **kwargs)
 
     return compile_or_fail
 
@@ -334,7 +356,7 @@ class _LoweringRefusedError(Exception):
     """Lowering a forward program failed."""
 
 
-def _refuse_forward_lowerings() -> object:
+def _refuse_forward_lowerings() -> Callable[..., jax.stages.Lowered]:
     """Return a `Traced.lower` that fails for every forward simulation program.
 
     Forward programs are traced as the planner's subject-tiled body; host
@@ -343,11 +365,11 @@ def _refuse_forward_lowerings() -> object:
     lower_body = jax.stages.Traced.lower
 
     def lower_or_fail(
-        self: jax.stages.Traced, *args: object, **kwargs: object
-    ) -> object:
+        self: jax.stages.Traced, *args: Never, **kwargs: Unpack[LowerOptions]
+    ) -> jax.stages.Lowered:
         if self.fun_name == "subject_tiled":
             raise _LoweringRefusedError("the forward program refused to lower")
-        return lower_body(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+        return lower_body(self, *args, **kwargs)
 
     return lower_or_fail
 

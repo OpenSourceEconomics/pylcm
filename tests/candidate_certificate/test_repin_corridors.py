@@ -9,7 +9,10 @@ import importlib.util
 import shutil
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tests.candidate_certificate.repin_corridors import CorridorPin
 
 import pytest
 
@@ -71,7 +74,7 @@ def _collect_pins(*, repo_root: Path) -> tuple[repin_corridors.CorridorPin, ...]
     )
 
 
-def _first_callable_pin(*, repo_root: Path) -> Any:
+def _first_callable_pin(*, repo_root: Path) -> CorridorPin:
     """Return the first callable pin in the certificate's pin store."""
     return next(
         pin for pin in _collect_pins(repo_root=repo_root) if pin.kind == "callable"
@@ -138,7 +141,7 @@ def test_a_digest_shared_by_two_sources_is_rewritten_for_the_named_one_only(
     other source's entry still matches its own, unchanged tree.
     """
     pins = _collect_pins(repo_root=certificate_root)
-    by_digest: dict[str, list[Any]] = {}
+    by_digest: dict[str, list[CorridorPin]] = {}
     for pin in pins:
         by_digest.setdefault(pin.pinned, []).append(pin)
     edited = next(

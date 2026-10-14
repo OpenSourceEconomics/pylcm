@@ -26,7 +26,7 @@ Both containers are registered as JAX pytrees (explicit
 """
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -35,6 +35,13 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import EGMSimPolicy
 from lcm.typing import ActionName, Float1D, FunctionName, StateName
+
+if TYPE_CHECKING:
+    from _lcm.typing import PytreeChild
+else:
+    # `_lcm.typing` imports this module, so the alias is not importable here at
+    # runtime.
+    type PytreeChild = object
 
 
 def derive_inner_sim_policy(
@@ -142,7 +149,7 @@ def _flatten_outer_policy_bank(
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_outer_policy_bank(
-    _aux: None, children: tuple[Any, EGMSimPolicy]
+    _aux: None, children: tuple[PytreeChild, EGMSimPolicy]
 ) -> OuterPolicyBank:
     # JAX also calls this declaration-time with opaque leaf tokens. Exact public
     # artifact validation runs after reconstruction, outside this library callback.
@@ -237,17 +244,34 @@ _NESTED_STATIC_FIELDS = (
     "value_rtol",
 )
 
+# The static fields a `NestedEGMSimPolicy` keeps as pytree aux data, in
+# `_NESTED_STATIC_FIELDS` order.
+type _NestedPolicyAux = tuple[
+    ActionName,
+    StateName,
+    FunctionName,
+    ActionName,
+    StateName,
+    FunctionName | None,
+    FunctionName,
+    float,
+    int,
+    OuterReplayCapability,
+    float,
+    float,
+]
+
 
 def _flatten_nested_egm_sim_policy(
     policy: NestedEGMSimPolicy,
-) -> tuple[tuple[EGMSimPolicy, OuterPolicyBank], tuple[object, ...]]:
+) -> tuple[tuple[EGMSimPolicy, OuterPolicyBank], _NestedPolicyAux]:
     aux = tuple(getattr(policy, name) for name in _NESTED_STATIC_FIELDS)
     return (policy.keeper, policy.adjuster), aux
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_nested_egm_sim_policy(
-    aux: tuple[object, ...], children: tuple[EGMSimPolicy, OuterPolicyBank]
+    aux: _NestedPolicyAux, children: tuple[EGMSimPolicy, OuterPolicyBank]
 ) -> NestedEGMSimPolicy:
     policy = object.__new__(NestedEGMSimPolicy)
     object.__setattr__(policy, "keeper", children[0])

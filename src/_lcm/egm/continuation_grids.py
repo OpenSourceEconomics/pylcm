@@ -14,16 +14,14 @@ so a model without an age-specialized state pays nothing and traces identically.
 
 from collections.abc import Hashable
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypeAlias, cast
+from typing import TYPE_CHECKING, cast
 
 from _lcm.typing import RegimeName
 
 if TYPE_CHECKING:
     from _lcm.regime_building.V import VInterpolationInfo
 
-    RegimeToVInterpolationInfo: TypeAlias = MappingProxyType[  # noqa: UP040
-        RegimeName, VInterpolationInfo
-    ]
+    type RegimeToVInterpolationInfo = MappingProxyType[RegimeName, VInterpolationInfo]
 else:
     # `VInterpolationInfo`'s module imports `lcm.regime`, which closes a cycle
     # through the `lcm.solvers` façade and the solvers that call these helpers.

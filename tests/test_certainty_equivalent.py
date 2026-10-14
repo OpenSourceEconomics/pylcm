@@ -5,12 +5,14 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal, localcontext
 from fractions import Fraction
-from typing import Any, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import DTypeLike
+from typing_extensions import TypedDict
 
 from _lcm.certainty_equivalent import power_inverse, power_transform
 from _lcm.probability import normalized_scaled_weights, scaled_exact_product
@@ -47,6 +49,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
     ScaledLotteryDifferentiationError,
 )
+from lcm.regime import FunctionEntry, RegimeReplacement
 from lcm.solvers import DCEGM, NBEGM, NNBEGM, FiniteOuterGrid
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
@@ -58,6 +61,7 @@ from lcm.typing import (
     IntND,
     Period,
     ScalarInt,
+    UserParams,
 )
 from lcm_examples.epstein_zin import get_model, get_params
 
@@ -217,6 +221,18 @@ _STOCK = LinSpacedGrid(start=0.0, stop=5.0, n_points=5)
 _INVESTMENT = LinSpacedGrid(start=-5.0, stop=5.0, n_points=5)
 
 
+type _FilledParamsNode = float | dict[str, _FilledParamsNode]
+
+
+class _ModelCertaintyEquivalent(TypedDict, total=False, closed=True):
+    """Model-wide certainty equivalent used by the stacked fixture."""
+
+    certainty_equivalent: CertaintyEquivalent
+
+
+type _TemplateNode = str | Mapping[str, _TemplateNode]
+
+
 def _check_probes(model: Model) -> None:
     """Run the solver's parameter-dependent preconditions, and nothing else.
 
@@ -225,28 +241,32 @@ def _check_probes(model: Model) -> None:
     take the same stand-in value here.
     """
 
-    def _fill(node: object) -> object:
+    def _fill(
+        node: _TemplateNode,
+    ) -> _FilledParamsNode:
         if isinstance(node, Mapping):
             return {key: _fill(value) for key, value in node.items()}
         return 1.0
 
-    params = cast("dict[str, Any]", _fill(model.get_params_template()))
+    params = cast("UserParams", _fill(model.get_params_template()))
     check_solver_params(
         regimes=model._regimes,
         flat_params=model._process_params(params),
     )
 
 
-def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) -> Model:
+def _make_model(
+    *, alive_kwargs: RegimeReplacement, dead_kwargs: RegimeReplacement
+) -> Model:
     """Build a minimal model, attaching regime-owned EGM margins as needed."""
-    base_alive: dict[str, Any] = {
+    base_alive: RegimeReplacement = {
         "states": {"wealth": _WEALTH},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": _CONSUMPTION},
         "constraints": {"budget": _budget},
         "functions": {"utility": _utility_alive},
     }
-    base_dead: dict[str, Any] = {
+    base_dead: RegimeReplacement = {
         "states": {"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
         "functions": {"utility": _utility_dead},
     }
@@ -287,7 +307,7 @@ def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) ->
         }
         merged_dead["states"] = {**merged_dead["states"], "stock": _STOCK}
         alive = NestedConsumptionSavingsRegime(
-            **merged_alive,
+            **merged_alive,  # ty: ignore[invalid-argument-type] - solver is NNBEGM in this branch
             liquid=liquid,
             outer_continuous=OuterContinuousMargin(
                 state="stock",
@@ -297,7 +317,7 @@ def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) ->
             ),
         )
     elif isinstance(solver, DCEGM | NBEGM):
-        alive = ConsumptionSavingsRegime(**merged_alive, liquid=liquid)
+        alive = ConsumptionSavingsRegime(**merged_alive, liquid=liquid)  # ty: ignore[invalid-argument-type] - solver is DCEGM or NBEGM in this branch
     else:
         alive = Regime(**merged_alive)
     dead = Regime(**merged_dead)
@@ -387,7 +407,7 @@ def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
-_NBEGM_FUNCTIONS: dict[str, Any] = {
+_NBEGM_FUNCTIONS: dict[str, FunctionEntry] = {
     "utility": _utility_alive,
     "resources": _resources,
     "savings": _savings,
@@ -849,8 +869,8 @@ def test_certainty_equivalent_rejects_phased():
     """The certainty equivalent is phase-invariant; `Phased` is rejected."""
     with pytest.raises(RegimeInitializationError):
         _make_model(
-            alive_kwargs={
-                "certainty_equivalent": Phased(
+            alive_kwargs={  # ty: ignore[invalid-argument-type] - deliberately invalid phase-varying certainty equivalent
+                "certainty_equivalent": Phased(  # ty: ignore[invalid-argument-type]
                     solve=PowerMean(),
                     simulate=PowerMean(),
                 ),
@@ -1125,7 +1145,7 @@ def test_epstein_zin_solved_values_match_numpy_reference(risk_aversion: float):
         )
 
 
-def _minimal_nnbegm() -> Any:
+def _minimal_nnbegm() -> NNBEGM:
     return NNBEGM(
         inner=NBEGM(
             savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
@@ -1330,7 +1350,7 @@ def _aggregate_power_mean(
     values: tuple[float, ...],
     weights: tuple[float, ...],
     risk_aversion: float,
-    dtype: Any,
+    dtype: DTypeLike,
     execution: str = "eager",
 ) -> float:
     """Aggregate a lottery through `PowerMean`, eagerly or under `jax.jit`."""
@@ -1808,7 +1828,9 @@ def _make_scale_equivariant_model(scale: float) -> Model:
     )
 
 
-def _scaled_model_params(risk_aversion: float) -> dict:
+def _scaled_model_params(
+    risk_aversion: float,
+) -> dict[str, dict[str, dict[str, float]]]:
     return {
         "alive": {
             "koopmans_aggregator": {
@@ -2046,12 +2068,12 @@ class _StackedRegimeId:
 
 def _make_stacked_model(
     *,
-    model_kwargs: dict[str, Any],
-    working_kwargs: dict[str, Any],
-    retired_kwargs: dict[str, Any],
+    model_kwargs: _ModelCertaintyEquivalent,
+    working_kwargs: RegimeReplacement,
+    retired_kwargs: RegimeReplacement,
 ) -> Model:
     """Build a model with two non-terminal regimes and one terminal regime."""
-    base: dict[str, Any] = {
+    base: RegimeReplacement = {
         "states": {"wealth": _WEALTH},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": _CONSUMPTION},
@@ -2061,8 +2083,8 @@ def _make_stacked_model(
     # Staggered schedules so each edge lands on a regime solved in the next
     # period, and no non-terminal regime is solved at the last age:
     # working (40) -> retired (41) -> dead (42).
-    working: dict[str, Any] = base | working_kwargs
-    retired: dict[str, Any] = base | retired_kwargs
+    working: RegimeReplacement = base | working_kwargs
+    retired: RegimeReplacement = base | retired_kwargs
     return Model(
         regimes={
             "working": Regime(**working),
@@ -2309,7 +2331,7 @@ def test_unrelated_batch_rows_do_not_share_a_reduction_scale() -> None:
     np.testing.assert_array_equal(np.asarray(got), np.asarray([1.0, 2.0]))
 
 
-def _scaled_case() -> tuple[Any, int, float]:
+def _scaled_case() -> tuple[np.dtype, int, float]:
     """The working dtype, a rare node's exponent, and a tolerance it can meet."""
     dtype = jnp.zeros(()).dtype
     exponent = -64 if dtype.itemsize == 4 else -512
@@ -2317,7 +2339,7 @@ def _scaled_case() -> tuple[Any, int, float]:
     return dtype, exponent, tolerance
 
 
-def _scaled_lottery(*, dtype: Any, exponent: int) -> tuple[Any, Any]:
+def _scaled_lottery(*, dtype: DTypeLike, exponent: int) -> tuple[FloatND, IntND]:
     """A joint lottery over two independent axes, one node rare in both."""
     axes = [jnp.asarray([1.0, 2.0**exponent], dtype=dtype)] * 2
     coefficients = []
@@ -2333,7 +2355,7 @@ def _scaled_lottery(*, dtype: Any, exponent: int) -> tuple[Any, Any]:
     )
 
 
-def _exact_linear_mean(*, dtype: Any, exponent: int) -> float:
+def _exact_linear_mean(*, dtype: DTypeLike, exponent: int) -> float:
     """The lottery's exact expectation, in rational arithmetic."""
     probability = Fraction(1, 1 << (-exponent))
     rare = probability * probability

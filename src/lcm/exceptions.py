@@ -7,6 +7,15 @@ solution-archive checks. Reach them through `lcm.exceptions`; the top-level
 package does not re-export them.
 """
 
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
+# `_lcm.typing` imports this module (through `_lcm.beartype_conf`), and no
+# runtime check reads the exception attributes, so the alias is imported for
+# type checking only.
+if TYPE_CHECKING:
+    from _lcm.typing import JSONValue, PeriodToRegimeToVArr
+
 
 class PyLCMError(Exception):
     """Base class for all PyLCM exceptions."""
@@ -24,8 +33,8 @@ class InvalidValueFunctionError(PyLCMError):
 
     """
 
-    partial_solution: object = None
-    diagnostics: object = None
+    partial_solution: PeriodToRegimeToVArr | None = None
+    diagnostics: Mapping[str, JSONValue] | None = None
 
 
 class InvalidRegimeTransitionProbabilitiesError(PyLCMError):
@@ -76,6 +85,10 @@ class IncompatibleSolutionError(PyLCMError):
 
 class ExecutionPlanningError(PyLCMError):
     """Raised when the requested execution policy cannot produce a valid plan."""
+
+
+class SolverAPITypeError(PyLCMError, TypeError):
+    """Raised when a solver-API boundary receives or returns a wrongly typed value."""
 
 
 class UnsupportedOperationError(PyLCMError):

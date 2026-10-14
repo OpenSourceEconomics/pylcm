@@ -1,12 +1,20 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Literal
 
-from _lcm.grids import Grid
 from _lcm.regime_law import RegimeLaw
 from lcm.koopmans_aggregation import LinearAggregator
+from lcm.phased import Phased
+from lcm.regime import (
+    ActionEntry,
+    ConstraintEntry,
+    FunctionEntry,
+    StateEntry,
+    StateTransitionEntry,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import GridSearch, Solver
+from lcm.transition import AgeSpecializedFunction
 from lcm.typing import UserFunction
 
 
@@ -29,15 +37,18 @@ class MockRegime(UserRegime):
         self,
         *,
         n_periods: int | None = None,
-        actions: dict[str, Grid | None] | None = None,
-        states: dict[str, Grid | None] | None = None,
-        state_transitions: dict[str, UserFunction | None] | None = None,
-        constraints: dict[str, UserFunction] | None = None,
+        actions: Mapping[str, ActionEntry] | None = None,
+        states: Mapping[str, StateEntry] | None = None,
+        state_transitions: Mapping[str, StateTransitionEntry] | None = None,
+        constraints: Mapping[str, ConstraintEntry] | None = None,
         terminal: bool = False,
         # Loosely typed on purpose: tests pass markers (`AgeSpecializedFunction`,
         # `Phased`) alongside plain callables.
-        functions: Mapping[str, object] | None = None,
-        koopmans_aggregator: object | None = None,
+        functions: Mapping[
+            str, FunctionEntry | AgeSpecializedFunction | Callable[..., None]
+        ]
+        | None = None,
+        koopmans_aggregator: UserFunction | Phased | None = None,
         solver: Solver | None = None,
     ) -> None:
         object.__setattr__(self, "n_periods", n_periods)
@@ -94,15 +105,10 @@ class MockRegime(UserRegime):
         real regime's.
         """
         normalized = MockRegime(
-            states=cast(
-                "dict[str, Grid | None]",
-                {k: v for k, v in self.states.items() if v is not None},
-            ),
-            state_transitions=cast(
-                "dict[str, UserFunction | None]", self.state_transitions
-            ),
-            constraints=cast("dict[str, UserFunction]", self.constraints),
-            functions=cast("dict[str, UserFunction]", self.functions),
+            states={k: v for k, v in self.states.items() if v is not None},
+            state_transitions=self.state_transitions,
+            constraints=self.constraints,
+            functions=self.functions,
         )
         callable_law = law if law is not None and callable(law.transition) else None
         return UserRegime.get_all_functions(normalized, phase, law=callable_law)

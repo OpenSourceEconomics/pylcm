@@ -1,7 +1,10 @@
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from types import MappingProxyType
+from typing import Literal
 
+import cloudpickle
 import jax.numpy as jnp
 import pandas as pd
 import pytest
@@ -11,6 +14,7 @@ from pandas.testing import assert_frame_equal
 from _lcm.execution.core_program import CoreProgramGraphAware
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
+from _lcm.simulation.additional_targets import _resolve_targets
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import (
     _lookup_values_from_indices,
@@ -23,10 +27,12 @@ from lcm import (
     Model,
 )
 from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.result import (
     SimulationResult,
     _collect_array_tree_leaf_sizes,
 )
+from lcm.typing import FunctionName
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 from tests.test_models.deterministic.regression import (
@@ -489,8 +495,54 @@ def regression_simulation_result():
 def test_available_targets_property(regression_simulation_result):
     """Test that available_targets shows what can be computed."""
     result = regression_simulation_result
-    assert isinstance(result.available_targets, list)
     assert {"utility", "borrowing_constraint"} <= set(result.available_targets)
+
+
+_NAME_LISTINGS = ("regime_names", "state_names", "action_names", "available_targets")
+
+
+@pytest.mark.parametrize("name", _NAME_LISTINGS)
+def test_simulation_result_name_listing_is_a_tuple(
+    *, regression_simulation_result, name
+):
+    """Each name listing of a simulation result is a tuple."""
+    assert isinstance(getattr(regression_simulation_result, name), tuple)
+
+
+@pytest.mark.parametrize("name", _NAME_LISTINGS)
+def test_simulation_result_name_listing_cannot_be_mutated(
+    *, regression_simulation_result, name
+):
+    """Writing into a name listing of a simulation result is refused."""
+    names = getattr(regression_simulation_result, name)
+
+    with pytest.raises(TypeError):
+        names[0] = "renamed"
+
+
+@pytest.mark.parametrize("name", _NAME_LISTINGS)
+def test_load_returns_name_listings_archived_as_lists_as_tuples(
+    *, tmp_path, regression_simulation_result, name
+):
+    """An archive holding a result's name listings as lists loads them as tuples."""
+    save_dir = tmp_path / "result"
+    regression_simulation_result.save(directory=save_dir)
+    metadata_path = save_dir / "metadata.pkl"
+    with metadata_path.open("rb") as fh:
+        saved = cloudpickle.load(fh)
+    for field in ("regime_names", "state_names", "action_names"):
+        object.__setattr__(
+            saved.result_metadata,
+            field,
+            list(getattr(saved.result_metadata, field)),
+        )
+    object.__setattr__(saved, "available_targets", list(saved.available_targets))
+    with metadata_path.open("wb") as fh:
+        cloudpickle.dump(saved, fh)
+
+    loaded = SimulationResult.load(directory=save_dir)
+
+    assert isinstance(getattr(loaded, name), tuple)
 
 
 def test_additional_targets_all(regression_simulation_result):
@@ -498,6 +550,64 @@ def test_additional_targets_all(regression_simulation_result):
     result = regression_simulation_result
     df = result.to_dataframe(additional_targets="all")
     assert set(result.available_targets) <= set(df.columns)
+
+
+@pytest.mark.parametrize("as_list", [False, True])
+def test_published_targets_match_all(
+    *, regression_simulation_result: SimulationResult, as_list: bool
+) -> None:
+    """The published target sequence computes the same columns and values as all."""
+    result = regression_simulation_result
+    targets = list(result.available_targets) if as_list else result.available_targets
+    assert_frame_equal(
+        result.to_dataframe(additional_targets=targets),
+        result.to_dataframe(additional_targets="all"),
+    )
+
+
+@pytest.mark.parametrize("as_list", [False, True])
+def test_save_published_targets_match_all(
+    *, regression_simulation_result: SimulationResult, tmp_path: Path, as_list: bool
+) -> None:
+    """Saving an explicit published target sequence writes every target's values."""
+    result = regression_simulation_result
+    expected = result.to_dataframe(additional_targets="all")
+    targets = list(result.available_targets) if as_list else result.available_targets
+    result.save(directory=tmp_path / "result", df_additional_targets=targets)
+    assert_frame_equal(
+        pd.read_feather(tmp_path / "result/simulated_data.arrow"),
+        expected.where(expected.notna(), None),
+    )
+
+
+@pytest.mark.parametrize("additional_targets", [("utility",), ["utility"], (), []])
+def test_resolve_explicit_targets_as_tuple(
+    additional_targets: Sequence[FunctionName],
+) -> None:
+    """Explicit target sequences retain their names and order in an immutable tuple."""
+    assert _resolve_targets(
+        additional_targets=additional_targets, available_targets=("utility",)
+    ) == tuple(additional_targets)
+
+
+@pytest.mark.parametrize("boundary", ["dataframe", "save"])
+@pytest.mark.parametrize("targets", ["utility", "", "al"])
+def test_target_boundaries_reject_bare_strings(
+    *,
+    regression_simulation_result: SimulationResult,
+    tmp_path: Path,
+    boundary: Literal["dataframe", "save"],
+    targets: FunctionName,
+) -> None:
+    """Other bare strings are refused before persistence consumes the result."""
+    result = regression_simulation_result
+    if boundary == "save":
+        with pytest.raises(InvalidAdditionalTargetsError, match=r"sequence.*all"):
+            result.save(directory=tmp_path / "result", df_additional_targets=targets)
+        assert not (tmp_path / "result").exists()
+    else:
+        with pytest.raises(InvalidAdditionalTargetsError, match=r"sequence.*all"):
+            result.to_dataframe(additional_targets=targets)
 
 
 def test_additional_targets_all_with_stochastic_transitions():
@@ -798,6 +908,13 @@ def test_collect_array_tree_leaf_sizes_orders_leaves_by_size_descending():
     leaves = _collect_array_tree_leaf_sizes(tree=tree)
 
     assert [(leaf.shape, leaf.n_bytes) for leaf in leaves] == [((100,), 400), ((2,), 8)]
+
+
+def test_collect_array_tree_leaf_sizes_returns_a_tuple():
+    """The leaf records come back as an immutable sequence."""
+    tree = {"regime_A": {"big": jnp.zeros((2,), dtype=jnp.float32)}}
+
+    assert isinstance(_collect_array_tree_leaf_sizes(tree=tree), tuple)
 
 
 def test_collect_array_tree_leaf_sizes_records_path_dtype_and_size():

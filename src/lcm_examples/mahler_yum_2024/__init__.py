@@ -88,6 +88,7 @@ import functools
 from collections.abc import Mapping, Sequence
 from dataclasses import make_dataclass
 from pathlib import Path
+from typing import TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -95,6 +96,7 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import make_interp_spline
 
+from _lcm.typing import DataclassInstance
 from lcm import (
     AgeGrid,
     ByAge,
@@ -120,6 +122,7 @@ from lcm.typing import (
     Period,
     ScalarFloat,
     ScalarInt,
+    UserParamsNode,
 )
 
 _DATA_DIR = Path(__file__).parent / "data"
@@ -780,7 +783,47 @@ def __getattr__(name: str) -> Model:
     raise AttributeError(msg)
 
 
-START_PARAMS = {
+class IncomeProcessParams(TypedDict):
+    """The education-specific wage profile and the shock variance."""
+
+    y1: pd.Series
+    """Wage at labour-market entry, by education."""
+    yt_s: pd.Series
+    """Linear age coefficient of the wage profile, by education."""
+    yt_sq: pd.Series
+    """Quadratic age coefficient of the wage profile, by education."""
+    wagep: pd.Series
+    """Wage penalty for bad health, by education."""
+    sigx: float
+    """Innovation variance of the productivity shock."""
+
+
+class StructuralParams(TypedDict):
+    """The estimated structural parameters `create_inputs` turns into model params."""
+
+    work_disutility: Mapping[str, Mapping[str, float]]
+    """Work-disutility knots by health and age."""
+    education_disutility_adjustment: float
+    """Log of the work-disutility multiplier for the low-educated."""
+    effort_cost: Mapping[str, Mapping[str, Mapping[str, float]]]
+    """Effort-cost knots by education, health and age."""
+    income_process: IncomeProcessParams
+    """The wage profile and the productivity-shock variance."""
+    adjustment_cost: Sequence[float]
+    """Scale and growth rate of the exponential adjustment-cost envelope."""
+    discount_factor: pd.Series
+    """Mean and spread of the two discount-factor types."""
+    effort_elasticity: float
+    """Curvature of the effort cost, which grows with effort to the `1 + 1/x`."""
+    utility_constant: float
+    """Constant added to the consumption utility."""
+    health_consumption_penalty: float
+    """Multiplier on the consumption utility in bad health."""
+    pension_replacement_rate: float
+    """Share of base income replaced by the pension."""
+
+
+START_PARAMS: StructuralParams = {
     # Work disutility knot values at ages 27, 41, 51, 65
     "work_disutility": {
         "bad": {
@@ -981,9 +1024,9 @@ def create_adjustment_cost_envelope(*, adjustment_cost: Sequence[float]) -> pd.S
     return pd.Series(values, index=pd.Index(age_values, name="age"))
 
 
-def _category_names(category_class: type) -> list[str]:
+def _category_names(category_class: type[DataclassInstance]) -> tuple[str, ...]:
     """Return the category names of a `@categorical` class, in declaration order."""
-    return [f.name for f in dataclasses.fields(category_class)]  # ty: ignore[invalid-argument-type]
+    return tuple(f.name for f in dataclasses.fields(category_class))
 
 
 EFFORT_FIELD_NAMES = np.array(_category_names(Effort))
@@ -1042,7 +1085,7 @@ def _compute_income_normalization(*, sigx: float) -> FloatND:
 
 
 def _compute_pension_base(
-    *, income_process: dict, income_normalization: FloatND
+    *, income_process: IncomeProcessParams, income_normalization: FloatND
 ) -> FloatND:
     """Compute base income at retirement age in good health, by education."""
     y1 = income_process["y1"]
@@ -1063,8 +1106,8 @@ def _compute_pension_base(
 
 
 def create_inputs(
-    *, seed: int, n_simulation_subjects: int, params: dict
-) -> tuple[dict, pd.DataFrame]:
+    *, seed: int, n_simulation_subjects: int, params: StructuralParams
+) -> tuple[dict[str, UserParamsNode], pd.DataFrame]:
     """Build model params and initial conditions.
 
     The two-valued discount-factor grid (`mean ± std`) is exposed via

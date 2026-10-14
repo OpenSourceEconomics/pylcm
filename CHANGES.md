@@ -5,6 +5,70 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Intermediates in policy lookup
+
+- `Model.lookup_policy(..., keep_intermediates=...)` replaces
+  `return_action_values=True`, which is removed. It takes any subset of `"Q"`, `"F"`,
+  `"U"` and `"CE"`, in any order, and fills only those fields of `PolicyLookup`; the
+  default `()` keeps none and runs the plain decision. `return_action_values=True`
+  becomes `keep_intermediates=("Q", "F", "U", "CE")`, or `("Q", "F")` for its former
+  output.
+- `U` is the flow utility and `CE` the undiscounted certainty-equivalent continuation,
+  per state row and action, with the shape of `Q`. `Q == W(utility=U, CE=CE, ...)` for
+  every Koopmans aggregator, so `Q == U + discount_factor * CE` under
+  `LinearAggregator`; a terminal regime has `CE == 0`. `actions`, `value` and the kept
+  intermediates come from one evaluation of the regime's kernel.
+- An unknown or repeated name raises `InvalidSimulationInputError`.
+
+### Public `EULER_GAMMA` for location-0 taste shocks
+
+- `lcm.EULER_GAMMA` exports the Euler-Mascheroni constant. Adding
+  `scale * EULER_GAMMA` to Bellman utility reproduces location-0 shocks under
+  `LinearAggregator` when other uses of the original utility are preserved;
+  see the [location-0 recipe](docs/reference/model_and_regime.md#api-euler-gamma).
+
+### Carrying a state to a regime that uses it counts as a use
+
+- A regime-level state that a regime only carries, with `fixed_transition` or any other
+  law of motion, toward a target it can reach is used when that target keeps the state.
+  Model-level states were already kept this way by broadcast pruning, and the check
+  now runs the same closure. Its own rule is stricter than pruning's: the target must
+  be reached in the law's own phase, at ages the source occupies, and keep the state on
+  its grid in that phase, on an edge where no joint transition produces the state.
+  Chains count. A zero-weight read such as `0.0 * skill` is no longer needed to keep
+  such a state. The rejection message states the rule and the regimes each phase
+  reaches.
+
+### Labelled profiles for age models
+
+- `TimeVarying.from_profile()` accepts `age_to_label`, mapping each model age to a
+  source label. The result is labelled by age and serves models on an `AgeGrid`. Give
+  exactly one of `period_to_label` and `age_to_label`; the validation is the same for
+  both, and age keys must be finite numbers. A non-integer period key, including a
+  boolean, raises `InvalidParamsError`, as it does for a `TimeVarying` coordinate.
+- A NumPy `TimeVarying` table keeps its dtype until the canonical cast, so an int64
+  value outside the int32 range raises the int32 overflow error, and a float64 value
+  that float32 cannot hold is reported with its supplied value, also with x64 disabled.
+
+### Independent runtime checks
+
+- `Model.solve()` and `Model.simulate()` accept `runtime_checks=True` independently
+  of `log_level`. Enabled numerical checks raise on the first failure at every
+  verbosity, including `off`; disable them explicitly with `runtime_checks=False`.
+  Construction, parameter schema, initial-condition structure and solution identity
+  validation remain active. Infinity-only value warnings retain their existing meaning.
+
+### Labelled value functions
+
+- `SolutionResult.value_array(period=..., regime=...)` returns an xarray `DataArray`
+  named `V` with one dimension per state axis, the resolved grid nodes as coordinates,
+  discrete states labelled as categoricals in declaration order (`use_labels=False` for
+  integer codes), and a `stakeholder` dimension for collective regimes. It wraps the
+  stored value without a host copy; `.sel(...)` selects a curve or surface by name before
+  any table is built. `SolutionResult.value_frame(...)` returns the same values as a long
+  pandas DataFrame with state columns followed by `V`. Both survive saving and loading.
+- New dependency: `xarray`.
+
 ### Explicit initial nodes and owned declarations
 
 - Declare admissible starts with `InitialNodes(by_age={25: "working"})` or

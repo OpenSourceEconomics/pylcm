@@ -41,6 +41,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     Period,
+    RegimeName,
     ScalarInt,
 )
 from lcm_examples.iskhakov_et_al_2017 import WORKING_LIFE_LAW
@@ -622,7 +623,7 @@ def _retirement_death_prob(*, age: int, final_age_alive: float) -> FloatND:
 def _three_regime_model_with_brute_worker(
     *,
     retirement_transition,
-    retirement_targets: tuple[str, ...] = ("retirement", "dead"),
+    retirement_targets: tuple[RegimeName, ...] = ("retirement", "dead"),
 ) -> Model:
     """Model with a brute-force worker regime next to a DC-EGM retirement regime."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")

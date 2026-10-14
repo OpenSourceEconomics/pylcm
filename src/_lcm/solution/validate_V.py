@@ -12,15 +12,27 @@ diagnostic-intermediates closure (built during regime canonicalization in
 import logging
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 
 from _lcm.engine import StateActionSpace
-from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeName
+from _lcm.typing import (
+    FlatRegimeParams,
+    JSONValue,
+    PeriodToRegimeToVArr,
+    QAndFArg,
+    ReferenceName,
+    RegimeName,
+)
 from _lcm.utils.logging import v_array_has_nan
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt, StateOrActionName
+
+# The fused diagnostic closure's output: a `{metric}_overall` scalar and a
+# `{metric}_by_{name}` vector per metric, plus each target regime's mean
+# transition probability under `regime_probs`.
+type _Reductions = Mapping[str, FloatND | Mapping[RegimeName, FloatND]]
 
 
 def _entry_support_cause(entered_process_names: tuple[str, ...]) -> str:
@@ -44,19 +56,20 @@ def _entry_support_cause(entered_process_names: tuple[str, ...]) -> str:
     )
 
 
-def validate_V(
+def validate_V[PartialSolution: PeriodToRegimeToVArr](
     *,
     V_arr: FloatND,
     age: float | ScalarInt | ScalarFloat,
     regime_name: RegimeName | None = None,
-    partial_solution: object = None,
-    compute_intermediates: Callable | None = None,
+    partial_solution: PartialSolution | None = None,
+    compute_intermediates: Callable[..., _Reductions] | None = None,
     state_action_space: StateActionSpace | None = None,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] | None = None,
     flat_params: FlatRegimeParams | None = None,
     period: int | None = None,
     entered_process_names: tuple[str, ...] = (),
     time_kind: Literal["age", "period"] = "age",
+    logger: logging.Logger | None = None,
 ) -> None:
     """Validate the value function array for NaN values.
 
@@ -81,6 +94,7 @@ def validate_V(
             law. Named in the message, because leaving such a process's support
             is the one NaN cause the engine mints deliberately.
         time_kind: Meaning of the coordinate in diagnostics.
+        logger: Call-local output policy for diagnostic enrichment failures.
 
     The NaN reduction stays sharded via `v_array_has_nan` (jit-wrapped so GSPMD
     partitions it across the V-array's devices instead of gathering V onto the
@@ -119,7 +133,10 @@ def validate_V(
                 time_kind=time_kind,
             )
         except Exception:
-            logging.getLogger("lcm").warning(
+            diagnostic_logger = (
+                logger if logger is not None else logging.getLogger("lcm")
+            )
+            diagnostic_logger.warning(
                 "Diagnostic enrichment failed; raising original NaN error",
                 exc_info=True,
             )
@@ -127,13 +144,13 @@ def validate_V(
     raise exc
 
 
-def value_function_nan_error(
+def value_function_nan_error[PartialSolution: PeriodToRegimeToVArr](
     *,
     n_nan: int,
     total: int,
     age: float | ScalarInt | ScalarFloat,
     regime_name: RegimeName | None = None,
-    partial_solution: object = None,
+    partial_solution: PartialSolution | None = None,
     entered_process_names: tuple[str, ...] = (),
     time_kind: Literal["age", "period"] = "age",
 ) -> InvalidValueFunctionError:
@@ -167,7 +184,7 @@ def value_function_nan_error(
 def _enrich_with_diagnostics(
     *,
     exc: InvalidValueFunctionError,
-    compute_intermediates: Callable,
+    compute_intermediates: Callable[..., _Reductions],
     state_action_space: StateActionSpace,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] | None,
     flat_params: FlatRegimeParams | None,
@@ -199,7 +216,7 @@ def _enrich_with_diagnostics(
 
     """
     all_names = (*state_action_space.state_names, *state_action_space.action_names)
-    state_action_kwargs: dict[str, Any] = {
+    state_action_kwargs: dict[StateOrActionName, FloatND | IntND] = {
         **state_action_space.states,
         **state_action_space.actions,
     }
@@ -213,7 +230,7 @@ def _enrich_with_diagnostics(
     # Wrap Python scalars as JAX arrays so the call matches the dtype used
     # at trace time in `_build_compute_intermediates_per_period`; avoids a
     # retrace for the diagnostic invocation.
-    call_kwargs: dict[str, Any] = {
+    call_kwargs: dict[ReferenceName, QAndFArg | None] = {
         **state_action_kwargs,
         "next_regime_to_V_arr": next_regime_to_V_arr,
         **param_kwargs,
@@ -235,13 +252,13 @@ def _enrich_with_diagnostics(
 
 def _summarize_diagnostics(
     *,
-    reductions: Mapping[str, Any],
+    reductions: _Reductions,
     variable_names: tuple[str, ...],
     regime_name: RegimeName,
     age: float,
     period: int | None = None,
     time_kind: Literal["age", "period"] = "age",
-) -> dict[str, Any]:
+) -> dict[str, JSONValue]:
     """Restructure the flat reduction pytree into the summary dict shape.
 
     Pure host-side — no device computation. Consumes the output of the
@@ -261,9 +278,17 @@ def _summarize_diagnostics(
         `"regime_probs"` mapping, suitable for `_format_diagnostic_summary`.
 
     """
-    summary: dict[str, Any] = {
+    summary: dict[str, JSONValue] = {
         "regime_name": regime_name,
         time_kind: age if time_kind == "age" else period,
+    }
+    # `regime_probs` is the one mapping-valued reduction; every other is an array.
+    arrays = {k: v for k, v in reductions.items() if not isinstance(v, Mapping)}
+    regime_probs = {
+        target: float(probability)
+        for value in reductions.values()
+        if isinstance(value, Mapping)
+        for target, probability in value.items()
     }
 
     for key_out, key_in in [
@@ -275,20 +300,18 @@ def _summarize_diagnostics(
         by_dim: dict[str, list[float]] = {}
         for name in variable_names:
             k = f"{key_in}_by_{name}"
-            if k in reductions:
-                by_dim[name] = reductions[k].tolist()
+            if k in arrays:
+                by_dim[name] = arrays[k].tolist()
         summary[key_out] = {
-            "overall": float(reductions[f"{key_in}_overall"]),
+            "overall": float(arrays[f"{key_in}_overall"]),
             "by_dim": by_dim,
         }
 
-    summary["regime_probs"] = {
-        k: float(v) for k, v in reductions["regime_probs"].items()
-    }
+    summary["regime_probs"] = regime_probs
     return summary
 
 
-def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
+def _format_diagnostic_summary(summary: Mapping[str, JSONValue]) -> str:
     """Format diagnostic summary for exception note.
 
     Args:

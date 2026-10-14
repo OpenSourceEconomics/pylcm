@@ -22,9 +22,48 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    NamedTuple,
+    Protocol,
+    TypedDict,
+    Unpack,
+    overload,
+)
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
+
+if TYPE_CHECKING:
+    from _lcm.typing import JSONValue
+
+
+class _AsvResultEntry(Protocol):
+    """The value and parameter slots of an ASV result record."""
+
+    def __len__(self) -> int: ...
+
+    @overload
+    def __getitem__(self, index: Literal[0], /) -> list[float | None] | None: ...
+
+    @overload
+    def __getitem__(self, index: Literal[1], /) -> list[list[str]]: ...
+
+
+class _AsvResultData(TypedDict, total=False):
+    results: dict[str, _AsvResultEntry]
+    commit_hash: str
+
+
+class _GhRunKwargs(TypedDict, total=False):
+    check: bool
+    capture_output: bool
+    text: bool
+
+
+type NaturalSortKey = tuple[tuple[int, float] | tuple[int, str], ...]
+type GroupSortKey = tuple[int, str, NaturalSortKey]
+
 
 _REPO_URL = "https://github.com/OpenSourceEconomics/pylcm"
 _SITE_CONTENTS_API = (
@@ -424,7 +463,7 @@ def display_names(benchmark_name: str) -> tuple[str, str]:
     )
 
 
-def display_sort_key(benchmark_name: str) -> tuple[Any, ...]:
+def display_sort_key(benchmark_name: str) -> tuple[int, str, NaturalSortKey, int, str]:
     """Return a key that orders ASV benchmarks as the comparison table orders rows.
 
     Args:
@@ -448,7 +487,7 @@ def _canonical_names(benchmark_name: str) -> tuple[str, str]:
     return class_name, _METHOD_ALIASES.get(method_name, method_name)
 
 
-def _group_sort_key(group: tuple[str, str]) -> tuple[Any, ...]:
+def _group_sort_key(group: tuple[str, str]) -> GroupSortKey:
     """Sort known families canonically and parameters by their numeric value."""
     display_name, params = group
     return (
@@ -458,7 +497,7 @@ def _group_sort_key(group: tuple[str, str]) -> tuple[Any, ...]:
     )
 
 
-def _natural_sort_key(value: str) -> tuple[Any, ...]:
+def _natural_sort_key(value: str) -> NaturalSortKey:
     """Return a key that orders embedded numbers numerically, not lexically."""
     return tuple(
         (0, float(part)) if _NATURAL_SORT_RE.fullmatch(part) else (1, part.casefold())
@@ -488,8 +527,8 @@ def _parse_raw_values(
     result_file: Path,
 ) -> dict[tuple[str, str, str], float]:
     """Parse an ASV result JSON into a (class, method, params) → raw value dict."""
-    data: dict[str, Any] = json.loads(result_file.read_text(encoding="utf-8"))
-    results: dict[str, list[Any]] = data.get("results", {})
+    data: _AsvResultData = json.loads(result_file.read_text(encoding="utf-8"))
+    results: dict[str, _AsvResultEntry] = data.get("results", {})
 
     values_by_key: dict[tuple[str, str, str], float] = {}
 
@@ -508,10 +547,10 @@ def _parse_raw_values(
 
         if params_list:
             for idx, combo_str in enumerate(_expand_params(params_list)):
-                if idx < len(raw_values) and raw_values[idx] is not None:
-                    values_by_key[(class_name, method_name, combo_str)] = raw_values[
-                        idx
-                    ]
+                if idx < len(raw_values):
+                    value = raw_values[idx]
+                    if value is not None:
+                        values_by_key[(class_name, method_name, combo_str)] = value
         elif (
             isinstance(raw_values, list)
             and len(raw_values) == 1
@@ -524,7 +563,7 @@ def _parse_raw_values(
 
 def _get_commit_hash(result_file: Path) -> str:
     """Return the full commit hash stored in an ASV result file."""
-    data = json.loads(result_file.read_text(encoding="utf-8"))
+    data: _AsvResultData = json.loads(result_file.read_text(encoding="utf-8"))
     return data.get("commit_hash", "unknown")
 
 
@@ -633,8 +672,8 @@ def _upsert_pr_comment(body: str) -> None:
 
 def _run_gh(
     cmd: list[str],
-    **kwargs: Any,
-) -> subprocess.CompletedProcess[str]:
+    **kwargs: Unpack[_GhRunKwargs],
+) -> subprocess.CompletedProcess[str | bytes]:
     """Run a ``gh`` CLI command, raising a clear error if gh is missing."""
     try:
         return subprocess.run(cmd, **kwargs)
@@ -776,7 +815,7 @@ def _ensure_head_result(
     old_prefix = latest.name.split("-", 1)[0]
     new_path = latest.parent / latest.name.replace(old_prefix, head_sha, 1)
 
-    data: dict[str, Any] = json.loads(latest.read_text(encoding="utf-8"))
+    data: dict[str, JSONValue] = json.loads(latest.read_text(encoding="utf-8"))
     data["commit_hash"] = head_sha_full
     new_path.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
@@ -810,7 +849,7 @@ def _fetch_baseline_from_site(
     )
     listing_bytes = _fetch_public_url(url=machine_url, description="result listing")
     try:
-        listing: Any = json.loads(listing_bytes)
+        listing: JSONValue = json.loads(listing_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise _BaselineFetchError(
             f"Published benchmark result listing was not valid JSON: {error}"

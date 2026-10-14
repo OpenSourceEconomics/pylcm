@@ -25,7 +25,7 @@ This module asserts, on a small CPU model, for both an unbudgeted
 """
 
 import builtins
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 
 import jax.numpy as jnp
@@ -37,6 +37,7 @@ from _lcm.simulation import (
     host_operations,
     process_grids,
 )
+from _lcm.typing import PytreeValue
 from _lcm.utils.logging import LogLevel, get_logger
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm.execution import ExecutionConfig
@@ -101,14 +102,20 @@ def _count_new_wrapper_objects() -> Generator[dict[str, int]]:
     counts = {"compile_calls": 0, "attributed_compile_calls": 0}
     original_compile = builtins.compile
 
-    def counting_compile(*args: object, **kwargs: object) -> object:
-        counts["compile_calls"] += 1
-        filename = kwargs.get("filename", args[1] if len(args) > 1 else "")
-        if any(marker in str(filename) for marker in _ATTRIBUTED_MODULE_MARKERS):
-            counts["attributed_compile_calls"] += 1
-        return original_compile(*args, **kwargs)  # ty: ignore[no-matching-overload]
+    def observe_compile[**P, Result](
+        original: Callable[P, Result],
+    ) -> Callable[P, Result]:
+        def counting_compile(*args: P.args, **kwargs: P.kwargs) -> Result:
+            counts["compile_calls"] += 1
+            filename = kwargs.get("filename", args[1] if len(args) > 1 else "")
+            if any(marker in str(filename) for marker in _ATTRIBUTED_MODULE_MARKERS):
+                counts["attributed_compile_calls"] += 1
+            return original(*args, **kwargs)
 
-    builtins.compile = counting_compile  # ty: ignore[invalid-assignment]
+        return counting_compile
+
+    # ParamSpec retains calls, but ty widens the overloaded compile return union.
+    builtins.compile = observe_compile(original_compile)  # ty: ignore[invalid-assignment]
     try:
         yield counts
     finally:
@@ -226,7 +233,7 @@ def test_value_dependent_operation_checks_still_raise(log_level: LogLevel) -> No
     `host_operations.py:73-151,287-318`).
     """
 
-    def _pure_operation(*, value: object) -> object:
+    def _pure_operation(*, value: PytreeValue) -> PytreeValue:
         return value
 
     # Exercise the check under each log level's logger, exactly like a real
@@ -243,7 +250,7 @@ def test_value_dependent_operation_checks_still_raise(log_level: LogLevel) -> No
     with pytest.raises(host_operations.ExecutionPlanningError):
         host_operations._validated_static_arguments(
             function=_pure_operation,
-            arguments={"value": object()},
+            arguments={"value": 0},
             static_arguments={"value": 1},
             subject_outputs=False,
         )
@@ -315,7 +322,7 @@ def test_warm_call_trace_request_count_is_unaffected_by_the_migration() -> None:
     assert counts.trace_requests >= 1
 
 
-def _module_level_pure_operation(*, value: object) -> object:
+def _module_level_pure_operation(*, value: PytreeValue) -> PytreeValue:
     """Module-level stand-in operation: satisfies the identity check's contract."""
     return value
 

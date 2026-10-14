@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -129,6 +130,57 @@ def test_a_well_formed_regime_transition_is_untouched() -> None:
         np.asarray([7.75, 15.5, 23.25, 31.0]),
         rtol=1e-6,
     )
+
+
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+@pytest.mark.parametrize("runtime_checks", [False, True])
+@pytest.mark.parametrize("simulate", [False, True])
+def test_runtime_checks_control_invalid_regime_probabilities(
+    *, log_level: LogLevel, runtime_checks: bool, simulate: bool
+) -> None:
+    """Runtime checks reject signed transition weights independently of verbosity."""
+    model = _build(probability_a=1.5, probability_b=-0.5)
+    if runtime_checks:
+        if simulate:
+            with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
+                model.simulate(
+                    params=_PARAMS,
+                    initial_conditions={
+                        "age": jnp.array([20.0]),
+                        "wealth": jnp.array([2.0]),
+                        "regime_id": jnp.array([RegimeId.source]),
+                    },
+                    log_level=log_level,
+                    runtime_checks=runtime_checks,
+                    seed=0,
+                )
+        else:
+            with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
+                model.solve(
+                    params=_PARAMS,
+                    log_level=log_level,
+                    runtime_checks=runtime_checks,
+                )
+    elif simulate:
+        result = model.simulate(
+            params=_PARAMS,
+            initial_conditions={
+                "age": jnp.array([20.0]),
+                "wealth": jnp.array([2.0]),
+                "regime_id": jnp.array([RegimeId.source]),
+            },
+            log_level=log_level,
+            runtime_checks=runtime_checks,
+            seed=0,
+        )
+        assert result.n_subjects == 1
+    else:
+        solution = model.solve(
+            params=_PARAMS,
+            log_level=log_level,
+            runtime_checks=runtime_checks,
+        )
+        assert solution.values[0]["source"].shape == (4,)
 
 
 @categorical(ordered=False)

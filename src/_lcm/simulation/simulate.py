@@ -70,6 +70,7 @@ from _lcm.simulation.diagnostic_operations import (
     profiled_transition_counts,
 )
 from _lcm.simulation.gated_routing import (
+    GatedRouteDelta,
     commit_gated_route_delta,
     gated_route_candidates,
 )
@@ -150,12 +151,15 @@ from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
 from _lcm.typing import (
     ActionName,
+    ArrayTree,
     EconFunctionArg,
     FlatParams,
     FlatRegimeParams,
     InitialConditions,
     PeriodToRegimeToSimulationPolicy,
     PRNGKeyND,
+    QAndFArg,
+    QAndFKwargs,
     RegimeIdsToNames,
     RegimeName,
     RegimeNamesToIds,
@@ -189,6 +193,7 @@ from lcm.typing import (
     FunctionName,
     Int1D,
     IntND,
+    ReferenceName,
     ScalarFloat,
     ScalarInt,
 )
@@ -881,18 +886,15 @@ def _simulate_subject_chunk(
         original_age = chunk_operations.period_age(
             values=ages.values, period=period, memory=memory
         )
-        age = cast(
-            "ScalarInt | ScalarFloat",
-            place_simulation_arguments(
-                arguments={"age": original_age},
-                subject_arg_names=(),
-                value_reads=(),
-                devices=devices,
-                budget_bytes=None if memory is None else memory.budget_bytes,
-                live_footprint=None if memory is None else memory.budget_snapshot(),
-                budget_devices=() if memory is None else memory.devices,
-            )["age"],
-        )
+        age = place_simulation_arguments(
+            arguments={"age": original_age},
+            subject_arg_names=(),
+            value_reads=(),
+            devices=devices,
+            budget_bytes=None if memory is None else memory.budget_bytes,
+            live_footprint=None if memory is None else memory.budget_snapshot(),
+            budget_devices=() if memory is None else memory.devices,
+        )["age"]
         if memory is not None:
             memory.hold(tree=age)
 
@@ -1100,7 +1102,7 @@ def _simulate_subject_chunk(
 
 
 def _bind_unit_executor(
-    *, regime: Regime, memory: SimulationMemory | None, inputs: object
+    *, regime: Regime, memory: SimulationMemory | None, inputs: ArrayTree
 ) -> Regime:
     """Bind live unit residency without changing any persistent regime bundle."""
     if memory is None:
@@ -1253,7 +1255,7 @@ def _referenced_value_kwargs(
     period_to_regime_to_V_arr: Mapping[int, Mapping[RegimeName, FloatND]],
     flat_params: FlatParams,
     period: int,
-) -> dict[str, object]:
+) -> dict[ReferenceName, QAndFArg]:
     """Build the value mappings one regime's kernel reads beside its own grids.
 
     Two channels, each empty for a regime that declares nothing on it, and each
@@ -1275,7 +1277,7 @@ def _referenced_value_kwargs(
         Mapping of engine argument names to their per-regime mappings.
 
     """
-    kwargs: dict[str, object] = {}
+    kwargs: dict[ReferenceName, QAndFArg] = {}
     if regime.same_period_ref_regimes:
         this_period_V = period_to_regime_to_V_arr.get(period, MappingProxyType({}))
         kwargs[SAME_PERIOD_V_ARG] = MappingProxyType(
@@ -1315,11 +1317,11 @@ def _read_external_replay(
     regime: Regime,
     period: int,
     age: ScalarInt | ScalarFloat,
-    states: Mapping[StateName, object],
+    states: Mapping[StateName, FloatND | IntND],
     state_action_space: StateActionSpace,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     flat_params: FlatRegimeParams,
-    referenced_value_kwargs: Mapping[str, object],
+    referenced_value_kwargs: QAndFKwargs,
     subject_ids_in_regime: BoolND,
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
     """Run one preflighted external reader and verify its chosen actions."""
@@ -1453,11 +1455,11 @@ def _validate_period_values(
     the period's value arrays, so a period costs a single device-to-host
     transfer whatever the number of regimes. Only a regime the NaN row accuses
     pays for the enriched value-function report, which reads the device again
-    to describe what it found. At `log_level="off"` no reduction is issued at
-    all.
+    to describe what it found. With ``runtime_checks=False`` no reduction is
+    issued.
 
     Every offending regime of the period is named first, then the enriched
-    reports run. At `log_level="debug"` the first enriched report raises, so
+    reports run. With runtime checks enabled the first enriched report raises, so
     naming the period's regimes first is what keeps the other offenders --- an
     Inf-only regime among them, which the enriched report never speaks about
     --- in the record of the aborted run.
@@ -1546,6 +1548,7 @@ def _validate_simulated_value(
             + (1,) * (value.ndim - subject_ids_in_regime.ndim)
         )
         validate_V(
+            logger=logger,
             V_arr=jnp.where(in_regime_mask, value, 0.0),
             age=age,
             regime_name=regime_name,
@@ -1962,6 +1965,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
             memory=memory,
+            runtime_checks=validation_enabled(logger),
         )
         # The value router's routing half. A gated
         # edge's target is always ALSO an ordinary declared transition
@@ -1985,7 +1989,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 flags=period_to_regime_to_dissolution_flags,
             )
             route_delta, new_subject_regime_ids, new_own_stakeholder = cast(
-                "tuple[Mapping[str, Mapping[str, object]], Int1D, Int1D]",
+                "tuple[Mapping[RegimeName, GatedRouteDelta], Int1D, Int1D]",
                 execute_simulation_program(
                     programs=regime.simulation.programs,
                     family="gate_route",
@@ -2033,10 +2037,10 @@ def _execute_finite_replay(
     age: ScalarFloat | ScalarInt,
     n_subjects: int,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    referenced_value_kwargs: Mapping[str, object],
+    referenced_value_kwargs: QAndFKwargs,
     logger: logging.Logger,
     memory: SimulationMemory | None = None,
-) -> tuple[MappingProxyType, FloatND, BoolND]:
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Run declared reconstruction, its host diagnostic, and canonical ranking."""
     payload = ReplayPayload.from_policy(sim_policy)
     bank = execute_simulation_program(
@@ -2068,7 +2072,7 @@ def _execute_finite_replay(
                 period=period,
             )
     return cast(
-        "tuple[MappingProxyType, FloatND, BoolND]",
+        "tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]",
         execute_simulation_program(
             programs=regime.simulation.programs,
             family="policy_rank",
@@ -2104,7 +2108,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
     grid_values: FloatND,
     in_regime: BoolND,
     logger: logging.Logger,
-    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
+    referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND | None]:
     """Interpolate the published EGM policy at each subject's resources.
 
@@ -2933,7 +2937,7 @@ def _nested_grid_baseline(
     period: int,
     age: ScalarFloat | ScalarInt,
     replay_candidate: tuple[FloatND, FloatND, BoolND],
-    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
+    referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Return the deterministic canonical-Q baseline for nested replay.
 
@@ -3428,7 +3432,7 @@ def _score_nnbegm_candidate_bank(
     canonical_states: Mapping[StateName, FloatND | IntND],
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
+    referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
 ) -> tuple[FloatND, BoolND]:
     """Construct complete candidate action tuples and score canonical Q."""
     n_candidates, n_subjects = candidate_inner.shape
@@ -3672,7 +3676,7 @@ def _replay_nnbegm_candidates(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     logger: logging.Logger,
-    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
+    referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
     """Reconstruct, validate, then rank the exact solve candidate product."""
     candidate_inner, candidate_outer, live, represented = (
@@ -3685,7 +3689,7 @@ def _replay_nnbegm_candidates(
             age=age,
         )
     )
-    # Keep this diagnostic before canonical scoring: debug refuses an
+    # Keep this diagnostic before canonical scoring: runtime checks refuse an
     # unrepresentable solve candidate before evaluating the remaining bank.
     _announce_dropped_outer_candidates(
         logger=logger,
@@ -3778,7 +3782,7 @@ def _rank_nnbegm_candidate_bank(
     canonical_states: Mapping[StateName, FloatND | IntND],
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-    referenced_value_kwargs: Mapping[str, object],
+    referenced_value_kwargs: QAndFKwargs,
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
     """Pure canonical scoring and first-maximum ranking of the represented bank."""
     n_candidates = candidate_inner.shape[0]
@@ -3846,13 +3850,8 @@ def _announce_dropped_outer_candidates(
 
     The count is aggregated on device and read back as two scalars, so the
     report costs one transfer per regime-period rather than one per candidate.
-    The gate is the public log level:
-
-    - `"off"` -- silent, and the candidates are still dropped;
-    - `"warning"` / `"progress"` -- one warning carrying the counts;
-    - `"debug"` -- raised, because a candidate the solve ranked and replay
-      cannot reconstruct is a defect worth stopping on while a model is being
-      developed.
+    Runtime checks raise when replay cannot reconstruct a candidate ranked by
+    the solve. With checks disabled, candidates are still dropped.
     """
     if not validation_enabled(logger):
         return
@@ -4006,7 +4005,7 @@ def _canonical_Q_at_branch(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     flat_params: FlatRegimeParams,
-    referenced_value_kwargs: Mapping[str, object],
+    referenced_value_kwargs: QAndFKwargs,
     period: int,
     age: ScalarFloat | ScalarInt,
 ) -> tuple[FloatND, BoolND]:
@@ -4050,7 +4049,7 @@ def _canonical_Q_at_actions(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
+    referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
 ) -> tuple[FloatND, BoolND]:
     """Score one action value per subject with the canonical state-action value.
 
@@ -4087,7 +4086,7 @@ def _score_nested_action_pair(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
+    referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Score the published nested action pair once through canonical Q.
 

@@ -61,7 +61,7 @@ def test_no_nan_warning_from_out_of_regime_placeholders(caplog):
     assert nan_warnings == []
 
 
-@pytest.mark.parametrize("log_level", ["warning", "debug"])
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
 def test_out_of_regime_placeholders_pass_v_validation(log_level: LogLevel) -> None:
     """Per-regime V validation ignores out-of-regime placeholder entries.
 
@@ -141,12 +141,16 @@ def _nan_producing_model() -> Model:
     )
 
 
-def test_a_period_with_a_non_finite_value_warns_once_per_offending_regime(
-    caplog: pytest.LogCaptureFixture,
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_runtime_checks_reject_owned_simulated_nan_at_every_level(
+    *, caplog: pytest.LogCaptureFixture, log_level: LogLevel
 ) -> None:
-    """At `warning`, each regime with a NaN owned value produces exactly one line."""
+    """Owned NaNs stop forward simulation independently of console verbosity."""
     model = _nan_producing_model()
-    with caplog.at_level(logging.WARNING, logger="lcm"):
+    with (
+        caplog.at_level(logging.WARNING, logger="lcm"),
+        pytest.raises(InvalidValueFunctionError),
+    ):
         model.simulate(
             params={"discount_factor": 0.95},
             initial_conditions={
@@ -154,14 +158,42 @@ def test_a_period_with_a_non_finite_value_warns_once_per_offending_regime(
                 "age": jnp.full(2, float(NAN_AGE)),
                 "regime_id": jnp.full(2, OffNodeRegimeId.work),
             },
-            log_level="warning",
+            log_level=log_level,
         )
     lines = [
         record.getMessage()
         for record in caplog.records
         if "NaN/Inf" in record.getMessage()
     ]
-    assert lines == [f"NaN/Inf in V_arr for regime 'work' at age {NAN_AGE}"]
+    assert lines == (
+        []
+        if log_level == "off"
+        else [f"NaN/Inf in V_arr for regime 'work' at age {NAN_AGE}"]
+    )
+
+
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+def test_runtime_checks_disabled_allow_owned_simulated_nan(
+    log_level: LogLevel,
+) -> None:
+    """Disabled checks permit off-grid NaNs while the solved grid stays finite."""
+    model = _nan_producing_model()
+    result = model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "wealth": jnp.array([1.5, 2.5]),
+            "age": jnp.full(2, float(NAN_AGE)),
+            "regime_id": jnp.full(2, OffNodeRegimeId.work),
+        },
+        log_level=log_level,
+        runtime_checks=False,
+    )
+    assert bool(jnp.any(jnp.isnan(result.raw_results["work"][0].V_arr)))
+    assert all(
+        bool(jnp.all(jnp.isfinite(value)))
+        for values in result.period_to_regime_to_V_arr.values()
+        for value in values.values()
+    )
 
 
 @categorical(ordered=False)

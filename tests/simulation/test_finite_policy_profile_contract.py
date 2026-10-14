@@ -2,7 +2,8 @@
 
 import gc
 import weakref
-from typing import Any, cast
+from collections.abc import Mapping
+from typing import Never, Unpack, cast
 
 import jax
 import jax._src.core
@@ -13,6 +14,7 @@ import pytest
 import _lcm.simulation.chunk_admission as admission
 import _lcm.simulation.simulate as simulation
 from _lcm.egm.published_policy import NNBEGMSimPolicy
+from _lcm.simulation.chunk_planning import SimulationChunkProfile
 from _lcm.simulation.chunk_profile_inventory import ChunkProfileInventory
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
 from _lcm.simulation.memory import SimulationMemory
@@ -20,7 +22,14 @@ from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.solution.artifacts import OwnedSolutionView
+from _lcm.typing import PytreeByPeriod, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
+from tests.simulation._callback_types import (
+    ChunkProfileInputs,
+    InventoryCompiled,
+    MemoryRun,
+    RuntimeDispatch,
+)
 from tests.simulation.test_finite_policy_budget import _inputs
 from tests.simulation.test_population_allocation_budget import (
     _forbid_concrete,
@@ -49,7 +58,9 @@ def test_finite_bank_keeps_the_full_outer_extent_without_allocating(
     observed: list[tuple[tuple[int, ...], ...]] = []
     compiled = ChunkProfileInventory.compiled
 
-    def observe_bank(self: ChunkProfileInventory, **call: Any) -> object:
+    def observe_bank(
+        self: ChunkProfileInventory, **call: Unpack[InventoryCompiled]
+    ) -> ShapeDtypePytree:
         result = compiled(self, **call)
         if call["name"] == "core:policy_prepare":
             bank = cast("tuple[jax.ShapeDtypeStruct, ...]", result)
@@ -61,8 +72,8 @@ def test_finite_bank_keeps_the_full_outer_extent_without_allocating(
 
     # keyword-only-exempt: library-callback=_ChunkProfiler.profile_widths
     def inspect_profile(
-        self: admission._ChunkProfiler, *, n_subjects: int, widths: Any
-    ) -> object:
+        self: admission._ChunkProfiler, *, n_subjects: int, widths: Mapping[str, int]
+    ) -> Never:
         del widths
         assert n_subjects == 7
         with monkeypatch.context() as guard:
@@ -104,8 +115,9 @@ def test_finite_bank_keeps_the_full_outer_extent_without_allocating(
         )
 
 
+@pytest.mark.parametrize("runtime_checks", [False, True])
 def test_public_finite_bank_floor_refuses_before_any_chunk_allocation(
-    monkeypatch: pytest.MonkeyPatch,
+    *, monkeypatch: pytest.MonkeyPatch, runtime_checks: bool
 ) -> None:
     """A real bank lower bound cannot be hidden behind a raw compiler peak."""
     width = 8192
@@ -126,21 +138,26 @@ def test_public_finite_bank_floor_refuses_before_any_chunk_allocation(
     inspected: list[int] = []
     original = admission.profile_simulation_chunk
 
-    def observe_profile(**call: Any) -> object:
+    def observe_profile(**call: Unpack[ChunkProfileInputs]) -> SimulationChunkProfile:
         inspected.append(call["n_subjects"])
         return original(**call)
 
     monkeypatch.setattr(admission, "profile_simulation_chunk", observe_profile)
     monkeypatch.setattr(simulation, "_simulate_subject_chunk", _forbid_concrete)
-    with pytest.raises(ExecutionPlanningError, match="no anchor map fits"):
+    # Numerical preflight can exhaust this budget before bank profiling begins.
+    refusal = (
+        "No workspace-width candidate fits" if runtime_checks else "no anchor map fits"
+    )
+    with pytest.raises(ExecutionPlanningError, match=refusal):
         model.simulate(
             params=params,
             solution=solution,
             initial_conditions=initial,
             log_level="off",
+            runtime_checks=runtime_checks,
             seed=17,
         )
-    assert inspected == [width]
+    assert inspected == ([] if runtime_checks else [width])
 
 
 @pytest.mark.parametrize("refuse", [False, True])
@@ -156,7 +173,9 @@ def test_finite_diagnostic_counts_the_live_bank_and_admits_before_dispatch(
     dispatch = SimulationRuntime.dispatch
     run = SimulationMemory.run
 
-    def observe_prepare(self: SimulationRuntime, **call: Any) -> object:
+    def observe_prepare(
+        self: SimulationRuntime, **call: Unpack[RuntimeDispatch]
+    ) -> PytreeValue:
         result = dispatch(self, **call)
         if call["program"].name == "simulate_policy_prepare":
             bank = cast("tuple[jax.Array, ...]", result)
@@ -164,7 +183,9 @@ def test_finite_diagnostic_counts_the_live_bank_and_admits_before_dispatch(
             bank_refs.extend(weakref.ref(leaf) for leaf in bank)
         return result
 
-    def inspect_count(self: SimulationMemory, **call: Any) -> object:
+    def inspect_count[T: PytreeValue](
+        self: SimulationMemory, **call: Unpack[MemoryRun[T]]
+    ) -> T:
         if call["function"] is not dropped_candidate_counts:
             return run(self, **call)
         bank = banks.pop(0)
@@ -218,7 +239,7 @@ def test_diagnostic_owner_oracle_rejects_an_omitted_preparation_bank(
     hold = SimulationMemory.hold
 
     # keyword-only-exempt: library-callback=SimulationMemory.hold
-    def omit_bank(self: SimulationMemory, tree: object) -> None:
+    def omit_bank(self: SimulationMemory, tree: PytreeByPeriod) -> None:
         if (
             isinstance(tree, tuple)
             and len(tree) == 4

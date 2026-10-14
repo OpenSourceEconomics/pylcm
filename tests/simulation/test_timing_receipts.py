@@ -17,6 +17,7 @@ from benchmarks.asv._compile_counters import (
     LOWERING_EVENT,
     TRACE_EVENT,
 )
+from lcm.typing import UserInitialConditions, UserParams
 from tests.ci.simulation_timings import TimingMeasurement
 from tests.simulation import test_compile_requests as timing_tests
 
@@ -25,16 +26,18 @@ def test_timed_batch_retains_order_and_excludes_warmup_compilations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Receipts contain every timed sample and only the timed calls' compile events."""
-    calls: list[str] = []
+    calls: list[tuple[str, bool]] = []
     clock = iter(
         (0, 100, 100, 300, 300, 301, 301, 305, 305, 308, 308, 310, 310, 312, 312, 318)
     )
 
-    def solve(**_kwargs: object) -> None:
+    def solve[Ignored](**_kwargs: Ignored) -> None:
         pass
 
-    def simulate(*, log_level: str, **_kwargs: object) -> SimpleNamespace:
-        calls.append(log_level)
+    def simulate[Ignored](
+        *, log_level: str, runtime_checks: bool, **_kwargs: Ignored
+    ) -> SimpleNamespace:
+        calls.append((log_level, runtime_checks))
         for event, repeats in (
             (TRACE_EVENT, 1),
             (LOWERING_EVENT, 2),
@@ -44,7 +47,7 @@ def test_timed_batch_retains_order_and_excludes_warmup_compilations(
                 jax.monitoring.record_event_duration_secs(event, 0.001)
         return SimpleNamespace(raw_results=None)
 
-    def witness() -> tuple[SimpleNamespace, dict, dict]:
+    def witness() -> tuple[SimpleNamespace, UserParams, UserInitialConditions]:
         return SimpleNamespace(solve=solve, simulate=simulate), {}, {}
 
     monkeypatch.setattr(timing_tests, "WITNESSES", {"receipt": witness})
@@ -56,7 +59,7 @@ def test_timed_batch_retains_order_and_excludes_warmup_compilations(
         witness="receipt", log_level="progress", repeats=3, stub_preflight=False
     )
 
-    assert calls == ["off", "progress"] * 4
+    assert calls == [("off", False), ("progress", True)] * 4
     assert measurement.samples == (
         ("off", 1.0),
         ("progress", 4.0),
@@ -100,6 +103,7 @@ def test_receipt_preserves_observations_and_worker_identity(
     assert observed["nodeid"] == "tests/test_timing.py::test_wall_time[dissolution]"
     assert observed["witness"] == "dissolution"
     assert observed["stub_preflight"] is True
+    assert observed["runtime_checks"] == {"off": False, "progress": True}
     assert observed["worker_id"] == "gw3"
     assert observed["pid"] == os.getpid()
     assert observed["precision"] == (64 if jax.config.jax_enable_x64 else 32)
@@ -337,7 +341,7 @@ def _run_retry_loop(
     """Return how many batches the retry loop took and the batch it settled on."""
     remaining = list(spreads)
 
-    def batch(**_kwargs: object) -> TimingMeasurement:
+    def batch[Ignored](**_kwargs: Ignored) -> TimingMeasurement:
         """Stand in for one timed batch with a prescribed control-leg spread."""
         return _measurement(
             _spread(level="off", spread=remaining.pop(0))

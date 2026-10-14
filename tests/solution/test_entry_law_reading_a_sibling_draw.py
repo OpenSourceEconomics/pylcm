@@ -29,7 +29,14 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import ContinuousState, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    ContinuousState,
+    FloatND,
+    FunctionName,
+    ScalarFloat,
+    ScalarInt,
+    UserFunction,
+)
 
 # Symmetric nodes on `(0, 1, 2)`, so the draw has mean one whatever weights the
 # discretization assigns them.
@@ -73,7 +80,7 @@ def _income_plus_shock(*, income: ScalarFloat, shock: ScalarFloat) -> ScalarFloa
 @pytest.fixture(params=["direct", "through_a_helper"])
 def model(request: pytest.FixtureRequest) -> Model:
     """Source entering the target's `income` process at the entry shock."""
-    functions: dict = {"utility": _no_utility}
+    functions: dict[FunctionName, UserFunction] = {"utility": _no_utility}
     if request.param == "direct":
         income_law = _income_from_draw
     else:

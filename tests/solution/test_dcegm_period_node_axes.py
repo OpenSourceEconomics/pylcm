@@ -1,6 +1,9 @@
 """A DC-EGM period group owns the actual stochastic mesh it integrates."""
 
-from typing import Any
+from collections.abc import Hashable, Mapping
+from pathlib import Path
+from types import MappingProxyType
+from typing import NotRequired, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -10,6 +13,7 @@ import pytest
 from _lcm.egm import step
 from _lcm.execution.core_program import core_program_graph
 from _lcm.solution.dcegm import EGMStepBuild
+from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -24,11 +28,12 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ExecutionPlanningError
+from lcm.period_capture import PeriodCapture
 from lcm.regime import Regime
-from lcm.solver_api import SolutionResult
+from lcm.solver_api import ResultRetention, SolutionResult
 from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS
 from lcm.transition import AgeCaseLaw, AgeSelector
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import FloatND, RegimeName, ScalarInt, UserParams
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.solution.test_dcegm_axis_width_policy import (
@@ -39,6 +44,49 @@ from tests.solution.test_dcegm_axis_width_policy import (
     utility,
 )
 from tests.solution.test_dcegm_core_program import _run
+
+
+class _SolveKwargs(TypedDict):
+    params: UserParams
+    log_level: LogLevel
+    retention: NotRequired[ResultRetention]
+    max_compilation_workers: NotRequired[int | None]
+    log_path: NotRequired[str | Path | None]
+    log_keep_n_latest: NotRequired[int]
+    period_capture: NotRequired[PeriodCapture | None]
+
+
+class _StepKwargs(TypedDict):
+    solver: step._BoundDCEGM
+    regime_name: RegimeName
+    user_regimes: Mapping[RegimeName, step.UserRegime]
+    laws: step.RegimeLaws
+    functions: step.EconFunctionsMapping
+    koopmans_aggregator: step.EconFunction
+    constraints: step.ConstraintFunctionsMapping
+    processed_constraints: step.ProcessedConstraintsMapping
+    transitions: step.TransitionFunctionsMapping
+    transition_plans: step.TargetTransitionPlans
+    compute_regime_transition_probs: step.RegimeTransitionFunction
+    regime_to_v_interpolation_info: MappingProxyType[
+        RegimeName, step.VInterpolationInfo
+    ]
+    solution_reachability: step.PhaseReachability
+    flat_param_names: frozenset[step.QualifiedName]
+    regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]]
+    state_action_space: step.StateActionSpace
+    has_taste_shocks: bool
+    period_to_regime_v_interp: NotRequired[
+        MappingProxyType[int, MappingProxyType[RegimeName, step.VInterpolationInfo]]
+        | None
+    ]
+    period_to_regime_grid_signature: NotRequired[
+        MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None
+    ]
+    period_to_user_regimes: NotRequired[
+        MappingProxyType[int, Mapping[RegimeName, step.UserRegime]] | None
+    ]
+    age_values: FloatND | step.IntND
 
 
 @categorical(ordered=False)
@@ -176,7 +224,7 @@ def test_period_groups_keep_their_actual_child_health_extents(
     original = step.build_egm_step_functions
     recorded = {}
 
-    def observe(**kwargs: Any) -> EGMStepBuild:
+    def observe(**kwargs: Unpack[_StepKwargs]) -> EGMStepBuild:
         build = original(**kwargs)
         recorded[kwargs["regime_name"]] = dict(build.stochastic_node_axes_by_period)
         return build
@@ -222,7 +270,7 @@ def test_grouped_values_and_replay_match_independent_single_period_models(
     original_solve = Model.solve
     solved_values = []
 
-    def record(self: Model, **kwargs: Any) -> SolutionResult:
+    def record(self: Model, **kwargs: Unpack[_SolveKwargs]) -> SolutionResult:
         result = original_solve(self, **kwargs)
         solved_values.append(np.asarray(result.values[period]["parent"]))
         return result

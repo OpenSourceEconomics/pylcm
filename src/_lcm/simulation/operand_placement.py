@@ -4,7 +4,7 @@ import dataclasses
 import math
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 import jax
 import numpy as np
@@ -18,7 +18,27 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
+from _lcm.typing import ArgumentTree, HostArray
 from lcm.exceptions import ExecutionPlanningError
+from lcm.typing import ReferenceName, ValueND
+
+# One process-grid parameter: a runtime or fixed numerical value, which may be a
+# Python complex.
+type _ProcessParameter = ValueND | HostArray | np.generic | int | float | complex
+
+# A placement operand as callers hand it over: a core-program argument tree, or a
+# process-grid parameter, alone or in its parameter mapping.
+type _OperandValue = ArgumentTree | _ProcessParameter | Mapping[str, _ProcessParameter]
+
+if TYPE_CHECKING:
+    # An operand tree as the placement walk descends and rebuilds it.
+    type _Operand = (
+        _OperandValue | tuple[_Operand, ...] | list[_Operand] | Mapping[str, _Operand]
+    )
+else:
+    # beartype cannot build a check for a recursive alias over other recursive
+    # pytree aliases; callers' operands are checked against `_OperandValue`.
+    type _Operand = object
 
 
 @runtime_checkable
@@ -31,22 +51,26 @@ class SubjectArgumentNames(Protocol):
         ...
 
 
-def place_simulation_arguments(
+def place_simulation_arguments[T: _OperandValue](
     *,
-    arguments: Mapping[str, object],
-    subject_arg_names: tuple[str, ...],
+    arguments: Mapping[str, T],
+    subject_arg_names: tuple[ReferenceName, ...],
     value_reads: tuple[ValueRead, ...],
     devices: tuple[jax.Device, ...],
     budget_bytes: int | None = None,
     live_footprint: DeviceBufferFootprint | None = None,
     argument_footprint: DeviceBufferFootprint | None = None,
     budget_devices: tuple[jax.Device, ...] = (),
-) -> Mapping[str, object]:
+) -> MappingProxyType[str, T]:
     """Share scalars/grids/params and shard subjects on the declared device order.
 
     Addressed value leaves are already supplied by the period's value owner and
     pass through unchanged. Placement is call-local; this module caches no arrays.
     An already-correct array passes through by identity, including subject states.
+
+    Each argument comes back with its own container structure; only its numeric
+    leaves are replaced by device arrays, so a tree of device arrays keeps its
+    exact type and a host leaf comes back as the device array it was placed as.
 
     A budgeted caller supplies the live inventory in `live_footprint`; the
     operands are charged on top of it here. A caller that already measured
@@ -105,13 +129,14 @@ def place_simulation_arguments(
         # placements finish. Subsequent compiler planning therefore has no
         # outstanding scratch from these operand copies.
         jax.block_until_ready(placed)
-    return placed
+    # Rebuilding a container keeps its structure and places its leaves.
+    return cast("MappingProxyType[str, T]", placed)
 
 
 def _require_operand_headroom(
     *,
-    arguments: Mapping[str, object],
-    subject_arg_names: tuple[str, ...],
+    arguments: Mapping[str, _Operand],
+    subject_arg_names: tuple[ReferenceName, ...],
     subject_sharding: jax.sharding.Sharding,
     shared_sharding: jax.sharding.Sharding,
     protected: frozenset[tuple[str | int, ...]],
@@ -173,7 +198,11 @@ def subject_operand_sharding(
     return jax.NamedSharding(mesh, jax.P("X"))
 
 
-def _required_operand_bytes(*, leaf: object, sharding: jax.sharding.Sharding) -> int:
+def _required_operand_bytes(
+    *,
+    leaf: jax.Array | HostArray | np.generic | complex,
+    sharding: jax.sharding.Sharding,
+) -> int:
     """Size canonical numeric payloads without materializing a device array."""
     if isinstance(leaf, jax.Array):
         shape = tuple(leaf.shape)
@@ -192,8 +221,8 @@ def _required_operand_bytes(*, leaf: object, sharding: jax.sharding.Sharding) ->
 
 
 def _operand_leaves(
-    *, tree: object, protected: frozenset[tuple[str | int, ...]]
-) -> Iterator[object]:
+    *, tree: _Operand, protected: frozenset[tuple[str | int, ...]]
+) -> Iterator[_Operand]:
     """Walk the same operand containers while leaving addressed values untouched."""
     if () in protected:
         return
@@ -225,10 +254,10 @@ def _paths_below(
 
 def _place_operand_tree(
     *,
-    tree: object,
+    tree: _Operand,
     sharding: jax.sharding.Sharding,
     protected: frozenset[tuple[str | int, ...]],
-) -> object:
+) -> _Operand:
     """Rebuild only operand containers around the explicitly protected leaves."""
     if () in protected:
         return tree
@@ -269,7 +298,7 @@ def _place_operand_tree(
     return _place_operand_leaf(leaf=tree, sharding=sharding)
 
 
-def _place_operand_leaf(*, leaf: object, sharding: jax.sharding.Sharding) -> object:
+def _place_operand_leaf(*, leaf: _Operand, sharding: jax.sharding.Sharding) -> _Operand:
     """Move a numeric leaf while preserving already-correct buffers and metadata."""
     if isinstance(leaf, jax.Array) and leaf.sharding == sharding:
         return leaf

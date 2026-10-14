@@ -6,7 +6,7 @@ age name the source's destinations there.
 """
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Unpack
 
 import jax.numpy as jnp
 import numpy as np
@@ -31,6 +31,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.regime import Regime as UserRegime
+from lcm.regime import RegimeReplacement
 from lcm.transition import AgeSelector
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
@@ -86,8 +87,8 @@ def _granular_transition() -> ByAge:
 _WORK_EDGES = {"work": 0, "retired": (0, 1), "dead": (0, 1)}
 
 
-def _build_regime(**overrides: Any) -> UserRegime:
-    spec: dict[str, Any] = {
+def _build_regime(**overrides: Unpack[RegimeReplacement]) -> UserRegime:
+    spec: RegimeReplacement = {
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},

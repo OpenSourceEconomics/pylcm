@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.ci._workflow_types import Workflow, WorkflowStep
 from tests.ci.cpu_suite_invocations import cpu_suite_invocation_argvs
 
 _REPO_ROOT = Path(__file__).parents[2]
@@ -33,13 +34,13 @@ _GENERAL_STEPS = (
 )
 
 
-def _workflow() -> dict:
+def _workflow() -> Workflow:
     return yaml.safe_load(
         (_REPO_ROOT / ".github/workflows/cpu.yml").read_text(encoding="utf-8")
     )
 
 
-def _step(*, job: str, step_name: str) -> dict:
+def _step(*, job: str, step_name: str) -> WorkflowStep:
     return next(
         entry
         for entry in _workflow()["jobs"][job]["steps"]

@@ -20,12 +20,17 @@ from _lcm.simulation.initial_conditions import (
     _read_initial_cohorts,
     validate_simulation_inputs,
 )
-from _lcm.simulation.residency import DeviceBufferFootprint, resident_bytes_by_device
+from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    resident_bytes_by_device,
+)
 from _lcm.transition_checks import _SerialValidationRequired
-from _lcm.typing import FlatParams, InitialConditions
+from _lcm.typing import FlatParams, InitialConditions, PytreeValue
 from _lcm.utils.logging import get_logger
 from lcm import AgeGrid, Model
-from lcm.exceptions import ExecutionPlanningError
+from lcm.exceptions import ExecutionPlanningError, InvalidInitialConditionsError
 from tests.simulation.initial_conditions._models import make_asymmetric_state_model
 
 
@@ -44,6 +49,63 @@ def _case(*, n_subjects: int = 1) -> tuple[Model, FlatParams, InitialConditions]
         }
     )
     return model, params, initial
+
+
+def test_runtime_checks_disabled_release_preflight_unit_on_structural_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid initial structure still raises and releases its admitted buffers."""
+    model, params, initial = _case()
+    invalid = MappingProxyType(
+        {**initial, "regime_id": jnp.full_like(initial["regime_id"], 999)}
+    )
+    np.testing.assert_array_equal(invalid["regime_id"], [999])
+    captured: list[SimulationMemory] = []
+    original = initial_module._preflight_memory
+
+    def capture(
+        *,
+        execution: ResolvedExecution | None,
+        retained_footprint: DeviceBufferFootprint | None,
+        initial_conditions: InitialConditions,
+        flat_params: FlatParams,
+        regimes: initial_module.MappingProxyType[
+            initial_module.RegimeName, initial_module.Regime
+        ],
+        regime_names_to_ids: initial_module.RegimeNamesToIds,
+        ages: initial_module.TimeAxis,
+        producers: initial_module.ProfiledSimulationOperations | None = None,
+    ) -> SimulationMemory | None:
+        memory = original(
+            execution=execution,
+            retained_footprint=retained_footprint,
+            initial_conditions=initial_conditions,
+            flat_params=flat_params,
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            ages=ages,
+            producers=producers,
+        )
+        assert memory is not None
+        captured.append(memory)
+        return memory
+
+    monkeypatch.setattr(initial_module, "_preflight_memory", capture)
+    assert model.ages is not None
+    with pytest.raises(InvalidInitialConditionsError, match="regime"):
+        validate_simulation_inputs(
+            initial_conditions=invalid,
+            regimes=model._regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+            flat_params=params,
+            ages=model.ages,
+            logger=get_logger(log_level="off", runtime_checks=False),
+            execution=dataclasses.replace(model._execution, device_memory_bytes=2**25),
+            retained_footprint=measure_buffer_footprint(tree=(invalid, params)),
+        )
+    assert len(captured) == 1
+    assert captured[0].unit_inputs == ()
+    assert captured[0].derived == ()
 
 
 @pytest.mark.parametrize("relevant_bad_code", [False, True])
@@ -120,10 +182,10 @@ def test_resource_failures_never_select_serial_diagnostics(
     model, params, initial = _case()
     expected = error_type("resource sentinel")
 
-    def denied(**_kwargs: object) -> None:
+    def denied[Ignored](**_kwargs: Ignored) -> None:
         raise expected
 
-    def forbidden(**_kwargs: object) -> None:
+    def forbidden[Ignored](**_kwargs: Ignored) -> None:
         pytest.fail("Resource failure selected serial validation.")
 
     monkeypatch.setattr(initial_module, "_pack_initial_summary", denied)
@@ -147,7 +209,7 @@ def test_summary_allocation_is_refused_before_dispatch_and_inputs_survive(
     """Real admission refuses an unfunded summary and accepts generous headroom."""
     model, params, initial = _case(n_subjects=1024)
     generous = dataclasses.replace(model._execution, device_memory_bytes=2**25)
-    empty = DeviceBufferFootprint(spans={})
+    empty = DeviceBufferFootprint(spans=MappingProxyType({}))
     assert model.ages is not None
     memory = _preflight_memory(
         execution=generous,
@@ -173,11 +235,13 @@ def test_summary_allocation_is_refused_before_dispatch_and_inputs_survive(
     dispatched = []
     original = jax.stages.Compiled.__call__
 
-    def observe(self: jax.stages.Compiled, *args: object, **kwargs: object) -> object:
+    def observe(
+        self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         dispatched.append(self)
         return original(self, *args, **kwargs)
 
-    def forbidden(**_kwargs: object) -> None:
+    def forbidden[Ignored](**_kwargs: Ignored) -> None:
         pytest.fail("A valid budget witness selected unprofiled serial diagnostics.")
 
     monkeypatch.setattr(jax.stages.Compiled, "__call__", observe)

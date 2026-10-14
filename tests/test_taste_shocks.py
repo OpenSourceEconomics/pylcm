@@ -15,10 +15,21 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm import logsum
 from _lcm.regime_building.max_Q_over_a import draw_taste_shock_noise
+from lcm import EULER_GAMMA, AgeGrid, DiscreteGrid, Model, Regime, categorical
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
+from lcm.solvers import GridSearch
 from lcm.taste_shocks import (
     ExtremeValueTasteShocks,
 )
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+    UserParamsNode,
+)
+from tests.conftest import DECIMAL_PRECISION
 from tests.test_models import taste_shocks_toy
 
 
@@ -226,3 +237,240 @@ def test_taste_shocks_without_discrete_action_raises():
             regime_id_class=taste_shocks_toy.ToyRegimeId,
             initial_nodes={40: "alive"},
         )
+
+
+def _utility_alive_location_zero(
+    *,
+    consumption: ContinuousAction,
+    work: DiscreteAction,
+    kappa: float,
+    taste_shock_scale: float,
+) -> FloatND:
+    return (
+        taste_shocks_toy.utility_alive(consumption=consumption, work=work, kappa=kappa)
+        + taste_shock_scale * EULER_GAMMA
+    )
+
+
+def _get_location_zero_model() -> Model:
+    alive = taste_shocks_toy.alive.replace(
+        functions={"utility": _utility_alive_location_zero}
+    )
+    return Model(
+        edges={"alive": {"done": 40}},
+        regimes={"alive": alive, "done": taste_shocks_toy.done},
+        ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
+        regime_id_class=taste_shocks_toy.ToyRegimeId,
+        initial_nodes={40: "alive"},
+    )
+
+
+@pytest.mark.slow
+def test_location_zero_utility_shift_moves_value_by_constant_and_keeps_choices():
+    """Adding `scale * EULER_GAMMA` to utility gives location-0 EV1 shocks.
+
+    Under the default linear Koopmans aggregator, the constant enters every
+    discrete action's `Q` with unit slope. In this toy every action leads to
+    the same shock-free terminal regime, so each `Q` moves by the same
+    constant: the decision-period value rises by exactly `scale * EULER_GAMMA`
+    and the same seed draws the same discrete choices.
+    """
+    scale = 0.2
+    discount_factor = 0.95
+    wealth = np.linspace(1.0, 10.0, 6)
+    n_subjects = wealth.size
+    initial_conditions = {
+        "age": jnp.full(n_subjects, 40.0),
+        "wealth": jnp.asarray(wealth),
+        "regime_id": jnp.full(
+            n_subjects, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
+        ),
+    }
+    mean_zero_params = taste_shocks_toy.get_params(
+        scale=scale, discount_factor=discount_factor
+    )
+    location_zero_params = {
+        "discount_factor": discount_factor,
+        "alive": {
+            "utility": {"kappa": taste_shocks_toy.KAPPA, "taste_shock_scale": scale},
+            "next_wealth": {"wage": taste_shocks_toy.WAGE},
+            "taste_shocks": {"scale": scale},
+        },
+    }
+    mean_zero_model = taste_shocks_toy.get_model()
+    location_zero_model = _get_location_zero_model()
+
+    mean_zero_V = mean_zero_model.solve(
+        params=mean_zero_params, log_level="debug"
+    ).values
+    location_zero_V = location_zero_model.solve(
+        params=location_zero_params, log_level="debug"
+    ).values
+
+    aaae(
+        location_zero_V[0]["alive"],
+        mean_zero_V[0]["alive"] + scale * EULER_GAMMA,
+        decimal=DECIMAL_PRECISION,
+    )
+
+    mean_zero_choices = mean_zero_model.simulate(
+        params=mean_zero_params,
+        initial_conditions=initial_conditions,
+        log_level="debug",
+        seed=5471,
+    ).to_dataframe(use_labels=False)
+    location_zero_choices = location_zero_model.simulate(
+        params=location_zero_params,
+        initial_conditions=initial_conditions,
+        log_level="debug",
+        seed=5471,
+    ).to_dataframe(use_labels=False)
+
+    first_period = "period == 0"
+    np.testing.assert_array_equal(
+        location_zero_choices.query(first_period)["work"].to_numpy(),
+        mean_zero_choices.query(first_period)["work"].to_numpy(),
+    )
+
+
+@categorical(ordered=True)
+class LocationZeroDependencyAction:
+    zero: ScalarInt
+    one: ScalarInt
+
+
+@categorical(ordered=False)
+class LocationZeroDependencyRegime:
+    alive: ScalarInt
+    done: ScalarInt
+
+
+def _dependency_base_utility(*, decision: DiscreteAction, entry_cost: float) -> FloatND:
+    return decision - entry_cost
+
+
+def _dependency_mean_zero_utility(*, base_utility: FloatND) -> FloatND:
+    return base_utility
+
+
+def _dependency_location_zero_utility(
+    *, base_utility: FloatND, taste_shock_scale: float
+) -> FloatND:
+    return base_utility + taste_shock_scale * EULER_GAMMA
+
+
+def _dependency_feasible_from_utility(*, utility: FloatND) -> BoolND:
+    return utility >= 0
+
+
+def _dependency_feasible_from_base_utility(*, base_utility: FloatND) -> BoolND:
+    return base_utility >= 0
+
+
+def _dependency_terminal_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _get_utility_dependency_model(
+    *, shifted: bool, preserve_constraint_input: bool
+) -> Model:
+    utility = (
+        _dependency_location_zero_utility if shifted else _dependency_mean_zero_utility
+    )
+    feasibility = (
+        _dependency_feasible_from_base_utility
+        if preserve_constraint_input
+        else _dependency_feasible_from_utility
+    )
+    alive = Regime(
+        actions={"decision": DiscreteGrid(category_class=LocationZeroDependencyAction)},
+        functions={"base_utility": _dependency_base_utility, "utility": utility},
+        constraints={"nonnegative_felicity": feasibility},
+        taste_shocks=ExtremeValueTasteShocks(),
+        solver=GridSearch(),
+    )
+    return Model(
+        edges={"alive": {"done": 40}},
+        regimes={
+            "alive": alive,
+            "done": Regime(functions={"utility": _dependency_terminal_utility}),
+        },
+        ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
+        regime_id_class=LocationZeroDependencyRegime,
+        initial_nodes={40: "alive"},
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("entry_cost", "scale", "adds_feasible_action"),
+    [
+        pytest.param(0.25, 0.2, False, id="shift-below-feasibility-threshold"),
+        pytest.param(0.25, 1.0, True, id="shift-crosses-feasibility-threshold"),
+        pytest.param(0.0, 0.2, False, id="zero-utility-action-is-feasible"),
+        pytest.param(1.0, 0.2, False, id="only-zero-utility-action-is-feasible"),
+    ],
+)
+def test_location_zero_shift_preserves_unshifted_constraint_inputs(
+    *, entry_cost: float, scale: float, adds_feasible_action: bool
+) -> None:
+    """A location shift changes shocks while preserving the original feasible set.
+
+    Utility is a shared DAG output. A constraint reading it must keep reading
+    unshifted felicity when the public recipe adds the Gumbel mean. A naive
+    rewrite can admit a formerly infeasible action, even with LinearAggregator.
+    The two boundary cases also keep the original non-strict constraint literal.
+    """
+    mean_zero_params: dict[str, UserParamsNode] = {
+        "discount_factor": 0.95,
+        "alive": {
+            "base_utility": {"entry_cost": entry_cost},
+            "taste_shocks": {"scale": scale},
+        },
+    }
+    location_zero_params: dict[str, UserParamsNode] = {
+        "discount_factor": 0.95,
+        "alive": {
+            "base_utility": {"entry_cost": entry_cost},
+            "utility": {"taste_shock_scale": scale},
+            "taste_shocks": {"scale": scale},
+        },
+    }
+    mean_zero_model = _get_utility_dependency_model(
+        shifted=False, preserve_constraint_input=False
+    )
+    naive_model = _get_utility_dependency_model(
+        shifted=True, preserve_constraint_input=False
+    )
+    location_zero_model = _get_utility_dependency_model(
+        shifted=True, preserve_constraint_input=True
+    )
+
+    mean_zero_value = mean_zero_model.solve(
+        params=mean_zero_params, log_level="debug"
+    ).values[0]["alive"]
+    naive_value = naive_model.solve(
+        params=location_zero_params, log_level="debug"
+    ).values[0]["alive"]
+    location_zero_value = location_zero_model.solve(
+        params=location_zero_params, log_level="debug"
+    ).values[0]["alive"]
+
+    # Enumerate the two deterministic actions independently of the model DAG.
+    base_values = np.array([0.0, 1.0]) - entry_cost
+    shift = scale * np.euler_gamma
+    original_mask = base_values >= 0.0
+    naive_mask = base_values + shift >= 0.0
+    expected_mean_zero = scale * np.logaddexp.reduce(base_values[original_mask] / scale)
+    expected_location_zero = expected_mean_zero + shift
+    expected_naive = shift + scale * np.logaddexp.reduce(
+        base_values[naive_mask] / scale
+    )
+
+    aaae(mean_zero_value, expected_mean_zero, decimal=DECIMAL_PRECISION)
+    aaae(location_zero_value, expected_location_zero, decimal=DECIMAL_PRECISION)
+    aaae(naive_value, expected_naive, decimal=DECIMAL_PRECISION)
+    if adds_feasible_action:
+        assert float(naive_value) > float(location_zero_value)
+    else:
+        aaae(naive_value, location_zero_value, decimal=DECIMAL_PRECISION)

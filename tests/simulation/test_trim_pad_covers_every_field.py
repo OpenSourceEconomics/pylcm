@@ -7,8 +7,8 @@ so coverage remains complete as the result schema evolves.
 
 import dataclasses
 from types import MappingProxyType
-from typing import Any
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -46,17 +46,18 @@ def _period_data(n_rows: int) -> PeriodRegimeSimulationData:
     """One period's data with EVERY field at `n_rows` rows.
 
     Built field-by-field from the dataclass so a newly added field is populated here
-    automatically; `kwargs` is `Any`-valued because the per-field type is only known
-    at runtime, and beartype checks it at construction anyway.
+    automatically. Each field holds an array or a named mapping of arrays,
+    and beartype checks the individual field annotations at construction.
     """
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, jax.Array | MappingProxyType[str, jax.Array]] = {}
     for field in dataclasses.fields(PeriodRegimeSimulationData):
         column = _column(field=field, n_rows=n_rows)
         if field.name in _MAPPING_FIELDS:
             kwargs[field.name] = MappingProxyType({"a": column, "b": column})
         else:
             kwargs[field.name] = column
-    return PeriodRegimeSimulationData(**kwargs)
+    # Dynamic field names are paired with their declared array or mapping shape.
+    return PeriodRegimeSimulationData(**kwargs)  # ty: ignore[invalid-argument-type]
 
 
 def _padded_period_data() -> PeriodRegimeSimulationData:

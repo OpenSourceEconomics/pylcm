@@ -71,6 +71,13 @@ Public inspection attributes include:
 - `pruned_variables`;
 - `get_params_template()`, which returns a mutable nested template.
 
+`model.validate_transitions(params=params)` runs the transition preflight used by
+`solve(runtime_checks=True)` without backward induction. It returns `None` on success
+and raises the same first diagnostic for invalid regime probabilities, stochastic state
+laws or joint transition supports and probabilities. It checks active periods and phase
+grids with numerical checks always enabled and no console output. Utilities, solver
+outputs and general deterministic next-state finiteness are outside this preflight.
+
 Two methods check initial conditions without solving or simulating. Both accept the same
 `initial_conditions` forms as `simulate` — a mapping of arrays with `"regime_id"` codes,
 or a DataFrame with a `"regime_name"` column, ages and categorical labels — and the same
@@ -229,6 +236,42 @@ on the source regime of a gated transition; together with a folded IID state
 (`fold=True`); and together with a nonlinear certainty equivalent. These are semantic
 boundaries, not ignored options: the declaration is rejected during `Regime` declaration
 or `Model` construction, before solve.
+
+(api-euler-gamma)=
+
+### Location-0 shocks and `EULER_GAMMA`
+
+pylcm's taste shocks are mean-zero. Many papers use the standard Gumbel with location
+zero, whose mean is `scale * EULER_GAMMA`, the scale times the Euler-Mascheroni
+constant. To match such a model, add that mean to the utility of every action in each
+regime that declares taste shocks:
+
+```python
+import jax.numpy as jnp
+
+from lcm import EULER_GAMMA
+
+
+def utility(*, consumption, work, kappa, taste_shock_scale):
+    return jnp.log(consumption) - kappa * work + taste_shock_scale * EULER_GAMMA
+```
+
+Pass `taste_shock_scale` with the same value as the regime's `taste_shocks` scale.
+`lcm.EULER_GAMMA` equals `numpy.euler_gamma`.
+
+Apply the shift only to the Bellman utility. Keep feasibility, transition laws, and
+other consumers of the original utility unchanged. If `utility` also feeds a constraint
+or another DAG node, factor the original expression into `base_utility`, point those
+consumers at `base_utility`, and add the shift in the `utility` wrapper. For example,
+`base_utility >= 0` must not become `base_utility + scale * EULER_GAMMA >= 0`.
+
+With these other uses preserved, the recipe reproduces the location-0 model, including
+solved values and choice probabilities, when the Koopmans aggregator satisfies
+`W(u + c, CE, ...) = W(u, CE, ...) + c` for `c = scale * EULER_GAMMA`.
+`LinearAggregator` (the default) and custom aggregators additive in utility with unit
+slope have this property. pylcm adds the shock to the choice-specific value after
+aggregation; for aggregators without this property, such as `CESAggregator` in general,
+shifting utility does not reproduce location-0 shocks.
 
 ## Derived categoricals
 

@@ -5,7 +5,7 @@ import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, no_type_check
+from typing import no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -26,8 +26,13 @@ from _lcm.transition_plans import (
     TargetTransitionPlans,
 )
 from _lcm.typing import (
+    ArrayTree,
     EconFunctionsMapping,
     NextStateSimulationFunction,
+    NextStateSolutionFunction,
+    PRNGKeyND,
+    PytreeValue,
+    QualifiedName,
     RegimeName,
     StateName,
     StateOrActionName,
@@ -37,7 +42,16 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import ContinuousState, DiscreteState, Float1D, FloatND, IntND
+from lcm.typing import (
+    ContinuousState,
+    DiscreteState,
+    Float1D,
+    FloatND,
+    IntND,
+    ReferenceName,
+    ScalarFloat,
+    ScalarInt,
+)
 
 
 def get_next_state_function_for_solution(
@@ -45,7 +59,7 @@ def get_next_state_function_for_solution(
     transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
     functions: EconFunctionsMapping,
     targets: Sequence[TransitionFunctionName] | None = None,
-) -> NextStateSimulationFunction:
+) -> NextStateSolutionFunction:
     """Get function that computes the next states during the solution.
 
     Args:
@@ -283,7 +297,7 @@ def _extend_bundle_for_simulation(
     bundle: MappingProxyType[TransitionFunctionName, Callable[..., FloatND | IntND]],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     transition_plans: TargetTransitionPlans,
-) -> dict[TransitionFunctionName, Callable[..., FloatND | IntND]]:
+) -> dict[TransitionFunctionName, Callable[..., ArrayTree]]:
     """Replace stochastic transitions for one target with realisation wrappers.
 
     Deterministic transitions are passed through unchanged. Stochastic transitions
@@ -308,9 +322,7 @@ def _extend_bundle_for_simulation(
 
     """
     plan = transition_plans[target_regime_name]
-    extended: dict[TransitionFunctionName, Callable[..., FloatND | IntND]] = dict(
-        bundle
-    )
+    extended: dict[TransitionFunctionName, Callable[..., ArrayTree]] = dict(bundle)
     for next_state_name in bundle:
         lottery = plan.lotteries.get(next_state_name)
         if lottery is None:
@@ -354,7 +366,7 @@ def _create_joint_stochastic_next_func(
     support_provider_name: str | None,
     support_size: int | None,
     node_annotation: str | None,
-) -> Callable[..., Any]:
+) -> _RealizedJointNode:
     """Draw one support node and publish its whole pytree to dependent outputs."""
     if support_provider_name is None or support_size is None or node_annotation is None:
         raise ModelInitializationError(
@@ -375,7 +387,7 @@ def _create_joint_stochastic_next_func(
 class _RealizedJointNode:
     """Draw one support node of a joint lottery and publish its whole pytree."""
 
-    qname: str
+    qname: QualifiedName
     """Qualified `<target>__<lottery>` name of the lottery."""
     support_provider_name: str
     """Name of the DAG node supplying the lottery's support."""
@@ -400,7 +412,7 @@ class _RealizedJointNode:
     # Python scalars, arrays of either integer width -- so its annotations
     # document the contract and are not enforced at call time.
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: PytreeValue) -> ArrayTree:
         index = jax.random.choice(
             key=kwargs[f"key_{self.qname}"],
             a=self.support_size,
@@ -446,7 +458,7 @@ def _create_discrete_stochastic_next_func(
 class _DiscreteStochasticNextState:
     """Draw a discrete state's next value from its weight vector."""
 
-    qname: str
+    qname: QualifiedName
     """Qualified `<target>__next_<state>` name of the transition."""
     labels: DiscreteState
     """Category codes the drawn value is one of."""
@@ -540,7 +552,7 @@ def _resolve_conditioned_sigma(
 
 def _create_ar1_next_func(
     *,
-    qname: str,
+    qname: QualifiedName,
     state_name: StateName,
     grid: _AR1Process,
     conditioned: tuple[StateConditioned, Float1D] | None = None,
@@ -549,7 +561,7 @@ def _create_ar1_next_func(
     runtime_param_names = {
         qname_from_tree_path((state_name, p)): p for p in grid.params_to_pass_at_runtime
     }
-    args: dict[str, str] = {
+    args: dict[ReferenceName, str] = {
         f"key_{qname}": "PRNGKeyND",
         state_name: "ContinuousState",
         **dict.fromkeys(runtime_param_names, "FloatND"),
@@ -571,13 +583,13 @@ def _create_ar1_next_func(
 class _AR1NextState:
     """Draw an AR(1) process's next value from its current value and a key."""
 
-    qname: str
+    qname: QualifiedName
     """Qualified `<target>__next_<state>` name of the transition."""
     state_name: StateName
     """Name of the process state whose current value the draw conditions on."""
-    args: dict[str, str]
+    args: dict[ReferenceName, str]
     """Argument names and annotations, in signature order."""
-    fixed_params: dict[str, Any]
+    fixed_params: dict[str, ScalarFloat | ScalarInt]
     """Process parameters fixed at construction."""
     runtime_param_names: dict[str, str]
     """Mapping of qualified runtime-param names to the process's own names."""
@@ -612,7 +624,7 @@ class _AR1NextState:
 
 def _create_iid_next_func(
     *,
-    qname: str,
+    qname: QualifiedName,
     state_name: StateName,
     grid: _IIDProcess,
     conditioned: tuple[StateConditioned, Float1D] | None = None,
@@ -621,7 +633,7 @@ def _create_iid_next_func(
     runtime_param_names = {
         qname_from_tree_path((state_name, p)): p for p in grid.params_to_pass_at_runtime
     }
-    args: dict[str, str] = {
+    args: dict[ReferenceName, str] = {
         f"key_{qname}": "PRNGKeyND",
         **dict.fromkeys(runtime_param_names, "FloatND"),
     }
@@ -641,11 +653,11 @@ def _create_iid_next_func(
 class _IIDNextState:
     """Draw an IID process's next value from a key."""
 
-    qname: str
+    qname: QualifiedName
     """Qualified `<target>__next_<state>` name of the transition."""
-    args: dict[str, str]
+    args: dict[ReferenceName, str]
     """Argument names and annotations, in signature order."""
-    fixed_params: dict[str, Any]
+    fixed_params: dict[str, ScalarFloat | ScalarInt]
     """Process parameters fixed at construction."""
     runtime_param_names: dict[str, str]
     """Mapping of qualified runtime-param names to the process's own names."""
@@ -678,8 +690,10 @@ class _IIDNextState:
 
 
 def _conditioned_sigma(
-    *, conditioned: tuple[StateConditioned, Float1D] | None, kwargs: Mapping[str, Any]
-) -> Mapping[str, Any]:
+    *,
+    conditioned: tuple[StateConditioned, Float1D] | None,
+    kwargs: Mapping[ReferenceName, FloatND | IntND | PRNGKeyND],
+) -> Mapping[str, ScalarFloat]:
     """Return `{"sigma": <the value the conditioning state selects>}`, else `{}`.
 
     Overrides the scalar `sigma` that places the nodes, so the draw uses the same
@@ -693,8 +707,8 @@ def _conditioned_sigma(
 
 def _publish_signature(
     *,
-    target: object,
-    args: Mapping[str, str],
+    target: Callable[..., ArrayTree],
+    args: Mapping[ReferenceName, str],
     return_annotation: str,
     name: str,
 ) -> None:

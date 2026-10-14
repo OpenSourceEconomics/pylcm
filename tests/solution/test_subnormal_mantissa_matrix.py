@@ -28,6 +28,7 @@ from lcm import (
     categorical,
 )
 from lcm.certainty_equivalent import CertaintyEquivalent
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 
@@ -158,9 +159,13 @@ def _model(
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 
 
-def _source_value(*, model: Model, log_level: LogLevel = "off") -> FloatND:
+def _source_value(
+    *, model: Model, log_level: LogLevel = "off", runtime_checks: bool = True
+) -> FloatND:
     return jnp.asarray(
-        model.solve(params=_PARAMS, log_level=log_level).values[0]["source"]
+        model.solve(
+            params=_PARAMS, log_level=log_level, runtime_checks=runtime_checks
+        ).values[0]["source"]
     )
 
 
@@ -343,7 +348,10 @@ def test_a_negative_smallest_subnormal_does_not_bypass_the_distribution_guard() 
         rare_probability=lambda: -_smallest_subnormal(),
         rare_payoff=_largest_finite_rare_payoff,
     )
-    value = _source_value(model=model, log_level="off")
+    with pytest.raises(InvalidValueFunctionError, match="NaN"):
+        _source_value(model=model)
+    # Inspect the native distribution guard's invalid-value sentinel.
+    value = _source_value(model=model, runtime_checks=False)
 
     assert bool(jnp.all(jnp.isnan(value)))
 

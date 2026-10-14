@@ -17,20 +17,98 @@ it labelled a fallback carries no donating candidate.
 """
 
 import dataclasses
+import logging
 from collections.abc import Hashable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import NotRequired, TypedDict, Unpack
 
+import jax
 import pytest
 
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.solution import backward_induction
-from lcm import ExecutionConfig
-from lcm.solver_api import ResultRetention
+from lcm import ExecutionConfig, Model
+from lcm.solver_api import ResultRetention, SolutionResult
 from tests.test_models import nbegm_ride_along_toy
 
-type WidthKey = tuple[tuple[str, int], ...]
-type Triple = tuple[str, int, str]
+type WidthKey = backward_induction._WidthKey
+type Triple = backward_induction._CoreTriple
+
+
+class _WaveKwargs(TypedDict):
+    new_lowerings: Mapping[Hashable, backward_induction._CoreCandidate]
+    resolved_programs: Mapping[
+        backward_induction._CoreCandidate, backward_induction.ResolvedCoreProgram
+    ]
+    all_layouts: Mapping[
+        backward_induction._CoreTriple, backward_induction.ResolvedOutputLayout
+    ]
+    internal_templates: Mapping[
+        backward_induction._CoreCandidate,
+        Mapping[backward_induction.ReferenceName, backward_induction.ShapeDtypePytree],
+    ]
+    donations: Mapping[
+        backward_induction._CoreCandidate,
+        tuple[backward_induction.ResolvedDonation, ...],
+    ]
+    ages: backward_induction.TimeAxis
+    n_triples_per_lowering: Mapping[Hashable, int]
+    log_kernel_memory: bool
+    n_workers: int
+    logger: logging.Logger
+    compiled: dict[Hashable, jax.stages.Compiled]
+    labels: dict[Hashable, str]
+
+
+class _ResidencyKwargs(TypedDict):
+    compiled: jax.stages.Compiled
+    program: backward_induction.ResolvedCoreProgram
+    internal_arguments: Mapping[
+        backward_induction.ReferenceName, backward_induction.ShapeDtypePytree
+    ]
+    inventory: backward_induction.ResidentInventory
+
+
+class _CompilationKwargs(TypedDict):
+    regimes: MappingProxyType[backward_induction.RegimeName, backward_induction.Regime]
+    program_fingerprint: str
+    flat_params: backward_induction.FlatParams
+    ages: backward_induction.TimeAxis
+    next_regime_to_V_arr: MappingProxyType[
+        backward_induction.RegimeName, backward_induction.FloatND
+    ]
+    next_regime_to_continuation: MappingProxyType[
+        backward_induction.RegimeName, backward_induction.ContinuationPayload
+    ]
+    next_edge_to_V_arr: MappingProxyType[
+        backward_induction._EdgeKey, backward_induction.FloatND
+    ]
+    enable_jit: bool
+    execution: backward_induction.ResolvedExecution
+    retain_replay: bool
+    retain_all_artifacts: bool
+    persistable_artifact_refs: frozenset[backward_induction.ArtifactRef]
+    max_compilation_workers: int | None
+    logger: logging.Logger
+    call_id: NotRequired[backward_induction.CallId | None]
+    fixed_input_arrays: NotRequired[backward_induction.PytreeByPeriod]
+    process_grid_resolver: NotRequired[backward_induction.ProcessGridResolver | None]
+    gather_checks: NotRequired[backward_induction.GatherChecks | None]
+    executable_cache: NotRequired[backward_induction.ExecutableCache | None]
+    capture_periods: NotRequired[tuple[tuple[str, int], ...]]
+    structural_blueprints: NotRequired[
+        backward_induction.StructuralBlueprintCache | None
+    ]
+    base_state_action_spaces: NotRequired[
+        Mapping[backward_induction.RegimeName, backward_induction.StateActionSpace]
+        | None
+    ]
+
+
+class _ReservationKwargs(TypedDict):
+    compiled: jax.stages.Compiled
+    widths: Mapping[str, int]
+
 
 # Role of the wave call that lowers each triple's donating variant.
 PRIMARY = "primary"
@@ -89,9 +167,9 @@ class Census:
     """Every lowering key the solve compiled."""
     selected_widths: Mapping[Triple, WidthKey]
     """Widths the finished solve dispatched for each triple."""
-    donation_fallbacks: Mapping[Triple, Any]
+    donation_fallbacks: Mapping[Triple, backward_induction.PlannedCore]
     """The finished solve's selected donation-free fallbacks."""
-    selected_cores: Mapping[Triple, Any]
+    selected_cores: Mapping[Triple, backward_induction.PlannedCore]
     """The planned core the finished solve dispatches for each triple."""
 
     def rows_for(self, *, role: str) -> tuple[CandidateRow, ...]:
@@ -114,7 +192,7 @@ def donor_pair_model(
     *,
     device_memory_bytes: int | None,
     axis_widths: Mapping[str, int] = MappingProxyType({}),
-) -> Any:
+) -> Model:
     """Build the donor-pair fixture under one budget and one width constraint."""
     return nbegm_ride_along_toy.build_model(
         variant="nbegm",
@@ -127,7 +205,7 @@ def donor_pair_model(
     )
 
 
-def solve_donor_pair(*, model: Any) -> Any:
+def solve_donor_pair(*, model: Model) -> SolutionResult:
     """Solve the donor-pair fixture, retaining values only."""
     return model.solve(
         params=nbegm_ride_along_toy.build_params(),
@@ -152,10 +230,10 @@ class CensusRecorder:
         self._reservations: dict[int, int] = {}
         self._measured: list[tuple[Triple, WidthKey, str, int, int]] = []
         self._selected_widths: dict[Triple, WidthKey] = {}
-        self._donation_fallbacks: Mapping[Triple, Any] = {}
-        self._selected_cores: dict[Triple, Any] = {}
+        self._donation_fallbacks: Mapping[Triple, backward_induction.PlannedCore] = {}
+        self._selected_cores: dict[Triple, backward_induction.PlannedCore] = {}
 
-    def role_of(self, *, compiled: object) -> str:
+    def role_of(self, *, compiled: jax.stages.Compiled) -> str:
         """Name the wave-call role the executable's key was lowered by."""
         return self._role_of_compiled[id(compiled)]
 
@@ -166,24 +244,28 @@ class CensusRecorder:
         compile_all = backward_induction._compile_all_functions
         reservation = backward_induction.compiler_memory_reservation
 
-        def observe_wave(**kwargs: Any) -> None:
+        def observe_wave(**kwargs: Unpack[_WaveKwargs]) -> None:
             role = self._open_call(**kwargs)
             wave(**kwargs)
             self._close_call(role=role, **kwargs)
 
-        def observe_reservation(**kwargs: Any) -> CompilerMemoryReservation:
+        def observe_reservation(
+            **kwargs: Unpack[_ReservationKwargs],
+        ) -> CompilerMemoryReservation:
             value = reservation(**kwargs)
             self._reservations.setdefault(
                 id(kwargs["compiled"]), value.reservation_bytes
             )
             return value
 
-        def observe_residency(**kwargs: Any) -> int:
+        def observe_residency(**kwargs: Unpack[_ResidencyKwargs]) -> int:
             actual = resident(**kwargs)
             self._record_measurement(residency=actual, **kwargs)
             return actual
 
-        def observe_compilation(**kwargs: Any) -> Any:
+        def observe_compilation(
+            **kwargs: Unpack[_CompilationKwargs],
+        ) -> backward_induction._CompiledPrograms:
             result = compile_all(**kwargs)
             self._record_result(result=result)
             return result
@@ -224,7 +306,7 @@ class CensusRecorder:
             selected_cores=dict(self._selected_cores),
         )
 
-    def _open_call(self, **kwargs: Any) -> str:
+    def _open_call(self, **kwargs: Unpack[_WaveKwargs]) -> str:
         """Label the call by wave order and learn every candidate's program."""
         role = self._next_role
         if role == PRIMARY:
@@ -242,7 +324,7 @@ class CensusRecorder:
                 self._fallback_key_of_candidate[candidate] = key
         return role
 
-    def _close_call(self, *, role: str, **kwargs: Any) -> None:
+    def _close_call(self, *, role: str, **kwargs: Unpack[_WaveKwargs]) -> None:
         """Read back the executables the finished call left behind."""
         keys = tuple(kwargs["new_lowerings"])
         candidates = tuple(kwargs["new_lowerings"].values())
@@ -254,7 +336,9 @@ class CensusRecorder:
             WaveCall(wave=self._wave, role=role, keys=keys, candidates=candidates)
         )
 
-    def _record_measurement(self, *, residency: int, **kwargs: Any) -> None:
+    def _record_measurement(
+        self, *, residency: int, **kwargs: Unpack[_ResidencyKwargs]
+    ) -> None:
         """Attach one residency reading to the candidate it was taken for."""
         triple, widths = self._candidate_of_program[id(kwargs["program"])]
         compiled = kwargs["compiled"]
@@ -262,7 +346,7 @@ class CensusRecorder:
             (triple, widths, self.role_of(compiled=compiled), id(compiled), residency)
         )
 
-    def _record_result(self, *, result: Any) -> None:
+    def _record_result(self, *, result: backward_induction._CompiledPrograms) -> None:
         """Read the finished solve's selection and its donation-free fallbacks."""
         self._donation_fallbacks = dict(result.donation_fallbacks)
         for (regime, period), cores in result.executables.items():

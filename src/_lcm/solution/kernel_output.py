@@ -10,10 +10,10 @@ immediate error naming the regime and period rather than a silent loss, so a
 producer-side artifact without its engine reader cannot ship.
 """
 
-from collections.abc import Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax.numpy as jnp
 
@@ -25,7 +25,7 @@ from _lcm.solution.contract import (
     GeneratedReplayAuthority,
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.typing import RegimeName, SimulationPolicy
+from _lcm.typing import ArtifactPayload, RegimeName, SimulationPolicy
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     SIMULATION_POLICY,
@@ -80,19 +80,19 @@ class ConsumedKernelOutput:
     diagnostics: SolverDiagnostics | None
     """The solver's numerical self-report, when it measures anything."""
 
-    continuation_artifacts: Mapping[ArtifactKey, object]
+    continuation_artifacts: MappingProxyType[ArtifactKey, ArtifactPayload]
     """Declared continuation payloads retained independently after rolling."""
 
-    replay_artifacts: Mapping[ArtifactKey, object]
+    replay_artifacts: MappingProxyType[ArtifactKey, ArtifactPayload]
     """Every declared replay payload, including custom plugin artifacts."""
 
-    auxiliary_artifacts: Mapping[ArtifactKey, object]
+    auxiliary_artifacts: MappingProxyType[ArtifactKey, ArtifactPayload]
     """Declared solver outputs retained only for inspection or persistence."""
 
 
 def consume_kernel_output(
     *,
-    output: object,
+    output: KernelOutput,
     continuation_key: ArtifactKey | None,
     regime_name: RegimeName,
     period: int,
@@ -118,7 +118,7 @@ def consume_kernel_output(
         raise TypeError(msg)
 
     continuations = dict(output.continuations)
-    published_continuations: dict[ArtifactKey, object] = {}
+    published_continuations: dict[ArtifactKey, ArtifactPayload] = {}
     continuation: ContinuationPayload | None = None
     if continuation_key is not None:
         _fail_on_version_mismatch(
@@ -252,7 +252,7 @@ def consume_kernel_output(
         generated_replay_authority=generated_replay_authority,
         dissolution=dissolution,
         diagnostics=diagnostics,
-        continuation_artifacts=published_continuations,
+        continuation_artifacts=MappingProxyType(published_continuations),
         replay_artifacts=published_replay,
         auxiliary_artifacts=declared_auxiliary,
     )
@@ -261,13 +261,13 @@ def consume_kernel_output(
 def _consume_declared_artifacts(
     *,
     channel: ArtifactChannel,
-    artifacts: dict[ArtifactKey, object],
+    artifacts: dict[ArtifactKey, ArtifactPayload],
     authorities: Mapping[ArtifactKey, ArtifactAuthority],
     regime_name: RegimeName,
     period: int,
-) -> dict[ArtifactKey, object]:
+) -> MappingProxyType[ArtifactKey, ArtifactPayload]:
     """Canonicalize extension artifacts once and return those exact snapshots."""
-    canonical: dict[ArtifactKey, object] = {}
+    canonical: dict[ArtifactKey, ArtifactPayload] = {}
     for key in tuple(artifacts):
         authority = authorities.get(key)
         if authority is None or authority.descriptor.channel is not channel:
@@ -287,18 +287,18 @@ def _consume_declared_artifacts(
         regime_name=regime_name,
         period=period,
     )
-    return canonical
+    return MappingProxyType(canonical)
 
 
 def _canonicalize_declared_artifact(
     *,
-    payload: object,
+    payload: ArtifactPayload,
     authority: ArtifactAuthority,
     channel: ArtifactChannel,
     key: ArtifactKey,
     regime_name: RegimeName,
     period: int,
-) -> object:
+) -> ArtifactPayload:
     """Canonicalize a producer payload and attach its cell to any defect."""
     if authority.descriptor.key != key or authority.descriptor.channel is not channel:
         raise RuntimeError(
@@ -321,15 +321,15 @@ def _canonicalize_declared_artifact(
         ) from error
 
 
-def _pop_typed_artifact(
+def _pop_typed_artifact[Payload](
     *,
     channel: str,
-    artifacts: dict[ArtifactKey, object],
+    artifacts: dict[ArtifactKey, ArtifactPayload],
     key: ArtifactKey,
-    expected_types: tuple[type, ...],
+    expected_types: tuple[type[Payload], ...],
     regime_name: RegimeName,
     period: int,
-) -> Any:  # noqa: ANN401
+) -> Payload | None:
     """Remove the artifact under `key` from `artifacts` after checking its type.
 
     Returns `None` when the key is absent; a present artifact of a type the
@@ -379,7 +379,7 @@ def _fail_on_self_declared_key_mismatch(
 
 def _fail_on_version_mismatch(
     *,
-    keys: Mapping[ArtifactKey, object],
+    keys: Iterable[ArtifactKey],
     expected: ArtifactKey,
     regime_name: RegimeName,
     period: int,
@@ -403,7 +403,7 @@ def _fail_on_version_mismatch(
 def _fail_on_unconsumed(
     *,
     channel: str,
-    artifacts: Mapping[ArtifactKey, object],
+    artifacts: Collection[ArtifactKey],
     regime_name: RegimeName,
     period: int,
 ) -> None:

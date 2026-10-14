@@ -9,10 +9,12 @@ matches a dense brute solve that maximises over the same product.
 
 import functools
 from collections.abc import Mapping
+from typing import Literal
 
 import numpy as np
 import pytest
 
+from lcm.typing import FloatND, RegimeName
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import nbegm_multi_discrete_toy as toy
 
@@ -35,8 +37,8 @@ def _solve(
     variant: str,
     n_actions: int,
     n_consumption: int = 120,
-    envelope_arithmetic: str = "certified",
-) -> Mapping[int, Mapping]:
+    envelope_arithmetic: Literal["certified", "ordinary"] = "certified",
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     model = toy.build_model(
         variant=variant,
         n_actions=n_actions,
@@ -58,7 +60,10 @@ def _solve(
     ],
 )
 def test_nbegm_envelope_over_several_discrete_actions_matches_brute(
-    *, n_actions: int, n_branches: int, envelope_arithmetic: str
+    *,
+    n_actions: int,
+    n_branches: int,
+    envelope_arithmetic: Literal["certified", "ordinary"],
 ) -> None:
     """`V` agrees with a dense brute solve when several discrete actions are declared.
 
@@ -99,7 +104,10 @@ _EVERY_NODE_ATOL = 3e-2
 
 @functools.cache
 def _alive_values(
-    *, variant: str, overrides_name: str, envelope_arithmetic: str = "certified"
+    *,
+    variant: str,
+    overrides_name: str,
+    envelope_arithmetic: Literal["certified", "ordinary"] = "certified",
 ) -> np.ndarray:
     """Solve the three-action toy and stack the alive value of every alive period."""
     model = toy.build_model(
@@ -123,7 +131,7 @@ def _alive_values(
 )
 @pytest.mark.parametrize("overrides_name", tuple(_UNAFFORDABLE_BRANCH_OVERRIDES))
 def test_nbegm_matches_brute_where_a_branch_affords_no_action(
-    *, overrides_name: str, envelope_arithmetic: str
+    *, overrides_name: str, envelope_arithmetic: Literal["certified", "ordinary"]
 ) -> None:
     """`V` agrees with a dense brute solve at every node, including the lowest
     liquid nodes where the insured branch affords no action.

@@ -3,7 +3,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
 
 import jax
 
@@ -13,8 +12,17 @@ from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.subject_devices import simulation_subject_devices
-from _lcm.typing import FlatParams, RegimeName, StateOrActionName
-from lcm.typing import Float1D, Int1D, IntND
+from _lcm.typing import FlatParams, RegimeName, StateName, StateOrActionName
+from lcm.typing import (
+    ActionName,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    Float1D,
+    Int1D,
+    IntND,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -26,7 +34,18 @@ class SimulationCallInputs:
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace]
 
     @property
-    def array_roots(self) -> object:
+    def array_roots(
+        self,
+    ) -> tuple[
+        FlatParams,
+        tuple[
+            tuple[
+                MappingProxyType[StateName, ContinuousState | DiscreteState],
+                MappingProxyType[ActionName, DiscreteAction | ContinuousAction],
+            ],
+            ...,
+        ],
+    ]:
         """Expose transient concrete roots without rebuilding a parameterized grid."""
         return (
             self.flat_params,
@@ -61,7 +80,7 @@ def prepare_simulation_call_inputs(
         live_footprint=None if memory is None else memory.snapshot(),
         budget_devices=() if memory is None else memory.devices,
     )
-    flat_params = cast("FlatParams", shared["params"])
+    flat_params = shared["params"]
     if memory is not None:
         memory.hold(tree=flat_params)
     spaces = {}
@@ -145,9 +164,9 @@ def prepare_simulation_chunk_inputs(
         live_footprint=None if memory is None else memory.snapshot(),
         budget_devices=() if memory is None else memory.devices,
     )
-    initial_regime_ids = cast("Int1D", subject_inputs["regime_ids"])
-    initial_own_stakeholder = cast("Int1D", subject_inputs["roles"])
-    starting_periods = cast("Int1D", subject_inputs["starting_periods"])
+    initial_regime_ids = subject_inputs["regime_ids"]
+    initial_own_stakeholder = subject_inputs["roles"]
+    starting_periods = subject_inputs["starting_periods"]
     base_state_action_spaces = call_inputs.base_state_action_spaces
     if memory is not None:
         memory.set_chunk_inputs(

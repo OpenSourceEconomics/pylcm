@@ -7,7 +7,7 @@ bounded search refused at the covered width falls back to the power-of-two width
 """
 
 from collections.abc import Hashable, Mapping
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 import pytest
 from beartype.roar import BeartypeCallHintViolation
@@ -164,11 +164,14 @@ def test_bounded_width_selector_does_not_refine_back_toward_a_refused_cover() ->
     ],
 )
 def test_execution_config_refuses_malformed_covered_axes(
-    *, covered_axes: Any, error: type[Exception], match: str
+    *,
+    covered_axes: list[str] | tuple[int, ...] | tuple[str, ...],
+    error: type[Exception],
+    match: str,
 ) -> None:
     """`covered_axes` must be a tuple of distinct non-empty axis names."""
     with pytest.raises(error, match=match):
-        ExecutionConfig(covered_axes=covered_axes)
+        ExecutionConfig(covered_axes=covered_axes)  # ty: ignore[invalid-argument-type]
 
 
 def test_model_refuses_covered_axes_naming_an_undeclared_axis() -> None:
@@ -189,7 +192,7 @@ def _keys_by_triple(
     ).solve(params=get_params(n_periods=3), log_level="off")
     grouped: dict[Hashable, tuple[Mapping[str, int], set[Hashable]]] = {}
     for candidate, key in captured[0].items():
-        triple, widths = cast("tuple[Hashable, Any]", candidate)
+        triple, widths = cast("tuple[Hashable, tuple[tuple[str, int], ...]]", candidate)
         grouped.setdefault(triple, (dict(widths), set()))[1].add(key)
     return grouped
 

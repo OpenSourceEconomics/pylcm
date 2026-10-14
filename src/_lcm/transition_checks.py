@@ -15,12 +15,13 @@ runs. Two families:
   state transition (incl. per-target dict entries), evaluates the user
   function on the Cartesian product of the grid variables it reads, directly
   or through the phase's regime functions, and verifies outcome-axis size,
-  [0, 1] range, and sum-to-1. A simulate-phase law reads each carried state on
-  its simulate grid.
+  [0, 1] range, and sum-to-1. Each law is evaluated in every phase that uses
+  it — a phase-invariant law in both — with that phase's targets, functions
+  and grids, at each period's own nodes of an age-specialized state. A
+  simulate-phase evaluation reads each carried state on its simulate grid.
 
-Both checks read their policy off the `logger`: `log_level="off"` skips the
-check, `"warning"` / `"progress"` log each failure and let the run continue,
-`"debug"` raises on the first failure.
+Both checks read the explicit runtime policy carried by the logger. Enabled
+checks raise on the first failure, independently of console output.
 
 These are runtime checks: they need a fully-built `Regime` plus user
 `flat_params` and evaluate the transition functions numerically. The
@@ -38,7 +39,7 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from math import prod
 from types import MappingProxyType
-from typing import Any, cast, no_type_check
+from typing import Literal, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -55,6 +56,8 @@ from _lcm.engine import (
     _StochasticStateTransition,
 )
 from _lcm.params.edges import regime_kernel_params
+from _lcm.params.mapping_leaf import MappingLeaf
+from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.next_state import get_next_stochastic_weights_function
@@ -70,16 +73,27 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.time import TimeAxis
-from _lcm.transition_plans import LotteryLifetime, declared_law_over_codes
+from _lcm.transition_plans import (
+    LotteryLifetime,
+    TransitionLotteryInfo,
+    declared_law_over_codes,
+)
 from _lcm.typing import (
+    ArrayTree,
     EconFunction,
+    EconFunctionArg,
+    EconFunctionKwargs,
     EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
+    HostArray,
+    PytreeValue,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
     StateOrActionName,
+    TransitionFunction,
+    TransitionFunctionName,
 )
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
@@ -92,13 +106,13 @@ from lcm.exceptions import (
 from lcm.typing import (
     Bool1D,
     BoolND,
-    ContinuousState,
-    DiscreteState,
     FloatND,
     FunctionName,
     IntND,
+    ReferenceName,
     ScalarFloat,
     ScalarInt,
+    ValueND,
 )
 
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
@@ -110,7 +124,34 @@ type _RegimeProbabilityOutput = tuple[
 type _FeasibleRowsOutput = tuple[
     Mapping[RegimeName, FloatND], BoolND, Mapping[StateOrActionName, FloatND | IntND]
 ]
-type _SupportSchema = tuple[str, int, object, tuple[tuple[tuple[int, ...], str], ...]]
+type _SupportSchema = tuple[
+    str, int, jax.tree_util.PyTreeDef, tuple[tuple[tuple[int, ...], str], ...]
+]
+# One input a state-probability check binds: the period, the age, a grid or a
+# parameter leaf.
+type _BoundInput = int | float | ValueND | MappingLeaf | SequenceLeaf
+# Identifies one bound input exactly: an array by identity, an integer by value,
+# a float by its bits.
+type _BindingToken = (
+    tuple[type[jax.Array], int] | tuple[type[int], int] | tuple[type[float], bytes]
+)
+# What a cached state probability is keyed by: the law's regime, state, target,
+# phase and function identity, and its exact bound inputs.
+type _StateProbabilityKey = tuple[
+    RegimeName,
+    StateName,
+    RegimeName | None,
+    Literal["solve", "simulate"] | None,
+    int,
+    tuple[tuple[str, _BindingToken], ...],
+]
+# What one phase feeds a state law: the identities of the functions it reads and
+# the names of the carried grids it reads.
+type _ConsumedContext = tuple[tuple[tuple[FunctionName, int], ...], tuple[str, ...]]
+# The law and the inputs a cached state probability was computed from.
+type _BoundInputs = tuple[Callable[..., FloatND] | _BoundInput, ...]
+# One leaf of a placed producer operand: an array, or a host array or scalar.
+type _OperandLeaf = ValueND | HostArray | np.generic | bool | int | float
 
 
 class _SerialValidationRequired(Exception):  # noqa: N818
@@ -123,7 +164,7 @@ class _StateProbabilitySummary:
 
     shape: tuple[int, ...]
     flag: jax.Array
-    bound_inputs: tuple[object, ...] = field(repr=False)
+    bound_inputs: _BoundInputs = field(repr=False)
     """Keep identity-keyed immutable operands alive until the summary closes."""
 
 
@@ -137,7 +178,7 @@ class _ValidationSummary:
     spaces: dict[tuple[RegimeName, tuple[tuple[str, int], ...]], StateActionSpace] = (
         field(default_factory=dict, repr=False)
     )
-    state_probabilities: dict[tuple[object, ...], _StateProbabilitySummary] = field(
+    state_probabilities: dict[_StateProbabilityKey, _StateProbabilitySummary] = field(
         default_factory=dict, repr=False
     )
 
@@ -162,7 +203,7 @@ class _ValidationSummary:
         self,
         *,
         function: Callable[..., jax.Array],
-        arguments: Mapping[str, object],
+        arguments: Mapping[str, ArrayTree],
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
     ) -> None:
         """Admit and retain only one check's reduced output."""
@@ -296,8 +337,7 @@ def validate_transitions(
     """Validate regime and state transition probabilities before solve / simulate.
 
     Runs the regime-transition check then the state-transition check. Both
-    self-gate on the logger's runtime-validation policy (`log_level="off"`
-    skips, `"warning"` / `"progress"` warn, `"debug"` raises).
+    self-gate on the logger's explicit runtime policy, independently of output.
 
     Args:
         regimes: Immutable mapping of regime names to regimes.
@@ -503,9 +543,8 @@ def validate_regime_transition_probs_all_periods(
         regimes: Immutable mapping of regime names to regimes.
         flat_params: Immutable mapping of regime names to flat parameter mappings.
         ages: Age grid for the model.
-        logger: Logger carrying the runtime-validation policy. `log_level="off"`
-            returns immediately; `"warning"` / `"progress"` log each failure and
-            continue; `"debug"` raises on the first failure. `None` validates
+        logger: Logger carrying the explicit runtime-check policy. Disabled
+            checks return immediately; enabled checks raise. `None` validates
             regardless of the log level and raises on the first failure.
 
     Raises:
@@ -513,7 +552,7 @@ def validate_regime_transition_probs_all_periods(
             invalid probabilities and `logger` is `None` or implies raise mode.
 
     """
-    # Skipped entirely at `log_level="off"`. What that costs is the diagnosis
+    # Skipped when runtime checks are disabled. What that costs is the diagnosis
     # rather than the answer: the continuation aggregator measures the mass its
     # retained targets represent and returns NaN unless it is one and no weight
     # is negative, so a misspecification survives as a NaN rather than as a
@@ -685,7 +724,7 @@ def _validate_regime_law_on_feasible_rows(
     phase: SolutionPhase | SimulationPhase,
     available_grids: Mapping[StateOrActionName, FloatND | IntND],
     regime_params: FlatRegimeParams,
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
     period: int,
@@ -751,10 +790,7 @@ def _state_action_space_for_period(
     if not period_states:
         return base
     return base.replace(
-        states=cast(
-            "MappingProxyType[StateName, ContinuousState | DiscreteState]",
-            MappingProxyType(dict(base.states) | dict(period_states)),
-        )
+        states=MappingProxyType(dict(base.states) | dict(period_states))
     )
 
 
@@ -763,7 +799,7 @@ def _evaluate_feasible_rows(
     law: Callable[..., Mapping[RegimeName, FloatND]],
     feasibility: Callable[..., BoolND],
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     memory: SimulationMemory | None,
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
@@ -798,7 +834,7 @@ def _evaluate_feasible_rows(
 def _feasible_rows_law(
     *,
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     grid_names: tuple[StateOrActionName, ...],
     law: Callable[..., Mapping[RegimeName, FloatND]],
     feasibility: Callable[..., BoolND],
@@ -824,7 +860,7 @@ def _evaluate_regime_probability_law(
     *,
     func: Callable[..., Mapping[RegimeName, FloatND]],
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     memory: SimulationMemory | None,
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
@@ -855,7 +891,7 @@ def _evaluate_regime_probability_law(
 def _regime_probability_law(
     *,
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     grid_names: tuple[StateOrActionName, ...],
     func: Callable[..., Mapping[RegimeName, FloatND]],
 ) -> tuple[Mapping[RegimeName, FloatND], Mapping[StateOrActionName, FloatND | IntND]]:
@@ -940,7 +976,7 @@ def _validate_regime_transition_probs(
 
     """
     names = tuple(regime_transition_probs)
-    flag_arguments: dict[str, object] = {
+    flag_arguments: dict[str, ArrayTree] = {
         "probabilities": tuple(regime_transition_probs.values())
     }
     if rows is not None:
@@ -1137,9 +1173,8 @@ def validate_state_transitions_all_periods(  # noqa: C901
         flat_params: Immutable mapping of regime names to flat parameter
             mappings.
         ages: Age grid for the model.
-        logger: Logger carrying the runtime-validation policy. `log_level="off"`
-            returns immediately; `"warning"` / `"progress"` log each failure and
-            continue; `"debug"` raises on the first failure.
+        logger: Logger carrying the explicit runtime-check policy. Disabled
+            checks return immediately; enabled checks raise.
 
     Raises:
         InvalidStateTransitionProbabilitiesError: If a `StochasticTransition`
@@ -1175,6 +1210,9 @@ def validate_state_transitions_all_periods(  # noqa: C901
                     params=regime_kernel_params(flat_params, regime_name=regime_name),
                 )
             )
+            state_action_space = _state_action_space_for_period(
+                regime=regime, base=state_action_space, period=period
+            )
             age = ages.values[period]  # noqa: PD011
             # The regime functions a law may read are evaluated as the solve
             # does: not partialled over fixed params, so bind both.
@@ -1185,41 +1223,39 @@ def validate_state_transitions_all_periods(  # noqa: C901
                 }
             )
             for transition in regime.stochastic_state_transitions.values():
-                if _state_transition_unused_in_period(
+                # Each demanded phase supplies its own functions and grids, and
+                # the law labelled with the phase its diagnostics name.
+                for phase_law, functions, extra_grids in _demanded_phase_contexts(
                     transition=transition,
                     regime=regime,
                     period=period,
+                    state_action_space=state_action_space,
                 ):
-                    continue
-                try:
-                    _validate_state_transition_single(
-                        transition=transition,
-                        regime_params=_params_callable_for_state_transition(
-                            regime=regime,
-                            flat_params_for_regime=regime_kernel_params(
-                                flat_params, regime_name=regime_name
+                    try:
+                        _validate_state_transition_single(
+                            transition=phase_law,
+                            regime_params=_params_callable_for_state_transition(
+                                regime=regime,
+                                flat_params_for_regime=regime_kernel_params(
+                                    flat_params, regime_name=regime_name
+                                ),
+                                transition=transition,
                             ),
-                            transition=transition,
-                        ),
-                        state_action_space=state_action_space,
-                        regime_name=regime_name,
-                        age=age,
-                        period=period,
-                        logger=logger,
-                        summary=summary,
-                        memory=memory,
-                        functions=_phase_functions(
-                            regime=regime, phase=transition.phase, period=period
-                        ),
-                        function_params=function_params,
-                        extra_grids=_phase_extra_grids(
-                            regime=regime, phase=transition.phase
-                        ),
-                    )
-                except InvalidStateTransitionProbabilitiesError as error:
-                    if summary is not None:
-                        raise _SerialValidationRequired from error
-                    raise_or_warn(logger=logger, error=error)
+                            state_action_space=state_action_space,
+                            regime_name=regime_name,
+                            age=age,
+                            period=period,
+                            logger=logger,
+                            summary=summary,
+                            memory=memory,
+                            functions=functions,
+                            function_params=function_params,
+                            extra_grids=extra_grids,
+                        )
+                    except InvalidStateTransitionProbabilitiesError as error:
+                        if summary is not None:
+                            raise _SerialValidationRequired from error
+                        raise_or_warn(logger=logger, error=error)
 
 
 def validate_joint_transitions_all_periods(
@@ -1274,6 +1310,9 @@ def validate_joint_transitions_all_periods(
                     params=regime_kernel_params(flat_params, regime_name=regime_name),
                 )
             )
+            state_action_space = _state_action_space_for_period(
+                regime=regime, base=state_action_space, period=period
+            )
             # A carried state has no solve grid axis, so a simulate-phase law
             # reading one is not resolvable on the solution state-action space.
             # Sweep its simulate-phase domain alongside the solve grids instead.
@@ -1288,10 +1327,8 @@ def validate_joint_transitions_all_periods(
                 ("simulate", regime.simulation),
             ):
                 targets = phase.reachability.targets(period=period, source=regime_name)
-                functions = (
-                    regime.solution.continuation_functions
-                    if phase_name == "solve"
-                    else regime.simulation.functions
+                functions = _phase_functions(
+                    regime=regime, phase=phase_name, period=period
                 )
                 for target in targets:
                     plan = phase.transition_plans.get(target)
@@ -1362,7 +1399,7 @@ def validate_joint_transitions_all_periods(
 
 @contextmanager
 def _own_transition_outputs(
-    *, memory: SimulationMemory | None, outputs: object, restore: object = ()
+    *, memory: SimulationMemory | None, outputs: PytreeValue, restore: PytreeValue = ()
 ) -> Generator[None]:
     """Publish temporary roots for admitted checks and release them reliably."""
     _set_transition_outputs(memory=memory, outputs=outputs)
@@ -1373,14 +1410,14 @@ def _own_transition_outputs(
 
 
 def _set_transition_outputs(
-    *, memory: SimulationMemory | None, outputs: object
+    *, memory: SimulationMemory | None, outputs: PytreeValue
 ) -> None:
     """Expose every temporary mapping leaf to residency accounting."""
     if memory is not None:
         memory.set_derived(_transition_owner_tree(outputs))
 
 
-def _transition_owner_tree(tree: object) -> object:
+def _transition_owner_tree(tree: PytreeValue) -> PytreeValue:
     """Convert opaque mapping containers into ordinary JAX pytree nodes."""
     if isinstance(tree, Mapping):
         return {key: _transition_owner_tree(value) for key, value in tree.items()}
@@ -1393,8 +1430,8 @@ def _transition_owner_tree(tree: object) -> object:
 
 def _validate_joint_laws(
     *,
-    joint_laws: Mapping[str, Any],
-    transitions: Mapping[str, Callable[..., Any]],
+    joint_laws: Mapping[str, TransitionLotteryInfo],
+    transitions: Mapping[TransitionFunctionName, TransitionFunction],
     weights: Mapping[str, FloatND | IntND],
     n_cells: int | None,
     regime_params: FlatRegimeParams,
@@ -1477,7 +1514,7 @@ def _validate_joint_laws(
 
 def _check_joint_support_schema(
     *,
-    support: object,
+    support: PytreeValue,
     kernel_name: str,
     regime_name: RegimeName,
     phase_name: str,
@@ -1513,7 +1550,7 @@ def _check_joint_support_schema(
 
 def _evaluate_joint_support(
     *,
-    func: Callable[..., Any],
+    func: Callable[..., PytreeValue],
     regime_params: FlatRegimeParams,
     period: ScalarInt,
     age: ScalarInt | ScalarFloat,
@@ -1524,9 +1561,9 @@ def _evaluate_joint_support(
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     memory: SimulationMemory | None = None,
-) -> Any:  # noqa: ANN401
+) -> PytreeValue | None:
     """Bind and admit one complete parameter-bound joint-support provider."""
-    kwargs: dict[str, object] = {}
+    kwargs: dict[ReferenceName, EconFunctionArg] = {}
     for name in inspect.signature(func).parameters:
         if name == "period":
             kwargs[name] = period
@@ -1558,7 +1595,7 @@ def _evaluate_joint_support(
 
 def _validate_joint_support(
     *,
-    support: object,
+    support: PytreeValue,
     support_size: int,
     kernel_name: str,
     regime_name: RegimeName,
@@ -1588,7 +1625,7 @@ def _validate_joint_support(
             ),
         )
         # The caller compares static schemas only for structurally valid
-        # supports. In warning mode validation continues, so returning the invalid
+        # supports. With checks disabled validation continues, so returning the invalid
         # pytree here would make the comparison itself dereference missing shapes.
         return False
 
@@ -1704,7 +1741,7 @@ def _evaluate_joint_weights(
     `extra_grids` carries grid axes the solution state-action space does not
     hold — the simulate-phase domain of each carried-only state. An argument
     that resolves to none of the grids or the regime's parameters leaves the
-    lottery unvalidated, which `log_level="debug"` refuses rather than sampling
+    lottery unvalidated, which enabled runtime checks refuse rather than sampling
     from an unexamined law.
 
     Returns:
@@ -1715,7 +1752,7 @@ def _evaluate_joint_weights(
         evaluated at all.
     """
     grid_args: dict[StateOrActionName, FloatND | IntND] = {}
-    scalar_kwargs: dict[str, object] = {}
+    scalar_kwargs: dict[ReferenceName, EconFunctionArg] = {}
     for name in inspect.signature(func).parameters:
         if name == "period":
             scalar_kwargs[name] = period
@@ -1772,7 +1809,7 @@ def _evaluate_joint_weights(
 def _joint_weight_law(
     *,
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     grid_names: tuple[StateOrActionName, ...],
     func: Callable[..., Mapping[str, FloatND | IntND]],
 ) -> Mapping[str, FloatND | IntND]:
@@ -1786,25 +1823,127 @@ def _joint_weight_law(
     )(*flat_arrays)
 
 
-def _state_transition_unused_in_period(
+def _effective_phases(transition: _StochasticStateTransition) -> tuple[Side, ...]:
+    """The phases whose programs evaluate a state law.
+
+    - an explicitly phased law ⇒ its own phase only
+    - a phase-invariant law ⇒ the solve phase, then the simulate phase
+    """
+    if transition.phase is None:
+        return ("solve", "simulate")
+    return (transition.phase,)
+
+
+def _demanded_phase_contexts(
     *,
     transition: _StochasticStateTransition,
     regime: Regime,
     period: int,
-) -> bool:
-    """Return whether a state transition has no retained edge this period.
+    state_action_space: StateActionSpace,
+) -> tuple[
+    tuple[
+        _StochasticStateTransition,
+        EconFunctionsMapping,
+        Mapping[StateOrActionName, FloatND | IntND],
+    ],
+    ...,
+]:
+    """The law, functions and phase grids of each distinct phase that uses a law.
 
-    A coarse (`target_regime_name is None`) state law applies regardless of
-    the regime-transition graph's own target set — an empty `period_targets`
-    is a fact about *which regime* is reached, not about whether a coarse
-    state law still needs checking. Only a per-target state law can be
-    unused, and only when its specific target isn't retained this period.
+    A phase contributes only when it demands the law this period. A phase whose
+    program and inputs repeat an earlier phase's exactly is evaluated once, under
+    the earlier phase. A phase-invariant law's simulate-only evaluation carries
+    the simulate phase, so its diagnostics say which phase failed.
     """
+    contexts = []
+    consumed: set[_ConsumedContext] = set()
+    for phase in _effective_phases(transition):
+        if _state_transition_unused_in_period(
+            transition=transition, regime=regime, phase=phase, period=period
+        ):
+            continue
+        functions = _phase_functions(regime=regime, phase=phase, period=period)
+        extra_grids = _phase_extra_grids(regime=regime, phase=phase)
+        context = _consumed_context(
+            transition=transition,
+            state_action_space=state_action_space,
+            functions=functions,
+            extra_grids=extra_grids,
+        )
+        if context not in consumed:
+            consumed.add(context)
+            labelled = (
+                replace(transition, phase=phase)
+                if phase == "simulate" and transition.phase is None
+                else transition
+            )
+            contexts.append((labelled, functions, extra_grids))
+    return tuple(contexts)
+
+
+def _consumed_context(
+    *,
+    transition: _StochasticStateTransition,
+    state_action_space: StateActionSpace,
+    functions: EconFunctionsMapping,
+    extra_grids: Mapping[StateOrActionName, FloatND | IntND],
+) -> _ConsumedContext:
+    """Identify what one phase's program feeds a state law at one period.
+
+    Within one regime and period the state-action space, the parameters and the
+    clock are shared by both phases, so two phases evaluate the same program on
+    the same inputs exactly when the law reads the same function objects and the
+    same phase-only grids. The returned key holds the identities of the
+    functions the law reads, directly or through other functions, and the names
+    of the carried grids it or they read.
+    """
+    declared, original_codes, _ = _as_declared_law(transition)
+    inputs = frozenset(
+        (
+            *state_action_space.states,
+            *state_action_space.actions,
+            *extra_grids,
+            *original_codes,
+            *declared.derived_categorical_codes,
+        )
+    )
+    pool = {name: func for name, func in functions.items() if name not in inputs}
+    read = _functions_read(func=declared.func, pool=pool)
+    arguments = frozenset(inspect.signature(declared.func).parameters).union(
+        *(inspect.signature(pool[name]).parameters for name in read)
+    )
+    return (
+        tuple(sorted((name, id(pool[name])) for name in read)),
+        tuple(sorted(name for name in arguments if name in extra_grids)),
+    )
+
+
+def _state_transition_unused_in_period(
+    *,
+    transition: _StochasticStateTransition,
+    regime: Regime,
+    phase: Side,
+    period: int,
+) -> bool:
+    """Return whether a state transition has no edge `phase` demands this period.
+
+    - the simulate phase in a period no simulated subject occupies the regime
+      ⇒ unused, whatever the law's target
+    - a coarse (`target_regime_name is None`) law otherwise ⇒ used; an empty
+      `period_targets` is a fact about *which regime* is reached, not about
+      whether a coarse state law still needs checking
+    - a per-target law ⇒ unused when its target isn't among the targets the
+      phase's own graph reaches this period
+    """
+    owner = regime.simulation if phase == "simulate" else regime.solution
+    if (
+        phase == "simulate"
+        and regime.name not in owner.reachability.active_regimes_by_period[period]
+    ):
+        return True
     if transition.target_regime_name is None:
         return False
-    period_targets = regime.solution.reachability.targets(
-        period=period, source=regime.name
-    )
+    period_targets = owner.reachability.targets(period=period, source=regime.name)
     return transition.target_regime_name not in period_targets
 
 
@@ -1855,6 +1994,7 @@ def _validate_state_transition_single(
             regime_name=regime_name,
             age=age,
             period=period,
+            extra_grids=extra_grids,
         )
         if summary is not None and summary.memory is None
         else None
@@ -1869,7 +2009,7 @@ def _validate_state_transition_single(
         return
 
     grid_args: dict[StateOrActionName, FloatND | IntND] = {}
-    scalar_kwargs: dict[str, object] = {}
+    scalar_kwargs: dict[ReferenceName, EconFunctionArg] = {}
     period_int32 = jnp.int32(period)
 
     for name in sig_params:
@@ -2086,7 +2226,7 @@ def _evaluate_state_probability_law(
     *,
     func: Callable[..., FloatND],
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     memory: SimulationMemory | None,
 ) -> FloatND:
     """Admit a complete stochastic-state law before its first device dispatch."""
@@ -2137,10 +2277,10 @@ def _evaluate_state_probability_law(
 
 def _evaluate_admitted_transition_producer(
     *,
-    function: Callable[..., object],
-    arguments: Mapping[str, object],
+    function: Callable[..., PytreeValue],
+    arguments: Mapping[str, EconFunctionArg | EconFunctionKwargs],
     memory: SimulationMemory,
-) -> object:
+) -> PytreeValue:
     """Place, profile, admit, and complete one transition validation producer."""
     placed = place_simulation_arguments(
         arguments=arguments,
@@ -2176,7 +2316,7 @@ def _evaluate_admitted_transition_producer(
 def _state_probability_law(
     *,
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
-    scalar_kwargs: Mapping[str, object],
+    scalar_kwargs: EconFunctionKwargs,
     grid_names: tuple[StateOrActionName, ...],
     func: Callable[..., FloatND],
 ) -> FloatND:
@@ -2190,7 +2330,9 @@ def _state_probability_law(
     )(*flat_arrays)
 
 
-def _abstract_transition_operand(value: object) -> object:
+def _abstract_transition_operand(
+    value: _OperandLeaf,
+) -> jax.ShapeDtypeStruct | _OperandLeaf:
     """Preserve the placed transition operand's dtype, weak type, and layout."""
     if isinstance(value, jax.Array):
         return jax.ShapeDtypeStruct(
@@ -2205,7 +2347,7 @@ def _abstract_transition_operand(value: object) -> object:
 def _append_cached_state_probability(
     *,
     summary: _ValidationSummary | None,
-    binding: tuple[tuple[object, ...], tuple[object, ...]] | None,
+    binding: tuple[_StateProbabilityKey, _BoundInputs] | None,
     transition: _StochasticStateTransition,
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
@@ -2230,7 +2372,7 @@ def _append_cached_state_probability(
 def _remember_state_probability(
     *,
     summary: _ValidationSummary | None,
-    binding: tuple[tuple[object, ...], tuple[object, ...]] | None,
+    binding: tuple[_StateProbabilityKey, _BoundInputs] | None,
     shape: tuple[int, ...],
 ) -> None:
     """Retain the completed reduction and immutable bindings, not probabilities."""
@@ -2251,24 +2393,28 @@ def _state_probability_binding(
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
     period: int,
-) -> tuple[tuple[object, ...], tuple[object, ...]] | None:
+    extra_grids: Mapping[StateOrActionName, FloatND | IntND] = _NO_EXTRA_GRIDS,
+) -> tuple[_StateProbabilityKey, _BoundInputs] | None:
     """Identify this pure law's exact immutable inputs inside one preflight.
 
     Model numerical functions obey JAX's purity contract. Mutable or opaque
     explicit operands decline reuse; a callable identity alone never suffices.
-    Age and period enter the key whenever consumed. Outcome count is checked
-    separately for every occurrence, including when the numerical inputs repeat.
+    Age, period and every grid the law reads — the period's own state nodes
+    and a carried state's simulate grid included — enter the key whenever
+    consumed. Outcome count is checked separately for every occurrence,
+    including when the numerical inputs repeat.
     """
-    arguments: list[tuple[str, object]] = []
-    bound_inputs: list[object] = [transition.func]
+    arguments: list[tuple[str, _BindingToken]] = []
+    bound_inputs: list[Callable[..., FloatND] | _BoundInput] = [transition.func]
     grids = {
         **transition.derived_categorical_codes,
         **state_action_space.actions,
         **state_action_space.states,
+        **extra_grids,
     }
     for name in signature_names:
         if name == "period":
-            value: object = period
+            value: _BoundInput = period
         elif name == "age":
             value = age
         elif name in grids:
@@ -2278,9 +2424,9 @@ def _state_probability_binding(
         else:
             return None
         if isinstance(value, jax.Array):
-            token: object = (jax.Array, id(value))
-        elif type(value) in (bool, int, str, type(None)):
-            token = (type(value), value)
+            token: _BindingToken = (jax.Array, id(value))
+        elif type(value) is int:
+            token = (int, value)
         elif type(value) is float:
             token = (float, struct.pack("!d", value))
         else:
@@ -2322,7 +2468,7 @@ def _check_state_probs(
         summary=summary,
     )
 
-    arguments: dict[str, object] = {"probabilities": probs}
+    arguments: dict[str, ValueND] = {"probabilities": probs}
     if source_codes is not None and fixed_of_code is not None:
         groups = np.asarray(fixed_of_code)
         outside_group = groups[source_codes][:, None] != groups
@@ -2437,16 +2583,16 @@ def _unit_mass_violations(sum_all: FloatND) -> BoolND:
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _NamedArgumentsCall:
+class _NamedArgumentsCall[R]:
     """Call a function with the keyword arguments it declares, only."""
 
-    func: Callable[..., Any] = field(repr=False)
+    func: Callable[..., R] = field(repr=False)
     """The function."""
     names: frozenset[str]
     """The argument names the function declares."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(self, **kwargs: EconFunctionArg) -> R:
         return self.func(**{k: v for k, v in kwargs.items() if k in self.names})
 
 
@@ -2454,31 +2600,33 @@ class _NamedArgumentsCall:
 class _LawAndFeasibility:
     """Evaluate a regime law and the regime's feasibility at one point."""
 
-    law: Callable[..., Any] = field(repr=False)
+    law: Callable[..., Mapping[RegimeName, FloatND]] = field(repr=False)
     """The regime law."""
-    feasibility: Callable[..., Any] = field(repr=False)
+    feasibility: Callable[..., BoolND] = field(repr=False)
     """The conjunction of the regime's constraints."""
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+    def __call__(
+        self, **kwargs: EconFunctionArg
+    ) -> tuple[Mapping[RegimeName, FloatND], BoolND]:
         return self.law(**kwargs), self.feasibility(**kwargs)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _GridPointCall:
+class _GridPointCall[R]:
     """Call a transition at one grid point, given positionally for `jax.vmap`."""
 
     names: tuple[str, ...]
     """Grid variable names, in the order the positional values arrive."""
-    scalar_kwargs: Mapping[str, object] = field(repr=False)
+    scalar_kwargs: EconFunctionKwargs = field(repr=False)
     """Arguments held fixed across grid points."""
-    func: Callable[..., Any] = field(repr=False)
+    func: Callable[..., R] = field(repr=False)
     """The transition function."""
 
     # The kernel is traced with whatever leaves its caller supplies -- tracers,
     # Python scalars, arrays of either integer width -- so its annotations
     # document the contract and are not enforced at call time.
     @no_type_check
-    def __call__(self, *args: FloatND | IntND) -> Any:  # noqa: ANN401
+    def __call__(self, *args: FloatND | IntND) -> R:
         kwargs = dict(zip(self.names, args, strict=True))
         return self.func(**kwargs, **self.scalar_kwargs)

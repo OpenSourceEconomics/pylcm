@@ -22,7 +22,9 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    FunctionName,
     ScalarInt,
+    UserFunction,
 )
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID
 from tests.envelope_configs import envelope_config
@@ -71,7 +73,7 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
     return (age / 50.0) * jnp.log(wealth)
 
 
-def _bonus_model(constraints: dict | None = None) -> Model:
+def _bonus_model(constraints: dict[FunctionName, UserFunction] | None = None) -> Model:
     # MSS is the only backend whose rows certify every envelope crossing, so
     # it is the only one that qualifies for the off-grid read.
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))

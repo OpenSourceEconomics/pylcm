@@ -8,9 +8,10 @@ interleavings.
 
 import logging
 import threading
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
-from typing import Any, ClassVar
+from types import MappingProxyType
+from typing import ClassVar, Literal, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -22,9 +23,58 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     ResolvedCoreProgram,
 )
-from _lcm.execution.output_layout import VALUE, resolve_output_layout
+from _lcm.execution.output_layout import (
+    VALUE,
+    ResolvedOutputLayout,
+    resolve_output_layout,
+)
 from _lcm.solution import backward_induction
+from _lcm.time import TimeAxis
+from _lcm.typing import HostArray, PytreeValue, ShapeDtypePytree
 from lcm import AgeGrid
+from lcm.typing import ReferenceName
+from tests.solution.test_pipelined_lowering import (
+    _CompileKwargs,
+    _RolesKwargs,
+)
+
+
+class _WaveKwargs(TypedDict):
+    new_lowerings: Mapping[Hashable, backward_induction._CoreCandidate]
+    resolved_programs: Mapping[backward_induction._CoreCandidate, ResolvedCoreProgram]
+    all_layouts: Mapping[backward_induction._CoreTriple, ResolvedOutputLayout]
+    internal_templates: Mapping[
+        backward_induction._CoreCandidate, Mapping[ReferenceName, ShapeDtypePytree]
+    ]
+    donations: Mapping[
+        backward_induction._CoreCandidate,
+        tuple[backward_induction.ResolvedDonation, ...],
+    ]
+    ages: TimeAxis
+    n_triples_per_lowering: Mapping[Hashable, int]
+    log_kernel_memory: bool
+    n_workers: int
+    logger: logging.Logger
+    compiled: dict[Hashable, jax.stages.Compiled]
+    labels: dict[Hashable, str]
+
+
+type _ArrayBits = tuple[tuple[int, ...], np.dtype, bytes]
+
+
+class _ReversedObservations(TypedDict):
+    finished: list[Hashable]
+    identity: bool
+    threads: tuple[list[str], list[Hashable], list[bool]]
+    values: list[_ArrayBits]
+    expected_values: list[_ArrayBits]
+
+
+class _MemoryKwargs(TypedDict):
+    compiled: jax.stages.Compiled
+    label: str
+    logger: logging.Logger
+
 
 _KEYS = ("first", "second", "third")
 _WAIT_SECONDS = 10.0  # Bounded synchronisation timeout, not a performance bound.
@@ -37,7 +87,7 @@ def _program(*, wealth: jax.Array, scale: int) -> jax.Array:
 
 def _wave_kwargs(
     *, n: int, n_workers: int, keys: tuple[str, ...] = _KEYS
-) -> tuple[dict[str, Any], jax.Array]:
+) -> tuple[_WaveKwargs, jax.Array]:
     """Arguments for one wave of programs, one per key, over `n` integer states."""
     wealth = jnp.asarray(np.arange(n) - n // 2, dtype=jnp.asarray(0.0).dtype)
     candidates: dict[Hashable, backward_induction._CoreCandidate] = {
@@ -47,19 +97,19 @@ def _wave_kwargs(
         candidate: ResolvedCoreProgram(
             name=str(key),
             function=_program,
-            arguments={"wealth": wealth},
-            static_kwargs={"scale": i + 1},
+            arguments=MappingProxyType({"wealth": wealth}),
+            static_kwargs=MappingProxyType({"scale": i + 1}),
             requirements=CoreExecutionRequirements(),
             output_roles=VALUE,
             disposition=CoreExecutionDisposition.PLANNED,
             donation_candidates=(),
-            tile_widths={},
+            tile_widths=MappingProxyType({}),
             specialization_key=(),
             input_transfer_plan=(),
         )
         for i, (key, candidate) in enumerate(candidates.items())
     }
-    kwargs = {
+    kwargs: _WaveKwargs = {
         "new_lowerings": candidates,
         "resolved_programs": resolved,
         "all_layouts": {
@@ -84,7 +134,7 @@ def _wave_kwargs(
     return kwargs, wealth
 
 
-def _literal_cumsum(*, wealth: jax.Array, scale: int) -> np.ndarray:
+def _literal_cumsum(*, wealth: jax.Array, scale: int) -> HostArray:
     """Scaled cumulative sum by a plain Python loop over integers."""
     source = np.asarray(wealth)
     total = 0
@@ -95,7 +145,7 @@ def _literal_cumsum(*, wealth: jax.Array, scale: int) -> np.ndarray:
     return np.asarray(result, dtype=source.dtype)
 
 
-def _bits(array: Any) -> tuple[tuple[int, ...], np.dtype, bytes]:
+def _bits(array: PytreeValue) -> _ArrayBits:
     """Shape, dtype and raw bytes of an array on the host."""
     host = np.asarray(jax.device_get(array))
     return host.shape, host.dtype, host.tobytes(order="C")
@@ -144,7 +194,7 @@ def test_lower_and_compile_wave_executables_match_direct_execution(
 @_SHAPES_AND_WORKERS
 @pytest.mark.parametrize("output", ["compiled", "labels"])
 def test_lower_and_compile_wave_publishes_every_key(
-    *, n: int, n_workers: int, output: str
+    *, n: int, n_workers: int, output: Literal["compiled", "labels"]
 ) -> None:
     """Executables and labels land under exactly the wave's lowering keys."""
     kwargs, _ = _wave_kwargs(n=n, n_workers=n_workers)
@@ -152,7 +202,7 @@ def test_lower_and_compile_wave_publishes_every_key(
     assert set(kwargs[output]) == set(_KEYS)
 
 
-def _run_reversed_finishing(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def _run_reversed_finishing(monkeypatch: pytest.MonkeyPatch) -> _ReversedObservations:
     """Run a two-worker wave in which the first compile finishes last."""
     kwargs, wealth = _wave_kwargs(n=17, n_workers=2)
     original_compile = backward_induction._compile_and_log
@@ -160,18 +210,20 @@ def _run_reversed_finishing(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     caller = threading.get_ident()
     third_compiled = threading.Event()
     lock = threading.Lock()
-    finished: list[str] = []
-    returned: dict[str, jax.stages.Compiled] = {}
+    finished: list[Hashable] = []
+    returned: dict[Hashable, jax.stages.Compiled] = {}
     lowered_off_caller: list[str] = []
-    compiled_on_caller: list[str] = []
+    compiled_on_caller: list[Hashable] = []
     first_waited: list[bool] = []
 
-    def observed_roles(**arguments: Any) -> None:
+    def observed_roles(**arguments: Unpack[_RolesKwargs]) -> None:
         if threading.get_ident() != caller:
             lowered_off_caller.append(arguments["label"])
         original_roles(**arguments)
 
-    def reverse_first(**arguments: Any) -> Any:
+    def reverse_first(
+        **arguments: Unpack[_CompileKwargs],
+    ) -> tuple[Hashable, jax.stages.Compiled]:
         key = arguments["lowering_key"]
         if threading.get_ident() == caller:
             compiled_on_caller.append(key)
@@ -202,19 +254,19 @@ def _run_reversed_finishing(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     }
 
 
-def _reversed_order(obs: dict[str, Any]) -> bool:
+def _reversed_order(obs: _ReversedObservations) -> bool:
     return obs["finished"] == ["second", "third", "first"]
 
 
-def _reversed_identity(obs: dict[str, Any]) -> bool:
+def _reversed_identity(obs: _ReversedObservations) -> bool:
     return obs["identity"]
 
 
-def _reversed_threads(obs: dict[str, Any]) -> bool:
+def _reversed_threads(obs: _ReversedObservations) -> bool:
     return obs["threads"] == ([], [], [True])
 
 
-def _reversed_values(obs: dict[str, Any]) -> bool:
+def _reversed_values(obs: _ReversedObservations) -> bool:
     return obs["values"] == obs["expected_values"]
 
 
@@ -224,7 +276,7 @@ def _reversed_values(obs: dict[str, Any]) -> bool:
     ids=["finishing-order", "object-identity", "thread-placement", "values"],
 )
 def test_lower_and_compile_wave_keys_survive_reversed_worker_finishing(
-    *, monkeypatch: pytest.MonkeyPatch, holds: Callable[[dict[str, Any]], bool]
+    *, monkeypatch: pytest.MonkeyPatch, holds: Callable[[_ReversedObservations], bool]
 ) -> None:
     """Workers finishing in reverse order still publish each executable by key.
 
@@ -241,20 +293,28 @@ class _RecordingExecutor(ThreadPoolExecutor):
 
     instances: ClassVar[list[_RecordingExecutor]] = []
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self, *, max_workers: int | None = None, thread_name_prefix: str = ""
+    ) -> None:
+        super().__init__(max_workers=max_workers, thread_name_prefix=thread_name_prefix)
         self.futures: list[Future] = []
         _RecordingExecutor.instances.append(self)
 
-    def submit(self, *args: Any, **kwargs: Any) -> Future:
-        future = super().submit(*args, **kwargs)
+    def submit[**Parameters, Result](
+        self,
+        fn: Callable[Parameters, Result],
+        /,
+        *args: Parameters.args,
+        **kwargs: Parameters.kwargs,
+    ) -> Future[Result]:
+        future = super().submit(fn, *args, **kwargs)
         self.futures.append(future)
         return future
 
 
 def _run_lowering_error_while_compiling(
     monkeypatch: pytest.MonkeyPatch,
-) -> dict[str, Any]:
+) -> dict[str, bool]:
     """Fail the third of four lowerings while the first compile is still running.
 
     One compile worker: the first compile blocks until released, so the second
@@ -266,18 +326,20 @@ def _run_lowering_error_while_compiling(
     original_roles = backward_induction._assert_lowered_output_roles
     release_first = threading.Event()
     first_finished = threading.Event()
-    started: list[str] = []
+    started: list[Hashable] = []
     lowered: list[str] = []
     lower_error = RuntimeError("distinct third-lowering error")
 
-    def held_compile(**arguments: Any) -> Any:
+    def held_compile(
+        **arguments: Unpack[_CompileKwargs],
+    ) -> tuple[Hashable, jax.stages.Compiled]:
         started.append(arguments["lowering_key"])
         if arguments["lowering_key"] == "first":
             release_first.wait(_WAIT_SECONDS)
             first_finished.set()
         return original_compile(**arguments)
 
-    def fail_third(**arguments: Any) -> None:
+    def fail_third(**arguments: Unpack[_RolesKwargs]) -> None:
         lowered.append(arguments["label"])
         original_roles(**arguments)
         if len(lowered) == 3:
@@ -344,7 +406,7 @@ def test_lower_and_compile_wave_lowering_error_stops_the_wave_at_once(
 
 def _run_failing_second_compile(
     monkeypatch: pytest.MonkeyPatch,
-) -> dict[str, Any]:
+) -> dict[str, bool]:
     """Fail the second of five compiles while the first compile is still running.
 
     Two compile workers. The first and third compiles are held until released.
@@ -361,11 +423,13 @@ def _run_failing_second_compile(
     release_held = threading.Event()
     release_second = threading.Event()
     first_finished = threading.Event()
-    started: list[str] = []
+    started: list[Hashable] = []
     lowered: list[str] = []
     lock = threading.Lock()
 
-    def held_or_failing_compile(**arguments: Any) -> Any:
+    def held_or_failing_compile(
+        **arguments: Unpack[_CompileKwargs],
+    ) -> tuple[Hashable, jax.stages.Compiled]:
         key = arguments["lowering_key"]
         with lock:
             started.append(key)
@@ -379,13 +443,19 @@ def _run_failing_second_compile(
             first_finished.set()
         return result
 
-    def record_lowering(**arguments: Any) -> None:
+    def record_lowering(**arguments: Unpack[_RolesKwargs]) -> None:
         lowered.append(arguments["label"])
         original_roles(**arguments)
 
     class FailSecondOnFourthSubmit(_RecordingExecutor):
-        def submit(self, *args: Any, **kwargs: Any) -> Future:
-            future = super().submit(*args, **kwargs)
+        def submit[**Parameters, Result](
+            self,
+            fn: Callable[Parameters, Result],
+            /,
+            *args: Parameters.args,
+            **kwargs: Parameters.kwargs,
+        ) -> Future[Result]:
+            future = super().submit(fn, *args, **kwargs)
             if len(self.futures) == 4:
                 release_second.set()
                 wait(self.futures[1:2], timeout=_WAIT_SECONDS)
@@ -454,7 +524,7 @@ class _CompileWorkerError(Exception):
     """Stand-in for an error raised inside a compile worker."""
 
 
-def _raise_from_compile(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def _raise_from_compile(monkeypatch: pytest.MonkeyPatch) -> _WaveKwargs:
     """Make `Lowered.compile` raise; return the wave's arguments."""
 
     def failing_compile(_: jax.stages.Lowered) -> jax.stages.Compiled:
@@ -465,10 +535,10 @@ def _raise_from_compile(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return kwargs
 
 
-def _raise_from_memory_diagnostic(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def _raise_from_memory_diagnostic(monkeypatch: pytest.MonkeyPatch) -> _WaveKwargs:
     """Make the kernel-memory diagnostic raise; return the wave's arguments."""
 
-    def failing_diagnostic(**_: Any) -> None:
+    def failing_diagnostic(**_: Unpack[_MemoryKwargs]) -> None:
         raise _CompileWorkerError("memory analysis failed")
 
     monkeypatch.setattr(backward_induction, "_log_kernel_memory", failing_diagnostic)
@@ -488,7 +558,7 @@ _WORKER_FAILURES = pytest.mark.parametrize(
 def test_lower_and_compile_wave_worker_exception_keeps_its_type(
     *,
     monkeypatch: pytest.MonkeyPatch,
-    arrange: Callable[[pytest.MonkeyPatch], dict[str, Any]],
+    arrange: Callable[[pytest.MonkeyPatch], _WaveKwargs],
 ) -> None:
     """A compile worker's exception surfaces with its original type."""
     kwargs = arrange(monkeypatch)
@@ -504,7 +574,7 @@ def test_lower_and_compile_wave_worker_exception_keeps_its_type(
 def test_lower_and_compile_wave_worker_exception_names_its_program(
     *,
     monkeypatch: pytest.MonkeyPatch,
-    arrange: Callable[[pytest.MonkeyPatch], dict[str, Any]],
+    arrange: Callable[[pytest.MonkeyPatch], _WaveKwargs],
 ) -> None:
     """A compile worker's exception carries a note naming the failing program."""
     kwargs = arrange(monkeypatch)

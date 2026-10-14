@@ -6,7 +6,7 @@ import inspect
 import textwrap
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -28,6 +28,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE
 from _lcm.solution import backward_induction, period_replay
 from _lcm.solution.backward_induction import _resolve_program_for_execution
+from _lcm.typing import PytreeValue
 from lcm.solver_api import ArtifactKey
 from lcm.solvers import (
     ValueArtifactAddress,
@@ -38,22 +39,22 @@ from lcm.solvers import (
 )
 
 
-def _identity(*, value: object) -> object:
+def _identity(*, value: PytreeValue) -> PytreeValue:
     return value
 
 
-def _double(*, value: object) -> object:
+def _double(*, value: PytreeValue) -> PytreeValue:
     return value
 
 
 def _context() -> CoreBuildContext:
     return CoreBuildContext(
-        state_action_space=object(),
+        state_action_space=None,
         next_regime_to_V_arr=MappingProxyType({}),
         next_regime_to_continuation=MappingProxyType({}),
         flat_params=MappingProxyType({}),
         period=0,
-        ages=object(),
+        ages=None,
     )
 
 
@@ -133,7 +134,11 @@ def test_compiler_options_survive_materialization_and_resolution() -> None:
         (("scan_unroll", 1), ("scan_unroll", 2)),
     ],
 )
-def test_compiler_options_refuse_mutable_or_ambiguous_metadata(options: object) -> None:
+def test_compiler_options_refuse_mutable_or_ambiguous_metadata(
+    options: list[tuple[str, int]]
+    | tuple[list[str | int], ...]
+    | tuple[tuple[str, int | float], ...],
+) -> None:
     """Compile identity requires immutable, uniquely named integer options."""
     with pytest.raises(
         (TypeError, ValueError, BeartypeCallHintParamViolation),
@@ -251,7 +256,7 @@ def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> No
     )
 
 
-def _function_tree(function: Callable[..., object]) -> ast.FunctionDef:
+def _function_tree[Result](function: Callable[..., Result]) -> ast.FunctionDef:
     tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
     function_node = tree.body[0]
     assert isinstance(function_node, ast.FunctionDef)
@@ -374,17 +379,19 @@ def test_native_graph_rejects_incoherent_disposition_reason(
 class _CoresOnlyKernel:
     """Publish only the retired core-enumeration interface, never a graph."""
 
-    def cores(self) -> Mapping[str, Callable[..., object]]:
+    def cores(self) -> Mapping[str, Callable[..., PytreeValue]]:
         return {"main": _identity}
 
-    def build_lower_args(self, **_context: object) -> Mapping[str, object]:
+    def build_lower_args[Ignored](
+        self, **_context: Ignored
+    ) -> Mapping[str, PytreeValue]:
         return {}
 
 
 def test_core_program_graph_rejects_a_kernel_without_a_native_graph() -> None:
     """A kernel is executable only through its own native core-program graph."""
-    with pytest.raises(TypeError, match="native core-program graph"):
-        core_program_graph(kernel=_CoresOnlyKernel())
+    with pytest.raises(BeartypeCallHintParamViolation, match="parameter kernel"):
+        core_program_graph(kernel=_CoresOnlyKernel())  # ty: ignore[invalid-argument-type]
 
 
 def test_every_disposition_is_planned_dense_or_host_driven() -> None:
@@ -421,7 +428,7 @@ def _scoped_program(
         if scope in {ProgramScope.REPLAY, ProgramScope.ARTIFACT}
         else ()
     )
-    retained_artifact_payload_types = dict.fromkeys(retained_artifact_keys, object)
+    retained_artifact_payload_types = dict.fromkeys(retained_artifact_keys, jax.Array)
     return CoreProgram(
         name=name,
         function=_identity,
@@ -463,7 +470,7 @@ def test_retained_artifact_payload_types_must_be_a_mapping() -> None:
     with pytest.raises(TypeError, match="must be a mapping"):
         dataclasses.replace(
             _native_program(),
-            retained_artifact_payload_types=cast("Any", ()),
+            retained_artifact_payload_types=(),
         )
 
 
@@ -484,7 +491,9 @@ def test_retained_artifact_payload_types_must_be_a_mapping() -> None:
     ],
 )
 def test_retained_artifact_payload_type_declarations_are_exact(
-    *, payload_types: Any, match: str
+    *,
+    payload_types: Mapping[ArtifactKey | str, type[PytreeValue] | object],  # noqa: PAN001 - Arbitrary non-type rejection witness.
+    match: str,
 ) -> None:
     declaration = dataclasses.replace(
         _native_program(), retained_artifact_payload_types=payload_types
@@ -497,7 +506,7 @@ def test_retained_artifact_payload_type_declarations_are_exact(
 def test_retained_artifact_keys_must_be_exact_public_keys() -> None:
     declaration = dataclasses.replace(
         _scoped_program(name="typed", scope=ProgramScope.ARTIFACT),
-        retained_artifact_keys=cast("Any", ("tests.core_program.typed",)),
+        retained_artifact_keys=("tests.core_program.typed",),
         retained_artifact_payload_types={},
     )
 
@@ -711,3 +720,15 @@ def test_native_graph_rejects_a_scope_outside_the_enumeration() -> None:
 
     with pytest.raises(TypeError, match="scope"):
         core_program_graph(kernel=_NativeKernel({"main": program}))
+
+
+def test_core_build_context_refuses_ages_that_are_no_time_axis() -> None:
+    """A build context's ages are a time axis or absent, never another object."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="ages"):
+        dataclasses.replace(_context(), ages=object())
+
+
+def test_core_build_context_refuses_a_regime_level_that_is_no_mapping() -> None:
+    """Each regime's flat params are a mapping of parameter leaves, never a string."""
+    with pytest.raises(BeartypeCallHintParamViolation, match="flat_params"):
+        dataclasses.replace(_context(), flat_params=MappingProxyType({"working": "x"}))

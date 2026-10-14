@@ -37,7 +37,7 @@ from tests.conftest import DECIMAL_PRECISION
 
 # The value-read behaviour under test is independent of the drop announce, so
 # these calls run with runtime validation off.
-_SILENT = get_logger(log_level="off")
+_SILENT = get_logger(log_level="off", runtime_checks=False)
 
 # Consumption the published node the replacement tests fall back to carries.
 # It sits inside that node's resources, so the replacement is admissible on
@@ -67,7 +67,7 @@ class _StubRegime(Regime):
     writes the one field directly rather than building a whole compiled regime.
     """
 
-    def __init__(self, *, simulation: object) -> None:
+    def __init__(self, *, simulation: SimpleNamespace) -> None:
         object.__setattr__(self, "simulation", simulation)
 
 

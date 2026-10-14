@@ -1,16 +1,19 @@
 """Shared spaces are completed once; stochastic ID staging stays admitted."""
 
 from types import MappingProxyType
-from typing import Any
 
 import jax
 import jax.core
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 import pytest
+from jax.typing import DTypeLike
 
-from _lcm.engine import SolutionPhase
+from _lcm.engine import SolutionPhase, StateActionSpace
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.transitions import draw_key_from_dict
+from _lcm.typing import FlatRegimeParams
 from lcm import ExecutionConfig, LinSpacedGrid
 from tests.simulation.test_population_allocation_budget import (
     _memory,
@@ -22,14 +25,15 @@ _N_SUBJECTS = 7
 
 
 @pytest.mark.parametrize("subject_width", [1, 3, 7])
+@pytest.mark.parametrize("runtime_checks", [False, True])
 def test_complete_spaces_are_call_local_across_subject_chunks(
-    *, monkeypatch: pytest.MonkeyPatch, subject_width: int
+    *, monkeypatch: pytest.MonkeyPatch, subject_width: int, runtime_checks: bool
 ) -> None:
     """Each regime's space is completed a fixed number of times per simulate call.
 
     The count does not depend on the subject-chunk width: each regime is
-    completed once for the simulation inputs. The regime-selection check
-    already passed for these params in `solve`, so simulate reuses it.
+    completed once for the simulation inputs. Enabled numerical preflight
+    also completes the nonterminal regime's space once, independently of chunks.
     """
     model = get_model(
         n_periods=2,
@@ -43,9 +47,19 @@ def test_complete_spaces_are_call_local_across_subject_chunks(
     counts: dict[str, int] = {}
     original = SolutionPhase.state_action_space
 
-    def observe(self: SolutionPhase, **kwargs: Any) -> object:
+    # keyword-only-exempt: library-callback=SolutionPhase.state_action_space
+    def observe(
+        self: SolutionPhase,
+        *,
+        regime_params: FlatRegimeParams,
+        process_grid_resolver: ProcessGridResolver | None = None,
+    ) -> StateActionSpace:
         counts[names[id(self)]] = counts.get(names[id(self)], 0) + 1
-        return original(self, **kwargs)
+        return original(
+            self,
+            regime_params=regime_params,
+            process_grid_resolver=process_grid_resolver,
+        )
 
     with monkeypatch.context() as patch:
         patch.setattr(SolutionPhase, "state_action_space", observe)
@@ -61,10 +75,11 @@ def test_complete_spaces_are_call_local_across_subject_chunks(
             },
             seed=17,
             log_level="off",
+            runtime_checks=runtime_checks,
         )
     assert (result.n_subjects, counts) == (
         _N_SUBJECTS,
-        {"working_life": 1, "dead": 1},
+        {"working_life": 2 if runtime_checks else 1, "dead": 1},
     )
 
 
@@ -98,7 +113,16 @@ def test_draw_ids_are_constructed_inside_the_admitted_numerical_body(
     memory = _memory(inputs=(keys, ids, probabilities), budget=1_000_000)
     original = jnp.asarray
 
-    def guard(value: object, *args: Any, **kwargs: Any) -> object:
+    # keyword-only-exempt: library-callback=jax.numpy.asarray
+    def guard(
+        value: npt.ArrayLike,
+        dtype: DTypeLike | None = None,
+        order: str | None = None,
+        *,
+        copy: bool | None = None,
+        device: jax.Device | jax.sharding.Sharding | None = None,
+        out_sharding: jax.NamedSharding | jax.P | None = None,
+    ) -> jax.Array:
         if isinstance(value, list | tuple) and any(
             isinstance(leaf, jax.Array) and not isinstance(leaf, jax.core.Tracer)
             for leaf in jax.tree.leaves(value)
@@ -106,7 +130,9 @@ def test_draw_ids_are_constructed_inside_the_admitted_numerical_body(
             raise _UnadmittedAllocationError(
                 "Regime ID vector staged outside its admitted body"
             )
-        return original(value, *args, **kwargs)
+        return original(
+            value, dtype, order, copy=copy, device=device, out_sharding=out_sharding
+        )
 
     with monkeypatch.context() as capture:
         capture.setattr(jnp, "asarray", guard)

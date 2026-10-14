@@ -16,6 +16,7 @@ from typing import Literal
 
 from _lcm.constraints.ir import Compare, Condition
 from lcm.exceptions import NBEGMCaseError
+from lcm.typing import UserFunction
 
 type BoundaryKind = Literal["continuous_kink", "jump", "hard_constraint"]
 type EqualityOwner = Literal["when", "otherwise"]
@@ -116,7 +117,7 @@ def case_boundary(*, condition: Condition, kind: BoundaryKind) -> CaseBoundary:
     return CaseBoundary(expression=expression, kind=kind)
 
 
-def piece[F: Callable[..., object]](
+def piece[F: UserFunction](
     *,
     output: str,
     when: CaseBoundary | None = None,
@@ -204,7 +205,7 @@ def affine_breakpoint(
     )
 
 
-def piecewise_affine[F: Callable[..., object]](
+def piecewise_affine[F: UserFunction](
     *,
     output: str,
     variable: str,
@@ -237,7 +238,7 @@ def piecewise_affine[F: Callable[..., object]](
     )
 
 
-def smooth_helper[F: Callable[..., object]](func: F) -> F:
+def smooth_helper[F: UserFunction](func: F) -> F:
     """Attest that a user node's `max`/`clip`/`abs` use is numerical, not economic.
 
     The smoothness gate rejects piecewise primitives in user economic nodes
@@ -265,7 +266,7 @@ class _PieceAttacher:
     meta: PieceMeta
     """The piece declaration attached as `__lcm_piece__`."""
 
-    def __call__[F: Callable[..., object]](self, func: F) -> F:
+    def __call__[F: UserFunction](self, func: F) -> F:
         """Attach the declaration and return `func` unchanged."""
         func.__lcm_piece__ = self.meta  # ty: ignore[unresolved-attribute]
         return func
@@ -278,7 +279,7 @@ class _ScheduleAttacher:
     meta: PiecewiseAffineMeta
     """The schedule declaration attached as `__lcm_piecewise_affine__`."""
 
-    def __call__[F: Callable[..., object]](self, func: F) -> F:
+    def __call__[F: UserFunction](self, func: F) -> F:
         """Attach the declaration and return `func` unchanged."""
         func.__lcm_piecewise_affine__ = self.meta  # ty: ignore[unresolved-attribute]
         return func

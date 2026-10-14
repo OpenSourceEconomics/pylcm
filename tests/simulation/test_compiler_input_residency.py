@@ -3,7 +3,6 @@
 from collections.abc import Callable, Mapping
 from functools import partialmethod
 from types import MappingProxyType
-from typing import Any
 
 import jax
 import numpy as np
@@ -19,6 +18,7 @@ from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
+from _lcm.typing import FootprintTree, PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -75,7 +75,7 @@ def _dispatch(
     return result.block_until_ready()
 
 
-def _payload_bytes(*, tree: object, device: jax.Device) -> int:
+def _payload_bytes(*, tree: FootprintTree, device: jax.Device) -> int:
     return sum(
         stop - start
         for start, stop in measure_buffer_footprint(tree=tree).spans.get(device, ())
@@ -83,14 +83,14 @@ def _payload_bytes(*, tree: object, device: jax.Device) -> int:
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _refuse_cached_execution(
+def _refuse_cached_execution[Result](
     self: jax.stages.Compiled,
-    *args: Any,
-    original: Callable[..., object],
+    *args: PytreeValue,
+    original: Callable[..., Result],
     forbidden: jax.stages.Compiled,
     attempted: list[bool],
-    **kwargs: Any,
-) -> object:
+    **kwargs: PytreeValue,
+) -> Result:
     if self is forbidden:
         attempted.append(True)
         raise AssertionError("Cached executable ran without room for its dead input")

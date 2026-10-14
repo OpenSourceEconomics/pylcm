@@ -24,7 +24,8 @@ is small, has no free structure, and scales along its grid knobs —
 it usable as a benchmark workload as well as a worked example.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from typing import Literal
 
 import jax.numpy as jnp
 
@@ -48,7 +49,10 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     FloatND,
+    IntND,
     ScalarInt,
+    StateName,
+    UserParamsNode,
 )
 
 # Lowest wealth node, kept strictly positive so log utility stays finite.
@@ -312,7 +316,7 @@ def get_params(
     marriage_premium: float = 1.0,
     interest_rate: float = 0.03,
     participation_slack: float = 0.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Return the params dict `get_model()`'s model takes.
 
     Args:
@@ -350,7 +354,9 @@ def get_params(
     }
 
 
-def get_initial_conditions(*, n_subjects: int, model: Model) -> dict:
+def get_initial_conditions(
+    *, n_subjects: int, model: Model
+) -> dict[StateName | Literal["regime_id"], FloatND | IntND]:
     """Return a cohort of singles, half women and half men.
 
     Args:
@@ -472,7 +478,7 @@ def _no_dissolution(D_target: BoolND) -> BoolND:
 
 # keyword-only-exempt: primary-argument=law
 def _until_last_age(
-    law: Mapping[str, object], *, terminal: str, last_age: int
+    law: Mapping[str, StochasticTransition], *, terminal: str, last_age: int
 ) -> ByAge:
     """Apply `law` until the age before `last_age`, then only its `terminal` cell."""
     return ByAge.until(
@@ -490,7 +496,9 @@ def _single_terminal(*, wealth: LinSpacedGrid, consumption: LinSpacedGrid) -> Re
     )
 
 
-def _transition_probabilities(*, last_age: int) -> dict:
+def _transition_probabilities(
+    *, last_age: int
+) -> dict[str, Callable[[FloatND], FloatND]]:
     """Build the four age-dependent transition probabilities of one model.
 
     Every non-terminal regime is solved up to `last_age` and hands its rows to

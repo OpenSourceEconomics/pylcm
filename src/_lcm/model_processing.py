@@ -7,7 +7,7 @@ Extracted from `model.py` to keep the `Model` class focused on its public API.
 import dataclasses
 import functools
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import cast
 
@@ -19,6 +19,7 @@ from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
+from _lcm.grids.categorical import get_category_codes
 from _lcm.pandas_utils import convert_series_in_params
 from _lcm.params.edges import (
     EDGES,
@@ -34,12 +35,14 @@ from _lcm.params.processing import (
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.reachability import PhaseName
 from _lcm.regime_building.age_normalization import (
     _regime_has_markers,
     normalize_age_specialization,
 )
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.broadcast import (
+    compute_kept_variables,
     root_functions,
     states_read_through_their_draw,
 )
@@ -56,25 +59,33 @@ from _lcm.regime_building.processing import (
 )
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.policy_programs import declare_finite_replay_programs
-from _lcm.solution.contract import SolverModelContext
+from _lcm.solution.contract import Solver, SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.time import TimeAxis, coordinate_kind, specialization_coordinate_at
 from _lcm.typing import (
+    DataclassInstance,
+    EconFunctionKwargs,
+    EGMCarryProducer,
     FlatParams,
     FlatRegimeParams,
+    FunctionName,
+    ParamsLeaf,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
+    RegimeParamsTemplateNode,
+    RegimeTransitionFunction,
     StateName,
+    VmappedRegimeTransitionFunction,
 )
-from _lcm.utils.containers import get_field_names_and_values
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
+from _lcm.utils.functools import is_user_function
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.params import MappingLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import JointTransition, Transition
-from lcm.typing import Phase, UserParams
+from lcm.typing import Phase, UserFunction, UserParams
 
 
 def build_regimes_and_template(
@@ -247,10 +258,11 @@ def validate_model_inputs(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
-    regime_id_class: type,
+    regime_id_class: type[DataclassInstance],
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     removed_edge_reads: Mapping[
         RegimeName, Mapping[str, tuple[RegimeName, ...]]
@@ -267,6 +279,10 @@ def validate_model_inputs(
     function still counts as used. A marker only the simulate phase reads is
     resolved at the first of `visited_periods_by_regime`, where a subject can be;
     they default to the active periods.
+
+    `targets_by_phase` names, per phase and regime, the targets the model graph
+    reaches at the demanded periods; a state a phase's law hands to one of that
+    phase's targets that keeps it as a state is used.
 
     `removed_edge_reads` name, per regime, the variables read by declarations
     that fixed-zero pruning removed with their edges, and those edges' targets.
@@ -312,8 +328,10 @@ def validate_model_inputs(
             )
         )
 
-    error_messages = _reserved_age_errors(
-        user_regimes=solver_validation_regimes, laws=laws, ages=ages
+    error_messages = list(
+        _reserved_age_errors(
+            user_regimes=solver_validation_regimes, laws=laws, ages=ages
+        )
     )
 
     if not user_regimes:
@@ -326,7 +344,7 @@ def validate_model_inputs(
     if len(terminal_regimes) < 1:
         error_messages.append("lcm.Model must have at least one terminal regime.")
 
-    regime_id_fields = sorted(get_field_names_and_values(regime_id_class).keys())
+    regime_id_fields = sorted(get_category_codes(regime_id_class))
     regime_names = sorted(user_regimes.keys())
     if regime_id_fields != regime_names:
         error_messages.append(
@@ -343,6 +361,7 @@ def validate_model_inputs(
             broadcast_variables=broadcast_variables,
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
+            targets_by_phase=targets_by_phase,
             visited_periods_by_regime=visited_periods_by_regime,
             removed_edge_reads=removed_edge_reads,
         )
@@ -373,11 +392,11 @@ def validate_model_inputs(
 
 def _reserved_age_errors(
     *, user_regimes: Mapping[RegimeName, UserRegime], laws: RegimeLaws, ages: TimeAxis
-) -> list[str]:
+) -> tuple[str, ...]:
     """Prevent unresolved ages from becoming runtime parameters in period mode."""
     errors: list[str] = []
     if coordinate_kind(ages) != "period":
-        return errors
+        return tuple(errors)
     for regime_name, regime in user_regimes.items():
         for phase in ("solve", "simulate"):
             functions = dict(
@@ -396,7 +415,7 @@ def _reserved_age_errors(
                         if isinstance(raw, Phased)
                         else raw,
                     )
-                    if callable(joint.support):
+                    if is_user_function(joint.support):
                         functions[f"__joint_support__{target}__{name}"] = joint.support
             if "age" in functions:
                 continue
@@ -411,7 +430,7 @@ def _reserved_age_errors(
                     f"dependency in {phase} functions {consumers}. Supply ages "
                     "or define a separately named biological_age from explicit inputs."
                 )
-    return errors
+    return tuple(errors)
 
 
 def _representative_for_validation(
@@ -475,16 +494,17 @@ def _validate_all_variables_used(
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    targets_by_phase: Mapping[PhaseName, Mapping[RegimeName, frozenset[RegimeName]]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
     removed_edge_reads: Mapping[
         RegimeName, Mapping[str, tuple[RegimeName, ...]]
     ] = MappingProxyType({}),
-) -> list[str]:
+) -> tuple[str, ...]:
     """Validate that all states and actions are used somewhere in each regime.
 
     Each state or action must be read by one of the regime's root computations
-    (`root_functions`) or by a law of motion that is not the identity. That
-    covers, per regime:
+    (`root_functions`) or by a law of motion that is not the identity, or be
+    handed to a reachable target that keeps it. That covers, per regime:
 
     - the concurrent valuation — utility, or a collective regime's
       per-stakeholder utilities, and the constraints;
@@ -496,18 +516,21 @@ def _validate_all_variables_used(
     - the gate, gate references or fallback projections of a gated edge whose
       target is this regime — those are declared on the source regime but
       evaluated here, so this regime is where the state they read must live;
-    - a law of motion, unless it hands the state to itself;
+    - a law of motion, unless it is a `fixed_transition` identity;
     - for a process state, any of the above reading its next-period draw
-      `next_<state>`, which is taken from the state.
+      `next_<state>`, which is taken from the state;
+    - a law of motion, identity included, toward a target the regime can
+      transition into that keeps the state, because that target's value has an
+      axis the regime has to fill. Hand-overs chain through
+      `compute_kept_variables`, so a regime that keeps a state only to hand it
+      on is itself such a target.
 
     A declaration removed with a fixed-zero edge is not a use: pruning removes
     as much as it can up front, so a variable read only across such an edge is
     unused, exactly as in the model declared without that edge.
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
-    ones, and a retained broadcast variable may be used only through a law
-    of motion toward a candidate target (which this per-regime check cannot
-    see).
+    ones.
 
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
@@ -515,6 +538,13 @@ def _validate_all_variables_used(
         laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
         broadcast_variables: Per regime, the model-level broadcast state and
             action names to exempt.
+        ages: The model's time axis, used to resolve `AgeSpecializedFunction`
+            markers at a representative age.
+        active_periods_by_regime: The per-regime coverage.
+        targets_by_phase: Per phase and regime, the targets the model graph
+            reaches at the demanded periods.
+        visited_periods_by_regime: Per regime, the periods a subject can be in
+            it, where a simulate-only marker is resolved.
         removed_edge_reads: Per regime, each state or action read by a
             declaration removed with its fixed-zero edge, and the targets of
             those edges; named in the error to explain why a variable is unused.
@@ -523,8 +553,8 @@ def _validate_all_variables_used(
         A list of error messages. Empty list if validation passes.
 
     """
-    error_messages = []
     conditioning_names = _model_wide_conditioning_names(user_regimes)
+    unread_by_regime: dict[RegimeName, frozenset[str]] = {}
 
     for regime_name, user_regime in user_regimes.items():
         variable_names = set(user_regime.states) | set(user_regime.actions)
@@ -546,7 +576,7 @@ def _validate_all_variables_used(
         # A `Phased` slot may consume a variable in only one phase, and the
         # variable is used either way, so a simulate variant that is a different
         # object joins the pool under its own key.
-        roots: dict[str, Callable[..., object]] = dict(solve_roots) | {
+        roots: dict[FunctionName, UserFunction] = dict(solve_roots) | {
             f"{key}__simulate": func
             for key, func in simulate_roots.items()
             if solve_roots.get(key) is not func
@@ -581,26 +611,23 @@ def _validate_all_variables_used(
             simulated_age = specialization_coordinate_at(
                 ages=ages, period=visited_periods[0]
             )
-            user_functions = cast(
-                "dict[str, Callable[..., object]]",
-                {
-                    name: resolve_node(
-                        node=func,
-                        age=simulated_age
-                        if name.endswith("__simulate")
-                        else representative_age,
-                    )
-                    for name, func in user_functions.items()
-                },
-            )
+            user_functions = {
+                name: resolve_node(
+                    node=func,
+                    age=simulated_age
+                    if name.endswith("__simulate")
+                    else representative_age,
+                )
+                for name, func in user_functions.items()
+            }
 
         targets = [
             *roots,
-            # A law of motion is a use of what it reads, except when it is the
-            # identity: handing a state to itself says nothing about the state
-            # being needed. This is where the two consumers of `root_functions`
-            # part ways — the pruning walk roots the identity hand-over, because
-            # a target that keeps the state has to be given its value.
+            # A law of motion is a use of what it reads, except when it is a
+            # `fixed_transition` identity: carrying a state says nothing about
+            # the state being needed. An identity hand-over is a use only toward
+            # a target that keeps the state, which `compute_kept_variables`
+            # decides below across regimes.
             *(
                 name
                 for name in user_functions
@@ -623,7 +650,22 @@ def _validate_all_variables_used(
         # that reads its next-period draw ends the walk at a leaf. The draw is
         # taken from the state, so reading it is a use of the state.
         reachable |= states_read_through_their_draw(regime=user_regime, reads=reachable)
-        unused_variables = sorted(variable_names - reachable)
+        unread_by_regime[regime_name] = frozenset(variable_names - reachable)
+
+    kept = compute_kept_variables(
+        user_regimes=user_regimes,
+        laws=laws,
+        candidates=unread_by_regime,
+        koopmans_aggregator=None,
+        ages=ages,
+        active_periods_by_regime=active_periods_by_regime,
+        visited_periods_by_regime=visited_periods_by_regime,
+        targets_by_phase=targets_by_phase,
+    )
+    error_messages = []
+    for regime_name, unread in unread_by_regime.items():
+        user_regime = user_regimes[regime_name]
+        unused_variables = sorted(unread - kept[regime_name])
 
         if unused_variables:
             unused_states = [v for v in unused_variables if v in user_regime.states]
@@ -642,6 +684,19 @@ def _validate_all_variables_used(
                 f"'{regime_name}': {' and '.join(msg_parts)}. "
                 f"Each state and action must be used in at least one of: "
                 f"utility, constraints, or transition functions."
+                + (
+                    _hand_over_explanation(
+                        regime_name=regime_name,
+                        solve_targets=targets_by_phase["solution"].get(
+                            regime_name, frozenset()
+                        ),
+                        simulate_targets=targets_by_phase["simulation"].get(
+                            regime_name, frozenset()
+                        ),
+                    )
+                    if unused_states
+                    else ""
+                )
                 + _removed_edge_explanation(
                     regime_name=regime_name,
                     unused=unused_variables,
@@ -649,7 +704,32 @@ def _validate_all_variables_used(
                 )
             )
 
-    return error_messages
+    return tuple(error_messages)
+
+
+def _hand_over_explanation(
+    *,
+    regime_name: RegimeName,
+    solve_targets: frozenset[RegimeName],
+    simulate_targets: frozenset[RegimeName],
+) -> str:
+    """State the hand-over rule and name the targets each phase was checked against."""
+    targets = (
+        f"'{regime_name}' reaches {_named_or_none(solve_targets)} when solving and "
+        f"{_named_or_none(simulate_targets)} when simulating"
+        if solve_targets or simulate_targets
+        else f"'{regime_name}' reaches no regime"
+    )
+    return (
+        f" A state also counts as used when '{regime_name}' carries it with a law "
+        f"of motion to a target that the same phase reaches and that keeps it as a "
+        f"state; {targets}."
+    )
+
+
+def _named_or_none(names: frozenset[RegimeName]) -> str:
+    """Render regime names as a sorted list, or say there are none."""
+    return str(sorted(names)) if names else "no regime"
 
 
 def _removed_edge_explanation(
@@ -669,7 +749,7 @@ def _removed_edge_explanation(
     )
 
 
-def _law_phase_varies(*, solve_obj: object, sim_obj: object) -> bool:
+def _law_phase_varies(*, solve_obj: UserFunction, sim_obj: UserFunction | None) -> bool:
     """Whether a name's `solve` and `simulate` resolutions are different laws.
 
     Object identity is the test: `get_all_functions` returns the raw user
@@ -690,9 +770,9 @@ def _law_phase_varies(*, solve_obj: object, sim_obj: object) -> bool:
     return True
 
 
-def _post_decision_function_of_solver(solver: object) -> str | None:
+def _post_decision_function_of_solver(solver: Solver) -> str | None:
     """Return the bound liquid post-decision role of an EGM-family solver."""
-    current: object | None = solver
+    current: Solver | None = solver
     while current is not None:
         post_decision = getattr(current, "post_decision_function", None)
         if isinstance(post_decision, str):
@@ -730,7 +810,7 @@ def _validate_constraint_phase_invariance(
     laws: RegimeLaws,
     ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
-) -> list[str]:
+) -> tuple[str, ...]:
     """Reject a constraint whose dependency ancestry contains a phase-varying node.
 
     The feasible set is a primitive of the model the agent solved, so it may not
@@ -809,13 +889,10 @@ def _validate_constraint_phase_invariance(
             representative_age = specialization_coordinate_at(
                 ages=ages, period=active_periods[0]
             )
-            ancestry_funcs = cast(
-                "dict[str, Callable[..., object]]",
-                {
-                    name: resolve_node(node=func, age=representative_age)
-                    for name, func in solve_funcs.items()
-                },
-            )
+            ancestry_funcs = {
+                name: resolve_node(node=func, age=representative_age)
+                for name, func in solve_funcs.items()
+            }
 
         for constraint_name in user_regime.decomposed_constraints:
             ancestors = get_ancestors(
@@ -846,12 +923,12 @@ def _validate_constraint_phase_invariance(
                     f"carried state's current value instead, or make it an "
                     f"ordinary (non-carried) state."
                 )
-    return error_messages
+    return tuple(error_messages)
 
 
 def _resolve_fixed_params(
     *,
-    fixed_params: dict[str, object],
+    fixed_params: UserParams,
     template: ParamsTemplate,
     already_consumed: frozenset[str],
 ) -> FlatParams:
@@ -891,7 +968,7 @@ def _remove_fixed_params_from_template(
     """
 
     # Template subtrees: `_trim_fixed_params` copies nodes of any depth.
-    trimmed: dict[RegimeName, MappingProxyType[str, object]] = {
+    trimmed: dict[RegimeName, MappingProxyType[str, RegimeParamsTemplateNode]] = {
         regime_name: MappingProxyType(
             _trim_fixed_params(
                 branch=regime_template,
@@ -920,14 +997,17 @@ def _remove_fixed_params_from_template(
 
 
 def _trim_fixed_params(
-    *, branch: Mapping[str, object], prefix: tuple[str, ...], fixed: Mapping
-) -> dict[str, object]:
+    *,
+    branch: Mapping[str, RegimeParamsTemplateNode],
+    prefix: tuple[str, ...],
+    fixed: FlatRegimeParams,
+) -> MappingProxyType[str, RegimeParamsTemplateNode]:
     """Copy `branch` without the leaves whose qualified name is in `fixed`."""
-    trimmed: dict[str, object] = {}
+    trimmed: dict[str, RegimeParamsTemplateNode] = {}
     for key, value in branch.items():
         if isinstance(value, Mapping):
             inner = _trim_fixed_params(
-                branch=cast("Mapping[str, object]", value),
+                branch=value,
                 prefix=(*prefix, key),
                 fixed=fixed,
             )
@@ -935,7 +1015,7 @@ def _trim_fixed_params(
                 trimmed[key] = MappingProxyType(inner)
         elif qname_from_tree_path((*prefix, key)) not in fixed:
             trimmed[key] = value
-    return trimmed
+    return MappingProxyType(trimmed)
 
 
 def _partial_fixed_params_into_regimes(
@@ -1086,8 +1166,10 @@ def _partial_fixed_params_into_regimes(
 
 
 def _filter_kwargs_for_func(
-    *, func: Callable, kwargs: Mapping[str, object]
-) -> Mapping[str, object]:
+    *,
+    func: RegimeTransitionFunction | VmappedRegimeTransitionFunction | EGMCarryProducer,
+    kwargs: EconFunctionKwargs,
+) -> EconFunctionKwargs:
     """Filter kwargs to only those accepted by func's signature."""
     try:
         sig = inspect.signature(func)
@@ -1132,7 +1214,7 @@ def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
             raise InvalidParamsError(msg)
 
 
-def _check_leaf(*, value: object, path: str) -> None:
+def _check_leaf(*, value: ParamsLeaf, path: str) -> None:
     """Check a single leaf, recursing into `MappingLeaf` / `SequenceLeaf`."""
     if isinstance(value, MappingLeaf):
         for k, v in value.data.items():

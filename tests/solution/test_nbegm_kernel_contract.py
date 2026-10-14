@@ -94,9 +94,13 @@ def test_a_utility_naming_its_coefficient_gamma_solves_the_same_problem() -> Non
     """
     crra_params = copy.deepcopy(_TOY_PARAMS)
     gamma_params = copy.deepcopy(_TOY_PARAMS)
-    gamma_params["alive"]["utility"] = {
-        "gamma": crra_params["alive"]["utility"]["crra"]
-    }
+    crra_alive = crra_params["alive"]
+    gamma_alive = gamma_params["alive"]
+    assert isinstance(crra_alive, dict)
+    assert isinstance(gamma_alive, dict)
+    crra_utility_params = crra_alive["utility"]
+    assert isinstance(crra_utility_params, dict)
+    gamma_alive["utility"] = {"gamma": crra_utility_params["crra"]}
 
     named_gamma = (
         _build(
@@ -294,10 +298,17 @@ def test_a_liquid_law_naming_its_return_interest_solves_the_same_problem() -> No
     """
     return_liquid_params = copy.deepcopy(_TOY_PARAMS)
     interest_params = copy.deepcopy(_TOY_PARAMS)
-    budget = interest_params["alive"]["alive"]["next_liquid"]
+    alive = interest_params["alive"]
+    assert isinstance(alive, dict)
+    alive_target = alive["alive"]
+    assert isinstance(alive_target, dict)
+    budget = alive_target["next_liquid"]
+    assert isinstance(budget, dict)
     renamed_budget = {"interest": budget["return_liquid"], "income": budget["income"]}
     for target in ("alive", "dead"):
-        interest_params["alive"][target]["next_liquid"] = renamed_budget
+        target_params = alive[target]
+        assert isinstance(target_params, dict)
+        target_params["next_liquid"] = renamed_budget
 
     named_interest = (
         _build(

@@ -88,7 +88,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def _alive_edges(*, final_age_alive: int) -> dict:
+def _alive_edges(*, final_age_alive: int) -> dict[RegimeName, Transition]:
     """Stay alive before `final_age_alive`; die from any age up to and including it.
 
     `next_regime` chooses between the two edges where both exist.

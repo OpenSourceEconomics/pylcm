@@ -6,7 +6,7 @@ import weakref
 from collections.abc import Callable, Mapping
 from functools import partial, partialmethod
 from types import MappingProxyType
-from typing import Any
+from typing import Unpack
 
 import jax
 import jax.numpy as jnp
@@ -14,17 +14,20 @@ import numpy as np
 import pytest
 
 import _lcm.simulation.runtime as runtime_module
+from _lcm.execution.compiler_memory import CompilerMemoryReport
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     MaterializedCoreProgram,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.execution.workspace_planning import compiler_peak_bytes
+from _lcm.execution.workspace_planning import WorkspacePlan, compiler_peak_bytes
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
 from _lcm.simulation.runtime import CompiledSimulationProgram, SimulationRuntime
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
+from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 from tests.execution.test_compiler_allocation_reservation import memory_stats
+from tests.simulation._callback_types import WorkspacePlanning
 from tests.simulation.test_program_runtime import _program
 
 
@@ -36,7 +39,7 @@ class _LiveArrays:
 
     def __call__(self) -> DeviceBufferFootprint:
         jax.block_until_ready(self.arrays)
-        return measure_buffer_footprint(tree=self.arrays)
+        return measure_buffer_footprint(tree=tuple(self.arrays))
 
 
 def _runtime(*, budget: int, enable_jit: bool = True) -> SimulationRuntime:
@@ -61,9 +64,9 @@ def _controlled_width_output(*, state: jax.Array, width: int) -> jax.Array:
 def _controlled_memory_analysis(
     self: jax.stages.Compiled,
     *,
-    original: Callable[..., object],
+    original: Callable[..., CompilerMemoryReport | None],
     executable_widths: dict[int, int],
-) -> object:
+) -> CompilerMemoryReport | None:
     width = executable_widths.get(id(self))
     if width is None:
         return original(self)
@@ -71,14 +74,14 @@ def _controlled_memory_analysis(
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
-def _observe_controlled_execution(
+def _observe_controlled_execution[Result](
     self: jax.stages.Compiled,
-    *args: Any,
-    original: Callable[..., object],
+    *args: PytreeValue,
+    original: Callable[..., CompilerMemoryReport | None],
     executable_widths: dict[int, int],
     executions: list[int],
-    **kwargs: Any,
-) -> object:
+    **kwargs: PytreeValue,
+) -> CompilerMemoryReport | None:
     width = executable_widths.get(id(self))
     if width is not None:
         executions.append(width)
@@ -192,11 +195,13 @@ def test_cached_candidates_are_rechecked_after_retained_outputs_grow(
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class _ObservedPlanner:
-    original: Callable[..., Any]
+class _ObservedPlanner[Compiled]:
+    original: Callable[..., WorkspacePlan[Compiled]]
     observations: list[tuple[int, int | None]]
 
-    def __call__(self, **kwargs: Any) -> Any:
+    def __call__(
+        self, **kwargs: Unpack[WorkspacePlanning[Compiled]]
+    ) -> WorkspacePlan[Compiled]:
         plan = self.original(**kwargs)
         self.observations.append((kwargs["resident_bytes"], plan.peak_bytes))
         return plan
@@ -272,7 +277,7 @@ def test_budgeted_dispatch_requires_a_call_scoped_live_inventory() -> None:
 def test_ready_unit_outputs_reach_the_host_inventory() -> None:
     """Host adapters see every raw core output through the same explicit handoff."""
     state = jnp.arange(4.0)
-    outputs: list[object] = []
+    outputs: list[PytreeValue] = []
     runtime = _runtime(budget=1_000_000)
     executor = SimulationUnitExecutor(
         runtime=runtime,

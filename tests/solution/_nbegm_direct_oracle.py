@@ -42,22 +42,52 @@ import tempfile
 from collections.abc import Callable, Generator, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TypedDict, overload
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from numpy.typing import ArrayLike
 
+from _lcm.continuation import ContinuationPayload
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.continuation import ContinuationPlan, _ChildRead
+from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreBuildContext,
     MaterializedCoreProgram,
     core_program_graph,
     materialize_core_program,
 )
+from _lcm.params.mapping_leaf import MappingLeaf
+from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.solution.contract import PeriodKernel
+from _lcm.solution.nbegm import (
+    DiscreteActionCodes,
+    _NBEGMRideAlongStatics,
+    _NBEGMScheduleSpec,
+    _NBEGMSource,
+    _RideAlongNBEGMPeriodKernel,
+)
 from _lcm.solution.negm import _with_outer_post_decision
+from _lcm.solution.nnbegm import _NNBEGMPeriodKernel
 from _lcm.solution.period_replay import _load_capture_payload
+from _lcm.time import TimeAxis
+from _lcm.typing import ArgumentTree, EconFunctionArg, FlatParams, ReferenceName
 from lcm import Model
+from lcm.typing import ActionName, FloatND, IntND, RegimeName, StateName, UserParams
+
+type WorkingDType = np.dtype[np.float32] | np.dtype[np.float64]
+
+
+class OracleContext(TypedDict):
+    state_action_space: StateActionSpace
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
+    flat_params: FlatParams
+    period: int
+    ages: TimeAxis
+
 
 NEWTON_ACTION_FLOOR = 1e-8
 
@@ -117,22 +147,22 @@ class ChildPeriodContext:
     nodes, and an age-specialized function closes over the child's age.
     """
 
-    statics: Any
+    statics: _NBEGMRideAlongStatics
     """The child-period kernel's statics: its breakpoint sources, with every
     derived variable resolved at the child's age."""
 
-    grids: Mapping[str, np.ndarray]
+    grids: Mapping[StateName, np.ndarray]
     """Every state's nodes at the child's period."""
 
     period: int
     """The child's period."""
 
-    age: Any
+    age: FloatND
     """The child's age."""
 
 
 def child_period_context(
-    *, model: Model, context: Mapping[str, Any], regime_name: str = "alive"
+    *, model: Model, context: OracleContext, regime_name: RegimeName = "alive"
 ) -> ChildPeriodContext | None:
     """Return the self-read child's context, or `None` past the last period.
 
@@ -143,10 +173,11 @@ def child_period_context(
     regime = model._regimes[regime_name]
     if period not in regime.solution.period_kernels:
         return None
-    child_kernel: Any = regime.solution.period_kernels[period]
+    child_kernel = regime.solution.period_kernels[period]
+    assert isinstance(child_kernel, _RideAlongNBEGMPeriodKernel | _NNBEGMPeriodKernel)
     statics = (
         child_kernel.statics
-        if hasattr(child_kernel, "statics")
+        if isinstance(child_kernel, _RideAlongNBEGMPeriodKernel)
         else child_kernel.keeper_kernel.statics
     )
     states = dict(context["state_action_space"].states)
@@ -163,10 +194,10 @@ def child_period_context(
 def ride_along_kernel(
     *,
     model: Model,
-    params: Mapping[str, Any],
-    regime_name: str = "alive",
+    params: UserParams,
+    regime_name: RegimeName = "alive",
     period: int | None = None,
-) -> tuple[Any, dict[str, Any]]:
+) -> tuple[PeriodKernel, OracleContext]:
     """Return one regime-period's kernel and the inputs the solve handed it.
 
     The model is solved once with the engine's period capture switched on for the
@@ -202,10 +233,10 @@ def ride_along_kernel(
 def nnbegm_inner_contexts(
     *,
     model: Model,
-    params: Mapping[str, Any],
-    regime_name: str = "alive",
+    params: UserParams,
+    regime_name: RegimeName = "alive",
     period: int | None = None,
-) -> tuple[tuple[str, Any, dict[str, Any]], ...]:
+) -> tuple[tuple[str, _RideAlongNBEGMPeriodKernel, OracleContext], ...]:
     """Return the keeper and adjuster contexts of one NNBEGM regime-period.
 
     The nested solver hands both inner kernels the period's own inputs; the
@@ -215,12 +246,13 @@ def nnbegm_inner_contexts(
     kernel, context = ride_along_kernel(
         model=model, params=params, regime_name=regime_name, period=period
     )
+    assert isinstance(kernel, _NNBEGMPeriodKernel)
     nodes = np.asarray(kernel.outer_grid_values)
-    contexts: list[tuple[str, Any, dict[str, Any]]] = [
+    contexts: list[tuple[str, _RideAlongNBEGMPeriodKernel, OracleContext]] = [
         ("keeper", kernel.keeper_kernel, context)
     ]
     for position in sorted({0, len(nodes) // 2}):
-        node_context = {
+        node_context: OracleContext = {
             **context,
             "flat_params": _with_outer_post_decision(
                 flat_params=context["flat_params"],
@@ -250,14 +282,16 @@ def _environment(variables: Mapping[str, str]) -> Generator[None]:
                 os.environ[name] = value
 
 
-def run_production_kernel(*, kernel: Any, context: Mapping[str, Any]) -> tuple:
+def run_production_kernel(
+    *, kernel: PeriodKernel, context: OracleContext
+) -> tuple[ArgumentTree, ...]:
     """Run the kernel's replay program on the context and return its raw outputs."""
     materialized = _materialize_replay(kernel=kernel, context=context)
     return tuple(jax.jit(materialized.function)(**materialized.arguments))
 
 
 def _materialize_replay(
-    *, kernel: Any, context: Mapping[str, Any]
+    *, kernel: PeriodKernel, context: OracleContext
 ) -> MaterializedCoreProgram:
     """Bind the context into the kernel's replay program, the one publishing policy."""
     return materialize_core_program(
@@ -268,8 +302,8 @@ def _materialize_replay(
 
 def direct_oracle_period(  # noqa: PLR0915
     *,
-    kernel: Any,
-    context: Mapping[str, Any],
+    kernel: _RideAlongNBEGMPeriodKernel,
+    context: OracleContext,
     child: ChildPeriodContext | None,
     tie_tolerance: float = 0.0,
 ) -> OraclePeriodResult:
@@ -284,19 +318,24 @@ def direct_oracle_period(  # noqa: PLR0915
     spec = kernel.schedule_spec
     plan = kernel.continuation_plan
 
-    kwargs = dict(_materialize_replay(kernel=kernel, context=context).arguments)
-    kwargs.update(
+    replay_arguments = dict(
+        _materialize_replay(kernel=kernel, context=context).arguments
+    )
+    replay_arguments.update(
         getattr(core_program_graph(kernel=kernel)["replay"].function, "keywords", None)
         or {}
     )
+    kwargs = {
+        name: _economic_argument(value)
+        for name, value in replay_arguments.items()
+        if name != "next_regime_to_continuation"
+    }
     # Captures preserve the solved child payloads. The numerical oracle reads
     # those economic inputs independently of the production argument adapter,
     # which may split a marginal leaf out of the continuation tree for donation.
     carries = {
         name: _numpy_carry(carry)
-        for name, carry in cast(
-            "Mapping[str, EGMCarry]", context["next_regime_to_continuation"]
-        ).items()
+        for name, carry in context["next_regime_to_continuation"].items()
     }
     dtype = np.asarray(kwargs[statics.liquid_name]).dtype
     liquid_grid = np.asarray(kwargs[statics.liquid_name], dtype=np.float64)
@@ -309,7 +348,6 @@ def direct_oracle_period(  # noqa: PLR0915
     param_pool = {
         key: value for key, value in kwargs.items() if key not in statics.state_names
     }
-    del param_pool["next_regime_to_continuation"]
     inverse_eis = (
         1.0
         / _scalar(
@@ -478,7 +516,9 @@ def direct_oracle_period(  # noqa: PLR0915
     )
 
 
-def _branch_bindings(discrete_actions: Any) -> tuple[dict[str, Any], ...]:
+def _branch_bindings(
+    discrete_actions: DiscreteActionCodes,
+) -> tuple[dict[ActionName, IntND], ...]:
     """Every combination of the declared discrete actions' codes, product order."""
     names = tuple(name for name, _ in discrete_actions)
     code_sets = tuple(codes for _, codes in discrete_actions)
@@ -491,10 +531,17 @@ def _branch_bindings(discrete_actions: Any) -> tuple[dict[str, Any], ...]:
     )
 
 
-def _numpy_carry(carry: EGMCarry) -> HostCarry:
+def _numpy_carry(carry: ContinuationPayload) -> HostCarry:
     """Copy every array leaf of a carry to the host as float64."""
+    assert isinstance(carry, EGMCarry)
 
-    def to_host(leaf: Any) -> Any:
+    @overload
+    def to_host(leaf: FloatND) -> np.ndarray: ...
+
+    @overload
+    def to_host(leaf: None) -> None: ...
+
+    def to_host(leaf: FloatND | None) -> np.ndarray | None:
         return None if leaf is None else np.asarray(leaf, dtype=np.float64)
 
     return HostCarry(
@@ -507,11 +554,19 @@ def _numpy_carry(carry: EGMCarry) -> HostCarry:
     )
 
 
-def _scalar(value: Any) -> float:
+def _economic_argument(value: ArgumentTree) -> EconFunctionArg:
+    """Require the captured oracle inputs to be economic function arguments."""
+    assert isinstance(value, jax.Array | float | MappingLeaf | SequenceLeaf)
+    return value
+
+
+def _scalar(value: EconFunctionArg | ArrayLike) -> float:
     return float(np.asarray(value))
 
 
-def _nextafter(*, values: Any, direction: float, dtype: Any) -> Any:
+def _nextafter(
+    *, values: ArrayLike, direction: float, dtype: WorkingDType
+) -> np.ndarray:
     """Step each value to its neighbour in the working dtype, as float64."""
     stepped = np.nextafter(
         np.asarray(values, dtype=dtype), np.asarray(direction, dtype)
@@ -546,12 +601,12 @@ class _CellGeometry:
 
 def _cell_geometry(
     *,
-    statics: Any,
-    kwargs: Mapping[str, Any],
-    cell: Mapping[str, Any],
+    statics: _NBEGMRideAlongStatics,
+    kwargs: Mapping[str, EconFunctionArg],
+    cell: Mapping[StateName, jax.Array],
     liquid_grid: np.ndarray,
-    dtype: Any,
-    action_binding: Mapping[str, Any],
+    dtype: WorkingDType,
+    action_binding: Mapping[ActionName, IntND],
 ) -> _CellGeometry:
     """Map every declared breakpoint to its liquid preimage and partition the cell.
 
@@ -615,20 +670,23 @@ def _cell_geometry(
 
 def _source_preimage(
     *,
-    source: Any,
-    statics: Any,
-    kwargs: Mapping[str, Any],
-    cell: Mapping[str, Any],
-    dtype: Any,
-    action_binding: Mapping[str, Any],
+    source: _NBEGMSource,
+    statics: _NBEGMRideAlongStatics,
+    kwargs: Mapping[str, EconFunctionArg],
+    cell: Mapping[StateName, jax.Array],
+    dtype: WorkingDType,
+    action_binding: Mapping[ActionName, IntND],
 ) -> float:
     """One breakpoint's liquid preimage in one cell, ownership resolved."""
     table = kwargs[source.threshold_param_name]
     if source.threshold_subkey is not None:
+        assert isinstance(table, MappingLeaf)
         table = table.data[source.threshold_subkey]
     if source.threshold_index_state is not None:
+        assert isinstance(table, jax.Array)
         table = table[cell[source.threshold_index_state]]
     if source.threshold_static_index is not None:
+        assert isinstance(table, jax.Array)
         table = table[source.threshold_static_index]
     threshold = float(np.asarray(table).astype(dtype))
     if source.derived_of_liquid_dag is None:
@@ -638,7 +696,7 @@ def _source_preimage(
     dag = source.derived_of_liquid_dag
     dag_arg_names = frozenset(inspect.signature(dag).parameters)
 
-    def derived_of_liquid(liquid: Any) -> Any:
+    def derived_of_liquid(liquid: FloatND) -> FloatND:
         return dag(
             **{statics.liquid_name: liquid},
             **{name: cell[name] for name in source.derived_state_names},
@@ -672,17 +730,17 @@ class _CellContinuation:
 
 def _cell_continuation(
     *,
-    kernel: Any,
-    statics: Any,
-    plan: Any,
-    combo_pool: Mapping[str, Any],
+    kernel: _RideAlongNBEGMPeriodKernel,
+    statics: _NBEGMRideAlongStatics,
+    plan: ContinuationPlan,
+    combo_pool: Mapping[str, EconFunctionArg],
     carries: Mapping[str, HostCarry],
-    kwargs: Mapping[str, Any],
+    kwargs: Mapping[str, EconFunctionArg],
     child: ChildPeriodContext | None,
     breakpoints: np.ndarray,
     liquid_grid: np.ndarray,
     savings_grid: np.ndarray,
-    dtype: Any,
+    dtype: WorkingDType,
 ) -> _CellContinuation:
     """Read one branch's continuation rows, per interval when the law reads liquid."""
     risk_aversion = (
@@ -690,7 +748,7 @@ def _cell_continuation(
         if plan.risk_aversion_param_name is not None
         else None
     )
-    pools: list[Mapping[str, Any]]
+    pools: list[Mapping[str, EconFunctionArg]]
     if statics.continuation_reads_liquid:
         lower_edges = np.concatenate([liquid_grid[:1], breakpoints])
         upper_edges = np.concatenate([breakpoints, liquid_grid[-1:]])
@@ -703,19 +761,19 @@ def _cell_continuation(
         pools = [combo_pool]
     values, marginals, cliff_savings, cliff_values = [], [], [], []
     for pool in pools:
-        targets = (
-            _cliff_savings_targets(
+        if kernel.cliff_candidates:
+            assert child is not None
+            targets = _cliff_savings_targets(
                 plan=plan,
                 regime_name=kernel.regime_name,
                 combo_pool=pool,
                 kwargs=kwargs,
-                child=cast("ChildPeriodContext", child),
+                child=child,
                 savings_grid=savings_grid,
                 dtype=dtype,
             )
-            if kernel.cliff_candidates
-            else np.zeros(0)
-        )
+        else:
+            targets = np.zeros(0)
         value, marginal = _expected_continuation(
             plan=plan,
             combo_pool=pool,
@@ -745,13 +803,13 @@ def _cell_continuation(
 
 def _cliff_savings_targets(
     *,
-    plan: Any,
-    regime_name: str,
-    combo_pool: Mapping[str, Any],
-    kwargs: Mapping[str, Any],
+    plan: ContinuationPlan,
+    regime_name: RegimeName,
+    combo_pool: Mapping[str, EconFunctionArg],
+    kwargs: Mapping[str, EconFunctionArg],
     child: ChildPeriodContext,
     savings_grid: np.ndarray,
-    dtype: Any,
+    dtype: WorkingDType,
 ) -> np.ndarray:
     """Savings targets a few float steps inside each side of every child jump.
 
@@ -780,12 +838,12 @@ def _cliff_savings_targets(
     grids = {name: child.grids[name] for name in statics.ride_names}
     child_kwargs = {
         **kwargs,
-        **child.grids,
+        **{name: jnp.asarray(grid) for name, grid in child.grids.items()},
         "period": jnp.int32(child.period),
         "age": child.age,
     }
     liquid_grid = np.asarray(child.grids[statics.liquid_name], dtype=np.float64)
-    choices: dict[str, list[Any]] = {}
+    choices: dict[StateName, list[int]] = {}
     for name in statics.ride_names:
         grid = grids[name]
         if name in read.stochastic_state_names:
@@ -838,8 +896,8 @@ def _cliff_savings_targets(
 
 
 def _euler_draw_nodes(
-    *, read: Any, combo_pool: Mapping[str, Any]
-) -> dict[str, list[Any]]:
+    *, read: _ChildRead, combo_pool: Mapping[str, EconFunctionArg]
+) -> dict[str, list[jax.Array]]:
     """Node values of each draw the Euler-state law reads, sorted by name."""
     nodes = {
         f"next_{name}": list(values)
@@ -850,7 +908,7 @@ def _euler_draw_nodes(
     if read.local_support_func is not None:
         supports = read.local_support_func(**combo_pool)
         nodes |= {
-            name: list(np.asarray(supports[key]))
+            name: list(jnp.asarray(supports[key]))
             for name, key in zip(
                 read.local_draw_names, read.local_support_keys, strict=True
             )
@@ -860,12 +918,12 @@ def _euler_draw_nodes(
 
 def _cliff_targets_at_node(
     *,
-    read: Any,
-    pool: Mapping[str, Any],
+    read: _ChildRead,
+    pool: Mapping[str, EconFunctionArg],
     post_decision_name: str,
     jumps: np.ndarray,
     savings_grid: np.ndarray,
-    dtype: Any,
+    dtype: WorkingDType,
 ) -> np.ndarray:
     """The jump targets with every draw the liquid law reads fixed in `pool`."""
 
@@ -894,8 +952,8 @@ def _cliff_targets_at_node(
 
 def _expected_continuation(
     *,
-    plan: Any,
-    combo_pool: Mapping[str, Any],
+    plan: ContinuationPlan,
+    combo_pool: Mapping[str, EconFunctionArg],
     carries: Mapping[str, HostCarry],
     savings_grid: np.ndarray,
     risk_aversion: float | None,
@@ -977,9 +1035,9 @@ class _ChildReader:
     def __init__(
         self,
         *,
-        read: Any,
+        read: _ChildRead,
         carry: HostCarry,
-        combo_pool: Mapping[str, Any],
+        combo_pool: Mapping[str, EconFunctionArg],
         post_decision_name: str,
     ) -> None:
         self.read = read
@@ -1018,14 +1076,16 @@ class _ChildReader:
             "age": jnp.asarray(read.age_values)[child_period],
         }
         resources_params = {
-            name: child_time.get(name, combo_pool.get(name))
+            name: _economic_argument(child_time.get(name, combo_pool.get(name)))
             for name in read.resources_param_names
         }
 
-        def next_states(savings: Any) -> Any:
+        def next_states(savings: FloatND) -> Mapping[str, FloatND]:
             return read.next_state_func(**combo_pool, **{post_decision_name: savings})
 
-        def euler_state(*, savings: Any, stochastic_values: tuple[Any, ...]) -> Any:
+        def euler_state(
+            *, savings: FloatND, stochastic_values: tuple[jax.Array, ...]
+        ) -> FloatND:
             draws = dict(zip(draw_names, stochastic_values, strict=True))
             return read.euler_state_func(
                 **combo_pool,
@@ -1035,11 +1095,11 @@ class _ChildReader:
 
         # keyword-only-exempt: library-callback=jax.value_and_grad
         def resources(
-            savings: Any,
-            stochastic_values: tuple[Any, ...],
-            row_values: tuple[Any, ...],
-            codes: tuple[Any, ...],
-        ) -> Any:
+            savings: FloatND,
+            stochastic_values: tuple[jax.Array, ...],
+            row_values: tuple[jax.Array, ...],
+            codes: tuple[jax.Array, ...],
+        ) -> FloatND:
             carried_values = stochastic_values[: len(read.stochastic_state_names)]
             bound = {
                 read.euler_state_name: euler_state(
@@ -1103,7 +1163,9 @@ class _ChildReader:
             )
 
             def queries_and_gradients(
-                *, row: int, stochastic_values: tuple[Any, ...] = stochastic_values
+                *,
+                row: int,
+                stochastic_values: tuple[jax.Array, ...] = stochastic_values,
             ) -> tuple[float, float]:
                 query, gradient = self.query_and_gradient(
                     jnp.asarray(savings),
@@ -1127,7 +1189,7 @@ class _ChildReader:
 
 def _child_carry_index(
     *,
-    read: Any,
+    read: _ChildRead,
     deterministic_codes: Mapping[str, int],
     node_indices: tuple[int, ...],
 ) -> tuple[int, ...]:
@@ -1143,7 +1205,7 @@ def _child_carry_index(
 
 def _aggregate_child_rows(
     *,
-    read: Any,
+    read: _ChildRead,
     carry: HostCarry,
     child_index: tuple[int, ...],
     passive_values: tuple[float, ...],
@@ -1386,8 +1448,8 @@ class _CellBudget:
     discount_factor: float
     utility: Callable[[float], float]
     marginal_utility: Callable[[float], float]
-    coh_of_liquid: Callable[[Any], Any]
-    coh_slope_of_liquid: Callable[[Any], Any]
+    coh_of_liquid: Callable[[FloatND], FloatND]
+    coh_slope_of_liquid: Callable[[FloatND], FloatND]
     action_ceiling: float
     inverse_eis: float | None
 
@@ -1448,15 +1510,18 @@ class _CellBudget:
 class _PeriodFunctions:
     """The period's declarations compiled once, taking the cell and branch as data."""
 
-    utility: Callable[..., Any]
-    marginal_utility: Callable[..., Any]
-    coh: Callable[..., Any]
-    coh_slope: Callable[..., Any]
-    utility_arg_names: frozenset[str]
+    utility: Callable[..., FloatND]
+    marginal_utility: Callable[..., FloatND]
+    coh: Callable[..., FloatND]
+    coh_slope: Callable[..., FloatND]
+    utility_arg_names: frozenset[ReferenceName]
 
 
 def _period_functions(
-    *, spec: Any, statics: Any, kwargs: Mapping[str, Any]
+    *,
+    spec: _NBEGMScheduleSpec,
+    statics: _NBEGMRideAlongStatics,
+    kwargs: Mapping[str, EconFunctionArg],
 ) -> _PeriodFunctions:
     """Compile the schedule and utility declarations with the params bound.
 
@@ -1467,7 +1532,11 @@ def _period_functions(
     utility_params = {name: kwargs[name] for name in statics.utility_param_names}
 
     # keyword-only-exempt: library-callback=jax.grad
-    def coh_of(liquid: Any, cell: Mapping[str, Any], binding: Mapping[str, Any]) -> Any:
+    def coh_of(
+        liquid: FloatND,
+        cell: Mapping[StateName, jax.Array],
+        binding: Mapping[ActionName, IntND],
+    ) -> FloatND:
         return spec.coh_of_liquid_dag(
             **{statics.liquid_name: liquid},
             **{name: cell[name] for name in statics.coh_state_names},
@@ -1477,8 +1546,10 @@ def _period_functions(
 
     # keyword-only-exempt: library-callback=jax.grad
     def utility_of(
-        consumption: Any, cell: Mapping[str, Any], binding: Mapping[str, Any]
-    ) -> Any:
+        consumption: FloatND,
+        cell: Mapping[StateName, jax.Array],
+        binding: Mapping[ActionName, IntND],
+    ) -> FloatND:
         return spec.utility_dag(
             **{statics.consumption_action_name: consumption},
             **{name: cell[name] for name in statics.utility_state_names},
@@ -1498,11 +1569,11 @@ def _period_functions(
 def _cell_budget(
     *,
     functions: _PeriodFunctions,
-    spec: Any,
-    statics: Any,
-    cell: Mapping[str, Any],
-    kwargs: Mapping[str, Any],
-    action_binding: Mapping[str, Any],
+    spec: _NBEGMScheduleSpec,
+    statics: _NBEGMRideAlongStatics,
+    cell: Mapping[StateName, jax.Array],
+    kwargs: Mapping[str, EconFunctionArg],
+    action_binding: Mapping[ActionName, IntND],
     inverse_eis: float | None,
     action_ceiling: float,
 ) -> _CellBudget:
@@ -1555,7 +1626,7 @@ def _cell_budget(
 def _solve_cell_step(
     *,
     budget: _CellBudget,
-    statics: Any,
+    statics: _NBEGMRideAlongStatics,
     liquid_grid: np.ndarray,
     query_grid: np.ndarray,
     savings_grid: np.ndarray,

@@ -38,6 +38,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParams,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, invariance_tolerances
 
@@ -169,7 +170,7 @@ def _model(width: int | None = None) -> Model:
     )
 
 
-def _params() -> dict:
+def _params() -> UserParams:
     return {"discount_factor": 0.95, "final_age_alive": 40 + (N_PERIODS - 2) * 10}
 
 

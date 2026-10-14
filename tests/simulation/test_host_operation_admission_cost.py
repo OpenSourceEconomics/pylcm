@@ -25,7 +25,7 @@ requirement still refuses, and that the simulated results are unchanged.
 
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -49,23 +49,25 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
     union_buffer_footprints,
 )
+from _lcm.typing import FootprintTree, PytreeValue
 from benchmarks.asv._simulation_witnesses import dissolution
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
+from tests.simulation._callback_types import HostDispatch, WorkspacePlanning
 
-# The dissolution witness runs this many pure helper operations in one warm
-# forward call. The count is a property of the fixture's regimes and periods,
-# not of the admission route, and must not move when the route changes: 32
-# per-call operations (two of them the regime-selection law and its flags)
-# plus four per simulated (regime, period) pair (mask, lookup, fallback, site
-# key) over the five pairs the witness simulates, plus one realized regime-law
-# check for each of the two pairs that draw a next regime.
-_WITNESS_HELPER_OPERATIONS = 54
-# Regime selection also admits its user-law producers through the axis-free
-# plan before they run, outside the helper dispatch count.
-_WITNESS_PRODUCER_ADMISSIONS = 2
+# The checked dissolution witness includes numerical preflight and outcome flags.
+# User-law producers also enter the axis-free plan outside helper dispatch.
+_WITNESS_HELPER_OPERATIONS = 63
+_WITNESS_PRODUCER_ADMISSIONS = 5
 
 _WITNESS_SEED = 6606
+
+
+class _AxisFreePlanning[Compiled](TypedDict):
+    compile_candidate: Callable[[], Compiled]
+    memory_for: Callable[[Compiled], CompilerMemoryReservation]
+    budget_bytes: int
+    resident_bytes: int
 
 
 def _budget() -> ExecutionConfig:
@@ -88,9 +90,9 @@ def _reservation(*, peak: int, allocation: int) -> CompilerMemoryReservation:
     )
 
 
-def _outcome(
-    plan: Callable[[], WorkspacePlan[object]],
-) -> tuple[object, ...] | str:
+def _outcome[Compiled](
+    plan: Callable[[], WorkspacePlan[Compiled]],
+) -> tuple[Compiled, int | None, int | None, dict[str, int]] | str:
     """Reduce a planner call to its comparable verdict: selection or refusal text."""
     try:
         result = plan()
@@ -104,14 +106,14 @@ def _outcome(
     )
 
 
-class _CountingCompiler:
+class _CountingCompiler[Compiled]:
     """Return one candidate while counting how often the planner compiled it."""
 
-    def __init__(self, *, result: object) -> None:
+    def __init__(self, *, result: Compiled) -> None:
         self.result = result
         self.calls = 0
 
-    def __call__(self, *_widths: object) -> object:
+    def __call__(self, *_widths: Mapping[str, int]) -> Compiled:
         """Serve both planner protocols: axis-free takes no width mapping."""
         self.calls += 1
         return self.result
@@ -120,8 +122,16 @@ class _CountingCompiler:
 # --------------------------------------------------------------- one admission route
 
 
+@pytest.mark.parametrize(
+    ("runtime_checks", "helper_operations", "producer_admissions"),
+    [(False, 55, 0), (True, _WITNESS_HELPER_OPERATIONS, _WITNESS_PRODUCER_ADMISSIONS)],
+)
 def test_every_budgeted_helper_admits_through_the_axis_free_plan(
+    *,
     monkeypatch: pytest.MonkeyPatch,
+    runtime_checks: bool,
+    helper_operations: int,
+    producer_admissions: int,
 ) -> None:
     """One warm forward call plans each helper once, and never on the frontier."""
     counts: dict[str, int] = {"dispatch": 0, "axis_free": 0, "frontier": 0}
@@ -131,18 +141,23 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
     original_axis_free = host_operations.plan_axis_free_workspace
 
     def counted_dispatch(
-        self: host_operations.ProfiledSimulationOperations, **kwargs: Any
-    ) -> object:
+        self: host_operations.ProfiledSimulationOperations,
+        **kwargs: Unpack[HostDispatch],
+    ) -> PytreeValue:
         if recording["on"]:
             counts["dispatch"] += 1
         return original_dispatch(self, **kwargs)
 
-    def counted_axis_free(**kwargs: Any) -> object:
+    def counted_axis_free[Compiled](
+        **kwargs: Unpack[_AxisFreePlanning[Compiled]],
+    ) -> WorkspacePlan[Compiled]:
         if recording["on"]:
             counts["axis_free"] += 1
         return original_axis_free(**kwargs)
 
-    def counted_frontier(**kwargs: Any) -> object:
+    def counted_frontier[Compiled](
+        **kwargs: Unpack[WorkspacePlanning[Compiled]],
+    ) -> WorkspacePlan[Compiled]:
         if recording["on"]:
             counts["frontier"] += 1
         return plan_workspace(**kwargs)
@@ -156,7 +171,9 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
     )
 
     model, params, initial = dissolution(execution_config=_budget())
-    solution = model.solve(params=params, log_level="off")
+    solution = model.solve(
+        params=params, log_level="off", runtime_checks=runtime_checks
+    )
     for _ in range(2):
         jax.block_until_ready(
             model.simulate(
@@ -165,6 +182,7 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
                 solution=solution,
                 seed=_WITNESS_SEED,
                 log_level="off",
+                runtime_checks=runtime_checks,
             )
         )
     recording["on"] = True
@@ -175,14 +193,13 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
             solution=solution,
             seed=_WITNESS_SEED,
             log_level="off",
+            runtime_checks=runtime_checks,
         )
     )
     recording["on"] = False
 
-    assert counts["dispatch"] == _WITNESS_HELPER_OPERATIONS
-    assert (
-        counts["axis_free"] == _WITNESS_HELPER_OPERATIONS + _WITNESS_PRODUCER_ADMISSIONS
-    )
+    assert counts["dispatch"] == helper_operations
+    assert counts["axis_free"] == helper_operations + producer_admissions
     assert counts["frontier"] == 0
 
 
@@ -267,7 +284,7 @@ def _footprint(
     *, device: jax.Device, spans: tuple[tuple[int, int], ...]
 ) -> DeviceBufferFootprint:
     """Bind explicit address ranges on one actual device."""
-    return DeviceBufferFootprint(spans={device: spans})
+    return DeviceBufferFootprint(spans=MappingProxyType({device: spans}))
 
 
 def test_folding_a_new_owner_yields_the_full_re_merge_exactly() -> None:
@@ -360,11 +377,11 @@ class _ChargeWitness:
         device = scope.devices[0]
         charged = resident_bytes_by_device(
             live=charged_footprint,
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=scope.devices,
         )[device]
         owner = scope.period_owner
-        trees: list[object] = [
+        trees: list[FootprintTree] = [
             tuple(scope._held),
             scope.unit_inputs,
             scope.derived,
@@ -375,7 +392,7 @@ class _ChargeWitness:
                 footprints=tuple(measure_buffer_footprint(tree=tree) for tree in trees),
                 devices=scope.devices,
             ),
-            arguments=DeviceBufferFootprint(spans={}),
+            arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
             devices=scope.devices,
         )[device]
         self.samples.append((charged, fresh))
@@ -390,7 +407,7 @@ def test_the_charge_never_falls_below_a_fresh_measurement_of_the_live_owners(
 
     # keyword-only-exempt: library-callback=SimulationMemory.budget_snapshot
     def observed(
-        self: SimulationMemory, *, additional: object = ()
+        self: SimulationMemory, *, additional: PytreeValue = ()
     ) -> DeviceBufferFootprint:
         result = original(self, additional=additional)
         witness.observe(scope=self, charged_footprint=result)
@@ -415,7 +432,7 @@ def test_the_charge_never_falls_below_a_fresh_measurement_of_the_live_owners(
 # ------------------------------------------------------------------ operand charging
 
 
-def _placement_arguments(*, device: jax.Device) -> Mapping[str, object]:
+def _placement_arguments(*, device: jax.Device) -> Mapping[str, PytreeValue]:
     """Mix an already-placed array with leaves placement still has to move."""
     return MappingProxyType(
         {
@@ -431,12 +448,12 @@ def _placement_arguments(*, device: jax.Device) -> Mapping[str, object]:
 
 def _place(
     *,
-    arguments: Mapping[str, object],
+    arguments: Mapping[str, PytreeValue],
     device: jax.Device,
     budget_bytes: int,
     live: DeviceBufferFootprint,
     argument_footprint: DeviceBufferFootprint | None = None,
-) -> Mapping[str, object]:
+) -> Mapping[str, PytreeValue]:
     """Place the same operands under the two spellings of the live inventory."""
     return place_simulation_arguments(
         arguments=arguments,

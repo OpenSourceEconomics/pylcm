@@ -26,10 +26,11 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Literal
 
 from _lcm.typing import RegimeName
 from lcm.transition import StochasticTransition
+from lcm.typing import UserAge, UserFunction
 
 type PhaseName = Literal["solution", "simulation"]
 
@@ -146,11 +147,11 @@ class ModelReachability:
 
     solution: PhaseReachability
     simulation: PhaseReachability
-    nodes: frozenset[tuple[object, RegimeName]] = frozenset()
+    nodes: frozenset[tuple[UserAge, RegimeName]] = frozenset()
     """Exact `(age, regime)` pairs of every solved problem: each pair the
     declared starts can visit, and each pair whose value a solved problem reads."""
 
-    visited_nodes: frozenset[tuple[object, RegimeName]] = frozenset()
+    visited_nodes: frozenset[tuple[UserAge, RegimeName]] = frozenset()
     """Exact `(age, regime)` pairs a subject starting at a declared start can
     physically visit; a subset of `nodes`."""
 
@@ -159,8 +160,10 @@ class ModelReachability:
         return self.solution if phase == "solution" else self.simulation
 
 
-def candidate_targets_from_transition(
-    *, transition: object, all_regime_names: Collection[RegimeName]
+def candidate_targets_from_transition[Cell](
+    *,
+    transition: UserFunction | StochasticTransition | Mapping[RegimeName, Cell] | None,
+    all_regime_names: Collection[RegimeName],
 ) -> tuple[RegimeName, ...]:
     """Return the static candidate universe declared by one transition.
 
@@ -177,11 +180,9 @@ def candidate_targets_from_transition(
     if transition is None:
         return ()
     if isinstance(transition, Mapping):
-        # A regime law is deliberately `object` — the slot holds any of the
-        # transition forms. A mapping is the per-target form, whose keys are
-        # regime names by construction.
-        per_target = cast("Mapping[RegimeName, object]", transition)
-        return tuple(sorted(per_target))
+        # A mapping is the per-target form, whose keys are regime names by
+        # construction.
+        return tuple(sorted(transition))
     targets = getattr(transition, "targets", None)
     if isinstance(transition, StochasticTransition) and targets is not None:
         return tuple(sorted(targets))

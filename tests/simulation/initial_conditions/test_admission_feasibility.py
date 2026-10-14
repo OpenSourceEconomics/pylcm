@@ -1,10 +1,9 @@
 """Public simulation feasibility producers respect the declared memory budget."""
 
 import dataclasses
-import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Never, cast
 
 import jax
 import jax.numpy as jnp
@@ -12,8 +11,10 @@ import numpy as np
 import pytest
 
 import lcm
+from _lcm.execution.compiler_memory import CompilerMemoryReport
 from _lcm.simulation import initial_conditions as preflight
 from _lcm.simulation.initial_conditions import _SerialValidationRequired
+from _lcm.typing import JSONValue, PytreeValue
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -157,12 +158,16 @@ def compiler_boundary(monkeypatch: pytest.MonkeyPatch) -> _CompilerBoundary:
     analyze_program = jax.stages.Compiled.memory_analysis
     dispatch_program = jax.stages.Compiled.__call__
 
-    def analyze_and_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def analyze_and_record(
+        self: jax.stages.Compiled, *args: Never, **kwargs: Never
+    ) -> CompilerMemoryReport | None:
         stats = analyze_program(self, *args, **kwargs)
         observed.profiled.append((self, len(observed.dispatched)))
         return stats
 
-    def dispatch_and_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def dispatch_and_record(
+        self: jax.stages.Compiled, *args: PytreeValue, **kwargs: PytreeValue
+    ) -> PytreeValue:
         observed.dispatched.append(self)
         return dispatch_program(self, *args, **kwargs)
 
@@ -191,7 +196,7 @@ def test_simulate_refuses_feasibility_workspace_before_diagnostics(
     wide_solution: SolutionResult,
     compiler_boundary: _CompilerBoundary,
     monkeypatch: pytest.MonkeyPatch,
-    record_property: Callable[[str, object], None],
+    record_property: Callable[[str, JSONValue], None],
 ) -> None:
     """The actual constraint workspace must fit before its predicate is evaluated."""
     assert (
@@ -203,7 +208,7 @@ def test_simulate_refuses_feasibility_workspace_before_diagnostics(
     model, params, initial = _inputs(budget=budget, n_actions=1024)
     if serial:
 
-        def require_serial(**kwargs: Any) -> None:
+        def require_serial[Ignored](**kwargs: Ignored) -> None:
             del kwargs
             raise _SerialValidationRequired
 
@@ -313,9 +318,9 @@ def test_generous_budget_preserves_values_actions_and_caller_arrays(
 
 
 @pytest.mark.parametrize("constant", [False, True])
-@pytest.mark.parametrize("log_level", ["warning", "progress", "debug"])
+@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
 def test_generous_budget_preserves_natural_invalid_diagnostics(
-    *, constant: bool, log_level: LogLevel, caplog: pytest.LogCaptureFixture
+    *, constant: bool, log_level: LogLevel
 ) -> None:
     legacy, legacy_params, legacy_initial = _inputs(budget=None, constant=constant)
     with pytest.raises(InvalidInitialConditionsError) as oracle:
@@ -323,21 +328,9 @@ def test_generous_budget_preserves_natural_invalid_diagnostics(
             params=legacy_params, initial_conditions=legacy_initial, log_level="debug"
         )
     model, params, initial = _inputs(budget=2**24, constant=constant)
-    if log_level == "debug":
-        with pytest.raises(InvalidInitialConditionsError) as actual:
-            model.simulate(
-                params=params, initial_conditions=initial, log_level=log_level
-            )
-        assert str(actual.value) == str(oracle.value)
-    else:
-        with caplog.at_level(logging.WARNING, logger="lcm"):
-            model.simulate(
-                params=params, initial_conditions=initial, log_level=log_level
-            )
-        messages = [
-            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
-        ]
-        assert messages[0] == str(oracle.value)
+    with pytest.raises(InvalidInitialConditionsError) as actual:
+        model.simulate(params=params, initial_conditions=initial, log_level=log_level)
+    assert str(actual.value) == str(oracle.value)
 
 
 @pytest.mark.parametrize(
@@ -348,11 +341,11 @@ def test_feasibility_resource_errors_escape_without_serial_retry(
 ) -> None:
     failure = error_type("feasibility producer unavailable")
 
-    def fail(**kwargs: Any) -> None:
+    def fail[Ignored](**kwargs: Ignored) -> None:
         del kwargs
         raise failure
 
-    def forbidden(**kwargs: Any) -> None:
+    def forbidden[Ignored](**kwargs: Ignored) -> None:
         del kwargs
         pytest.fail("A resource exception entered serial validation.")
 

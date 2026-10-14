@@ -13,6 +13,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
     feasible,
@@ -78,7 +79,7 @@ def build_params(
     return_liquid: float = 0.03,
     income: float = 1.0,
     premium: float = 1.5,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the buy-private one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
     return {

@@ -5,9 +5,9 @@ import functools
 import inspect
 import sys
 import weakref
-from collections.abc import Callable
-from types import CodeType
-from typing import Any
+from collections.abc import Callable, Mapping
+from types import CodeType, MappingProxyType
+from typing import Concatenate, NotRequired, TypedDict, Unpack
 
 import jax
 import jax.core
@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.engine import Regime
 from _lcm.simulation import initial_conditions
 from _lcm.simulation import membership as membership_module
 from _lcm.simulation import simulate as simulation_module
@@ -30,14 +31,21 @@ from _lcm.simulation.residency import (
     measure_buffer_footprint,
     resident_bytes_by_device,
 )
+from _lcm.typing import PytreeByPeriod, PytreeValue, StatesPerRegime
 from lcm import DiscreteGrid, Model, categorical
 from lcm.execution import ExecutionConfig
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
+    Float1D,
     FloatND,
+    Int1D,
+    ReferenceName,
+    RegimeName,
     ScalarInt,
+    StateName,
 )
+from tests.simulation._callback_types import HostDispatch, OperandPlacement
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
@@ -45,64 +53,74 @@ from tests.simulation.test_budget_lifecycle import (
 from tests.test_models.initial_nodes import initial_nodes_of
 
 
-def _run_with_membership_guard(
+class _InitialStateInputs(TypedDict):
+    initial_states: Mapping[StateName, Float1D | Int1D]
+    regimes: MappingProxyType[RegimeName, Regime]
+    device_ids: NotRequired[tuple[int, ...]]
+    memory: NotRequired[SimulationMemory | None]
+
+
+def _run_with_membership_guard[**P, Result](
     *,
-    original: Callable[..., Any],
+    original: Callable[P, Result],
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
     observations: list[bool],
-    **kwargs: Any,
-) -> Any:
-    """Inspect the pure membership body during abstract profiling or execution."""
-    function_name = "full_like" if operation == "empty_carriers" else "where"
-    target_name = (
-        "_empty_subject_membership"
-        if operation == "empty_carriers"
-        else "_activate_subject_membership"
-    )
-    target_code = inspect.unwrap(getattr(membership_module, target_name)).__code__
-    numerical_function = getattr(jnp, function_name)
-    with monkeypatch.context() as guard:
-        guard.setattr(
-            jnp,
-            function_name,
-            functools.partial(
-                _guard_first_subject_allocation,
-                original=numerical_function,
-                operation=operation,
-                observations=observations,
-                target_code=target_code,
-            ),
+) -> Callable[P, Result]:
+    def call(*args: P.args, **kwargs: P.kwargs) -> Result:
+        """Inspect the pure membership body during abstract profiling or execution."""
+        function_name = "full_like" if operation == "empty_carriers" else "where"
+        target_name = (
+            "_empty_subject_membership"
+            if operation == "empty_carriers"
+            else "_activate_subject_membership"
         )
-        return original(**kwargs)
+        target_code = inspect.unwrap(getattr(membership_module, target_name)).__code__
+        numerical_function = getattr(jnp, function_name)
+        with monkeypatch.context() as guard:
+            guard.setattr(
+                jnp,
+                function_name,
+                _guard_first_subject_allocation(
+                    original=numerical_function,
+                    operation=operation,
+                    observations=observations,
+                    target_code=target_code,
+                ),
+            )
+            return original(*args, **kwargs)
+
+    return call
 
 
-def _guard_first_subject_allocation(
-    *args: Any,
-    original: Callable[..., Any],
+def _guard_first_subject_allocation[**P, Result](
+    *,
+    original: Callable[P, Result],
     operation: str,
     observations: list[bool],
     target_code: CodeType,
-    **kwargs: Any,
-) -> Any:
-    """The first subject-sized operation must be traced before it executes."""
-    operand = (
-        args[0]
-        if args
-        else kwargs["a" if operation == "empty_carriers" else "condition"]
-    )
-    if (
-        sys._getframe(1).f_code is target_code
-        and not observations
-        and getattr(operand, "shape", None) == (1,)
-    ):
-        traced = isinstance(operand, jax.core.Tracer)
-        observations.append(traced)
-        if not traced:
-            raise AssertionError(
-                f"Unprofiled simulation membership allocation: {operation}"
-            )
-    return original(*args, **kwargs)
+) -> Callable[P, Result]:
+    def call(*args: P.args, **kwargs: P.kwargs) -> Result:
+        """The first subject-sized operation must be traced before it executes."""
+        operand = (
+            args[0]
+            if args
+            else kwargs["a" if operation == "empty_carriers" else "condition"]
+        )
+        if (
+            sys._getframe(1).f_code is target_code
+            and not observations
+            and getattr(operand, "shape", None) == (1,)
+        ):
+            traced = isinstance(operand, jax.core.Tracer)
+            observations.append(traced)
+            if not traced:
+                raise AssertionError(
+                    f"Unprofiled simulation membership allocation: {operation}"
+                )
+        return original(*args, **kwargs)
+
+    return call
 
 
 @pytest.mark.parametrize("operation", ["empty_carriers", "activation"])
@@ -126,6 +144,7 @@ def test_budgeted_membership_setup_allocates_inside_profiled_code(
         monkeypatch=monkeypatch,
         operation=operation,
         observations=observations,
+    )(
         params=params,
         initial_conditions=initial,
         solution=solution,
@@ -218,26 +237,34 @@ class _ObservedMembershipRoots:
     states: tuple[weakref.ReferenceType[jax.Array], ...] = ()
     age: weakref.ReferenceType[jax.Array] | None = None
     original_ages: DeviceBufferFootprint | None = None
-    expected_age: object = None
+    expected_age: np.ndarray | None = None
     reached: int = 0
     produced: tuple[weakref.ReferenceType[jax.Array], ...] = ()
 
 
 def _capture_initial_state_roots(
-    *, original: Callable[..., Any], observed: _ObservedMembershipRoots, **kwargs: Any
-) -> Any:
+    *,
+    original: Callable[..., StatesPerRegime],
+    observed: _ObservedMembershipRoots,
+    **kwargs: Unpack[_InitialStateInputs],
+) -> StatesPerRegime:
     observed.initial = measure_buffer_footprint(tree=kwargs["initial_states"])
     result = original(**kwargs)
     observed.states = tuple(weakref.ref(array) for array in jax.tree.leaves(result))
     return result
 
 
-def _capture_placed_age(
-    *, original: Callable[..., Any], observed: _ObservedMembershipRoots, **kwargs: Any
-) -> Any:
+def _capture_placed_age[Result: Mapping[ReferenceName, PytreeValue]](
+    *,
+    original: Callable[..., Result],
+    observed: _ObservedMembershipRoots,
+    **kwargs: Unpack[OperandPlacement[PytreeValue]],
+) -> Result:
     result = original(**kwargs)
     if set(kwargs["arguments"]) == {"age"}:
-        observed.age = weakref.ref(result["age"])
+        age = result["age"]
+        assert isinstance(age, jax.Array)
+        observed.age = weakref.ref(age)
         observed.expected_age = np.asarray(kwargs["arguments"]["age"]).copy()
     return result
 
@@ -246,10 +273,10 @@ def _capture_placed_age(
 def _inspect_membership_roots(
     self: ProfiledSimulationOperations,
     *,
-    original: Callable[..., Any],
+    original: Callable[Concatenate[ProfiledSimulationOperations, ...], PytreeValue],
     observed: _ObservedMembershipRoots,
-    **kwargs: Any,
-) -> Any:
+    **kwargs: Unpack[HostDispatch],
+) -> PytreeValue:
     target = (
         membership_module._empty_subject_membership
         if observed.channel == "states"
@@ -302,8 +329,8 @@ def _inspect_membership_roots(
 
 # keyword-only-exempt: library-callback=jax.tree.map
 def _omit_membership_leaf(
-    value: object, *, observed: _ObservedMembershipRoots
-) -> object:
+    value: PytreeByPeriod, *, observed: _ObservedMembershipRoots
+) -> PytreeByPeriod:
     """Omit only the captured new roots, preserving every unrelated live operand."""
     return None if any(value is ref() for ref in observed.produced) else value
 
@@ -311,9 +338,9 @@ def _omit_membership_leaf(
 # keyword-only-exempt: library-callback=functools.partialmethod
 def _omit_observed_membership_hold(
     self: SimulationMemory,
-    tree: object,
+    tree: PytreeByPeriod,
     *,
-    original: Callable[..., Any],
+    original: Callable[[SimulationMemory, PytreeByPeriod], None],
     observed: _ObservedMembershipRoots,
 ) -> None:
     original(

@@ -59,6 +59,7 @@ from typing import Literal
 
 import jax.numpy as jnp
 
+from _lcm.typing import DataclassInstance
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -83,6 +84,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.envelope_configs import envelope_config
 
@@ -110,7 +112,7 @@ class HousingFuesRegimeId:
     dead: ScalarInt
 
 
-def _make_housing_levels(*, n_housing: int) -> type:
+def _make_housing_levels(*, n_housing: int) -> type[DataclassInstance]:
     """Create an ordered categorical with one field per discrete housing level."""
     annotations = {f"h{i}": ScalarInt for i in range(n_housing)}
     cls = type("HousingLevels", (), {"__annotations__": annotations})
@@ -507,7 +509,7 @@ def build_params(
     rho_w: float = 0.82,
     sigma_w: float = 0.11,
     mu_w: float = 0.0,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Calibration parameters for the DS App.2 EGM-FUES discrete-housing model.
 
     Args:

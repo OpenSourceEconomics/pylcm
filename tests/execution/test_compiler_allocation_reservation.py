@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from types import SimpleNamespace
-from typing import Any
+from typing import Never
 
 import pytest
 
@@ -14,8 +14,12 @@ from _lcm.execution.workspace_planning import (
 )
 from lcm.exceptions import ExecutionPlanningError
 
+type AllocationCounter = int | float | list[int] | None
 
-def memory_stats(*, peak: object, **fields: object) -> SimpleNamespace:
+
+def memory_stats(
+    *, peak: AllocationCounter, **fields: AllocationCounter
+) -> SimpleNamespace:
     """Build an explicit complete synthetic compiler report."""
     values = {
         "peak_memory_in_bytes": peak,
@@ -23,6 +27,8 @@ def memory_stats(*, peak: object, **fields: object) -> SimpleNamespace:
         "output_size_in_bytes": 0,
         "alias_size_in_bytes": 0,
         "temp_size_in_bytes": 0,
+        "generated_code_size_in_bytes": 0,
+        "host_generated_code_size_in_bytes": 0,
         "host_argument_size_in_bytes": 0,
         "host_output_size_in_bytes": 0,
         "host_alias_size_in_bytes": 0,
@@ -32,11 +38,11 @@ def memory_stats(*, peak: object, **fields: object) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
-class _Executable:
-    def __init__(self, analysis: object) -> None:
+class _Executable[Analysis]:
+    def __init__(self, analysis: Analysis) -> None:
         self.analysis = analysis
 
-    def memory_analysis(self) -> object:
+    def memory_analysis(self) -> Analysis:
         return self.analysis
 
     def __call__(self) -> None:
@@ -77,32 +83,6 @@ def test_reservation_preserves_raw_peak_and_accounts_for_allocations(
     assert compiler_peak_bytes(compiled=executable, widths={}) == peak
 
 
-@pytest.mark.parametrize("mapping", [False, True])
-def test_per_device_allocation_categories_remain_paired(*, mapping: bool) -> None:
-    records = [
-        memory_stats(
-            peak=20,
-            argument_size_in_bytes=100,
-            output_size_in_bytes=100,
-            alias_size_in_bytes=100,
-        ),
-        memory_stats(
-            peak=10,
-            argument_size_in_bytes=20,
-            output_size_in_bytes=20,
-            temp_size_in_bytes=90,
-        ),
-    ]
-    analysis = {"first": vars(records[0]), "second": records[1]} if mapping else records
-    executable = _Executable(analysis)
-    plan = plan_workspace(
-        axes=(),
-        compile_candidate=lambda _: executable,
-        budget_bytes=130,
-    )
-    assert (plan.peak_bytes, plan.reservation_bytes) == (20, 130)
-
-
 @pytest.mark.parametrize("resident", [0, 17])
 def test_reservation_and_external_owners_must_both_fit(resident: int) -> None:
     executable = _Executable(memory_stats(peak=1, temp_size_in_bytes=100))
@@ -136,19 +116,43 @@ def test_reservation_and_external_owners_must_both_fit(resident: int) -> None:
         "host_temp_size_in_bytes",
     ],
 )
-@pytest.mark.parametrize("invalid", [None, True, -1, 1.0, "missing"])
-def test_missing_or_malformed_allocation_counters_refuse(
-    *, field: str, invalid: object
+@pytest.mark.parametrize("invalid", [None, True, -1, 1.0])
+def test_malformed_allocation_counters_refuse(
+    *, field: str, invalid: float | None
 ) -> None:
-    report = vars(memory_stats(peak=1))
-    if invalid == "missing":
-        report.pop(field)
-    else:
-        report[field] = invalid
+    report = memory_stats(peak=1, **{field: invalid})
     with pytest.raises(ExecutionPlanningError, match="per-device reservation"):
         plan_workspace(
             axes=(),
             compile_candidate=lambda _: _Executable(report),
+            budget_bytes=100,
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "peak_memory_in_bytes",
+        "argument_size_in_bytes",
+        "output_size_in_bytes",
+        "alias_size_in_bytes",
+        "temp_size_in_bytes",
+        "generated_code_size_in_bytes",
+        "host_generated_code_size_in_bytes",
+        "host_argument_size_in_bytes",
+        "host_output_size_in_bytes",
+        "host_alias_size_in_bytes",
+        "host_temp_size_in_bytes",
+    ],
+)
+def test_report_missing_a_counter_is_not_an_allocation_record(field: str) -> None:
+    """A report lacking any counter pylcm reads is refused as a whole."""
+    report = vars(memory_stats(peak=1))
+    report.pop(field)
+    with pytest.raises(ExecutionPlanningError, match="not an allocation record"):
+        plan_workspace(
+            axes=(),
+            compile_candidate=lambda _: _Executable(SimpleNamespace(**report)),
             budget_bytes=100,
         )
 
@@ -195,21 +199,45 @@ def test_generated_code_metadata_does_not_reclassify_allocation_space() -> None:
     assert memory.reservation_bytes == 5
 
 
-@pytest.mark.parametrize("analysis", [[], {}, [memory_stats(peak=1), {}]])
-def test_incomplete_device_collection_refuses(analysis: object) -> None:
-    with pytest.raises(ExecutionPlanningError, match="per-device reservation"):
+@pytest.mark.parametrize(
+    "analysis",
+    [
+        [],
+        {},
+        [memory_stats(peak=1)],
+        {"device-0": memory_stats(peak=1)},
+        vars(memory_stats(peak=1)),
+    ],
+    ids=(
+        "empty-sequence",
+        "empty-mapping",
+        "record-sequence",
+        "record-mapping",
+        "string-keyed-record",
+    ),
+)
+def test_reservation_refuses_what_is_not_an_allocation_record(
+    analysis: list[SimpleNamespace] | dict[str, SimpleNamespace | AllocationCounter],
+) -> None:
+    """Only the attribute record JAX returns on every backend is read."""
+    with pytest.raises(ExecutionPlanningError, match="not an allocation record"):
         compiler_memory_reservation(compiled=_Executable(analysis), widths={})
 
 
-def test_columnar_peak_cannot_hide_unpaired_allocation_fields() -> None:
+def test_columnar_peak_refuses_the_reservation() -> None:
     executable = _Executable(memory_stats(peak=[5, 10], temp_size_in_bytes=100))
     with pytest.raises(ExecutionPlanningError, match="per-device reservation"):
         compiler_memory_reservation(compiled=executable, widths={})
-    assert compiler_peak_bytes(compiled=executable, widths={}) == 10
+
+
+def test_columnar_peak_refuses_the_peak_reader() -> None:
+    executable = _Executable(memory_stats(peak=[5, 10], temp_size_in_bytes=100))
+    with pytest.raises(ExecutionPlanningError, match="per-device peak"):
+        compiler_peak_bytes(compiled=executable, widths={})
 
 
 def test_cached_lookup_requires_complete_reservation() -> None:
-    def insufficient(_: object) -> Any:
+    def insufficient[Compiled](_: Compiled) -> int:
         return 1
 
     with pytest.raises(ExecutionPlanningError, match="complete reservation"):
@@ -217,17 +245,17 @@ def test_cached_lookup_requires_complete_reservation() -> None:
             axes=(),
             compile_candidate=lambda _: object(),
             budget_bytes=100,
-            memory_for=insufficient,
+            memory_for=insufficient,  # ty: ignore[invalid-argument-type]
         )
 
 
 def test_unbudgeted_execution_does_not_read_a_report() -> None:
     executable = object()
 
-    def fail(_: object) -> Any:
+    def fail[Compiled](_: Compiled) -> Never:
         pytest.fail("Unbudgeted planning consulted compiler memory")
 
-    def compile_candidate(_: Mapping[str, int]) -> object:
+    def compile_candidate(_: Mapping[str, int]) -> object:  # noqa: PAN001 - Returns the opaque identity witness without using it.
         return executable
 
     plan = plan_workspace(axes=(), compile_candidate=compile_candidate, memory_for=fail)

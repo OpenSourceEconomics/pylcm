@@ -29,6 +29,7 @@ from lcm import (
     UniformIIDProcess,
     categorical,
 )
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import DiscreteState, FloatND, IntND, ScalarFloat, ScalarInt
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
@@ -129,7 +130,9 @@ def test_a_reachable_node_outside_the_targets_support_still_fails_loudly() -> No
     """
     model = _build(health_probabilities=(0.5, 0.5, 0.0))
 
-    V = model.solve(params=_PARAMS, log_level="off").values
+    with pytest.raises(InvalidValueFunctionError, match="all values are NaN"):
+        model.solve(params=_PARAMS, log_level="off")
+    V = model.solve(params=_PARAMS, log_level="off", runtime_checks=False).values
 
     assert bool(jnp.isnan(jnp.asarray(V[0]["source"])))
 

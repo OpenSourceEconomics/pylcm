@@ -9,9 +9,11 @@ import pytest
 from tests.candidate_certificate import direct_flow
 from tests.candidate_certificate.generate_sources import sha256_file
 
+type RepositoryRelativePath = str
+
 
 @pytest.fixture(scope="module")
-def clean_corridor_sources() -> tuple[str, ...]:
+def clean_corridor_sources() -> tuple[RepositoryRelativePath, ...]:
     """Check the frozen checkout once, independently of all resealed mutants."""
     clean = direct_flow.verify_direct_candidate_flow(
         repo_root=Path(__file__).parents[1]
@@ -62,7 +64,7 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
 def test_uniform_admission_mutation_is_rejected_after_independent_byte_reseal(
     *,
     mutation: str,
-    clean_corridor_sources: tuple[str, ...],
+    clean_corridor_sources: tuple[RepositoryRelativePath, ...],
     uniform_mutations: dict[str, dict[str, str]],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -13,11 +13,14 @@ in-period value jump: this isolates the discrete-envelope-over-ride-cells
 composition from the published-jump topology.
 """
 
+from typing import Literal
+
 import jax.numpy as jnp
 
 import lcm
 from _lcm.grids.base import Grid
 from lcm import DiscreteGrid, LinSpacedGrid, Model, NormalIIDProcess, categorical
+from lcm.regime import StateTransitionEntry
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     ContinuousAction,
@@ -26,8 +29,10 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParamsNode,
 )
 from tests.test_models.nbegm_common import (
+    NBEGMKwargs,
     crra_utility,
     feasible,
     make_alive_dead_model,
@@ -409,8 +414,8 @@ def build_model(  # noqa: C901, PLR0912
     nonlinear_budget_above_ten: bool = False,
     execution_config: lcm.ExecutionConfig = lcm.ExecutionConfig(),  # noqa: B008
     include_income: bool = True,
-    probe_failure: str = "reject",
-    probe_schedule: str = "every_solve",
+    probe_failure: Literal["reject", "assume_declared"] = "reject",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
 ) -> Model:
     """Create the (alive, dead) ride-along toy with a discrete insurance choice.
 
@@ -478,7 +483,7 @@ def build_model(  # noqa: C901, PLR0912
             "derived_income": derived_income,
         }
     extra_states: dict[str, Grid] = {"income": income_grid} if include_income else {}
-    extra_state_transitions: dict[str, object] = {}
+    extra_state_transitions: dict[str, StateTransitionEntry] = {}
     if action_in_health_transition:
         extra_states["health"] = DiscreteGrid(category_class=Health)
         extra_state_transitions["health"] = {
@@ -500,7 +505,7 @@ def build_model(  # noqa: C901, PLR0912
             "alive": tracker_law,
             "dead": tracker_law,
         }
-    solver_kwargs: dict[str, object] = {}
+    solver_kwargs: NBEGMKwargs = {}
     if probe_failure != "reject":
         solver_kwargs["probe_failure"] = probe_failure
     if probe_schedule != "every_solve":
@@ -581,7 +586,7 @@ def build_params(
     nonlinear_budget_above_ten: bool = False,
     curvature: float = 0.05,
     action_in_discount: bool = False,
-) -> dict:
+) -> dict[str, UserParamsNode]:
     """Get parameters for the ride-along discrete-choice toy.
 
     With `action_in_discount` the regime declares its own `discount_factor`

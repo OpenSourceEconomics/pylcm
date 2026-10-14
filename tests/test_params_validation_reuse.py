@@ -1,11 +1,34 @@
-from typing import Any
+from types import MappingProxyType
+from typing import NotRequired, Unpack
 
 import jax.numpy as jnp
 import pytest
+from typing_extensions import TypedDict
 
 from _lcm import transition_checks
+from _lcm.engine import Regime
+from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.simulation.memory import SimulationMemory
+from _lcm.time import TimeAxis
+from _lcm.typing import FlatRegimeParams, RegimeTransitionFunction
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.typing import RegimeName
 from lcm_examples.mortality import get_model, get_params
+
+
+class _ValidationKwargs(TypedDict, closed=True):
+    regimes: MappingProxyType[RegimeName, Regime]
+    regime_params: FlatRegimeParams
+    active_regimes_next_period: tuple[RegimeName, ...]
+    regime_name: RegimeName
+    period: int
+    ages: TimeAxis
+    law: RegimeTransitionFunction
+    summary: NotRequired[transition_checks._ValidationSummary | None]
+    process_grid_resolver: NotRequired[ProcessGridResolver | None]
+    memory: NotRequired[SimulationMemory | None]
+    realized: NotRequired[bool]
+
 
 N_PERIODS = 4
 
@@ -16,7 +39,7 @@ def single_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     calls: list[int] = []
     original = transition_checks._validate_regime_transition_single
 
-    def counting(**kwargs: Any) -> None:
+    def counting(**kwargs: Unpack[_ValidationKwargs]) -> None:
         calls.append(1)
         original(**kwargs)
 
