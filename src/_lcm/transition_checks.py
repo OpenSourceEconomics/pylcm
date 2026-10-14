@@ -34,7 +34,7 @@ import inspect
 import logging
 import struct
 from collections.abc import Callable, Generator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from functools import partial
 from math import prod
@@ -132,8 +132,15 @@ from lcm.typing import (
     ValueND,
 )
 
-# Rows of the state-action product one off-grid count step evaluates at once.
+# Rows of the state-action product one off-grid count step evaluates at once:
+# the unbudgeted block and the narrowest a budgeted count retries down to.
 _OFF_GRID_BLOCK_ROWS = 1 << 14
+
+# The widest block a budgeted count tries first; it halves from here until the
+# budget admits it.
+# ponytail: fixed starting width, derive it from a compiled per-row reservation
+# if large budgets ever need wider blocks.
+_OFF_GRID_MAX_BLOCK_ROWS = 1 << 22
 
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
 _NO_FUNCTIONS: EconFunctionsMapping = MappingProxyType({})
@@ -593,9 +600,7 @@ def _off_grid_target_counts(
     available = {**space.states, **space.actions}
     if phase is regime.simulation:
         available |= dict(_phase_extra_grids(regime=regime, phase="simulate"))
-    function = partial(
-        _off_grid_counts_law, grid_names=tuple(available), func=point_call
-    )
+    grid_names = tuple(available)
     scalar_kwargs = MappingProxyType(
         {
             **regime.resolved_fixed_params,
@@ -610,19 +615,52 @@ def _off_grid_target_counts(
             },
         }
     )
+    if memory is None:
+        return _off_grid_counts_law(
+            grid_args=available,
+            scalar_kwargs=scalar_kwargs,
+            grid_names=grid_names,
+            func=point_call,
+        )
     arguments = {"grid_args": available, "scalar_kwargs": scalar_kwargs}
-    return (
-        function(grid_args=available, scalar_kwargs=scalar_kwargs)
-        if memory is None
-        else cast(
+
+    def admitted_count(block_rows: int) -> IntND:
+        return cast(
             "IntND",
             _evaluate_admitted_transition_producer(
-                function=function,
+                function=partial(
+                    _off_grid_counts_law,
+                    grid_names=grid_names,
+                    func=point_call,
+                    block_rows=block_rows,
+                ),
                 arguments=arguments,
                 memory=memory,
             ),
         )
+
+    *wider, narrowest = _off_grid_block_candidates(
+        n_rows=prod(jnp.shape(axis)[0] for axis in available.values())
     )
+    for block_rows in wider:
+        with suppress(ExecutionPlanningError):
+            return admitted_count(block_rows)
+    return admitted_count(narrowest)
+
+
+def _off_grid_block_candidates(*, n_rows: int) -> tuple[int, ...]:
+    """Return the block widths a budgeted count tries, widest first.
+
+    The first covers the whole product when it is narrower than
+    `_OFF_GRID_MAX_BLOCK_ROWS`; each next halves the previous; the last is
+    `_OFF_GRID_BLOCK_ROWS`.
+    """
+    rows = min(n_rows, _OFF_GRID_MAX_BLOCK_ROWS)
+    candidates = []
+    while rows > _OFF_GRID_BLOCK_ROWS:
+        candidates.append(rows)
+        rows //= 2
+    return (*candidates, _OFF_GRID_BLOCK_ROWS)
 
 
 def _build_off_grid_cell(
@@ -713,22 +751,30 @@ def _off_grid_counts_law(
     scalar_kwargs: EconFunctionKwargs,
     grid_names: tuple[StateOrActionName, ...],
     func: Callable[..., IntND],
+    block_rows: int | None = None,
 ) -> IntND:
     """Reduce saturating integer counts block by block inside one producer.
 
-    The trailing axes whose product fits `_OFF_GRID_BLOCK_ROWS` are evaluated
-    together; a loop walks the remaining leading axes and accumulates the
-    counts, so no intermediate holds more than one block of rows, however large
-    the state-action product is. Every addition saturates at `COUNT_CAPACITY`,
-    so a total is exact below it and a positive population never reads as zero.
+    The trailing axes whose product fits `block_rows` (default
+    `_OFF_GRID_BLOCK_ROWS`) are evaluated together; a loop walks the remaining
+    leading axes and accumulates the counts, so no intermediate holds more than
+    one block of rows, however large the state-action product is. Every
+    addition saturates at `COUNT_CAPACITY`, so a total is exact below it and a
+    positive population never reads as zero.
+
+    The loop bound passes through an optimization barrier. XLA's GPU compiler
+    evaluates the dynamic-slice offsets of a loop with a known trip count once
+    per iteration, so a visible bound makes compiling a count over many blocks
+    take longer than running it.
     """
+    rows = _OFF_GRID_BLOCK_ROWS if block_rows is None else block_rows
     point = _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
     if not grid_names:
         return point()
     axes = tuple(jnp.asarray(grid_args[name]) for name in grid_names)
     split = len(axes)
     block = 1
-    while split and block * axes[split - 1].shape[0] <= _OFF_GRID_BLOCK_ROWS:
+    while split and block * axes[split - 1].shape[0] <= rows:
         split -= 1
         block *= axes[split].shape[0]
     outer, inner = axes[:split], axes[split:]
@@ -757,8 +803,8 @@ def _off_grid_counts_law(
         )
     shape = jax.eval_shape(count_block, jnp.int32(0))
     return jax.lax.fori_loop(
-        0,
-        n_blocks,
+        jnp.int32(0),
+        jax.lax.optimization_barrier(jnp.int32(n_blocks)),
         lambda index, total: add_counts(
             left=total, right=count_block(index.astype(jnp.int32))
         ),
