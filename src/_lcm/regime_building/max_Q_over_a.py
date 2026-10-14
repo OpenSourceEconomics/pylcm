@@ -6,9 +6,6 @@ the blockwise route that never materializes the whole action product,
 `get_action_partitioned_max_Q_over_a` the blockwise route whose action product
 several devices share, and `get_argmax_and_max_Q_over_a` the variant simulation
 needs, which returns the winning action alongside the value.
-`get_selection_readout_Q_over_a` and `get_selection_readout_max_Q_over_a` are
-the dense routes of a regime that selects its action with a separate
-aggregator.
 """
 
 import functools
@@ -26,13 +23,12 @@ from jax import Array
 
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
 from _lcm.logsum import EULER_GAMMA, logsum_and_softmax
-from _lcm.regime_building.argmax import argmax_and_max, argmax_and_readout
+from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import (
     ParetoWeights,
     collective_argmax_and_readout,
     collective_readout,
 )
-from _lcm.regime_building.Q_and_F import QAndFParts, get_Q_and_F_parts
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.solution.action_streaming import (
     build_partitioned_streaming_max_Q_over_a,
@@ -1587,149 +1583,6 @@ class _HardMaxArgmaxQOverA:
             return jnp.where(_dissolution, -1, argmax_flat), V_stacked
         index, value = argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)
         return jnp.where(jnp.any(F_arr), index, -1), value
-
-
-def get_selection_readout_Q_over_a(
-    *,
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
-    action_names: tuple[ActionName, ...],
-    state_names: tuple[StateName, ...],
-    publishes_index: bool,
-    return_feasibility: bool = False,
-) -> Callable[..., FloatND | tuple[IntND, FloatND] | tuple[FloatND, BoolND]]:
-    """Get the reduction over actions of a regime with a selection aggregator.
-
-    At one state cell the action is the first feasible maximizer of the
-    kernel's `Q_selection`, and the value is the Koopmans `Q` at that action,
-    both from one evaluation of the kernel. A cell without a feasible action
-    has value `-inf`.
-
-    Args:
-        Q_and_F: A kernel built by `get_Q_and_F` with a selection aggregator.
-        action_names: Tuple of action names, discrete first.
-        state_names: Tuple of state names.
-        publishes_index: Whether the reduction also returns the flat index of
-            the selected action, as simulation needs.
-        return_feasibility: Whether the reduction also returns the flag that no
-            action is feasible at the cell, as the counted solve needs. Exclusive
-            with `publishes_index`.
-
-    Returns:
-        The value at the selected action, preceded by its flat index if
-        `publishes_index` is set, or followed by the empty-action flag if
-        `return_feasibility` is set.
-
-    """
-    extra_param_names = _get_extra_param_names(
-        Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
-    )
-    parts = productmap(
-        func=get_Q_and_F_parts(Q_and_F=Q_and_F),
-        variables=action_names,
-        batch_sizes=dict.fromkeys(action_names, 0),
-    )
-    if publishes_index and return_feasibility:
-        msg = "A selection readout publishes either its index or its feasibility."
-        raise ValueError(msg)
-    return_annotation = (
-        "tuple[IntND, FloatND]"
-        if publishes_index
-        else "tuple[FloatND, BoolND]"
-        if return_feasibility
-        else "FloatND"
-    )
-    return with_signature(
-        _SelectionReadoutQOverA(
-            parts=parts,
-            publishes_index=publishes_index,
-            return_feasibility=return_feasibility,
-        ),
-        args=["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names],
-        return_annotation=return_annotation,
-        enforce=False,
-    )
-
-
-def get_selection_readout_max_Q_over_a(
-    *,
-    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
-    action_names: tuple[ActionName, ...],
-    state_names: tuple[StateName, ...],
-    cell_width_keyword: str | None,
-    untiled_state_names: tuple[StateName, ...],
-    broadcast_state_names: tuple[StateName, ...],
-    return_feasibility: bool = False,
-) -> MaxQOverAFunction:
-    """Get the value function of a regime with a selection aggregator.
-
-    Maps `get_selection_readout_Q_over_a` over the state product, tiled by
-    `cell_width_keyword` when one is given, with the layout arguments
-    `get_max_Q_over_a` takes.
-    """
-    cell = get_selection_readout_Q_over_a(
-        Q_and_F=Q_and_F,
-        action_names=action_names,
-        state_names=state_names,
-        publishes_index=False,
-        return_feasibility=return_feasibility,
-    )
-    mapped = (
-        productmap(
-            func=cell,
-            variables=state_names,
-            batch_sizes=dict.fromkeys(state_names, 0),
-        )
-        if cell_width_keyword is None
-        else tiled_productmap(
-            func=cell,
-            variables=state_names,
-            width_keyword=cell_width_keyword,
-            untiled_variables=untiled_state_names,
-            broadcast_variables=broadcast_state_names,
-        )
-    )
-    return cast("MaxQOverAFunction", mapped)
-
-
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _SelectionReadoutQOverA:
-    """The value of the action a selection aggregator picks, at one state cell.
-
-    Every value the reduction reads is an explicit field. The caller wraps it
-    in `dags.with_signature` to advertise the arguments the state productmap
-    binds by name.
-    """
-
-    __name__: ClassVar[str] = "selection_readout_Q_over_a"
-    """Name `dags` reads off the callable when it reports an invalid argument."""
-
-    parts: Callable[..., QAndFParts]
-    """The regime's kernel parts, mapped over the action product."""
-
-    publishes_index: bool
-    """Whether to return the selected flat index alongside the value."""
-
-    return_feasibility: bool = False
-    """Whether to return the empty-action flag after the value."""
-
-    def __call__(
-        self,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        **states_actions_params: QAndFArg,
-    ) -> FloatND | tuple[IntND, FloatND] | tuple[FloatND, BoolND]:
-        """Return the selected action's value, with its index or flag if requested."""
-        parts = self.parts(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            **states_actions_params,
-        )
-        index, value = argmax_and_readout(
-            selection=cast("FloatND", parts.Q_selection),
-            readout=parts.Q,
-            where=parts.F,
-        )
-        if self.publishes_index:
-            return index, value
-        return (value, ~jnp.any(parts.F)) if self.return_feasibility else value
 
 
 def draw_taste_shock_noise(

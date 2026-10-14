@@ -36,18 +36,19 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   in functions, constraints and carried-state imputations; this includes `Phased`
   function declarations and model-level derived value grids.
 
-### Selection aggregator
+### Time-inconsistent agents with `Decoupled`
 
-- `Regime(selection_aggregator=...)` separates the action selection from the value
-  passed back. The action maximizes `selection_aggregator(utility, CE, ...)` over the
-  feasible set, and `V` is `koopmans_aggregator(utility, CE, ...)` at that action. Its
-  params live under the pseudo-function name `selection_aggregator`, and `Phased`
-  gives the solve and simulation different selection rules. With `u + β̃δ·CE` in the
-  solve and `u + βδ·CE` in simulation this covers the naive (`β̃ = 1`), sophisticated
-  (`β̃ = β`) and partially naive beta-delta agents. Simulation and `lookup_policy`
-  select with the simulate variant and publish the Koopmans value of the chosen
-  action. Only `GridSearch` supports it; terminal and collective regimes, regimes with
-  taste shocks and gated-edge sources refuse it when the model is built.
+- `Regime(koopmans_aggregator=lcm.Decoupled(objective=..., value=...))` chooses actions
+  with `objective(utility, CE, ...)` and stores `value(utility, CE, ...)` at the chosen
+  action. `objective` may be `Phased`, so the solve and simulation choose differently;
+  with `u + β̃δ·CE` in the solve, `u + βδ·CE` in simulation and `value = u + δ·CE` this
+  covers the naive, sophisticated and partially naive beta-delta agents. With
+  `ExtremeValueTasteShocks` the objective sets the choice probabilities and the stored
+  value is the expected `value` at the noisy choice. Both functions read parameters from
+  the `koopmans_aggregator` namespace, where a shared name is one parameter.
+  `PolicyLookup.Q_objective` publishes the objective's action values. Only `GridSearch`
+  supports it; collective regimes, gated-edge sources and sharded continuous states
+  refuse it. A `Phased` Koopmans aggregator is unchanged.
 - A state or regime-function input read only by a Koopmans aggregator reaches it.
 
 ### Choice probabilities in policy lookup with taste shocks

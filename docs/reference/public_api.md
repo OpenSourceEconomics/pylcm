@@ -98,23 +98,24 @@ documentation and tests.
 
 ## Preferences, results, and persistence
 
-| Public name                                                                     | Canonical documentation         |
-| ------------------------------------------------------------------------------- | ------------------------------- |
-| [`lcm.LinearAggregator`](../methods/preferences.md)                             | Linear Koopmans form            |
-| [`lcm.CESAggregator`](../methods/preferences.md)                                | CES Koopmans form               |
-| [`lcm.CertaintyEquivalent`](../methods/preferences.md)                          | Certainty-equivalent contract   |
-| [`lcm.LinearExpectation`](../methods/preferences.md)                            | Linear lottery reduction        |
-| [`lcm.PowerMean`](../methods/preferences.md)                                    | Power-mean reduction            |
-| [`lcm.QuasiArithmeticMean`](../methods/preferences.md)                          | Quasi-arithmetic reduction      |
-| [`lcm.SimulationResult`](runtime_and_results.md#api-simulation-result)          | Deferred simulation result      |
-| [`lcm.PolicyLookup`](runtime_and_results.md#api-policy-lookup)                  | Per-period policy lookup result |
-| [`lcm.save_solution`](runtime_and_results.md#api-standalone-persistence)        | Save a complete solution        |
-| [`lcm.load_solution`](runtime_and_results.md#api-standalone-persistence)        | Load a complete solution lazily |
-| [`lcm.load_legacy_solution`](runtime_and_results.md#api-standalone-persistence) | Read the old value-only format  |
-| [`lcm.SolveSnapshot`](runtime_and_results.md#api-standalone-persistence)        | Solve diagnostic snapshot       |
-| [`lcm.SimulateSnapshot`](runtime_and_results.md#api-standalone-persistence)     | Simulation diagnostic snapshot  |
-| [`lcm.load_snapshot`](runtime_and_results.md#api-standalone-persistence)        | Load diagnostic snapshot        |
-| [`lcm.__version__`](public_api.md)                                              | Installed pylcm version         |
+| Public name                                                                     | Canonical documentation          |
+| ------------------------------------------------------------------------------- | -------------------------------- |
+| [`lcm.LinearAggregator`](../methods/preferences.md)                             | Linear Koopmans form             |
+| [`lcm.CESAggregator`](../methods/preferences.md)                                | CES Koopmans form                |
+| [`lcm.Decoupled`](../methods/preferences.md)                                    | Choose with one W, store another |
+| [`lcm.CertaintyEquivalent`](../methods/preferences.md)                          | Certainty-equivalent contract    |
+| [`lcm.LinearExpectation`](../methods/preferences.md)                            | Linear lottery reduction         |
+| [`lcm.PowerMean`](../methods/preferences.md)                                    | Power-mean reduction             |
+| [`lcm.QuasiArithmeticMean`](../methods/preferences.md)                          | Quasi-arithmetic reduction       |
+| [`lcm.SimulationResult`](runtime_and_results.md#api-simulation-result)          | Deferred simulation result       |
+| [`lcm.PolicyLookup`](runtime_and_results.md#api-policy-lookup)                  | Per-period policy lookup result  |
+| [`lcm.save_solution`](runtime_and_results.md#api-standalone-persistence)        | Save a complete solution         |
+| [`lcm.load_solution`](runtime_and_results.md#api-standalone-persistence)        | Load a complete solution lazily  |
+| [`lcm.load_legacy_solution`](runtime_and_results.md#api-standalone-persistence) | Read the old value-only format   |
+| [`lcm.SolveSnapshot`](runtime_and_results.md#api-standalone-persistence)        | Solve diagnostic snapshot        |
+| [`lcm.SimulateSnapshot`](runtime_and_results.md#api-standalone-persistence)     | Simulation diagnostic snapshot   |
+| [`lcm.load_snapshot`](runtime_and_results.md#api-standalone-persistence)        | Load diagnostic snapshot         |
+| [`lcm.__version__`](public_api.md)                                              | Installed pylcm version          |
 
 ## Explicit public submodule surfaces
 

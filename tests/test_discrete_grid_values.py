@@ -26,6 +26,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 from _lcm.grids.discrete import MISSING_CAT_CODE, read_at_codes
+from _lcm.regime_building.finalize import _authored
 from _lcm.regime_building.V import _LookupWrapper
 from _lcm.regime_building.value_adapter import (
     adapt_entry,
@@ -36,6 +37,8 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    CollectiveUtility,
+    Decoupled,
     DeterministicTransition,
     DiscreteGrid,
     InitialNodes,
@@ -671,10 +674,6 @@ def test_koopmans_aggregator_reads_the_value_of_a_derived_categorical(
     assert _first_values(model=model, params={}).item() == nodes[1]
 
 
-def _report_utility(*, utility: FloatND, CE: FloatND) -> FloatND:
-    return utility + 0.0 * CE
-
-
 def _utility_of_hours(*, hours: DiscreteAction) -> FloatND:
     return jnp.asarray(hours, dtype=float)
 
@@ -682,20 +681,25 @@ def _utility_of_hours(*, hours: DiscreteAction) -> FloatND:
 @pytest.mark.parametrize("enable_jit", [False, True])
 @pytest.mark.parametrize("nodes", _NODE_PAIRS)
 @pytest.mark.parametrize("phased", [False, True])
-def test_selection_aggregator_selects_by_the_values_of_an_action(
+def test_decoupled_objective_selects_by_the_values_of_an_action(
     *, enable_jit, nodes, phased
 ):
-    """A selection rule on hours values keeps the unique optimum at the lower node."""
+    """An objective on hours values picks the lower node; the value reports it."""
 
     def select(*, utility: FloatND, CE: FloatND, hours: DiscreteAction) -> FloatND:
         return -((hours - nodes[0]) ** 2) + 0.0 * utility + 0.0 * CE
 
+    def report_hours(
+        *, utility: FloatND, CE: FloatND, hours: DiscreteAction
+    ) -> FloatND:
+        return jnp.asarray(hours, dtype=float) + 0.0 * utility + 0.0 * CE
+
     working = UserRegime(
         actions={"hours": DiscreteGrid(values=nodes)},
         functions={"utility": _utility_of_hours},
-        koopmans_aggregator=_report_utility,
-        selection_aggregator=(
-            Phased(solve=select, simulate=select) if phased else select
+        koopmans_aggregator=Decoupled(
+            objective=Phased(solve=select, simulate=select) if phased else select,
+            value=report_hours,
         ),
     )
     model = _one_period_model(working=working, enable_jit=enable_jit)
@@ -1462,3 +1466,166 @@ def test_read_at_codes_is_the_same_for_every_code_representation(
         expected = [expected, expected]
     np.testing.assert_array_equal(np.asarray(got), expected)
     assert got.dtype == values.dtype
+
+
+# Finalization keeps a declared `Phased` object when it has nothing to strip.
+
+
+@categorical(ordered=False)
+class _CoupleTerminal:
+    couple: ScalarInt
+    couple_terminal: ScalarInt
+
+
+@categorical(ordered=False)
+class _Work:
+    no: ScalarInt
+    yes: ScalarInt
+
+
+def _u_f(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+    return jnp.log(wealth) - 0.1 * work
+
+
+def _u_m(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 0.5 * jnp.log(wealth) - 0.2 * work
+
+
+def _u_m_simulate(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 0.5 * jnp.log(wealth) - 0.3 * work
+
+
+def _u_terminal(*, wealth: ContinuousState) -> FloatND:
+    return 0.5 * jnp.log(wealth)
+
+
+def _household(*, m_utility: UserFunction | Phased) -> UserRegime:
+    return UserRegime(
+        states={"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)},
+        state_transitions={"wealth": fixed_transition("wealth")},
+        actions={"work": DiscreteGrid(category_class=_Work)},
+        functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": m_utility})},
+    )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_phased_stakeholder_utility_without_value_grids_builds_and_solves(
+    *, enable_jit
+):
+    """The declared `Phased` body reaches the household check as the same object."""
+    phased = Phased(solve=_u_m, simulate=_u_m_simulate)
+    terminal = UserRegime(
+        states={"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _u_terminal, "m": _u_terminal})
+        },
+    )
+    model = Model(
+        regimes={"couple": _household(m_utility=phased), "couple_terminal": terminal},
+        edges={"couple": {"couple_terminal": 0}},
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_CoupleTerminal,
+        initial_nodes={0: "couple"},
+        enable_jit=enable_jit,
+    )
+    values = model.solve(
+        params={
+            "couple": {"koopmans_aggregator": {"discount_factor": 0.9}},
+            "couple_terminal": {},
+        },
+        log_level="off",
+    ).values
+    # m's period-0 value: her solve utility, not working, plus the discounted
+    # terminal one at wealth held fixed.
+    expected = 0.5 * np.log([1.0, 2.0, 3.0]) * 1.9
+    aaae(np.asarray(values[0]["couple"])[..., 1], expected, decimal=DECIMAL_PRECISION)
+
+
+@categorical(ordered=False)
+class _SingleOrCouple:
+    single: ScalarInt
+    single_terminal: ScalarInt
+    couple: ScalarInt
+    couple_terminal: ScalarInt
+
+
+def _u_single(
+    *, wealth: ContinuousState, work: DiscreteAction, kind: DiscreteState
+) -> FloatND:
+    return jnp.log(wealth) - 0.1 * work + 0.001 * kind
+
+
+def _u_single_terminal(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    return jnp.log(wealth) + 0.001 * kind
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_phased_stakeholder_utility_beside_a_value_grid_elsewhere_builds(*, enable_jit):
+    """A value grid in another regime leaves the household's `Phased` body alone."""
+    wealth = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
+    kind = DiscreteGrid(values=[10, 20])
+    phased = Phased(solve=_u_m, simulate=_u_m_simulate)
+    model = Model(
+        regimes={
+            "single": UserRegime(
+                states={"wealth": wealth, "kind": kind},
+                state_transitions={
+                    "wealth": fixed_transition("wealth"),
+                    "kind": fixed_transition("kind"),
+                },
+                actions={"work": DiscreteGrid(category_class=_Work)},
+                functions={"utility": _u_single},
+            ),
+            "single_terminal": UserRegime(
+                states={"wealth": wealth, "kind": kind},
+                functions={"utility": _u_single_terminal},
+            ),
+            "couple": _household(m_utility=phased),
+            "couple_terminal": UserRegime(
+                states={"wealth": wealth},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _u_terminal, "m": _u_terminal}
+                    )
+                },
+            ),
+        },
+        edges={"single": {"single_terminal": 0}, "couple": {"couple_terminal": 0}},
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_SingleOrCouple,
+        initial_nodes={0: ["single", "couple"]},
+        enable_jit=enable_jit,
+    )
+    assert model.user_regimes["couple"].decomposed_functions["utility_m"] is phased
+
+
+def test_a_really_replaced_phased_stakeholder_body_still_fails_the_identity_check():
+    """An equal but new `Phased` object is a different body."""
+    regime = _household(m_utility=Phased(solve=_u_m, simulate=_u_m_simulate))
+    engine = {
+        **dict(regime.decomposed_functions),
+        "utility_m": Phased(solve=_u_m, simulate=_u_m_simulate),
+    }
+    with pytest.raises(
+        RegimeInitializationError, match="different body for 'utility_m'"
+    ):
+        regime.with_engine_functions(engine_functions=engine)
+
+
+def test_authored_keeps_a_phased_object_and_strips_a_wrapped_side():
+    """Nothing to strip keeps the object; a value adapter on a side is removed."""
+    plain = Phased(solve=_u_m, simulate=_u_m_simulate)
+    adapted = Phased(
+        solve=adapt_user_function(
+            func=_identity_wealth, value_grids=_VALUE_GRIDS, encode=None
+        ),
+        simulate=_identity_wealth,
+    )
+
+    stripped = _authored(adapted)
+
+    assert _authored(plain) is plain
+    assert isinstance(stripped, Phased)
+    assert stripped is not adapted
+    assert stripped.solve is _identity_wealth
+    assert stripped.simulate is _identity_wealth
