@@ -13,8 +13,11 @@ Every shift is exact, so both models evaluate the same floats at either
 precision.
 """
 
+import math
+from fractions import Fraction
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -35,8 +38,11 @@ from lcm import (
     ByAge,
     DeterministicTransition,
     DiscreteGrid,
+    InitialNodes,
+    JointTransition,
     LinSpacedGrid,
     Model,
+    Periods,
     Phased,
     Transition,
     case_boundary,
@@ -55,6 +61,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    Int1D,
     ScalarInt,
     UserFunction,
     UserParams,
@@ -1108,3 +1115,350 @@ def test_a_model_level_derived_value_grid_counts_for_the_refusals(phased):
             laws={},
             derived_categoricals={"bonus": DiscreteGrid(values=[10, 20])},
         )
+
+
+# The discrete-law check resolves lotteries as the solve does.
+# A Markov lottery is swept over its target's codes; a joint draw takes each of
+# its declared support events. The oracle enumerates the finite model in exact
+# fractions, independently of the solver.
+
+
+@categorical(ordered=False)
+class _AliveDead:
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+@categorical(ordered=True)
+class _ThreeCodes:
+    low: ScalarInt
+    middle: ScalarInt
+    high: ScalarInt
+
+
+@categorical(ordered=True)
+class _TwoCodes:
+    low: ScalarInt
+    high: ScalarInt
+
+
+_LOTTERY_PARAMS: UserParams = {"discount_factor": 0.5}
+
+
+def _lottery_values(*, probabilities: tuple[Fraction, ...]) -> list[float]:
+    """Period-0 values of the two live periods, utility `x + a`, beta 1/2."""
+    beta = Fraction(1, 2)
+    codes = range(len(probabilities))
+    last = [max(Fraction(x + a) for a in (0, 1)) for x in codes]
+    expected_last = sum(
+        (probability * last[node] for node, probability in enumerate(probabilities)),
+        start=Fraction(0),
+    )
+    return [
+        float(max(Fraction(x + a) for a in (0, 1)) + beta * expected_last)
+        for x in codes
+    ]
+
+
+def _lottery_utility(*, x: DiscreteState, a: DiscreteAction) -> FloatND:
+    return 1.0 * x + a
+
+
+def _lottery_sibling_utility(
+    *, x: DiscreteState, y: DiscreteState, a: DiscreteAction
+) -> FloatND:
+    return 1.0 * x + y + a
+
+
+def _dead_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _every_row(*, x: DiscreteState, a: DiscreteAction) -> BoolND:
+    return (x >= 0) & (a >= 0)
+
+
+def _quarter_quarter_half() -> FloatND:
+    return jnp.asarray([0.25, 0.25, 0.5])
+
+
+def _half_half_nothing() -> FloatND:
+    return jnp.asarray([0.5, 0.5, 0.0])
+
+
+def _half_half() -> FloatND:
+    return jnp.asarray([0.5, 0.5])
+
+
+def _x_from_event(*, draw: Int1D) -> DiscreteState:
+    """Events `[10]` and `[11]` give codes 0 and 1; node indices would give -10."""
+    return draw[0] - 10
+
+
+def _x_off_grid_from_event(*, draw: Int1D) -> DiscreteState:
+    """Event `[10]` gives code 0 and event `[11]` code 2, off the grid `0, 1`."""
+    return 2 * (draw[0] - 10)
+
+
+def _y_off_grid_at_high_x(*, next_x: DiscreteState) -> DiscreteState:
+    """Leave `y`'s grid `0, 1` exactly at `x`'s highest node."""
+    return jnp.where(next_x == 2, 2, 0).astype(jnp.int32)
+
+
+def _lottery_model(*, alive: UserRegime, enable_jit: bool) -> Model:
+    return Model(
+        n_periods=3,
+        regimes={
+            "alive": alive,
+            "dead": UserRegime(functions={"utility": _dead_utility}),
+        },
+        regime_id_class=_AliveDead,
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"alive": Periods(values=(0,)), "dead": Periods(values=(1,))}},
+        enable_jit=enable_jit,
+    )
+
+
+def _markov_model(
+    *, form: str, enable_jit: bool, off_grid_sibling: bool, zero_mass_last: bool
+) -> Model:
+    lottery = StochasticTransition(
+        func=_half_half_nothing if zero_mass_last else _quarter_quarter_half
+    )
+    law = {
+        "bare": lottery,
+        "phased": Phased(solve=lottery, simulate=lottery),
+        "phased_per_target": Phased(
+            solve={"alive": lottery}, simulate={"alive": lottery}
+        ),
+    }[form]
+    states = {"x": DiscreteGrid(category_class=_ThreeCodes)}
+    transitions = {"x": law}
+    if off_grid_sibling:
+        states["y"] = DiscreteGrid(category_class=_TwoCodes)
+        transitions["y"] = _y_off_grid_at_high_x
+    alive = UserRegime(
+        states=states,
+        actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+        state_transitions=transitions,
+        constraints={"every_row": _every_row},
+        functions={
+            "utility": _lottery_sibling_utility
+            if off_grid_sibling
+            else _lottery_utility
+        },
+    )
+    return _lottery_model(alive=alive, enable_jit=enable_jit)
+
+
+def _joint_model(*, enable_jit: bool, off_grid_output: bool) -> Model:
+    kernel = JointTransition(
+        support_size=2,
+        support=jnp.asarray([[10], [11]], dtype=jnp.int32),
+        probabilities=_half_half,
+        outputs={"x": _x_off_grid_from_event if off_grid_output else _x_from_event},
+    )
+    alive = UserRegime(
+        states={"x": DiscreteGrid(category_class=_TwoCodes)},
+        actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+        joint_transitions={"alive": {"draw": kernel}},
+        functions={"utility": _lottery_utility},
+    )
+    return _lottery_model(alive=alive, enable_jit=enable_jit)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("form", ["bare", "phased", "phased_per_target"])
+def test_markov_lottery_in_each_phase_form_passes_the_discrete_check(
+    *, form, enable_jit
+):
+    """A `Phased` Markov lottery keeps its row and node axes apart."""
+    model = _markov_model(
+        form=form, enable_jit=enable_jit, off_grid_sibling=False, zero_mass_last=False
+    )
+    model.validate_transitions(params=_LOTTERY_PARAMS)
+    got = model.solve(params=_LOTTERY_PARAMS, log_level="off", runtime_checks=True)
+    np.testing.assert_array_equal(
+        np.asarray(got.values[0]["alive"]),
+        _lottery_values(probabilities=(Fraction(1, 4), Fraction(1, 4), Fraction(1, 2))),
+    )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_joint_output_is_checked_at_its_support_events(*, enable_jit):
+    """A joint output reads the declared events, never the internal node index."""
+    model = _joint_model(enable_jit=enable_jit, off_grid_output=False)
+    model.validate_transitions(params=_LOTTERY_PARAMS)
+    got = model.solve(params=_LOTTERY_PARAMS, log_level="off", runtime_checks=True)
+    np.testing.assert_array_equal(
+        np.asarray(got.values[0]["alive"]),
+        _lottery_values(probabilities=(Fraction(1, 2), Fraction(1, 2))),
+    )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("form", ["bare", "phased", "phased_per_target"])
+@pytest.mark.parametrize("zero_mass_last", [False, True])
+def test_off_grid_sibling_of_a_markov_lottery_is_refused(
+    *, form, zero_mass_last, enable_jit
+):
+    """Every node counts, including one the lottery gives no mass."""
+    model = _markov_model(
+        form=form,
+        enable_jit=enable_jit,
+        off_grid_sibling=True,
+        zero_mass_last=zero_mass_last,
+    )
+    with pytest.raises(InvalidStateTransitionError, match="next_y"):
+        model.validate_transitions(params=_LOTTERY_PARAMS)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_off_grid_joint_output_is_refused(*, enable_jit):
+    """The error names the support node whose event leaves the grid."""
+    model = _joint_model(enable_jit=enable_jit, off_grid_output=True)
+    with pytest.raises(InvalidStateTransitionError, match="next_x") as error:
+        model.validate_transitions(params=_LOTTERY_PARAMS)
+    assert "'draw': 1" in str(error.value)
+
+
+# A law may return its code as a Python `int`.
+
+
+@categorical(ordered=False)
+class _SourceTarget:
+    source: ScalarInt
+    target: ScalarInt
+
+
+def _constant_code_values(*, next_code: int) -> tuple[list[float], list[float]]:
+    """Both periods' values: utility `kind + choice`, then `100 + kind`, beta 1/2."""
+    terminal = [100.0 + kind for kind in (0, 1)]
+    source = [
+        max(kind + choice + 0.5 * terminal[next_code] for choice in (0, 1))
+        for kind in (0, 1)
+    ]
+    return source, terminal
+
+
+def _python_low() -> int:
+    return 0
+
+
+def _python_high() -> int:
+    return 1
+
+
+def _array_low() -> DiscreteState:
+    return jnp.int32(0)
+
+
+def _array_high() -> DiscreteState:
+    return jnp.int32(1)
+
+
+def _kind_utility(*, kind: DiscreteState, choice: DiscreteAction) -> FloatND:
+    return jnp.asarray(kind, dtype=float) + jnp.asarray(choice, dtype=float)
+
+
+def _kind_terminal_utility(*, kind: DiscreteState) -> FloatND:
+    return 100.0 + jnp.asarray(kind, dtype=float)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("runtime_checks", [False, True], ids=["unchecked", "checked"])
+@pytest.mark.parametrize(
+    ("law", "next_code"),
+    [
+        pytest.param(_python_low, 0, id="python-low"),
+        pytest.param(_array_low, 0, id="array-low"),
+        pytest.param(_python_high, 1, id="python-high"),
+        pytest.param(_array_high, 1, id="array-high"),
+    ],
+)
+def test_constant_category_law_may_return_a_python_int(
+    *, law, next_code, runtime_checks, enable_jit
+):
+    """A Python `int` code solves like the same code as an array."""
+    source = UserRegime(
+        states={"kind": DiscreteGrid(category_class=_TwoCodes)},
+        state_transitions={"kind": law},
+        actions={"choice": DiscreteGrid(category_class=_TwoCodes)},
+        functions={"utility": _kind_utility},
+    )
+    target = UserRegime(
+        states={"kind": DiscreteGrid(category_class=_TwoCodes)},
+        functions={"utility": _kind_terminal_utility},
+    )
+    model = Model(
+        regimes={"source": source, "target": target},
+        regime_id_class=_SourceTarget,
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
+        initial_nodes={20: "source"},
+        edges={"source": {"target": 20}},
+        enable_jit=enable_jit,
+    )
+    got = model.solve(
+        params={"discount_factor": 0.5}, log_level="off", runtime_checks=runtime_checks
+    )
+    source_values, terminal_values = _constant_code_values(next_code=next_code)
+    np.testing.assert_array_equal(np.asarray(got.values[0]["source"]), source_values)
+    np.testing.assert_array_equal(np.asarray(got.values[1]["target"]), terminal_values)
+
+
+def _read_matrix_axis(
+    *, values: list[list[float]], axis: int, code: int
+) -> list[float]:
+    """Read one axis of a matrix with literal bounds: NaN off the axis."""
+    size = len(values) if axis == 0 else len(values[0])
+    cells = len(values[0]) if axis == 0 else len(values)
+    if not 0 <= code < size:
+        return [math.nan] * cells
+    return list(values[code]) if axis == 0 else [row[code] for row in values]
+
+
+def _as_code(*, code: int, representation: str) -> int | jax.Array:
+    if representation == "python":
+        return code
+    if representation == "int32":
+        return jnp.int32(code)
+    if not jax.config.jax_enable_x64:
+        pytest.skip("An int64 code needs x64.")
+    return jnp.int64(code)
+
+
+@pytest.mark.parametrize("representation", ["python", "int32", "int64"])
+@pytest.mark.parametrize("route", ["eager", "jit", "vmap"])
+@pytest.mark.parametrize("axis", [0, 1])
+@pytest.mark.parametrize("which", ["lowest", "highest", "negative", "n", "missing"])
+def test_read_at_codes_is_the_same_for_every_code_representation(
+    *, representation, route, axis, which
+):
+    """On the axis a code reads its node; off it, NaN, however it is typed."""
+    literal = [[0.0, 1.0], [10.0, 11.0], [20.0, 21.0]]
+    values = jnp.asarray(literal)
+    size = values.shape[axis]
+    raw = {
+        "lowest": 0,
+        "highest": size - 1,
+        "negative": -1,
+        "n": size,
+        "missing": MISSING_CAT_CODE,
+    }[which]
+    code = _as_code(code=raw, representation=representation)
+    positions = (code,) if axis == 0 else (slice(None), code)
+
+    # The code is captured inside the trace, as a constant law's literal is.
+    def read(array: FloatND) -> FloatND:
+        return read_at_codes(array=array, positions=positions)
+
+    expected = _read_matrix_axis(values=literal, axis=axis, code=raw)
+    if route == "eager":
+        got = read(values)
+    elif route == "jit":
+        got = jax.jit(read)(values)
+    else:
+        got = jax.vmap(read)(jnp.stack([values, values]))
+        expected = [expected, expected]
+    np.testing.assert_array_equal(np.asarray(got), expected)
+    assert got.dtype == values.dtype
