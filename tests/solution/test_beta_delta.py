@@ -15,10 +15,10 @@ c_t = w_t / D_t where D_t depends on the discounting type:
 where bd = beta * delta. The compounding agent applies `u + bd * CE` in both
 phases, so it discounts the future at `bd` per period: exponential discounting
 at a lower factor. The naive agent prices its continuation with the exponential
-value `V^E`. The sophisticated and partially naive agents need an aggregator
-that selects apart from the one that values; `test_selection_aggregator.py`
-covers them, since with log utility and deterministic wealth the sophisticated
-consumption at t=0 equals the naive one.
+value `V^E`. The sophisticated and partially naive agents need an objective that
+chooses apart from the value that is stored; `lcm.Decoupled` declares it and
+`test_decoupled.py` covers them, since with log utility and deterministic
+wealth the sophisticated consumption at t=0 equals the naive one.
 
 """
 

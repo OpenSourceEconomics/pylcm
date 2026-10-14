@@ -46,6 +46,7 @@ from lcm.consumption_savings_regime import (
     _composition_rule_message,
     _EGMFamilyRegime,
 )
+from lcm.decoupled import Decoupled
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import ConstraintEntry, StateTransitionEntry
@@ -186,18 +187,9 @@ def finalize_regimes(
             ),
             derived_categoricals=merged,
             koopmans_aggregator=cast(
-                "UserFunction | Phased | None",
+                "UserFunction | Phased | Decoupled | None",
                 adapt_entry(
                     entry=regime_koopmans_aggregator,
-                    value_grids=value_grids,
-                    encode=None,
-                    adapters=adapters,
-                ),
-            ),
-            selection_aggregator=cast(
-                "UserFunction | Phased | None",
-                adapt_entry(
-                    entry=user_regime.selection_aggregator,
                     value_grids=value_grids,
                     encode=None,
                     adapters=adapters,

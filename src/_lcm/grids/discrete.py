@@ -25,7 +25,7 @@ from _lcm.grids.categorical import (
     get_category_codes,
 )
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, FloatND, Int1D, IntND, ValueND
+from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ValueND
 
 # The code of a value off a value grid, equal to the simulation's sentinel for
 # a categorical state missing from initial conditions. int32 min stays
@@ -234,7 +234,9 @@ class DiscreteGrid(Grid):
         else:
             value = _as_float_query(value=value, dtype=nodes.dtype)
             index = _nearest_index(midpoints=self.__midpoints, value=value)
-            matches = jnp.abs(value - nodes[index]) <= self.__tolerance
+            matches = _within_tolerance(
+                value=value, node=nodes[index], tolerance=self.__tolerance
+            )
         return jnp.where(matches, index, MISSING_CAT_CODE).astype(jnp.int32)
 
     def decode(self, code: ArrayLike) -> ValueND:
@@ -380,6 +382,28 @@ def _validate_tolerance(
                 f"{nodes.dtype}, so it admits no value near that node. Use 0 for an "
                 f"exact match or a tolerance of at least that spacing."
             )
+
+
+def _within_tolerance(*, value: FloatND, node: FloatND, tolerance: float) -> BoolND:
+    """Return whether each value lies within `tolerance` of its node, exactly.
+
+    XLA flushes a subnormal result to zero, so `value - node` near the smallest
+    normal float can read 0 for distinct floats. A zero tolerance is decided by
+    equality. Below 1 in magnitude, both sides are scaled by a power of two, an
+    exact operation, that lifts every gap between distinct floats and the stored
+    tolerance into the normal range; the scaled tolerance is formed on the host,
+    where nothing flushes.
+    """
+    if tolerance == 0.0:
+        return value == node
+    dtype = np.dtype(node.dtype)
+    scale = dtype.type(2.0 ** (np.finfo(dtype).nmant + 1))
+    scaled_tolerance = float(dtype.type(tolerance) * scale)
+    return jnp.where(
+        jnp.abs(node) < 1,
+        jnp.abs(value * scale - node * scale) <= scaled_tolerance,
+        jnp.abs(value - node) <= tolerance,
+    )
 
 
 def _nearest_index(*, midpoints: Float1D, value: FloatND) -> IntND:

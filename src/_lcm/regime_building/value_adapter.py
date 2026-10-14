@@ -26,6 +26,7 @@ from _lcm.identity_transition import _IdentityTransition
 from _lcm.regime_law import DecomposedTransition, RegimeLaws
 from _lcm.typing import EconFunctionArg, FunctionName, RegimeName
 from lcm.collective import CollectiveUtility, ValueDependentConstraint
+from lcm.decoupled import Decoupled
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import (
@@ -41,7 +42,7 @@ from lcm.typing import StateName, StateOrActionName, UserFunction, ValueND
 _CODE_ANNOTATION = "DiscreteState"
 
 # One entry of a regime's `functions`, `state_transitions` or `constraints`.
-type AdaptableEntry = FunctionEntry | StateTransitionEntry | ConstraintEntry
+type AdaptableEntry = FunctionEntry | StateTransitionEntry | ConstraintEntry | Decoupled
 
 # The adapters built for one model: each authored function and encoding grid
 # (by identity) to the function and its adapter.
@@ -192,10 +193,11 @@ def adapt_entry(
 ) -> AdaptableEntry:
     """Adapt every user function inside one regime slot entry.
 
-    Walks `Phased` sides, per-target mappings and the probability function of a
-    `StochasticTransition`, which is decoded only: it returns probabilities over
-    codes. With `adapters`, one authored function gets one adapter wherever it
-    appears, so a function shared by both phases stays one function.
+    Walks `Phased` sides, per-target mappings, both functions of a `Decoupled`
+    Koopmans aggregator and the probability function of a `StochasticTransition`,
+    which is decoded only: it returns probabilities over codes. With `adapters`,
+    one authored function gets one adapter wherever it appears, so a function
+    shared by both phases stays one function.
     """
     # Without value grids nothing changes. Conditions and the collective
     # declarations carry no user function over variables, and an identity law
@@ -239,6 +241,27 @@ def adapt_entry(
                     )
                     for key, value in entry.items()
                 }
+            ),
+        )
+    if isinstance(entry, Decoupled):
+        return Decoupled(
+            objective=cast(
+                "UserFunction | Phased",
+                adapt_entry(
+                    entry=entry.objective,
+                    value_grids=value_grids,
+                    encode=None,
+                    adapters=adapters,
+                ),
+            ),
+            value=cast(
+                "UserFunction",
+                adapt_entry(
+                    entry=entry.value,
+                    value_grids=value_grids,
+                    encode=None,
+                    adapters=adapters,
+                ),
             ),
         )
     if isinstance(entry, StochasticTransition):

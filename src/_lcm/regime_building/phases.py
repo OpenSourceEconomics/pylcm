@@ -29,6 +29,7 @@ from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.collective import CollectiveUtility
+from lcm.decoupled import Decoupled
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.transition import (
@@ -107,7 +108,19 @@ def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedReg
     )
     aggregator = user_regime.koopmans_aggregator
     aggregator_errors: list[str] = []
-    if isinstance(aggregator, Phased):
+    if isinstance(aggregator, Phased) and any(
+        isinstance(variant, Decoupled)
+        for variant in (aggregator.solve, aggregator.simulate)
+    ):
+        solve_aggregator = simulate_aggregator = None
+        aggregator_errors = [
+            (
+                "`koopmans_aggregator` is `Phased(...)` around a `Decoupled`. "
+                "Put `Phased` on its objective instead: `Decoupled(objective="
+                "Phased(solve=..., simulate=...), value=...)`."
+            )
+        ]
+    elif isinstance(aggregator, Phased):
         solve_aggregator, simulate_aggregator = aggregator.solve, aggregator.simulate
         # A non-terminal regime needs an aggregator in both phases; `None` in a
         # `Phased` slot means "terminal", which a single phase cannot be.
@@ -122,7 +135,8 @@ def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedReg
             if variant is None
         ]
     else:
-        solve_aggregator = simulate_aggregator = aggregator
+        solve_aggregator = user_regime.get_koopmans_aggregator(phase="solve")
+        simulate_aggregator = user_regime.get_koopmans_aggregator(phase="simulate")
     terminal = law.terminal
     terminal_errors = (
         [
@@ -159,7 +173,7 @@ def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedReg
             joint_transitions=solve_joint_transitions,
             regime_transition=solve_transition,
             koopmans_aggregator=cast("UserFunction | None", solve_aggregator),
-            selection_aggregator=user_regime.get_selection_aggregator(phase="solve"),
+            objective_aggregator=user_regime.get_objective_aggregator(),
         ),
         simulation=_build_phase_spec(
             constraints=constraints,
@@ -169,24 +183,8 @@ def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedReg
             joint_transitions=simulate_joint_transitions,
             regime_transition=simulate_transition,
             koopmans_aggregator=cast("UserFunction | None", simulate_aggregator),
-            selection_aggregator=user_regime.get_selection_aggregator(phase="simulate"),
+            objective_aggregator=user_regime.get_objective_aggregator(phase="simulate"),
         ),
-    )
-
-
-def _phased_selection_errors(*, user_regime: Regime) -> tuple[str, ...]:
-    """Name each phase a `Phased` selection aggregator leaves empty."""
-    selection = user_regime.selection_aggregator
-    if not isinstance(selection, Phased):
-        return ()
-    return tuple(
-        f"`selection_aggregator` is `Phased(...)` with `{phase}=None`. Pass a "
-        "callable for each phase, or a bare callable to use one in both."
-        for phase, variant in (
-            ("solve", selection.solve),
-            ("simulate", selection.simulate),
-        )
-        if variant is None
     )
 
 
@@ -265,12 +263,7 @@ def _resolve_law_free_slots(*, user_regime: Regime) -> _LawFreeSlots:
         solve_joint_transitions=solve_joint_transitions,
         simulate_joint_transitions=simulate_joint_transitions,
         carried_only=carried_only,
-        errors=(
-            *pools.errors,
-            *carried_errors,
-            *joint_transition_errors,
-            *_phased_selection_errors(user_regime=user_regime),
-        ),
+        errors=(*pools.errors, *carried_errors, *joint_transition_errors),
     )
 
 
@@ -315,7 +308,7 @@ def _build_phase_spec(
     joint_transitions: _PhaseJointTransitions,
     regime_transition: _PhaseRegimeTransition,
     koopmans_aggregator: UserFunction | None,
-    selection_aggregator: UserFunction | None,
+    objective_aggregator: UserFunction | None,
 ) -> RegimePhaseSpec:
     """Assemble one phase's slice from its resolved slot values."""
     return RegimePhaseSpec(
@@ -329,7 +322,7 @@ def _build_phase_spec(
         state_transitions=MappingProxyType(state_transitions),
         joint_transitions=joint_transitions,
         koopmans_aggregator=koopmans_aggregator,
-        selection_aggregator=selection_aggregator,
+        objective_aggregator=objective_aggregator,
         regime_transition=regime_transition,
         # A per-target dict is stochastic by construction (each cell is a
         # StochasticTransition-wrapped probability function).
@@ -452,12 +445,14 @@ def phase_variation_paths(
     if isinstance(transition, Phased) and transition.solve is not transition.simulate:
         varied.append("transition")
 
-    aggregator = user_regime.koopmans_aggregator
-    if isinstance(aggregator, Phased) and aggregator.solve is not aggregator.simulate:
+    if (
+        user_regime.get_koopmans_aggregator(phase="solve")
+        is not user_regime.get_koopmans_aggregator(phase="simulate")
+    ) or (
+        user_regime.get_objective_aggregator(phase="solve")
+        is not user_regime.get_objective_aggregator(phase="simulate")
+    ):
         varied.append("koopmans_aggregator")
-    selection = user_regime.selection_aggregator
-    if isinstance(selection, Phased) and selection.solve is not selection.simulate:
-        varied.append("selection_aggregator")
 
     return tuple(varied)
 
@@ -504,9 +499,21 @@ def project_onto_solve_phase(user_regime: Regime) -> Regime:
             target: {name: _solve_variant(kernel) for name, kernel in kernels.items()}
             for target, kernels in user_regime.joint_transitions.items()
         },
-        koopmans_aggregator=_solve_variant(user_regime.koopmans_aggregator),
-        selection_aggregator=_solve_variant(user_regime.selection_aggregator),
+        koopmans_aggregator=_project_koopmans_onto_solve(
+            declaration=user_regime.koopmans_aggregator
+        ),
     )
+
+
+def _project_koopmans_onto_solve(
+    *, declaration: UserFunction | Phased | Decoupled | None
+) -> UserFunction | Decoupled | None:
+    """Keep the solve variant of a Koopmans declaration, objective included."""
+    if isinstance(declaration, Decoupled):
+        return Decoupled(
+            objective=_solve_variant(declaration.objective), value=declaration.value
+        )
+    return cast("UserFunction | None", _solve_variant(declaration))
 
 
 def _solve_variant[T](value: T | Phased) -> T:
@@ -570,11 +577,12 @@ class RegimePhaseSpec:
     """Phase-resolved joint kernels, explicitly scoped by target and node name."""
 
     koopmans_aggregator: UserFunction | None
-    """Phase-resolved Bellman aggregator; `None` for terminal regimes."""
+    """Phase-resolved Bellman aggregator; `None` for terminal regimes. With a
+    `Decoupled` declaration it is the value aggregator."""
 
-    selection_aggregator: UserFunction | None
-    """Phase-resolved aggregator that selects the action, or `None` when the
-    Koopmans aggregator selects."""
+    objective_aggregator: UserFunction | None
+    """Phase-resolved aggregator the actions are chosen with, or `None` when the
+    Koopmans aggregator also chooses."""
 
     regime_transition: _PhaseRegimeTransition
     """Phase-resolved regime transition; `None` for terminal regimes.

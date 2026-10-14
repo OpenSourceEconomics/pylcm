@@ -34,6 +34,7 @@ from lcm import (
     AgeRange,
     ByAge,
     CollectiveUtility,
+    Decoupled,
     DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
@@ -496,10 +497,6 @@ def test_koopmans_aggregator_reads_the_value_of_a_derived_categorical(
     assert _first_values(model=model, params={}).item() == nodes[1]
 
 
-def _report_utility(*, utility: FloatND, CE: FloatND) -> FloatND:
-    return utility + 0.0 * CE
-
-
 def _utility_of_hours(*, hours: DiscreteAction) -> FloatND:
     return jnp.asarray(hours, dtype=float)
 
@@ -507,20 +504,25 @@ def _utility_of_hours(*, hours: DiscreteAction) -> FloatND:
 @pytest.mark.parametrize("enable_jit", [False, True])
 @pytest.mark.parametrize("nodes", _NODE_PAIRS)
 @pytest.mark.parametrize("phased", [False, True])
-def test_selection_aggregator_selects_by_the_values_of_an_action(
+def test_decoupled_objective_selects_by_the_values_of_an_action(
     *, enable_jit, nodes, phased
 ):
-    """A selection rule on hours values keeps the unique optimum at the lower node."""
+    """An objective on hours values picks the lower node; the value reports it."""
 
     def select(*, utility: FloatND, CE: FloatND, hours: DiscreteAction) -> FloatND:
         return -((hours - nodes[0]) ** 2) + 0.0 * utility + 0.0 * CE
 
+    def report_hours(
+        *, utility: FloatND, CE: FloatND, hours: DiscreteAction
+    ) -> FloatND:
+        return jnp.asarray(hours, dtype=float) + 0.0 * utility + 0.0 * CE
+
     working = UserRegime(
         actions={"hours": DiscreteGrid(values=nodes)},
         functions={"utility": _utility_of_hours},
-        koopmans_aggregator=_report_utility,
-        selection_aggregator=(
-            Phased(solve=select, simulate=select) if phased else select
+        koopmans_aggregator=Decoupled(
+            objective=Phased(solve=select, simulate=select) if phased else select,
+            value=report_hours,
         ),
     )
     model = _one_period_model(working=working, enable_jit=enable_jit)
