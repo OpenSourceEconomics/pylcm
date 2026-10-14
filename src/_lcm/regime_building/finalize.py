@@ -229,7 +229,11 @@ def _authored(
     function, so a regime finalized again is not wrapped twice.
     """
     if isinstance(func, Phased):
-        return Phased(solve=_authored(func.solve), simulate=_authored(func.simulate))
+        solve, simulate = _authored(func.solve), _authored(func.simulate)
+        # Keep the declared object: other checks compare phases by identity.
+        if solve is func.solve and simulate is func.simulate:
+            return func
+        return Phased(solve=solve, simulate=simulate)
     while isinstance(func, ValueAdapter | _AnnotatedCaseFunction):
         func = func.func if isinstance(func, ValueAdapter) else func.function
     return func
