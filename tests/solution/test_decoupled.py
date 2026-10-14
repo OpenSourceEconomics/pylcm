@@ -1021,3 +1021,156 @@ def test_ev1_simulated_choices_follow_the_acting_selfs_probabilities() -> None:
     spend = _naive_today_probabilities()[0]
     share = (df.loc[df["period"] == 0, "choice"] == "spend").mean()
     assert abs(share - spend) < 4 * np.sqrt(spend * (1 - spend) / n_subjects)
+
+
+@lcm.categorical(ordered=False)
+class Gate:
+    blocked: ScalarInt
+    allowed: ScalarInt
+
+
+def gate_utility(choice: DiscreteAction) -> FloatND:
+    return jnp.where(choice == Gate.blocked, 7.0, 1.0)
+
+
+def gate_is_open(choice: DiscreteAction) -> BoolND:
+    return choice == Gate.allowed
+
+
+def translated_objective(*, utility: FloatND, CE: FloatND, offset: float) -> FloatND:
+    """Every action's objective is `offset`: a translation that moves no choice."""
+    return jnp.full_like(utility + CE, offset)
+
+
+def _gate_model(*, objective: UserFunction, enable_jit: bool) -> lcm.Model:
+    """One EV1 decision with one feasible action (`R = 1`), then nothing."""
+    return lcm.Model(
+        n_periods=2,
+        regimes={
+            "decide": lcm.Regime(
+                actions={"choice": lcm.DiscreteGrid(Gate)},
+                functions={"utility": gate_utility},
+                constraints={"gate_is_open": gate_is_open},
+                koopmans_aggregator=lcm.Decoupled(objective=objective, value=additive),
+                taste_shocks=lcm.ExtremeValueTasteShocks(),
+            ),
+            "end": lcm.Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+        edges={"decide": {"end": lcm.Periods(values=(0,))}},
+        enable_jit=enable_jit,
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+def _large_offset() -> float:
+    """An objective level whose unit in the last place exceeds the stored value."""
+    return float(2 ** (26 if jnp.asarray(0.0).dtype == jnp.float32 else 55))
+
+
+@pytest.mark.parametrize("keep_intermediates", [(), ALL_INTERMEDIATES])
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_ev1_infeasible_combination_publishes_minus_infinity(
+    *, enable_jit: bool, keep_intermediates: tuple[Intermediate, ...]
+) -> None:
+    """`Qc` is `-inf` where no action is feasible; raw `Q` stays unmasked."""
+    model = _gate_model(objective=additive, enable_jit=enable_jit)
+    params: UserParams = {"decide": {"taste_shocks": {"scale": 1.0}}}
+    got = model.lookup_policy(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        period=0,
+        regime_name="decide",
+        states={},
+        keep_intermediates=keep_intermediates,
+    )
+    Qc = np.asarray(got.Qc)[0]
+    assert np.isneginf(Qc[Gate.blocked])
+    assert Qc[Gate.allowed] == 1.0
+    assert_array_equal(np.asarray(got.choice_probabilities)[0], [0.0, 1.0])
+    if keep_intermediates:
+        assert np.asarray(got.Q)[0, Gate.blocked] == 7.0
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_ev1_stored_value_survives_a_large_objective_translation(
+    *, enable_jit: bool
+) -> None:
+    """The one feasible action's value `1` survives an objective of `2**26`."""
+    model = _gate_model(objective=translated_objective, enable_jit=enable_jit)
+    params: UserParams = {
+        "decide": {
+            "taste_shocks": {"scale": 1.0},
+            "koopmans_aggregator": {"offset": _large_offset()},
+        }
+    }
+    solution = model.solve(params=params, log_level="off")
+    lookup = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="decide",
+        states={},
+    )
+    assert float(np.asarray(solution.value(period=0, regime="decide"))) == 1.0
+    assert_array_equal(np.asarray(lookup.value), [1.0])
+
+
+def _entropy_oracle(
+    *, objective: np.ndarray, value: np.ndarray, feasible: np.ndarray, scale: float
+) -> float:
+    """`sum_k P_k R_k + scale * H(P)` in float64, `P = softmax(objective / scale)`."""
+    best = np.where(feasible, objective, -np.inf)
+    index = np.argmax(best, axis=-1)
+    o = np.take_along_axis(best, index[..., None], axis=-1)[..., 0]
+    r = np.take_along_axis(value, index[..., None], axis=-1)[..., 0]
+    live = np.isfinite(o)
+    z = np.where(live, (o - o[live].max()) / scale, -np.inf)
+    p = np.exp(z) / np.exp(z).sum()
+    log_p = np.where(p > 0, np.log(np.where(p > 0, p, 1.0)), 0.0)
+    return float(np.sum(np.where(p > 0, p * r, 0.0)) - scale * np.sum(p * log_p))
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_ev1_stored_value_is_invariant_to_objective_translations(*, seed: int) -> None:
+    """Generated menus: translating the objective leaves the stored value unchanged.
+
+    Objectives sit on a quarter grid within `[-4, 4]`, so `objective + 2**20`
+    is exact in float32 and the translated choice problem is the same one.
+    """
+    from _lcm.regime_building.decoupled import (  # noqa: PLC0415
+        decoupled_logsum,
+        get_conditional_profiles,
+    )
+    from _lcm.regime_building.Q_and_F import QAndFParts  # noqa: PLC0415
+
+    rng = np.random.default_rng(seed)
+    shape = (4, 3)
+    objective = rng.integers(-16, 17, size=shape) / 4.0
+    value = rng.normal(size=shape) * 3.0
+    feasible = rng.uniform(size=shape) > 0.3
+    feasible[0, 0] = True
+    scale = float(rng.choice([0.25, 1.0, 3.0]))
+    expected = _entropy_oracle(
+        objective=objective, value=value, feasible=feasible, scale=scale
+    )
+    tolerance = (
+        50
+        * float(jnp.finfo(jnp.asarray(0.0).dtype).eps)
+        * (1.0 + np.abs(value).max() + scale * np.log(value.size))
+    )
+    for offset in (0.0, 2.0**20):
+        parts = QAndFParts(
+            U=jnp.asarray(value),
+            F=jnp.asarray(feasible),
+            CE=jnp.zeros(shape),
+            Q=jnp.asarray(value),
+            Q_objective=jnp.asarray(objective + offset),
+        )
+        got, _ = decoupled_logsum(
+            conditional=get_conditional_profiles(parts=parts, n_discrete_action_axes=1),
+            scale=jnp.asarray(scale),
+            parts=parts,
+        )
+        assert abs(float(got) - expected) <= tolerance, (offset, float(got), expected)

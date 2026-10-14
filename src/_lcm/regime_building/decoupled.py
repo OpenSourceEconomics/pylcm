@@ -296,9 +296,13 @@ def get_conditional_profiles(
         objective=jnp.take_along_axis(objective, continuous_index[..., None], axis=-1)[
             ..., 0
         ],
-        value=jnp.take_along_axis(
-            parts.Q.reshape(*shape, -1), continuous_index[..., None], axis=-1
-        )[..., 0],
+        value=jnp.where(
+            jnp.any(parts.F.reshape(*shape, -1), axis=-1),
+            jnp.take_along_axis(
+                parts.Q.reshape(*shape, -1), continuous_index[..., None], axis=-1
+            )[..., 0],
+            -jnp.inf,
+        ),
         continuous_index=continuous_index.astype(jnp.int32),
     )
 
@@ -311,26 +315,29 @@ def decoupled_logsum(
     With `P = softmax(objective / scale)` over the feasible combinations, the
     value is `scale * logsumexp(objective / scale) + sum_k P_k (value_k -
     objective_k)`: the expected value of the stored profile at the noisy choice,
-    shock included. No feasible combination gives `-inf`; a NaN at any feasible
-    action, in either profile, gives NaN.
+    shock included. It is evaluated as `sum_k P_k value_k + scale * H(P)`, the
+    same quantity with `H` the entropy of `P`, so the objective's level never
+    enters and cannot cancel the stored value in rounding. No feasible
+    combination gives `-inf`; a NaN at any feasible action, in either profile,
+    gives NaN.
     """
-    smoothed, probabilities = logsum_and_softmax(
+    _, probabilities = logsum_and_softmax(
         values=conditional.objective,
         scale=scale,
         axes=tuple(range(conditional.objective.ndim)),
     )
-    correction = jnp.sum(
-        probabilities
-        * jnp.where(
-            jnp.isneginf(conditional.objective),
-            0.0,
-            conditional.value - conditional.objective,
+    chosen = probabilities > 0
+    expected_value = jnp.sum(jnp.where(chosen, probabilities * conditional.value, 0.0))
+    entropy = -jnp.sum(
+        jnp.where(
+            chosen, probabilities * jnp.log(jnp.where(chosen, probabilities, 1.0)), 0.0
         )
     )
+    value = jnp.where(jnp.any(chosen), expected_value + scale * entropy, -jnp.inf)
     feasible_nan = jnp.any(
         parts.F & (jnp.isnan(cast("FloatND", parts.Q_objective)) | jnp.isnan(parts.Q))
     )
-    return jnp.where(feasible_nan, jnp.nan, smoothed + correction), probabilities
+    return jnp.where(feasible_nan, jnp.nan, value), probabilities
 
 
 # What the dense lookup of a `Decoupled` regime publishes, in the order its
