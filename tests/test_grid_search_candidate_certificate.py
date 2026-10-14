@@ -855,6 +855,9 @@ def _copy_certified_sources(*, tmp_path: Path, mutation: str) -> tuple[str, ...]
             if relative == _BACKWARD_SOURCE
             else (root / relative).read_text(encoding="utf-8"),
             encoding="utf-8",
+            # LF on every platform, so a plain `hashlib` digest of these bytes is
+            # the certificate's checkout-independent seal.
+            newline="\n",
         )
     return sources
 
