@@ -79,6 +79,7 @@ from _lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
+from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import (
@@ -4053,7 +4054,7 @@ def _fallback_raise_checks(
 def _count_outside_grid(*, values: FloatND, points: Float1D) -> IntND:
     """Count raw values outside the grid's closed endpoints, NaN included."""
     inside = (values >= points[0]) & (values <= points[-1])
-    return jnp.sum(~inside, dtype=jnp.int32)
+    return sum_counts(counts=~inside)
 
 
 def _get_raise_landing_counter(
@@ -4184,10 +4185,9 @@ def _live_landing_counts(
         shape = [1] * len(node_weights)
         shape[axis] = -1
         live = live & is_live(weights).reshape(shape)
-    return jnp.sum(
-        jnp.where(live[..., None], node_counts, 0),
+    return sum_counts(
+        counts=jnp.where(live[..., None], node_counts, 0),
         axis=tuple(range(len(node_weights))),
-        dtype=jnp.int32,
     )
 
 
