@@ -62,10 +62,17 @@ def test_characteristics_list_characteristics_in_row_order():
     assert tuple(STATUS) == ("has_job", "on_di", "di_years")
 
 
-def test_characteristics_are_read_only():
-    """Neither the mapping nor its arrays can be changed after the check."""
+@pytest.mark.parametrize(("name", "value"), [("di_years", 5), ("has_job", False)])
+def test_characteristic_arrays_are_read_only(*, name, value):
+    """Neither an integer nor a bool column can be changed after the check."""
     with pytest.raises(ValueError, match="read-only"):
-        STATUS["di_years"][0] = 5
+        STATUS[name][0] = value
+
+
+def test_characteristics_mapping_is_read_only():
+    """No column of the mapping can be replaced or added after the check."""
+    with pytest.raises(TypeError, match="does not support item assignment"):
+        STATUS["di_years"] = np.array([0, 0, 0, 0], dtype=np.int32)  # ty: ignore[invalid-assignment]
 
 
 @categorical(ordered=False)
@@ -486,6 +493,66 @@ def test_category_with_accepts_every_signed_width_and_bool(*, mode, dtype):
     found = _TRANSFORMS[mode](jnp.asarray(values, dtype=dtype))
 
     np.testing.assert_array_equal(found, _exact_signed_codes(values))
+
+
+@categorical(ordered=False)
+class _Flag:
+    off: ScalarInt
+    on: ScalarInt
+
+
+FLAG = characteristics(
+    category_class=_Flag,
+    by_category={"off": {"flag": False}, "on": {"flag": True}},
+)
+
+# Signed queries of a bool column: only 0 and 1 name a category.
+_FLAG_QUERIES = (-2, -1, 0, 1, 2)
+_FLAG_CODES = np.array(
+    [MISSING_CAT_CODE, MISSING_CAT_CODE, 0, 1, MISSING_CAT_CODE], dtype=np.int32
+)
+
+
+def _flag_lookup(values):
+    return category_with(FLAG, flag=values)
+
+
+_FLAG_TRANSFORMS = {
+    "eager": _flag_lookup,
+    "jit": jax.jit(_flag_lookup),
+    "vmap": jax.vmap(_flag_lookup),
+    "jit_vmap": jax.jit(jax.vmap(_flag_lookup)),
+}
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit"])
+def test_category_with_python_ints_other_than_0_and_1_miss_a_bool_column(*, mode):
+    """A Python int names a bool category only as 0 or 1; 2 is not `True`."""
+    lookup = _FLAG_TRANSFORMS[mode]
+
+    found = [int(lookup(value)) for value in _FLAG_QUERIES]
+
+    np.testing.assert_array_equal(found, _FLAG_CODES)
+
+
+@pytest.mark.parametrize("mode", ["eager", "jit", "vmap", "jit_vmap"])
+@pytest.mark.parametrize("representation", ["weak", "int8", "int16", "int32", "int64"])
+def test_category_with_signed_arrays_other_than_0_and_1_miss_a_bool_column(
+    *, mode, representation
+):
+    """Signed arrays of any width name a bool category only as 0 or 1."""
+    if representation == "int64" and not X64_ENABLED:
+        pytest.skip("int64 needs x64")
+    queries = (
+        _weak_batch(_FLAG_QUERIES)
+        if representation == "weak"
+        else jnp.asarray(_FLAG_QUERIES, dtype=representation)
+    )
+
+    found = _FLAG_TRANSFORMS[mode](queries)
+
+    assert found.dtype == jnp.int32
+    np.testing.assert_array_equal(found, _FLAG_CODES)
 
 
 @pytest.mark.skipif(not X64_ENABLED, reason="64-bit queries need x64")
