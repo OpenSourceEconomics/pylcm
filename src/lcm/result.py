@@ -59,10 +59,15 @@ class PolicyLookup:
     """
 
     value: FloatND
-    """Max over the action grid of Q, using the solved continuation, per row.
+    """Decision value using the solved continuation, one value per queried row.
 
-    In a regime with taste shocks, the smoothed maximum
-    `scale * logsumexp(Qc / scale)` over the discrete-action combinations.
+    Without `Decoupled`, the hard maximum of `Q`, or with taste shocks the
+    smoothed maximum `scale * logsumexp(Qc / scale)`.
+
+    With `Decoupled`, the value profile at the objective's hard-max choice.
+    With taste shocks, its expectation at the objective's noisy choice,
+    including the selected centered shock. This is generally not a logsum of
+    `Qc`: the choice probabilities come from the objective profile.
     """
 
     Q: FloatND | None = None
@@ -98,29 +103,38 @@ class PolicyLookup:
     """Value each entry of `Q` is chosen on, same shape, or `None`.
 
     With a `Decoupled` Koopmans aggregator, its simulate-phase objective
-    aggregator applied to `U` and `CE`: the action is the first feasible
-    maximizer of `Q_objective` and `value` is `Q` there. `None` when the
-    Koopmans aggregator also chooses, or unless action values are requested.
+    aggregator applied to `U` and `CE`. Without taste shocks, the action is
+    its first feasible maximizer and `value` is `Q` there. With taste shocks,
+    conditional continuous choices maximize this profile, and their objective
+    values determine the discrete choice probabilities. `None` when the
+    Koopmans aggregator also chooses, or unless `Q_objective` is requested.
     """
 
     Qc: FloatND | None = None
     """Conditional value per discrete-action combination, or `None`.
 
     Filled for a regime with taste shocks only: one leading row axis, then one
-    axis per discrete action of the queried grid. The max of `Q` over the
-    feasible continuous actions, `-inf` for a combination without one.
+    axis per discrete action of the queried grid. Without `Decoupled`, the max
+    of `Q` over feasible continuous actions. With `Decoupled`, the value profile
+    at the objective's first feasible continuous maximizer, not generally the
+    max of `Q`. A combination without a feasible continuous action has `-inf`.
     """
 
     choice_probabilities: FloatND | None = None
     """Probability of each discrete-action combination, shape of `Qc`, or `None`.
 
-    `softmax(Qc / scale)` over the feasible combinations: exactly zero for an
-    infeasible combination, and zero everywhere in a row without a feasible
-    combination, whose `value` is `-inf`.
+    Without `Decoupled`, `softmax(Qc / scale)` over the feasible combinations.
+    With `Decoupled`, softmax of the objective's conditional continuous maxima
+    divided by the scale, not generally of `Qc`. Exactly zero for an infeasible
+    combination, and zero everywhere in a row without a feasible combination,
+    whose `value` is `-inf`.
     """
 
     conditional_actions: MappingProxyType[ActionName, FloatND] | None = None
-    """Continuous actions attaining `Qc`, one array of the shape of `Qc` each.
+    """Conditional continuous choices, one array of the shape of `Qc` each.
+
+    With `Decoupled`, these maximize the objective and `Qc` reads the value
+    profile there; they need not maximize the value profile itself.
 
     Filled for a regime with taste shocks only. A combination without a feasible
     continuous action holds the first grid value; mask it with
