@@ -163,7 +163,13 @@ def test_kept_parts_program_publishes_only_the_kept_parts(solved):
 
 @pytest.mark.parametrize(
     ("keep_intermediates", "match"),
-    [(("V",), "keep_intermediates"), (("Q", "Q"), "at most once")],
+    [
+        (("V",), "keep_intermediates"),
+        (("Q", "V"), "keep_intermediates"),
+        (("V", "Q"), "keep_intermediates"),
+        (("Q", "F", "U", "CE", "V"), "keep_intermediates"),
+        (("Q", "Q"), "at most once"),
+    ],
 )
 def test_lookup_refuses_unknown_or_repeated_intermediates(
     *, solved, keep_intermediates, match

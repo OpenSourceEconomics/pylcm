@@ -3962,7 +3962,7 @@ class Model:
                 f"edges; {regime_name!r} declares one."
             )
             raise InvalidSimulationInputError(msg)
-        _fail_if_repeated_intermediates(keep_intermediates=keep_intermediates)
+        _fail_if_invalid_intermediates(keep_intermediates=keep_intermediates)
         if keep_intermediates and regime.stakeholders is not None:
             msg = (
                 "Policy lookup keeps intermediates for singleton regimes only; "
@@ -4679,10 +4679,21 @@ _INTERMEDIATE_ROLES: MappingProxyType[Intermediate, str] = MappingProxyType(
 )
 
 
-def _fail_if_repeated_intermediates(
-    *, keep_intermediates: tuple[Intermediate, ...]
-) -> None:
-    """Raise if `keep_intermediates` names one intermediate more than once."""
+def _fail_if_invalid_intermediates(*, keep_intermediates: tuple[str, ...]) -> None:
+    """Raise if `keep_intermediates` names an unknown intermediate or one twice.
+
+    The public type check samples a single entry of the tuple, so every name is
+    checked here, typed wide so that this check is the one that reports it.
+    """
+    unknown = sorted(
+        {name for name in keep_intermediates if name not in _INTERMEDIATE_ROLES}
+    )
+    if unknown:
+        msg = (
+            f"keep_intermediates names unknown intermediates {unknown}; choose "
+            f"from {tuple(_INTERMEDIATE_ROLES)}."
+        )
+        raise InvalidSimulationInputError(msg)
     repeated = sorted(
         {name for name in keep_intermediates if keep_intermediates.count(name) > 1}
     )
