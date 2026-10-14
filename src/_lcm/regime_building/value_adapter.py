@@ -214,19 +214,8 @@ def adapt_entry(
         return entry
     adapters = {} if adapters is None else adapters
     if isinstance(entry, Phased):
-        return Phased(
-            solve=adapt_entry(
-                entry=entry.solve,
-                value_grids=value_grids,
-                encode=encode,
-                adapters=adapters,
-            ),
-            simulate=adapt_entry(
-                entry=entry.simulate,
-                value_grids=value_grids,
-                encode=encode,
-                adapters=adapters,
-            ),
+        return _adapt_phased(
+            entry=entry, value_grids=value_grids, encode=encode, adapters=adapters
         )
     if isinstance(entry, Mapping):
         return cast(
@@ -244,26 +233,7 @@ def adapt_entry(
             ),
         )
     if isinstance(entry, Decoupled):
-        return Decoupled(
-            objective=cast(
-                "UserFunction | Phased",
-                adapt_entry(
-                    entry=entry.objective,
-                    value_grids=value_grids,
-                    encode=None,
-                    adapters=adapters,
-                ),
-            ),
-            value=cast(
-                "UserFunction",
-                adapt_entry(
-                    entry=entry.value,
-                    value_grids=value_grids,
-                    encode=None,
-                    adapters=adapters,
-                ),
-            ),
-        )
+        return _adapt_decoupled(entry=entry, value_grids=value_grids, adapters=adapters)
     if isinstance(entry, StochasticTransition):
         return dataclasses.replace(
             entry,
@@ -276,6 +246,48 @@ def adapt_entry(
         value_grids=value_grids,
         encode=encode,
         adapters=adapters,
+    )
+
+
+# A container whose parts all come back unchanged is returned as declared: other
+# checks compare declarations, such as a stakeholder's utility, by identity.
+
+
+def _adapt_phased(
+    *,
+    entry: Phased,
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    encode: DiscreteGrid | None,
+    adapters: AdapterMemo,
+) -> Phased:
+    """Adapt both sides of a `Phased` entry, keeping the entry if neither changes."""
+    solve, simulate = (
+        adapt_entry(
+            entry=side, value_grids=value_grids, encode=encode, adapters=adapters
+        )
+        for side in (entry.solve, entry.simulate)
+    )
+    if solve is entry.solve and simulate is entry.simulate:
+        return entry
+    return Phased(solve=solve, simulate=simulate)
+
+
+def _adapt_decoupled(
+    *,
+    entry: Decoupled,
+    value_grids: Mapping[StateOrActionName, DiscreteGrid],
+    adapters: AdapterMemo,
+) -> Decoupled:
+    """Adapt the objective and the value, keeping the entry if neither changes."""
+    objective, value = (
+        adapt_entry(entry=part, value_grids=value_grids, encode=None, adapters=adapters)
+        for part in (entry.objective, entry.value)
+    )
+    if objective is entry.objective and value is entry.value:
+        return entry
+    return Decoupled(
+        objective=cast("UserFunction | Phased", objective),
+        value=cast("UserFunction", value),
     )
 
 

@@ -1017,6 +1017,64 @@ def test_phased_stakeholder_utility_without_value_grids_builds_and_solves(
     aaae(np.asarray(values[0]["couple"])[..., 1], expected, decimal=DECIMAL_PRECISION)
 
 
+@categorical(ordered=False)
+class _SingleOrCouple:
+    single: ScalarInt
+    single_terminal: ScalarInt
+    couple: ScalarInt
+    couple_terminal: ScalarInt
+
+
+def _u_single(
+    *, wealth: ContinuousState, work: DiscreteAction, kind: DiscreteState
+) -> FloatND:
+    return jnp.log(wealth) - 0.1 * work + 0.001 * kind
+
+
+def _u_single_terminal(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    return jnp.log(wealth) + 0.001 * kind
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_phased_stakeholder_utility_beside_a_value_grid_elsewhere_builds(*, enable_jit):
+    """A value grid in another regime leaves the household's `Phased` body alone."""
+    wealth = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
+    kind = DiscreteGrid(values=[10, 20])
+    phased = Phased(solve=_u_m, simulate=_u_m_simulate)
+    model = Model(
+        regimes={
+            "single": UserRegime(
+                states={"wealth": wealth, "kind": kind},
+                state_transitions={
+                    "wealth": fixed_transition("wealth"),
+                    "kind": fixed_transition("kind"),
+                },
+                actions={"work": DiscreteGrid(category_class=_Work)},
+                functions={"utility": _u_single},
+            ),
+            "single_terminal": UserRegime(
+                states={"wealth": wealth, "kind": kind},
+                functions={"utility": _u_single_terminal},
+            ),
+            "couple": _household(m_utility=phased),
+            "couple_terminal": UserRegime(
+                states={"wealth": wealth},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _u_terminal, "m": _u_terminal}
+                    )
+                },
+            ),
+        },
+        edges={"single": {"single_terminal": 0}, "couple": {"couple_terminal": 0}},
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_SingleOrCouple,
+        initial_nodes={0: ["single", "couple"]},
+        enable_jit=enable_jit,
+    )
+    assert model.user_regimes["couple"].decomposed_functions["utility_m"] is phased
+
+
 def test_a_really_replaced_phased_stakeholder_body_still_fails_the_identity_check():
     """An equal but new `Phased` object is a different body."""
     regime = _household(m_utility=Phased(solve=_u_m, simulate=_u_m_simulate))
