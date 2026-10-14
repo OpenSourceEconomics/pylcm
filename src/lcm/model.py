@@ -4679,14 +4679,20 @@ _INTERMEDIATE_ROLES: MappingProxyType[Intermediate, str] = MappingProxyType(
 )
 
 
-def _fail_if_invalid_intermediates(*, keep_intermediates: tuple[str, ...]) -> None:
+def _fail_if_invalid_intermediates(
+    *,
+    keep_intermediates: tuple[object, ...],  # noqa: PAN001 - checked entry by entry
+) -> None:
     """Raise if `keep_intermediates` names an unknown intermediate or one twice.
 
-    The public type check samples a single entry of the tuple, so every name is
-    checked here, typed wide so that this check is the one that reports it.
+    The public type check samples a single entry of the tuple, so every entry is
+    checked here. Entries are typed `object`, so that this check, not the internal
+    type check, reports an entry that is not a string.
     """
-    unknown = sorted(
-        {name for name in keep_intermediates if name not in _INTERMEDIATE_ROLES}
+    unknown = tuple(
+        name
+        for name in keep_intermediates
+        if not (isinstance(name, str) and name in _INTERMEDIATE_ROLES)
     )
     if unknown:
         msg = (
@@ -4695,7 +4701,7 @@ def _fail_if_invalid_intermediates(*, keep_intermediates: tuple[str, ...]) -> No
         )
         raise InvalidSimulationInputError(msg)
     repeated = sorted(
-        {name for name in keep_intermediates if keep_intermediates.count(name) > 1}
+        {str(name) for name in keep_intermediates if keep_intermediates.count(name) > 1}
     )
     if repeated:
         msg = f"Policy lookup keeps each intermediate at most once; got {repeated}."
