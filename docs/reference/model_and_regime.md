@@ -150,9 +150,10 @@ full product of the members.
   code arrays or as labels in a DataFrame; a start tuple the declaration never reaches
   raises `InvalidInitialConditionsError`. Members reach `to_dataframe` through
   `additional_targets`.
-- `variant="closed"` (the default) closes the code set under every period's laws.
-  `variant="masked"` keeps the forward-reachable tuples only and makes each code
-  infeasible at the periods it cannot be reached in.
+- The code set holds every tuple reachable at some period. A generated constraint,
+  `<name>_is_reachable`, makes each code infeasible at the periods it cannot be reached
+  in, so its value there is `-inf` and no reachable cell reads it.
+- Member laws and grids are the same in both phases; a `Phased` member is refused.
 - A model declares at most one composite state.
 
 (api-period-candidate-lowering)=

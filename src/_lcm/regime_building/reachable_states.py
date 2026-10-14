@@ -13,9 +13,8 @@ laws toward every target the static regime graph of either phase retains:
 - a law that reads anything else, a stochastic law, or a state held on a
   non-discrete grid is refused, naming the law or state.
 
-The closed union adds every successor of every union tuple at every active period
-until nothing new appears, so one code set can serve all periods: no tuple in it
-steps outside it under any allowed action.
+The union of every node's tuples is one code set for all periods; a tuple in it is
+reachable at the periods whose nodes list it.
 """
 
 import inspect
@@ -51,7 +50,7 @@ _TIME_ARGUMENTS = frozenset({"period", "age"})
 
 @dataclass(frozen=True, kw_only=True)
 class ReachableStates:
-    """Reachable code tuples of the named states, per node and closed over periods."""
+    """Reachable code tuples of the named states, per node and over all periods."""
 
     state_names: tuple[StateName, ...]
     """The enumerated states, in tuple order."""
@@ -59,8 +58,8 @@ class ReachableStates:
     by_node: MappingProxyType[tuple[int, RegimeName], frozenset[Codes]]
     """Per `(period, regime)` carrying the states, the tuples reachable there."""
 
-    closed: tuple[Codes, ...]
-    """Sorted union of every node's tuples, closed under every active period's laws."""
+    union: tuple[Codes, ...]
+    """Sorted union of every node's tuples."""
 
     carriers: frozenset[RegimeName]
     """Regimes that carry every named state."""
@@ -89,7 +88,7 @@ def enumerate_reachable_states(
         start_codes: Mapping of each named state to its admissible start codes.
 
     Returns:
-        The forward sets per node and their closed union.
+        The reachable tuples per node and their union.
 
     Raises:
         ModelInitializationError: If a named state is not discrete in a regime
@@ -124,29 +123,12 @@ def enumerate_reachable_states(
                         tuples=tuples,
                     )
                 )
-    closed: set[Codes] = set().union(*by_node.values())
-    while True:
-        added = {
-            successor
-            for period, period_edges in edges.items()
-            for source, target, phase_name in period_edges
-            for successor in evaluator.successors(
-                phase_name=phase_name,
-                source=source,
-                target=target,
-                period=period,
-                tuples=closed,
-            )
-        } - closed
-        if not added:
-            break
-        closed |= added
     return ReachableStates(
         state_names=members,
         by_node=MappingProxyType(
             {node: frozenset(tuples) for node, tuples in sorted(by_node.items())}
         ),
-        closed=tuple(sorted(closed)),
+        union=tuple(sorted(set().union(*by_node.values()))),
         carriers=carriers,
         skipped_constraints=MappingProxyType(dict(sorted(evaluator.skipped.items()))),
     )
@@ -404,9 +386,11 @@ def _build_program(
         if usable
         else None
     )
-    leaves = set(inspect.signature(law_func).parameters)
-    if feasibility is not None:
-        leaves |= set(inspect.signature(feasibility).parameters)
+    law_args = tuple(inspect.signature(law_func).parameters)
+    feasibility_args = (
+        () if feasibility is None else tuple(inspect.signature(feasibility).parameters)
+    )
+    leaves = set(law_args) | set(feasibility_args)
     scalars = {
         name: value for name, value in fixed_params.items() if name in leaves
     } | {
@@ -425,14 +409,10 @@ def _build_program(
 
     def evaluate(**row: jax.Array) -> tuple[dict[str, jax.Array], jax.Array]:
         values = row | scalars
-        nexts = law_func(
-            **{arg: values[arg] for arg in inspect.signature(law_func).parameters}
-        )
+        nexts = law_func(**{arg: values[arg] for arg in law_args})
         if feasibility is None:
             return nexts, jnp.ones((), dtype=bool)
-        allowed = feasibility(
-            **{arg: values[arg] for arg in inspect.signature(feasibility).parameters}
-        )
+        allowed = feasibility(**{arg: values[arg] for arg in feasibility_args})
         return nexts, jnp.asarray(allowed)
 
     return _Program(

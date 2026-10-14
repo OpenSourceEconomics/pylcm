@@ -3,9 +3,8 @@
 Starting from declared start codes at the admissible initial nodes, the enumeration
 pushes every tuple of the named states through their deterministic laws, at every
 code of the other discrete variables those laws and the constraints read, keeping
-only actions the evaluable constraints allow. The closed union additionally contains
-every successor of every union tuple at every period, so a single code set serves all
-periods.
+only actions the evaluable constraints allow. The union of the per-node tuples is one
+code set for all periods.
 """
 
 import itertools
@@ -226,33 +225,11 @@ def test_forward_sets_equal_itertools_oracle() -> None:
     assert dict(reachable.by_node) == _oracle(6)
 
 
-def test_closed_union_holds_every_successor_of_every_member() -> None:
-    """No union tuple steps outside the closed set at any period under any choice."""
+def test_union_holds_every_reachable_tuple_once_in_sorted_order() -> None:
+    """The code set is the sorted union of the per-node tuples."""
     reachable = _enumerate(model=_model(n_periods=6))
-    closed = set(reachable.closed)
-    a_code, b_code, c_code = int(_Choice.a), int(_Choice.b), int(_Choice.c)
-    escapes = {
-        (
-            min(a + (choice == a_code), _CAP),
-            min(b + (choice == b_code), _CAP),
-            min(c + (choice == c_code), _CAP),
-        )
-        for a, b, c in closed
-        for choice in range(4)
-        if not (choice == c_code and a == 0)
-    } - closed
-    assert escapes == set()
-
-
-def test_closure_adds_successors_the_forward_sets_never_reach() -> None:
-    """Late tuples applied at early periods step to tuples no choice path reaches.
-
-    Four decisions cannot raise all three counters to the cap, but the union holds
-    `(2, 2, 0)`, so closing it under the laws adds `(2, 2, 1)` and then `(2, 2, 2)`.
-    """
-    reachable = _enumerate(model=_model(n_periods=6))
-    forward = set().union(*reachable.by_node.values())
-    assert ((2, 2, 2) in reachable.closed, (2, 2, 2) in forward) == (True, False)
+    expected = tuple(sorted(set().union(*_oracle(6).values())))
+    assert reachable.union == expected
 
 
 def test_every_code_as_start_code_gives_the_product_at_period_zero() -> None:

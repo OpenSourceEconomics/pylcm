@@ -2,12 +2,9 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
 
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import StateName
-
-type CompositeVariant = Literal["closed", "masked"]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -18,13 +15,8 @@ class CompositeState:
     variables, the period, the age and fixed parameters. pylcm enumerates the member
     tuples reachable from `start_codes` at the admissible initial nodes and solves
     and stores values on those tuples only. User functions keep reading the members.
-
-    Two variants are available:
-
-    - `"closed"`: the code set is closed under every period's laws, so no tuple in
-      it steps outside it under an allowed action;
-    - `"masked"`: the code set holds the forward-reachable tuples, and a generated
-      constraint makes each tuple infeasible at the periods it cannot be reached in.
+    A generated constraint makes each tuple infeasible at the periods it cannot be
+    reached in, so its value there is `-inf`.
     """
 
     members: tuple[StateName, ...]
@@ -32,9 +24,6 @@ class CompositeState:
 
     start_codes: Mapping[StateName, tuple[int, ...]]
     """Per member, the codes a subject can start with."""
-
-    variant: CompositeVariant = "closed"
-    """How the code set serves every period."""
 
     def __post_init__(self) -> None:
         if len(self.members) < 2 or len(set(self.members)) != len(self.members):  # noqa: PLR2004

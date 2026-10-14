@@ -9,8 +9,8 @@ on the user regimes before anything else reads them:
 - every regime carrying the members holds the generated grid in their place, one
   decoder function per member, so user functions keep reading member names, and
   one law per carrying target that encodes the members' next values;
-- the `"masked"` variant also adds a constraint that makes each code infeasible at
-  the periods it cannot be reached in.
+- a generated constraint makes each code infeasible at the periods it cannot be
+  reached in, so its value there is `-inf` and no reachable cell reads it.
 
 Codes off the generated set read as `MISSING_CAT_CODE`, whose value read is NaN.
 """
@@ -46,8 +46,9 @@ from _lcm.typing import (
 )
 from _lcm.utils.functools import publish_signature
 from _lcm.utils.namespace import flatten_regime_namespace
-from lcm.composite_state import CompositeState, CompositeVariant
+from lcm.composite_state import CompositeState
 from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
+from lcm.phased import Phased
 from lcm.regime import Regime, StateTransitionEntry
 from lcm.transition import fixed_transition
 from lcm.typing import (
@@ -76,11 +77,8 @@ class CompositeLowering:
     members: tuple[StateName, ...]
     """Member states, in tuple order."""
 
-    variant: CompositeVariant
-    """How the code set serves every period."""
-
     reachable: ReachableStates
-    """Forward sets per node and their closed union."""
+    """Reachable tuples per node and their union."""
 
     table: np.ndarray
     """Member codes of every composite code, shape `(n_codes, n_members)`."""
@@ -146,6 +144,9 @@ def lower_composite_states(
         msg = f"Only one composite state is supported; got {sorted(composite_states)}."
         raise ModelInitializationError(msg)
     ((name, declaration),) = composite_states.items()
+    _fail_if_members_are_unsupported(
+        name=name, members=declaration.members, regimes=regimes
+    )
     dense = build_dense_model()
     engine = dense._regimes  # noqa: SLF001
     reachable = enumerate_reachable_states(
@@ -155,11 +156,7 @@ def lower_composite_states(
         state_names=declaration.members,
         start_codes=declaration.start_codes,
     )
-    codes = (
-        reachable.closed
-        if declaration.variant == "closed"
-        else tuple(sorted(set().union(*reachable.by_node.values())))
-    )
+    codes = reachable.union
     members = declaration.members
     carriers = reachable.carriers
     declared = regimes[min(carriers)].states
@@ -178,7 +175,6 @@ def lower_composite_states(
     lowering = CompositeLowering(
         name=name,
         members=members,
-        variant=declaration.variant,
         reachable=reachable,
         table=table,
         encoding=encoding,
@@ -186,10 +182,9 @@ def lower_composite_states(
         member_labels=tuple(tuple(grid.categories) for grid in member_grids),
     )
     grid = DiscreteGrid(_category_class(name=name, n_codes=len(codes)))
-    period_masks = (
-        _period_masks(lowering=lowering, n_periods=len(dense._time.exact_values))  # noqa: SLF001
-        if declaration.variant == "masked"
-        else {}
+    period_masks = _period_masks(
+        lowering=lowering,
+        n_periods=len(dense._time.exact_values),  # noqa: SLF001
     )
     rewritten = {
         regime_name: _rewrite_regime(
@@ -200,8 +195,13 @@ def lower_composite_states(
             engine_transitions=_member_laws(
                 regime=engine[regime_name], members=members, carriers=carriers
             ),
-            fixed=engine[regime_name].resolved_fixed_params,
-            period_mask=period_masks.get(regime_name),
+            fixed=MappingProxyType(
+                {
+                    **engine[regime_name].resolved_fixed_params,
+                    **engine[regime_name].solution.resolved_fixed_params,
+                }
+            ),
+            period_mask=period_masks[regime_name],
         )
         if regime_name in carriers
         else regime
@@ -211,6 +211,37 @@ def lower_composite_states(
         engine=engine, carriers=carriers, fixed_params=fixed_params, members=members
     )
     return MappingProxyType(rewritten), MappingProxyType({name: lowering}), consumed
+
+
+def _fail_if_members_are_unsupported(
+    *,
+    name: StateName,
+    members: tuple[StateName, ...],
+    regimes: Mapping[RegimeName, Regime],
+) -> None:
+    """Refuse phase-specific members and members held on differing grids."""
+    grids: dict[StateName, set[tuple[str, ...]]] = {}
+    for regime_name, regime in regimes.items():
+        for member in members:
+            if isinstance(regime.state_transitions.get(member), Phased) or isinstance(
+                regime.states.get(member), Phased
+            ):
+                msg = (
+                    f"Member {member!r} of {name!r} is phase-specific in regime "
+                    f"{regime_name!r}; composite members need one law and one grid "
+                    "for both phases."
+                )
+                raise ModelInitializationError(msg)
+            grid = regime.states.get(member)
+            if isinstance(grid, DiscreteGrid):
+                grids.setdefault(member, set()).add(tuple(grid.categories))
+    for member, categories in grids.items():
+        if len(categories) > 1:
+            msg = (
+                f"Member {member!r} of {name!r} is held on different grids "
+                f"{sorted(categories)}; every carrying regime needs the same one."
+            )
+            raise ModelInitializationError(msg)
 
 
 def lower_composite_initial_conditions(
@@ -348,9 +379,15 @@ class _ReachableAtPeriod:
     shape: tuple[int, int]
     """Number of periods and of composite codes."""
 
+    name: StateName
+    """Name of the composite state, the argument holding the code."""
+
     def __call__(self, **kwargs: IntND) -> BoolND:
-        code, period = kwargs.values()
-        reached = _read_flat(table=self.mask, shape=self.shape, index=(period, code))
+        reached = _read_flat(
+            table=self.mask,
+            shape=self.shape,
+            index=(kwargs["period"], kwargs[self.name]),
+        )
         return reached == 1
 
 
@@ -425,15 +462,21 @@ def _rewrite_regime(
     grid: DiscreteGrid,
     engine_transitions: Mapping[RegimeName, Mapping[str, Callable[..., IntND]]],
     fixed: FlatRegimeParams,
-    period_mask: np.ndarray | None,
+    period_mask: np.ndarray,
 ) -> Regime:
     """Hold the composite state in place of the members in one carrying regime."""
     name, members = lowering.name, lowering.members
+    reachable_name = f"{name}_is_reachable"
     taken = (set(regime.states) - set(members)) | set(regime.functions)
-    if name in taken or set(members) & set(regime.functions):
+    if (
+        name in taken
+        or set(members) & set(regime.functions)
+        or reachable_name in regime.constraints
+    ):
         msg = (
-            f"Regime {regime_name!r} already declares {name!r} or a function named "
-            f"after a member of {list(members)}."
+            f"Regime {regime_name!r} already declares {name!r}, the constraint "
+            f"{reachable_name!r}, or a function named after a member of "
+            f"{list(members)}."
         )
         raise ModelInitializationError(msg)
     functions = dict(regime.functions)
@@ -455,19 +498,18 @@ def _rewrite_regime(
             fixed=fixed,
             encoding=jnp.asarray(lowering.encoding),
         )
-    constraints = dict(regime.constraints)
-    if period_mask is not None:
-        check = _ReachableAtPeriod(
-            mask=jnp.asarray(period_mask.ravel(), dtype=jnp.int32),
-            shape=(period_mask.shape[0], period_mask.shape[1]),
-        )
-        _publish(
-            target=check,
-            args={name: DiscreteState, "period": ScalarInt},
-            name=f"{name}_is_reachable",
-            returns=BoolND,
-        )
-        constraints[f"{name}_is_reachable"] = check
+    check = _ReachableAtPeriod(
+        mask=jnp.asarray(period_mask.ravel(), dtype=jnp.int32),
+        shape=(period_mask.shape[0], period_mask.shape[1]),
+        name=name,
+    )
+    _publish(
+        target=check,
+        args={name: DiscreteState, "period": ScalarInt},
+        name=reachable_name,
+        returns=BoolND,
+    )
+    constraints = dict(regime.constraints) | {reachable_name: check}
     return dataclasses.replace(
         regime,
         states={name: grid}

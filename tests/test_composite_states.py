@@ -2,19 +2,16 @@
 
 Declaring deterministic discrete member states as one composite state replaces their
 axes by a single generated state whose codes index the tuples reachable from the
-declared start codes. User functions keep reading the members. Two variants exist:
+declared start codes. User functions keep reading the members. A generated
+constraint makes every tuple infeasible at the periods it cannot be reached in.
 
-- `"closed"`: the code set is closed under every period's laws, so no tuple in it
-  steps outside it under an allowed action;
-- `"masked"`: the code set holds the forward-reachable tuples only, and a generated
-  constraint makes every tuple infeasible at the periods it cannot be reached in.
-
-Both reproduce the dense model's values at every reachable cell and its simulated
-panel exactly.
+The model reproduces the dense model's values at every reachable cell and its
+simulated panel exactly.
 """
 
 from collections.abc import Mapping
 
+import cloudpickle
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -27,13 +24,14 @@ from lcm import (
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    Phased,
     Regime,
     StochasticTransition,
     categorical,
     fixed_transition,
 )
-from lcm.composite_state import CompositeVariant
 from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
+from lcm.regime import ConstraintEntry, StateTransitionEntry
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -41,6 +39,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    FunctionName,
     RegimeName,
     ScalarInt,
     StateName,
@@ -139,7 +138,11 @@ def _zero_utility() -> FloatND:
 
 
 def _model(
-    *, composite_states: Mapping[StateName, CompositeState] | None = None
+    *,
+    composite_states: Mapping[StateName, CompositeState] | None = None,
+    count_a_law: StateTransitionEntry = _next_count_a,
+    retired_count_c: DiscreteGrid | None = None,
+    extra_constraints: Mapping[FunctionName, ConstraintEntry] | None = None,
 ) -> Model:
     """Counters move in `alive`, freeze in `retired`, and `dead` is terminal."""
     alive = Regime(
@@ -149,7 +152,7 @@ def _model(
             "wealth": LinSpacedGrid(start=1, stop=4, n_points=4),
         },
         state_transitions={
-            "count_a": _next_count_a,
+            "count_a": count_a_law,
             "count_b": _next_count_b,
             "count_c": _next_count_c,
             "offer": StochasticTransition(func=_offer_probs),
@@ -164,10 +167,12 @@ def _model(
             "c_needs_a": _c_needs_a,
             "b_needs_offer": _b_needs_offer,
             "budget": _budget,
-        },
+        }
+        | dict(extra_constraints or {}),
     )
     retired = Regime(
-        states={name: DiscreteGrid(_Count) for name in _MEMBERS},
+        states={name: DiscreteGrid(_Count) for name in _MEMBERS}
+        | ({} if retired_count_c is None else {"count_c": retired_count_c}),
         state_transitions={name: fixed_transition(name) for name in _MEMBERS},
         functions={"utility": _retired_utility},
     )
@@ -190,16 +195,8 @@ def _model(
     )
 
 
-def _composite(variant: CompositeVariant) -> Model:
-    return _model(
-        composite_states={
-            "history": CompositeState(
-                members=_MEMBERS,
-                start_codes=dict.fromkeys(_MEMBERS, (0,)),
-                variant=variant,
-            )
-        }
-    )
+def _composite() -> Model:
+    return _model(composite_states=_history())
 
 
 def _member_first(
@@ -216,12 +213,9 @@ def _member_first(
     )
 
 
-@pytest.mark.parametrize("variant", ["closed", "masked"])
-def test_values_agree_with_dense_model_at_every_reachable_cell(
-    variant: CompositeVariant,
-) -> None:
+def test_values_agree_with_dense_model_at_every_reachable_cell() -> None:
     """Composite V equals dense V wherever a member tuple is reached."""
-    dense, composite = _model(), _composite(variant)
+    dense, composite = _model(), _composite()
     lowering = composite._composite_states["history"]
     dense_values = dense.solve(params=_PARAMS, log_level="off").values
     composite_values = composite.solve(params=_PARAMS, log_level="off").values
@@ -275,46 +269,26 @@ def _panel(*, model: Model, composite: bool) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
-@pytest.mark.parametrize("variant", ["closed", "masked"])
-def test_simulated_panel_equals_dense_panel(variant: CompositeVariant) -> None:
+def test_simulated_panel_equals_dense_panel() -> None:
     """Choices, states and decoded members match the dense model row for row."""
     pd.testing.assert_frame_equal(
-        _panel(model=_composite(variant), composite=True),
+        _panel(model=_composite(), composite=True),
         _panel(model=_model(), composite=False),
         check_dtype=False,
     )
 
 
-def test_masked_code_set_is_the_forward_union_and_closed_set_is_larger() -> None:
-    """The masked variant stores fewer codes than the closed one on this model."""
-    sizes = tuple(
-        len(_composite(variant)._composite_states["history"].table)
-        for variant in ("masked", "closed")
-    )
-    forward = len(
-        set().union(
-            *_composite("masked")
-            ._composite_states["history"]
-            .reachable.by_node.values()
-        )
-    )
-    assert (sizes[0], sizes[0] < sizes[1]) == (forward, True)
-
-
-@pytest.mark.parametrize("variant", ["closed", "masked"])
-def test_value_array_has_one_entry_per_code_and_other_state_cell(
-    variant: CompositeVariant,
-) -> None:
+def test_value_array_has_one_entry_per_code_and_other_state_cell() -> None:
     """The composite axis replaces the member product in the stored value array."""
-    composite = _composite(variant)
+    composite = _composite()
     values = composite.solve(params=_PARAMS, log_level="off").values
     n_codes = len(composite._composite_states["history"].table)
     assert np.asarray(values[0]["alive"]).shape == (n_codes, 2, 4)
 
 
-def test_masked_variant_is_infeasible_where_a_code_is_unreachable() -> None:
+def test_code_unreachable_at_its_period_is_infeasible() -> None:
     """At period 0 only the start tuple is reachable, so every other code reads -inf."""
-    composite = _composite("masked")
+    composite = _composite()
     lowering = composite._composite_states["history"]
     start = lowering.encode((0, 0, 0))
     v0 = np.asarray(composite.solve(params=_PARAMS, log_level="off").values[0]["alive"])
@@ -328,7 +302,7 @@ def test_initial_member_tuple_outside_the_code_set_is_refused() -> None:
         "count_c": jnp.full(40, _CAP, dtype=jnp.int32)
     }
     with pytest.raises(InvalidInitialConditionsError, match="count_c"):
-        _composite("closed").simulate(
+        _composite().simulate(
             params=_PARAMS, initial_conditions=conditions, log_level="off", seed=1
         )
 
@@ -351,7 +325,7 @@ def test_labelled_initial_frame_names_members_like_the_dense_model() -> None:
             params=_PARAMS, initial_conditions=frame, log_level="off", seed=11
         ).to_dataframe(use_labels=False)[["subject_id", "period", "choice"]]
 
-    pd.testing.assert_frame_equal(run(_composite("closed")), run(_model()))
+    pd.testing.assert_frame_equal(run(_composite()), run(_model()))
 
 
 def test_unknown_member_label_in_initial_frame_is_named() -> None:
@@ -368,7 +342,7 @@ def test_unknown_member_label_in_initial_frame_is_named() -> None:
         }
     )
     with pytest.raises(InvalidInitialConditionsError, match="bogus"):
-        _composite("closed").simulate(
+        _composite().simulate(
             params=_PARAMS, initial_conditions=frame, log_level="off", seed=1
         )
 
@@ -383,3 +357,60 @@ def test_composite_name_taken_by_an_action_is_refused() -> None:
                 )
             }
         )
+
+
+def _history() -> dict[StateName, CompositeState]:
+    return {
+        "history": CompositeState(
+            members=_MEMBERS, start_codes=dict.fromkeys(_MEMBERS, (0,))
+        )
+    }
+
+
+def _keep_count_a(*, count_a: DiscreteState) -> DiscreteState:
+    return count_a
+
+
+def test_phase_specific_member_law_is_refused() -> None:
+    """A member whose law differs between solve and simulate names its law."""
+    with pytest.raises(ModelInitializationError, match="count_a"):
+        _model(
+            composite_states=_history(),
+            count_a_law=Phased(solve=_next_count_a, simulate=_keep_count_a),
+        )
+
+
+@categorical(ordered=True)
+class _WideCount:
+    zero: ScalarInt
+    one: ScalarInt
+    two: ScalarInt
+    three: ScalarInt
+
+
+def test_member_held_on_different_grids_is_refused() -> None:
+    """Every carrying regime must hold a member on one grid."""
+    with pytest.raises(ModelInitializationError, match="count_c"):
+        _model(composite_states=_history(), retired_count_c=DiscreteGrid(_WideCount))
+
+
+def _always(*, choice: DiscreteAction) -> BoolND:
+    return choice >= 0
+
+
+def test_constraint_named_like_the_generated_one_is_refused() -> None:
+    """The generated reachability constraint may not replace a declared one."""
+    with pytest.raises(ModelInitializationError, match="history_is_reachable"):
+        _model(
+            composite_states=_history(),
+            extra_constraints={"history_is_reachable": _always},
+        )
+
+
+def test_round_tripped_model_simulates_the_same_panel() -> None:
+    """A pickled and restored model keeps its composite lowering."""
+    composite = _composite()
+    restored = cloudpickle.loads(cloudpickle.dumps(composite))
+    pd.testing.assert_frame_equal(
+        _panel(model=restored, composite=True), _panel(model=composite, composite=True)
+    )
