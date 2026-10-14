@@ -30,6 +30,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    Intermediate,
     ScalarInt,
     UserFunction,
     UserParams,
@@ -350,8 +351,10 @@ def test_taste_shocks_refuse_a_selection_aggregator() -> None:
         _model(taste_shocks=lcm.ExtremeValueTasteShocks())
 
 
-@pytest.mark.parametrize("return_action_values", [False, True])
-def test_lookup_selects_like_simulation(*, return_action_values: bool) -> None:
+@pytest.mark.parametrize("keep_intermediates", [(), ("Q", "F", "U", "CE")])
+def test_lookup_selects_like_simulation(
+    *, keep_intermediates: tuple[Intermediate, ...]
+) -> None:
     """Today's sophisticated self spends wherever it can, at every wealth level."""
     model = _model()
     params = _params(beta_tilde=BETA)
@@ -361,7 +364,7 @@ def test_lookup_selects_like_simulation(*, return_action_values: bool) -> None:
         period=0,
         regime_name="decide",
         states={"wealth": jnp.array([0, 1, 2, 3])},
-        return_action_values=return_action_values,
+        keep_intermediates=keep_intermediates,
     )
     assert got.actions is not None
     assert_array_equal(
@@ -370,9 +373,9 @@ def test_lookup_selects_like_simulation(*, return_action_values: bool) -> None:
     )
 
 
-@pytest.mark.parametrize("return_action_values", [False, True])
+@pytest.mark.parametrize("keep_intermediates", [(), ("Q", "F", "U", "CE")])
 def test_lookup_publishes_the_long_run_value_of_the_selection(
-    *, return_action_values: bool
+    *, keep_intermediates: tuple[Intermediate, ...]
 ) -> None:
     """The looked-up value is `u + δ·CE` at today's selected action."""
     model = _model()
@@ -383,7 +386,7 @@ def test_lookup_publishes_the_long_run_value_of_the_selection(
         period=0,
         regime_name="decide",
         states={"wealth": jnp.array([0, 1, 2, 3])},
-        return_action_values=return_action_values,
+        keep_intermediates=keep_intermediates,
     )
     # Sophisticated V_1 = [0.9, 1.5, 2.4, 3.3]; save at 0, spend elsewhere.
     assert_array_almost_equal(

@@ -4,7 +4,6 @@ import logging
 from collections.abc import Mapping
 
 import jax
-import jax.numpy as jnp
 
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.solution.contract import Solver
@@ -13,6 +12,7 @@ from _lcm.solution.egm import EGM
 from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import NEGM
 from _lcm.solution.nnbegm import NNBEGM
+from _lcm.utils.counts import COUNT_CAPACITY, sum_counts
 from _lcm.utils.logging import validation_enabled
 from lcm.exceptions import OffGridPolicyError, OffGridStateError
 from lcm.typing import (
@@ -60,9 +60,7 @@ def fail_if_endogenous_grid_reads_a_clipped_grid(
 @jax.jit
 def count_off_grid(*, values: FloatND, points: Float1D, feasible: BoolND) -> ScalarInt:
     """Count strict exterior raw values on the economically reached population."""
-    return jnp.count_nonzero(
-        feasible & ((values < points[0]) | (values > points[-1]))
-    ).astype(jnp.int32)
+    return sum_counts(counts=feasible & ((values < points[0]) | (values > points[-1])))
 
 
 def report_off_grid(
@@ -77,9 +75,10 @@ def report_off_grid(
     logger: logging.Logger,
 ) -> None:
     """Enforce a declared raise policy and separately emit checked counts."""
+    shown = f">={count}" if count >= COUNT_CAPACITY else f"={count}"
     message = (
         f"Off-grid next states: regime={regime!r}, target={target!r}, "
-        f"period={period}, state={state!r}, phase={phase!r}, count={count}"
+        f"period={period}, state={state!r}, phase={phase!r}, count{shown}"
     )
     if count and rule == "raise":
         raise OffGridStateError(message)
