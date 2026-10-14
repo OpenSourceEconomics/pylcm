@@ -100,7 +100,7 @@ type LoopIndex = int | Int[Scalar, ""]
 # signatures self-documenting about which kind of name a string slot carries.
 type RegimeName = str
 type Phase = Literal["solve", "simulate"]
-type Intermediate = Literal["Q", "F", "U", "CE"]
+type Intermediate = Literal["Q", "F", "U", "CE", "Q_objective"]
 type StateName = str
 type ActionName = str
 type StateOrActionName = str
