@@ -9,6 +9,7 @@ from abc import abstractmethod
 from dataclasses import dataclass, fields
 from functools import partial
 from math import comb
+from numbers import Real
 from types import MappingProxyType
 from typing import ClassVar
 
@@ -120,8 +121,9 @@ class TauchenAR1Process(_AR1Process):
         The nodes do not depend on stationarity, so unit roots are supported.
         Unspecified law parameters are supplied at solve or simulation time.
         """
+        _fail_if_non_real_nodes(nodes=nodes)
         return _TauchenOnNodesProcess(
-            nodes=nodes,
+            nodes=tuple(float(node) for node in nodes),
             n_points=len(nodes),
             gauss_hermite=False,
             rho=rho,
@@ -223,6 +225,11 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
             )
         super().__post_init__()
 
+    @property
+    def constructor_name(self) -> str:
+        """Name of the public call that builds this process, for error messages."""
+        return "TauchenAR1Process.on_nodes"
+
     def fail_if_nonstationary_rho(self, *, rho: float | FloatND | IntND) -> None:
         """Require finite persistence; supplied nodes need no stationary law."""
         if not np.isfinite(np.asarray(rho)).all():
@@ -254,6 +261,25 @@ class _TauchenOnNodesProcess(TauchenAR1Process):
             ),
             in_axes=0,
         )(nodes)
+
+
+def _fail_if_non_real_nodes(
+    *,
+    nodes: tuple[object, ...],  # noqa: PAN001 - checked entry by entry
+) -> None:
+    """Raise if a supplied node is not a real number.
+
+    The public type check samples a single entry of the tuple, so every entry is
+    checked here. Entries are typed `object`, so that this check, not the internal
+    type check, reports an entry that is not a number.
+    """
+    invalid = tuple(node for node in nodes if not isinstance(node, Real))
+    if invalid:
+        msg = (
+            f"TauchenAR1Process.on_nodes needs real-number nodes; got {invalid!r} "
+            f"in {nodes!r}."
+        )
+        raise GridInitializationError(msg)
 
 
 # keyword-only-exempt: library-callback=jax.vmap
