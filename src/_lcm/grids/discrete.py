@@ -382,18 +382,22 @@ def _validate_tolerance(
 
 
 def _within_tolerance(*, value: FloatND, node: FloatND, tolerance: float) -> BoolND:
-    """Return whether each value lies within `tolerance` of its node, exactly.
+    """Return whether each value lies within `tolerance` of its node.
 
     XLA flushes a subnormal result to zero, so `value - node` near the smallest
-    normal float can read 0 for distinct floats. A zero tolerance is decided by
-    equality. Below 1 in magnitude, both sides are scaled by a power of two, an
-    exact operation, that lifts every gap between distinct floats and the stored
-    tolerance into the normal range; the scaled tolerance is formed on the host,
-    where nothing flushes.
+    normal float can read 0 for distinct floats. A zero tolerance is therefore
+    decided by equality. A flushed difference is below the smallest normal, so it
+    misleads only a tolerance below that too; such a tolerance is compared after
+    scaling both sides by a power of two, which is exact for nodes below 1 and
+    lifts every gap between distinct floats into the normal range. Otherwise the
+    distance is compared as computed, so it is exact up to its rounding at the
+    grid's dtype. XLA on CPU also reads a subnormal input as zero.
     """
     if tolerance == 0.0:
         return value == node
     dtype = np.dtype(node.dtype)
+    if tolerance >= np.finfo(dtype).tiny:
+        return jnp.abs(value - node) <= tolerance
     scale = dtype.type(2.0 ** (np.finfo(dtype).nmant + 1))
     scaled_tolerance = float(dtype.type(tolerance) * scale)
     return jnp.where(

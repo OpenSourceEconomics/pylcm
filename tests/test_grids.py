@@ -853,6 +853,14 @@ def test_float_value_grid_tolerance_holds_at_the_smallest_normal():
     assert grid.encode(queries).tolist() == [0, MISSING_CAT_CODE]
 
 
+def test_float_value_grid_large_tolerance_flags_a_value_beyond_it():
+    """A tolerance near the dtype's top end still bounds the match at a small node."""
+    large, tolerance = (1e300, 1e295) if X64_ENABLED else (1e35, 1e32)
+    grid = DiscreteGrid(values=[0.0, large], tolerance=tolerance)
+    queries = jnp.asarray([tolerance, 2 * tolerance], dtype=canonical_float_dtype())
+    assert grid.encode(queries).tolist() == [0, MISSING_CAT_CODE]
+
+
 @pytest.mark.parametrize("value", [0.3, -0.5, 2.0, float("nan")])
 def test_float_value_grid_tolerance_flags_values_between_nodes(value):
     """Values farther than the tolerance from every node get the sentinel."""
