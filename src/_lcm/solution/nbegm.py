@@ -131,6 +131,7 @@ from _lcm.solution.egm import (
     declare_egm_carry_reads,
     guard_regime_mass,
 )
+from _lcm.solution.feasibility import BoundedResult
 from _lcm.solution.periodization import (
     resolve_solver_build_context,
     restrict_solver_build_context_to_period_group,
@@ -7032,6 +7033,10 @@ class _NBEGMCellContinuation:
                 savings_grid=self.savings_grid, targets=cliff_targets
             )
         )
+        if isinstance(rows, BoundedResult):
+            raise TypeError(
+                "NB-EGM continuation query status requires its installed adapter."
+            )
         if cliff_targets is None:
             return rows
         return (*rows, cliff_targets)
@@ -7144,7 +7149,12 @@ def _interval_rows(
         if not interval_targets
         else _query_with_targets(savings_grid=savings_grid, targets=interval_targets[0])
     )
-    return jax.vmap(interval_continuation)(query)
+    rows = jax.vmap(interval_continuation)(query)
+    if isinstance(rows, BoundedResult):
+        raise TypeError(
+            "NB-EGM continuation query status requires its installed adapter."
+        )
+    return rows
 
 
 def _query_with_targets(*, savings_grid: Float1D, targets: FloatND) -> Float1D:

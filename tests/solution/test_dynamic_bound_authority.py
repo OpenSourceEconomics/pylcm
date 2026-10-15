@@ -520,6 +520,8 @@ def test_nonterminal_action_evaluation_shares_flow_before_continuation(
         kernel = q_and_f_module._QAndF(
             U_and_F=flow,
             continuation_reads=frozenset(),
+            selection_aggregator=None,
+            build_selection_kwargs=None,
             compute_CE=continuation,
             koopmans_aggregator=cast("EconFunction", W),
             build_W_kwargs=build_W_kwargs,
@@ -585,6 +587,8 @@ def test_private_flow_transport_does_not_shadow_user_inputs(*, evaluated: bool) 
     )
     kernel = q_and_f_module._QAndF(
         U_and_F=flow,
+        selection_aggregator=None,
+        build_selection_kwargs=None,
         compute_CE=continuation,
         koopmans_aggregator=cast("EconFunction", W),
         build_W_kwargs=build_W_kwargs,

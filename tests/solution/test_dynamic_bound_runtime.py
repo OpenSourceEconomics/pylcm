@@ -139,6 +139,7 @@ def test_public_policy_lookup_keeps_integrity_with_retained_action_parts(
         },
         keep_intermediates=intermediates,
     )
+    assert result.actions is not None
     np.testing.assert_array_equal(result.actions["consumption"], [2.0, 2.0, 2.0])
     np.testing.assert_array_equal(result.value, [2.0, 2.0, 2.0])
     if kept:
