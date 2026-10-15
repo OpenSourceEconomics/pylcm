@@ -11,9 +11,11 @@ jobs:
   run-benchmarks:
     name: Run benchmarks on GPU and publish to open-econ.org/pylcm-benchmarks
     timeout-minutes: 14400  # 10 days (max is 35790 for self-hosted)
+    # A runner of its own on the benchmark machine, so a main-branch run never
+    # queues behind pull-request benchmarks for a runner slot.
     runs-on:
       - self-hosted
-      - gpu-benchmark
+      - gpu-benchmark-main
     steps:
       # See benchmark-pr.yml: `/tmp` is on a small root filesystem on the
       # benchmark runner, so keep temporary files on the runner's work volume.
@@ -24,6 +26,13 @@ jobs:
         run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Report free disk space
         run: df -h "$TMPDIR" /tmp / | cat
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      # The machine-wide lock shared with benchmark-pr.yml. A main-branch run
+      # takes it before any waiting pull-request benchmark.
+      - name: Hold the benchmark GPU for this whole job
+        run: bash .github/scripts/hold-benchmark-gpu.sh main
       - name: Wait for GPU to be free
         run: |
           echo "Waiting for GPU to be free..."
@@ -33,9 +42,6 @@ jobs:
             sleep 60
           done
           echo "GPU is free."
-      - uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 0
       - name: Regenerate version.py
         run: >-
           echo "__version__ = '$(git describe --tags --always)'"
@@ -80,3 +86,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pixi run -e benchmarks-cuda12 asv-run-and-publish-main
+      # Runs even when an earlier step fails or the job is cancelled. Killing
+      # the lock holder's child as well closes every copy of the lock file.
+      - name: Release the benchmark GPU
+        if: always()
+        run: |-
+          if test -n "${GPU_LOCK_PID:-}"; then
+            pkill -P "$GPU_LOCK_PID" || true
+            kill "$GPU_LOCK_PID" 2> /dev/null || true
+          fi

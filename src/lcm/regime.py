@@ -142,6 +142,9 @@ class Regime:
     An `AgeSpecializedGrid` value is a continuous state whose grid bounds vary
     with age (fixed `n_points`); it is resolved to a concrete grid per period at
     model build.
+    A `JointNormalIIDProcess` value declares correlated physical shocks. It
+    stays here as declared; `lower_joint_normal_processes` gives the
+    coordinate states and generated functions the engine runs.
     """
 
     state_transitions: Mapping[StateName, StateTransitionEntry] = field(
@@ -419,25 +422,16 @@ class Regime:
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
-        if any(
-            isinstance(state, JointNormalIIDProcess) for state in self.states.values()
-        ):
-            states, functions = lower_joint_normal_processes(
-                states=self.states,
-                functions=self.functions,
-                other_names=frozenset(self.actions)
-                | frozenset(self.constraints)
-                | frozenset(self.state_transitions),
-            )
-            object.__setattr__(self, "states", states)
-            object.__setattr__(self, "functions", functions)
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()
         # What depends on the law is validated once the model binds it from
         # `Model(edges=...)`; completeness (a `utility` entry, aggregator
         # injection, transition coverage) is validated when the model finalizes
-        # its regimes, since model-level slots may still satisfy it.
-        validate_regime(self)
+        # its regimes, since model-level slots may still satisfy it. A regime
+        # declaring a joint process is validated in the form the engine runs,
+        # which constructing that form does.
+        if self.lower_joint_normal_processes() is self:
+            validate_regime(self)
         self._make_field_immutable(name="functions")
         self._make_field_immutable(name="states")
         self._make_field_immutable(name="state_transitions")
@@ -463,6 +457,37 @@ class Regime:
         """
         self._lower_collective_utility()
         self._lower_value_dependent_constraints()
+
+    def lower_joint_normal_processes(self) -> Regime:
+        """Return the regime the engine runs for its joint normal declarations.
+
+        Each `JointNormalIIDProcess` in `states` becomes one standard-normal
+        coordinate state `<group>_normal_<d>` per dimension, and `functions`
+        gains the generated `<group>` vector and one function per physical
+        shock. The declarations themselves stay in this regime's `states` and
+        `functions`, so `replace` swaps a joint process or a function without
+        meeting the generated names.
+
+        Returns:
+            This regime when it declares no joint process; otherwise a new
+            regime holding the lowered states and functions.
+
+        Raises:
+            RegimeInitializationError: If a generated name collides with a
+                declaration of this regime.
+        """
+        if not any(
+            isinstance(state, JointNormalIIDProcess) for state in self.states.values()
+        ):
+            return self
+        states, functions = lower_joint_normal_processes(
+            states=self.states,
+            functions=self.functions,
+            other_names=frozenset(self.actions)
+            | frozenset(self.constraints)
+            | frozenset(self.state_transitions),
+        )
+        return self.replace(states=states, functions=functions)
 
     @property
     def decomposed_functions(

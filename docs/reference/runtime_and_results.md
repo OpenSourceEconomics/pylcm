@@ -620,11 +620,14 @@ and no explicit width, complete chunk profiles select the widest fitting candida
 Retained full-population inputs and result assembly remain part of the bound even when
 chunks shrink. Each simulation takes its population from the initial conditions, so the
 same model accepts different call-time populations. `seed` controls random draws
-independently of those chunk boundaries. Ordinary and independent taste roots accept
-integers or scalar typed JAX keys; caller key buffers join the budgeted entry inventory,
-and profiles distinguish their actual PRNG implementations. A collective model may
-require an addressed dissolution replay artifact and `own_stakeholder`; see
-[Collective regimes](collective_regimes.md).
+independently of those chunk boundaries. The ordinary `seed` is an integer, which
+becomes a Threefry key whatever `jax_default_prng_impl` says, or a scalar typed Threefry
+key; other implementations are refused, because their batched draws change with the
+chunk width. The independent `taste_shock_seed` draws per subject key and accepts an
+integer or a scalar typed key of any implementation. Caller key buffers join the
+budgeted entry inventory, and profiles distinguish the taste root's actual PRNG
+implementation. A collective model may require an addressed dissolution replay artifact
+and `own_stakeholder`; see [Collective regimes](collective_regimes.md).
 
 Under a device-memory budget, the top-first outer-cohort planner profiles the
 whole-population candidate first and descends only on refusal, using either the pinned

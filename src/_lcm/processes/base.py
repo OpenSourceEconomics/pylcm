@@ -160,6 +160,11 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     introduce further non-parameter fields (e.g. `gauss_hermite`).
     """
 
+    @property
+    def constructor_name(self) -> str:
+        """Name of the public call that builds this process, for error messages."""
+        return type(self).__name__
+
     def __post_init__(self) -> None:
         if self.simulate_draws not in {"continuous", "nodes"}:
             msg = "simulate_draws must be 'continuous' or 'nodes'."
