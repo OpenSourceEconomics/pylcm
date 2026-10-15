@@ -414,3 +414,79 @@ def test_round_tripped_model_simulates_the_same_panel() -> None:
     pd.testing.assert_frame_equal(
         _panel(model=restored, composite=True), _panel(model=composite, composite=True)
     )
+
+
+@categorical(ordered=True)
+class _Bit:
+    zero: ScalarInt
+    one: ScalarInt
+
+
+@categorical(ordered=False)
+class _LiveId:
+    live: ScalarInt
+    dead: ScalarInt
+
+
+def _bit_utility(
+    *, a: DiscreteState, b: DiscreteState, choice: DiscreteAction
+) -> FloatND:
+    return 0.0 + a + b + choice
+
+
+def _next_b_from_choice(*, choice: DiscreteAction) -> DiscreteState:
+    return choice
+
+
+def _next_a_from_numeric_choice(*, choice: DiscreteAction) -> DiscreteState:
+    return jnp.where(choice == 20, jnp.int32(1), jnp.int32(0))
+
+
+def _two_bit_model(
+    *,
+    a_grid: DiscreteGrid,
+    choice_grid: DiscreteGrid,
+    transitions: Mapping[StateName, StateTransitionEntry],
+) -> Model:
+    """Two binary members, one binary choice, two decisions and a terminal period."""
+    return Model(
+        regimes={
+            "live": Regime(
+                states={"a": a_grid, "b": DiscreteGrid(_Bit)},
+                actions={"choice": choice_grid},
+                state_transitions=transitions,
+                functions={"utility": _bit_utility},
+            ),
+            "dead": Regime(functions={"utility": _zero_utility}),
+        },
+        edges={"live": {"live": 0, "dead": 1}},
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_LiveId,
+        initial_nodes={0: "live"},
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        composite_states={
+            "history": CompositeState(
+                members=("a", "b"), start_codes={"a": (0,), "b": (0,)}
+            )
+        },
+    )
+
+
+def test_member_on_a_value_grid_is_refused() -> None:
+    """Members are read as codes, so a member declared by its values is refused."""
+    with pytest.raises(ModelInitializationError, match=r"'a'.*values"):
+        _two_bit_model(
+            a_grid=DiscreteGrid(values=[10, 20]),
+            choice_grid=DiscreteGrid(_Bit),
+            transitions={"a": fixed_transition("a"), "b": _next_b_from_choice},
+        )
+
+
+def test_member_law_reading_a_value_grid_is_refused() -> None:
+    """A member law reading a variable declared by its values names that input."""
+    with pytest.raises(ModelInitializationError, match=r"next_a.*'choice'"):
+        _two_bit_model(
+            a_grid=DiscreteGrid(_Bit),
+            choice_grid=DiscreteGrid(values=[10, 20]),
+            transitions={"a": _next_a_from_numeric_choice, "b": fixed_transition("b")},
+        )

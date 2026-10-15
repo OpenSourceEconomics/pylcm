@@ -154,6 +154,11 @@ full product of the members.
   `<name>_is_reachable`, makes each code infeasible at the periods it cannot be reached
   in, so its value there is `-inf` and no reachable cell reads it.
 - Member laws and grids are the same in both phases; a `Phased` member is refused.
+- Members are held on category grids. A member declared by its values
+  (`DiscreteGrid(values=...)`) is refused, and so is a member law that reads a variable
+  declared by its values.
+- Initial conditions are encoded only for subjects whose starting regime carries the
+  members; member codes must be whole numbers.
 - A model declares at most one composite state.
 
 (api-period-candidate-lowering)=

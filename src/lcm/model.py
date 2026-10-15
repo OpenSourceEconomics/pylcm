@@ -868,6 +868,7 @@ class Model:
                 composite_states=composite_states,
                 regimes=regimes,
                 fixed_params=fixed_params,
+                derived_categoricals=derived_categoricals,
                 build_dense_model=lambda: Model(
                     description=description,
                     ages=ages,
@@ -3638,6 +3639,7 @@ class Model:
                 initial_conditions = lower_composite_initial_conditions(
                     initial_conditions=initial_conditions,
                     lowerings=self._composite_states,
+                    regime_names_to_ids=self.regime_names_to_ids,
                 )
                 initial_conditions = self._lower_joint_initial_conditions(
                     initial_conditions=initial_conditions,
@@ -4735,6 +4737,7 @@ class Model:
         initial_conditions = lower_composite_initial_conditions(
             initial_conditions=initial_conditions,
             lowerings=self._composite_states,
+            regime_names_to_ids=self.regime_names_to_ids,
         )
         initial_conditions = self._lower_joint_initial_conditions(
             initial_conditions=initial_conditions,

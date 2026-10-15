@@ -15,7 +15,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   tuple infeasible at the periods it cannot be reached in.
 - Member laws must be deterministic and read only discrete variables, the period, the
   age and fixed parameters; a stochastic or phase-specific member law, a law reading
-  anything else, and a member held on different grids are refused by name.
+  anything else, a member held on different grids, a member declared by its values,
+  and a member law reading a variable declared by its values are refused by name.
 
 ### Conditional continuous actions
 
