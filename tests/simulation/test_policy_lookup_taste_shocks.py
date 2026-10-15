@@ -276,6 +276,14 @@ def test_lookup_under_a_device_budget_decodes_the_same_conditional_actions():
     np.testing.assert_array_equal(
         np.asarray(got.conditional_actions["consumption"]), EXPECTED_CONSUMPTION
     )
+    for name, expected in (
+        ("Qc", EXPECTED_QC),
+        ("choice_probabilities", EXPECTED_PROBABILITIES),
+        ("value", EXPECTED_VALUE),
+    ):
+        np.testing.assert_array_almost_equal(
+            np.asarray(getattr(got, name)), expected, decimal=HAND_DECIMALS
+        )
 
 
 def test_lookup_small_scale_puts_all_mass_on_the_best_combination():
@@ -299,6 +307,19 @@ def test_lookup_restricted_work_grid_shrinks_the_discrete_axis(solved):
     assert (got.Qc.shape, np.asarray(got.choice_probabilities).tolist()) == (
         (2, 1),
         [[1.0], [1.0]],
+    )
+    # Shape and unit mass alone would also accept the wrong singleton work code.
+    column = int(Work.on)
+    expected_Qc = EXPECTED_QC[:, column : column + 1]
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.Qc), expected_Qc, decimal=HAND_DECIMALS
+    )
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.value), expected_Qc[:, 0], decimal=HAND_DECIMALS
+    )
+    np.testing.assert_array_equal(
+        np.asarray(got.conditional_actions["consumption"]),
+        EXPECTED_CONSUMPTION[:, column : column + 1],
     )
 
 
@@ -417,6 +438,13 @@ def test_lookup_with_phased_utility_smooths_the_simulated_Qc(phased_solved):
     expected = SCALE * np.log(np.exp(simulated_Qc / SCALE).sum(axis=1))
     np.testing.assert_array_almost_equal(
         np.asarray(got.value), expected, decimal=HAND_DECIMALS
+    )
+    weights = np.exp((simulated_Qc - simulated_Qc.max(axis=1, keepdims=True)) / SCALE)
+    expected_probabilities = weights / weights.sum(axis=1, keepdims=True)
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.choice_probabilities),
+        expected_probabilities,
+        decimal=HAND_DECIMALS,
     )
 
 
