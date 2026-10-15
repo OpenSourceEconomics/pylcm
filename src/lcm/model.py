@@ -1588,7 +1588,6 @@ class Model:
                 logger=get_call_logger(log_level="warning", runtime_checks=True),
                 process_grid_resolver=None,
                 memory=self._transition_memory(flat_params=flat_params),
-                count_when_silent=True,
             )
 
     def _transition_memory(self, *, flat_params: FlatParams) -> SimulationMemory | None:

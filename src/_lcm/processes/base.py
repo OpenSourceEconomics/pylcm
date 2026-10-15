@@ -9,7 +9,7 @@ normal-mixture helpers build those nodes and weights for the leaf classes.
 import math
 from abc import abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
 from typing import ClassVar, Literal
 
@@ -165,6 +165,16 @@ class _ContinuousStochasticProcess(ContinuousGrid):
             msg = "simulate_draws must be 'continuous' or 'nodes'."
             raise GridInitializationError(msg)
         self._resolve_conditioned_sigma()
+
+    def has_same_law_as(self, other: _ContinuousStochasticProcess) -> bool:
+        """Return whether `other` declares this law, whatever its draw mode.
+
+        `simulate_draws` only chooses how a simulation realizes the law, so two
+        declarations differing in it alone describe one process.
+        """
+        return replace(self, simulate_draws="continuous") == replace(
+            other, simulate_draws="continuous"
+        )
 
     def _resolve_conditioned_sigma(self) -> None:
         """Split a conditioned `sigma` into its declaration and its node-placing value.
