@@ -37,25 +37,20 @@ jobs:
         run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Report free disk space
         run: df -h "$TMPDIR" /tmp / | cat
-      # The benchmark machine runs several runner slots on one GPU, and the
-      # concurrency group is per branch, so benchmark jobs of different pull
-      # requests can start together. A machine-wide lock, taken here and held
-      # until the job ends, runs them one after another. The `nvidia-smi` poll
-      # below only guards against GPU work started outside these jobs: it cannot
-      # see a job that is still installing its environment.
+      # Pull-request and main-branch benchmarks run on separate runners of the
+      # same GPU machine, so they can start together. A machine-wide lock, taken
+      # here and held until the job ends, runs them one after another, and a
+      # waiting main-branch run takes it before any waiting pull request (see
+      # the script). The `nvidia-smi` poll below only guards against GPU work
+      # started outside these jobs: it cannot see a job that is still installing
+      # its environment.
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
       - name: Hold the benchmark GPU for this whole job
-        run: |
-          held="$RUNNER_TEMP/gpu-lock-held"
-          rm -f "$held"
-          nohup flock /tmp/pylcm-gpu-benchmark.lock \
-            sh -c 'touch "$0" && exec sleep infinity' "$held" \
-            > /dev/null 2>&1 &
-          echo "GPU_LOCK_PID=$!" >> "$GITHUB_ENV"
-          until test -e "$held"; do
-            echo "$(date): another benchmark job holds the GPU, retrying in 30s..."
-            sleep 30
-          done
-          echo "GPU lock held."
+        run: bash .github/scripts/hold-benchmark-gpu.sh pr
       - name: Wait for GPU to be free
         run: |
           echo "Waiting for GPU to be free..."
@@ -65,11 +60,6 @@ jobs:
             sleep 60
           done
           echo "GPU is free."
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
       - name: Ensure main ref exists
         run: git branch --force main origin/main
       - name: Regenerate version.py
