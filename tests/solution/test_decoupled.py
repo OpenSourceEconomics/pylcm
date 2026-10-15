@@ -985,7 +985,12 @@ def _naive_today_probabilities() -> np.ndarray:
 
 
 def test_ev1_lookup_publishes_the_acting_selfs_choice_probabilities() -> None:
-    """Probabilities are `softmax(Q_objective / scale)` with today's beta."""
+    """Probabilities are `softmax(Q_objective / scale)` with today's beta.
+
+    `Qc` is the stored long-run value at each choice and `value` its expectation
+    at the noisy choice plus `scale` times the entropy, which differs from a logsum
+    of `Qc` because the objective and the stored value differ at both choices.
+    """
     model = _ev1_model()
     params = _ev1_params(beta_tilde=1.0)
     got = model.lookup_policy(
@@ -995,11 +1000,23 @@ def test_ev1_lookup_publishes_the_acting_selfs_choice_probabilities() -> None:
         regime_name="decide",
         states={"wealth": jnp.array([Wealth.one])},
     )
+    continuation = _enumerate_ev1_values(beta_tilde=1.0)[1]
+    expected_qc = np.array(
+        [SPEND_UTILITY + DELTA * continuation[0], DELTA * continuation[2]]
+    )
+    probabilities = _naive_today_probabilities()
+    expected_value = probabilities @ expected_qc - SCALE * np.sum(
+        probabilities * np.log(probabilities)
+    )
     assert_array_almost_equal(
         cast("FloatND", got.choice_probabilities)[0],
-        _naive_today_probabilities(),
+        probabilities,
         decimal=DECIMAL_PRECISION,
     )
+    assert_array_almost_equal(
+        cast("FloatND", got.Qc)[0], expected_qc, decimal=DECIMAL_PRECISION
+    )
+    assert_array_almost_equal(got.value, [expected_value], decimal=DECIMAL_PRECISION)
 
 
 def test_ev1_simulated_choices_follow_the_acting_selfs_probabilities() -> None:
