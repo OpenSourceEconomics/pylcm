@@ -337,21 +337,22 @@ class _SolveOneCombo:
             discounted_expected_value_at_limit=discount_factor * expected_values[0],
         )
 
-        # A combo with no live candidate (its entire continuation is `-inf`)
-        # is worth `-inf` everywhere, like an infeasible combo.
-        no_live_candidate = jnp.all(candidate_dead)
-        V_row = jnp.where(no_live_candidate, -jnp.inf, V_row)
-        value_row = jnp.where(no_live_candidate, -jnp.inf, value_row)
-        marginal_utility_row = jnp.where(no_live_candidate, 0.0, marginal_utility_row)
-
+        # A dead combo is worth `-inf` everywhere: either infeasible, or with no
+        # live candidate (its entire continuation is `-inf`). Its value rows win
+        # no maximum and carry zero choice probability; its marginal utility is
+        # exactly zero so probability-weighted sums stay finite; and its grid and
+        # policy are a finite placeholder so continuation reads and their JVPs
+        # stay finite. NaN candidates are not dead, so genuine poison propagates.
+        dead = jnp.all(candidate_dead)
         if pieces.feasibility_func is not None:
-            # Infeasible discrete combos: -inf value rows so they win no
-            # maximum and carry zero choice probability; exactly-zero
-            # marginal utility so probability-weighted sums stay finite.
-            feasible = pieces.feasibility_func(**combo_pool)
-            V_row = jnp.where(feasible, V_row, -jnp.inf)
-            value_row = jnp.where(feasible, value_row, -jnp.inf)
-            marginal_utility_row = jnp.where(feasible, marginal_utility_row, 0.0)
+            dead = dead | jnp.logical_not(pieces.feasibility_func(**combo_pool))
+        V_row = jnp.where(dead, -jnp.inf, V_row)
+        value_row = jnp.where(dead, -jnp.inf, value_row)
+        marginal_utility_row = jnp.where(dead, 0.0, marginal_utility_row)
+        refined_grid = jnp.where(
+            dead, jnp.arange(refined_grid.size, dtype=dtype), refined_grid
+        )
+        refined_policy = jnp.where(dead, 0.0, refined_policy)
 
         return (
             V_row,
