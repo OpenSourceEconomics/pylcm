@@ -720,6 +720,13 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_flatten_bounded_result_with_keys": "1a2bf6b03c40e6e856fd86a64ca1acb16bd123d563c7d95dc52101a6161688ba",
             "_unflatten_bounded_result": "a4d5e193df624f64e541cebbd9d7667536b822e6db0a976ec0506ea99b48a754",
             "BoundInputStatus.__reduce__": "33d2023a9031d6df24452121ed7d9e6c21cb97f6d589f16aaefe6a6cca07f584",
+            "QueryInputStatus.__reduce__": "bfc887d0254213a99e6aff139a18fc1087dbe21a07c9e6d1da05d90516039892",
+            "_flatten_query_input_status": "33c2f1a195bd106b2bdcd6975c6a874e3fc14c81e9385d25c7f8c7855de0cda9",
+            "_flatten_query_input_status_with_keys": "e7e87d2d4b6745cfcc836ac775d37c7ad00aae26049d5b8bd4bd9274a4fd2cbc",
+            "_unflatten_query_input_status": "142486aca425d21e531e79440cf1e71859dec6a015718864073a72cdfb47479c",
+            "reduce_query_input_status": "3abe4ed7820131b3e4dfab3b6c3ef3c456f471435f1b8a6f62ec15ec779ac754",
+            "merge_query_input_status": "43d6e3c63706c3238912cbc043ca6c16f0fcf03c9790ebd5f8454f9e6f2977a5",
+            "validate_query_input_status": "ecf5a6d377850ab92abf6d64d3862506df369a6922fee87a2cbf758115e24609",
         },
     ),
     PANDAS_UTILS_SOURCE: (
@@ -1398,6 +1405,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_accumulate_landing_totals": "6cd8c599aa1d6ac36bcb74190ce593ec041e197dd8d898568e95220fced4aabc",
             "_match_leaf_pair_sharding": "81ce99279371a26877d29acaa2760f8c78502c91406fe11b7154f372b3c682b7",
             "_match_leaf_template_sharding": "58636de01c9b386ae6211b5aaa4c837eb995ae0a7aa76faca6a56889f59c7b6d",
+            "_query_block_status": "6330830a169c66671eb19bb43626edc593ccf58b0f62568899905b66eb7839cf",
         },
     ),
     EAGER_CORE_SOURCE: (
@@ -2098,6 +2106,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_fail_if_a_continuation_demand_is_unmet": "549fe3f9640f3cf3f227ec0a2e209a692d02fa7ddba0bb407879aec812741cb9",
             "_build_solution_phase": "02aa34fcd3d4097a1215a1f9345fe96a2e2e51dc50f3f2084925b0289c83dcd2",
             "_process_regime_core": "45aceb0253b1be25b9329b1dc6048b5de7941e045dd2b52b8ebfc145de4bf0d5",
+            "_prepare_dcegm_query_models": "eff9b833b43ce7727e24bfe34debc99e526f1c908fc8b5f6ce3c64693bb7c873",
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
@@ -2175,6 +2184,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "validate_query_evaluator_authority": "872b9392f5b474fba7bd37ce680665a75c56ebe7f1f296b215e052a6dd285277",
             "_adaptive_evaluator_contract": "8d82bb532477223e972a3c02b96b7ad44d6aa6f6923f0dfa116d0976268b0e5f",
             "validate_query_template": "4ffc7186abce559cdb769b04d3498e7a9e72abab66c0426979d0554765c5eaf8",
+            "EGMRowTopologySpec.__post_init__": "0ef583ea8e3cd5fc6f5f2feb0d1f134f8baa9e0209b9cdd67a18e308e5c13a04",
+            "_validate_row_topology": "002d0b993c0dc92edd86fc40dd102696c80447c9f3235fa9ae1f9f58ff909ca3",
+            "_validate_row_topology_authority": "9a093fb013afd7594cb1d6d0abecf97c42f17cd2d20cebf6c24f3a3b0b7f4023",
         },
     ),
     "src/_lcm/egm/query_data.py": (
@@ -2367,6 +2379,10 @@ class DirectMutationControls(TypedDict):
     s03_scalar_mutation_count: int
     s03_scalar_names_match_expected: bool
     admitted_s03_scalar_mutations: list[str]
+    owned_query_helper_mutations: dict[str, MutationCase]
+    owned_query_helper_mutation_count: int
+    owned_query_helper_names_match_expected: bool
+    admitted_owned_query_helper_mutations: list[str]
     all_rejected: bool
 
 
@@ -6808,6 +6824,9 @@ _S02_QUERY_STATUS_CONTRACTS = _contracts(
             "validate_query_evaluator_authority",
             "_adaptive_evaluator_contract",
             "validate_query_template",
+            "EGMRowTopologySpec.__post_init__",
+            "_validate_row_topology",
+            "_validate_row_topology_authority",
         ),
         "src/_lcm/egm/query_data.py": (
             "EGMQueryData.__post_init__",
@@ -6889,6 +6908,13 @@ _S02_QUERY_STATUS_CONTRACTS = _contracts(
             "_flatten_bounded_result",
             "_flatten_bounded_result_with_keys",
             "_unflatten_bounded_result",
+            "QueryInputStatus.__reduce__",
+            "_flatten_query_input_status",
+            "_flatten_query_input_status_with_keys",
+            "_unflatten_query_input_status",
+            "reduce_query_input_status",
+            "merge_query_input_status",
+            "validate_query_input_status",
         ),
         "src/_lcm/utils/dispatchers.py": (
             "map_over_leading_axis",
@@ -6966,6 +6992,7 @@ _S02_QUERY_STATUS_CONTRACTS = _contracts(
             "solve",
             "_run_dispatch_unit",
             "_accumulate_landing_totals",
+            "_query_block_status",
         ),
         "src/_lcm/simulation/programs.py": (
             "build_simulation_programs",
@@ -7023,6 +7050,7 @@ _S02_QUERY_STATUS_CONTRACTS = _contracts(
             "_Evaluated.__call__",
         ),
         "src/_lcm/egm/outer_envelope.py": ("stack_candidate_carries",),
+        "src/_lcm/regime_building/processing.py": ("_prepare_dcegm_query_models",),
     }
 )
 
@@ -11265,6 +11293,149 @@ def s03_scalar_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     return specs
 
 
+_OWNED_QUERY_HELPER_MUTATIONS = {
+    "owned_query_status:pickle_wrong_record": (
+        "src/_lcm/solution/feasibility.py",
+        "QueryInputStatus.__reduce__",
+        "expression",
+        "_unflatten_query_input_status",
+        "_unflatten_bound_status",
+        1,
+    ),
+    "owned_query_status:flatten_floor_grid_swapped": (
+        "src/_lcm/solution/feasibility.py",
+        "_flatten_query_input_status",
+        "expression",
+        "tuple(status)",
+        "(status.invalid_shifted_grid, status.nonfinite_floor, status.coverage_missing)",
+        1,
+    ),
+    "owned_query_status:keyed_flatten_floor_grid_swapped": (
+        "src/_lcm/solution/feasibility.py",
+        "_flatten_query_input_status_with_keys",
+        "expression",
+        "zip(QueryInputStatus._fields, status, strict=True)",
+        "zip(QueryInputStatus._fields, (status.invalid_shifted_grid, status.nonfinite_floor, status.coverage_missing), strict=True)",
+        1,
+    ),
+    "owned_query_status:unflatten_floor_grid_swapped": (
+        "src/_lcm/solution/feasibility.py",
+        "_unflatten_query_input_status",
+        "expression",
+        "tuple.__new__(QueryInputStatus, leaves)",
+        "tuple.__new__(QueryInputStatus, (leaves[1], leaves[0], leaves[2]))",
+        1,
+    ),
+    "owned_query_status:reducer_inactive_lanes": (
+        "src/_lcm/solution/feasibility.py",
+        "reduce_query_input_status",
+        "expression",
+        "active & flag",
+        "~active & flag",
+        1,
+    ),
+    "owned_query_status:merge_requires_both_windows": (
+        "src/_lcm/solution/feasibility.py",
+        "merge_query_input_status",
+        "expression",
+        "a | b",
+        "a & b",
+        1,
+    ),
+    "owned_query_status:validator_arithmetic_gate_removed": (
+        "src/_lcm/solution/feasibility.py",
+        "validate_query_input_status",
+        "expression",
+        "nonfinite or invalid_grid",
+        "False",
+        1,
+    ),
+    "owned_query_status:validator_coverage_gate_removed": (
+        "src/_lcm/solution/feasibility.py",
+        "validate_query_input_status",
+        "expression",
+        "missing",
+        "False",
+        1,
+    ),
+    "owned_query_status:block_slot_count_ignored": (
+        "src/_lcm/solution/backward_induction.py",
+        "_query_block_status",
+        "expression",
+        "len(statuses or ()) != n_query_slots",
+        "False",
+        1,
+    ),
+    "owned_query_authority:topology_schema_not_checked": (
+        "src/_lcm/continuation.py",
+        "EGMRowTopologySpec.__post_init__",
+        "expression",
+        "self.schema_version != 1",
+        "False",
+        1,
+    ),
+    "owned_query_authority:topology_exact_type_not_checked": (
+        "src/_lcm/continuation.py",
+        "_validate_row_topology",
+        "expression",
+        "type(topology) is not EGMRowTopologySpec",
+        "False",
+        1,
+    ),
+    "owned_query_authority:topology_authority_not_compared": (
+        "src/_lcm/continuation.py",
+        "_validate_row_topology_authority",
+        "expression",
+        "not same",
+        "False",
+        1,
+    ),
+    "owned_query_authority:dc_later_periods_omitted": (
+        "src/_lcm/regime_building/processing.py",
+        "_prepare_dcegm_query_models",
+        "keyword",
+        "target_periods",
+        "(periods[0],)",
+        1,
+    ),
+}
+
+_OWNED_QUERY_PRIORITY_MUTATION = (
+    "owned_query_status:validator_coverage_before_arithmetic"
+)
+EXPECTED_OWNED_QUERY_HELPER_MUTATION_COUNT = 14
+EXPECTED_OWNED_QUERY_HELPER_MUTATION_NAMES_SHA256 = (
+    "0a4bd8a9400c984913740b6e58ac399e660bb5b39c41d1b6b2580388d196cb07"
+)
+
+
+def owned_query_helper_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build separate body controls for owned query integrity and authority."""
+    specs = _callable_mutation_specs(
+        repo_root=repo_root, mutations=_OWNED_QUERY_HELPER_MUTATIONS
+    )
+    relative = "src/_lcm/solution/feasibility.py"
+    tree = ast.parse((repo_root / relative).read_text(encoding="utf-8"))
+    function = _definition(tree=tree, name="validate_query_input_status")
+    loop_indices = [
+        index
+        for index, statement in enumerate(function.body)
+        if isinstance(statement, ast.For)
+    ]
+    if len(loop_indices) != 2:
+        raise ValueError("Query integrity priority requires exactly two owned loops.")
+    first, second = loop_indices
+    function.body[first], function.body[second] = (
+        function.body[second],
+        function.body[first],
+    )
+    specs[_OWNED_QUERY_PRIORITY_MUTATION] = {
+        "path": relative,
+        "source": ast.unparse(tree) + "\n",
+    }
+    return specs
+
+
 def supplemental_direct_flow_mutation_specs(
     *, repo_root: Path
 ) -> dict[str, dict[str, str]]:
@@ -14268,11 +14439,19 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     if set(specs) & set(supplemental):
         raise ValueError("Supplemental mutation names overlap the pinned registry")
     s03_scalar = s03_scalar_mutation_specs(repo_root=root)
+    owned_query = owned_query_helper_mutation_specs(repo_root=root)
     if (set(specs) | set(supplemental)) & set(s03_scalar):
         raise ValueError("S03 scalar mutations overlap existing populations")
+    if (set(specs) | set(supplemental) | set(s03_scalar)) & set(owned_query):
+        raise ValueError("Owned query helper mutations overlap existing populations")
     mutated_paths = {
         spec["path"]
-        for spec in (*specs.values(), *supplemental.values(), *s03_scalar.values())
+        for spec in (
+            *specs.values(),
+            *supplemental.values(),
+            *s03_scalar.values(),
+            *owned_query.values(),
+        )
     }
     certified_paths = (
         set(_CERTIFIED_CORRIDOR_SOURCES)
@@ -14313,6 +14492,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
     registered = direct_flow_mutation_specs(repo_root=root)
     supplemental = supplemental_direct_flow_mutation_specs(repo_root=root)
     s03_scalar = s03_scalar_mutation_specs(repo_root=root)
+    owned_query = owned_query_helper_mutation_specs(repo_root=root)
     uniform = uniform_process_mutation_specs(repo_root=root)
     action_grid = action_grid_mutation_specs(repo_root=root)
     feasibility = feasibility_mutation_specs(repo_root=root)
@@ -14332,6 +14512,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
             registered
             | supplemental
             | s03_scalar
+            | owned_query
             | uniform
             | action_grid
             | feasibility
@@ -14345,7 +14526,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
             target = temp_root / relative
             target.write_text(spec["source"], encoding="utf-8")
             original_seal = _SOURCE_SEALS[relative]
-            if name.startswith(("s02_query:", "s02_status:", "s03_scalar:")):
+            if name.startswith(
+                (
+                    "s02_query:",
+                    "s02_status:",
+                    "s03_scalar:",
+                    "owned_query_status:",
+                    "owned_query_authority:",
+                )
+            ):
                 _SOURCE_SEALS[relative] = sha256_file(target)
             try:
                 result = verify_direct_candidate_flow(repo_root=temp_root)
@@ -14434,6 +14623,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
         and _mutation_name_digest(tuple(s03_scalar_cases))
         == EXPECTED_S03_SCALAR_MUTATION_NAMES_SHA256
     )
+    owned_query_cases = {name: cases.pop(name) for name in owned_query}
+    owned_query_admitted = sorted(
+        name for name, result in owned_query_cases.items() if not result["rejected"]
+    )
+    owned_query_names_match = (
+        len(owned_query_cases) == EXPECTED_OWNED_QUERY_HELPER_MUTATION_COUNT
+        and _mutation_name_digest(tuple(owned_query_cases))
+        == EXPECTED_OWNED_QUERY_HELPER_MUTATION_NAMES_SHA256
+    )
     supplemental_cases = {name: cases.pop(name) for name in supplemental}
     supplemental_admitted = sorted(
         name for name, result in supplemental_cases.items() if not result["rejected"]
@@ -14504,8 +14702,14 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
         "s03_scalar_mutation_count": len(s03_scalar_cases),
         "s03_scalar_names_match_expected": s03_scalar_names_match,
         "admitted_s03_scalar_mutations": s03_scalar_admitted,
+        "owned_query_helper_mutations": owned_query_cases,
+        "owned_query_helper_mutation_count": len(owned_query_cases),
+        "owned_query_helper_names_match_expected": owned_query_names_match,
+        "admitted_owned_query_helper_mutations": owned_query_admitted,
         "all_rejected": (
-            not s03_scalar_admitted
+            not owned_query_admitted
+            and owned_query_names_match
+            and not s03_scalar_admitted
             and s03_scalar_names_match
             and clean["ok"]
             and not partition_admitted
