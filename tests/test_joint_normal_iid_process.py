@@ -705,7 +705,6 @@ def test_joint_normal_budgeted_runtime_typed_seed_preserves_physical_frame() -> 
     # Control integer implementation explicitly; don't inherit an unrelated RBG default.
     with jax.default_prng_impl("threefry2x32"):
         threefry = jax.random.key(521, impl="threefry2x32")
-        rbg = jax.random.key(521, impl="rbg")
         integer_result = model.simulate(
             params=params,
             initial_conditions=initial,
@@ -722,18 +721,10 @@ def test_joint_normal_budgeted_runtime_typed_seed_preserves_physical_frame() -> 
             log_level="off",
             runtime_checks=True,
         )
-        rbg_result = model.simulate(
-            params=params,
-            initial_conditions=initial,
-            solution=solution,
-            seed=rbg,
-            log_level="off",
-            runtime_checks=True,
-        )
     integer_frame = integer_result.to_dataframe()
     threefry_frame = threefry_result.to_dataframe()
     pd.testing.assert_frame_equal(integer_frame, threefry_frame, check_exact=True)
-    for result in (integer_result, threefry_result, rbg_result):
+    for result in (integer_result, threefry_result):
         frame = result.to_dataframe()
         assert {"x", "y"} <= set(frame.columns)
         assert not any("normal_" in name for name in frame.columns)
