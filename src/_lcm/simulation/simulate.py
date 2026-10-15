@@ -1028,7 +1028,9 @@ def _simulate_subject_chunk(
                         period=period + 1,
                         subject_slice=subject_slice,
                         n_subjects=len(subject_regime_ids),
-                    ),
+                    )
+                    if shock_paths
+                    else MappingProxyType({}),
                     own_stakeholder=own_stakeholder,
                     new_own_stakeholder=new_own_stakeholder,
                     gated_edge_fold_age=(

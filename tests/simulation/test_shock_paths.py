@@ -10,9 +10,11 @@ import pandas as pd
 import pytest
 
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.simulation.runtime import SimulationRuntime
 from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
+    DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
     LogNormalIIDProcess,
@@ -20,15 +22,18 @@ from lcm import (
     NormalIIDProcess,
     Phased,
     Regime,
+    StochasticTransition,
     TauchenAR1Process,
     TimeVarying,
     UniformIIDProcess,
     categorical,
+    fixed_transition,
     time_varying_params,
 )
 from lcm.exceptions import InvalidInitialConditionsError, InvalidSimulationInputError
 from lcm.typing import (
     ContinuousState,
+    DiscreteState,
     FloatND,
     ScalarFloat,
     ScalarInt,
@@ -1090,3 +1095,197 @@ def test_visited_terminal_regime_accepts_and_seeds_a_history() -> None:
         log_level="off",
     ).to_dataframe(use_labels=False)
     np.testing.assert_array_equal(df["shock"].to_numpy(dtype=float), np.full(5, -1.0))
+
+
+@categorical(ordered=False)
+class PairRegimeId:
+    a: ScalarInt
+    b: ScalarInt
+    dead: ScalarInt
+
+
+@categorical(ordered=False)
+class PairHealth:
+    bad: ScalarInt
+    good: ScalarInt
+
+
+def _pair_model(*, a: Regime, b: Regime) -> Model:
+    """Two regimes entered at age 20 that never exchange subjects."""
+    return Model(
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
+        regime_id_class=PairRegimeId,
+        initial_nodes={20: ("a", "b")},
+        regimes={"a": a, "b": b, "dead": Regime(functions={"utility": _zero})},
+        edges={
+            "a": {"a": (20,), "dead": (21,)},
+            "b": {"b": (20,), "dead": (21,)},
+        },
+    )
+
+
+def _pair_panel(*, df: pd.DataFrame, column: str) -> np.ndarray:
+    """Return the `(subject, period)` panel of `column` in regimes `a` and `b`."""
+    rows = (
+        df.reset_index()
+        .query("regime_name != 'dead'")
+        .sort_values(["subject_id", "period"])
+    )
+    return rows[column].to_numpy().reshape(2, 2)
+
+
+def _uniform_pair_model() -> Model:
+    return _pair_model(
+        a=Regime(
+            states={"shock": UniformIIDProcess(n_points=3, start=-1.0, stop=1.0)},
+            functions={"utility": _shock_utility},
+        ),
+        b=Regime(
+            states={"shock": UniformIIDProcess(n_points=3, start=0.0, stop=3.0)},
+            functions={"utility": _shock_utility},
+        ),
+    )
+
+
+def _pair_initial(**states: jax.Array) -> dict[str, jax.Array]:
+    return {
+        "age": jnp.array([20.0, 20.0]),
+        "regime_id": jnp.array([PairRegimeId.a, PairRegimeId.b], dtype=jnp.int32),
+        **states,
+    }
+
+
+def test_paths_are_checked_against_each_subjects_own_regime_support() -> None:
+    """A value outside one regime's support is admissible for a subject in another."""
+    paths = np.array([[0.5, -0.5, 0.0], [2.5, 2.0, 0.0]])
+    df = (
+        _uniform_pair_model()
+        .simulate(
+            params={"discount_factor": 0.9},
+            initial_conditions=_pair_initial(shock=jnp.zeros(2)),
+            shock_paths={"shock": paths},
+            seed=3,
+            log_level="off",
+        )
+        .to_dataframe(use_labels=False)
+    )
+    np.testing.assert_array_equal(_pair_panel(df=df, column="shock"), paths[:, :2])
+
+
+def test_value_read_outside_the_subjects_own_regime_support_is_rejected() -> None:
+    with pytest.raises(
+        InvalidSimulationInputError, match=r"shock.*period 1 in regime 'a'"
+    ):
+        _uniform_pair_model().simulate(
+            params={"discount_factor": 0.9},
+            initial_conditions=_pair_initial(shock=jnp.zeros(2)),
+            shock_paths={"shock": np.array([[0.5, 2.5, 0.0], [2.5, 2.0, 0.0]])},
+            seed=3,
+            log_level="off",
+        )
+
+
+def test_unread_cell_of_a_late_entrant_may_be_missing() -> None:
+    """The period before a subject enters is never read, so NaN there is accepted."""
+    paths = np.array([[1.0, -1.0, 2.0], [np.nan, 1.0, -2.0]])
+    df = (
+        _model()
+        .simulate(
+            params={"discount_factor": 0.9},
+            initial_conditions=_initial(),
+            shock_paths={"shock": paths},
+            seed=7,
+            log_level="off",
+        )
+        .to_dataframe(use_labels=False)
+        .reset_index()
+        .query("regime_name == 'alive'")
+    )
+    expected = paths[df["subject_id"].to_numpy(), df["period"].to_numpy()]
+    np.testing.assert_array_equal(df["shock"], expected)
+
+
+def _pair_health_probs(health: DiscreteState) -> FloatND:
+    del health
+    return jnp.array([0.5, 0.5])
+
+
+def _health_utility(health: DiscreteState) -> ScalarFloat:
+    return health.astype(jnp.float32)
+
+
+def test_paths_seed_only_subjects_whose_regime_draws_the_state() -> None:
+    """A subject whose regime carries health deterministically keeps its entry."""
+    health = DiscreteGrid(category_class=PairHealth)
+    model = _pair_model(
+        a=Regime(
+            states={"health": health},
+            state_transitions={"health": fixed_transition("health")},
+            functions={"utility": _health_utility},
+        ),
+        b=Regime(
+            states={"health": health},
+            state_transitions={"health": StochasticTransition(func=_pair_health_probs)},
+            functions={"utility": _health_utility},
+        ),
+    )
+    df = model.simulate(
+        params={"discount_factor": 0.9},
+        initial_conditions=_pair_initial(
+            health=jnp.full(2, PairHealth.bad, dtype=jnp.int32)
+        ),
+        shock_paths={
+            "health": np.full(3, PairHealth.good, dtype=np.int32),
+        },
+        seed=3,
+        log_level="off",
+    ).to_dataframe(use_labels=False)
+    np.testing.assert_array_equal(
+        _pair_panel(df=df, column="health"),
+        [[PairHealth.bad, PairHealth.bad], [PairHealth.good, PairHealth.good]],
+    )
+
+
+@pytest.mark.parametrize("missing", ["age", "regime_id"])
+def test_missing_entry_column_reports_the_same_error_with_and_without_paths(
+    missing: str,
+) -> None:
+    initial = {k: v for k, v in _initial().items() if k != missing}
+    messages = []
+    for shock_paths in (None, {"shock": np.array([1.0, -1.0, 2.0])}):
+        with pytest.raises(InvalidInitialConditionsError) as err:
+            _model().simulate(
+                params={"discount_factor": 0.9},
+                initial_conditions=initial,
+                shock_paths=shock_paths,
+                log_level="off",
+            )
+        messages.append(str(err.value))
+    assert messages[0] == messages[1]
+
+
+def _runtime_cache_sizes(model: Model) -> tuple[int, ...]:
+    sizes = []
+    for regimes in model._simulate_runtime_regimes.values():
+        executor = next(iter(regimes.values())).simulation.programs.executor
+        assert isinstance(executor, SimulationRuntime)
+        sizes.append(len(executor.cache))
+    return tuple(sizes)
+
+
+def test_repeated_paths_reuse_compiled_transition_programs() -> None:
+    """Calls supplying the same shocks reuse one bound program set."""
+    model = _model()
+    solution = model.solve(params={"discount_factor": 0.9}, log_level="off")
+    sizes = []
+    for scale in (1.0, 0.5, -1.0):
+        model.simulate(
+            params={"discount_factor": 0.9},
+            solution=solution,
+            initial_conditions=_initial(),
+            shock_paths={"shock": scale * np.array([1.0, -1.0, 2.0])},
+            seed=7,
+            log_level="off",
+        )
+        sizes.append(_runtime_cache_sizes(model))
+    assert sizes[1:] == [sizes[0], sizes[0]]

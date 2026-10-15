@@ -654,9 +654,13 @@ levels must be positive and uniform draws must lie inside the declared interval.
 Discrete shocks require exact category codes. Persistent processes consume the supplied
 realised level directly, rather than treating it as an innovation and recursing again.
 
-Paths cover every period where the named shock is declared active in the simulation
-phase. Values outside those periods are ignored. Folded shocks are supported, including
-transition-local draws: a draw affecting the transition into period `p` comes from
-column `p`. A deterministic law reading `next_<shock>` sees the supplied draw before
-computing its own next state. Shocks omitted from the mapping retain the ordinary seeded
-stream, and solve expectations remain stochastic.
+Each value is checked against the support of every regime that may read it: the
+subject's starting regime in its entry period, and afterwards every regime the
+simulation can reach from there, since later regime membership is itself drawn. A
+subject's entry value is replaced only when its starting regime draws the shock. Cells
+no regime can read, such as those before a subject enters, are ignored and may hold
+`NaN`. Folded shocks are supported, including transition-local draws: a draw affecting
+the transition into period `p` comes from column `p`. A deterministic law reading
+`next_<shock>` sees the supplied draw before computing its own next state. Shocks
+omitted from the mapping retain the ordinary seeded stream, and solve expectations
+remain stochastic.

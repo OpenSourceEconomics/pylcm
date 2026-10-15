@@ -178,8 +178,8 @@ from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.shock_paths import (
     bind_shock_path_programs,
-    canonicalize_shock_paths,
-    seed_shock_paths,
+    kernel_param_names,
+    resolve_shock_paths,
 )
 from _lcm.simulation.simulate import (
     _lookup_values_from_indices,
@@ -277,6 +277,7 @@ from _lcm.typing import (
     PeriodToRegimeToVArr,
     PytreeByPeriod,
     PytreeValue,
+    QualifiedName,
     RegimeName,
     RegimeNamesToIds,
     RegimeParamsTemplateNode,
@@ -730,6 +731,16 @@ class Model:
     _simulate_runtime_regimes: dict[int, MappingProxyType[RegimeName, Regime]]
     """Program executors shared by calls with the same outer subject shape."""
 
+    _shock_path_runtime_regimes: dict[
+        tuple[
+            int,
+            frozenset[StateName],
+            frozenset[tuple[RegimeName, frozenset[QualifiedName]]],
+        ],
+        MappingProxyType[RegimeName, Regime],
+    ]
+    """Runtime regimes reading supplied shocks, by shape and supplied names."""
+
     _simulate_entry_operations: ProfiledSimulationOperations
     """Entry and validation executable profiles; no call owners or admissions.
 
@@ -887,6 +898,7 @@ class Model:
         )
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         self._simulate_runtime_regimes = {}
+        self._shock_path_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
         self._kept_parts_programs = {}
@@ -1401,6 +1413,7 @@ class Model:
             self._solution_model_instance_id = uuid.uuid4().hex
         self._identity_process_id = os.getpid()
         self._simulate_runtime_regimes = {}
+        self._shock_path_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
         self._kept_parts_programs = {}
@@ -2137,6 +2150,30 @@ class Model:
                     )
                 )
             return self._simulate_runtime_regimes[compile_batch_size]
+
+    def _shock_path_regimes_for_shape(
+        self,
+        *,
+        compile_batch_size: int,
+        supplied: frozenset[StateName],
+        flat_params: FlatParams,
+    ) -> MappingProxyType[RegimeName, Regime]:
+        """Return the runtime regimes with transitions reading the supplied shocks.
+
+        Bound once per shape, supplied shock names and parameter names, so calls
+        differing only in path values reuse one set of compiled programs.
+        """
+        regimes = self._runtime_regimes_for_shape(compile_batch_size=compile_batch_size)
+        if not supplied:
+            return regimes
+        param_names = kernel_param_names(regimes=regimes, params=flat_params)
+        key = (compile_batch_size, supplied, frozenset(param_names.items()))
+        with self._simulate_compile_lock:
+            if key not in self._shock_path_runtime_regimes:
+                self._shock_path_runtime_regimes[key] = bind_shock_path_programs(
+                    regimes=regimes, supplied=supplied, param_names=param_names
+                )
+            return self._shock_path_runtime_regimes[key]
 
     def _open_entry_allocations(
         self,
@@ -3419,10 +3456,10 @@ class Model:
                 initial-condition row order. Overrides the entry value and later
                 draws, including folded IID and persistent processes. Continuous
                 values must be in the distribution's support; discrete values are
-                exact category codes. Model-active periods must be covered; inactive
-                periods are ignored. Transition-local draws use the destination's
-                period. Solve expectations and unnamed shocks' seeded streams are
-                unchanged.
+                exact category codes. A value is checked against every regime the
+                subject may occupy when it is read; unread cells are ignored.
+                Transition-local draws use the destination's period. Solve
+                expectations and unnamed shocks' seeded streams are unchanged.
             log_level: Console verbosity: off, warning, progress or debug.
             runtime_checks: Validate computed transition probabilities, NaN values
                 and numerical feasibility/replay checks; raise on the first failure.
@@ -3577,18 +3614,14 @@ class Model:
                     )
                 if entry_allocations is not None:
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
-                resolved_shock_paths = canonicalize_shock_paths(
+                resolved_shock_paths, initial_conditions = resolve_shock_paths(
                     paths=shock_paths,
+                    initial=initial_conditions,
                     regimes=self._regimes,
                     draw_only=self._draw_only_processes,
                     params=flat_params,
-                    n_subjects=len(initial_conditions["regime_id"]),
-                )
-                initial_conditions = seed_shock_paths(
-                    initial=initial_conditions,
-                    paths=resolved_shock_paths,
                     ages=self._time,
-                    regimes=self._regimes,
+                    regime_names_to_ids=self.regime_names_to_ids,
                 )
                 initial_conditions = canonicalize_initial_conditions(
                     initial_conditions=initial_conditions,
@@ -3773,13 +3806,10 @@ class Model:
                     )
                 )
                 if entry_allocations is not None:
-                    simulate_regimes = self._runtime_regimes_for_shape(
+                    simulate_regimes = self._shock_path_regimes_for_shape(
                         compile_batch_size=padded_n_subjects,
-                    )
-                    simulate_regimes = bind_shock_path_programs(
-                        regimes=simulate_regimes,
-                        paths=resolved_shock_paths,
-                        params=flat_params,
+                        supplied=frozenset(resolved_shock_paths),
+                        flat_params=flat_params,
                     )
                     prepared_chunks = prepare_simulation_chunks(
                         regimes=simulate_regimes,
@@ -3826,13 +3856,10 @@ class Model:
                             initial_conditions=initial_conditions,
                             multiple=compile_batch_size,
                         )
-                    simulate_regimes = self._runtime_regimes_for_shape(
+                    simulate_regimes = self._shock_path_regimes_for_shape(
                         compile_batch_size=compile_batch_size,
-                    )
-                    simulate_regimes = bind_shock_path_programs(
-                        regimes=simulate_regimes,
-                        paths=resolved_shock_paths,
-                        params=flat_params,
+                        supplied=frozenset(resolved_shock_paths),
+                        flat_params=flat_params,
                     )
             result = simulate(
                 flat_params=flat_params,
