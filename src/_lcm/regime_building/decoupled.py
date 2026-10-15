@@ -317,9 +317,12 @@ def decoupled_logsum(
     objective_k)`: the expected value of the stored profile at the noisy choice,
     shock included. It is evaluated as `sum_k P_k value_k + scale * H(P)`, the
     same quantity with `H` the entropy of `P`, so the objective's level never
-    enters and cannot cancel the stored value in rounding. No feasible
-    combination gives `-inf`; a NaN at any feasible action, in either profile,
-    gives NaN.
+    enters and cannot cancel the stored value in rounding. A feasible
+    combination has positive mass even where its probability underflows, so
+    an infinite value there makes the result infinite (NaN for both signs). No
+    feasible combination gives `-inf`; a NaN at any feasible action, in either
+    profile, gives NaN. Values are masked before they are weighted, so an
+    infeasible `-inf` cannot turn a gradient into NaN.
     """
     _, probabilities = logsum_and_softmax(
         values=conditional.objective,
@@ -327,13 +330,25 @@ def decoupled_logsum(
         axes=tuple(range(conditional.objective.ndim)),
     )
     chosen = probabilities > 0
-    expected_value = jnp.sum(jnp.where(chosen, probabilities * conditional.value, 0.0))
+    # Mask before multiplying so an inactive -inf cannot poison the adjoint.
+    safe_value = jnp.where(chosen, conditional.value, 0.0)
+    expected_value = jnp.sum(jnp.where(chosen, probabilities * safe_value, 0.0))
     entropy = -jnp.sum(
         jnp.where(
             chosen, probabilities * jnp.log(jnp.where(chosen, probabilities, 1.0)), 0.0
         )
     )
     value = jnp.where(jnp.any(chosen), expected_value + scale * entropy, -jnp.inf)
+    # A finite objective has strictly positive EV1 mass even if its floating
+    # probability underflows. Such mass cannot discard an infinite readout.
+    support = jnp.isfinite(conditional.objective)
+    has_negative_infinity = jnp.any(support & jnp.isneginf(conditional.value))
+    has_positive_infinity = jnp.any(support & jnp.isposinf(conditional.value))
+    value = jnp.where(
+        has_negative_infinity,
+        jnp.where(has_positive_infinity, jnp.nan, -jnp.inf),
+        jnp.where(has_positive_infinity, jnp.inf, value),
+    )
     feasible_nan = jnp.any(
         parts.F & (jnp.isnan(cast("FloatND", parts.Q_objective)) | jnp.isnan(parts.Q))
     )
