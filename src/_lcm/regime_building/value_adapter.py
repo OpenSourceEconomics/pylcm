@@ -212,20 +212,21 @@ def adapt_entry(
         return entry
     adapters = {} if adapters is None else adapters
     if isinstance(entry, Phased):
-        return Phased(
-            solve=adapt_entry(
-                entry=entry.solve,
-                value_grids=value_grids,
-                encode=encode,
-                adapters=adapters,
-            ),
-            simulate=adapt_entry(
-                entry=entry.simulate,
-                value_grids=value_grids,
-                encode=encode,
-                adapters=adapters,
-            ),
+        solve = adapt_entry(
+            entry=entry.solve,
+            value_grids=value_grids,
+            encode=encode,
+            adapters=adapters,
         )
+        simulate = adapt_entry(
+            entry=entry.simulate,
+            value_grids=value_grids,
+            encode=encode,
+            adapters=adapters,
+        )
+        if solve is entry.solve and simulate is entry.simulate:
+            return entry
+        return Phased(solve=solve, simulate=simulate)
     if isinstance(entry, Mapping):
         return cast(
             "AdaptableEntry",
