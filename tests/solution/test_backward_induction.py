@@ -81,6 +81,7 @@ class MockSolutionPhase:
     continuation_template: None = None
     continuation_spec: None = None
     post_decision_bounds: tuple[PostDecisionBoundSpec, ...] = ()
+    query_input_authorities: None = None
     period_state_axes: (
         MappingProxyType[int, MappingProxyType[StateOrActionName, Float1D]] | None
     ) = None

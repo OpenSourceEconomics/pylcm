@@ -628,7 +628,7 @@ def test_builtin_artifact_keys_are_stably_versioned() -> None:
             SOLVER_DIAGNOSTICS,
         )
     } == {
-        "pylcm.egm.continuation": 1,
+        "pylcm.egm.continuation": 2,
         "pylcm.simulation.policy": 1,
         "pylcm.collective.dissolution_flag": 1,
         "pylcm.solver.diagnostics": 1,
