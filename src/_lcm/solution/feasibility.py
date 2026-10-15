@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import NamedTuple, cast
+from typing import Literal, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -20,6 +20,7 @@ from lcm.typing import (
     RegimeName,
     ScalarBool,
     ScalarFloat,
+    ScalarInt,
 )
 
 type FeasibilityCounts = tuple[IntND, IntND]
@@ -140,6 +141,67 @@ jax.tree_util.register_pytree_with_keys(
 )
 
 
+class ContinuationReadCounts(NamedTuple):
+    """Optional int32 totals for paired continuation reads and first-live support."""
+
+    below_first_live: ScalarInt
+    """Number of eligible reads strictly below their first supported coordinate."""
+    eligible: ScalarInt
+    """Total number of independently eligible paired reads."""
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        Callable[[None, Iterable[PytreeChild]], ContinuationReadCounts],
+        tuple[None, tuple[PytreeChild, ...]],
+    ]:
+        """Persist native leaves and role placeholders through pytree reconstruction."""
+        return _unflatten_continuation_read_counts, (None, tuple(self))
+
+
+def _flatten_continuation_read_counts(
+    status: ContinuationReadCounts,
+) -> tuple[tuple[PytreeChild, ...], None]:
+    return (status.below_first_live, status.eligible), None
+
+
+def _flatten_continuation_read_counts_with_keys(
+    status: ContinuationReadCounts,
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
+    return (
+        (
+            (jax.tree_util.GetAttrKey("below_first_live"), status.below_first_live),
+            (
+                jax.tree_util.GetAttrKey("eligible"),
+                status.eligible,
+            ),
+        ),
+        None,
+    )
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_continuation_read_counts(
+    _aux: None, children: Iterable[PytreeChild]
+) -> ContinuationReadCounts:
+    """Restore temporary batch axes and role placeholders without scalar checks."""
+    leaves = tuple(children)
+    if len(leaves) != 2:  # noqa: PLR2004
+        raise TypeError("A continuation-read record has exactly two leaves.")
+    return cast("ContinuationReadCounts", tuple.__new__(ContinuationReadCounts, leaves))
+
+
+jax.tree_util.register_pytree_with_keys(
+    ContinuationReadCounts,
+    _flatten_continuation_read_counts_with_keys,
+    _unflatten_continuation_read_counts,
+    _flatten_continuation_read_counts,
+)
+
+
+type _BoundedResultAux = tuple[Literal["continuation_read_counts"], bool] | None
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class BoundedResult[Output: PytreeValue]:
     """Ordinary mapped outputs beside separately reduced bound-integrity records."""
@@ -150,6 +212,8 @@ class BoundedResult[Output: PytreeValue]:
     """Scalar records at an owning reduction; temporary lanes stay inside its window."""
     query_status: tuple[QueryInputStatus, ...] | None = None
     """Separate inherited query records; absent on the feature-free layout."""
+    continuation_read_counts: ContinuationReadCounts | None = None
+    """Optional diagnostic summary, independent of mandatory integrity records."""
 
 
 def _flatten_bounded_result[Output: PytreeValue](
@@ -161,17 +225,21 @@ def _flatten_bounded_result[Output: PytreeValue](
         | ShardingTree
         | PytreeChild
         | tuple[BoundInputStatus, ...]
-        | tuple[QueryInputStatus, ...],
+        | tuple[QueryInputStatus, ...]
+        | ContinuationReadCounts,
         ...,
     ],
-    None,
+    _BoundedResultAux,
 ]:
     children = (result.output, result.bound_status)
-    return (
-        (*children, result.query_status)
-        if result.query_status is not None
-        else children
-    ), None
+    if result.query_status is not None:
+        children = (*children, result.query_status)
+    if result.continuation_read_counts is None:
+        return children, None
+    return (*children, result.continuation_read_counts), (
+        "continuation_read_counts",
+        result.query_status is not None,
+    )
 
 
 def _flatten_bounded_result_with_keys[Output: PytreeValue](
@@ -185,38 +253,68 @@ def _flatten_bounded_result_with_keys[Output: PytreeValue](
             | ShardingTree
             | PytreeChild
             | tuple[BoundInputStatus, ...]
-            | tuple[QueryInputStatus, ...],
+            | tuple[QueryInputStatus, ...]
+            | ContinuationReadCounts,
         ],
         ...,
     ],
-    None,
+    _BoundedResultAux,
 ]:
     children = (
         (jax.tree_util.GetAttrKey("output"), result.output),
         (jax.tree_util.GetAttrKey("bound_status"), result.bound_status),
     )
+    if result.query_status is not None:
+        children = (
+            *children,
+            (jax.tree_util.GetAttrKey("query_status"), result.query_status),
+        )
+    if result.continuation_read_counts is None:
+        return children, None
     return (
-        (*children, (jax.tree_util.GetAttrKey("query_status"), result.query_status))
-        if result.query_status is not None
-        else children
-    ), None
+        *children,
+        (
+            jax.tree_util.GetAttrKey("continuation_read_counts"),
+            result.continuation_read_counts,
+        ),
+    ), ("continuation_read_counts", result.query_status is not None)
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
 def _unflatten_bounded_result(
-    _aux: None,
+    _aux: _BoundedResultAux,
     children: Iterable[PytreeValue | ShapeDtypeTree | ShardingTree | PytreeChild],
 ) -> BoundedResult[PytreeValue]:
     """Restore numeric, abstract and role trees before their owning trust seam."""
     leaves = tuple(children)
-    if len(leaves) not in (2, 3):
-        raise TypeError("A bounded result has ordinary output and declared summaries.")
+    if _aux is None:
+        if len(leaves) not in (2, 3):
+            raise TypeError(
+                "A bounded result has ordinary output and declared summaries."
+            )
+        has_query = len(leaves) == 3  # noqa: PLR2004
+        counts = None
+    else:
+        if (
+            type(_aux) is not tuple
+            or len(_aux) != 2  # noqa: PLR2004
+            or _aux[0] != "continuation_read_counts"
+            or type(_aux[1]) is not bool
+        ):
+            raise TypeError("A checked bounded result requires its declared layout.")
+        has_query = _aux[1]
+        if len(leaves) != (4 if has_query else 3) or not isinstance(
+            leaves[-1], ContinuationReadCounts
+        ):
+            raise TypeError("A checked bounded result has one separate count pair.")
+        counts = leaves[-1]
     result = object.__new__(BoundedResult)
     object.__setattr__(result, "output", leaves[0])
     object.__setattr__(result, "bound_status", leaves[1])
     # The optional query bank follows the two ordinary children.
-    query_status = leaves[2] if len(leaves) == 3 else None  # noqa: PLR2004
+    query_status = leaves[2] if has_query else None
     object.__setattr__(result, "query_status", query_status)
+    object.__setattr__(result, "continuation_read_counts", counts)
     return cast("BoundedResult[PytreeValue]", result)
 
 

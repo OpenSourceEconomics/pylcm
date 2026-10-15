@@ -45,6 +45,7 @@ from _lcm.execution.core_program import (
     ProgramScope,
     ReducedAxis,
     TiledOutputAxis,
+    bind_core_program_fixed_params,
 )
 from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.execution.reductions import WEIGHTED_EXPECTATION_REDUCTION
@@ -1185,9 +1186,8 @@ class _DCEGMPeriodKernel:
             self,
             _core_programs=MappingProxyType(
                 {
-                    name: replace(
-                        program,
-                        function=functools.partial(program.function, **egm_fixed),
+                    name: bind_core_program_fixed_params(
+                        program=program, params=egm_fixed
                     )
                     for name, program in self._core_programs.items()
                 }
