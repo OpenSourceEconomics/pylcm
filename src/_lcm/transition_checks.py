@@ -361,12 +361,13 @@ def validate_transitions(
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     memory: SimulationMemory | None = None,
-    count_when_silent: bool = False,
 ) -> None:
     """Validate regime and state transition probabilities before solve / simulate.
 
-    Runs the regime-transition check then the state-transition check. Both
-    self-gate on the logger's explicit runtime policy, independently of output.
+    Runs the regime-transition check then the state-transition check, both
+    gated on the logger's explicit runtime policy. Off-grid landings on a grid
+    declared `off_grid="raise"` are checked regardless; landings on other grids
+    are counted only when that policy is on and the logger reports warnings.
 
     Args:
         regimes: Immutable mapping of regime names to regimes.
@@ -375,8 +376,6 @@ def validate_transitions(
         logger: Logger carrying the runtime-validation policy.
         memory: Budgeted owner that admits every off-grid count producer before
             dispatch, or `None` for an unbudgeted call.
-        count_when_silent: Count off-grid landings of every grid even when the
-            logger suppresses warnings, as an explicit validation request does.
 
     """
     if not validation_enabled(logger):
@@ -387,7 +386,6 @@ def validate_transitions(
             ages=ages,
             logger=logger,
             process_grid_resolver=process_grid_resolver,
-            count_when_silent=count_when_silent,
         )
         return
     if summary is not None:
@@ -436,7 +434,6 @@ def validate_transitions(
         ages=ages,
         logger=logger,
         process_grid_resolver=process_grid_resolver,
-        count_when_silent=count_when_silent,
     )
 
 
@@ -448,7 +445,6 @@ def _validate_off_grid_under(
     ages: TimeAxis,
     logger: logging.Logger,
     process_grid_resolver: ProcessGridResolver | None,
-    count_when_silent: bool,
 ) -> None:
     """Run every off-grid count through one call-owned summary of `memory`."""
     summary = _ValidationSummary(
@@ -462,7 +458,6 @@ def _validate_off_grid_under(
             logger=logger,
             summary=summary,
             process_grid_resolver=process_grid_resolver,
-            count_when_silent=count_when_silent,
         )
     finally:
         summary.close()
@@ -477,7 +472,6 @@ def validate_off_grid_transitions(
     mandatory_only: bool = False,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
-    count_when_silent: bool = False,
 ) -> None:
     """Count raw landings, or only enforce mandatory raise policy in preflight.
 
@@ -486,11 +480,11 @@ def validate_off_grid_transitions(
     values are known. Its realized landings are counted as simulation advances.
     """
     # Count-only diagnostics can expand simulation-only axes during solve, so a
-    # silent solve skips them; an explicit validation request still counts.
+    # logger that would not report the counts skips them.
     checked = (
         validation_enabled(logger)
         and not mandatory_only
-        and (count_when_silent or logger.isEnabledFor(logging.WARNING))
+        and logger.isEnabledFor(logging.WARNING)
     )
     for period in range(ages.n_periods - 1):
         for name, regime in regimes.items():

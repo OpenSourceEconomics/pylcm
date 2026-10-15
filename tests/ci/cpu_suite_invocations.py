@@ -61,6 +61,7 @@ EIGHT_DEVICE_TEST_FILES = (
     "tests/simulation/test_subject_parallel_runtime.py",
     "tests/simulation/test_subject_parallel_model.py",
     "tests/solution/test_materialization_admission.py",
+    "tests/simulation/test_shock_paths_mesh.py",
 )
 
 

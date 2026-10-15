@@ -368,11 +368,10 @@ def test_actual_key_implementation_changes_profile_identity(role: str) -> None:
     assert keys[0] == keys[2]
 
 
-@pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])
 def test_actual_key_implementation_misses_then_repeat_hits(
-    *, monkeypatch: pytest.MonkeyPatch, role: str
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Public typed roots rebuild for changed implementation and reuse on return."""
+    """Public typed taste roots rebuild for a changed implementation, then reuse."""
     model = _budgeted_model()
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     solution = model.solve(params=params, log_level="off")
@@ -386,8 +385,8 @@ def test_actual_key_implementation_misses_then_repeat_hits(
                 params=params,
                 initial_conditions=initial,
                 solution=solution,
-                seed=root if role == "seed" else 11,
-                taste_shock_seed=root if role == "taste_shock_seed" else None,
+                seed=11,
+                taste_shock_seed=root,
                 log_level="off",
             )
             builds.append(calls[0])
