@@ -1180,6 +1180,15 @@ def test_tauchen_on_nodes_rejects_invalid_grid(nodes: tuple[float, ...]) -> None
         TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=0.3)
 
 
+# The public type check samples one entry per call, so each input is refused
+# many times to catch a call that accepts it or names the private class.
+@pytest.mark.parametrize("nodes", [(-1.0, "0.0", 1.0), (-1.0, None, 1.0)])
+def test_tauchen_on_nodes_refuses_non_numeric_nodes_on_every_call(nodes) -> None:
+    for _ in range(30):
+        with pytest.raises(GridInitializationError, match="on_nodes"):
+            TauchenAR1Process.on_nodes(nodes=nodes, rho=1.0, sigma=0.3)
+
+
 def test_tauchen_on_nodes_runtime_parameters_keep_fixed_coordinates() -> None:
     """Runtime law parameters leave the supplied physical grid observable."""
     process = TauchenAR1Process.on_nodes(nodes=(-1.0, 0.0, 2.0))
