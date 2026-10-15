@@ -67,6 +67,7 @@ from lcm.case_piece import (
     PieceMeta,
     PiecewiseAffineMeta,
 )
+from lcm.decoupled import Decoupled
 from lcm.phased import Phased
 from lcm.solver_api import (
     ArtifactChannel,
@@ -1131,6 +1132,20 @@ class _SemanticHasher:
                 self.frame(label="Phased-simulate-start")
                 self.visit(value=value.simulate)
                 self.frame(label="Phased-simulate-end")
+                return
+            if isinstance(value, Decoupled):
+                if type(value) is not Decoupled:
+                    msg = (
+                        "Cannot durably fingerprint Decoupled subclass semantic "
+                        f"value {type(value).__module__}.{type(value).__qualname__}."
+                    )
+                    raise TypeError(msg)
+                self.frame(label="Decoupled-objective-start")
+                self.visit(value=value.objective)
+                self.frame(label="Decoupled-objective-end")
+                self.frame(label="Decoupled-value-start")
+                self.visit(value=value.value)
+                self.frame(label="Decoupled-value-end")
                 return
             if isinstance(value, types.CodeType):
                 self._visit_code(value)

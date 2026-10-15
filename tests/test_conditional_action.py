@@ -7,6 +7,7 @@ models solve and simulate identically.
 """
 
 from collections.abc import Callable
+from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
@@ -20,10 +21,16 @@ from lcm import (
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    Phased,
     categorical,
 )
-from lcm.exceptions import GridInitializationError, ModelInitializationError
+from lcm.exceptions import (
+    GridInitializationError,
+    InvalidSimulationInputError,
+    ModelInitializationError,
+)
 from lcm.grids import ContinuousGrid
+from lcm.persistence import load_solution
 from lcm.regime import Regime
 from lcm.typing import (
     ActionName,
@@ -33,6 +40,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     FunctionName,
+    IntND,
     ScalarInt,
 )
 from tests.conftest import assert_agrees_to_ulp
@@ -300,3 +308,243 @@ def test_lookup_policy_matches_the_pin_constraint(inactive_value: float) -> None
         }
     for name, expected in looked_up[False].items():
         np.testing.assert_array_equal(looked_up[True][name], expected, err_msg=name)
+
+
+SHIFT_GRID = DiscreteGrid(values=[0, 8, 12])
+
+
+def _utility_with_shift(
+    *,
+    consumption: ContinuousAction,
+    hours: ContinuousAction,
+    labor: DiscreteAction,
+    shift: DiscreteAction,
+    disutility: FloatND,
+) -> FloatND:
+    return (
+        jnp.log(consumption) - disutility * (hours / 40.0) - 0.1 * labor - 0.01 * shift
+    )
+
+
+def _shift_pin(
+    *, labor: DiscreteAction, shift: DiscreteAction, hours: ContinuousAction
+) -> BoolND:
+    return ((labor == Labor.yes) & ((shift == 8) | (shift == 12))) | (hours == 0.0)
+
+
+def _get_shift_model(*, conditional: bool) -> Model:
+    """Hours are active only when working a shift of 8 or 12 hours."""
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
+    if conditional:
+        hours = ConditionalAction(
+            grid=HOURS_GRID,
+            active_when={"labor": Labor.yes, "shift": (8, 12)},
+            inactive_value=0.0,
+        )
+        constraints = {"borrowing": _borrowing}
+    else:
+        hours = HOURS_GRID
+        constraints = {"borrowing": _borrowing, "hours_only": _shift_pin}
+    working = Regime(
+        state_transitions={"wealth": _next_wealth},
+        actions={
+            "labor": DiscreteGrid(category_class=Labor),
+            "shift": SHIFT_GRID,
+            "hours": hours,
+            "consumption": CONSUMPTION_GRID,
+        },
+        functions={"utility": _utility_with_shift},
+        constraints=constraints,
+    )
+    dead = Regime(functions={"utility": _bequest})
+    return Model(
+        regimes={"working": working, "dead": dead},
+        states={"wealth": WEALTH_GRID},
+        ages=ages,
+        regime_id_class=RegimeId,
+        initial_nodes={ages.exact_values[0]: "working"},
+        edges={"working": {"working": (0, 1), "dead": 2}},
+    )
+
+
+def _assert_same_values(*, got: Model, expected: Model) -> None:
+    got_solution = got.solve(params=PARAMS, log_level="off")
+    expected_solution = expected.solve(params=PARAMS, log_level="off")
+    for period, regimes in expected_solution.values.items():
+        for regime, values in regimes.items():
+            assert_agrees_to_ulp(
+                got=got_solution.values[period][regime],
+                expected=values,
+                n_ulp=4,
+                err_msg=f"period {period}, regime {regime}",
+            )
+
+
+def test_condition_on_two_actions_and_a_value_set_solves_like_its_pin() -> None:
+    """A conjunction over two discrete actions, one of them numeric with a set of
+    activating values, equals the hand-written pin."""
+    _assert_same_values(
+        got=_get_shift_model(conditional=True),
+        expected=_get_shift_model(conditional=False),
+    )
+
+
+def _array_annotated_utility(
+    *, consumption: FloatND, hours: FloatND, labor: IntND, disutility: FloatND
+) -> FloatND:
+    return jnp.log(consumption) - disutility * (hours / 40.0) - 0.1 * labor
+
+
+def _array_annotated_pin(*, labor: IntND, hours: FloatND) -> BoolND:
+    return (labor == Labor.yes) | (hours == 0.0)
+
+
+def _array_annotated_next_wealth(
+    *, wealth: FloatND, consumption: FloatND, hours: FloatND
+) -> FloatND:
+    return 1.03 * (wealth - consumption) + 0.1 * hours
+
+
+def _array_annotated_borrowing(*, consumption: FloatND, wealth: FloatND) -> BoolND:
+    return consumption <= wealth
+
+
+def _phased_model(*, conditional: bool) -> Model:
+    """The utility is declared per phase, and every function annotates its arguments
+    as plain arrays."""
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
+    constraints: dict[FunctionName, Callable[..., BoolND]] = {
+        "borrowing": _array_annotated_borrowing
+    }
+    if conditional:
+        hours = ConditionalAction(
+            grid=HOURS_GRID, active_when={"labor": Labor.yes}, inactive_value=0.0
+        )
+    else:
+        hours = HOURS_GRID
+        constraints["hours_only"] = _array_annotated_pin
+    working = Regime(
+        state_transitions={"wealth": _array_annotated_next_wealth},
+        actions={
+            "labor": DiscreteGrid(category_class=Labor),
+            "hours": hours,
+            "consumption": CONSUMPTION_GRID,
+        },
+        functions={
+            "utility": Phased(
+                solve=_array_annotated_utility, simulate=_array_annotated_utility
+            )
+        },
+        constraints=constraints,
+    )
+    dead = Regime(functions={"utility": _bequest})
+    return Model(
+        regimes={"working": working, "dead": dead},
+        states={"wealth": WEALTH_GRID},
+        ages=ages,
+        regime_id_class=RegimeId,
+        initial_nodes={ages.exact_values[0]: "working"},
+        edges={"working": {"working": (0, 1), "dead": 2}},
+    )
+
+
+def test_conditional_action_with_a_phased_utility_solves_like_its_pin() -> None:
+    """A regime whose utility is declared per phase accepts the conditional action."""
+    _assert_same_values(
+        got=_phased_model(conditional=True), expected=_phased_model(conditional=False)
+    )
+
+
+def _model_level_model(*, conditional: bool) -> Model:
+    """Labor and hours are declared once on the model; the terminal regime masks
+    them."""
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
+    if conditional:
+        hours = ConditionalAction(
+            grid=HOURS_GRID, active_when={"labor": Labor.yes}, inactive_value=0.0
+        )
+        constraints = {}
+    else:
+        hours = HOURS_GRID
+        constraints = {"hours_only": _hours_pin(0.0)}
+    working = Regime(
+        state_transitions={"wealth": _next_wealth},
+        actions={"consumption": CONSUMPTION_GRID},
+        functions={"utility": _utility},
+        constraints={"borrowing": _borrowing},
+    )
+    dead = Regime(
+        functions={"utility": _bequest},
+        actions={"labor": None, "hours": None},
+        constraints=dict.fromkeys(constraints),
+    )
+    return Model(
+        regimes={"working": working, "dead": dead},
+        states={"wealth": WEALTH_GRID},
+        actions={"labor": DiscreteGrid(category_class=Labor), "hours": hours},
+        constraints=constraints,
+        ages=ages,
+        regime_id_class=RegimeId,
+        initial_nodes={ages.exact_values[0]: "working"},
+        edges={"working": {"working": (0, 1), "dead": 2}},
+    )
+
+
+def test_model_level_conditional_action_solves_like_its_pin() -> None:
+    """A conditional action declared on the model equals a model-level pin."""
+    _assert_same_values(
+        got=_model_level_model(conditional=True),
+        expected=_model_level_model(conditional=False),
+    )
+
+
+def test_inactive_value_matches_a_node_rounded_at_the_working_precision() -> None:
+    """At float32 the node of `LinSpacedGrid(0, 1, 11)` nearest 0.9 is not the float
+    nearest 0.9; the declared value still names that node."""
+    grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=11)
+    hours = ConditionalAction(
+        grid=grid, active_when={"labor": Labor.yes}, inactive_value=0.9
+    )
+    assert hours.inactive_index == 9
+
+
+@pytest.mark.parametrize(
+    ("active_when", "accepted"),
+    [({"labor": Labor.yes}, True), ({"labor": Labor.no}, False)],
+)
+def test_saved_solution_is_accepted_only_by_the_same_declaration(
+    *, tmp_path: Path, active_when: dict[ActionName, ScalarInt], accepted: bool
+) -> None:
+    """A saved solution binds the declaration: changing `active_when` refuses it."""
+    solution = _get_model(conditional=True).solve(params=PARAMS, log_level="off")
+    loaded = load_solution(path=solution.save(path=tmp_path / "solution.lcm"))
+    other = _model_with_hours(
+        hours=ConditionalAction(
+            grid=HOURS_GRID, active_when=active_when, inactive_value=0.0
+        )
+    )
+    if accepted:
+        other.simulate(
+            params=PARAMS,
+            solution=loaded,
+            initial_conditions={
+                "wealth": jnp.linspace(1.5, 11.5, N_SUBJECTS),
+                "age": jnp.zeros(N_SUBJECTS),
+                "regime_id": jnp.full(N_SUBJECTS, RegimeId.working, dtype=jnp.int32),
+            },
+            log_level="off",
+        )
+    else:
+        with pytest.raises(InvalidSimulationInputError, match="model_fingerprint"):
+            other.simulate(
+                params=PARAMS,
+                solution=loaded,
+                initial_conditions={
+                    "wealth": jnp.linspace(1.5, 11.5, N_SUBJECTS),
+                    "age": jnp.zeros(N_SUBJECTS),
+                    "regime_id": jnp.full(
+                        N_SUBJECTS, RegimeId.working, dtype=jnp.int32
+                    ),
+                },
+                log_level="off",
+            )

@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 from dags import concatenate_functions
 
+from _lcm.dtypes import safe_to_int_dtype
 from _lcm.engine import Regime as EngineRegime
 from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import categorical
@@ -40,8 +41,10 @@ from _lcm.regime_building.reachable_states import (
 from _lcm.typing import (
     DataclassInstance,
     FlatRegimeParams,
+    FunctionName,
     ReferenceName,
     RegimeName,
+    RegimeNamesToIds,
     StateName,
 )
 from _lcm.utils.functools import publish_signature
@@ -114,6 +117,7 @@ def lower_composite_states(
     composite_states: Mapping[StateName, CompositeState],
     regimes: Mapping[RegimeName, Regime],
     fixed_params: UserParams,
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
     build_dense_model: Callable[[], Model],
 ) -> tuple[
     MappingProxyType[RegimeName, Regime],
@@ -126,6 +130,7 @@ def lower_composite_states(
         composite_states: Mapping of generated state names to their declarations.
         regimes: Mapping of regime names to the declared user regimes.
         fixed_params: Parameters fixed at model initialization.
+        derived_categoricals: Mapping of model-level derived categoricals.
         build_dense_model: Build the declared model without composite states.
 
     Returns:
@@ -158,6 +163,13 @@ def lower_composite_states(
     )
     codes = reachable.union
     members = declaration.members
+    value_inputs = _value_grid_inputs(
+        name=name,
+        members=members,
+        engine=engine,
+        regimes=regimes,
+        derived_categoricals=derived_categoricals,
+    )
     carriers = reachable.carriers
     declared = regimes[min(carriers)].states
     member_grids = [
@@ -195,6 +207,7 @@ def lower_composite_states(
             engine_transitions=_member_laws(
                 regime=engine[regime_name], members=members, carriers=carriers
             ),
+            value_inputs=value_inputs,
             fixed=MappingProxyType(
                 {
                     **engine[regime_name].resolved_fixed_params,
@@ -244,15 +257,68 @@ def _fail_if_members_are_unsupported(
             raise ModelInitializationError(msg)
 
 
+def _value_grid_inputs(
+    *,
+    name: StateName,
+    members: tuple[StateName, ...],
+    engine: Mapping[RegimeName, EngineRegime],
+    regimes: Mapping[RegimeName, Regime],
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
+) -> frozenset[ReferenceName]:
+    """Refuse members declared by their values; return the other value-grid reads.
+
+    A value grid hands its values to user functions and its codes to the engine.
+    Members are read through generated decoders as codes, so a member declared by
+    its values is refused; the returned names (`x` and `next_x` of every other value
+    grid) are what a member law may not read.
+    """
+    grids = (
+        [
+            (regime_name, variable, grid)
+            for regime_name, regime in engine.items()
+            for variable, grid in regime.solution.grids.items()
+        ]
+        + [
+            (regime_name, variable, grid)
+            for regime_name, regime in regimes.items()
+            for variable, grid in regime.derived_categoricals.items()
+        ]
+        + [(None, variable, grid) for variable, grid in derived_categoricals.items()]
+    )
+    valued = {
+        (regime_name, variable)
+        for regime_name, variable, grid in grids
+        if isinstance(grid, DiscreteGrid) and grid.values is not None  # noqa: PD011
+    }
+    for regime_name, variable in sorted(valued, key=str):
+        if variable in members:
+            msg = (
+                f"Member {variable!r} of {name!r} is declared by its values in regime "
+                f"{regime_name!r}; composite members must be held on category grids."
+            )
+            raise ModelInitializationError(msg)
+    names = {variable for _, variable in valued}
+    return frozenset({*names, *(f"next_{variable}" for variable in names)})
+
+
 def lower_composite_initial_conditions(
     *,
     initial_conditions: UserInitialConditions | pd.DataFrame,
     lowerings: Mapping[StateName, CompositeLowering],
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> UserInitialConditions | pd.DataFrame:
     """Replace member columns of initial conditions by composite codes.
 
+    Only subjects whose initial regime carries the members are encoded; every other
+    subject keeps the missing code (`None` in a labelled frame), as the dense model
+    does for a state its regime lacks. Member codes are checked for integrality and
+    the int32 range before any conversion.
+
     Raises:
-        InvalidInitialConditionsError: If a member tuple has no composite code.
+        InvalidInitialConditionsError: If a carrying subject's member tuple has no
+            composite code, or a carrying subject's label is no category of its
+            member.
+        ValueError: If a member code is fractional or outside the int32 range.
 
     """
     if not lowerings:
@@ -264,31 +330,62 @@ def lower_composite_initial_conditions(
         present = [member for member in lowering.members if member in out]
         if not present:
             continue
-        if len(present) != len(lowering.members):
-            missing = sorted(set(lowering.members) - set(present))
-            msg = f"Initial conditions give {present} but not {missing}."
-            raise InvalidInitialConditionsError(msg)
-        rows = np.stack(
-            [
-                np.asarray(out.pop(member), dtype=np.int64)
-                for member in lowering.members
-            ],
-            axis=1,
+        columns = {
+            member: np.asarray(safe_to_int_dtype(value=out.pop(member), name=member))
+            for member in present
+        }
+        n_subjects = (
+            len(np.asarray(out["regime_id"]))
+            if "regime_id" in out
+            else len(columns[present[0]])
         )
-        out[name] = jnp.asarray(_encode_or_fail(lowering=lowering, rows=rows))
+        wrong_length = sorted(
+            member for member, codes in columns.items() if len(codes) != n_subjects
+        )
+        if wrong_length:
+            msg = (
+                f"Initial member columns {wrong_length} must give one code per "
+                f"subject ({n_subjects})."
+            )
+            raise InvalidInitialConditionsError(msg)
+        carrying = (
+            np.isin(
+                np.asarray(out["regime_id"]),
+                [int(regime_names_to_ids[regime]) for regime in lowering.carriers],
+            )
+            if "regime_id" in out
+            else np.ones(n_subjects, dtype=bool)
+        )
+        composite = np.full(n_subjects, MISSING_CAT_CODE, dtype=np.int32)
+        if carrying.any():
+            missing = sorted(set(lowering.members) - set(present))
+            if missing:
+                msg = (
+                    f"Initial conditions give {present} but not {missing}, which "
+                    "subjects starting in a regime that carries them need."
+                )
+                raise InvalidInitialConditionsError(msg)
+            rows = np.stack(
+                [columns[member] for member in lowering.members], axis=1
+            ).astype(np.int64)
+            composite[carrying] = _encode_or_fail(
+                lowering=lowering, rows=rows[carrying]
+            )
+        out[name] = jnp.asarray(composite)
     return MappingProxyType(out)
 
 
 def _lower_labelled_frame(
     *, frame: pd.DataFrame, lowerings: Mapping[StateName, CompositeLowering]
 ) -> pd.DataFrame:
-    """Replace member label columns by composite labels where every member is set."""
+    """Replace member label columns by composite labels on carrying subjects."""
     out = frame.copy()
     for name, lowering in lowerings.items():
         if not any(member in out for member in lowering.members):
             continue
         members = out.reindex(columns=list(lowering.members))
-        given = members.notna().all(axis=1).to_numpy()
+        carrying = out["regime_name"].isin(lowering.carriers).to_numpy()
+        given = carrying & members.notna().all(axis=1).to_numpy()
         for member, labels in zip(
             lowering.members, lowering.member_labels, strict=True
         ):
@@ -461,6 +558,7 @@ def _rewrite_regime(
     lowering: CompositeLowering,
     grid: DiscreteGrid,
     engine_transitions: Mapping[RegimeName, Mapping[str, Callable[..., IntND]]],
+    value_inputs: frozenset[ReferenceName],
     fixed: FlatRegimeParams,
     period_mask: np.ndarray,
 ) -> Regime:
@@ -495,6 +593,7 @@ def _rewrite_regime(
             regime=regime,
             members=members,
             engine_transitions=engine_transitions,
+            value_inputs=value_inputs,
             fixed=fixed,
             encoding=jnp.asarray(lowering.encoding),
         )
@@ -526,6 +625,7 @@ def _composite_law(
     regime: Regime,
     members: tuple[StateName, ...],
     engine_transitions: Mapping[RegimeName, Mapping[str, Callable[..., IntND]]],
+    value_inputs: frozenset[ReferenceName],
     fixed: FlatRegimeParams,
     encoding: IntND,
 ) -> StateTransitionEntry:
@@ -545,6 +645,13 @@ def _composite_law(
             set_annotations=True,
         )
         parameters = inspect.signature(combined).parameters
+        if read := sorted((set(parameters) - set(fixed)) & value_inputs):
+            msg = (
+                f"The member laws {sorted(laws)} of {name!r} toward {target!r} read "
+                f"{read}, which are declared by their values; a composite state's "
+                "member laws can only read category grids."
+            )
+            raise ModelInitializationError(msg)
         encoder = _CompositeEncoder(
             laws=combined,
             law_args=tuple(parameters),
@@ -578,7 +685,10 @@ def _period_masks(
         for regime_name in lowering.carriers
     }
     for (period, regime_name), tuples in lowering.reachable.by_node.items():
-        rows = np.asarray(sorted(tuples), dtype=np.int64)
+        # An empty successor set is a (0, n_members) table.
+        rows = np.asarray(sorted(tuples), dtype=np.int64).reshape(
+            len(tuples), len(lowering.members)
+        )
         masks[regime_name][period, lowering.encode_rows(rows)] = True
     return masks
 

@@ -154,6 +154,11 @@ full product of the members.
   `<name>_is_reachable`, makes each code infeasible at the periods it cannot be reached
   in, so its value there is `-inf` and no reachable cell reads it.
 - Member laws and grids are the same in both phases; a `Phased` member is refused.
+- Members are held on category grids. A member declared by its values
+  (`DiscreteGrid(values=...)`) is refused, and so is a member law that reads a variable
+  declared by its values.
+- Initial conditions are encoded only for subjects whose starting regime carries the
+  members; member codes must be whole numbers.
 - A model declares at most one composite state.
 
 (api-period-candidate-lowering)=
@@ -210,7 +215,7 @@ A general regime declares:
 | `derived_categoricals` | Discrete grids for categorical DAG outputs                                    |
 | `solver`               | `lcm.solvers.GridSearch()` by default                                         |
 | `taste_shocks`         | Optional EV1 taste-shock configuration                                        |
-| `koopmans_aggregator`  | Optional regime-level continuation aggregator                                 |
+| `koopmans_aggregator`  | Optional regime-level continuation aggregator, `Phased` or `Decoupled`        |
 | `certainty_equivalent` | Optional regime-level lottery reduction                                       |
 | `description`          | Human-readable description                                                    |
 
@@ -250,9 +255,13 @@ those choice-specific values. Simulation forms the feasible choice-specific valu
 its policy's action candidates, adds one independent mean-zero Gumbel shock per
 discrete-action combination, and takes the argmax. For any fixed candidate values, the
 expected latent perturbed maximum equals their smoothed log-sum. The shock affects the
-choice, while simulation publishes the selected unshocked value. DCEGM simulation uses
-grid-restricted candidates and therefore need not reproduce its off-grid solve value or
-choice probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
+choice, while simulation publishes the selected unshocked value. This describes a regime
+whose Koopmans aggregator also chooses. With a `Decoupled` aggregator the continuous
+actions and the choice probabilities come from the objective, and the solve stores the
+expected value profile at the noisy choice; see
+[preferences](../methods/preferences.md). DCEGM simulation uses grid-restricted
+candidates and therefore need not reproduce its off-grid solve value or choice
+probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 
 This feature requires at least one discrete action and is implemented by `GridSearch`
 and `DCEGM`. It is rejected for `NEGM`, `NBEGM`, and `NNBEGM`; on a collective regime;
