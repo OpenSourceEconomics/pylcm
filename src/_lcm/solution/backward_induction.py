@@ -190,9 +190,12 @@ from _lcm.solution.diagnostics import (
     _states_for_period,
 )
 from _lcm.solution.feasibility import (
+    BoundInputStatus,
     FeasibilityCounts,
     FeasibilityKernelOutput,
     add_feasibility_counts,
+    merge_bound_input_status,
+    validate_runtime_bound_status,
 )
 from _lcm.solution.grid_search import _GridSearchArgumentBuilder
 from _lcm.solution.kernel_attribution import (
@@ -257,6 +260,7 @@ from _lcm.typing import (
     StateName,
     ValueND,
 )
+from _lcm.utils.counts import add_counts
 from _lcm.utils.logging import (
     format_duration,
     log_period_header,
@@ -741,7 +745,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     ledger=input_liveness,
                     registry=buffer_registry,
                 )
-                period_pending_outputs: list[FloatND] = []
+                period_pending_outputs: list[ValueND] = []
                 period_release_candidates: dict[
                     ValueArtifactAddress, _InputDispatch
                 ] = {}
@@ -886,6 +890,37 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 selected_artifact_keys=selected_artifact_keys,
                             ),
                         )
+                        runtime_bounds = tuple(
+                            bound
+                            for bound in regime.solution.post_decision_bounds
+                            if bound.kind == "dag"
+                        )
+                        if runtime_bounds:
+                            statuses = (
+                                output.bound_status
+                                if type(output) is FeasibilityKernelOutput
+                                else ()
+                            )
+                            validate_runtime_bound_status(
+                                statuses=statuses,
+                                bound_specs=runtime_bounds,
+                                regime_name=regime_name,
+                                period=period,
+                            )
+                        if (
+                            type(output) is FeasibilityKernelOutput
+                            and output.landing_totals is not None
+                        ):
+                            from _lcm.solution.landing_counts import (  # noqa: PLC0415
+                                fail_on_reached_landings,
+                            )
+
+                            fail_on_reached_landings(
+                                totals=output.landing_totals,
+                                checks=output.landing_checks,
+                                regime_name=regime_name,
+                                period=period,
+                            )
                         continuation_spec = regime.solution.continuation_spec
                         result = consume_kernel_output(
                             output=output,
@@ -1568,6 +1603,30 @@ def _run_period_kernel(
     return output
 
 
+def _accumulate_landing_totals(
+    *,
+    landing_totals: IntND | None,
+    landing_checks: tuple[tuple[str, str], ...],
+    output: FeasibilityKernelOutput,
+) -> tuple[IntND, tuple[tuple[str, str], ...]]:
+    """Retain the first landing bank, then add identically qualified blocks."""
+    if landing_totals is None:
+        landing_totals = cast("IntND", output.landing_totals)
+        landing_checks = output.landing_checks
+    else:
+        if landing_checks != output.landing_checks:
+            raise TypeError(
+                "Invariant blocks must retain the same qualified landing checks."
+            )
+        landing_totals = add_counts(
+            left=landing_totals,
+            right=jax.device_put(
+                cast("IntND", output.landing_totals), landing_totals.sharding
+            ),
+        )
+    return landing_totals, landing_checks
+
+
 def _run_dispatch_unit(
     *,
     value_template: FloatND,
@@ -1630,6 +1689,9 @@ def _run_dispatch_unit(
         )
     value: FloatND | None = None
     feasibility_counts: FeasibilityCounts | None = None
+    bound_status: tuple[BoundInputStatus, ...] | None = None
+    landing_totals: IntND | None = None
+    landing_checks: tuple[tuple[str, str], ...] = ()
     for name in bound:
         binding = cast("InvariantBinding", graph[name].invariant_binding)
         output = run_kernel(
@@ -1637,6 +1699,32 @@ def _run_dispatch_unit(
             capture_target=None,
         )
         if type(output) is FeasibilityKernelOutput:
+            if output.landing_totals is not None:
+                landing_totals, landing_checks = _accumulate_landing_totals(
+                    landing_totals=landing_totals,
+                    landing_checks=landing_checks,
+                    output=output,
+                )
+            if bound_status is None:
+                bound_status = output.bound_status
+            else:
+                bound_status = tuple(
+                    merge_bound_input_status(
+                        left=left,
+                        right=BoundInputStatus(
+                            nonfinite_floor=jax.device_put(
+                                right.nonfinite_floor, left.nonfinite_floor.sharding
+                            ),
+                            invalid_shifted_grid=jax.device_put(
+                                right.invalid_shifted_grid,
+                                left.invalid_shifted_grid.sharding,
+                            ),
+                        ),
+                    )
+                    for left, right in zip(
+                        bound_status, output.bound_status, strict=True
+                    )
+                )
             counts = output.feasibility_counts
             feasibility_counts = (
                 counts
@@ -1660,7 +1748,11 @@ def _run_dispatch_unit(
         KernelOutput(value=cast("FloatND", value))
         if feasibility_counts is None
         else FeasibilityKernelOutput(
-            value=cast("FloatND", value), feasibility_counts=feasibility_counts
+            value=cast("FloatND", value),
+            feasibility_counts=feasibility_counts,
+            bound_status=bound_status or (),
+            landing_totals=landing_totals,
+            landing_checks=landing_checks,
         )
     ), True
 
@@ -2054,7 +2146,7 @@ def _match_continuation_template_sharding(
 
 
 # keyword-only-exempt: library-callback=jax.tree.map
-def _match_leaf_pair_sharding(leaf: FloatND, template_leaf: FloatND) -> FloatND:
+def _match_leaf_pair_sharding(leaf: ValueND, template_leaf: ValueND) -> ValueND:
     """Place one continuation leaf on its template leaf's sharding."""
     return _match_leaf_template_sharding(leaf=leaf, template_leaf=template_leaf)
 
@@ -2121,7 +2213,7 @@ def _assert_assembled_value_layout(*, value: FloatND, template: FloatND) -> None
         raise AssertionError(msg)
 
 
-def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> FloatND:
+def _match_leaf_template_sharding(*, leaf: ValueND, template_leaf: ValueND) -> ValueND:
     """Place one solved array on its template's device sharding (no-op on match).
 
     Applied where a solved value array is published and where the continuation
@@ -2536,7 +2628,7 @@ def _release_closed_period_inputs(
     candidates: dict[ValueArtifactAddress, _InputDispatch],
     inputs: SolveInputMappings,
     templates: SolveInputMappings,
-    pending_outputs: Sequence[FloatND],
+    pending_outputs: Sequence[ValueND],
     logger: logging.Logger,
     release_enabled: bool,
     before_delete: BeforeArrayDelete | None = None,

@@ -36,7 +36,7 @@ from dataclasses import replace
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.carry import EGMCarry
+from _lcm.egm.carry import EGMCarry, stack_egm_carries
 from _lcm.egm.interp import (
     interp_left_germ_on_padded_grid,
     interp_left_record_on_padded_grid,
@@ -53,24 +53,25 @@ def stack_candidate_carries(
     if not candidates:
         raise ValueError("At least one outer candidate is required.")
     leaves = tuple(candidate.leaves() for candidate in candidates)
-    values = tuple(
-        jnp.where(jnp.isnan(leaf[("value",)]), -jnp.inf, leaf[("value",)])
-        if nan_is_infeasible
-        else leaf[("value",)]
-        for leaf in leaves
+    normalized = tuple(
+        replace(
+            candidate,
+            value=jnp.where(
+                jnp.isnan(leaf[("value",)]),
+                -jnp.inf,
+                leaf[("value",)],
+            ),
+            marginal_utility=jnp.where(
+                jnp.isnan(leaf[("value",)]),
+                0.0,
+                leaf[("marginal_utility",)],
+            ),
+        )
+        if nan_is_infeasible and candidate.query_data_for_transport() is None
+        else candidate
+        for candidate, leaf in zip(candidates, leaves, strict=True)
     )
-    marginals = tuple(
-        jnp.where(jnp.isnan(leaf[("value",)]), 0.0, leaf[("marginal_utility",)])
-        if nan_is_infeasible
-        else leaf[("marginal_utility",)]
-        for leaf in leaves
-    )
-    return EGMCarry(
-        endog_grid=jnp.stack([leaf[("endog_grid",)] for leaf in leaves], axis=-2),
-        value=jnp.stack(values, axis=-2),
-        marginal_utility=jnp.stack(marginals, axis=-2),
-        taste_shock_scale=leaves[0][("taste_shock_scale",)],
-    )
+    return stack_egm_carries(candidates=normalized)
 
 
 def build_stacked_outer_carry(

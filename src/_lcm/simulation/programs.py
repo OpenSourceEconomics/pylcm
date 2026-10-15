@@ -47,8 +47,14 @@ from _lcm.execution.core_program import (
     ReducedAxis,
     ValueRead,
 )
+from _lcm.execution.output_layout import OutputRoleLeaf, StateAxesLeading
 from _lcm.regime_building.argmax import argmax_and_readout
-from _lcm.regime_building.Q_and_F import QAndFParts, get_Q_and_F_parts
+from _lcm.regime_building.Q_and_F import (
+    BoundedQAndF,
+    QAndFParts,
+    get_Q_and_F_parts,
+    runtime_bound_specs,
+)
 from _lcm.simulation.gated_routing import (
     simulation_gate_fold,
     simulation_gate_route_delta,
@@ -83,6 +89,7 @@ from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
 from _lcm.solution.backward_induction import FoldAge
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.contract import SolverBuildContext
+from _lcm.solution.feasibility import BoundedResult
 from _lcm.solution.grid_search import (
     ACTION_PRODUCT_AXIS,
     _edge_reference_regimes_for_targets,
@@ -101,7 +108,7 @@ from _lcm.typing import (
     StateOrActionName,
     StatesPerRegime,
 )
-from _lcm.utils.dispatchers import productmap
+from _lcm.utils.dispatchers import map_over_leading_axis, productmap
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import (
     Bool1D,
@@ -114,6 +121,10 @@ from lcm.typing import (
     ReferenceName,
     StateName,
 )
+
+type ActionPartsDecisionOutput = tuple[
+    IntND, FloatND, FloatND, BoolND, FloatND, FloatND
+]
 
 
 # Why a regime whose routing the host drives cedes its own width.
@@ -225,6 +236,7 @@ def build_simulation_programs(
                     ),
                 ),
                 subject_arg_names=lookup_subject_arg_names,
+                n_bound_records=len(runtime_bound_specs(function=kernel)),
             )
         action_values[period] = dataclasses.replace(
             decision[period],
@@ -237,9 +249,12 @@ def build_simulation_programs(
                 decision[period].requirements, reduced_axes=()
             ),
             output_roles=(
-                TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
-                if context.has_taste_shocks
-                else ACTION_VALUES_OUTPUT_ROLES
+                *(
+                    TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
+                    if context.has_taste_shocks
+                    else ACTION_VALUES_OUTPUT_ROLES
+                ),
+                *_bound_output_roles(function=kernel),
             ),
         )
 
@@ -357,7 +372,11 @@ def _decision_programs(
                     core_key=DECISION_PROGRAM,
                 ),
             ),
-            output_roles=(ACTION_INDEX, DECISION_VALUE),
+            output_roles=(
+                ACTION_INDEX,
+                DECISION_VALUE,
+                *_bound_output_roles(function=Q_and_F_functions[period]),
+            ),
             disposition=CoreExecutionDisposition.PLANNED,
             donation_candidates=(),
         )
@@ -732,6 +751,30 @@ def _decision_value_reads(
     )
 
 
+def _bound_output_roles(*, function: QAndFFunction) -> tuple[StateAxesLeading, ...]:
+    """Declare one scalar Boolean leaf per mandatory canonical integrity flag."""
+    return tuple(
+        StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=())
+        for _ in range(2 * len(runtime_bound_specs(function=function)))
+    )
+
+
+def _flatten_subject_integrity[Output: PytreeValue](
+    *, result: BoundedResult[Output], n_records: int
+) -> tuple[PytreeValue, ...]:
+    """Require scalar Boolean summaries before exposing the subject core's outputs."""
+    if type(result) is not BoundedResult or len(result.bound_status) != n_records:
+        raise TypeError("Subject summaries must match model-owned declarations.")
+    if any(
+        flag.shape != () or flag.dtype != jnp.bool_
+        for status in result.bound_status
+        for flag in status
+    ):
+        raise TypeError("Subject integrity outputs must be scalar Boolean arrays.")
+    outputs = cast("tuple[PytreeValue, ...]", result.output)
+    return (*outputs, *(flag for status in result.bound_status for flag in status))
+
+
 def _decision_body(
     *,
     Q_and_F: QAndFFunction,
@@ -742,8 +785,13 @@ def _decision_body(
     subject_arg_names: tuple[ReferenceName, ...],
 ) -> Callable[..., PytreeValue]:
     """Build one period group's decision body, tiled over the subject axis."""
+    n_bound_records = len(runtime_bound_specs(function=Q_and_F))
     if not streams_actions:
-        return _SubjectTiled(func=dense_reducer, subject_arg_names=subject_arg_names)
+        return _SubjectTiled(
+            func=dense_reducer,
+            subject_arg_names=subject_arg_names,
+            n_bound_records=n_bound_records,
+        )
     from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
         _get_extra_param_names,
     )
@@ -771,7 +819,9 @@ def _decision_body(
         return_annotation="tuple[IntND, FloatND]",
         enforce=False,
     )
-    return _SubjectTiled(func=cell, subject_arg_names=subject_arg_names)
+    return _SubjectTiled(
+        func=cell, subject_arg_names=subject_arg_names, n_bound_records=n_bound_records
+    )
 
 
 # What the dense decision with its parts publishes, in the order its body
@@ -807,7 +857,11 @@ def with_kept_action_parts(
         return program
     key = (id(program), roles)
     if key not in cache:
-        published = cast("tuple[str, ...]", program.output_roles)
+        published = tuple(
+            role
+            for role in cast("tuple[str | OutputRoleLeaf, ...]", program.output_roles)
+            if isinstance(role, str)
+        )
         kept = tuple(
             role
             for role in published
@@ -821,7 +875,16 @@ def with_kept_action_parts(
                     function=program.function,
                     positions=tuple(published.index(role) for role in kept),
                 ),
-                output_roles=kept,
+                output_roles=(
+                    *kept,
+                    *(
+                        role
+                        for role in cast(
+                            "tuple[str | OutputRoleLeaf, ...]", program.output_roles
+                        )
+                        if not isinstance(role, str)
+                    ),
+                ),
             ),
         )
     return cache[key][1]
@@ -870,10 +933,23 @@ class _SelectedOutputs:
     positions: tuple[int, ...]
     """Positions of the published outputs in the output tuple of `body`."""
 
-    def __call__(self, **kwargs: PytreeValue) -> tuple[PytreeValue, ...]:
+    def __call__(
+        self, **kwargs: PytreeValue
+    ) -> tuple[PytreeValue, ...] | BoundedResult[tuple[PytreeValue, ...]]:
         """Return the outputs of `body` at `positions`."""
-        outputs = cast("tuple[PytreeValue, ...]", self.body(**kwargs))
-        return tuple(outputs[position] for position in self.positions)
+        result = self.body(**kwargs)
+        outputs = result.output if type(result) is BoundedResult else result
+        selected = tuple(
+            cast("tuple[PytreeValue, ...]", outputs)[position]
+            for position in self.positions
+        )
+        return (
+            BoundedResult[tuple[PytreeValue, ...]](
+                output=selected, bound_status=result.bound_status
+            )
+            if type(result) is BoundedResult
+            else selected
+        )
 
 
 def _decision_with_action_parts(
@@ -889,17 +965,55 @@ def _decision_with_action_parts(
     that `Q` and `F`, or the EV1 reduction the solve applies, both without a
     taste-shock draw.
     """
+    bounded = bool(runtime_bound_specs(function=Q_and_F))
     parts = productmap(
-        func=get_Q_and_F_parts(Q_and_F=Q_and_F),
+        func=BoundedQAndF(function=Q_and_F, parts=True)
+        if bounded
+        else get_Q_and_F_parts(Q_and_F=Q_and_F),
         variables=action_names,
         batch_sizes=dict.fromkeys(action_names, 0),
+        bound_summary=bounded,
     )
     return with_signature(
-        body(parts=parts),
+        (
+            _BoundActionPartsBody(
+                parts=cast("Callable[..., BoundedResult[QAndFParts]]", parts),
+                body=body,
+            )
+            if bounded and body is not _DecisionWithActionParts
+            else body(parts=parts)
+        ),
         args=list(inspect.signature(parts).parameters),
         return_annotation="tuple[FloatND | IntND | BoolND, ...]",
         enforce=False,
     )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _BoundActionPartsBody:
+    """Keep bound integrity beside a readout of the same evaluated action parts."""
+
+    __name__: ClassVar[str] = "action_parts_with_bound_summary"
+    """Name advertised by the canonical action readout wrapper."""
+
+    parts: Callable[..., BoundedResult[QAndFParts]]
+    """Canonical action evaluation with its integrity records."""
+    body: Callable[..., Callable[..., PytreeValue]]
+    """Readout constructor consuming already evaluated ordinary parts."""
+
+    def __call__(self, **kwargs: PytreeValue) -> BoundedResult[PytreeValue]:
+        evaluated = self.parts(**kwargs)
+        readout = self.body(
+            parts=partial(_evaluated_action_parts, parts=evaluated.output)
+        )
+        return BoundedResult(
+            output=readout(**kwargs), bound_status=evaluated.bound_status
+        )
+
+
+def _evaluated_action_parts(*, parts: QAndFParts, **_kwargs: PytreeValue) -> QAndFParts:
+    """Return the ordinary parts already evaluated by the canonical action owner."""
+    return parts
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
@@ -918,21 +1032,32 @@ class _DecisionWithActionParts:
     __name__: ClassVar[str] = "argmax_and_max_Q_over_a_with_action_parts"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    parts: Callable[..., QAndFParts]
+    parts: Callable[..., QAndFParts | BoundedResult[QAndFParts]]
     """The kernel's parts, mapped over the action product."""
 
     def __call__(
         self,
         **kwargs: PytreeValue,
-    ) -> tuple[IntND, FloatND, FloatND, BoolND, FloatND, FloatND]:
+    ) -> ActionPartsDecisionOutput | BoundedResult[ActionPartsDecisionOutput]:
         """Return the chosen flat index, its value, and `Q`, `F`, `U` and `CE`."""
-        parts = self.parts(**kwargs)
+        evaluated = self.parts(**kwargs)
+        parts = cast(
+            "QAndFParts",
+            evaluated.output if type(evaluated) is BoundedResult else evaluated,
+        )
         index, value = argmax_and_readout(
             selection=parts.Q if parts.Q_selection is None else parts.Q_selection,
             readout=parts.Q,
             where=parts.F,
         )
-        return index, value, parts.Q, parts.F, parts.U, parts.CE
+        output = index, value, parts.Q, parts.F, parts.U, parts.CE
+        return (
+            BoundedResult[ActionPartsDecisionOutput](
+                output=output, bound_status=evaluated.bound_status
+            )
+            if type(evaluated) is BoundedResult
+            else output
+        )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
@@ -961,8 +1086,8 @@ class _StreamedArgmaxQOverA:
     action_width_keyword: str
     """Name of the planner-bound static action-block width in the call."""
 
-    folds: dict[int, Callable[..., HardMaxResult]] = dataclasses.field(
-        default_factory=dict, repr=False
+    folds: dict[int, Callable[..., HardMaxResult | BoundedResult[HardMaxResult]]] = (
+        dataclasses.field(default_factory=dict, repr=False)
     )
     """Streamed folds already built, by the block width each streams at."""
 
@@ -971,7 +1096,7 @@ class _StreamedArgmaxQOverA:
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: PytreeValue,
-    ) -> tuple[IntND, FloatND]:
+    ) -> tuple[IntND, FloatND] | BoundedResult[tuple[IntND, FloatND]]:
         """Return the chosen action's flat identity and the value it attains."""
         block_width = cast("int", states_actions_params[self.action_width_keyword])
         q_and_f_params = {
@@ -979,15 +1104,28 @@ class _StreamedArgmaxQOverA:
             for name, value in states_actions_params.items()
             if name in self.q_and_f_arg_names
         }
-        result = self._fold(block_width=block_width)(
+        evaluated = self._fold(block_width=block_width)(
             next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params
         )
-        return (
+        result = cast(
+            "HardMaxResult",
+            evaluated.output if type(evaluated) is BoundedResult else evaluated,
+        )
+        output = (
             result.best_global_action_id.astype(jnp.int32),
             result.best_value,
         )
+        return (
+            BoundedResult[tuple[IntND, FloatND]](
+                output=output, bound_status=evaluated.bound_status
+            )
+            if type(evaluated) is BoundedResult
+            else output
+        )
 
-    def _fold(self, *, block_width: int) -> Callable[..., HardMaxResult]:
+    def _fold(
+        self, *, block_width: int
+    ) -> Callable[..., HardMaxResult | BoundedResult[HardMaxResult]]:
         """Return the streamed fold for one block width, building it once."""
         fold = self.folds.get(block_width)
         if fold is None:
@@ -1018,10 +1156,15 @@ class _SubjectTiled:
 
     subject_arg_names: tuple[ReferenceName, ...]
     """Arguments carrying the per-subject leading axis this splits into tiles."""
+    n_bound_records: int = dataclasses.field(
+        default=0,
+        metadata={"fingerprint_omit_if_default": True},
+    )
+    """Declared mandatory records reduced separately before row concatenation."""
 
     @property
     def subject_shard_arg_names(self) -> tuple[str, ...]:
-        """Certify that every output has the same independent leading subject axis."""
+        """Declare independent ordinary rows beside explicitly declared scalar roles."""
         return self.subject_arg_names
 
     def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
@@ -1029,11 +1172,30 @@ class _SubjectTiled:
         width = cast("int", kwargs.pop(SUBJECT_WIDTH_KEYWORD))
         accepted = inspect.signature(self.func).parameters
         if not self.subject_arg_names:
-            return self.func(
+            result = self.func(
                 **{name: value for name, value in kwargs.items() if name in accepted}
+            )
+            return (
+                _flatten_subject_integrity(
+                    result=cast("BoundedResult[PytreeValue]", result),
+                    n_records=self.n_bound_records,
+                )
+                if self.n_bound_records
+                else result
             )
         tiles = {name: kwargs.pop(name) for name in self.subject_arg_names}
         shared = {name: value for name, value in kwargs.items() if name in accepted}
+        if self.n_bound_records:
+            result = map_over_leading_axis(
+                func=partial(_evaluate_subject_tile, func=self.func, shared=shared),
+                xs=tiles,
+                batch_size=width,
+                bound_summary=True,
+            )
+            return _flatten_subject_integrity(
+                result=cast("BoundedResult[PytreeValue]", result),
+                n_records=self.n_bound_records,
+            )
         # A remainder shorter than the width would be traced and compiled as a
         # second program, whose rounding need not match the full tiles'. Pad it
         # with copies of the last subject so every tile has the width's shape,

@@ -46,6 +46,7 @@ from _lcm.execution.execution_plan import (
     visible_device_pool_limits,
 )
 from _lcm.execution.footprint import layout_footprint
+from _lcm.execution.output_layout import OutputRoleLeaf
 from _lcm.grids import (
     DiscreteGrid,
     Grid,
@@ -221,6 +222,7 @@ from _lcm.solution.block_major import (
     active_component_selection,
 )
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.feasibility import consume_runtime_bound_outputs
 from _lcm.solution.fingerprint import (
     SolutionParamProjection,
     fingerprint_model,
@@ -4385,21 +4387,35 @@ class Model:
             )
         outputs = cast(
             "tuple[jax.Array, ...]",
-            executor.dispatch(
-                program=program,
-                period=period,
-                n_subjects=n_rows,
-                arguments=decision_arguments(
-                    states=space.states,
-                    discrete_actions={n: grids[n] for n in space.discrete_actions},
-                    continuous_actions={n: grids[n] for n in space.continuous_actions},
-                    taste_keys={},
-                    next_values=next_V,
-                    references=references,
-                    params=regime_kernel_params(flat_params, regime_name=regime_name),
-                    period=jnp.int32(period),
-                    age=self._time.values[period],  # noqa: PD011
+            consume_runtime_bound_outputs(
+                outputs=cast(
+                    "tuple[jax.Array, ...]",
+                    executor.dispatch(
+                        program=program,
+                        period=period,
+                        n_subjects=n_rows,
+                        arguments=decision_arguments(
+                            states=space.states,
+                            discrete_actions={
+                                n: grids[n] for n in space.discrete_actions
+                            },
+                            continuous_actions={
+                                n: grids[n] for n in space.continuous_actions
+                            },
+                            taste_keys={},
+                            next_values=next_V,
+                            references=references,
+                            params=regime_kernel_params(
+                                flat_params, regime_name=regime_name
+                            ),
+                            period=jnp.int32(period),
+                            age=self._time.values[period],  # noqa: PD011
+                        ),
+                    ),
                 ),
+                bound_specs=regime.simulation.post_decision_bounds,
+                regime_name=regime_name,
+                period=period,
             ),
         )
         if not space.states:
@@ -4407,8 +4423,12 @@ class Model:
             # once, for the one row an empty query stands for; every output gets
             # that row here.
             outputs = tuple(output[None] for output in outputs)
-        # Every lookup program publishes a flat tuple, one role per output.
-        roles = cast("tuple[str, ...]", program.output_roles)
+        # Both lookup programs publish a flat tuple, one role per output.
+        roles = tuple(
+            role
+            for role in cast("tuple[str | OutputRoleLeaf, ...]", program.output_roles)
+            if isinstance(role, str)
+        )
         by_role = dict(zip(roles, outputs, strict=True))
         # A taste-shock regime draws its discrete action, so the lookup decodes
         # the continuous action attaining each combination's `Qc` instead.

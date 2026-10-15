@@ -49,6 +49,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.execution.reductions import WEIGHTED_EXPECTATION_REDUCTION
 from _lcm.grids import ContinuousGrid
+from _lcm.post_decision_bound import PostDecisionBoundSpec, grid_origin_bound_spec
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.continuation_reads import (
     continuation_leaf_reads,
@@ -355,6 +356,13 @@ class DCEGM(OneMarginSolver):
                 continuous_action=margin.action,
                 resources=margin.resources,
                 post_decision_function=margin.post_decision_state,
+                post_decision_bound=grid_origin_bound_spec(
+                    post_decision=margin.post_decision_state,
+                    liquid_state=margin.state,
+                    action=margin.action,
+                    resources_target=margin.resources,
+                    grid=self.savings_grid,
+                ),
             ),
         )
 
@@ -438,7 +446,8 @@ class DCEGM(OneMarginSolver):
         bound = cast("_BoundDCEGM", self)
         proofs = (
             proves_the_savings_grids_lower_bound(
-                post_decision=bound.post_decision_function
+                post_decision=bound.post_decision_function,
+                bound_spec=bound.post_decision_bound,
             ),
         )
         if context.phase == "simulate":
@@ -610,6 +619,8 @@ class _BoundDCEGM(DCEGM):
 
     post_decision_function: FunctionName
     """Name of the function giving the savings the exogenous grid spans."""
+    post_decision_bound: PostDecisionBoundSpec | None = None
+    """Literal grid floor installed as a construction capability."""
 
 
 # Planner name of the child stochastic-node mesh the DC-EGM continuation folds.

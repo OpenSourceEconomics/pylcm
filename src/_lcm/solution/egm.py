@@ -27,9 +27,15 @@ from _lcm.constraints.routes import (
     ConstraintSite,
 )
 from _lcm.continuation import EGMContinuationSpec
-from _lcm.egm.carry import EGMCarry, egm_carry_role_tree
+from _lcm.egm.carry import EGMCarry, egm_carry_role_tree, egm_query_role_tree
 from _lcm.egm.one_asset_egm_step import RetiredEGMResult
 from _lcm.egm.preferences import Preferences
+from _lcm.egm.query_data import (
+    EGMQueryData,
+    QueryNodeKind,
+    build_template_egm_query_data,
+)
+from _lcm.egm.scalar_query import ScalarEGMQuery, build_scalar_egm_query
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -37,8 +43,9 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
 )
-from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.execution.output_layout import VALUE, OutputRoleLeaf, StateAxesLeading
 from _lcm.grids import ContinuousGrid
+from _lcm.post_decision_bound import PostDecisionBoundSpec, grid_origin_bound_spec
 from _lcm.probability import is_negative, regime_mass_is_a_distribution
 from _lcm.solution.continuation_reads import (
     continuation_leaf_reads,
@@ -63,6 +70,14 @@ from _lcm.solution.contract import (
     bind_roles,
     simulation_route,
 )
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    BoundInputStatus,
+    FeasibilityCounts,
+    FeasibilityKernelOutput,
+    count_current_feasibility,
+    validate_runtime_bound_status,
+)
 from _lcm.solution.periodization import (
     resolve_solver_build_context,
     solver_period_group_key,
@@ -82,7 +97,12 @@ from _lcm.typing import (
     ShapeDtypePytree,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import (
+    InvalidValueFunctionError,
+    ModelInitializationError,
+    RegimeInitializationError,
+    UnsupportedOperationError,
+)
 from lcm.solver_api import (
     EGM_CONTINUATION,
     EGM_ENDOGENOUS_COORDINATE,
@@ -96,7 +116,9 @@ from lcm.typing import (
     Float1D,
     FloatND,
     FunctionName,
+    IntND,
     ReferenceName,
+    ScalarBool,
     ScalarFloat,
     StateName,
     ValueND,
@@ -104,7 +126,11 @@ from lcm.typing import (
 
 # A jit-able one-row core: the value array and the marginal-value carry on the
 # liquid grid.
-type OneRowCore = Callable[..., tuple[FloatND, EGMCarry]]
+type BoundedOneRowOutput = BoundedResult[
+    tuple[FloatND, EGMCarry, FeasibilityCounts, ScalarBool]
+]
+type OneRowOutput = tuple[FloatND, EGMCarry] | BoundedOneRowOutput
+type OneRowCore = Callable[..., OneRowOutput]
 
 
 @beartype(conf=REGIME_CONF)
@@ -160,6 +186,13 @@ class EGM(OneMarginSolver):
                 continuous_action=margin.action,
                 resources=margin.resources,
                 post_decision_function=margin.post_decision_state,
+                post_decision_bound=grid_origin_bound_spec(
+                    post_decision=margin.post_decision_state,
+                    liquid_state=margin.state,
+                    action=margin.action,
+                    resources_target=margin.resources,
+                    grid=self.savings_grid,
+                ),
             ),
         )
 
@@ -209,6 +242,7 @@ class EGM(OneMarginSolver):
             _isclose,
             _solve_grids,
             fail_if_custom_koopmans_aggregator,
+            fail_if_declared_lower_bound_disagrees_with_the_grid,
         )
 
         regime_name = context.regime_name
@@ -216,6 +250,12 @@ class EGM(OneMarginSolver):
         fail_if_custom_koopmans_aggregator(
             regime_name=regime_name,
             user_regime=user_regime,
+            solver_name="EGM",
+        )
+        fail_if_declared_lower_bound_disagrees_with_the_grid(
+            regime_name=regime_name,
+            user_regime=user_regime,
+            solver=bound,
             solver_name="EGM",
         )
         if context.laws[regime_name].terminal:
@@ -394,7 +434,8 @@ class EGM(OneMarginSolver):
         bound = cast("_BoundEGM", self)
         proofs = (
             proves_the_savings_grids_lower_bound(
-                post_decision=bound.post_decision_function
+                post_decision=bound.post_decision_function,
+                bound_spec=bound.post_decision_bound,
             ),
         )
         if context.phase == "simulate":
@@ -515,6 +556,8 @@ class EGM(OneMarginSolver):
         bound = cast("_BoundEGM", self)
 
         savings_grid = self.savings_grid.to_jax()
+        query_models = context.scalar_query_models or {}
+        current_model = query_models.get(context.regime_name)
         liquid_state = next(
             iter(
                 context.regime_to_v_interpolation_info[
@@ -537,6 +580,11 @@ class EGM(OneMarginSolver):
         )
         period_to_target = period_to_continuation_target(context=context)
         cores: dict[Hashable, OneRowCore] = {}
+        source_queries: dict[Hashable, ScalarEGMQuery | None] = {}
+        child_capabilities: dict[Hashable, ContinuationCapabilities] = {}
+        reader_capabilities: dict[
+            int, Mapping[RegimeName, ContinuationCapabilities]
+        ] = {}
         laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         period_group_keys: dict[int, Hashable] = {}
@@ -558,19 +606,64 @@ class EGM(OneMarginSolver):
                 continuation_targets=(target,),
                 solver_path=("egm",),
             )
+            next_model = query_models.get(target)
+            from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+                periodized_tree_signature,
+                resolve_periodized_node,
+                resolve_periodized_nodes,
+            )
+
+            if next_model is not None:
+                group_key = (
+                    group_key,
+                    periodized_tree_signature(
+                        tree=next_model.functions, period=period + 1
+                    ),
+                )
             if group_key not in cores:
                 resolved = resolve_solver_build_context(context=context, period=period)
                 core = _build_egm_core(
-                    savings_grid=savings_grid,
+                    savings_grid=savings_grid
+                    if current_model is None
+                    else current_model.offsets,
                     functions=resolved.functions,
                     koopmans_aggregator=cast(
                         "EconFunction", resolved.koopmans_aggregator
                     ),
                     consumption_action=consumption_action,
+                    current_query=None
+                    if current_model is None
+                    else build_scalar_egm_query(
+                        model=current_model,
+                        functions=resolved.functions,
+                        koopmans_aggregator=cast(
+                            "EconFunction", resolved.koopmans_aggregator
+                        ),
+                    ),
+                    next_query=None
+                    if next_model is None
+                    else build_scalar_egm_query(
+                        model=next_model,
+                        functions=cast(
+                            "EconFunctionsMapping",
+                            resolve_periodized_nodes(
+                                mapping=next_model.functions, period=period + 1
+                            ),
+                        ),
+                        koopmans_aggregator=cast(
+                            "EconFunction",
+                            resolve_periodized_node(
+                                node=next_model.koopmans_aggregator, period=period + 1
+                            ),
+                        ),
+                    ),
                 )
                 cores[group_key] = guard_regime_mass(
                     core=core, enable_jit=context.enable_jit
                 )
+                source_queries[group_key] = core.current_query
+                if core.next_query is not None:
+                    child_capabilities[group_key] = core.next_query.capabilities
                 laws[group_key] = build_declared_liquid_law(
                     transitions=resolved.transitions,
                     functions=resolved.functions,
@@ -580,6 +673,10 @@ class EGM(OneMarginSolver):
                     variable_names=variable_names,
                 )
             period_group_keys[period] = group_key
+            if group_key in child_capabilities:
+                reader_capabilities[period] = MappingProxyType(
+                    {target: child_capabilities[group_key]}
+                )
             period_kernels[period] = _build_egm_period_kernel(
                 core=cores[group_key],
                 declared_law=laws[group_key],
@@ -595,13 +692,46 @@ class EGM(OneMarginSolver):
                     target=target,
                     target_state_name=target_state,
                 ),
+                current_query=source_queries[group_key],
+                query_template=None
+                if current_model is None
+                else build_template_egm_query_data(
+                    state_shape=(),
+                    action_shape=(),
+                    row_capacity=liquid_grid.size,
+                    interval_capacity=1,
+                ),
+                own_bound_specs=()
+                if current_model is None
+                else (current_model.authority.bound,),
+                inherited_bound_specs=()
+                if next_model is None
+                else (next_model.authority.bound,),
+                source_period=period,
             )
         return SolutionKernels(
+            continuation_reader_capabilities=reader_capabilities or None,
             period_kernels=MappingProxyType(period_kernels),
             period_group_keys=MappingProxyType(period_group_keys),
             continuation_spec=EGMContinuationSpec(
-                template=_build_one_asset_carry_template(liquid_grid=liquid_grid),
-                layout=self.egm_continuation_layout,
+                template=replace(
+                    _build_one_asset_carry_template(liquid_grid=liquid_grid),
+                    query_data=None
+                    if current_model is None
+                    else build_template_egm_query_data(
+                        state_shape=(),
+                        action_shape=(),
+                        row_capacity=liquid_grid.size,
+                        interval_capacity=1,
+                    ),
+                ),
+                layout=self.egm_continuation_layout
+                if current_model is None
+                else replace(
+                    self.egm_continuation_layout,
+                    rows_share_state_grid=True,
+                    query_spec=current_model.authority,
+                ),
             ),
         )
 
@@ -627,6 +757,8 @@ class _BoundEGM(EGM):
 
     post_decision_function: FunctionName
     """Name of the function giving the savings the exogenous grid spans."""
+    post_decision_bound: PostDecisionBoundSpec | None = None
+    """Literal grid floor installed as a construction capability."""
 
 
 # The carry rows `_EGMArgumentBuilder.__call__` flattens into named program
@@ -636,6 +768,7 @@ _EGM_ARGUMENT_BY_LEAF: MappingProxyType[tuple[str, ...], str] = MappingProxyType
         ("endog_grid",): "next_liquid_grid",
         ("value",): "next_value",
         ("marginal_utility",): "next_marginal",
+        ("query_data",): "next_query_data",
     }
 )
 
@@ -707,6 +840,11 @@ def _build_egm_period_kernel(
     transition_target_names: tuple[RegimeName, ...],
     next_liquid_grid: Float1D,
     publishes_breakpoints: bool = False,
+    current_query: ScalarEGMQuery | None = None,
+    query_template: EGMQueryData | None = None,
+    own_bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
+    inherited_bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
+    source_period: int = 0,
 ) -> _EGMPeriodKernel:
     """Declare one period's EGM program graph around a shared core.
 
@@ -730,23 +868,52 @@ def _build_egm_period_kernel(
         declared_law=declared_law,
         savings_grid=savings_grid,
         compute_regime_transition_probs=compute_regime_transition_probs,
+        current_query=current_query,
+        has_child_query=bool(inherited_bound_specs),
+        own_bound_specs=own_bound_specs,
     )
+    scalar_role = StateAxesLeading(state_names=(), shape=())
+    ordinary_roles = (
+        VALUE,
+        egm_carry_role_tree(
+            row=StateAxesLeading(state_names=()),
+            scalar=scalar_role,
+            breakpoints=StateAxesLeading(state_names=())
+            if publishes_breakpoints
+            else None,
+            policy=None,
+            query_data=None
+            if query_template is None
+            else egm_query_role_tree(query_data=query_template, state_names=()),
+        ),
+    )
+    output_roles = ordinary_roles
+    if own_bound_specs or inherited_bound_specs:
+        numeric_template = BoundedResult(
+            output=(
+                jnp.zeros_like(savings_grid),
+                replace(
+                    _build_one_asset_carry_template(liquid_grid=savings_grid),
+                    query_data=query_template,
+                ),
+                (jnp.int32(0), jnp.int32(0)),
+                jnp.asarray(a=False),
+            ),
+            bound_status=tuple(
+                BoundInputStatus(
+                    nonfinite_floor=jnp.asarray(a=False),
+                    invalid_shifted_grid=jnp.asarray(a=False),
+                )
+                for _ in (*own_bound_specs, *inherited_bound_specs)
+            ),
+        )
+        output_roles = jax.tree.map_with_path(_scalar_egm_output_role, numeric_template)
     program = CoreProgram(
         name="main",
         function=core,
         argument_builder=argument_builder,
         requirements=CoreExecutionRequirements(),
-        output_roles=(
-            VALUE,
-            egm_carry_role_tree(
-                row=StateAxesLeading(state_names=()),
-                scalar=StateAxesLeading(state_names=(), shape=()),
-                breakpoints=StateAxesLeading(state_names=())
-                if publishes_breakpoints
-                else None,
-                policy=None,
-            ),
-        ),
+        output_roles=output_roles,
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
     )
@@ -757,6 +924,9 @@ def _build_egm_period_kernel(
         liquid_state=liquid_state,
         transition_target_names=transition_target_names,
         next_liquid_grid=next_liquid_grid,
+        own_bound_specs=own_bound_specs,
+        inherited_bound_specs=inherited_bound_specs,
+        source_period=source_period,
     )
 
 
@@ -799,6 +969,12 @@ class _EGMArgumentBuilder:
 
     bound_params: Mapping[QualifiedName, ParamsLeaf] = MappingProxyType({})
     """Fixed params bound into the core, kept so the law can read them too."""
+    current_query: ScalarEGMQuery | None = None
+    """Installed source floor evaluator, absent on literal and legacy adapters."""
+    has_child_query: bool = False
+    """Whether the plain source core has a trusted feature-child adapter."""
+    own_bound_specs: tuple[PostDecisionBoundSpec, ...] = ()
+    """Canonical source declarations used before an aborting law-order error."""
 
     def __call__(
         self, context: CoreBuildContext
@@ -809,17 +985,46 @@ class _EGMArgumentBuilder:
         next_carry = context.next_regime_to_continuation[self.continuation_target]
         next_carry = cast("EGMCarry", next_carry)
         leaves = next_carry.leaves()
+        query_data = next_carry.query_data_for_transport()
         (
             effective_savings_grid,
             next_liquid,
             marginal_return,
             boundary_savings_targets,
             boundary_next_liquid,
+            source_bound_status,
         ) = self._law_readings(
             flat_params=flat_params,
             next_breakpoints=leaves.get(("breakpoints",)),
             period=context.period,
+            age=cast("TimeAxis", context.ages).values[context.period],
         )
+        pool = {
+            **self.bound_params,
+            **union_free_params(
+                flat_params=flat_params,
+                regime_name=self.regime_name,
+                transition_target_names=self.transition_target_names,
+            ),
+        }
+        child_args = {}
+        if self.has_child_query:
+            prefix = f"{self.continuation_target}__"
+            child_args = {
+                "next_query_pool": MappingProxyType(
+                    {
+                        **{
+                            name.removeprefix(prefix): value
+                            for name, value in pool.items()
+                            if name.startswith(prefix)
+                        },
+                        "period": jnp.int32(context.period + 1),
+                        "age": cast("TimeAxis", context.ages).values[
+                            context.period + 1
+                        ],
+                    }
+                )
+            }
         return MappingProxyType(
             {
                 "liquid": state_action_space.states[self.liquid_state],
@@ -831,6 +1036,13 @@ class _EGMArgumentBuilder:
                 "boundary_next_liquid": boundary_next_liquid,
                 "next_value": leaves[("value",)],
                 "next_marginal": leaves[("marginal_utility",)],
+                **(
+                    {"source_bound_status": source_bound_status}
+                    if source_bound_status is not None
+                    else {}
+                ),
+                **child_args,
+                **({"next_query_data": query_data} if query_data is not None else {}),
                 "retains_regime_mass": self._retains_regime_mass(
                     liquid=state_action_space.states[self.liquid_state],
                     flat_params=flat_params,
@@ -843,6 +1055,11 @@ class _EGMArgumentBuilder:
                     transition_target_names=self.transition_target_names,
                 ),
                 "period": jnp.int32(context.period),
+                **(
+                    {"age": cast("TimeAxis", context.ages).values[context.period]}
+                    if self.current_query is not None
+                    else {}
+                ),
             }
         )
 
@@ -900,7 +1117,8 @@ class _EGMArgumentBuilder:
         flat_params: FlatParams,
         next_breakpoints: FloatND | None,
         period: int,
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+        age: ParamsLeaf,
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, BoundInputStatus | None]:
         """Read the declared law on the savings grid and check it can be inverted.
 
         Evaluated here rather than inside the compiled core: the readings depend
@@ -916,28 +1134,46 @@ class _EGMArgumentBuilder:
                 transition_target_names=self.transition_target_names,
             ),
             "period": jnp.int32(period),
+            "age": age,
         }
         from _lcm.egm.declared_law import (  # noqa: PLC0415
             fail_if_declared_law_is_not_increasing,
         )
 
+        saving_nodes = self.savings_grid
+        status = None
+        if self.current_query is not None:
+            _floor, saving_nodes, status = self.current_query.evaluate_floor(
+                pool=law_params
+            )
         next_liquid, marginal_return = self.declared_law(
-            savings_grid=self.savings_grid,
+            savings_grid=saving_nodes,
             **law_params,
         )
-        fail_if_declared_law_is_not_increasing(
-            next_liquid=next_liquid,
-            regime_name=self.regime_name,
-            target=self.continuation_target,
-        )
+        try:
+            fail_if_declared_law_is_not_increasing(
+                next_liquid=next_liquid,
+                regime_name=self.regime_name,
+                target=self.continuation_target,
+            )
+        except RegimeInitializationError:
+            if status is not None:
+                validate_runtime_bound_status(
+                    statuses=(status,),
+                    bound_specs=self.own_bound_specs,
+                    regime_name=self.regime_name,
+                    period=period,
+                )
+            raise
         if next_breakpoints is None:
             empty = jnp.zeros((0,), dtype=self.savings_grid.dtype)
             return (
-                self.savings_grid,
+                saving_nodes,
                 next_liquid,
                 marginal_return,
                 empty,
                 empty,
+                status,
             )
 
         boundary_targets = _one_sided_boundary_savings_targets(
@@ -969,6 +1205,7 @@ class _EGMArgumentBuilder:
             marginal_return,
             boundary_targets,
             boundary_next_liquid,
+            status,
         )
 
 
@@ -1006,6 +1243,12 @@ class _EGMPeriodKernel:
     The abscissae of the continuation value and marginal this kernel reads. Equal
     to this period's own grid unless the liquid state is an `AgeSpecializedGrid`.
     """
+    own_bound_specs: tuple[PostDecisionBoundSpec, ...] = ()
+    """Source-owned records forwarded to ordinary backward acceptance."""
+    inherited_bound_specs: tuple[PostDecisionBoundSpec, ...] = ()
+    """Canonical child declaration slots, independent of source bound presence."""
+    source_period: int = 0
+    """Source computational period supplying the child's exact next-period slot."""
 
     def __post_init__(self) -> None:
         """Snapshot the graph and require exactly the `main` program."""
@@ -1068,6 +1311,12 @@ class _EGMPeriodKernel:
         logger: logging.Logger,  # noqa: ARG002
     ) -> KernelOutput:
         """Run the compiled `main` program and publish its typed continuation."""
+        if (
+            self.own_bound_specs or self.inherited_bound_specs
+        ) and period != self.source_period:
+            raise TypeError(
+                "Scalar query period differs from its model-owned authority."
+            )
         program = self._core_programs["main"]
         arguments = program.argument_builder(
             CoreBuildContext(
@@ -1079,9 +1328,44 @@ class _EGMPeriodKernel:
                 ages=ages,
             )
         )
-        V_arr, carry = cast(
-            "tuple[FloatND, EGMCarry]", compiled_cores["main"](**arguments)
-        )
+        evaluated = compiled_cores["main"](**arguments)
+        if self.own_bound_specs or self.inherited_bound_specs:
+            if type(evaluated) is not BoundedResult:
+                raise TypeError(
+                    "A scalar query consumer is missing mandatory integrity records."
+                )
+            own_count = len(self.own_bound_specs)
+            if len(evaluated.bound_status) != own_count + len(
+                self.inherited_bound_specs
+            ):
+                raise TypeError(
+                    "Scalar query records differ from model-owned declaration slots."
+                )
+            validate_runtime_bound_status(
+                statuses=evaluated.bound_status[own_count:],
+                bound_specs=self.inherited_bound_specs,
+                regime_name=self.continuation_target,
+                period=period + 1,
+            )
+            V_arr, carry, counts, coverage = evaluated.output
+            if bool(coverage):
+                validate_runtime_bound_status(
+                    statuses=evaluated.bound_status[:own_count],
+                    bound_specs=self.own_bound_specs,
+                    regime_name=self.regime_name,
+                    period=period,
+                )
+                raise InvalidValueFunctionError(
+                    f"query_coverage_missing in regime '{self.continuation_target}', "
+                    f"period {period + 1}."
+                )
+            return FeasibilityKernelOutput(
+                value=V_arr,
+                continuations={EGM_CONTINUATION: carry},
+                feasibility_counts=counts,
+                bound_status=evaluated.bound_status[:own_count],
+            )
+        V_arr, carry = cast("tuple[FloatND, EGMCarry]", evaluated)
         return KernelOutput(
             value=V_arr,
             continuations={EGM_CONTINUATION: carry},
@@ -1130,12 +1414,38 @@ def _one_sided_boundary_savings_targets(
     return jnp.where(valid, candidates, jnp.nan).reshape(-1)
 
 
+# keyword-only-exempt: library-callback=jax.tree.map_with_path
+def _scalar_egm_output_role(
+    path: tuple[jax.tree_util.GetAttrKey | jax.tree_util.SequenceKey, ...],
+    leaf: FloatND | BoolND | IntND,
+) -> OutputRoleLeaf:
+    """Reconstruct feature output roles through the registered numeric pytree."""
+    if path[0] == jax.tree_util.GetAttrKey("output") and path[
+        1
+    ] == jax.tree_util.SequenceKey(0):
+        return VALUE
+    if (
+        path[0] == jax.tree_util.GetAttrKey("output")
+        and path[1] == jax.tree_util.SequenceKey(1)
+        and path[2]
+        in (
+            jax.tree_util.GetAttrKey("endog_grid"),
+            jax.tree_util.GetAttrKey("value"),
+            jax.tree_util.GetAttrKey("marginal_utility"),
+        )
+    ):
+        return StateAxesLeading(state_names=())
+    return StateAxesLeading(state_names=(), shape=leaf.shape, dtype=leaf.dtype)
+
+
 def _build_egm_core(
     *,
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
     consumption_action: ActionName,
+    current_query: ScalarEGMQuery | None = None,
+    next_query: ScalarEGMQuery | None = None,
 ) -> _EGMCore:
     """Build the jit-able 1-D EGM core for the savings grid.
 
@@ -1175,6 +1485,8 @@ def _build_egm_core(
         egm_one_asset_step=egm_one_asset_step,
         build_preferences=build_preferences,
         read_discount_factor=read_discount_factor,
+        current_query=current_query,
+        next_query=next_query,
     )
 
 
@@ -1188,6 +1500,10 @@ class _EGMCore:
     """Build the felicity trio from the regime's scalar params."""
     read_discount_factor: Callable[[EconFunctionKwargs], ScalarFloat]
     """Read the discount factor off the regime's scalar params."""
+    current_query: ScalarEGMQuery | None = None
+    """Source feature activation, sharing the installed canonical bound."""
+    next_query: ScalarEGMQuery | None = None
+    """Trusted scalar target adapter bound before leaf-read declarations."""
 
     def __call__(
         self,
@@ -1201,9 +1517,38 @@ class _EGMCore:
         boundary_savings_targets: Float1D,  # noqa: ARG002
         boundary_next_liquid: Float1D,  # noqa: ARG002
         effective_savings_grid: Float1D,
+        next_query_data: EGMQueryData | None = None,
+        source_bound_status: BoundInputStatus | None = None,
+        next_query_pool: EconFunctionKwargs | None = None,
         **params: ValueND,
-    ) -> tuple[Float1D, EGMCarry]:
+    ) -> OneRowOutput:
         """Run one EGM step and return the value array and the marginal-value carry."""
+        continuation_args = {}
+        statuses = () if source_bound_status is None else (source_bound_status,)
+        coverage = jnp.asarray(a=False)
+        if self.next_query is not None:
+            if next_query_data is None or next_query_pool is None:
+                raise TypeError(
+                    "A model-bound scalar query lacks its declared numeric inputs."
+                )
+            result = self.next_query(
+                query=next_liquid,
+                grid=next_liquid_grid,
+                value=next_value,
+                marginal=next_marginal,
+                data=next_query_data,
+                pool=next_query_pool,
+            )
+            continuation_args = {
+                "continuation_value": result.value,
+                "continuation_marginal": result.marginal,
+            }
+            statuses = (*statuses, result.bound_status)
+            coverage = jnp.any(result.coverage_missing)
+        elif next_query_data is not None:
+            raise UnsupportedOperationError(
+                "Feature rows require the model-bound query adapter."
+            )
         step = self.egm_one_asset_step(
             next_value=next_value,
             next_marginal=next_marginal,
@@ -1214,13 +1559,69 @@ class _EGMCore:
             preferences=self.build_preferences(params),
             next_liquid=next_liquid,
             marginal_return=marginal_return,
+            **continuation_args,
+            feature_floor=self.current_query is not None or self.next_query is not None,
         )
+        query_data = None
+        if self.current_query is not None:
+            if step.savings is None or step.corner_continuation is None:
+                raise TypeError("A scalar floor producer lacks candidate provenance.")
+            legal = liquid > effective_savings_grid[0]
+            finite = (
+                legal
+                & jnp.isfinite(step.value)
+                & jnp.isfinite(step.marginal)
+                & jnp.isfinite(step.savings)
+            )
+            economic = legal & jnp.isneginf(step.value) & jnp.isfinite(step.savings)
+            kinds = jnp.where(
+                finite,
+                QueryNodeKind.FINITE,
+                jnp.where(
+                    economic, QueryNodeKind.ECONOMIC_MINUS_INF, QueryNodeKind.PAD
+                ),
+            ).astype(jnp.int32)
+            query_data = EGMQueryData(
+                savings=step.savings,
+                node_kind=kinds,
+                link_valid=(kinds[:-1] != QueryNodeKind.PAD)
+                & (kinds[1:] != QueryNodeKind.PAD),
+                owner_id=jnp.zeros(liquid.shape, dtype=jnp.int32),
+                side_id=jnp.zeros(liquid.shape, dtype=jnp.int32),
+                floor_used=effective_savings_grid[0],
+                corner_continuation=jnp.reshape(step.corner_continuation, (1,)),
+                corner_kind=jnp.reshape(
+                    jnp.where(
+                        jnp.isfinite(step.corner_continuation),
+                        QueryNodeKind.FINITE,
+                        jnp.where(
+                            jnp.isneginf(step.corner_continuation),
+                            QueryNodeKind.ECONOMIC_MINUS_INF,
+                            QueryNodeKind.PAD,
+                        ),
+                    ).astype(jnp.int32),
+                    (1,),
+                ),
+                corner_interval_id=jnp.zeros((1,), dtype=jnp.int32),
+                corner_side_id=jnp.zeros((1,), dtype=jnp.int32),
+            )
         carry = EGMCarry(
             endog_grid=liquid,
             value=step.value,
             marginal_utility=step.marginal,
             taste_shock_scale=jnp.asarray(0.0, dtype=step.value.dtype),
+            query_data=query_data,
         )
+        if self.current_query is not None or self.next_query is not None:
+            counts = count_current_feasibility(
+                budget_feasible=(liquid > effective_savings_grid[0])[:, None],
+                predicate_feasible=jnp.ones((liquid.size, 1, 0), dtype=jnp.bool_),
+                value=step.value,
+                active_states=jnp.ones(liquid.shape, dtype=jnp.bool_),
+            )
+            return BoundedResult(
+                output=(step.value, carry, counts, coverage), bound_status=statuses
+            )
         return step.value, carry
 
 
@@ -1245,17 +1646,33 @@ class _RegimeMassGuardedCore:
     """The one-row core whose output the guard poisons."""
 
     def __call__(
-        self, *, retains_regime_mass: BoolND, **kwargs: EconFunctionArg
-    ) -> tuple[FloatND, EGMCarry]:
+        self, *, retains_regime_mass: BoolND, **kwargs: PytreeValue
+    ) -> OneRowOutput:
         """Run the core and poison its value and carry channels on lost mass."""
-        value, carry = self.core(**kwargs)
+        evaluated = self.core(**kwargs)
+        if type(evaluated) is BoundedResult:
+            bounded = cast(
+                "BoundedOneRowOutput",
+                evaluated,
+            )
+            value, carry = bounded.output[:2]
+        else:
+            value, carry = cast("tuple[FloatND, EGMCarry]", evaluated)
         leaves = carry.leaves()
-        return jnp.where(retains_regime_mass, value, jnp.nan), replace(
-            carry,
-            value=jnp.where(retains_regime_mass, leaves[("value",)], jnp.nan),
-            marginal_utility=jnp.where(
-                retains_regime_mass, leaves[("marginal_utility",)], jnp.nan
+        guarded = (
+            jnp.where(retains_regime_mass, value, jnp.nan),
+            replace(
+                carry,
+                value=jnp.where(retains_regime_mass, leaves[("value",)], jnp.nan),
+                marginal_utility=jnp.where(
+                    retains_regime_mass, leaves[("marginal_utility",)], jnp.nan
+                ),
             ),
+        )
+        return (
+            replace(bounded, output=(*guarded, *bounded.output[2:]))
+            if type(evaluated) is BoundedResult
+            else guarded
         )
 
 

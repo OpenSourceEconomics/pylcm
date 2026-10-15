@@ -20,7 +20,7 @@ import functools
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
@@ -31,7 +31,15 @@ from _lcm.egm.interp import (
     interp_on_prepared_grid,
     prepare_padded_grid,
 )
+from _lcm.egm.query_data import (
+    EGMQueryData,
+    NumericQueryLeaf,
+)
+from _lcm.egm.query_data import (
+    build_template_egm_query_data as build_template_egm_query_data,  # noqa: PLC0414
+)
 from _lcm.grids import Grid
+from lcm.exceptions import UnsupportedOperationError
 from lcm.solver_api import (
     EGM_CONTINUATION,
     EGM_ENDOGENOUS_COORDINATE,
@@ -69,8 +77,7 @@ class EGMCarry:
     row per combo: leading axes are the regime's discrete states (in V state
     order; process states are node-valued discrete dimensions), then its
     passive continuous states (in V continuous-state order, one node per
-    combo), then its discrete actions. Every array is pinned to the canonical
-    float dtype.
+    combo), then its discrete actions. Floating arrays use the canonical float dtype.
     """
 
     endog_grid: FloatND
@@ -126,14 +133,21 @@ class EGMCarry:
     or jump-schedule rows), whose downstream never reaches that replay.
     """
 
+    query_data: EGMQueryData | None = None
+    """Conditional candidate/support data interpreted only by model authority."""
+
     @property
     def capabilities(self) -> ContinuationCapabilities:
-        """Return what these rows can answer.
+        """Return capabilities of the standalone carry reader.
 
-        The rows carry a value everywhere and its exact slope in the endogenous
+        The rows publish value and their declared marginal in the endogenous
         coordinate. They name no owning candidate, and they locate their own
-        boundaries only when a `breakpoints` row is published.
+        boundaries only when a `breakpoints` row is published. Query payloads
+        require a model-bound adapter, which supplies its own reader capabilities;
+        their numeric metadata does not make this standalone reader queryable.
         """
+        if self.query_data is not None:
+            return ContinuationCapabilities()
         return ContinuationCapabilities(
             value=True,
             marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE}),
@@ -143,6 +157,10 @@ class EGMCarry:
 
     def value_at(self, *, query: FloatND) -> FloatND:
         """Return the value of these rows at `query`, one query per row."""
+        if self.query_data is not None:
+            raise UnsupportedOperationError(
+                "Feature rows require the model-bound query adapter."
+            )
         rows = self._row_arguments(query=query)
         return jax.vmap(read_value_row)(
             search_grid=rows.search_grid,
@@ -155,6 +173,10 @@ class EGMCarry:
 
     def marginal_at(self, *, query: FloatND, state: StateName) -> FloatND:
         """Return the marginal in `state` at `query`, one query per row."""
+        if self.query_data is not None:
+            raise UnsupportedOperationError(
+                "Feature rows require the model-bound query adapter."
+            )
         capabilities = self.capabilities
         if state not in capabilities.marginal_states:
             msg = (
@@ -171,15 +193,25 @@ class EGMCarry:
             x_query=rows.x_query,
         ).reshape(self.endog_grid.shape[:-1])
 
-    def leaves(self) -> MappingProxyType[tuple[str, ...], FloatND]:
+    def query_data_for_transport(self) -> EGMQueryData | None:
+        """Return the optional whole query record without copying its buffers."""
+        return self.query_data
+
+    def leaves(self) -> MappingProxyType[tuple[str, ...], NumericQueryLeaf]:
         """Return every published array of this carry by its field path."""
-        return MappingProxyType(
-            {
-                (name,): getattr(self, name)
-                for name in _EGM_CARRY_FIELDS
-                if getattr(self, name) is not None
-            }
-        )
+        leaves: dict[tuple[str, ...], NumericQueryLeaf] = {
+            (name,): getattr(self, name)
+            for name in _EGM_CARRY_FIELDS
+            if name != "query_data" and getattr(self, name) is not None
+        }
+        if self.query_data is not None:
+            leaves.update(
+                {
+                    ("query_data", *path): leaf
+                    for path, leaf in self.query_data.leaves().items()
+                }
+            )
+        return MappingProxyType(leaves)
 
     def _flat_rows(self, *, array: FloatND) -> Float2D:
         """Collapse every leading axis of one payload row set."""
@@ -209,16 +241,21 @@ _EGM_CARRY_FIELDS = (
     "taste_shock_scale",
     "breakpoints",
     "policy",
+    "query_data",
 )
 
 
-def _flatten_egm_carry(carry: EGMCarry) -> tuple[tuple[PytreeChild, ...], None]:
+def _flatten_egm_carry(
+    carry: EGMCarry,
+) -> tuple[tuple[PytreeChild | EGMQueryData, ...], None]:
     return tuple(getattr(carry, name) for name in _EGM_CARRY_FIELDS), None
 
 
 def _flatten_egm_carry_with_keys(
     carry: EGMCarry,
-) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
+) -> tuple[
+    tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild | EGMQueryData], ...], None
+]:
     """Flatten with field-named keys so a leaf path reads `.endog_grid`."""
     return (
         tuple(
@@ -230,18 +267,46 @@ def _flatten_egm_carry_with_keys(
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
-def _unflatten_egm_carry(_aux: None, children: Iterable[PytreeChild]) -> EGMCarry:
+def _unflatten_egm_carry(
+    _aux: None, children: Iterable[PytreeChild | EGMQueryData]
+) -> EGMCarry:
     return _assemble_egm_carry(children=children)
 
 
 def _assemble_egm_carry(
-    *, children: Iterable[PytreeChild | OutputRoleLeaf]
+    *, children: Iterable[PytreeChild | OutputRoleLeaf | EGMQueryData]
 ) -> EGMCarry:
     """Set the carry's fields in flatten order, bypassing its checked constructor."""
     carry = object.__new__(EGMCarry)
     for name, child in zip(_EGM_CARRY_FIELDS, children, strict=True):
         object.__setattr__(carry, name, child)
     return carry
+
+
+def stack_egm_carries(*, candidates: tuple[EGMCarry, ...]) -> EGMCarry:
+    """Insert one outer axis while keeping fixed-cell floors and mesh data shared."""
+    if not candidates:
+        raise ValueError("At least one outer candidate is required.")
+    structure = jax.tree.structure(candidates[0])
+    if any(jax.tree.structure(candidate) != structure for candidate in candidates[1:]):
+        raise TypeError("Outer candidates require identical carry/query structure.")
+    return cast(
+        "EGMCarry",
+        jax.tree.map_with_path(_stack_carry_leaf, *candidates),
+    )
+
+
+def _stack_carry_leaf(
+    path: tuple[jax.tree_util.GetAttrKey, ...], *leaves: NumericQueryLeaf
+) -> NumericQueryLeaf:
+    """Stack candidate-dependent axes without duplicating shared query banks."""
+    names = tuple(key.name for key in path)
+    if names in (("taste_shock_scale",), ("query_data", "floor_used")):
+        return leaves[0]
+    if "adaptive_outer_data" in names:
+        return leaves[0]
+    axis = -3 if "liquid_corner_data" in names else -2
+    return jnp.stack(leaves, axis=axis)
 
 
 jax.tree_util.register_pytree_with_keys(
@@ -342,6 +407,7 @@ def egm_carry_role_tree(
     scalar: OutputRoleLeaf,
     breakpoints: OutputRoleLeaf | None,
     policy: OutputRoleLeaf | None,
+    query_data: EGMQueryData | None = None,
 ) -> EGMCarry:
     """Build an `EGMCarry`-shaped tree of output roles.
 
@@ -351,13 +417,52 @@ def egm_carry_role_tree(
     are role declarations rather than arrays, so the tree is assembled through
     the field-by-field assembly rather than the runtime-checked constructor.
     """
-    return _assemble_egm_carry(children=(row, row, row, scalar, breakpoints, policy))
+    return _assemble_egm_carry(
+        children=(row, row, row, scalar, breakpoints, policy, query_data)
+    )
+
+
+def egm_query_role_tree(
+    *, query_data: EGMQueryData, state_names: tuple[StateName, ...]
+) -> EGMQueryData:
+    """Declare each numeric query buffer's exact dtype, shape and state axes."""
+    return cast(
+        "EGMQueryData",
+        jax.tree.map_with_path(
+            functools.partial(_query_output_role, state_names=state_names),
+            query_data,
+        ),
+    )
+
+
+# keyword-only-exempt: library-callback=jax.tree.map_with_path
+def _query_output_role(
+    path: tuple[jax.tree_util.GetAttrKey, ...],
+    leaf: NumericQueryLeaf,
+    *,
+    state_names: tuple[StateName, ...],
+) -> OutputRoleLeaf:
+    """Replicate shared mesh metadata and place conditional banks by fixed states."""
+    from _lcm.execution.output_layout import StateAxesLeading  # noqa: PLC0415
+
+    names = tuple(key.name for key in path)
+    shared_mesh = names[0] == "adaptive_outer_data" and names[-1] in (
+        "outer_nodes",
+        "outer_count",
+        "outer_node_kind",
+    )
+    return StateAxesLeading(
+        state_names=() if shared_mesh else state_names,
+        dtype=leaf.dtype,
+        shape=leaf.shape,
+    )
 
 
 def build_template_egm_carry(
     *,
     n_rows: int,
     leading_shape: tuple[int, ...] = (),
+    query_data: EGMQueryData | None = None,
 ) -> EGMCarry:
     """Build a benign all-finite carry template with `n_rows` grid slots.
 
@@ -385,6 +490,7 @@ def build_template_egm_carry(
         value=jnp.zeros(shape, dtype=dtype),
         marginal_utility=jnp.zeros(shape, dtype=dtype),
         taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
+        query_data=query_data,
     )
 
 
@@ -445,7 +551,7 @@ def shard_carry_template(
         ),
     )
     scalar_spec = jax.NamedSharding(plan.mesh, jax.P())
-    return jax.tree.map(
+    return jax.tree.map_with_path(
         functools.partial(
             _place_carry_leaf, scalar_spec=scalar_spec, leading_spec=leading_spec
         ),
@@ -473,12 +579,21 @@ def _place_carry_template_on_one_device(
     return jax.device_put(template, jax.sharding.SingleDeviceSharding(devices[0]))
 
 
-# keyword-only-exempt: library-callback=jax.tree.map
+# keyword-only-exempt: library-callback=jax.tree.map_with_path
 def _place_carry_leaf(
-    leaf: FloatND,
+    path: tuple[jax.tree_util.GetAttrKey, ...],
+    leaf: NumericQueryLeaf,
     *,
     scalar_spec: jax.NamedSharding,
     leading_spec: jax.NamedSharding,
-) -> FloatND:
-    """Place one carry leaf: a scalar replicates, a row takes the leading sharding."""
-    return jax.device_put(leaf, scalar_spec if leaf.ndim == 0 else leading_spec)
+) -> NumericQueryLeaf:
+    """Replicate scalar/shared mesh data and partition fixed-state banks."""
+    names = tuple(key.name for key in path)
+    shared_mesh = "adaptive_outer_data" in names and names[-1] in (
+        "outer_nodes",
+        "outer_count",
+        "outer_node_kind",
+    )
+    return jax.device_put(
+        leaf, scalar_spec if leaf.ndim == 0 or shared_mesh else leading_spec
+    )

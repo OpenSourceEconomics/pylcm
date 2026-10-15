@@ -15,6 +15,7 @@ reads its partition from the axis index and exchanges accumulators with
 """
 
 import itertools
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -137,14 +138,17 @@ def _partitioned_lanes(
     )
 
     def participant(_lane: jax.Array) -> HardMaxResult:
-        return jax.vmap(
-            lambda cell: reduce_cell(
-                choice=jnp.arange(n_actions, dtype=jnp.int32),
-                cell=cell,
-                values=jnp.asarray(values),
-                feasible=jnp.asarray(feasible),
-            )
-        )(jnp.arange(n_cells))
+        return cast(
+            "HardMaxResult",
+            jax.vmap(
+                lambda cell: reduce_cell(
+                    choice=jnp.arange(n_actions, dtype=jnp.int32),
+                    cell=cell,
+                    values=jnp.asarray(values),
+                    feasible=jnp.asarray(feasible),
+                )
+            )(jnp.arange(n_cells)),
+        )
 
     return jax.jit(jax.vmap(participant, axis_name=_AXIS))(jnp.arange(n_partitions))
 
@@ -437,18 +441,21 @@ def _local_accumulators(
         n_partitions=n_partitions,
         axis_name=_AXIS,
     )
-    return [
-        jax.vmap(
-            lambda cell, partition=partition: reduce_cell.local(
-                partition=jnp.int32(partition),
-                choice=jnp.arange(n_actions, dtype=jnp.int32),
-                cell=cell,
-                values=jnp.asarray(values),
-                feasible=jnp.asarray(feasible),
-            )
-        )(jnp.arange(n_cells))
-        for partition in range(n_partitions)
-    ]
+    return cast(
+        "list[HardMaxAccumulator]",
+        [
+            jax.vmap(
+                lambda cell, partition=partition: reduce_cell.local(
+                    partition=jnp.int32(partition),
+                    choice=jnp.arange(n_actions, dtype=jnp.int32),
+                    cell=cell,
+                    values=jnp.asarray(values),
+                    feasible=jnp.asarray(feasible),
+                )
+            )(jnp.arange(n_cells))
+            for partition in range(n_partitions)
+        ],
+    )
 
 
 def test_merging_partition_accumulators_in_any_order_publishes_the_same_bits():

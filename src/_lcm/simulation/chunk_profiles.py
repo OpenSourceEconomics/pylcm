@@ -390,11 +390,15 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 )
             else:
                 decision = cores["decision"]
-                indices, value = cast(
-                    "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
+                decision_outputs = cast(
+                    "tuple[jax.ShapeDtypeStruct, ...]",
                     _record_core(
                         inventory=inventory, profile=decision, family="decision"
                     ),
+                )
+                indices, value = cast(
+                    "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
+                    decision_outputs[:2],
                 )
                 if not base_spaces[name].states and indices.ndim == 0:
                     indices, value = cast(

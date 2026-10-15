@@ -150,6 +150,11 @@ from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution.backward_induction import _states_for_period
 from _lcm.solution.continuation_reads import rekeyed_value_reads
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    consume_runtime_bound_outputs,
+    validate_runtime_bound_status,
+)
 from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
@@ -1857,26 +1862,31 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             )
             taste_shock_kwargs = {"taste_shock_key": gumbel_keys}
 
-        indices_optimal_actions, V_arr = cast(
-            "tuple[IntND, FloatND]",
-            execute_simulation_program(
-                programs=regime.simulation.programs,
-                family="decision",
-                period=period,
-                n_subjects=n_chunk_subjects,
-                arguments=decision_arguments(
-                    states=state_action_space.states,
-                    discrete_actions=state_action_space.discrete_actions,
-                    continuous_actions=state_action_space.continuous_actions,
-                    taste_keys=taste_shock_kwargs,
-                    next_values=next_regime_to_V_arr,
-                    references=referenced_value_kwargs,
-                    params=regime_kernel_params(flat_params, regime_name=regime_name),
-                    period=jnp.int32(period) if memory is None else np.int32(period),
-                    age=age,
-                ),
+        decision_outputs = execute_simulation_program(
+            programs=regime.simulation.programs,
+            family="decision",
+            period=period,
+            n_subjects=n_chunk_subjects,
+            arguments=decision_arguments(
+                states=state_action_space.states,
+                discrete_actions=state_action_space.discrete_actions,
+                continuous_actions=state_action_space.continuous_actions,
+                taste_keys=taste_shock_kwargs,
+                next_values=next_regime_to_V_arr,
+                references=referenced_value_kwargs,
+                params=regime_kernel_params(flat_params, regime_name=regime_name),
+                period=jnp.int32(period) if memory is None else np.int32(period),
+                age=age,
             ),
         )
+        indices_optimal_actions, V_arr = consume_runtime_bound_outputs(
+            outputs=cast("tuple[QAndFArg, ...]", decision_outputs),
+            bound_specs=regime.simulation.post_decision_bounds,
+            regime_name=regime_name,
+            period=period,
+        )
+        indices_optimal_actions = cast("IntND", indices_optimal_actions)
+        V_arr = cast("FloatND", V_arr)
         # A scalar stateless decision lacks the leading subject axis that
         # every downstream simulation operation expects.
         if not state_action_space.states and indices_optimal_actions.ndim == 0:
@@ -4143,7 +4153,7 @@ def _canonical_Q_at_actions(
         Tuple of the per-subject canonical value and feasibility.
 
     """
-    values, feasible = regime.simulation.Q_and_F[period](
+    evaluated = regime.simulation.Q_and_F[period](
         **canonical_states,
         **{name: jnp.asarray(candidate_actions[name]) for name in action_names},
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -4152,6 +4162,24 @@ def _canonical_Q_at_actions(
         period=jnp.int32(period),
         age=age,
     )
+    if type(evaluated) is BoundedResult:
+        validate_runtime_bound_status(
+            statuses=evaluated.bound_status,
+            bound_specs=tuple(
+                bound
+                for bound in regime.simulation.post_decision_bounds
+                if bound.kind == "dag"
+            ),
+            regime_name=regime.name,
+            period=period,
+        )
+        values, feasible = cast("tuple[FloatND, BoolND]", evaluated.output)
+    else:
+        if any(bound.kind == "dag" for bound in regime.simulation.post_decision_bounds):
+            raise TypeError(
+                "Canonical actual-action evaluation must produce mandatory integrity."
+            )
+        values, feasible = cast("tuple[FloatND, BoolND]", evaluated)
     return jnp.asarray(values), jnp.asarray(feasible).astype(bool)
 
 

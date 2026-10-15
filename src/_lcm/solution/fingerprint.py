@@ -43,6 +43,7 @@ import _lcm.zero_safe as zero_safe_declarations
 import lcm.exceptions as lcm_exceptions
 import lcm.koopmans_aggregation as koopmans_declarations
 from _lcm.certainty_equivalent import CertaintyEquivalent
+from _lcm.continuation import EGMQuerySpec
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
@@ -795,6 +796,15 @@ def fingerprint_model_structure(
                     key: authority.descriptor
                     for key, authority in regime.solution.artifact_authorities.items()
                 },
+                **(
+                    {
+                        "query_authority": _query_semantic_descriptor(
+                            regime.solution.query_authority
+                        ),
+                    }
+                    if regime.solution.query_authority is not None
+                    else {}
+                ),
                 "period_state_axes": regime.solution.period_state_axes,
                 # ``Phased`` is projected to its solve member by the semantic
                 # hasher. The declaration retains user-level function bodies,
@@ -811,6 +821,23 @@ def fingerprint_model_structure(
     hasher = _SemanticHasher(binding_recorder=binding_recorder)
     hasher.visit(value=record)
     return hasher.hexdigest()
+
+
+def _query_semantic_descriptor(spec: EGMQuerySpec) -> EGMQuerySpec:
+    """Seal static query meaning; declaration and parameter walks seal code/data."""
+    adaptive = spec.adaptive_outer
+    return dataclasses.replace(
+        spec,
+        bound=dataclasses.replace(spec.bound, dependency_identity=()),
+        evaluator_identity=(),
+        adaptive_outer=None
+        if adaptive is None
+        else dataclasses.replace(
+            adaptive,
+            evaluator_identity=(),
+            mesh_authority_identity=(),
+        ),
+    )
 
 
 def _grid_support(

@@ -20,12 +20,13 @@ import jax
 from jax import Array
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.continuation import ContinuationPayload, ContinuationSpec
+from _lcm.continuation import ContinuationPayload, ContinuationSpec, EGMQuerySpec
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.execution.execution_plan import visible_devices
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
@@ -40,6 +41,7 @@ from _lcm.typing import (
     FlatRegimeParams,
     FunctionName,
     NextStateSimulationFunction,
+    PytreeValue,
     QAndFFunction,
     RegimeName,
     RegimeParamsTemplate,
@@ -55,6 +57,7 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
 from lcm.solver_api import (
     ArtifactAuthority,
     ArtifactKey,
+    ContinuationCapabilities,
     ExecutableReplayRoute,
     ReplayMode,
     ReplayRoute,
@@ -390,6 +393,25 @@ class SolutionPhase:
 
     constraints: ConstraintFunctionsMapping
     """Immutable mapping of constraint names to feasibility predicates."""
+
+    post_decision_bounds: tuple[PostDecisionBoundSpec, ...] = dataclasses.field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Canonical bound identities, independent of numerical continuation payloads."""
+
+    query_authority: EGMQuerySpec | None = dataclasses.field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Expected query meaning constructed from canonical model and route declarations.
+
+    Absent when the model installs no query route. A producer's transported
+    layout does not supply this independently owned descriptor.
+    """
+
+    continuation_reader_capabilities: (
+        Mapping[int, Mapping[RegimeName, ContinuationCapabilities]] | None
+    ) = dataclasses.field(default=None, metadata={"fingerprint_omit_if_default": True})
+    """Per-period capabilities of installed target-specific model-bound readers."""
 
     has_compiled_constraint_boundaries: bool = False
     """Whether the solve route compiles any constraint boundary into its kernel."""
@@ -1051,6 +1073,11 @@ class SimulationPhase:
     constraints: ConstraintFunctionsMapping
     """Immutable mapping of constraint names to feasibility predicates."""
 
+    post_decision_bounds: tuple[PostDecisionBoundSpec, ...] = dataclasses.field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Canonical declarations shared with solve, resolved by the active phase pool."""
+
     feasibility_pools_by_period: FeasibilityPoolsByPeriod
     """Function and constraint pools resolved at each of the phase's periods.
 
@@ -1097,7 +1124,7 @@ class SimulationPhase:
     call's arguments cannot disagree.
     """
 
-    Q_and_F: MappingProxyType[int, QAndFFunction]
+    Q_and_F: MappingProxyType[int, QAndFFunction[PytreeValue]]
     """Immutable mapping of period to pointwise state-action value functions.
 
     Evaluates the canonical `Q` and its feasibility at one action value per

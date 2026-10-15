@@ -11,6 +11,7 @@ model build.
 import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import cached_property
 from types import MappingProxyType
 from typing import ClassVar, Literal, TypedDict, Unpack, cast
 
@@ -20,6 +21,7 @@ import lcm.solvers as _solvers
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.processed import ConstraintLike
 from _lcm.grids import DiscreteGrid, Grid
+from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes.joint_normal import JointNormalIIDProcess
 from _lcm.processes.joint_normal_lowering import lower_joint_normal_processes
 from _lcm.regime_building.transitions import collect_state_transitions
@@ -482,7 +484,7 @@ class Regime:
         self._lower_collective_utility()
         self._lower_value_dependent_constraints()
 
-    @property
+    @cached_property
     def decomposed_functions(
         self,
     ) -> Mapping[FunctionName, UserFunction | Phased | None]:
@@ -499,7 +501,84 @@ class Regime:
         Deterministic and idempotent: a regime that declares no household is
         returned unchanged, and reading the view never changes the regime.
         """
-        return decompose_functions(self.functions)
+        from _lcm.constraints.dynamic_bound import get_floor_node  # noqa: PLC0415
+        from _lcm.constraints.ir import Ref  # noqa: PLC0415
+        from _lcm.constraints.processed import normalize_constraints  # noqa: PLC0415
+
+        functions = dict(decompose_functions(self.functions))
+        for name, constraint in self.constraints.items():
+            if isinstance(constraint, _PostDecisionLowerBound) and callable(
+                constraint.lower_bound
+            ):
+                target = f"{name}_lower"
+                occupied = (
+                    set(functions)
+                    | set(self.constraints)
+                    | set(self.states)
+                    | set(self.actions)
+                    | set(self.derived_categoricals)
+                )
+                occupied |= {
+                    f"{prefix}_{state}"
+                    for state in set(self.states) | set(self.state_transitions)
+                    for prefix in ("next", "support_next", "weight_next", "key_next")
+                }
+                if target in occupied:
+                    raise RegimeInitializationError(
+                        f"Borrowing bound '{name}' generates '{target}', which "
+                        f"collides with a declared node."
+                    )
+                functions[target] = get_floor_node(
+                    function=cast("UserFunction", constraint.lower_bound),
+                    constraint_name=name,
+                )
+        margin = getattr(self, "liquid", None)
+        if margin is not None:
+            normalized = normalize_constraints(
+                constraints=cast(
+                    "Mapping[FunctionName, ConstraintLike]", self.decomposed_constraints
+                )
+            )
+            for name, constraint in normalized.items():
+                surfaces = constraint.boundary_surfaces
+                if (
+                    surfaces is None
+                    or len(surfaces) != 1
+                    or isinstance(constraint.declaration, _PostDecisionLowerBound)
+                ):
+                    continue
+                surface = surfaces[0]
+                if (
+                    surface.op != ">="
+                    or not isinstance(surface.left, Ref)
+                    or surface.left.name != margin.post_decision_state
+                    or not isinstance(surface.right, Ref)
+                ):
+                    continue
+                target = surface.right.name
+                producer = functions.get(target)
+                if isinstance(producer, Phased):
+                    functions[target] = Phased(
+                        solve=(
+                            get_floor_node(
+                                function=producer.solve, constraint_name=name
+                            )
+                            if callable(producer.solve)
+                            else producer.solve
+                        ),
+                        simulate=(
+                            get_floor_node(
+                                function=producer.simulate, constraint_name=name
+                            )
+                            if callable(producer.simulate)
+                            else producer.simulate
+                        ),
+                    )
+                elif callable(producer):
+                    functions[target] = get_floor_node(
+                        function=producer, constraint_name=name
+                    )
+        return MappingProxyType(functions)
 
     @property
     def decomposed_constraints(
@@ -703,6 +782,18 @@ class Regime:
                     )
             elif transition is not None:
                 result["next_regime"] = cast("UserFunction", transition)
+        from _lcm.constraints.processed import normalize_constraints  # noqa: PLC0415
+
+        normalized = normalize_constraints(
+            constraints=cast(
+                "Mapping[FunctionName, ConstraintLike]", self.decomposed_constraints
+            )
+        )
+        for name, constraint in normalized.items():
+            if isinstance(constraint.declaration, _PostDecisionLowerBound) and callable(
+                constraint.declaration.lower_bound
+            ):
+                result[name] = constraint.as_function(pool=result)
         return MappingProxyType(result)
 
     def _augment_phase_functions(
@@ -710,6 +801,38 @@ class Regime:
     ) -> dict[FunctionName, UserFunction]:
         """Add internal functions required by a specialized regime declaration."""
         return functions
+
+    def _restore_floor_sources(
+        self,
+        engine_functions: Mapping[FunctionName, UserFunction | Phased | None],
+    ) -> Mapping[FunctionName, UserFunction | Phased | None]:
+        """Keep original declarations behind the engine's scalar checked views."""
+        from _lcm.constraints.dynamic_bound import get_floor_source  # noqa: PLC0415
+
+        restored = dict(engine_functions)
+        for name, producer in engine_functions.items():
+            raw = self.functions.get(name)
+            if (
+                callable(producer)
+                and get_floor_source(function=cast("UserFunction", producer)) is raw
+            ) or (
+                isinstance(producer, Phased)
+                and isinstance(raw, Phased)
+                and all(
+                    current is declared
+                    or (
+                        callable(current)
+                        and get_floor_source(function=cast("UserFunction", current))
+                        is declared
+                    )
+                    for current, declared in (
+                        (producer.solve, raw.solve),
+                        (producer.simulate, raw.simulate),
+                    )
+                )
+            ):
+                restored[name] = raw
+        return MappingProxyType(restored)
 
     def with_engine_functions(
         self,
@@ -742,6 +865,30 @@ class Regime:
                 or does not reproduce what the resulting regime decomposes to.
         """
         declaration = self.functions.get("utility")
+        engine_functions = self._restore_floor_sources(engine_functions)
+        expected_function_names = frozenset(engine_functions)
+        generated = {
+            f"{name}_lower"
+            for name, constraint in self.constraints.items()
+            if isinstance(constraint, _PostDecisionLowerBound)
+            and callable(constraint.lower_bound)
+        }
+        for target in generated:
+            if (
+                target in engine_functions
+                and engine_functions[target] is not self.decomposed_functions[target]
+            ):
+                raise RegimeInitializationError(
+                    f"Borrowing bound '{target.removesuffix('_lower')}' owns "
+                    f"'{target}'; the engine mapping supplies a different producer."
+                )
+        engine_functions = MappingProxyType(
+            {
+                name: func
+                for name, func in engine_functions.items()
+                if name not in generated
+            }
+        )
         if not isinstance(declaration, CollectiveUtility):
             return self.replace(functions=engine_functions, **other_slots)
 
@@ -776,7 +923,9 @@ class Regime:
         written = self.replace(
             functions=MappingProxyType({**raw, **overlay}), **other_slots
         )
-        disagreement = sorted(set(engine_functions) ^ set(written.decomposed_functions))
+        disagreement = sorted(
+            expected_function_names ^ set(written.decomposed_functions)
+        )
         if disagreement:
             raise RegimeInitializationError(
                 f"Writing the engine mapping back would not reproduce it: "
@@ -869,7 +1018,12 @@ def decompose_constraints(
     """
     return MappingProxyType(
         {
-            name: cast("ConstraintLike | Phased | None", constraint)
+            name: (
+                dataclasses.replace(constraint, lower_target=f"{name}_lower")
+                if isinstance(constraint, _PostDecisionLowerBound)
+                and callable(constraint.lower_bound)
+                else cast("ConstraintLike | Phased | None", constraint)
+            )
             for name, constraint in constraints.items()
             if not isinstance(constraint, ValueDependentConstraint)
         }

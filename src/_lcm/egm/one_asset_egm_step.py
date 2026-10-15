@@ -41,6 +41,10 @@ class RetiredEGMResult(NamedTuple):
     """This period's marginal value of liquid `V' = u'(c*)` on `liquid_grid`."""
     consumption: Float1D
     """This period's optimal consumption on `liquid_grid`."""
+    savings: Float1D | None = None
+    """Associated original saving candidates on feature rows."""
+    corner_continuation: ScalarFloat | None = None
+    """Already evaluated continuation at the shifted floor."""
 
 
 def egm_one_asset_step(
@@ -54,6 +58,9 @@ def egm_one_asset_step(
     preferences: Preferences,
     next_liquid: Float1D,
     marginal_return: Float1D,
+    continuation_value: Float1D | None = None,
+    continuation_marginal: Float1D | None = None,
+    feature_floor: bool = False,
 ) -> RetiredEGMResult:
     """Solve one period of the 1-D consumption--saving problem by EGM.
 
@@ -91,11 +98,19 @@ def egm_one_asset_step(
         `liquid_grid`.
 
     """
-    value_next = interp_on_regular_grid(
-        x_query=next_liquid, xp=next_liquid_grid, fp=next_value
+    value_next = (
+        continuation_value
+        if continuation_value is not None
+        else interp_on_regular_grid(
+            x_query=next_liquid, xp=next_liquid_grid, fp=next_value
+        )
     )
-    marginal_next = interp_on_regular_grid(
-        x_query=next_liquid, xp=next_liquid_grid, fp=next_marginal
+    marginal_next = (
+        continuation_marginal
+        if continuation_marginal is not None
+        else interp_on_regular_grid(
+            x_query=next_liquid, xp=next_liquid_grid, fp=next_marginal
+        )
     )
 
     consumption = invert_euler(
@@ -118,8 +133,17 @@ def egm_one_asset_step(
     min_savings = savings_grid[0]
     constrained = liquid_grid < liquid_endog[0]
     constrained_consumption = liquid_grid - min_savings
-    value_at_min_savings = interp_on_regular_grid(
-        x_query=next_liquid[0], xp=next_liquid_grid, fp=next_value
+    domain = liquid_grid > min_savings
+    if feature_floor:
+        constrained_consumption = jnp.where(domain, constrained_consumption, 1.0)
+    value_at_min_savings = (
+        value_next[0]
+        if continuation_value is not None or feature_floor
+        else interp_on_regular_grid(
+            x_query=next_liquid[0],
+            xp=next_liquid_grid,
+            fp=next_value,
+        )
     )
     constrained_value = (
         preferences.utility(constrained_consumption)
@@ -132,6 +156,21 @@ def egm_one_asset_step(
     # Envelope theorem: the marginal value of liquid is the marginal utility of the
     # optimal consumption.
     marginal = preferences.marginal_utility(consumption_on_grid)
+    if feature_floor:
+        saving_on_grid = jnp.where(
+            constrained,
+            min_savings,
+            jnp.interp(liquid_grid, liquid_endog, savings_grid),
+        )
+        value = jnp.where(domain, value, -jnp.inf)
+        marginal = jnp.where(domain & jnp.isfinite(value), marginal, 0.0)
+        return RetiredEGMResult(
+            value=value,
+            marginal=marginal,
+            consumption=consumption_on_grid,
+            savings=saving_on_grid,
+            corner_continuation=value_at_min_savings,
+        )
     return RetiredEGMResult(
         value=value, marginal=marginal, consumption=consumption_on_grid
     )

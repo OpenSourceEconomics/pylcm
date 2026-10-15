@@ -12,7 +12,7 @@ kernel build rather than with the model-construction validators.
 from collections.abc import Mapping
 from types import MappingProxyType
 
-from _lcm.constraints.bounds import lower_bound_declaration
+from _lcm.constraints.bounds import matches_installed_literal_bound
 from _lcm.constraints.processed import ProcessedConstraintsMapping
 from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.regime_introspection import (
@@ -382,10 +382,10 @@ def _find_unsupported_function_args(
         # is the solver's declaration to make, and one that keeps its bounds
         # must still not be asked to evaluate one per discrete combination,
         # where a continuous post-decision state cannot be read.
-        bound = lower_bound_declaration(
-            constraint=processed_constraints[constraint_name]
-        )
-        if bound is not None and bound[0] == solver.post_decision_function:
+        if matches_installed_literal_bound(
+            constraint=processed_constraints[constraint_name],
+            bound_spec=solver.post_decision_bound,
+        ):
             continue
         constraint_func = concatenate_regime_function(
             functions=MappingProxyType({**dict(functions), **dict(constraints)}),

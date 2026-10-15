@@ -89,6 +89,7 @@ from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
+from _lcm.post_decision_bound import PostDecisionBoundSpec, grid_origin_bound_spec
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.continuation_arguments import (
     MARGINAL_ARGUMENT,
@@ -398,6 +399,13 @@ class NBEGM(OneMarginSolver):
             continuous_action=margin.action,
             budget_target=margin.resources,
             post_decision_function=margin.post_decision_state,
+            post_decision_bound=grid_origin_bound_spec(
+                post_decision=margin.post_decision_state,
+                liquid_state=margin.state,
+                action=margin.action,
+                resources_target=margin.resources,
+                grid=self.savings_grid,
+            ),
         )
 
     @property
@@ -459,6 +467,7 @@ class NBEGM(OneMarginSolver):
         return case_piece_routes(
             context=context,
             post_decision_function=proved_post_decision_of(solver=self),
+            bound_spec=bound.post_decision_bound,
             solver_path=("nbegm",),
             boundary_compilers=boundary_compilers,
         )
@@ -1430,6 +1439,8 @@ class _BoundNBEGM(NBEGM):
     continuous_action: ActionName
     budget_target: FunctionName
     post_decision_function: FunctionName
+    post_decision_bound: PostDecisionBoundSpec | None = None
+    """Literal grid floor installed as a construction capability."""
 
 
 def proved_post_decision_of(*, solver: NBEGM) -> FunctionName | None:

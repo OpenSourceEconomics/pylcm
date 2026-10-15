@@ -23,6 +23,7 @@ from _lcm.constraints.routes import (
     ConstraintRouteKey,
     ConstraintSite,
 )
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.solution.contract import ConstraintRouteContext, simulation_route
 from _lcm.typing import EconFunctionsMapping, FunctionName
 
@@ -31,6 +32,7 @@ def case_piece_routes(
     *,
     context: ConstraintRouteContext,
     post_decision_function: FunctionName | None,
+    bound_spec: PostDecisionBoundSpec | None = None,
     solver_path: tuple[str, ...],
     function_pool: EconFunctionsMapping | None = None,
     boundary_compilers: tuple[BoundaryCompiler, ...] = (),
@@ -74,7 +76,9 @@ def case_piece_routes(
         ()
         if post_decision_function is None
         else (
-            proves_the_savings_grids_lower_bound(post_decision=post_decision_function),
+            proves_the_savings_grids_lower_bound(
+                post_decision=post_decision_function, bound_spec=bound_spec
+            ),
         )
     )
     if context.phase == "simulate":

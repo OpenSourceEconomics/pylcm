@@ -1401,13 +1401,59 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "type_local_decision:reducer_reads_ordinary_q_and_f",
         "structural_blueprint:cache_hit_ignores_key",
         "structural_blueprint:schema_drops_dtype",
+        "borrowing_bound:declared_producer_replaced_by_view",
+        "borrowing_bound:forbidden_dependency_bypassed",
+        "borrowing_bound:grid_origin_shifted",
+        "borrowing_bound:liquid_role_overwritten",
+        "borrowing_bound:literal_proof_value_substituted",
+        "borrowing_bound:normalized_rhs_renamed",
+        "borrowing_bound:parameter_owner_discarded",
+        "borrowing_bound:representative_marker_cache_identity_bypassed",
+        "borrowing_bound:scalar_shape_check_removed",
+        "borrowing_bound:temporal_marker_discarded",
+        "s02_query:active_period_pool_omitted",
+        "s02_query:auto_lower_target_omitted",
+        "s02_query:executable_ancestor_omitted",
+        "s02_query:executable_aux_restored",
+        "s02_query:expected_model_descriptor_bypassed",
+        "s02_query:intrinsic_budget_owner_changed",
+        "s02_query:shared_mesh_state_sharded",
+        "s02_query:typed_adapter_refusal_omitted",
+        "s02_status:active_lane_nonfinite_ignored",
+        "s02_status:canonical_dag_declarations_omitted",
+        "s02_status:kernel_status_channel_omitted",
+        "s02_status:mandatory_host_gate_omitted",
+        "s02_status:scan_history_retained",
+        "s02_status:subject_collective_or_omitted",
+        "s02_status:subject_scalar_roles_ignored",
+        "s02_status:bounded_aux_executable",
+        "s02_status:bounded_keyed_leaf_swapped",
+        "s02_status:bounded_reconstruction_status_swapped",
+        "s02_status:fold_weight_call_seam_replaced",
+        "s02_status:fold_weight_helper_changes_row",
+        "s02_status:initial_host_call_seam_replaced",
+        "s02_status:initial_host_helper_omits_status",
+        "s02_status:landing_reducer_status_omitted",
+        "s02_status:landing_total_call_seam_replaced",
+        "s02_status:landing_total_helper_loses_left_bank",
+        "s02_status:off_grid_eager_index_conversion_omitted",
+        "s02_status:off_grid_host_call_seam_replaced",
+        "s02_status:off_grid_host_helper_omits_status",
+        "s02_status:signature_metadata_omitted",
+        "s02_query:builder_query_record_call_seam_replaced",
+        "s02_query:carry_query_record_discarded",
+        "s02_query:outer_candidate_marginal_negated",
+        "s02_query:outer_query_record_call_seam_replaced",
     }
     assert not set(registered) & set(supplemental)
     assert {spec["path"] for spec in (registered | supplemental).values()} == (
         set(direct_flow._CERTIFIED_CORRIDOR_SOURCES)
         - set(direct_flow._UNIFORM_PROCESS_SOURCES)
         - set(direct_flow._ACTION_GRID_SOURCES)
-    )
+    ) | {
+        direct_flow.SUPPORT_AUTHORITY_SOURCE,
+        direct_flow.SUPPORT_TRANSITION_CHECKS_SOURCE,
+    }
 
 
 @pytest.mark.parametrize(

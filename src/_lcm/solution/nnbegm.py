@@ -359,6 +359,7 @@ class NNBEGM(TwoMarginSolver):
             return case_piece_routes(
                 context=context,
                 post_decision_function=proved_post_decision_of(solver=self.inner),
+                bound_spec=getattr(self.inner, "post_decision_bound", None),
                 solver_path=("nnbegm",),
             )
         bound = cast("_BoundNNBEGM", self)
@@ -394,6 +395,7 @@ class NNBEGM(TwoMarginSolver):
             for route in case_piece_routes(
                 context=context,
                 post_decision_function=proved_post_decision_of(solver=bound.inner),
+                bound_spec=bound.inner.post_decision_bound,
                 solver_path=("nnbegm", branch),
                 function_pool=pool,
                 boundary_compilers=boundary_compilers,

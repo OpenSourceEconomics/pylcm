@@ -1,6 +1,7 @@
 import dataclasses
 from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType, SimpleNamespace
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -26,6 +27,7 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
 )
 from _lcm.grids import Grid
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
@@ -78,6 +80,7 @@ class MockSolutionPhase:
     )
     continuation_template: None = None
     continuation_spec: None = None
+    post_decision_bounds: tuple[PostDecisionBoundSpec, ...] = ()
     period_state_axes: (
         MappingProxyType[int, MappingProxyType[StateOrActionName, Float1D]] | None
     ) = None
@@ -304,7 +307,10 @@ def test_backward_induction():
     regime = MockRegime(
         solution=MockSolutionPhase(
             period_kernels=_grid_search_period_kernels(
-                max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
+                max_Q_over_a={
+                    0: cast("MaxQOverAFunction", max_Q_over_a),
+                    1: cast("MaxQOverAFunction", max_Q_over_a),
+                },
                 regime_name="default",
             ),
             _base_state_action_space=state_action_space,
@@ -370,7 +376,10 @@ def test_backward_induction_single_period_Qc_arr():
     regime = MockRegime(
         solution=MockSolutionPhase(
             period_kernels=_grid_search_period_kernels(
-                max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
+                max_Q_over_a={
+                    0: cast("MaxQOverAFunction", max_Q_over_a),
+                    1: cast("MaxQOverAFunction", max_Q_over_a),
+                },
                 regime_name="default",
             ),
             _base_state_action_space=state_action_space,

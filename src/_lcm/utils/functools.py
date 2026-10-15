@@ -17,7 +17,7 @@ from typing import TypeIs, TypeVar, cast
 import jax.numpy as jnp
 from jax import Array
 
-from _lcm.typing import ArrayTree, PytreeValue
+from _lcm.typing import PytreeValue
 from lcm.typing import ReferenceName, UserFunction, UserFunctionResult, ValueND
 
 ReturnType = TypeVar("ReturnType")
@@ -175,7 +175,7 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
 
 
 def publish_signature(
-    *, target: Callable[..., ArrayTree], signature: inspect.Signature
+    *, target: Callable[..., PytreeValue], signature: inspect.Signature
 ) -> None:
     """Set the signature `inspect.signature` reports for `target`.
 

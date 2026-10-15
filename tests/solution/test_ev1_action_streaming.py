@@ -3,6 +3,7 @@
 import itertools
 import math
 from collections.abc import Callable, Mapping
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -15,6 +16,7 @@ from _lcm.solution.action_streaming import (
     _evaluate_ev1_branch_block,
     build_streaming_ev1_max_Q_over_a,
 )
+from _lcm.solution.logsumexp_action_reduction import LogSumExpResult
 from lcm.typing import ActionName
 
 
@@ -166,6 +168,7 @@ def test_ev1_packs_pure_discrete_branches_into_vector_blocks() -> None:
         sector=jnp.asarray(sectors),
         status=jnp.asarray(statuses),
     )
+    result = cast("LogSumExpResult", result)
     assert_allclose(result.smoothed_value, expected, rtol=1e-6, atol=1e-6)
 
 
@@ -209,6 +212,7 @@ def test_ev1_vector_chunks_match_oracle_with_multiple_discrete_axes(
         **{name: jnp.asarray(grid) for name, grid in grids.items()},
         shift=jnp.asarray(0.25),
     )
+    result = cast("LogSumExpResult", result)
 
     assert math.prod(len(grid) for grid in grids.values()) % block_width != 0
     assert_allclose(result.smoothed_value, expected, rtol=1e-5, atol=1e-6)
@@ -223,20 +227,23 @@ def test_ev1_padded_branch_ids_do_not_overflow_int32() -> None:
     int32_max = int(np.iinfo(np.int32).max)
     branches_per_block = 3
     final_branch_group = math.ceil(int32_max / branches_per_block) - 1
-    _values, feasible, global_ids = _evaluate_ev1_branch_block(
-        block_index=jnp.asarray(final_branch_group, dtype=jnp.int32),
-        Q_and_F=Q_and_F,
-        action_names=("branch",),
-        action_grids=(jnp.asarray([0], dtype=jnp.float32),),
-        action_sizes=(1,),
-        fixed_kwargs={},
-        n_discrete_branches=int32_max,
-        continuous_extent=1,
-        branches_per_block=branches_per_block,
-        blocks_per_branch_group=1,
-        continuous_block_width=1,
-        branch_offsets=jnp.arange(branches_per_block, dtype=jnp.int32),
-        continuous_offsets=jnp.arange(1, dtype=jnp.int32),
+    _values, feasible, global_ids = cast(
+        "tuple[jax.Array, jax.Array, jax.Array]",
+        _evaluate_ev1_branch_block(
+            block_index=jnp.asarray(final_branch_group, dtype=jnp.int32),
+            Q_and_F=Q_and_F,
+            action_names=("branch",),
+            action_grids=(jnp.asarray([0], dtype=jnp.float32),),
+            action_sizes=(1,),
+            fixed_kwargs={},
+            n_discrete_branches=int32_max,
+            continuous_extent=1,
+            branches_per_block=branches_per_block,
+            blocks_per_branch_group=1,
+            continuous_block_width=1,
+            branch_offsets=jnp.arange(branches_per_block, dtype=jnp.int32),
+            continuous_offsets=jnp.arange(1, dtype=jnp.int32),
+        ),
     )
 
     assert_array_equal(
@@ -287,6 +294,7 @@ def test_ev1_vector_chunks_keep_all_infeasible_distinct_from_nan() -> None:
         branch=jnp.arange(3, dtype=jnp.float32),
         choice=jnp.arange(5, dtype=jnp.float32),
     )
+    result = cast("LogSumExpResult", result)
 
     assert bool(jnp.isneginf(result.smoothed_value))
     assert not bool(jnp.isnan(result.smoothed_value))
@@ -315,6 +323,7 @@ def test_ev1_vector_chunks_preserve_signed_zero_tie_across_chunks() -> None:
         branch=jnp.asarray([0], dtype=jnp.int32),
         choice=jnp.arange(5, dtype=jnp.int32),
     )
+    result = cast("LogSumExpResult", result)
 
     assert_array_equal(result.smoothed_value, jnp.asarray(0.0))
     assert not bool(jnp.signbit(result.smoothed_value))
@@ -356,6 +365,7 @@ def test_ev1_vector_chunks_apply_feasibility_before_nan_propagation(
         branch=jnp.asarray(branches),
         choice=jnp.asarray(choices),
     )
+    result = cast("LogSumExpResult", result)
 
     if nan_is_feasible == 1:
         assert bool(jnp.isnan(result.smoothed_value))

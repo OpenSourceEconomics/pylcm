@@ -10,6 +10,8 @@ a comparison, not a privileged kind of one.
 
 from dataclasses import dataclass
 
+import jax.numpy as jnp
+
 from _lcm.constraints.dispositions import (
     ConstraintContext,
     Proof,
@@ -18,6 +20,8 @@ from _lcm.constraints.dispositions import (
 from _lcm.constraints.ir import Const, Ref
 from _lcm.constraints.processed import ProcessedConstraint
 from _lcm.constraints.routes import BoundConstraint, StructuralProof
+from _lcm.dtypes import canonical_float_dtype
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.typing import FunctionName
 
 
@@ -48,7 +52,7 @@ def lower_bound_declaration(
 
 
 def proves_the_savings_grids_lower_bound(
-    *, post_decision: FunctionName
+    *, post_decision: FunctionName, bound_spec: PostDecisionBoundSpec | None = None
 ) -> StructuralProof:
     """Build the proof that a savings grid already enforces a declared bound.
 
@@ -73,7 +77,29 @@ def proves_the_savings_grids_lower_bound(
 
     """
 
-    return _SavingsGridLowerBoundProof(post_decision=post_decision)
+    return _SavingsGridLowerBoundProof(
+        post_decision=post_decision, bound_spec=bound_spec
+    )
+
+
+def matches_installed_literal_bound(
+    *,
+    constraint: ProcessedConstraint,
+    bound_spec: PostDecisionBoundSpec | None,
+) -> bool:
+    """Require the declared name and canonical literal to match the installed floor."""
+    declaration = lower_bound_declaration(constraint=constraint)
+    if declaration is None or bound_spec is None or bound_spec.kind != "literal":
+        return False
+    if declaration[0] != bound_spec.post_decision or bound_spec.literal_value is None:
+        return False
+    dtype = canonical_float_dtype()
+    return bool(
+        jnp.array_equal(
+            jnp.asarray(declaration[1], dtype=dtype),
+            jnp.asarray(bound_spec.literal_value, dtype=dtype),
+        )
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -82,6 +108,8 @@ class _SavingsGridLowerBoundProof:
 
     post_decision: FunctionName
     """Name of the post-decision state the savings grid spans."""
+    bound_spec: PostDecisionBoundSpec | None
+    """Exact floor capability installed by the bound grid configuration."""
 
     def __call__(
         self,
@@ -89,8 +117,35 @@ class _SavingsGridLowerBoundProof:
         bound: BoundConstraint,
         context: ConstraintContext,  # noqa: ARG002
     ) -> ProvedByConstruction | None:
+        if self.bound_spec is not None and self.bound_spec.kind == "dag":
+            surfaces = bound.constraint.boundary_surfaces
+            if (
+                surfaces is None
+                or len(surfaces) != 1
+                or surfaces[0].op != ">="
+                or not isinstance(surfaces[0].left, Ref)
+                or not isinstance(surfaces[0].right, Ref)
+                or surfaces[0].left.name != self.bound_spec.post_decision
+                or surfaces[0].right.name != self.bound_spec.lower_target
+                or bound.constraint.name not in self.bound_spec.declaration_names
+            ):
+                return None
+            return ProvedByConstruction(
+                constraint=bound.constraint,
+                proof=Proof(
+                    reason="the installed canonical floor shifts every savings node",
+                    surface=surfaces[0],
+                ),
+            )
         declaration = lower_bound_declaration(constraint=bound.constraint)
-        if declaration is None or declaration[0] != self.post_decision:
+        if (
+            declaration is None
+            or declaration[0] != self.post_decision
+            or not matches_installed_literal_bound(
+                constraint=bound.constraint,
+                bound_spec=self.bound_spec,
+            )
+        ):
             return None
         surfaces = bound.constraint.boundary_surfaces
         return ProvedByConstruction(

@@ -35,6 +35,7 @@ from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.backward_induction import (
     _build_continuation_templates,
     _edge_kwargs,
+    _resolve_value_input_transfer_plan,
 )
 from _lcm.solution.grid_search import (
     _GridSearchArgumentBuilder,
@@ -53,7 +54,7 @@ def _materialize_program(
     model: Model,
     regime_name: RegimeName,
     params: UserParams,
-) -> tuple[_GridSearchArgumentBuilder, MaterializedCoreProgram]:
+) -> tuple[_GridSearchArgumentBuilder, MaterializedCoreProgram, FloatND]:
     """Build exactly the program arguments used by backward induction."""
     flat_params = model._process_params(params)
     next_V, next_continuation, next_edges = _build_continuation_templates(
@@ -81,7 +82,11 @@ def _materialize_program(
         edge_regime_to_V_arr=edge_kwargs.get("edge_regime_to_V_arr"),
     )
     builder = cast("_GridSearchArgumentBuilder", program.argument_builder)
-    return builder, materialize_core_program(program=program, context=context)
+    return (
+        builder,
+        materialize_core_program(program=program, context=context),
+        next_V[regime_name],
+    )
 
 
 def _assert_tree_equal(*, actual: PytreeValue, expected: PytreeValue) -> None:
@@ -176,7 +181,7 @@ def test_value_dependent_model_declares_its_required_program_disposition(
     expected_reason: str | None,
 ) -> None:
     """Processed reference routes retain channels on their one native program."""
-    builder, program = _materialize_program(
+    builder, program, source_value_template = _materialize_program(
         model=model_factory(),
         regime_name=regime_name,
         params=params,
@@ -193,7 +198,11 @@ def test_value_dependent_model_declares_its_required_program_disposition(
         expected_disposition is CoreExecutionDisposition.PLANNED
     )
     transfer_plan = (
-        _aligned_transfer_plan(program=program)
+        _resolve_value_input_transfer_plan(
+            program=program,
+            source_value_template=source_value_template,
+            source=(regime_name, 0, "main"),
+        )
         if expected_disposition is CoreExecutionDisposition.PLANNED
         else ()
     )
@@ -299,7 +308,7 @@ def _observable_route() -> tuple[
             ages=None,
         ),
     )
-    return dense, program
+    return cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", dense), program
 
 
 @pytest.mark.parametrize("width", [1, 2], ids=["unit", "partial-tail"])

@@ -37,7 +37,7 @@ from _lcm.constraints.routes import (
     ConstraintSite,
 )
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
-from _lcm.egm.carry import EGMCarry, egm_carry_role_tree
+from _lcm.egm.carry import EGMCarry, egm_carry_role_tree, stack_egm_carries
 from _lcm.egm.outer_envelope import build_stacked_outer_carry
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
@@ -286,7 +286,8 @@ class NEGM(TwoMarginSolver):
         bound = cast("_BoundNEGM", self)
         proofs = (
             proves_the_savings_grids_lower_bound(
-                post_decision=bound.inner.post_decision_function
+                post_decision=bound.inner.post_decision_function,
+                bound_spec=bound.inner.post_decision_bound,
             ),
         )
         if context.phase == "simulate":
@@ -1132,19 +1133,7 @@ def _stack_carry_template(
     """
     if template is None:
         return None
-    leaves = template.leaves()
-    return EGMCarry(
-        endog_grid=_broadcast_over_candidates(
-            arr=leaves[("endog_grid",)], n_candidates=n_candidates
-        ),
-        value=_broadcast_over_candidates(
-            arr=leaves[("value",)], n_candidates=n_candidates
-        ),
-        marginal_utility=_broadcast_over_candidates(
-            arr=leaves[("marginal_utility",)], n_candidates=n_candidates
-        ),
-        taste_shock_scale=leaves[("taste_shock_scale",)],
-    )
+    return stack_egm_carries(candidates=(template,) * n_candidates)
 
 
 def _broadcast_over_candidates(*, arr: FloatND, n_candidates: int) -> FloatND:

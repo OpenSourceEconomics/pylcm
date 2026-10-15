@@ -19,18 +19,23 @@ import jax.numpy as jnp
 import numpy as np
 from jax import vmap
 
-from _lcm.typing import ActionName, ArrayTree, PytreeValue, QAndFArg, StateName
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    merge_bound_input_status,
+    reduce_bound_input_status,
+)
+from _lcm.typing import ActionName, PytreeValue, QAndFArg, StateName
 from _lcm.utils.containers import find_duplicates
 from _lcm.utils.functools import allow_args, allow_only_kwargs, publish_signature
 from lcm.exceptions import FunctionDispatchError
-from lcm.typing import FloatND, ReferenceName, RegimeName, ValueND
+from lcm.typing import ReferenceName, RegimeName, ValueND
 
 _MAX_FLAT_CELL_INDEX = 2**31 - 1
 
 # A dispatched function returns any tree of arrays: the maps stack every leaf
 # along the mapped axes, whatever the tree's shape.
 FunctionWithArrayReturn = TypeVar(
-    "FunctionWithArrayReturn", bound=Callable[..., ArrayTree]
+    "FunctionWithArrayReturn", bound=Callable[..., PytreeValue]
 )
 
 
@@ -49,6 +54,8 @@ def map_over_leading_axis[InputTree, OutputTree](
     func: Callable[[InputTree], OutputTree],
     xs: InputTree,
     batch_size: int,
+    bound_summary: bool = False,
+    active: jax.Array | None = None,
 ) -> OutputTree:
     """Map one row body over a pytree leading axis, optionally in real batches.
 
@@ -66,6 +73,20 @@ def map_over_leading_axis[InputTree, OutputTree](
     if batch_size < 0:
         raise ValueError(f"batch_size must be non-negative, got {batch_size}")
     positional_func = allow_args(func)
+    if bound_summary:
+        return cast(
+            "OutputTree",
+            _map_with_bound_summary(
+                func=cast(
+                    "Callable[[InputTree], BoundedResult[PytreeValue]]", positional_func
+                ),
+                xs=xs,
+                batch_size=batch_size,
+                active=active,
+            ),
+        )
+    if active is not None:
+        raise TypeError("An active-lane mask requires an explicit bound summary.")
     if not 0 < batch_size < n_rows:
         return jax.vmap(positional_func)(xs)
     n_padding = -n_rows % batch_size
@@ -79,11 +100,108 @@ def map_over_leading_axis[InputTree, OutputTree](
     return jax.tree.map(lambda leaf: leaf[:n_rows], mapped)
 
 
+def _map_with_bound_summary[InputTree, Output: PytreeValue](
+    *,
+    func: Callable[[InputTree], BoundedResult[Output]],
+    xs: InputTree,
+    batch_size: int,
+    active: jax.Array | None,
+) -> BoundedResult[Output]:
+    """Store ordinary rows while OR-folding active flags in a fixed scan carry.
+
+    The first actual window supplies the ordinary output shapes and is stored
+    once. Later windows return no scan history. Only ordinary output buffers
+    have population extent; integrity lives in the current window and scalar carry.
+    """
+    n_rows = jax.tree.leaves(xs)[0].shape[0]
+    if n_rows < 1:
+        raise ValueError("A bounded summary map requires a nonempty row axis.")
+    if active is not None and (active.shape != (n_rows,) or active.dtype != jnp.bool_):
+        raise TypeError("Bound-summary activity must be a Boolean row mask.")
+    width = n_rows if batch_size == 0 else min(batch_size, n_rows)
+    n_windows = (n_rows + width - 1) // width
+    offsets = jnp.arange(width, dtype=jnp.int32)
+
+    def evaluate_window(start: jax.Array) -> tuple[BoundedResult[Output], jax.Array]:
+        indices = start + offsets
+        selected = jnp.minimum(indices, n_rows - 1)
+        inputs = jax.tree.map(lambda leaf: leaf[selected], xs)
+        result = jax.vmap(func)(inputs)
+        if type(result) is not BoundedResult or not result.bound_status:
+            raise TypeError(
+                "Bound-summary maps require declared BoundedResult records."
+            )
+        valid = indices < n_rows
+        if active is not None:
+            valid = valid & active[selected]
+        return result, valid
+
+    first, first_active = evaluate_window(jnp.asarray(0, dtype=jnp.int32))
+    summary = reduce_bound_input_status(
+        statuses=first.bound_status, active=first_active
+    )
+    if n_windows == 1:
+        return BoundedResult(output=first.output, bound_status=summary)
+    buffers = cast(
+        "Output",
+        jax.tree.map(
+            lambda leaf: jnp.zeros((n_windows * width, *leaf.shape[1:]), leaf.dtype),
+            first.output,
+        ),
+    )
+    buffers = cast(
+        "Output",
+        jax.tree.map(
+            lambda buffer, leaf: jax.lax.dynamic_update_slice(
+                buffer, leaf, (0, *(0 for _ in leaf.shape[1:]))
+            ),
+            buffers,
+            first.output,
+        ),
+    )
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def one_window(
+        carry: BoundedResult[Output], window: jax.Array
+    ) -> tuple[BoundedResult[Output], None]:
+        start = window * width
+        result, valid = evaluate_window(start)
+        output = cast(
+            "Output",
+            jax.tree.map(
+                lambda buffer, leaf: jax.lax.dynamic_update_slice(
+                    buffer,
+                    leaf,
+                    (start, *(jnp.zeros_like(start) for _ in leaf.shape[1:])),
+                ),
+                carry.output,
+                result.output,
+            ),
+        )
+        block = reduce_bound_input_status(statuses=result.bound_status, active=valid)
+        statuses = tuple(
+            merge_bound_input_status(left=left, right=right)
+            for left, right in zip(carry.bound_status, block, strict=True)
+        )
+        return BoundedResult(output=output, bound_status=statuses), None
+
+    final, _ = jax.lax.scan(
+        one_window,
+        BoundedResult(output=buffers, bound_status=summary),
+        jnp.arange(1, n_windows, dtype=jnp.int32),
+    )
+    return BoundedResult(
+        output=cast("Output", jax.tree.map(lambda leaf: leaf[:n_rows], final.output)),
+        bound_status=final.bound_status,
+    )
+
+
 def simulation_spacemap(
     *,
     func: FunctionWithArrayReturn,
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
+    bound_summary: bool = False,
 ) -> FunctionWithArrayReturn:
     """Apply jax.lax.map so func can be evaluated on actions and simulated states.
 
@@ -132,9 +250,15 @@ def simulation_spacemap(
             func=mappable_func,
             variables=action_names,
             batch_sizes=dict.fromkeys(action_names, 0),
+            bound_summary=bound_summary,
         )
     )
-    mapped = vmap_1d(func=mapped, variables=state_names, callable_with="only_args")
+    mapped = vmap_1d(
+        func=mapped,
+        variables=state_names,
+        callable_with="only_args",
+        bound_summary=bound_summary,
+    )
 
     publish_signature(target=mapped, signature=inspect.signature(mappable_func))
 
@@ -150,6 +274,7 @@ def vmap_1d(
         ReferenceName, int | MappingProxyType[RegimeName, int | None]
     ]
     | None = None,
+    bound_summary: bool = False,
 ) -> FunctionWithArrayReturn:
     """Apply vmap such that func is mapped over the specified variables.
 
@@ -215,6 +340,13 @@ def vmap_1d(
             in_axes_for_vmap[parameters.index(name)] = axes
 
         vmapped = vmap(positional_func, in_axes=in_axes_for_vmap)
+        if bound_summary:
+            if not positions:
+                raise TypeError(
+                    "Bound-summary co-maps require a named lane coordinate."
+                )
+            vmapped = _BoundVmap(function=vmapped, lane_position=positions[0])
+            publish_signature(target=vmapped, signature=signature)
 
     if callable_with == "only_kwargs":
         out = allow_only_kwargs(func=vmapped, enforce=False)
@@ -225,11 +357,35 @@ def vmap_1d(
     return cast("FunctionWithArrayReturn", out)
 
 
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _BoundVmap:
+    """Reduce whole-coordinate temporary flags before leaving the co-map owner."""
+
+    function: Callable[..., PytreeValue]
+    lane_position: int
+
+    def __call__(self, *args: PytreeValue) -> BoundedResult[PytreeValue]:
+        result = self.function(*args)
+        if type(result) is not BoundedResult or not result.bound_status:
+            raise TypeError(
+                "Bound-summary co-maps require mandatory integrity records."
+            )
+        extent = cast("jax.Array", args[self.lane_position]).shape[0]
+        return BoundedResult(
+            output=result.output,
+            bound_status=reduce_bound_input_status(
+                statuses=result.bound_status,
+                active=jnp.ones((extent,), dtype=jnp.bool_),
+            ),
+        )
+
+
 def productmap(
     *,
     func: FunctionWithArrayReturn,
     variables: tuple[str, ...],
     batch_sizes: dict[str, int],
+    bound_summary: bool = False,
 ) -> FunctionWithArrayReturn:
     """Apply jax.lax.map so func can be evaluated on the Cartesian product of variables.
 
@@ -267,6 +423,7 @@ def productmap(
         func=func_callable_with_args,
         product_axes=variables,
         batch_sizes=batch_sizes,
+        bound_summary=bound_summary,
     )
 
     # Create new signature where every parameter is kw-only as
@@ -291,6 +448,7 @@ def tiled_productmap(
     width_keyword: str,
     untiled_variables: tuple[str, ...] = (),
     broadcast_variables: tuple[str, ...] = (),
+    bound_summary: bool = False,
 ) -> FunctionWithArrayReturn:
     """Map a bounded window of the C-order Cartesian product of named inputs.
 
@@ -340,7 +498,10 @@ def tiled_productmap(
     )
     cell_variables = tuple(name for name in variables if name not in outer_variables)
     cell_mapper = _TiledProductMap(
-        func=func, variables=cell_variables, width_keyword=width_keyword
+        func=func,
+        variables=cell_variables,
+        width_keyword=width_keyword,
+        bound_summary=bound_summary,
     )
     mapped_signature = signature.replace(parameters=parameters)
     publish_signature(target=cell_mapper, signature=mapped_signature)
@@ -350,12 +511,14 @@ def tiled_productmap(
             func=mapped,
             variables=outer_variables,
             batch_sizes=dict.fromkeys(outer_variables, 0),
+            bound_summary=bound_summary,
         )
         mapped_order = (*outer_variables, *cell_variables)
         if mapped_order != variables:
             restored = _RestoreProductAxisOrder(
                 func=mapped,
                 axes=tuple(mapped_order.index(name) for name in variables),
+                bound_summary=bound_summary,
             )
             publish_signature(target=restored, signature=mapped_signature)
             mapped = cast("FunctionWithArrayReturn", restored)
@@ -367,6 +530,7 @@ def tiled_productmap(
                 variables=variables,
                 width_keyword=width_keyword,
                 untiled_variables=untiled_variables,
+                bound_summary=bound_summary,
             ),
             variables=broadcast_variables,
             width_keyword=width_keyword,
@@ -385,16 +549,16 @@ class _CountBroadcastExtentInWidth:
     plain mapper, whose flat cell includes the broadcast variables.
     """
 
-    func: Callable[..., ArrayTree]
+    func: Callable[..., PytreeValue]
     """Mapper whose outer vmaps run over the broadcast variables."""
-    plain: Callable[..., ArrayTree]
+    plain: Callable[..., PytreeValue]
     """Mapper over the same product whose cell includes the broadcast variables."""
     variables: tuple[str, ...]
     """Broadcast variables, each mapped whole around every cell window."""
     width_keyword: str
     """Static keyword naming the width in points of the whole product."""
 
-    def __call__(self, **kwargs: QAndFArg) -> ArrayTree:
+    def __call__(self, **kwargs: QAndFArg) -> PytreeValue:
         width = kwargs.get(self.width_keyword, 1)
         # An invalid width passes through unchanged for the cell mapper to refuse.
         if type(width) is int and width >= 1:
@@ -411,15 +575,24 @@ class _CountBroadcastExtentInWidth:
 class _RestoreProductAxisOrder:
     """Restore the declared state order after mapping untiled axes outside cells."""
 
-    func: Callable[..., ArrayTree]
+    func: Callable[..., PytreeValue]
     """Mapped scalar computation producing outer axes followed by cell axes."""
     axes: tuple[int, ...]
     """Permutation from mapped state axes to the original declared order."""
 
-    def __call__(self, **kwargs: QAndFArg) -> ArrayTree:
-        return jax.tree.map(
-            partial(_transpose_product_axes, axes=self.axes), self.func(**kwargs)
-        )
+    bound_summary: bool = False
+    """Whether scalar integrity is separate from ordinary product axes."""
+
+    def __call__(self, **kwargs: QAndFArg) -> PytreeValue:
+        mapped = self.func(**kwargs)
+        restore = partial(_transpose_product_axes, axes=self.axes)
+        if self.bound_summary:
+            result = cast("BoundedResult[PytreeValue]", mapped)
+            return BoundedResult(
+                output=jax.tree.map(restore, result.output),
+                bound_status=result.bound_status,
+            )
+        return jax.tree.map(restore, mapped)
 
 
 # keyword-only-exempt: library-callback=jax.tree.map
@@ -432,14 +605,17 @@ def _transpose_product_axes(value: jax.Array, *, axes: tuple[int, ...]) -> jax.A
 class _TiledProductMap:
     """Evaluate separate coordinate grids through a bounded Cartesian window."""
 
-    func: Callable[..., ArrayTree]
+    func: Callable[..., PytreeValue]
     """Unchanged scalar function evaluated at each product coordinate."""
     variables: tuple[str, ...]
     """Product coordinates in canonical C order, outermost first."""
     width_keyword: str
     """Static keyword consumed by this mapping boundary."""
 
-    def __call__(self, **kwargs: QAndFArg) -> ArrayTree:
+    bound_summary: bool = False
+    """Whether coordinate windows separately fold Boolean integrity."""
+
+    def __call__(self, **kwargs: QAndFArg) -> PytreeValue:
         width = kwargs.pop(self.width_keyword, 1)
         if type(width) is not int or width < 1:
             msg = f"Tile width must be a positive static integer, got {width!r}."
@@ -467,6 +643,7 @@ class _TiledProductMap:
                 variables=self.variables,
                 coordinates=coordinates,
                 arguments=arguments,
+                bound_summary=self.bound_summary,
             )
         if len(self.variables) > 1 and width // min(width, shape[-1]) > 1:
             return _map_grouped_product(
@@ -476,6 +653,7 @@ class _TiledProductMap:
                 shape=shape,
                 arguments=arguments,
                 width=width,
+                bound_summary=self.bound_summary,
             )
         evaluate = _EvaluateTiledCell(
             func=self.func,
@@ -485,20 +663,26 @@ class _TiledProductMap:
             arguments=arguments,
         )
         mapped = map_over_leading_axis(
-            func=evaluate, xs=jnp.arange(n_cells, dtype=jnp.int32), batch_size=width
+            func=evaluate,
+            xs=jnp.arange(n_cells, dtype=jnp.int32),
+            batch_size=width,
+            bound_summary=self.bound_summary,
         )
-        return jax.tree.map(partial(_restore_product_axes, shape=shape), mapped)
+        return _restore_mapped_product(
+            mapped=mapped, shape=shape, bound_summary=self.bound_summary
+        )
 
 
 def _map_grouped_product(
     *,
-    func: Callable[..., ArrayTree],
+    func: Callable[..., PytreeValue],
     variables: tuple[str, ...],
     coordinates: tuple[jax.Array, ...],
     shape: tuple[int, ...],
     arguments: MappingProxyType[ReferenceName, QAndFArg],
     width: int,
-) -> ArrayTree:
+    bound_summary: bool = False,
+) -> PytreeValue:
     """Map a flat prefix and final coordinate with at most two cell batch axes.
 
     The rectangle's two widths multiply to at most the requested width. Separate
@@ -513,6 +697,7 @@ def _map_grouped_product(
         variable=variables[-1],
         coordinate=coordinates[-1],
         width=inner_width,
+        bound_summary=bound_summary,
     )
     evaluate = _EvaluateTiledCell(
         func=_final_mapper(mapper=tiled_final, extent=shape[-1]),
@@ -527,9 +712,10 @@ def _map_grouped_product(
         func=evaluate,
         xs=jnp.arange(math.prod(shape[:-1]), dtype=jnp.int32),
         batch_size=outer_width,
+        bound_summary=bound_summary,
     )
-    return jax.tree.map(
-        partial(_restore_product_axes, shape=shape, n_flat_axes=2), mapped
+    return _restore_mapped_product(
+        mapped=mapped, shape=shape, n_flat_axes=2, bound_summary=bound_summary
     )
 
 
@@ -537,7 +723,7 @@ def _map_grouped_product(
 class _MapOverFinalCoordinate:
     """Evaluate the final coordinate for one decoded prefix cell."""
 
-    func: Callable[..., ArrayTree]
+    func: Callable[..., PytreeValue]
     """Unchanged scalar cell function."""
     variable: str
     """Name of the final Cartesian coordinate."""
@@ -546,7 +732,10 @@ class _MapOverFinalCoordinate:
     width: int
     """Active final-coordinate window within the requested cell budget."""
 
-    def __call__(self, **kwargs: QAndFArg) -> ArrayTree:
+    bound_summary: bool = False
+    """Whether each final-coordinate window owns an integrity reduction."""
+
+    def __call__(self, **kwargs: QAndFArg) -> PytreeValue:
         evaluate = _EvaluateTiledCell(
             func=self.func,
             variables=(self.variable,),
@@ -558,16 +747,18 @@ class _MapOverFinalCoordinate:
             func=evaluate,
             xs=jnp.arange(self.coordinate.shape[0], dtype=jnp.int32),
             batch_size=self.width,
+            bound_summary=self.bound_summary,
         )
 
 
 def _map_whole_product(
     *,
-    func: Callable[..., ArrayTree],
+    func: Callable[..., PytreeValue],
     variables: tuple[str, ...],
     coordinates: tuple[jax.Array, ...],
     arguments: MappingProxyType[ReferenceName, QAndFArg],
-) -> ArrayTree:
+    bound_summary: bool = False,
+) -> PytreeValue:
     """Map coordinates whose windows cover them, without decoding a flat index.
 
     Enumerating a grid by index and gathering every element back out of it is an
@@ -580,6 +771,7 @@ def _map_whole_product(
         func=func,
         variables=variables,
         batch_sizes=dict.fromkeys(variables, 0),
+        bound_summary=bound_summary,
     )
     named = dict(zip(variables, coordinates, strict=True))
     return mapped(**arguments, **named)
@@ -589,19 +781,23 @@ def _map_whole_product(
 class _MapWholeCoordinate:
     """Evaluate the final coordinate over its whole grid for one prefix cell."""
 
-    func: Callable[..., ArrayTree]
+    func: Callable[..., PytreeValue]
     """Unchanged scalar cell function."""
     variable: str
     """Name of the final Cartesian coordinate."""
     coordinate: jax.Array
     """Separate final-coordinate grid, mapped in full."""
 
-    def __call__(self, **kwargs: QAndFArg) -> ArrayTree:
+    bound_summary: bool = False
+    """Whether ordinary rows and scalar validity have separate mapped roles."""
+
+    def __call__(self, **kwargs: QAndFArg) -> PytreeValue:
         return _map_whole_product(
             func=self.func,
             variables=(self.variable,),
             coordinates=(self.coordinate,),
             arguments=MappingProxyType(kwargs),
+            bound_summary=self.bound_summary,
         )
 
 
@@ -612,7 +808,10 @@ def _final_mapper(
     if mapper.width < extent:
         return mapper
     return _MapWholeCoordinate(
-        func=mapper.func, variable=mapper.variable, coordinate=mapper.coordinate
+        func=mapper.func,
+        variable=mapper.variable,
+        coordinate=mapper.coordinate,
+        bound_summary=mapper.bound_summary,
     )
 
 
@@ -620,7 +819,7 @@ def _final_mapper(
 class _EvaluateTiledCell:
     """Decode one flat index and evaluate the unchanged scalar cell function."""
 
-    func: Callable[..., ArrayTree]
+    func: Callable[..., PytreeValue]
     """Scalar cell function receiving the decoded coordinate values."""
     variables: tuple[str, ...]
     """Coordinate names in the same order as their separate arrays."""
@@ -631,7 +830,7 @@ class _EvaluateTiledCell:
     arguments: MappingProxyType[ReferenceName, QAndFArg]
     """Non-coordinate arguments forwarded unchanged to the cell function."""
 
-    def __call__(self, index: jax.Array) -> ArrayTree:
+    def __call__(self, index: jax.Array) -> PytreeValue:
         cell = {
             name: coordinate[(index // stride) % coordinate.shape[0]]
             for name, coordinate, stride in zip(
@@ -649,11 +848,30 @@ def _restore_product_axes(
     return value.reshape((*shape, *value.shape[n_flat_axes:]))
 
 
+def _restore_mapped_product(
+    *,
+    mapped: PytreeValue,
+    shape: tuple[int, ...],
+    bound_summary: bool,
+    n_flat_axes: int = 1,
+) -> PytreeValue:
+    """Restore ordinary Cartesian axes while leaving reduced integrity scalar."""
+    restore = partial(_restore_product_axes, shape=shape, n_flat_axes=n_flat_axes)
+    if bound_summary:
+        result = cast("BoundedResult[PytreeValue]", mapped)
+        return BoundedResult(
+            output=jax.tree.map(restore, result.output),
+            bound_status=result.bound_status,
+        )
+    return jax.tree.map(restore, mapped)
+
+
 def _base_productmap_batched(
     *,
     func: FunctionWithArrayReturn,
     product_axes: tuple[str, ...],
     batch_sizes: dict[str, int],
+    bound_summary: bool = False,
 ) -> FunctionWithArrayReturn:
     """Map func over the Cartesian product of product_axes and execute in batches.
 
@@ -685,6 +903,7 @@ def _base_productmap_batched(
             func=func,
             product_axes=product_axes,
             batch_sizes=MappingProxyType(dict(batch_sizes)),
+            bound_summary=bound_summary,
         ),
     )
 
@@ -700,12 +919,15 @@ class _ProductMapBatched:
     contract.
     """
 
-    func: Callable[..., ArrayTree]
+    func: Callable[..., PytreeValue]
     """The function evaluated at every point of the product."""
     product_axes: tuple[str, ...]
     """Names of the arguments whose values span the product, outermost first."""
     batch_sizes: MappingProxyType[str, int]
     """The `jax.lax.map` batch size per product axis, `0` for one vectorized pass."""
+
+    bound_summary: bool = False
+    """Whether each axis folds integrity before ordinary output storage."""
 
     def __post_init__(self) -> None:
         # Instrumentation such as `jax.named_call` reads a callable's name, so the
@@ -718,7 +940,7 @@ class _ProductMapBatched:
                 getattr(self.func, attribute, type(self).__qualname__),
             )
 
-    def __call__(self, **kwargs: PytreeValue) -> ArrayTree:
+    def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
         non_array_kwargs = {
             key: val for key, val in kwargs.items() if key not in self.product_axes
         }
@@ -735,16 +957,17 @@ class _ProductMapBatched:
                     axis=axis,
                     axis_values=_axis_values(kwargs[axis]),
                     batch_size=self.batch_sizes[axis],
+                    bound_summary=self.bound_summary,
                 ),
             )
-        return cast("FloatND", loop_func())
+        return loop_func()
 
 
 @dataclass(frozen=True, eq=False)
 class _MappedOverOneMoreAxis:
     """`loop_func` mapped with `jax.lax.map` over the values of one product axis."""
 
-    loop_func: Callable[..., ArrayTree]
+    loop_func: Callable[..., PytreeValue]
     """The function evaluated once per value of `axis`."""
     axis: str
     """The argument of `loop_func` that takes one value of the axis per evaluation."""
@@ -753,21 +976,30 @@ class _MappedOverOneMoreAxis:
     batch_size: int
     """The `jax.lax.map` batch size, `0` for one vectorized pass."""
 
+    bound_summary: bool = False
+    """Whether integrity has scalar ownership rather than a product axis."""
+
     def __call__(
         self,
         *already_mapped_args: ValueND,
         **already_mapped_kwargs: ValueND,
-    ) -> ArrayTree:
+    ) -> PytreeValue:
+        evaluate = partial(
+            _evaluate_at_axis_value,
+            loop_func=self.loop_func,
+            axis=self.axis,
+            mapped_args=already_mapped_args,
+            mapped_kwargs=already_mapped_kwargs,
+        )
+        if self.bound_summary:
+            return map_over_leading_axis(
+                func=evaluate,
+                xs=jnp.atleast_1d(self.axis_values),
+                batch_size=self.batch_size,
+                bound_summary=True,
+            )
         return jax.lax.map(
-            partial(
-                _evaluate_at_axis_value,
-                loop_func=self.loop_func,
-                axis=self.axis,
-                mapped_args=already_mapped_args,
-                mapped_kwargs=already_mapped_kwargs,
-            ),
-            jnp.atleast_1d(self.axis_values),
-            batch_size=self.batch_size,
+            evaluate, jnp.atleast_1d(self.axis_values), batch_size=self.batch_size
         )
 
 
@@ -783,10 +1015,10 @@ def _axis_values(value: PytreeValue) -> ValueND:
 def _evaluate_at_axis_value(
     axis_value: ValueND,
     *,
-    loop_func: Callable[..., ArrayTree],
+    loop_func: Callable[..., PytreeValue],
     axis: str,
     mapped_args: tuple[ValueND, ...],
     mapped_kwargs: dict[ReferenceName, ValueND],
-) -> ArrayTree:
+) -> PytreeValue:
     """Evaluate `loop_func` at one value of `axis`, forwarding the other arguments."""
     return loop_func(*mapped_args, **{axis: axis_value}, **mapped_kwargs)

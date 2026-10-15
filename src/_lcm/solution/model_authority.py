@@ -20,7 +20,13 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from _lcm.continuation import ContinuationSpec, EGMContinuationSpec
+from _lcm.continuation import (
+    ContinuationSpec,
+    EGMContinuationSpec,
+    validate_query_evaluator_authority,
+    validate_query_model_authority,
+    validate_query_template,
+)
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy, OuterPolicyBank
@@ -681,7 +687,7 @@ class _ArtifactLayout:
     action_roles: tuple[str, ...] = ()
 
 
-def build_solution_authority(  # noqa: PLR0915
+def build_solution_authority(  # noqa: C901, PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
@@ -970,6 +976,12 @@ def build_solution_authority(  # noqa: PLR0915
                     key=continuation_spec.artifact_key,
                 )
                 continuation_template = continuation_spec.template
+                if isinstance(continuation_spec, EGMContinuationSpec):
+                    _validate_model_query_spec(
+                        regime=regime,
+                        state_action_space=state_action_space,
+                        spec=continuation_spec,
+                    )
                 continuation_persistence = (
                     PersistencePolicy.MODEL_VERIFIABLE
                     if isinstance(continuation_template, EGMCarry)
@@ -1533,6 +1545,90 @@ def _nested_policy_artifact_layout(
     )
 
 
+def _validate_model_query_spec(
+    *,
+    regime: Regime,
+    state_action_space: StateActionSpace,
+    spec: EGMContinuationSpec,
+) -> None:
+    """Authenticate a feature descriptor before observing its numeric template."""
+    declared = spec.layout.query_spec
+    expected = regime.solution.query_authority
+    if declared is None:
+        if expected is not None or spec.template.query_data is not None:
+            raise TypeError("Query continuation omits model-owned authority.")
+        return
+    if expected is None:
+        raise TypeError(
+            "Query continuation lacks independently constructed model authority."
+        )
+    # Budget construction imports solver modules that also import authority helpers.
+    from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME  # noqa: PLC0415
+
+    if expected.bound.kind == "dag" and isinstance(
+        regime.simulation.egm_policy_read, (EGMPolicyRead, NNBEGMPolicyRead)
+    ):
+        raise TypeError(
+            "Query policy/intrinsic budget authority requires a model-bound adapter; "
+            "scalar budget descriptors are refused."
+        )
+    if (
+        expected.bound.kind == "dag"
+        and DCEGM_BUDGET_CONSTRAINT_NAME in regime.simulation.constraints
+    ):
+        from _lcm.continuation import validate_query_bound_authority  # noqa: PLC0415
+        from _lcm.post_decision_bound import PostDecisionBoundSpec  # noqa: PLC0415
+
+        intrinsic = regime.simulation.constraints[DCEGM_BUDGET_CONSTRAINT_NAME]
+        installed = getattr(intrinsic, "_lcm_intrinsic_budget_bound", None)
+        if type(installed) is not PostDecisionBoundSpec:
+            raise TypeError(
+                "Query scalar intrinsic budget lacks its model-bound adapter."
+            )
+        validate_query_bound_authority(declared=installed, model_bound=expected.bound)
+    bounds = tuple(
+        bound
+        for bound in regime.solution.post_decision_bounds
+        if bound.post_decision == expected.bound.post_decision
+    )
+    if len(bounds) != 1:
+        raise TypeError("Query continuation has no unique installed model bound.")
+    validate_query_model_authority(
+        spec=declared,
+        model_spec=expected,
+        model_bound=bounds[0],
+        state_names=_declared_carry_row_state_names(
+            regime=regime, state_action_space=state_action_space
+        ),
+        action_names=tuple(state_action_space.discrete_actions),
+    )
+    adaptive = expected.adaptive_outer
+    if adaptive is not None and (
+        adaptive.outer_state not in expected.state_names
+        or adaptive.outer_state == bounds[0].liquid_state
+        or adaptive.outer_action not in state_action_space.continuous_actions
+        or adaptive.outer_action == bounds[0].action
+    ):
+        raise TypeError(
+            "Query outer roles differ from the canonical non-liquid margin."
+        )
+    validate_query_evaluator_authority(
+        spec=expected,
+        functions=regime.solution.continuation_functions,
+        target_periods=regime.active_periods,
+        functions_by_period=MappingProxyType(
+            {
+                period: MappingProxyType({**functions, **constraints})
+                for period, (
+                    functions,
+                    constraints,
+                ) in regime.solution.feasibility_pools_by_period.items()
+            }
+        ),
+    )
+    validate_query_template(template=spec.template, spec=expected)
+
+
 def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
     *,
     regime: Regime,
@@ -1610,11 +1706,54 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
         )
     )
     common_axis_names = (*leading_names, trailing_name)
+    query_spec = spec.layout.query_spec
+    if query_spec is not None:
+        axes.extend(
+            (
+                AxisAuthority(
+                    name="pylcm:egm:link",
+                    length=max(row_shape[-1] - 1, 0),
+                    role=AxisRole.OTHER,
+                    coordinates=tuple(range(max(row_shape[-1] - 1, 0))),
+                ),
+                AxisAuthority(
+                    name="pylcm:egm:interval",
+                    length=len(query_spec.interval_ids),
+                    role=AxisRole.OTHER,
+                    coordinates=query_spec.interval_ids,
+                ),
+            )
+        )
+        if query_spec.adaptive_outer is not None:
+            capacity = query_spec.adaptive_outer.adjuster_capacity
+            axes.extend(
+                (
+                    AxisAuthority(
+                        name="pylcm:egm:outer_mesh",
+                        length=capacity,
+                        role=AxisRole.CANDIDATE,
+                        coordinates=tuple(range(capacity)),
+                    ),
+                    AxisAuthority(
+                        name="pylcm:egm:outer_link",
+                        length=capacity - 1,
+                        role=AxisRole.OTHER,
+                        coordinates=tuple(range(capacity - 1)),
+                    ),
+                )
+            )
     leaf_axes: dict[TreePath, tuple[str, ...]] = {}
     for path, leaf in paths_and_leaves:
         shape = tuple(leaf.shape)
         field = path[-1]
-        if field == "attribute:taste_shock_scale":
+        if path[0] == "attribute:query_data":
+            names = _query_leaf_axis_names(
+                path=path,
+                state_names=row_state_names,
+                leading_names=tuple(leading_names),
+                trailing_name=trailing_name,
+            )
+        elif field == "attribute:taste_shock_scale":
             names: tuple[str, ...] = ()
         elif field == "attribute:breakpoints":
             breakpoint_name = "pylcm:egm:breakpoint"
@@ -1658,6 +1797,42 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
         axes=tuple(axes),
         state_roles=state_roles,
         action_roles=action_roles,
+    )
+
+
+def _query_leaf_axis_names(  # noqa: PLR0911
+    *,
+    path: TreePath,
+    state_names: tuple[StateName, ...],
+    leading_names: tuple[str, ...],
+    trailing_name: str,
+) -> tuple[str, ...]:
+    """Name fixed-cell, row/link, interval and shared-mesh axes independently."""
+    field = path[-1].removeprefix("attribute:")
+    if "attribute:adaptive_outer_data" in path:
+        if field == "outer_count":
+            return ()
+        if field in ("outer_nodes", "outer_node_kind"):
+            return ("pylcm:egm:outer_mesh",)
+        return (
+            *leading_names[:-1],
+            "pylcm:egm:outer_link"
+            if field == "outer_link_valid"
+            else "pylcm:egm:outer_mesh",
+        )
+    if field == "floor_used":
+        return state_names
+    if "attribute:liquid_corner_data" in path:
+        return (
+            *leading_names,
+            "pylcm:egm:link" if field == "link_valid" else trailing_name,
+            "pylcm:egm:interval",
+        )
+    if field.startswith("corner_"):
+        return (*leading_names, "pylcm:egm:interval")
+    return (
+        *leading_names,
+        "pylcm:egm:link" if field == "link_valid" else trailing_name,
     )
 
 

@@ -37,6 +37,7 @@ from jax import numpy as jnp
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.coarse_transition import _CoarseTransitionCell
+from _lcm.constraints.dynamic_bound import validate_declared_bounds
 from _lcm.continuation import ContinuationSpec, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.budget import (
@@ -49,6 +50,7 @@ from _lcm.egm.regime_introspection import (
     _get_discrete_state_names,
     _get_passive_state_names,
 )
+from _lcm.egm.scalar_query import ScalarEGMQueryModel
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
     get_brute_child_carry_producer,
@@ -97,6 +99,7 @@ from _lcm.params.regime_template import (
     create_edge_vocabulary,
     create_regime_params_template,
 )
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.processes.ar1 import TauchenAR1Process
 from _lcm.processes.iid import NormalIIDProcess
@@ -149,6 +152,7 @@ from _lcm.regime_building.gated_edges import (
 )
 from _lcm.regime_building.invariant_blocking import bound_state_names
 from _lcm.regime_building.max_Q_over_a import (
+    BoundedArgmaxOutput,
     get_argmax_and_max_Q_over_a,
     get_selection_readout_Q_over_a,
 )
@@ -815,6 +819,18 @@ def process_regimes(
 
     build_canonical_regimes = _CanonicalRegimeBuilder(
         ages=ages,
+        post_decision_bounds=MappingProxyType(
+            {
+                name: validate_declared_bounds(
+                    user_regime=user_regime,
+                    regime_name=name,
+                    law=laws[name],
+                    ages=ages,
+                    periods=regimes_to_active_periods.get(name, ()),
+                )
+                for name, user_regime in user_regimes.items()
+            }
+        ),
         all_grids=all_grids,
         axis_widths=resolved_execution.axis_widths,
         axis_widths_by_regime=resolved_execution.axis_widths_by_regime,
@@ -984,6 +1000,11 @@ class _CanonicalRegimeBuilder:
     ages: TimeAxis
     """The AgeGrid for the model."""
 
+    post_decision_bounds: MappingProxyType[
+        RegimeName, tuple[PostDecisionBoundSpec, ...]
+    ]
+    """Validated identities from the original model declarations and temporal law."""
+
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]]
     """Immutable mapping of regime names to their state and action grids."""
 
@@ -1131,6 +1152,7 @@ class _CanonicalRegimeBuilder:
         )
         canonical_regimes: dict[RegimeName, Regime] = {}
         solution_builds: dict[RegimeName, _SolutionBuild] = {}
+        scalar_query_models = _prepare_scalar_egm_query_models(processor=self)
         # Iterate the representative-resolved regimes: identical to the user regimes
         # except that any `AgeSpecializedGrid` state is a concrete representative-age
         # grid, so every grid-derived call below is age-invariant.
@@ -1199,6 +1221,8 @@ class _CanonicalRegimeBuilder:
 
             solution_build = _build_solution_phase(
                 spec=spec,
+                scalar_query_models=scalar_query_models,
+                post_decision_bounds=self.post_decision_bounds[regime_name],
                 regime_name=regime_name,
                 # Representative, not raw: these reach `SolverBuildContext`, and
                 # a solver reading a state grid off them wants a concrete
@@ -1256,6 +1280,7 @@ class _CanonicalRegimeBuilder:
 
             simulation = _build_simulation_phase(
                 spec=spec,
+                post_decision_bounds=solution.post_decision_bounds,
                 user_regime=user_regime,
                 law=self.laws[regime_name],
                 regime_name=regime_name,
@@ -1311,7 +1336,7 @@ class _CanonicalRegimeBuilder:
                 external_replay_route=solution.external_replay_route,
                 replay_unsupported=solution.replay_unsupported,
                 has_taste_shocks=user_regime.taste_shocks is not None,
-                solver=user_regime.solver,
+                solver=solution_build.solver,
                 certainty_equivalent=user_regime.certainty_equivalent,
                 value_aware_feasibility=value_aware_feasibility,
                 stakeholders=stakeholders,
@@ -1350,6 +1375,83 @@ class _CanonicalRegimeBuilder:
         return _with_declared_continuation_reads(
             canonical_regimes=canonical_regimes, solution_builds=solution_builds
         )
+
+
+def _prepare_scalar_egm_query_models(
+    *,
+    processor: _CanonicalRegimeBuilder,
+) -> MappingProxyType[RegimeName, ScalarEGMQueryModel] | None:
+    """Prepare trusted scalar pools once, independently of produced carry metadata."""
+    from _lcm.continuation import build_query_model_authority  # noqa: PLC0415
+    from _lcm.solution.egm import _BoundEGM  # noqa: PLC0415
+
+    models = {}
+    for name, user_regime in processor.representative_user_regimes.items():
+        solver = user_regime.solver
+        bounds = processor.post_decision_bounds[name]
+        if not isinstance(solver, _BoundEGM) or not any(
+            bound.kind == "dag" for bound in bounds
+        ):
+            continue
+        bound = dataclass_replace(bounds[0], resources_target=solver.resources)
+        phase = processor.specs[name].solution
+        template = processor.regime_to_params_template[name]
+        functions = MappingProxyType(
+            {
+                target: _process_one_function(
+                    func=func, regime_params_template=template, param_key=target
+                )
+                for target, func in phase.functions.items()
+            }
+        )
+        aggregator = _process_one_function(
+            func=cast("UserFunction", phase.koopmans_aggregator),
+            regime_params_template=template,
+            param_key="koopmans_aggregator",
+        )
+        functions = MappingProxyType({**functions, "koopmans_aggregator": aggregator})
+        periods = processor.regimes_to_active_periods[name]
+        representative = cast(
+            "EconFunctionsMapping",
+            resolve_periodized_nodes(mapping=functions, period=periods[0]),
+        )
+        authority = build_query_model_authority(
+            bound=bound,
+            state_names=(),
+            action_names=(),
+            coordinate_kind="liquid",
+            marginal_convention="ordinary_linear",
+            corner_coordinate_kind="compact_interval",
+            row_capacity=processor.all_grids[name][solver.continuous_state]
+            .to_jax()
+            .size,
+            interval_ids=(0,),
+            interval_side_ids=(0,),
+            evaluator_targets=(
+                ("resources", bound.resources_target),
+                ("utility", "utility"),
+                ("koopmans_aggregator", "koopmans_aggregator"),
+            ),
+            functions=representative,
+            functions_by_period=MappingProxyType(
+                {
+                    period: cast(
+                        "EconFunctionsMapping",
+                        resolve_periodized_nodes(mapping=functions, period=period),
+                    )
+                    for period in periods
+                }
+            ),
+            target_periods=periods,
+        )
+        nodes = solver.savings_grid.to_jax()
+        models[name] = ScalarEGMQueryModel(
+            authority=authority,
+            functions=functions,
+            koopmans_aggregator=aggregator,
+            offsets=nodes - nodes[0],
+        )
+    return MappingProxyType(models) if models else None
 
 
 def _with_declared_continuation_reads(
@@ -1453,6 +1555,27 @@ def _fail_if_a_declaration_moved_more_than_the_kernels(
             _fail_declaration_field(
                 regime_name=regime_name, solver=solver, field_name=field_name
             )
+    before_readers = handed_over.continuation_reader_capabilities
+    after_readers = declared.continuation_reader_capabilities
+    changed_readers = (
+        before_readers is not after_readers
+        if before_readers is None or after_readers is None
+        else tuple(before_readers) != tuple(after_readers)
+        or any(
+            tuple(before_readers[period]) != tuple(after_readers[period])
+            or any(
+                before_readers[period][target] is not after_readers[period][target]
+                for target in before_readers[period]
+            )
+            for period in before_readers
+        )
+    )
+    if changed_readers:
+        _fail_declaration_field(
+            regime_name=regime_name,
+            solver=solver,
+            field_name="continuation_reader_capabilities",
+        )
 
 
 def _fail_declaration_field(
@@ -3284,6 +3407,34 @@ def _fail_if_a_continuation_demand_is_unmet(
         missing = _missing_capabilities(
             demanded=demanded, offered=template.capabilities
         )
+        source_regime = canonical_regimes[source]
+        readers = source_regime.solution.continuation_reader_capabilities
+        if readers is not None:
+            reached_periods = tuple(
+                period
+                for period in source_regime.active_periods
+                if period < source_regime.solution.reachability.n_periods - 1
+                and target
+                in source_regime.solution.reachability.targets(
+                    period=period, source=source
+                )
+            )
+            installed_missing = tuple(
+                sorted(
+                    {
+                        capability
+                        for period in reached_periods
+                        for capability in _missing_capabilities(
+                            demanded=demanded,
+                            offered=readers.get(period, {}).get(
+                                target, template.capabilities
+                            ),
+                        )
+                    }
+                )
+            )
+            if reached_periods:
+                missing = installed_missing
         if missing:
             unmet.setdefault((source, key), []).append(
                 f"'{target}' publishes a continuation whose reader answers no "
@@ -3390,6 +3541,8 @@ def _build_solution_phase(  # noqa: PLR0915
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
+    post_decision_bounds: tuple[PostDecisionBoundSpec, ...] = (),
+    scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None,
 ) -> _SolutionBuild:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -3453,6 +3606,15 @@ def _build_solution_phase(  # noqa: PLR0915
         context the continuation-read declaration pass re-reads.
 
     """
+    query_model = (scalar_query_models or {}).get(regime_name)
+    if query_model is not None:
+        from _lcm.solution.egm import _BoundEGM  # noqa: PLC0415
+
+        solver = dataclass_replace(
+            cast("_BoundEGM", solver),
+            post_decision_bound=query_model.authority.bound,
+        )
+        post_decision_bounds = (query_model.authority.bound,)
     flat_param_names = _engine_flat_param_names(
         regime_params_template=regime_params_template,
         granular_param_expansions=granular_param_expansions,
@@ -3473,6 +3635,7 @@ def _build_solution_phase(  # noqa: PLR0915
 
     core = _process_regime_core(
         source_regime_name=regime_name,
+        scalar_query_model=query_model,
         koopmans_aggregator=spec.solution.koopmans_aggregator,
         selection_aggregator=spec.solution.selection_aggregator,
         functions=spec.solution.functions,
@@ -3547,6 +3710,9 @@ def _build_solution_phase(  # noqa: PLR0915
             # `U^s`-and-`F` per stakeholder and stacks the utilities on a trailing
             # stakeholder axis. Separate builder so the singleton path is untouched.
             Q_and_F_functions = _build_terminal_collective_Q_and_F_per_period(
+                bound_specs=tuple(
+                    bound for bound in post_decision_bounds if bound.kind == "dag"
+                ),
                 n_periods=ages.n_periods,
                 flat_param_names=flat_param_names,
                 functions=core.functions,
@@ -3564,6 +3730,9 @@ def _build_solution_phase(  # noqa: PLR0915
                 decision_group_key = _PerPeriodGroupKey(label="terminal-collective")
         else:
             terminal_func = get_Q_and_F_terminal(
+                bound_specs=tuple(
+                    bound for bound in post_decision_bounds if bound.kind == "dag"
+                ),
                 flat_param_names=flat_param_names,
                 functions=core.functions,
                 constraints=core.constraints,
@@ -3619,6 +3788,9 @@ def _build_solution_phase(  # noqa: PLR0915
             for state in co_map_state_names
         )
         grouped_Q_and_F = _build_Q_and_F_per_period(
+            bound_specs=tuple(
+                bound for bound in post_decision_bounds if bound.kind == "dag"
+            ),
             active_periods=regimes_to_active_periods[regime_name],
             phase_reachability=phase_reachability,
             source_regime_name=regime_name,
@@ -3688,6 +3860,7 @@ def _build_solution_phase(  # noqa: PLR0915
     # max-Q-over-a grid search; `DCEGM` wraps the EGM step.
     context = SolverBuildContext(
         regime_name=regime_name,
+        scalar_query_models=scalar_query_models,
         ages=ages,
         user_regimes=user_regimes,
         laws=laws,
@@ -3835,13 +4008,16 @@ def _build_solution_phase(  # noqa: PLR0915
     )
 
     phase = SolutionPhase(
+        continuation_reader_capabilities=solver_kernels.continuation_reader_capabilities,
         _variables=variables,
+        query_authority=None if query_model is None else query_model.authority,
         grids=all_grids[regime_name],
         functions=published_solution_functions,
         # Age-specialized functions are left unresolved here, so the simulation
         # continuation can resolve each at the age of the period it prices.
         _continuation_functions=core.functions,
         constraints=core.constraints,
+        post_decision_bounds=post_decision_bounds,
         feasibility_pools_by_period=cast(
             "FeasibilityPoolsByPeriod",
             resolve_periodized_pools_by_period(
@@ -4481,6 +4657,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         MappingProxyType({})
     ),
     invariant_bindings: tuple[StateName, ...] = (),
+    post_decision_bounds: tuple[PostDecisionBoundSpec, ...] = (),
 ) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
 
@@ -4705,6 +4882,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         realized_validation_probs = None
         if collective:
             Q_and_F_functions = _build_terminal_collective_Q_and_F_per_period(
+                bound_specs=tuple(
+                    bound for bound in post_decision_bounds if bound.kind == "dag"
+                ),
                 n_periods=ages.n_periods,
                 flat_param_names=flat_param_names,
                 functions=functions,
@@ -4717,6 +4897,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             )
         else:
             terminal_func = get_Q_and_F_terminal(
+                bound_specs=tuple(
+                    bound for bound in post_decision_bounds if bound.kind == "dag"
+                ),
                 flat_param_names=flat_param_names,
                 functions=functions,
                 constraints=constraints,
@@ -4814,6 +4997,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         )
         decision_Q_and_F = functools.partial(
             _build_Q_and_F_per_period,
+            bound_specs=tuple(
+                bound for bound in post_decision_bounds if bound.kind == "dag"
+            ),
             active_periods=simulated_periods[regime_name],
             phase_reachability=solution_reachability,
             source_regime_name=regime_name,
@@ -5141,6 +5327,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         carried_only_state_names=frozenset(carried_grids),
         functions=published_simulate_functions,
         constraints=published_simulate_constraints,
+        post_decision_bounds=post_decision_bounds,
         feasibility_pools_by_period=cast(
             "FeasibilityPoolsByPeriod",
             resolve_periodized_pools_by_period(
@@ -5487,6 +5674,7 @@ def _process_regime_core(
     draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     phase_reachability: PhaseReachability,
     phase_name: PhaseName,
+    scalar_query_model: ScalarEGMQueryModel | None = None,
 ) -> _CoreResult:
     """Process one phase's regime functions and transitions.
 
@@ -5568,10 +5756,15 @@ def _process_regime_core(
         # the collective-port function loop had dropped this call site, leaving
         # age-specialized deterministic functions unwrapped (they then reached
         # `jax.jit(...).lower()` as a bare `(*args, **kwargs)` marker).
-        processed_functions[func_name] = _process_one_function(
-            func=func,
-            regime_params_template=regime_params_template,
-            param_key=func_name,
+        processed_functions[func_name] = (
+            scalar_query_model.functions[func_name]
+            if scalar_query_model is not None
+            and func_name in scalar_query_model.functions
+            else _process_one_function(
+                func=func,
+                regime_params_template=regime_params_template,
+                param_key=func_name,
+            )
         )
 
     for func_name, func in deterministic_transition_functions.items():
@@ -5859,9 +6052,16 @@ def _process_regime_core(
     )
     phase_functions = MappingProxyType(
         {
-            func_name: processed_functions[func_name]
-            for func_name in processed_functions
-            if func_name not in excluded_from_functions
+            **{
+                func_name: processed_functions[func_name]
+                for func_name in processed_functions
+                if func_name not in excluded_from_functions
+            },
+            **(
+                {}
+                if scalar_query_model is None
+                else {"koopmans_aggregator": scalar_query_model.koopmans_aggregator}
+            ),
         }
     )
 
@@ -5914,7 +6114,9 @@ def _process_regime_core(
     )
 
     processed_koopmans_aggregator = (
-        None
+        scalar_query_model.koopmans_aggregator
+        if scalar_query_model is not None
+        else None
         if koopmans_aggregator is None
         else _process_one_function(
             func=koopmans_aggregator,
@@ -8358,6 +8560,7 @@ def _build_period_state_axes(
 def _build_terminal_collective_Q_and_F_per_period(
     *,
     n_periods: int,
+    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
     flat_param_names: frozenset[QualifiedName],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
@@ -8399,6 +8602,7 @@ def _build_terminal_collective_Q_and_F_per_period(
     """
     if not value_constraints:
         shared = get_Q_and_F_terminal_collective(
+            bound_specs=bound_specs,
             flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
@@ -8416,6 +8620,7 @@ def _build_terminal_collective_Q_and_F_per_period(
     return MappingProxyType(
         {
             period: get_Q_and_F_terminal_collective(
+                bound_specs=bound_specs,
                 flat_param_names=flat_param_names,
                 functions=functions,
                 constraints=constraints,
@@ -8443,6 +8648,7 @@ class _GroupedQAndF:
 def _build_Q_and_F_per_period(
     *,
     active_periods: tuple[int, ...],
+    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
     phase_reachability: PhaseReachability,
     source_regime_name: RegimeName,
     functions: EconFunctionsMapping,
@@ -8608,6 +8814,7 @@ def _build_Q_and_F_per_period(
             # singleton branch; with no age-specialized node the resolution is a
             # passthrough.
             built[key] = get_Q_and_F_collective(
+                bound_specs=bound_specs,
                 flat_param_names=flat_param_names,
                 koopmans_aggregator=koopmans_aggregator,
                 functions=cast(
@@ -8665,6 +8872,7 @@ def _build_Q_and_F_per_period(
             )
             continue
         built[key] = get_Q_and_F(
+            bound_specs=bound_specs,
             flat_param_names=flat_param_names,
             functions=cast(
                 "EconFunctionsMapping",
@@ -8720,14 +8928,14 @@ def _build_per_subject_decisions_per_period(
     has_taste_shocks: bool = False,
     stakeholders: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
-) -> MappingProxyType[int, ArgmaxQOverAFunction]:
+) -> MappingProxyType[int, ArgmaxQOverAFunction[BoundedArgmaxOutput]]:
     """Build the canonical argmax reducer at one subject's state cell, per period.
 
     The execution planner owns the subject width. Periods sharing a
     `Q_and_F` object share one reducer.
     """
-    built: dict[int, ArgmaxQOverAFunction] = {}
-    result: dict[int, ArgmaxQOverAFunction] = {}
+    built: dict[int, ArgmaxQOverAFunction[BoundedArgmaxOutput]] = {}
+    result: dict[int, ArgmaxQOverAFunction[BoundedArgmaxOutput]] = {}
     for period, Q_and_F in Q_and_F_functions.items():
         q_id = id(Q_and_F)
         if q_id not in built and has_selection_aggregator(Q_and_F=Q_and_F):
@@ -8759,7 +8967,7 @@ def _build_pointwise_Q_and_F_per_period(
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     enable_jit: bool,
-) -> MappingProxyType[int, QAndFFunction]:
+) -> MappingProxyType[int, QAndFFunction[PytreeValue]]:
     """Build per-subject pointwise Q-and-feasibility closures for each period.
 
     Unlike `argmax_and_max_Q_over_a`, which maximizes over the Cartesian product
@@ -8770,25 +8978,36 @@ def _build_pointwise_Q_and_F_per_period(
 
     Periods sharing the same Q_and_F object reuse a single compiled function.
     """
+    from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
+        BoundedQAndF,
+        runtime_bound_specs,
+    )
+
     subject_mapped_names = (
         *state_action_space.state_names,
         *state_action_space.action_names,
     )
 
-    built: dict[int, QAndFFunction] = {}
-    result: dict[int, QAndFFunction] = {}
+    built: dict[int, QAndFFunction[PytreeValue]] = {}
+    result: dict[int, QAndFFunction[PytreeValue]] = {}
     for period, Q_and_F in Q_and_F_functions.items():
         q_id = id(Q_and_F)
         if q_id not in built:
             # A terminal period's Q_and_F takes no actions, so only the names it
             # actually declares can be mapped over the subject axis.
             declared = frozenset(inspect.signature(Q_and_F).parameters)
-            func = jax.jit(Q_and_F) if enable_jit else Q_and_F
-            built[q_id] = simulation_spacemap(
-                func=func,
-                action_names=(),
-                state_names=tuple(
-                    name for name in subject_mapped_names if name in declared
+            bounded = bool(runtime_bound_specs(function=Q_and_F))
+            actual = BoundedQAndF(function=Q_and_F) if bounded else Q_and_F
+            func = jax.jit(actual) if enable_jit else actual
+            built[q_id] = cast(
+                "QAndFFunction[PytreeValue]",
+                simulation_spacemap(
+                    func=func,
+                    action_names=(),
+                    bound_summary=bounded,
+                    state_names=tuple(
+                        name for name in subject_mapped_names if name in declared
+                    ),
                 ),
             )
         result[period] = built[q_id]
