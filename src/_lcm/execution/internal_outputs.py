@@ -10,6 +10,7 @@ import dataclasses
 import functools
 from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType
+from typing import cast
 
 import jax
 
@@ -275,10 +276,15 @@ def _select_path(
     label: str,
 ) -> ShapeDtypePytree:
     """Index one abstract output tree down to the published subtree."""
+    from _lcm.solution.feasibility import BoundedResult  # noqa: PLC0415
+
     node = tree
     for step in path:
         try:
-            node = node[step]  # ty: ignore[not-subscriptable, invalid-argument-type]
+            if type(node) is BoundedResult and step == "output":
+                node = cast("ShapeDtypePytree", node.output)
+            else:
+                node = node[step]  # ty: ignore[not-subscriptable, invalid-argument-type]
         except (IndexError, KeyError, TypeError) as error:
             msg = (
                 f"Internal output {label!r} of core program {producer_name!r} declares "
