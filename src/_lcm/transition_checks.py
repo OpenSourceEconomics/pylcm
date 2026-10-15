@@ -1377,7 +1377,12 @@ def _feasible_rows_law(
     )
     if not grid_names:
         probabilities, feasible = point_call()
-        return probabilities, jnp.asarray(feasible), {}
+        # A constant law may return its code as a Python `int`.
+        return (
+            {name: jnp.asarray(value) for name, value in probabilities.items()},
+            jnp.asarray(feasible),
+            {},
+        )
     mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="ij")
     flat_arrays = tuple(array.ravel() for array in mesh)
     probabilities, feasible = jax.vmap(point_call)(*flat_arrays)
@@ -1873,9 +1878,10 @@ def _validate_discrete_state_laws(
     """Check one regime's deterministic discrete laws at one period, each phase.
 
     The laws to each target are composed as the solve composes them, through the
-    regime functions and through each other. A stochastic sibling the solve
-    resolves on its node axis, including a joint transition's drawn output, is an
-    input here, swept over its target grid; the lotteries themselves are left out.
+    regime functions and through each other. A lottery over a state's own codes is
+    an input here, swept over its target grid. A joint transition's draw takes each
+    event of its declared support, so its outputs are checked at every node, also
+    one the lottery gives no mass.
 
     The laws are first evaluated on the grid of the variables they read alone. Only
     when some code leaves its grid there are they evaluated again together with the
@@ -1905,19 +1911,32 @@ def _validate_discrete_state_laws(
                     if name is not None
                 }
             )
-            stochastic = {
-                name
-                for name in transitions
-                if name in regime.stochastic_state_transitions
-                or f"{name}__{target}" in regime.stochastic_state_transitions
-                or (
-                    plan is not None
-                    and (output := plan.outputs.get(name.removeprefix("next_")))
-                    is not None
-                    and output.next_state_name == name
-                    and bool(output.lottery_dependencies)
-                )
-            }
+            draws = (
+                {}
+                if plan is None
+                else {
+                    name: lottery
+                    for name, lottery in plan.lotteries.items()
+                    if lottery.support_provider_name is not None
+                }
+            )
+            # The canonical plan decides which lotteries are swept over their
+            # target's codes; the legacy names, which also list a draw that has a
+            # support of its own, apply only to a target without a plan.
+            stochastic = (
+                {
+                    name
+                    for name in transitions
+                    if name in regime.stochastic_state_transitions
+                    or f"{name}__{target}" in regime.stochastic_state_transitions
+                }
+                if plan is None
+                else {
+                    name
+                    for name in transitions
+                    if name in plan.lotteries and name not in draws
+                }
+            )
             target_grids = {
                 name: grid
                 for name in transitions
@@ -1953,6 +1972,36 @@ def _validate_discrete_state_laws(
                 },
             }
             scalar_kwargs = {**params, "period": jnp.int32(period), "age": age}
+            read = frozenset(inspect.signature(laws).parameters)
+            supports = {
+                name: _support_events(
+                    func=transitions[lottery.support_provider_name],
+                    scalar_kwargs=scalar_kwargs,
+                )
+                for name, lottery in draws.items()
+                if name in read
+            }
+            if any(events is None for events in supports.values()):
+                # The joint-transition check reports a support it cannot bind.
+                continue
+            if supports:
+                laws = _AtSupportEvents(
+                    law=laws,
+                    supports=tuple(
+                        (name, jax.tree_util.tree_structure(events), len(leaves))
+                        for name, events in supports.items()
+                        for leaves in (jax.tree_util.tree_leaves(events),)
+                    ),
+                )
+                for name, events in supports.items():
+                    leaves = jax.tree_util.tree_leaves(events)
+                    law_grids[f"__node_{name}"] = jnp.arange(
+                        draws[name].support_signature.size, dtype=jnp.int32
+                    )
+                    scalar_kwargs |= {
+                        f"__support_{name}_{index}": leaf
+                        for index, leaf in enumerate(leaves)
+                    }
             law_names = frozenset(inspect.signature(laws).parameters)
             law_codes, _, _ = _evaluate_feasible_rows(
                 law=_NamedArgumentsCall(func=laws, names=law_names),
@@ -1988,7 +2037,7 @@ def _validate_discrete_state_laws(
                 _fail_if_codes_leave_the_grid(
                     codes=codes[name],
                     feasible=feasible,
-                    point=point,
+                    point={k.removeprefix("__node_"): v for k, v in point.items()},
                     target_grid=target_grid,
                     source_grids=regime.solution.grids,
                     description=(
@@ -1996,6 +2045,66 @@ def _validate_discrete_state_laws(
                         f"the law '{name}' to regime '{target}'"
                     ),
                 )
+
+
+def _support_events(
+    *, func: Callable[..., PytreeValue], scalar_kwargs: Mapping[str, EconFunctionArg]
+) -> PytreeValue | None:
+    """Evaluate a joint support, or `None` if it reads more than params and time."""
+    names = inspect.signature(func).parameters
+    if any(name not in scalar_kwargs for name in names):
+        return None
+    return func(**{name: scalar_kwargs[name] for name in names})
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _AtSupportEvents:
+    """Call a law with each joint draw set to the support event at its node.
+
+    For each draw `d` the law reads, the call takes the node `__node_d` and the
+    support leaves `__support_d_<i>`, and passes `d` as the event at that node.
+    """
+
+    law: Callable[..., _FeasibleRowsLawOutput] = field(repr=False)
+    """The composed laws, reading each draw as an event."""
+    supports: tuple[tuple[str, jax.tree_util.PyTreeDef, int], ...]
+    """Each draw's name, support tree structure and number of leaves."""
+
+    def __post_init__(self) -> None:
+        drawn = {name for name, _, _ in self.supports}
+        _publish_signature(
+            target=self,
+            arg_names=(
+                *(
+                    name
+                    for name in inspect.signature(self.law).parameters
+                    if name not in drawn
+                ),
+                *(f"__node_{name}" for name in drawn),
+                *(
+                    f"__support_{name}_{index}"
+                    for name, _, n_leaves in self.supports
+                    for index in range(n_leaves)
+                ),
+            ),
+            return_annotation=inspect.Signature.empty,
+            name="laws_at_support_events",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: EconFunctionArg) -> _FeasibleRowsLawOutput:
+        events = {
+            name: jax.tree_util.tree_unflatten(
+                tree,
+                [
+                    kwargs[f"__support_{name}_{index}"][kwargs[f"__node_{name}"]]
+                    for index in range(n_leaves)
+                ],
+            )
+            for name, tree, n_leaves in self.supports
+        }
+        names = inspect.signature(self.law).parameters
+        return self.law(**{k: v for k, v in (kwargs | events).items() if k in names})
 
 
 def _evaluate_on_feasible_rows(

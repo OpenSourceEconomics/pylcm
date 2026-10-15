@@ -186,7 +186,11 @@ def merge_model_slots(
             regime_name=regime_name,
             actions=actions,
             constraints=constraints,
-            functions=functions,
+            readers=(
+                *functions.values(),
+                *constraints.values(),
+                *state_transitions.values(),
+            ),
         )
         errors.extend(
             (
@@ -703,9 +707,9 @@ def _valuation_roots(
         aggregator = regime.get_koopmans_aggregator(phase=phase) or koopmans_aggregator
         if aggregator is not None:
             roots["__koopmans_aggregator"] = aggregator
-        selection = regime.get_selection_aggregator(phase=phase)
-        if selection is not None:
-            roots["__selection_aggregator"] = selection
+        objective = regime.get_objective_aggregator(phase=phase)
+        if objective is not None:
+            roots["__koopmans_aggregator__objective"] = objective
     return MappingProxyType(roots)
 
 
