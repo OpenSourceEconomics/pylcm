@@ -841,3 +841,44 @@ def test_joint_normal_keeps_an_ordinary_state_carried_to_reader(*, fold: bool) -
         )
     assert {"x", "y", "lag"} <= set(frame.columns)
     assert np.isfinite(frame[["x", "y", "lag", "value"]].to_numpy()).all()
+
+
+def _declared_regime() -> lcm.Regime:
+    return lcm.Regime(
+        states={
+            "wages": JointNormalIIDProcess(
+                states=("x", "y"),
+                n_points=3,
+                gauss_hermite=True,
+                mean=(0.0, 0.0),
+                cov=_FULL_RANK_COV,
+            )
+        },
+        functions={"utility": _utility},
+    )
+
+
+def test_regime_keeps_the_joint_declaration_as_written() -> None:
+    """`states` and `functions` hold what the author declared, not the lowering."""
+    regime = _declared_regime()
+    assert (set(regime.states), set(regime.functions)) == ({"wages"}, {"utility"})
+
+
+def test_regime_replace_swaps_the_joint_declaration() -> None:
+    """Replacing the joint process changes the law the model builds from."""
+    replacement = JointNormalIIDProcess(
+        states=("x", "y"),
+        n_points=3,
+        gauss_hermite=True,
+        mean=(0.0, 0.0),
+        cov=((2.0, 0.5), (0.5, 1.0)),
+    )
+    regime = _declared_regime().replace(states={"wages": replacement})
+    assert regime.states["wages"] is replacement
+
+
+def test_regime_replace_of_functions_keeps_the_joint_outputs() -> None:
+    """Replacing `utility` leaves the physical shocks available to the model."""
+    regime = _declared_regime().replace(functions={"utility": _utility})
+    model = _model(regime)
+    assert model.initial_state_names(regime_name="working") == ("x", "y")
