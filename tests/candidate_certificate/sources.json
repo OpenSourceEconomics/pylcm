@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "fe2a3bfb65020443eb53ca2c4526cbba4941d73723b1785049da16b322d54708",
+  "source_inventory_sha256": "50574fd51edeaac427acb434b57708d9769f3c7b8ec51aa95a2b13b5c7968f4f",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -114,7 +114,7 @@
     },
     {
       "path": "src/_lcm/pandas_utils.py",
-      "sha256": "6d62f9b897416aceb89143db4cbe9a691b907d75579f736b830fede239bc199b"
+      "sha256": "9ce312a18a19bd267eec3145720f5b2911429490e9e1a4742de96aab5e35080d"
     },
     {
       "path": "src/_lcm/params/processing.py",
@@ -122,7 +122,7 @@
     },
     {
       "path": "src/_lcm/params/regime_template.py",
-      "sha256": "71def81dfc7a133730a65e206fe770c8b2ee31edc6064448da5a7367dc3f0476"
+      "sha256": "c11a082f4a256c25a66779301417a29385ab1f0ec0674e02fec36983e862aca6"
     },
     {
       "path": "src/_lcm/persistence/solution.py",
@@ -166,7 +166,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "b8e3bd3fec3721ecae91c2de57f9665391c56c8162cbcb6d58bed2358e9ebecc"
+      "sha256": "e4120f9cb8d38d46300fe8a1797df53065aa0fe575675263d8573cd4174eef31"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -178,7 +178,7 @@
     },
     {
       "path": "src/_lcm/simulation/additional_targets.py",
-      "sha256": "2fbc68874058f430f6037cc2d059cd18cf579bab7912ff03e467e4416e6e58ef"
+      "sha256": "3a4d95d5c88c801bb8bb0881a52cd8985e1cc17efdbfbf5474332e46b8d46614"
     },
     {
       "path": "src/_lcm/simulation/assembly.py",
@@ -302,11 +302,11 @@
     },
     {
       "path": "src/_lcm/simulation/result_dataframe.py",
-      "sha256": "d4dd248500cb96179f378430236c0201d221f377f62ec63689eb5234431376a5"
+      "sha256": "88773c4ce66f54feface58198c1785040ba43973f0fc24cab623c699aa400a41"
     },
     {
       "path": "src/_lcm/simulation/result_metadata.py",
-      "sha256": "b775c7cda25a3d7c53e6bc08499b24e2a277d95b5a2cef6e7fce5512cf208591"
+      "sha256": "3f1e299a4c7aa76aedea4d39288c9941a27ba7cb881d83792a44ad63b31f775d"
     },
     {
       "path": "src/_lcm/simulation/runtime.py",
@@ -478,7 +478,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "98cd2bfa764994861bec761a71d913532e1aaf67d5045d919de41daf5b31aba9"
+      "sha256": "8c2384e39eb08d6afc4bd7a1d80d5ede6d5b0af6da75b7f9dda596eac38dc9cc"
     },
     {
       "path": "src/lcm/result.py",

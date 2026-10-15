@@ -30,6 +30,7 @@ from _lcm.params.temporal import (
     validate_temporal_variants,
 )
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.processes.joint_normal_lowering import JointStateEntry
 from _lcm.reachability import ModelReachability
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
 from _lcm.regime_law import RegimeLaws
@@ -1638,7 +1639,7 @@ def _collect_state_names(
 
 
 def _state_grids_with_carried_domains(
-    states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
+    states: Mapping[StateName, JointStateEntry],
 ) -> MappingProxyType[StateName, Grid | AgeSpecializedGrid]:
     """Replace each carried-state declaration by its simulate-phase grid.
 
@@ -1651,7 +1652,9 @@ def _state_grids_with_carried_domains(
     """
     return MappingProxyType(
         {
-            name: cast("Grid", spec.simulate) if isinstance(spec, Phased) else spec
+            name: cast("Grid", spec.simulate)
+            if isinstance(spec, Phased)
+            else cast("Grid | AgeSpecializedGrid", spec)
             for name, spec in states.items()
             if spec is not None
         }

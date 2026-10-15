@@ -49,6 +49,58 @@ NormalIIDProcess(n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0)
 With `gauss_hermite=True`, positive even and odd `n_points` are supported. The examples
 use odd counts, which include a node at the mean; even counts have no mean node.
 
+### JointNormalIIDProcess
+
+Declare correlated Gaussian shocks together under one parameter namespace:
+
+```python
+from lcm import JointNormalIIDProcess, Regime
+
+working = Regime(
+    states={
+        "wages": JointNormalIIDProcess(
+            states=("eps_husband", "eps_wife"),
+            n_points=(7, 5),
+            gauss_hermite=True,
+            mean=(0.0, 0.0),
+            cov=None,
+        ),
+    },
+    functions={"utility": utility},
+)
+params = {"working": {"wages": {"cov": [[1.0, 0.4], [0.4, 2.0]]}}}
+```
+
+The scalar names in `states` are the physical shocks your DAG functions consume. Initial
+observations and simulation dataframe columns use those names too. A scalar `n_points`
+applies to every dimension; a tuple supplies counts in the named order. `mean` and `cov`
+can be fixed on the declaration or supplied through its parameter namespace. The
+covariance must be finite, symmetric and positive semidefinite; invalid runtime
+covariance identifies the process and regime even with runtime checks disabled. Singular
+covariance, including zero variance, is supported; initial observations must lie on its
+support.
+
+Quadrature forms the product of independent standard-normal rules and applies a
+lower-triangular covariance factor. Simulation draws continuous normal coordinates and
+applies the same factor. With `gauss_hermite=False`, supply positive `n_std`: the scalar
+rules use CDF bins. This declaration belongs directly in `Regime.states`; it is not a
+state-conditioned law or a replacement for `JointTransition`.
+
+The internal Cartesian value axes are named `<group>_normal_<dimension>` and carry
+standard-normal coordinates. Physical correlated support is not Cartesian, so these axes
+differ from the physical names in the DAG and simulation. `fold=True` folds every
+internal coordinate and inherits the scalar IID solver and timing restrictions. It
+retains physical shocks in simulation output.
+
+Initial-population recipes can inspect `model.initial_state_names(regime_name=...)` to
+obtain physical scalar names, including folded and carried states. For a continuous
+state,
+`model.initial_state_bounds(params=..., regime_name=..., state_name=..., period=...)`
+returns its marginal grid extents using the supplied runtime law. Supply the zero-based
+period for specialized grids. These intervals describe the discretized support; they
+neither form a Cartesian correlated grid nor truncate continuous draws. `state_names`
+and `state_grid` continue to describe value-array axes.
+
 ### LogNormalIIDProcess
 
 Discretized log-normal distribution where $\ln X \sim N(\mu, \sigma^2)$.

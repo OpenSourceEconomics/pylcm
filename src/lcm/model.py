@@ -94,6 +94,12 @@ from _lcm.processes.ar1 import (
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
+from _lcm.processes.joint_normal_lowering import (
+    coordinate_names,
+    joint_normal_declarations,
+    lower_joint_normal_initial_conditions,
+    validate_joint_normal_params,
+)
 from _lcm.reachability import ModelReachability
 from _lcm.regime_building.action_partitioning import (
     action_partition_width_ceilings,
@@ -837,6 +843,12 @@ class Model:
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
         self._edges = cast("ModelEdges", snapshot_transition_containers(edges))
+        # The engine reads each joint normal declaration in its lowered form;
+        # the caller's regimes keep the declarations as written.
+        regimes = {
+            name: regime.lower_joint_normal_processes()
+            for name, regime in regimes.items()
+        }
         laws, graph_edges = bind_edge_laws(
             edges=self._edges, regimes=regimes, ages=self._time
         )
@@ -3519,6 +3531,10 @@ class Model:
                     user_regimes=self.user_regimes,
                     regime_names_to_ids=self.regime_names_to_ids,
                 )
+                initial_conditions = self._lower_joint_initial_conditions(
+                    initial_conditions=initial_conditions,
+                    flat_params=flat_params,
+                )
                 if isinstance(initial_conditions, pd.DataFrame):
                     initial_conditions = initial_conditions_from_dataframe(
                         df=initial_conditions,
@@ -3952,7 +3968,11 @@ class Model:
             states: One 1-D array per state of the regime, all of equal length.
                 Discrete values must be grid codes; continuous values off the grid
                 are extrapolated exactly as in `simulate`. A regime without states
-                takes `{}`, which is one row.
+                takes `{}`, which is one row. A joint normal process is given
+                either by its physical shocks, as `initial_state_names` lists
+                them, or by its complete set of internal coordinates, as
+                `state_names` lists them, whose nodes `state_grid` returns; one
+                process cannot mix the two.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
@@ -3998,8 +4018,37 @@ class Model:
             params=params, inputs=(states, action_grids), solution=solution
         )
         try:
+            lookup_inputs: UserInitialConditions = states
+            processed_params = None
+            if joint_normal_declarations(regime.simulation.grids):
+                flat_params = self._process_params(params, array_writer=allocations)
+                processed_params = flat_params
+                first_state = (
+                    np.asarray(next(iter(states.values()))) if states else None
+                )
+                if first_state is not None and first_state.ndim != 1:
+                    raise InvalidInitialConditionsError(
+                        "Joint normal policy inputs must be one-dimensional arrays."
+                    )
+                n_rows = len(first_state) if first_state is not None else 1
+                lowered = self._lower_joint_initial_conditions(
+                    initial_conditions={
+                        **states,
+                        "regime_id": np.full(
+                            n_rows, int(self.regime_names_to_ids[regime_name])
+                        ),
+                    },
+                    flat_params=flat_params,
+                    accept_coordinates=True,
+                )
+                # The lowering preserves the supplied mapping/frame container kind.
+                lookup_inputs = {
+                    name: value
+                    for name, value in cast("UserInitialConditions", lowered).items()
+                    if name != "regime_id"
+                }
             states = canonicalize_initial_conditions(
-                initial_conditions=states,
+                initial_conditions=lookup_inputs,
                 regimes=MappingProxyType({regime_name: regime}),
                 array_writer=allocations,
             )
@@ -4028,6 +4077,7 @@ class Model:
                 states=states,
                 action_grids=action_grids,
                 allocations=allocations,
+                processed_params=processed_params,
                 keep_intermediates=frozenset(keep_intermediates),
                 n_query_rows=(
                     n_rows
@@ -4051,6 +4101,7 @@ class Model:
         allocations: SimulationEntryAllocations | None,
         keep_intermediates: frozenset[Intermediate],
         n_query_rows: int | None,
+        processed_params: FlatParams | None = None,
     ) -> PolicyLookup:
         """Run a validated lookup under the call's entry owner, if budgeted.
 
@@ -4061,9 +4112,13 @@ class Model:
         """
         regime = self._regimes[regime_name]
         flat_params = (
-            self._process_params(params)
-            if allocations is None
-            else self._process_params(params, array_writer=allocations)
+            processed_params
+            if processed_params is not None
+            else (
+                self._process_params(params)
+                if allocations is None
+                else self._process_params(params, array_writer=allocations)
+            )
         )
         resolver = None if allocations is None else allocations.process_grid_resolver
         if resolver is not None:
@@ -4261,6 +4316,92 @@ class Model:
             call_roots=(states, space.states, grids, outputs),
         )
 
+    def initial_state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
+        """Return physical per-subject state names for initial observations.
+
+        Includes folded and carried states. Joint-normal coordinates are replaced
+        by their declared physical names; value-array axes remain `state_names`.
+        """
+        regime = self._regimes.get(regime_name)
+        if regime is None:
+            raise InvalidSimulationInputError(
+                f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
+            )
+        names = dict.fromkeys(regime.simulation.state_names)
+        for group, process in joint_normal_declarations(
+            regime.simulation.grids
+        ).items():
+            for name in coordinate_names(group=group, process=process):
+                names.pop(name, None)
+            names.update(dict.fromkeys(process.states))
+        return tuple(names)
+
+    @beartype(conf=SIMULATION_INPUT_CONF)
+    def initial_state_bounds(
+        self,
+        *,
+        params: UserParams,
+        regime_name: RegimeName,
+        state_name: StateName,
+        period: int | None = None,
+    ) -> tuple[float, float]:
+        """Return a continuous initial state's physical quadrature/grid extents.
+
+        Runtime laws use `params`; specialized grids require a zero-based period.
+        Joint intervals are marginal extents of the transformed product support,
+        not Cartesian joint grids or truncation bounds for continuous draws.
+        """
+        names = self.initial_state_names(regime_name=regime_name)
+        regime = self._regimes[regime_name]
+        if state_name not in names:
+            raise InvalidSimulationInputError(
+                f"Regime {regime_name!r} has no physical initial state "
+                f"{state_name!r}; known: {names}."
+            )
+        if period is not None and (
+            type(period) is not int or period not in regime.active_periods
+        ):
+            raise InvalidSimulationInputError(
+                "Initial state bounds period must be valued in regime "
+                f"{regime_name!r}; got {period!r}."
+            )
+        for group, process in joint_normal_declarations(
+            regime.simulation.grids
+        ).items():
+            if state_name in process.states:
+                flat = self._process_params(params)
+                law_params = {
+                    **regime.resolved_fixed_params,
+                    **regime_kernel_params(flat, regime_name=regime_name),
+                }
+                bounds = process.compute_grid_bounds(
+                    mean=cast("FloatND", law_params[f"{group}__mean"])
+                    if process.mean is None
+                    else None,
+                    cov=cast("FloatND", law_params[f"{group}__cov"])
+                    if process.cov is None
+                    else None,
+                )
+                row = np.asarray(bounds)[process.states.index(state_name)]
+                return float(row[0]), float(row[1])
+        grid = regime.simulation.grids[state_name]
+        if isinstance(grid, DiscreteGrid):
+            raise InvalidSimulationInputError(
+                f"State {state_name!r} is discrete; continuous bounds do not apply."
+            )
+        points = (
+            self.state_grid(
+                params=params,
+                regime_name=regime_name,
+                state_name=state_name,
+                period=period,
+            )
+            if state_name in regime.solution.state_names
+            else grid.to_jax()
+        )
+        values = np.asarray(points)
+        return float(values.min()), float(values.max())
+
     def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         """Return a regime's state names in the axis order of its value arrays.
 
@@ -4446,6 +4587,10 @@ class Model:
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
+        initial_conditions = self._lower_joint_initial_conditions(
+            initial_conditions=initial_conditions,
+            flat_params=flat_params,
+        )
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
@@ -4461,6 +4606,32 @@ class Model:
         )
         self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
         return canonical, flat_params
+
+    def _lower_joint_initial_conditions(
+        self,
+        *,
+        initial_conditions: UserInitialConditions | pd.DataFrame,
+        flat_params: FlatParams,
+        accept_coordinates: bool = False,
+    ) -> UserInitialConditions | pd.DataFrame:
+        """Resolve named physical shocks before canonical entry allocation."""
+        return lower_joint_normal_initial_conditions(
+            initial_conditions=initial_conditions,
+            grids_by_regime={
+                name: regime.simulation.grids for name, regime in self._regimes.items()
+            },
+            params_by_regime={
+                name: MappingProxyType(
+                    {
+                        **regime.resolved_fixed_params,
+                        **regime_kernel_params(flat_params, regime_name=name),
+                    }
+                )
+                for name, regime in self._regimes.items()
+            },
+            regime_names_to_ids=self.regime_names_to_ids,
+            accept_coordinates=accept_coordinates,
+        )
 
     def _fail_if_declared_entry_is_not_permitted(
         self, *, initial_conditions: UserInitialConditions | pd.DataFrame
@@ -4671,6 +4842,18 @@ class Model:
             if not regime.active_periods:
                 continue
             for phase in (regime.solution, regime.simulation):
+                validate_joint_normal_params(
+                    grids=phase.grids,
+                    params=MappingProxyType(
+                        {
+                            **regime.resolved_fixed_params,
+                            **regime_kernel_params(
+                                flat_params, regime_name=regime_name
+                            ),
+                        }
+                    ),
+                    regime_name=regime_name,
+                )
                 for state_name, grid in phase.grids.items():
                     if (
                         isinstance(grid, _AR1Process)

@@ -160,6 +160,7 @@ from lcm.persistence import (  # noqa: E402
 )
 from lcm.phased import Phased  # noqa: E402
 from lcm.processes import (  # noqa: E402
+    JointNormalIIDProcess,
     LogNormalIIDProcess,
     NormalIIDProcess,
     NormalMixtureIIDProcess,
@@ -248,6 +249,7 @@ __all__ = [
     "InitialNodes",
     "InvariantBlockSchedule",
     "IrregSpacedGrid",
+    "JointNormalIIDProcess",
     "JointTransition",
     "LinSpacedGrid",
     "LinearAggregator",
