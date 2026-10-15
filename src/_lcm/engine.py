@@ -413,6 +413,11 @@ class SolutionPhase:
     ) = dataclasses.field(default=None, metadata={"fingerprint_omit_if_default": True})
     """Per-period capabilities of installed target-specific model-bound readers."""
 
+    query_input_authorities: (
+        Mapping[int, tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]] | None
+    ) = dataclasses.field(default=None, metadata={"fingerprint_omit_if_default": True})
+    """Canonical child regime, target period and bound for each private query slot."""
+
     has_compiled_constraint_boundaries: bool = False
     """Whether the solve route compiles any constraint boundary into its kernel."""
 

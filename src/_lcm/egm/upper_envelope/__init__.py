@@ -34,7 +34,7 @@ build each point's tangent; the others recover slopes from the segments.
 
 import functools
 from collections.abc import Callable
-from typing import Protocol, runtime_checkable
+from typing import Literal, NamedTuple, Protocol, cast, overload, runtime_checkable
 
 import jax.numpy as jnp
 
@@ -50,7 +50,11 @@ from _lcm.egm.upper_envelope.fues import (
 from _lcm.egm.upper_envelope.ltm import refine_envelope as refine_envelope_ltm
 from _lcm.egm.upper_envelope.mss import refine_envelope as refine_envelope_mss
 from _lcm.egm.upper_envelope.rfc import refine_envelope as refine_envelope_rfc
-from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
+from _lcm.egm.upper_envelope.segment_envelope import (
+    OwnedEnvelope,
+    _line_read,
+    refine_envelope_exact,
+)
 from _lcm.solution.dcegm import (
     DCEGM,
     ExactEnvelope,
@@ -59,7 +63,31 @@ from _lcm.solution.dcegm import (
     MSSEnvelope,
     RFCEnvelope,
 )
-from lcm.typing import Float1D, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, ScalarBool, ScalarFloat, ScalarInt
+
+
+class OwnedQueryBracket(NamedTuple):
+    """A bracket and original saving selected with its complete owned support.
+
+    Exact nodes select the right copy independently of adjacent links. Queries
+    at or above the last node clamp to that endpoint; queries below the first
+    node extend its valid owning secant. Interior gaps remain unsupported.
+    """
+
+    bracket: QueryBracket
+    savings: ScalarFloat
+    owner_id: ScalarInt
+    side_id: ScalarInt
+    read_supported: ScalarBool
+    lower_savings: ScalarFloat
+    upper_savings: ScalarFloat
+    lower_owner_id: ScalarInt
+    upper_owner_id: ScalarInt
+    lower_side_id: ScalarInt
+    upper_side_id: ScalarInt
+    link_valid: ScalarBool
+    construction_invalid: ScalarBool
+    """The full emitted prefix has invalid associated channels or exceeds capacity."""
 
 
 @runtime_checkable
@@ -90,18 +118,57 @@ class UpperEnvelopeBackend(Protocol):
         ...
 
 
-def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend:
+@runtime_checkable
+class _OwnedUpperEnvelopeBackend(Protocol):
+    """Refine candidates while publishing their associated original provenance."""
+
+    def __call__(
+        self,
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal_utility: Float1D,
+        savings: Float1D,
+        cell_width: int = 1,
+    ) -> OwnedEnvelope: ...
+
+
+@overload
+def get_upper_envelope(
+    *,
+    solver: DCEGM,
+    n_refined: int,
+    publish_provenance: Literal[False] = False,
+) -> UpperEnvelopeBackend: ...
+
+
+@overload
+def get_upper_envelope(
+    *,
+    solver: DCEGM,
+    n_refined: int,
+    publish_provenance: Literal[True],
+) -> _OwnedUpperEnvelopeBackend: ...
+
+
+def get_upper_envelope(
+    *, solver: DCEGM, n_refined: int, publish_provenance: bool = False
+) -> UpperEnvelopeBackend | _OwnedUpperEnvelopeBackend:
     """Build the upper-envelope backend selected by the solver configuration.
 
     Args:
         solver: The regime's DC-EGM solver configuration; its typed `envelope`
             object selects and configures the backend.
         n_refined: Static length of the refined output rows.
+        publish_provenance: Publish original saving and topology with ExactEnvelope.
 
     Returns:
         The configured backend.
 
     """
+    if publish_provenance and not isinstance(solver.envelope, ExactEnvelope):
+        raise ValueError("Owned provenance publication requires ExactEnvelope.")
     if isinstance(solver.envelope, FUESEnvelope):
         return functools.partial(
             _fues_backend,
@@ -111,9 +178,15 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
         )
 
     if isinstance(solver.envelope, ExactEnvelope):
-        return functools.partial(
-            _exact_backend, envelope=solver.envelope, n_refined=n_refined
+        backend = functools.partial(
+            _exact_backend,
+            envelope=solver.envelope,
+            n_refined=n_refined,
+            publish_provenance=publish_provenance,
         )
+        if publish_provenance:
+            return cast("_OwnedUpperEnvelopeBackend", backend)
+        return cast("UpperEnvelopeBackend", backend)
 
     if isinstance(solver.envelope, RFCEnvelope):
         return functools.partial(
@@ -137,7 +210,27 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
     raise ValueError(msg)
 
 
-def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryBracket]:
+@overload
+def get_bracket_finder(
+    *,
+    solver: DCEGM,
+    n_refined: int,
+    publish_provenance: Literal[False] = False,
+) -> Callable[..., QueryBracket]: ...
+
+
+@overload
+def get_bracket_finder(
+    *,
+    solver: DCEGM,
+    n_refined: int,
+    publish_provenance: Literal[True],
+) -> Callable[..., OwnedQueryBracket]: ...
+
+
+def get_bracket_finder(
+    *, solver: DCEGM, n_refined: int, publish_provenance: bool = False
+) -> Callable[..., QueryBracket | OwnedQueryBracket]:
     """Build the single-query bracket finder for the asset-row solve.
 
     The geometry-only counterpart of `get_upper_envelope` for asset-row mode,
@@ -162,11 +255,14 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
         n_refined: Static length of the refined envelope row every finder
             materializes before locating the bracket. This is the `n_pad`
             overflow threshold the asset-row publish compares `n_kept` against.
+        publish_provenance: Publish associated saving and support with ExactEnvelope.
 
     Returns:
         The configured bracket finder.
 
     """
+    if publish_provenance and not isinstance(solver.envelope, ExactEnvelope):
+        raise ValueError("Owned provenance publication requires ExactEnvelope.")
     if isinstance(solver.envelope, FUESEnvelope):
         return functools.partial(
             _fues_bracket_finder,
@@ -195,7 +291,10 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
     if isinstance(solver.envelope, ExactEnvelope):
         return functools.partial(
-            _exact_bracket_finder, envelope=solver.envelope, n_refined=n_refined
+            _exact_bracket_finder,
+            envelope=solver.envelope,
+            n_refined=n_refined,
+            publish_provenance=publish_provenance,
         )
 
     msg = f"Unknown upper-envelope backend: {solver.envelope!r}."
@@ -242,14 +341,15 @@ def _exact_backend(
     cell_width: int = 1,
     envelope: ExactEnvelope,
     n_refined: int,
-) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+    publish_provenance: bool = False,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt] | OwnedEnvelope:
     """Build the exact segment envelope of the candidate cloud.
 
     The construction reads its topology off the candidate order and its geometry
-    off the value links, so neither the candidate supgradient nor the exogenous
-    source savings are consumed.
+    off the value links. Original saving follows those same owning links when
+    provenance is requested; the candidate supgradient is not consumed.
     """
-    del marginal_utility, savings
+    del marginal_utility
     return refine_envelope_exact(
         endog_grid=endog_grid,
         policy=policy,
@@ -257,6 +357,7 @@ def _exact_backend(
         n_refined=n_refined,
         max_runs=envelope.max_runs,
         cell_width=cell_width,
+        savings=savings if publish_provenance else None,
     )
 
 
@@ -500,27 +601,110 @@ def _exact_bracket_finder(
     x_query: ScalarFloat,
     envelope: ExactEnvelope,
     n_refined: int,
-) -> QueryBracket:
+    publish_provenance: bool = False,
+) -> QueryBracket | OwnedQueryBracket:
     """Locate the query bracket from the exact segment envelope.
 
     Builds the same full NaN-padded row the full-envelope path publishes and
     slices the bracketing pair, so the two paths cannot diverge.
     """
-    del marginal_utility, savings
-    refined_grid, refined_policy, refined_value, n_kept = refine_envelope_exact(
+    del marginal_utility
+    refined = refine_envelope_exact(
         endog_grid=endog_grid,
         policy=policy,
         value=value,
         n_refined=n_refined,
         max_runs=envelope.max_runs,
         cell_width=cell_width,
+        savings=savings if publish_provenance else None,
     )
+    if isinstance(refined, OwnedEnvelope):
+        return _bracket_from_owned_row(refined=refined, x_query=x_query)
+    refined_grid, refined_policy, refined_value, n_kept = refined
     return _bracket_from_refined_row(
         refined_grid=refined_grid,
         refined_policy=refined_policy,
         refined_value=refined_value,
         n_kept=n_kept,
         x_query=x_query,
+    )
+
+
+def _bracket_from_owned_row(
+    *, refined: OwnedEnvelope, x_query: ScalarFloat
+) -> OwnedQueryBracket:
+    """Read original saving from the exact bracket that owns the query."""
+    active_prefix = jnp.arange(refined.grid.size) < refined.n_kept
+    construction_invalid = (refined.n_kept > refined.grid.size) | jnp.any(
+        active_prefix
+        & (
+            ~jnp.isfinite(refined.grid)
+            | ~jnp.isfinite(refined.policy)
+            | ~(jnp.isfinite(refined.value) | jnp.isneginf(refined.value))
+            | ~jnp.isfinite(refined.savings)
+        )
+    )
+    search_grid, valid_length = prepare_padded_grid(refined.grid)
+    insertion = jnp.searchsorted(search_grid, x_query, side="right")
+    exact_index = jnp.clip(insertion - 1, 0, jnp.maximum(valid_length - 1, 0)).astype(
+        jnp.int32
+    )
+    exact = (valid_length > 0) & (refined.grid[exact_index] == x_query)
+    last = jnp.maximum(valid_length - 1, 0)
+    upper_clamp = (valid_length > 0) & (x_query >= refined.grid[last])
+    endpoint = exact | upper_clamp
+    endpoint_index = jnp.where(upper_clamp, last, exact_index)
+    upper = jnp.clip(insertion, 1, jnp.maximum(valid_length - 1, 1)).astype(jnp.int32)
+    lower = upper - 1
+    pair_link = (
+        refined.link_valid[jnp.clip(lower, 0, refined.link_valid.shape[0] - 1)]
+        if refined.link_valid.shape[0]
+        else jnp.zeros((), dtype=bool)
+    )
+    lower = jnp.where(endpoint, endpoint_index, lower)
+    upper = jnp.where(endpoint, endpoint_index, upper)
+    bracket = QueryBracket(
+        lower_grid=refined.grid[lower],
+        upper_grid=refined.grid[upper],
+        lower_policy=refined.policy[lower],
+        upper_policy=refined.policy[upper],
+        lower_value=refined.value[lower],
+        upper_value=refined.value[upper],
+        first_grid=refined.grid[0],
+        n_kept=refined.n_kept,
+    )
+    saving, status = _line_read(
+        low=lower,
+        high=upper,
+        x_query=jnp.where(endpoint, refined.grid[endpoint_index], x_query),
+        endog_grid=refined.grid,
+        ordinate=refined.savings,
+    )
+    readable = (
+        jnp.isfinite(bracket.lower_policy)
+        & jnp.isfinite(bracket.upper_policy)
+        & ~jnp.isnan(bracket.lower_value)
+        & ~jnp.isnan(bracket.upper_value)
+        & jnp.isfinite(saving)
+        & (status == 0)
+    )
+    supported = (
+        (endpoint | pair_link) & readable & (refined.n_kept <= refined.grid.shape[0])
+    )
+    return OwnedQueryBracket(
+        bracket=bracket,
+        savings=jnp.where(supported, saving, jnp.nan),
+        owner_id=jnp.where(supported, refined.owner_id[lower], -1),
+        side_id=jnp.where(supported & endpoint, refined.side_id[lower], 0),
+        read_supported=supported,
+        lower_savings=refined.savings[lower],
+        upper_savings=refined.savings[upper],
+        lower_owner_id=refined.owner_id[lower],
+        upper_owner_id=refined.owner_id[upper],
+        lower_side_id=refined.side_id[lower],
+        upper_side_id=refined.side_id[upper],
+        link_valid=~endpoint & pair_link,
+        construction_invalid=construction_invalid,
     )
 
 

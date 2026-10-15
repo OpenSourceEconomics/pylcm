@@ -590,7 +590,9 @@ class MaxQOverAFunction[
 
 
 @runtime_checkable
-class EGMStepFunction(Protocol):
+class EGMStepFunction[Output: PytreeValue = tuple[FloatND, EGMCarry, EGMSimPolicy]](
+    Protocol
+):
     """The per-period DC-EGM kernel for one regime.
 
     Consumes the regime's exogenous state grids, the rolling EGM-carry
@@ -614,7 +616,7 @@ class EGMStepFunction(Protocol):
         _lcm_euler_point_width: int | None = None,
         _lcm_envelope_cell_width: int = 1,
         **kwargs: EconFunctionArg,
-    ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]: ...
+    ) -> Output: ...
 
 
 @runtime_checkable

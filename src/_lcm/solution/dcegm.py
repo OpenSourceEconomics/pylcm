@@ -33,7 +33,7 @@ from _lcm.constraints.routes import (
     ConstraintSite,
 )
 from _lcm.continuation import EGMContinuationSpec
-from _lcm.egm.carry import EGMCarry, egm_carry_role_tree
+from _lcm.egm.carry import EGMCarry, egm_carry_role_tree, egm_query_role_tree
 from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.published_policy import EGMSimPolicy, egm_sim_policy_role_tree
 from _lcm.engine import StateActionSpace
@@ -70,6 +70,13 @@ from _lcm.solution.contract import (
     bind_roles,
     simulation_route,
 )
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    BoundInputStatus,
+    FeasibilityCounts,
+    FeasibilityKernelOutput,
+    QueryInputStatus,
+)
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
@@ -95,11 +102,20 @@ from lcm.solver_api import (
 )
 from lcm.typing import (
     ActionName,
+    BoolND,
     FloatND,
     FunctionName,
     ReferenceName,
     StateName,
 )
+
+type _DCEGMStepOutput = (
+    tuple[FloatND, EGMCarry, EGMSimPolicy]
+    | BoundedResult[tuple[FloatND, EGMCarry, EGMSimPolicy, FeasibilityCounts]]
+)
+type _DCEGMQuerySlots = tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]
+_DCEGM_VALUES_FIELD_COUNT = 3
+_DCEGM_REPLAY_FIELD_COUNT = 4
 
 
 def _fail_if_exact_affine_kernel_unavailable(
@@ -491,6 +507,11 @@ class DCEGM(OneMarginSolver):
 
         assert context.compute_regime_transition_probs is not None  # noqa: S101
         assert context.koopmans_aggregator is not None  # noqa: S101
+        query_model = (
+            context.dcegm_query_models.get(context.regime_name)
+            if context.dcegm_query_models is not None
+            else None
+        )
         build = build_egm_step_functions(
             solver=cast("_BoundDCEGM", self),
             regime_name=context.regime_name,
@@ -513,8 +534,9 @@ class DCEGM(OneMarginSolver):
             state_action_space=context.state_action_space,
             has_taste_shocks=context.has_taste_shocks,
             age_values=context.ages.values,
+            query_model=query_model,
         )
-        steps: Mapping[int, EGMStepFunction] = build.steps
+        steps: Mapping[int, EGMStepFunction[_DCEGMStepOutput]] = build.steps
         argument_builder = _DCEGMArgumentBuilder(
             regime_name=context.regime_name,
             stateful_targets=build.stateful_targets,
@@ -527,7 +549,16 @@ class DCEGM(OneMarginSolver):
         programs_by_core: dict[int, MappingProxyType[str, CoreProgram]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         period_group_keys: dict[int, Hashable] = {}
+        own_bound_specs = () if query_model is None else (query_model.authority.bound,)
+        query_slots_by_period: dict[int, _DCEGMQuerySlots] = {}
         for period, core in steps.items():
+            query_slots = (
+                None
+                if query_model is None
+                else ((context.regime_name, period, query_model.authority.bound),)
+            )
+            if query_slots is not None:
+                query_slots_by_period[period] = query_slots
             if id(core) not in programs_by_core:
                 values_core = functools.partial(_dcegm_values_core, core=core)
                 replay_core = core
@@ -552,7 +583,10 @@ class DCEGM(OneMarginSolver):
                             argument_builder=argument_builder,
                             requirements=requirements,
                             output_roles=_dcegm_output_roles(
-                                build=build, publish_replay=False
+                                build=build,
+                                publish_replay=False,
+                                own_bound_specs=own_bound_specs,
+                                query_slots=query_slots,
                             ),
                             disposition=CoreExecutionDisposition.PLANNED,
                             donation_candidates=(),
@@ -569,7 +603,10 @@ class DCEGM(OneMarginSolver):
                             argument_builder=argument_builder,
                             requirements=requirements,
                             output_roles=_dcegm_output_roles(
-                                build=build, publish_replay=True
+                                build=build,
+                                publish_replay=True,
+                                own_bound_specs=own_bound_specs,
+                                query_slots=query_slots,
                             ),
                             disposition=CoreExecutionDisposition.PLANNED,
                             donation_candidates=(),
@@ -593,13 +630,23 @@ class DCEGM(OneMarginSolver):
                 regime_name=context.regime_name,
                 stateful_targets=build.stateful_targets,
                 transition_target_names=tuple(context.transitions),
+                own_bound_specs=own_bound_specs,
+                query_input_authorities=query_slots,
             )
         return SolutionKernels(
+            query_input_authorities=query_slots_by_period or None,
             period_kernels=MappingProxyType(period_kernels),
             period_group_keys=MappingProxyType(period_group_keys),
             continuation_spec=EGMContinuationSpec(
                 template=context.place_on_regime_devices(template=build.carry_template),
-                layout=self.egm_continuation_layout,
+                layout=(
+                    self.egm_continuation_layout
+                    if query_model is None
+                    else replace(
+                        self.egm_continuation_layout,
+                        query_spec=query_model.authority,
+                    )
+                ),
             ),
         )
 
@@ -744,7 +791,7 @@ def _stochastic_node_axis(
 class EGMStepBuild:
     """What one regime's DC-EGM step build hands its period kernels."""
 
-    steps: MappingProxyType[int, EGMStepFunction]
+    steps: MappingProxyType[int, EGMStepFunction[_DCEGMStepOutput]]
     """Per-period step function; periods sharing a configuration share one."""
 
     step_group_keys: MappingProxyType[int, Hashable]
@@ -790,8 +837,12 @@ class EGMStepBuild:
 
 
 def _dcegm_output_roles(
-    *, build: EGMStepBuild, publish_replay: bool
-) -> tuple[OutputRoleTree, ...]:
+    *,
+    build: EGMStepBuild,
+    publish_replay: bool,
+    own_bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
+    query_slots: _DCEGMQuerySlots | None = None,
+) -> OutputRoleTree:
     """Describe the step's outputs by the state axes that lead them.
 
     - The value array is the regime's value on the productmap state order.
@@ -810,28 +861,106 @@ def _dcegm_output_roles(
             scalar=StateAxesLeading(state_names=(), shape=()),
             breakpoints=None,
             policy=None,
+            query_data=(
+                None
+                if build.carry_template.query_data is None
+                else egm_query_role_tree(
+                    query_data=build.carry_template.query_data,
+                    state_names=row.state_names,
+                )
+            ),
         ),
     )
-    if not publish_replay:
-        return common
-    return (
-        *common,
-        egm_sim_policy_role_tree(
-            row=row,
-            row_discrete_state_names=build.row_discrete_state_names,
-            row_passive_state_names=build.row_passive_state_names,
-            row_discrete_action_names=build.row_discrete_action_names,
+    output: tuple[OutputRoleTree, ...] = common
+    if publish_replay:
+        output = (
+            *common,
+            egm_sim_policy_role_tree(
+                row=row,
+                row_discrete_state_names=build.row_discrete_state_names,
+                row_passive_state_names=build.row_passive_state_names,
+                row_discrete_action_names=build.row_discrete_action_names,
+            ),
+        )
+    if query_slots is None:
+        return output
+    count = StateAxesLeading(state_names=(), shape=(), dtype=jnp.int32)
+    template = _dcegm_role_template(
+        build=build,
+        publish_replay=publish_replay,
+        own_bound_specs=own_bound_specs,
+        query_slots=query_slots,
+    )
+    return jax.tree.unflatten(
+        jax.tree.structure(template),
+        jax.tree.leaves(
+            (
+                (*output, (count, count)),
+                jax.tree.map(_dcegm_status_role, template.bound_status),
+                jax.tree.map(_dcegm_status_role, template.query_status),
+            )
         ),
     )
+
+
+def _dcegm_role_template(
+    *,
+    build: EGMStepBuild,
+    publish_replay: bool,
+    own_bound_specs: tuple[PostDecisionBoundSpec, ...],
+    query_slots: _DCEGMQuerySlots,
+) -> BoundedResult[tuple[PytreeValue, ...]]:
+    """Construct the numeric structure whose registered unflatten restores roles."""
+    carry = build.carry_template
+    output: tuple[PytreeValue, ...] = (jnp.asarray(0.0), carry)
+    if publish_replay:
+        output = (
+            *output,
+            EGMSimPolicy(
+                endog_grid=carry.endog_grid,
+                policy=carry.endog_grid,
+                value=carry.value,
+                marginal_utility=carry.marginal_utility,
+                row_discrete_state_names=build.row_discrete_state_names,
+                row_passive_state_names=build.row_passive_state_names,
+                row_discrete_action_names=build.row_discrete_action_names,
+            ),
+        )
+    inactive = jnp.asarray(a=False)
+    return BoundedResult(
+        output=(*output, (jnp.int32(0), jnp.int32(0))),
+        bound_status=tuple(
+            BoundInputStatus(inactive, inactive) for _ in own_bound_specs
+        ),
+        query_status=tuple(
+            QueryInputStatus(inactive, inactive, inactive) for _ in query_slots
+        ),
+    )
+
+
+def _dcegm_status_role(flag: BoolND) -> StateAxesLeading:
+    """Describe bounded Boolean diagnostics independently of every numeric row axis."""
+    return StateAxesLeading(state_names=(), shape=flag.shape, dtype=flag.dtype)
 
 
 def _dcegm_values_core(
     *,
-    core: Callable[..., tuple[FloatND, EGMCarry, EGMSimPolicy]],
+    core: Callable[..., _DCEGMStepOutput],
     **kwargs: PytreeValue,
-) -> tuple[FloatND, EGMCarry]:
+) -> (
+    tuple[FloatND, EGMCarry]
+    | BoundedResult[tuple[FloatND, EGMCarry, FeasibilityCounts]]
+):
     """Run DC-EGM without retaining its optional simulation-policy output."""
-    value, carry, _policy = core(**kwargs)
+    evaluated = core(**kwargs)
+    if isinstance(evaluated, BoundedResult):
+        value, carry, _policy, counts = evaluated.output
+        return BoundedResult(
+            output=(value, carry, counts),
+            bound_status=evaluated.bound_status,
+            query_status=evaluated.query_status,
+        )
+    value, carry, _policy = evaluated
     return value, carry
 
 
@@ -985,6 +1114,12 @@ class _DCEGMPeriodKernel:
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
 
+    own_bound_specs: tuple[PostDecisionBoundSpec, ...] = ()
+    """Canonical source-floor arithmetic slots installed by this kernel's builder."""
+
+    query_input_authorities: _DCEGMQuerySlots | None = None
+    """Installed query/construction owners, absent on the legacy output layout."""
+
     def __post_init__(self) -> None:
         """Snapshot the graph and require the two retention-scoped variants."""
         programs = MappingProxyType(dict(self._core_programs))
@@ -1054,6 +1189,17 @@ class _DCEGMPeriodKernel:
             )
         )
         outputs = compiled_cores[name](**arguments)
+        if self.query_input_authorities is not None:
+            if type(outputs) is not BoundedResult:
+                raise TypeError("DC query outputs require declared integrity records.")
+            return _consume_bounded_dcegm_output(
+                evaluated=outputs,
+                variant=name,
+                own_bound_specs=self.own_bound_specs,
+                query_slots=self.query_input_authorities,
+            )
+        if isinstance(outputs, BoundedResult):
+            raise TypeError("DC integrity records require model-owned output slots.")
         if name == "main":
             V_arr, egm_carry = cast("tuple[FloatND, EGMCarry]", outputs)
             return KernelOutput(
@@ -1068,6 +1214,46 @@ class _DCEGMPeriodKernel:
             continuations={EGM_CONTINUATION: egm_carry},
             replay={SIMULATION_POLICY: sim_policy},
         )
+
+
+def _consume_bounded_dcegm_output(
+    *,
+    evaluated: BoundedResult[PytreeValue],
+    variant: str,
+    own_bound_specs: tuple[PostDecisionBoundSpec, ...],
+    query_slots: _DCEGMQuerySlots,
+) -> FeasibilityKernelOutput:
+    """Forward bounded diagnostics for acceptance after every invariant block."""
+    if (
+        len(evaluated.bound_status) != len(own_bound_specs)
+        or evaluated.query_status is None
+        or len(evaluated.query_status) != len(query_slots)
+    ):
+        raise TypeError("DC integrity records differ from model-owned output slots.")
+    fields = (
+        _DCEGM_VALUES_FIELD_COUNT if variant == "main" else _DCEGM_REPLAY_FIELD_COUNT
+    )
+    if type(evaluated.output) is not tuple or len(evaluated.output) != fields:
+        raise TypeError("DC bounded output lacks its declared numeric channels.")
+    if variant == "main":
+        value, carry, counts = cast(
+            "tuple[FloatND, EGMCarry, FeasibilityCounts]", evaluated.output
+        )
+        replay = {}
+    else:
+        value, carry, policy, counts = cast(
+            "tuple[FloatND, EGMCarry, EGMSimPolicy, FeasibilityCounts]",
+            evaluated.output,
+        )
+        replay = {SIMULATION_POLICY: policy}
+    return FeasibilityKernelOutput(
+        value=value,
+        continuations={EGM_CONTINUATION: carry},
+        replay=replay,
+        feasibility_counts=counts,
+        bound_status=evaluated.bound_status,
+        query_status=evaluated.query_status,
+    )
 
 
 def _carry_subset(

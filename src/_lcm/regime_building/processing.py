@@ -46,6 +46,7 @@ from _lcm.egm.budget import (
     get_intrinsic_budget_constraint,
 )
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry, shard_carry_template
+from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.regime_introspection import (
     _get_discrete_state_names,
     _get_passive_state_names,
@@ -1153,6 +1154,7 @@ class _CanonicalRegimeBuilder:
         canonical_regimes: dict[RegimeName, Regime] = {}
         solution_builds: dict[RegimeName, _SolutionBuild] = {}
         scalar_query_models = _prepare_scalar_egm_query_models(processor=self)
+        dcegm_query_models = _prepare_dcegm_query_models(processor=self)
         # Iterate the representative-resolved regimes: identical to the user regimes
         # except that any `AgeSpecializedGrid` state is a concrete representative-age
         # grid, so every grid-derived call below is age-invariant.
@@ -1222,6 +1224,7 @@ class _CanonicalRegimeBuilder:
             solution_build = _build_solution_phase(
                 spec=spec,
                 scalar_query_models=scalar_query_models,
+                dcegm_query_models=dcegm_query_models,
                 post_decision_bounds=self.post_decision_bounds[regime_name],
                 regime_name=regime_name,
                 # Representative, not raw: these reach `SolverBuildContext`, and
@@ -1454,6 +1457,118 @@ def _prepare_scalar_egm_query_models(
     return MappingProxyType(models) if models else None
 
 
+def _prepare_dcegm_query_models(
+    *,
+    processor: _CanonicalRegimeBuilder,
+) -> MappingProxyType[RegimeName, DCEGMQueryModel] | None:
+    """Prepare canonical DC pools from declarations before numerical builders."""
+    from _lcm.continuation import (  # noqa: PLC0415
+        EGMRowTopologySpec,
+        build_query_model_authority,
+    )
+    from _lcm.egm.step import compute_egm_carry_length  # noqa: PLC0415
+    from _lcm.solution.dcegm import (  # noqa: PLC0415
+        ExactEnvelope,
+        _BoundDCEGM,
+    )
+
+    models = {}
+    for name, user_regime in processor.representative_user_regimes.items():
+        solver = user_regime.solver
+        bounds = processor.post_decision_bounds[name]
+        if not isinstance(solver, _BoundDCEGM) or not any(
+            bound.kind == "dag" for bound in bounds
+        ):
+            continue
+        if not isinstance(solver.envelope, ExactEnvelope):
+            raise RegimeInitializationError(
+                "DC query provenance requires ExactEnvelope."
+            )
+        bound = dataclass_replace(bounds[0], resources_target=solver.resources)
+        phase = processor.specs[name].solution
+        template = processor.regime_to_params_template[name]
+        declarations = {
+            **phase.functions,
+            **{
+                target: as_constraint_function(
+                    constraint=constraint, pool=phase.functions
+                )
+                for target, constraint in phase.constraints.items()
+            },
+        }
+        functions = MappingProxyType(
+            {
+                target: _process_one_function(
+                    func=func,
+                    regime_params_template=template,
+                    param_key=target,
+                )
+                for target, func in declarations.items()
+            }
+        )
+        aggregator = _process_one_function(
+            func=cast("UserFunction", phase.koopmans_aggregator),
+            regime_params_template=template,
+            param_key="koopmans_aggregator",
+        )
+        functions = MappingProxyType({**functions, "koopmans_aggregator": aggregator})
+        periods = processor.regimes_to_active_periods[name]
+        by_period = MappingProxyType(
+            {
+                period: cast(
+                    "EconFunctionsMapping",
+                    resolve_periodized_nodes(mapping=functions, period=period),
+                )
+                for period in periods
+            }
+        )
+        info = processor.regime_to_v_interpolation_info[name]
+        asset_row = savings_stage_reads_euler_state(
+            user_regime=user_regime,
+            law=processor.laws[name],
+            solver=solver,
+        )
+        capacity = (
+            int(info.continuous_states[solver.continuous_state].to_jax().size)
+            if asset_row
+            else compute_egm_carry_length(solver=solver)
+        )
+        authority = build_query_model_authority(
+            bound=bound,
+            state_names=_get_discrete_state_names(v_interpolation_info=info)
+            + _get_passive_state_names(
+                v_interpolation_info=info, euler_state_name=solver.continuous_state
+            ),
+            action_names=tuple(processor.state_action_spaces[name].discrete_actions),
+            coordinate_kind="resources",
+            marginal_convention="ordinary_linear",
+            corner_coordinate_kind="liquid_row" if asset_row else "compact_interval",
+            row_capacity=capacity,
+            interval_ids=(0,),
+            interval_side_ids=(0,),
+            evaluator_targets=(
+                ("resources", bound.resources_target),
+                ("utility", "utility"),
+                ("koopmans_aggregator", "koopmans_aggregator"),
+                *((f"predicate:{target}", target) for target in phase.constraints),
+            ),
+            functions=by_period[periods[0]],
+            functions_by_period=by_period,
+            target_periods=periods,
+            row_topology=EGMRowTopologySpec(
+                kind="exact_monotone_run", owner_capacity=solver.envelope.max_runs
+            ),
+        )
+        nodes = solver.savings_grid.to_jax()
+        models[name] = DCEGMQueryModel(
+            authority=authority,
+            functions=functions,
+            koopmans_aggregator=aggregator,
+            offsets=nodes - nodes[0],
+        )
+    return MappingProxyType(models) if models else None
+
+
 def _with_declared_continuation_reads(
     *,
     canonical_regimes: dict[RegimeName, Regime],
@@ -1575,6 +1690,21 @@ def _fail_if_a_declaration_moved_more_than_the_kernels(
             regime_name=regime_name,
             solver=solver,
             field_name="continuation_reader_capabilities",
+        )
+    before_slots = handed_over.query_input_authorities
+    after_slots = declared.query_input_authorities
+    if (
+        before_slots is not after_slots
+        if before_slots is None or after_slots is None
+        else tuple(before_slots) != tuple(after_slots)
+        or any(
+            before_slots[period] is not after_slots[period] for period in before_slots
+        )
+    ):
+        _fail_declaration_field(
+            regime_name=regime_name,
+            solver=solver,
+            field_name="query_input_authorities",
         )
 
 
@@ -3543,6 +3673,7 @@ def _build_solution_phase(  # noqa: PLR0915
     ),
     post_decision_bounds: tuple[PostDecisionBoundSpec, ...] = (),
     scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None,
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
 ) -> _SolutionBuild:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -3606,12 +3737,14 @@ def _build_solution_phase(  # noqa: PLR0915
         context the continuation-read declaration pass re-reads.
 
     """
-    query_model = (scalar_query_models or {}).get(regime_name)
+    query_model = (scalar_query_models or {}).get(regime_name) or (
+        dcegm_query_models or {}
+    ).get(regime_name)
     if query_model is not None:
         from _lcm.solution.egm import _BoundEGM  # noqa: PLC0415
 
         solver = dataclass_replace(
-            cast("_BoundEGM", solver),
+            cast("_BoundEGM | _BoundDCEGM", solver),
             post_decision_bound=query_model.authority.bound,
         )
         post_decision_bounds = (query_model.authority.bound,)
@@ -3621,12 +3754,19 @@ def _build_solution_phase(  # noqa: PLR0915
         edge_params_template=edge_params_template,
     )
 
-    routing = _route_constraints(
+    routing_functions, routing_constraints = _canonical_constraint_routing_inputs(
+        query_model=query_model,
+        functions=spec.solution.functions,
         constraints=spec.solution.constraints,
+        active_periods=regimes_to_active_periods[regime_name],
+    )
+
+    routing = _route_constraints(
+        constraints=routing_constraints,
         solver=solver,
         regime_name=regime_name,
         phase="solve",
-        functions=spec.solution.functions,
+        functions=routing_functions,
         variables=variables,
         flat_param_names=flat_param_names,
         active_periods=regimes_to_active_periods[regime_name],
@@ -3861,6 +4001,7 @@ def _build_solution_phase(  # noqa: PLR0915
     context = SolverBuildContext(
         regime_name=regime_name,
         scalar_query_models=scalar_query_models,
+        dcegm_query_models=dcegm_query_models,
         ages=ages,
         user_regimes=user_regimes,
         laws=laws,
@@ -4011,6 +4152,7 @@ def _build_solution_phase(  # noqa: PLR0915
         continuation_reader_capabilities=solver_kernels.continuation_reader_capabilities,
         _variables=variables,
         query_authority=None if query_model is None else query_model.authority,
+        query_input_authorities=solver_kernels.query_input_authorities,
         grids=all_grids[regime_name],
         functions=published_solution_functions,
         # Age-specialized functions are left unresolved here, so the simulation
@@ -5674,7 +5816,7 @@ def _process_regime_core(
     draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     phase_reachability: PhaseReachability,
     phase_name: PhaseName,
-    scalar_query_model: ScalarEGMQueryModel | None = None,
+    scalar_query_model: ScalarEGMQueryModel | DCEGMQueryModel | None = None,
 ) -> _CoreResult:
     """Process one phase's regime functions and transitions.
 
@@ -9278,6 +9420,35 @@ def _describe_node_disagreement(*, solve_axis: Float1D, simulate_axis: Float1D) 
         f"{float(solve_axis[first])!r} and simulation has "
         f"{float(simulate_axis[first])!r} ({int(differing.size)} of "
         f"{int(solve_axis.size)} nodes differ)"
+    )
+
+
+def _canonical_constraint_routing_inputs(
+    *,
+    query_model: ScalarEGMQueryModel | DCEGMQueryModel | None,
+    functions: MappingProxyType[FunctionName, UserFunction],
+    constraints: ProcessedConstraintsMapping,
+    active_periods: tuple[int, ...],
+) -> tuple[MappingProxyType[FunctionName, UserFunction], ProcessedConstraintsMapping]:
+    """Qualify opaque DC predicates while retaining structured compiler inputs."""
+    if not isinstance(query_model, DCEGMQueryModel):
+        return functions, constraints
+    functions = cast(
+        "MappingProxyType[FunctionName, UserFunction]", query_model.functions
+    )
+    pool = _routing_pool(functions=functions, active_periods=active_periods)
+    return functions, MappingProxyType(
+        {
+            **constraints,
+            **normalize_constraints(
+                constraints={
+                    name: cast("UserFunction", pool[name])
+                    for name, constraint in constraints.items()
+                    if constraint.is_opaque
+                    and name not in query_model.authority.bound.declaration_names
+                }
+            ),
+        }
     )
 
 

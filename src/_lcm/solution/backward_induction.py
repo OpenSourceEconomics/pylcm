@@ -193,8 +193,11 @@ from _lcm.solution.feasibility import (
     BoundInputStatus,
     FeasibilityCounts,
     FeasibilityKernelOutput,
+    QueryInputStatus,
     add_feasibility_counts,
     merge_bound_input_status,
+    merge_query_input_status,
+    validate_query_input_status,
     validate_runtime_bound_status,
 )
 from _lcm.solution.grid_search import _GridSearchArgumentBuilder
@@ -906,6 +909,18 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 bound_specs=runtime_bounds,
                                 regime_name=regime_name,
                                 period=period,
+                            )
+                        query_authorities = (
+                            regime.solution.query_input_authorities or {}
+                        ).get(period, ())
+                        query_status = (
+                            output.query_status
+                            if type(output) is FeasibilityKernelOutput
+                            else None
+                        )
+                        if query_authorities or query_status is not None:
+                            validate_query_input_status(
+                                statuses=query_status, authorities=query_authorities
                             )
                         if (
                             type(output) is FeasibilityKernelOutput
@@ -1627,6 +1642,18 @@ def _accumulate_landing_totals(
     return landing_totals, landing_checks
 
 
+def _query_block_status(
+    *, output: KernelOutput, n_query_slots: int
+) -> tuple[QueryInputStatus, ...] | None:
+    """Require every reached block to supply its canonical query slots."""
+    statuses = output.query_status if type(output) is FeasibilityKernelOutput else None
+    if len(statuses or ()) != n_query_slots:
+        raise TypeError(
+            "Every invariant block must supply its model-owned query declaration slots."
+        )
+    return statuses
+
+
 def _run_dispatch_unit(
     *,
     value_template: FloatND,
@@ -1690,6 +1717,9 @@ def _run_dispatch_unit(
     value: FloatND | None = None
     feasibility_counts: FeasibilityCounts | None = None
     bound_status: tuple[BoundInputStatus, ...] | None = None
+    query_status: tuple[QueryInputStatus, ...] | None = None
+    query_status_initialized = False
+    n_query_slots = len((regime.solution.query_input_authorities or {}).get(period, ()))
     landing_totals: IntND | None = None
     landing_checks: tuple[tuple[str, str], ...] = ()
     for name in bound:
@@ -1698,7 +1728,24 @@ def _run_dispatch_unit(
             compiled_cores=MappingProxyType({name: compiled_cores[name]}),
             capture_target=None,
         )
+        block_query = _query_block_status(output=output, n_query_slots=n_query_slots)
         if type(output) is FeasibilityKernelOutput:
+            if query_status is not None and block_query is not None:
+                block_query = tuple(
+                    QueryInputStatus(
+                        *(
+                            jax.device_put(right, left.sharding)
+                            for left, right in zip(lhs, rhs, strict=True)
+                        )
+                    )
+                    for lhs, rhs in zip(query_status, block_query, strict=True)
+                )
+            query_status = (
+                merge_query_input_status(left=query_status, right=block_query)
+                if query_status_initialized
+                else block_query
+            )
+            query_status_initialized = True
             if output.landing_totals is not None:
                 landing_totals, landing_checks = _accumulate_landing_totals(
                     landing_totals=landing_totals,
@@ -1751,6 +1798,7 @@ def _run_dispatch_unit(
             value=cast("FloatND", value),
             feasibility_counts=feasibility_counts,
             bound_status=bound_status or (),
+            query_status=query_status,
             landing_totals=landing_totals,
             landing_checks=landing_checks,
         )

@@ -11,7 +11,7 @@ orchestration that maps it over the discrete-combo product.
 """
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.continuation import EGMQuerySpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import (
     ContinuationPlan,
@@ -33,7 +34,17 @@ from _lcm.egm.preferences import (
     BoundUtilityOfAction,
     get_numeric_inverse_marginal_utility,
 )
+from _lcm.egm.query_data import EGMQueryData, QueryNodeKind
+from _lcm.egm.upper_envelope import OwnedQueryBracket
 from _lcm.egm.upper_envelope.fues import QueryBracket
+from _lcm.egm.upper_envelope.segment_envelope import OwnedEnvelope
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    BoundInputStatus,
+    QueryInputStatus,
+    merge_query_input_status,
+    shift_savings_grid,
+)
 from _lcm.typing import (
     ActionName,
     EconFunctionArg,
@@ -46,6 +57,7 @@ from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    IntND,
     ReferenceName,
     ScalarBool,
     ScalarFloat,
@@ -55,6 +67,20 @@ from lcm.typing import (
 # Refined-row fields every envelope backend returns, ahead of the optional
 # read-support verdict.
 _REFINED_ROW_FIELDS: int = 4
+
+type _ComboRows = tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]
+type _NodeOutput = tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+type _NodeRows = tuple[FloatND, FloatND, FloatND, FloatND]
+type _ConditionalComboRows = tuple[
+    Float1D,
+    Float1D,
+    Float1D,
+    Float1D,
+    Float1D,
+    ScalarBool,
+    EGMQueryData | None,
+    BoolND,
+]
 
 # Smallest constrained-segment action as a fraction of the segment's span.
 # The constrained candidates are geometrically spaced from this offset toward
@@ -123,16 +149,50 @@ class _EgmKernelPieces:
     refine: Callable[
         ...,
         tuple[Float1D, Float1D, Float1D, ScalarInt]
-        | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool],
+        | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]
+        | OwnedEnvelope,
     ]
     """The configured upper-envelope backend (single-post-state carry)."""
 
-    refine_to_bracket: Callable[..., QueryBracket]
+    refine_to_bracket: Callable[..., QueryBracket | OwnedQueryBracket]
     """The single-query bracket finder for the asset-row publish (builds the full
     refined row and slices the bracketing node pair)."""
 
     continuation_plan: ContinuationPlan
     """Build-time statics of the per-savings-node continuation aggregation."""
+
+    lower_func: Callable[..., ScalarFloat] | None = None
+    """Canonical callable floor, evaluated independently of action alternatives."""
+
+    floor_status: BoundInputStatus | None = None
+    """Mandatory integrity of this cell's actual floor and shifted nodes."""
+
+    query_spec: EGMQuerySpec | None = None
+    """Installed model authority for this conditional source, when present."""
+
+    check_query_construction: bool = False
+    """The compiled source owns a mandatory query-construction summary slot."""
+
+
+def bind_cell_floor(
+    *, pieces: _EgmKernelPieces, pool: EconFunctionKwargs
+) -> _EgmKernelPieces:
+    """Translate the supplied savings offsets once at their fixed-cell owner."""
+    if pieces.lower_func is None:
+        return pieces
+    floor = jnp.asarray(pieces.lower_func(**pool), dtype=pieces.savings_nodes.dtype)
+    offsets = pieces.savings_nodes - pieces.savings_nodes[0]
+    nodes, status = shift_savings_grid(floor=floor, offsets=offsets)
+    invalid = status.nonfinite_floor | status.invalid_shifted_grid
+    return replace(
+        pieces,
+        savings_nodes=jnp.where(
+            invalid, jnp.arange(nodes.size, dtype=nodes.dtype), nodes
+        ),
+        borrowing_limit=jnp.where(invalid, 0.0, floor),
+        lower_func=None,
+        floor_status=status,
+    )
 
 
 def _get_solve_one_combo(
@@ -148,7 +208,7 @@ def _get_solve_one_combo(
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
-    tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool],
+    _ComboRows | BoundedResult[_ConditionalComboRows],
 ]:
     """Build the per-combo EGM computation for one kernel invocation.
 
@@ -208,7 +268,7 @@ class _SolveOneCombo:
     def __call__(
         self,
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
+    ) -> _ComboRows | BoundedResult[_ConditionalComboRows]:
         """Run the EGM step for one (discrete x passive-node) combo.
 
         Returns:
@@ -217,7 +277,8 @@ class _SolveOneCombo:
             grid, the value and marginal-utility carry rows, and the
             backend's read-support verdict (whether the row's linear span is
             free of compacted coverage gaps, so the off-grid simulation read
-            may consume it).
+            may consume it). Conditional sources append original candidate data
+            and exact node feasibility, with integrity carried as bounded auxiliary.
 
         """
         pieces = self.pieces
@@ -226,6 +287,7 @@ class _SolveOneCombo:
             **self.pool,
             **dict(zip(pieces.combo_names, combo_values, strict=True)),
         }
+        pieces = bind_cell_floor(pieces=pieces, pool=combo_pool)
         # Validation pins the default Bellman aggregator, whose single
         # non-(utility, CE) parameter is the discount factor.
         (discount_factor_arg,) = tuple(pieces.build_W_kwargs(combo_pool).values())
@@ -245,11 +307,26 @@ class _SolveOneCombo:
             stochastic_node_width=self.stochastic_node_width,
             resolved_process_grids=self.resolved_process_grids,
         )
-        actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
-            compute_node=compute_node,
-            savings_nodes=pieces.savings_nodes,
-            savings_point_width=self.savings_point_width,
-        )
+        child_status = None
+        conditional = pieces.query_spec is not None or pieces.check_query_construction
+        if conditional:
+            candidates, child_status = _compute_nodes_after_first(
+                first=compute_node(pieces.savings_nodes[0]),
+                compute_node=compute_node,
+                savings_nodes=pieces.savings_nodes,
+                savings_point_width=self.savings_point_width,
+            )
+        else:
+            candidates = _compute_nodes_over_savings(
+                compute_node=compute_node,
+                savings_nodes=pieces.savings_nodes,
+                savings_point_width=self.savings_point_width,
+            )
+            if isinstance(candidates, BoundedResult):
+                raise TypeError(
+                    "Child query slots require conditional candidate publication."
+                )
+        actions, endog_grid, values, expected_values = candidates
         own_resources_of_state = ResourcesOfState(
             resources_func=pieces.own_resources_func,
             euler_state_name=pieces.euler_state_name,
@@ -316,13 +393,12 @@ class _SolveOneCombo:
             marginal_utility=candidate_marginal,
             savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
         )
-        refined_grid, refined_policy, refined_value, n_kept = refined[
-            :_REFINED_ROW_FIELDS
-        ]
-        read_supported = (
-            refined[_REFINED_ROW_FIELDS]
-            if len(refined) > _REFINED_ROW_FIELDS
-            else jnp.asarray(True)  # noqa: FBT003
+        refined_grid, refined_policy, refined_value, n_kept, read_supported = (
+            _refined_rows(
+                refined=refined,
+                query_spec=pieces.query_spec,
+                check_query_construction=pieces.check_query_construction,
+            )
         )
 
         V_row, value_row, marginal_utility_row = _publish_V_and_carry_rows(
@@ -344,19 +420,53 @@ class _SolveOneCombo:
         value_row = jnp.where(no_live_candidate, -jnp.inf, value_row)
         marginal_utility_row = jnp.where(no_live_candidate, 0.0, marginal_utility_row)
 
+        construction = (
+            _source_construction_status(
+                refined=refined,
+                marginal_row=marginal_utility_row,
+                expected_at_floor=expected_values[0],
+            )
+            if conditional
+            else None
+        )
+
+        feasible = jnp.asarray(True)  # noqa: FBT003
         if pieces.feasibility_func is not None:
             # Infeasible discrete combos: -inf value rows so they win no
             # maximum and carry zero choice probability; exactly-zero
             # marginal utility so probability-weighted sums stay finite.
             feasible = pieces.feasibility_func(**combo_pool)
-            V_row = jnp.where(feasible, V_row, -jnp.inf)
-            value_row = jnp.where(feasible, value_row, -jnp.inf)
-            marginal_utility_row = jnp.where(feasible, marginal_utility_row, 0.0)
-            # Dead rows need finite geometry for continuation reads and their JVPs.
-            refined_grid = jnp.where(
-                feasible, refined_grid, jnp.arange(refined_grid.size, dtype=dtype)
+            if pieces.query_spec is None:
+                V_row = jnp.where(feasible, V_row, -jnp.inf)
+                value_row = jnp.where(feasible, value_row, -jnp.inf)
+                marginal_utility_row = jnp.where(feasible, marginal_utility_row, 0.0)
+                # Dead rows need finite geometry for continuation reads and JVPs.
+                refined_grid = jnp.where(
+                    feasible, refined_grid, jnp.arange(refined_grid.size, dtype=dtype)
+                )
+                refined_policy = jnp.where(feasible, refined_policy, 0.0)
+
+        if conditional:
+            if not isinstance(refined, OwnedEnvelope) or construction is None:
+                raise TypeError("Conditional publication requires owned envelope rows.")
+            node_feasible = publish_resources > pieces.borrowing_limit
+            if pieces.feasibility_func is not None:
+                node_feasible = node_feasible & feasible
+            return _conditional_combo_output(
+                pieces=pieces,
+                refined=refined,
+                V_row=jnp.where(node_feasible, V_row, -jnp.inf),
+                value_row=value_row,
+                marginal_row=marginal_utility_row,
+                expected_at_floor=expected_values[0],
+                node_feasible=node_feasible,
+                read_supported=read_supported,
+                child_status=child_status,
+                grid_row=refined_grid,
+                policy_row=refined_policy,
+                construction_invalid=construction[0],
+                kinds=construction[1],
             )
-            refined_policy = jnp.where(feasible, refined_policy, 0.0)
 
         return (
             V_row,
@@ -366,6 +476,143 @@ class _SolveOneCombo:
             marginal_utility_row,
             read_supported,
         )
+
+
+def _refined_rows(
+    *,
+    refined: tuple[Float1D, Float1D, Float1D, ScalarInt]
+    | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]
+    | OwnedEnvelope,
+    query_spec: EGMQuerySpec | None,
+    check_query_construction: bool = False,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
+    """Separate static owned publication from the legacy optional support flag."""
+    if query_spec is not None or check_query_construction:
+        if not isinstance(refined, OwnedEnvelope):
+            raise TypeError("Conditional publication requires owned envelope rows.")
+        edge = (jnp.arange(refined.link_valid.size) < refined.n_kept - 1) & (
+            refined.grid[1:] > refined.grid[:-1]
+        )
+        return (
+            refined.grid,
+            refined.policy,
+            refined.value,
+            refined.n_kept,
+            jnp.all(~edge | refined.link_valid),
+        )
+    if isinstance(refined, OwnedEnvelope):
+        raise TypeError("Owned envelope rows require installed source authority.")
+    grid, policy, value, n_kept = refined[:_REFINED_ROW_FIELDS]
+    support = (
+        refined[_REFINED_ROW_FIELDS]
+        if len(refined) > _REFINED_ROW_FIELDS
+        else jnp.asarray(True)  # noqa: FBT003
+    )
+    return grid, policy, value, n_kept, support
+
+
+def _source_construction_status(
+    *,
+    refined: tuple[Float1D, Float1D, Float1D, ScalarInt]
+    | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]
+    | OwnedEnvelope,
+    marginal_row: Float1D,
+    expected_at_floor: ScalarFloat,
+) -> tuple[ScalarBool, IntND]:
+    """Inspect the real emitted prefix before economic masks change carry rows."""
+    if not isinstance(refined, OwnedEnvelope):
+        raise TypeError("Query construction requires owned envelope rows.")
+    active = jnp.arange(refined.grid.size) < refined.n_kept
+    represented = (
+        jnp.isfinite(refined.grid)
+        & jnp.isfinite(refined.policy)
+        & jnp.isfinite(refined.savings)
+        & (jnp.isfinite(refined.value) | jnp.isneginf(refined.value))
+        & jnp.isfinite(marginal_row)
+    )
+    known_corner = jnp.isfinite(expected_at_floor) | jnp.isneginf(expected_at_floor)
+    invalid = (
+        (refined.n_kept > refined.grid.size)
+        | jnp.any(active & ~represented)
+        | ~known_corner
+    )
+    kinds = jnp.where(
+        active & represented,
+        jnp.where(
+            jnp.isneginf(refined.value),
+            QueryNodeKind.ECONOMIC_MINUS_INF,
+            QueryNodeKind.FINITE,
+        ),
+        QueryNodeKind.PAD,
+    ).astype(jnp.int32)
+    return invalid, kinds
+
+
+def _conditional_combo_output(
+    *,
+    pieces: _EgmKernelPieces,
+    refined: OwnedEnvelope,
+    V_row: Float1D,
+    value_row: Float1D,
+    marginal_row: Float1D,
+    expected_at_floor: ScalarFloat,
+    node_feasible: BoolND,
+    read_supported: ScalarBool,
+    child_status: tuple[QueryInputStatus, ...] | None,
+    grid_row: Float1D,
+    policy_row: Float1D,
+    construction_invalid: ScalarBool,
+    kinds: IntND,
+) -> BoundedResult[_ConditionalComboRows]:
+    """Publish original source records and mandatory prefix integrity separately."""
+    spec = pieces.query_spec
+    if spec is None and not pieces.check_query_construction:
+        raise TypeError("Conditional publication requires installed source authority.")
+    data = None
+    if spec is not None:
+        known_corner = jnp.isfinite(expected_at_floor) | jnp.isneginf(expected_at_floor)
+        corner_kind = jnp.where(
+            known_corner,
+            jnp.where(
+                jnp.isneginf(expected_at_floor),
+                QueryNodeKind.ECONOMIC_MINUS_INF,
+                QueryNodeKind.FINITE,
+            ),
+            QueryNodeKind.PAD,
+        ).astype(jnp.int32)
+        data = EGMQueryData(
+            savings=refined.savings,
+            node_kind=kinds,
+            link_valid=refined.link_valid,
+            owner_id=refined.owner_id,
+            side_id=refined.side_id,
+            floor_used=pieces.borrowing_limit,
+            corner_continuation=expected_at_floor[None],
+            corner_kind=corner_kind[None],
+            corner_interval_id=jnp.asarray(spec.interval_ids, dtype=jnp.int32),
+            corner_side_id=jnp.asarray(spec.interval_side_ids, dtype=jnp.int32),
+        )
+    return BoundedResult(
+        output=(
+            V_row,
+            grid_row,
+            policy_row,
+            value_row,
+            marginal_row,
+            read_supported,
+            data,
+            node_feasible,
+        ),
+        bound_status=() if pieces.floor_status is None else (pieces.floor_status,),
+        query_status=(
+            *(child_status or ()),
+            QueryInputStatus(
+                nonfinite_floor=jnp.asarray(False),  # noqa: FBT003
+                invalid_shifted_grid=jnp.asarray(False),  # noqa: FBT003
+                coverage_missing=construction_invalid,
+            ),
+        ),
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -399,12 +646,11 @@ def tile_block_size(*, width: int | None, extent: int) -> int:
 
 def _compute_nodes_over_savings(
     *,
-    compute_node: Callable[
-        [ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
-    ],
+    compute_node: Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]],
     savings_nodes: Float1D,
     savings_point_width: int | None,
-) -> tuple[FloatND, FloatND, FloatND, FloatND]:
+    bound_summary: bool = False,
+) -> _NodeRows | BoundedResult[_NodeRows]:
     """Run `compute_node` over every savings node, in tiles the plan sizes.
 
     A `savings_point_width` below the grid length runs the per-savings-node
@@ -414,7 +660,9 @@ def _compute_nodes_over_savings(
     output is identical either way: the per-node `(action, endogenous
     resources, value, expected continuation)` candidates stacked along the
     savings axis, which the constrained-region assembly and the upper envelope
-    then consume on the full grid.
+    then consume on the full grid. Installed child query slots use
+    `bound_summary` to OR-reduce integrity inside each tile while retaining
+    only the four ordinary candidate arrays on the savings axis.
     """
     return map_over_leading_axis(
         func=compute_node,
@@ -422,7 +670,38 @@ def _compute_nodes_over_savings(
         batch_size=tile_block_size(
             width=savings_point_width, extent=int(savings_nodes.shape[0])
         ),
+        bound_summary=bound_summary,
     )
+
+
+def _compute_nodes_after_first(
+    *,
+    first: _NodeOutput | BoundedResult[_NodeOutput],
+    compute_node: Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]],
+    savings_nodes: Float1D,
+    savings_point_width: int | None,
+) -> tuple[_NodeRows, tuple[QueryInputStatus, ...] | None]:
+    """Reuse the first candidate and fold the remaining child slots within tiles."""
+    first_output = first.output if isinstance(first, BoundedResult) else first
+    status = first.query_status if isinstance(first, BoundedResult) else None
+    if savings_nodes.size == 1:
+        return cast(
+            "_NodeRows", tuple(jnp.atleast_1d(value) for value in first_output)
+        ), status
+    tail = _compute_nodes_over_savings(
+        compute_node=compute_node,
+        savings_nodes=savings_nodes[1:],
+        savings_point_width=savings_point_width,
+        bound_summary=isinstance(first, BoundedResult),
+    )
+    tail_output = tail.output if isinstance(tail, BoundedResult) else tail
+    if isinstance(tail, BoundedResult):
+        status = merge_query_input_status(left=status, right=tail.query_status)
+    candidates = tuple(
+        jnp.concatenate((jnp.atleast_1d(value), tail_value))
+        for value, tail_value in zip(first_output, tail_output, strict=True)
+    )
+    return cast("_NodeRows", candidates), status
 
 
 def _get_compute_node(
@@ -435,7 +714,7 @@ def _get_compute_node(
     dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
-) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:
+) -> Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]]:
     """Build the per-savings-node Euler inversion for one discrete combo."""
     continuation = bind_continuation(
         plan=pieces.continuation_plan,
@@ -488,7 +767,11 @@ def _get_compute_node(
 class _ComputeNode:
     """Euler-invert one savings node against the bound continuation."""
 
-    continuation: Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]
+    continuation: Callable[
+        [ScalarFloat],
+        tuple[ScalarFloat, ScalarFloat]
+        | BoundedResult[tuple[ScalarFloat, ScalarFloat]],
+    ]
     """Expected continuation value and marginal at a savings node."""
 
     discount_factor: ScalarFloat
@@ -503,8 +786,21 @@ class _ComputeNode:
     def __call__(
         self,
         savings_value: ScalarFloat,
-    ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
-        expected_value, expected_marginal = self.continuation(savings_value)
+    ) -> _NodeOutput | BoundedResult[_NodeOutput]:
+        continuation = self.continuation(savings_value)
+        if type(continuation) is BoundedResult:
+            continuation = cast(
+                "BoundedResult[tuple[ScalarFloat, ScalarFloat]]", continuation
+            )
+            if continuation.bound_status or continuation.query_status is None:
+                raise TypeError(
+                    "Child continuation requires query slots and no own bound slots."
+                )
+            expected_value, expected_marginal = continuation.output
+        else:
+            expected_value, expected_marginal = cast(
+                "tuple[ScalarFloat, ScalarFloat]", continuation
+            )
         action = invert_euler(
             expected_marginal_continuation=expected_marginal,
             discount_factor=self.discount_factor,
@@ -512,7 +808,14 @@ class _ComputeNode:
         )
         endog_point = savings_value + action
         value = self.utility_of_action(action) + self.discount_factor * expected_value
-        return action, endog_point, value, expected_value
+        output: _NodeOutput = (action, endog_point, value, expected_value)
+        if type(continuation) is BoundedResult:
+            return BoundedResult[_NodeOutput](
+                output=output,
+                bound_status=(),
+                query_status=continuation.query_status,
+            )
+        return output
 
 
 def _candidate_supgradient(

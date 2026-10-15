@@ -22,7 +22,9 @@ from jax import vmap
 from _lcm.solution.feasibility import (
     BoundedResult,
     merge_bound_input_status,
+    merge_query_input_status,
     reduce_bound_input_status,
+    reduce_query_input_status,
 )
 from _lcm.typing import ActionName, PytreeValue, QAndFArg, StateName
 from _lcm.utils.containers import find_duplicates
@@ -127,7 +129,9 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
         selected = jnp.minimum(indices, n_rows - 1)
         inputs = jax.tree.map(lambda leaf: leaf[selected], xs)
         result = jax.vmap(func)(inputs)
-        if type(result) is not BoundedResult or not result.bound_status:
+        if type(result) is not BoundedResult or not (
+            result.bound_status or result.query_status
+        ):
             raise TypeError(
                 "Bound-summary maps require declared BoundedResult records."
             )
@@ -140,8 +144,13 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
     summary = reduce_bound_input_status(
         statuses=first.bound_status, active=first_active
     )
+    query_summary = reduce_query_input_status(
+        statuses=first.query_status, active=first_active
+    )
     if n_windows == 1:
-        return BoundedResult(output=first.output, bound_status=summary)
+        return BoundedResult(
+            output=first.output, bound_status=summary, query_status=query_summary
+        )
     buffers = cast(
         "Output",
         jax.tree.map(
@@ -183,16 +192,26 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
             merge_bound_input_status(left=left, right=right)
             for left, right in zip(carry.bound_status, block, strict=True)
         )
-        return BoundedResult(output=output, bound_status=statuses), None
+        return BoundedResult(
+            output=output,
+            bound_status=statuses,
+            query_status=merge_query_input_status(
+                left=carry.query_status,
+                right=reduce_query_input_status(
+                    statuses=result.query_status, active=valid
+                ),
+            ),
+        ), None
 
     final, _ = jax.lax.scan(
         one_window,
-        BoundedResult(output=buffers, bound_status=summary),
+        BoundedResult(output=buffers, bound_status=summary, query_status=query_summary),
         jnp.arange(1, n_windows, dtype=jnp.int32),
     )
     return BoundedResult(
         output=cast("Output", jax.tree.map(lambda leaf: leaf[:n_rows], final.output)),
         bound_status=final.bound_status,
+        query_status=final.query_status,
     )
 
 
@@ -366,7 +385,9 @@ class _BoundVmap:
 
     def __call__(self, *args: PytreeValue) -> BoundedResult[PytreeValue]:
         result = self.function(*args)
-        if type(result) is not BoundedResult or not result.bound_status:
+        if type(result) is not BoundedResult or not (
+            result.bound_status or result.query_status
+        ):
             raise TypeError(
                 "Bound-summary co-maps require mandatory integrity records."
             )
@@ -375,6 +396,10 @@ class _BoundVmap:
             output=result.output,
             bound_status=reduce_bound_input_status(
                 statuses=result.bound_status,
+                active=jnp.ones((extent,), dtype=jnp.bool_),
+            ),
+            query_status=reduce_query_input_status(
+                statuses=result.query_status,
                 active=jnp.ones((extent,), dtype=jnp.bool_),
             ),
         )
@@ -591,6 +616,7 @@ class _RestoreProductAxisOrder:
             return BoundedResult(
                 output=jax.tree.map(restore, result.output),
                 bound_status=result.bound_status,
+                query_status=result.query_status,
             )
         return jax.tree.map(restore, mapped)
 
@@ -862,6 +888,7 @@ def _restore_mapped_product(
         return BoundedResult(
             output=jax.tree.map(restore, result.output),
             bound_status=result.bound_status,
+            query_status=result.query_status,
         )
     return jax.tree.map(restore, mapped)
 

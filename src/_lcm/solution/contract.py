@@ -51,6 +51,7 @@ from _lcm.continuation import (
     EGMContinuationLayout,
 )
 from _lcm.egm.branch_aggregation import OuterBranchAggregator
+from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.scalar_query import ScalarEGMQueryModel
 from _lcm.engine import (
     ParamCheck,
@@ -252,6 +253,9 @@ class SolverBuildContext:
 
     scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None
     """Trusted scalar query pools prepared once before numerical kernel factories."""
+
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None
+    """Trusted DC query pools, independent of the consuming solver family."""
 
     solve_functions: MappingProxyType[FunctionName, UserFunction]
     """Normalized, unprocessed solve-phase declarations for this regime."""
@@ -745,6 +749,11 @@ class SolutionKernels:
     ) = None
     """Installed readers' capabilities by consuming source period and target."""
 
+    query_input_authorities: (
+        Mapping[int, tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]] | None
+    ) = None
+    """Actual installed diagnostic-owner regime, period and bound for each slot."""
+
     param_checks: tuple[ParamCheck, ...] = ()
     """Preconditions the engine passes every parameter draw against real params.
 
@@ -778,6 +787,12 @@ class SolutionKernels:
 
     def __post_init__(self) -> None:
         """Snapshot mappings and reject contradictory artifact identities."""
+        if self.query_input_authorities is not None:
+            object.__setattr__(
+                self,
+                "query_input_authorities",
+                MappingProxyType(dict(self.query_input_authorities)),
+            )
         if self.continuation_reader_capabilities is not None:
             object.__setattr__(
                 self,

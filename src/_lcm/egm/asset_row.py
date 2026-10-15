@@ -31,31 +31,84 @@ from _lcm.egm.interp import (
     interp_on_padded_grid,
 )
 from _lcm.egm.preferences import BoundUtilityOfAction
+from _lcm.egm.query_data import EGMLiquidCornerData, EGMQueryData, QueryNodeKind
 from _lcm.egm.step_core import (
     ResourcesOfState,
     _candidate_supgradient,
     _compute_constrained_candidates,
+    _compute_nodes_after_first,
     _compute_nodes_over_savings,
     _EgmKernelPieces,
     _get_compute_node,
+    _NodeOutput,
+    _NodeRows,
+    bind_cell_floor,
     tile_block_size,
 )
+from _lcm.egm.upper_envelope import OwnedQueryBracket
 from _lcm.egm.upper_envelope.fues import (
     QueryBracket,
+)
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    QueryInputStatus,
+    merge_query_input_status,
 )
 from _lcm.typing import (
     EconFunctionKwargs,
     RegimeName,
     StateName,
 )
+from _lcm.utils.dispatchers import map_over_leading_axis
 from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    IntND,
     ScalarBool,
     ScalarFloat,
     ScalarInt,
 )
+
+type _OwnedAssetNode = tuple[
+    ScalarFloat,
+    ScalarFloat,
+    ScalarFloat,
+    ScalarFloat,
+    ScalarFloat,
+    ScalarInt,
+    ScalarInt,
+    ScalarBool,
+    ScalarFloat,
+    ScalarFloat,
+]
+type _AssetComboRows = tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]
+type _AssetNode = tuple[ScalarFloat, ScalarFloat, ScalarFloat]
+type _AssetNodeRows = tuple[Float1D, Float1D, Float1D]
+_ASSET_NODE_CHANNEL_COUNT = 3
+_OWNED_ASSET_NODE_CHANNEL_COUNT = 10
+type _OwnedAssetRows = tuple[
+    Float1D,
+    Float1D,
+    Float1D,
+    Float1D,
+    Float1D,
+    IntND,
+    IntND,
+    BoolND,
+    Float1D,
+    Float1D,
+]
+type _ConditionalAssetRows = tuple[
+    Float1D,
+    Float1D,
+    Float1D,
+    Float1D,
+    Float1D,
+    ScalarBool,
+    EGMQueryData | None,
+    BoolND,
+]
 
 
 def _get_solve_one_combo_asset_rows(
@@ -71,7 +124,7 @@ def _get_solve_one_combo_asset_rows(
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
-    tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool],
+    _AssetComboRows | BoundedResult[_ConditionalAssetRows],
 ]:
     """Build the per-combo EGM computation solving per exogenous asset node.
 
@@ -144,7 +197,7 @@ class _SolveOneComboAssetRows:
     def __call__(
         self,
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
+    ) -> _AssetComboRows | BoundedResult[_ConditionalAssetRows]:
         """Run the per-asset-node EGM step for one (discrete x passive) combo.
 
         Returns:
@@ -162,6 +215,7 @@ class _SolveOneComboAssetRows:
             **self.pool,
             **dict(zip(pieces.combo_names, combo_values, strict=True)),
         }
+        pieces = bind_cell_floor(pieces=pieces, pool=combo_pool)
         # Validation pins the default Bellman aggregator, whose single
         # non-(utility, CE) parameter is the discount factor.
         (discount_factor_arg,) = tuple(pieces.build_W_kwargs(combo_pool).values())
@@ -199,12 +253,43 @@ class _SolveOneComboAssetRows:
         # the fused vmap. The tiles are concatenated, so the two schedules name
         # the same result.
         block = tile_block_size(width=self.euler_point_width, extent=n_state)
+        if pieces.query_spec is not None or pieces.check_query_construction:
+            nodes = map_over_leading_axis(
+                func=solve_one_node,
+                xs=self.state_grid,
+                batch_size=block,
+                bound_summary=True,
+            )
+            if not isinstance(nodes, BoundedResult):
+                raise TypeError("Conditional asset rows require bounded node results.")
+            if pieces.query_spec is None:
+                if len(nodes.output) != _ASSET_NODE_CHANNEL_COUNT:
+                    raise TypeError(
+                        "Literal asset publication requires three channels."
+                    )
+                return _status_asset_rows(
+                    nodes=cast("BoundedResult[_AssetNodeRows]", nodes),
+                    pieces=pieces,
+                    resources=jax.vmap(own_resources_of_state)(self.state_grid),
+                    combo_pool=combo_pool,
+                )
+            if len(nodes.output) != _OWNED_ASSET_NODE_CHANNEL_COUNT:
+                raise TypeError("Owned asset publication requires ten channels.")
+            return _conditional_asset_rows(
+                nodes=cast("BoundedResult[_OwnedAssetRows]", nodes),
+                pieces=pieces,
+                resources=jax.vmap(own_resources_of_state)(self.state_grid),
+                combo_pool=combo_pool,
+            )
         if block:
-            V_vec, policy_vec, mu_vec = jax.lax.map(
+            mapped_nodes = jax.lax.map(
                 solve_one_node, self.state_grid, batch_size=block
             )
         else:
-            V_vec, policy_vec, mu_vec = jax.vmap(solve_one_node)(self.state_grid)
+            mapped_nodes = jax.vmap(solve_one_node)(self.state_grid)
+        if isinstance(mapped_nodes, BoundedResult):
+            raise TypeError("Child query slots require conditional asset publication.")
+        V_vec, policy_vec, mu_vec = mapped_nodes
         publish_resources = jax.vmap(own_resources_of_state)(self.state_grid)
 
         pad = jnp.full((pieces.n_carry_rows - n_state,), jnp.nan, dtype=dtype)
@@ -270,14 +355,16 @@ class _SolveOneNode:
     own_resources_of_state: Callable[[ScalarFloat], ScalarFloat]
     """The regime's resources as a function of its Euler state, combo bound."""
 
-    continuation_of_euler_state: Callable[[ScalarFloat, ScalarFloat], ScalarFloat]
+    continuation_of_euler_state: Callable[
+        [ScalarFloat, ScalarFloat], ScalarFloat | BoundedResult[ScalarFloat]
+    ]
     """Expected continuation of `(state_value, savings_value)`, combo bound."""
 
     def __call__(
         self,
         node_value: ScalarFloat,
-    ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
-        pieces = self.pieces
+    ) -> _AssetNode | BoundedResult[_AssetNode] | BoundedResult[_OwnedAssetNode]:
+        pieces = bind_cell_floor(pieces=self.pieces, pool=self.combo_pool)
         discount_factor = self.discount_factor
         node_pool = {**self.combo_pool, pieces.euler_state_name: node_value}
         utility_of_action = BoundUtilityOfAction(
@@ -295,11 +382,23 @@ class _SolveOneNode:
             stochastic_node_width=self.stochastic_node_width,
             resolved_process_grids=self.resolved_process_grids,
         )
-        actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
-            compute_node=compute_node,
-            savings_nodes=pieces.savings_nodes,
-            savings_point_width=self.savings_point_width,
-        )
+        child_status = None
+        floor_direct = jnp.asarray(0.0, dtype=self.dtype)
+        if pieces.query_spec is not None:
+            candidates, floor_direct, child_status = _asset_candidates_with_direct(
+                node=self,
+                pieces=pieces,
+                node_value=node_value,
+                utility_of_action=utility_of_action,
+                compute_node=compute_node,
+            )
+        else:
+            candidates, child_status = _asset_candidates_without_direct(
+                pieces=pieces,
+                compute_node=compute_node,
+                savings_point_width=self.savings_point_width,
+            )
+        actions, endog_grid, values, expected_values = candidates
 
         resources_at_node, resources_gradient = jax.value_and_grad(
             self.own_resources_of_state
@@ -354,6 +453,30 @@ class _SolveOneNode:
             x_query=resources_at_node,
         )
 
+        if pieces.query_spec is not None:
+            if type(bracket) is not OwnedQueryBracket:
+                raise TypeError("Conditional asset rows require source-owned brackets.")
+            return _conditional_asset_node(
+                node=self,
+                pieces=pieces,
+                bracket=bracket,
+                node_value=node_value,
+                resources=resources_at_node,
+                resources_gradient=resources_gradient,
+                utility_of_action=utility_of_action,
+                expected_at_floor=expected_values[0],
+                floor_direct=floor_direct,
+                child_status=child_status,
+            )
+
+        construction_invalid = jnp.asarray(a=False)
+        if pieces.check_query_construction:
+            if type(bracket) is not OwnedQueryBracket:
+                raise TypeError("Asset construction checks require owned brackets.")
+            construction_invalid = bracket.construction_invalid
+            bracket = bracket.bracket
+        elif isinstance(bracket, OwnedQueryBracket):
+            raise TypeError("Owned asset brackets require installed query authority.")
         V_node, policy_node = publish_node_from_bracket(
             bracket=bracket,
             n_pad=pieces.n_pad,
@@ -373,9 +496,17 @@ class _SolveOneNode:
             jnp.where(jnp.isnan(policy_node), 1.0, policy_node)
         )
         savings_at_optimum = resources_at_node - policy_node
-        continuation_gradient = jax.grad(self.continuation_of_euler_state)(
-            node_value, savings_at_optimum
-        )
+        if pieces.check_query_construction:
+            continuation_gradient, direct_status = _asset_direct_gradient(
+                node=self, node_value=node_value, saving=savings_at_optimum
+            )
+            child_status = merge_query_input_status(
+                left=child_status, right=direct_status
+            )
+        else:
+            continuation_gradient = jax.grad(self.continuation_of_euler_state)(
+                node_value, savings_at_optimum
+            )
         mu_node = (
             marginal_utility_node
             + discount_factor * continuation_gradient / resources_gradient
@@ -387,7 +518,337 @@ class _SolveOneNode:
             candidate_dead=candidate_dead,
             resources_gradient=resources_gradient,
         )
+        if pieces.check_query_construction:
+            corner_known = jnp.isfinite(expected_values[0]) | jnp.isneginf(
+                expected_values[0]
+            )
+            invalid = (
+                construction_invalid
+                | ~corner_known
+                | ~(jnp.isfinite(V_node) | jnp.isneginf(V_node))
+                | ~jnp.isfinite(mu_node)
+                | ~jnp.isfinite(resources_gradient)
+                | (resources_gradient <= 0.0)
+            )
+            return BoundedResult(
+                output=(V_node, policy_node, mu_node),
+                bound_status=(),
+                query_status=(
+                    *(child_status or ()),
+                    QueryInputStatus(
+                        jnp.asarray(a=False), jnp.asarray(a=False), invalid
+                    ),
+                ),
+            )
         return V_node, policy_node, mu_node
+
+
+def _asset_candidates_without_direct(
+    *,
+    pieces: _EgmKernelPieces,
+    compute_node: Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]],
+    savings_point_width: int | None,
+) -> tuple[_NodeRows, tuple[QueryInputStatus, ...] | None]:
+    """Evaluate candidates once and summarize only statically declared child slots."""
+    if pieces.check_query_construction:
+        return _compute_nodes_after_first(
+            first=compute_node(pieces.savings_nodes[0]),
+            compute_node=compute_node,
+            savings_nodes=pieces.savings_nodes,
+            savings_point_width=savings_point_width,
+        )
+    candidates = _compute_nodes_over_savings(
+        compute_node=compute_node,
+        savings_nodes=pieces.savings_nodes,
+        savings_point_width=savings_point_width,
+    )
+    if isinstance(candidates, BoundedResult):
+        raise TypeError("Child query slots require conditional asset candidates.")
+    return candidates, None
+
+
+def _asset_direct_gradient(
+    *, node: _SolveOneNode, node_value: ScalarFloat, saving: ScalarFloat
+) -> tuple[ScalarFloat, tuple[QueryInputStatus, ...] | None]:
+    """Differentiate the numeric continuation while retaining its child slots."""
+
+    def continuation(
+        state_value: ScalarFloat,
+    ) -> tuple[ScalarFloat, tuple[QueryInputStatus, ...] | None]:
+        result = node.continuation_of_euler_state(state_value, saving)
+        if isinstance(result, BoundedResult):
+            if result.bound_status or result.query_status is None:
+                raise TypeError("Direct child reads require declared query slots.")
+            return result.output, result.query_status
+        return result, None
+
+    (_, status), gradient = jax.value_and_grad(continuation, has_aux=True)(node_value)
+    return gradient, status
+
+
+def _asset_candidates_with_direct(
+    *,
+    node: _SolveOneNode,
+    pieces: _EgmKernelPieces,
+    node_value: ScalarFloat,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+    compute_node: Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]],
+) -> tuple[_NodeRows, ScalarFloat, tuple[QueryInputStatus, ...] | None]:
+    """Differentiate first-node W and retain its numeric candidate as auxiliary."""
+
+    def first(
+        state_value: ScalarFloat,
+    ) -> tuple[ScalarFloat, _NodeOutput | BoundedResult[_NodeOutput]]:
+        first_compute = _get_compute_node(
+            pieces=pieces,
+            combo_pool={**node.combo_pool, pieces.euler_state_name: state_value},
+            discount_factor=node.discount_factor,
+            utility_of_action=utility_of_action,
+            next_regime_to_continuation=node.next_regime_to_continuation,
+            dtype=node.dtype,
+            stochastic_node_width=node.stochastic_node_width,
+            resolved_process_grids=node.resolved_process_grids,
+        )
+        result = first_compute(pieces.savings_nodes[0])
+        output = result.output if isinstance(result, BoundedResult) else result
+        return output[3], result
+
+    (_, first_result), direct = jax.value_and_grad(first, has_aux=True)(node_value)
+    candidates, child_status = _compute_nodes_after_first(
+        first=first_result,
+        compute_node=compute_node,
+        savings_nodes=pieces.savings_nodes,
+        savings_point_width=node.savings_point_width,
+    )
+    return candidates, direct, child_status
+
+
+def _conditional_asset_node(
+    *,
+    node: _SolveOneNode,
+    pieces: _EgmKernelPieces,
+    bracket: OwnedQueryBracket,
+    node_value: ScalarFloat,
+    resources: ScalarFloat,
+    resources_gradient: ScalarFloat,
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+    expected_at_floor: ScalarFloat,
+    floor_direct: ScalarFloat,
+    child_status: tuple[QueryInputStatus, ...] | None,
+) -> BoundedResult[_OwnedAssetNode]:
+    """Keep owned ordinary and independently evaluated corner candidates separate."""
+    pair = bracket.bracket
+    lower_slope = _node_value_slope(
+        policy=pair.lower_policy,
+        value=pair.lower_value,
+        utility_of_action=utility_of_action,
+    )
+    upper_slope = _node_value_slope(
+        policy=pair.upper_policy,
+        value=pair.upper_value,
+        utility_of_action=utility_of_action,
+    )
+    ordinary_value = _interp_between_nodes(
+        x_query=resources,
+        xp_lower=pair.lower_grid,
+        xp_upper=pair.upper_grid,
+        fp_lower=pair.lower_value,
+        fp_upper=pair.upper_value,
+        slope_lower=lower_slope,
+        slope_upper=upper_slope,
+    )
+    saving = bracket.savings
+    policy = resources - saving
+    supported = (
+        bracket.read_supported & (saving >= pieces.borrowing_limit) & (policy > 0.0)
+    )
+    safe_policy = jnp.where(supported, policy, 1.0)
+    safe_saving = jnp.where(supported, saving, pieces.borrowing_limit)
+
+    chosen_direct, direct_status = _asset_direct_gradient(
+        node=node, node_value=node_value, saving=safe_saving
+    )
+    child_status = merge_query_input_status(left=child_status, right=direct_status)
+    mu = (
+        jax.grad(utility_of_action)(safe_policy)
+        + node.discount_factor * chosen_direct / resources_gradient
+    )
+    economic = jnp.isneginf(ordinary_value)
+    mu = jnp.where(economic, 0.0, mu)
+    valid_value = jnp.isfinite(ordinary_value) | economic
+    invalid_numeric = bracket.read_supported & (
+        ~jnp.isfinite(saving) | ~valid_value | ~jnp.isfinite(mu)
+    )
+    supported &= valid_value & ~invalid_numeric
+    corner_policy = resources - pieces.borrowing_limit
+    corner_value = (
+        utility_of_action(jnp.maximum(corner_policy, jnp.finfo(resources.dtype).tiny))
+        + node.discount_factor * expected_at_floor
+    )
+    corner_value = jnp.where(corner_policy > 0.0, corner_value, -jnp.inf)
+    published_value = jnp.where(
+        supported, jnp.maximum(ordinary_value, corner_value), corner_value
+    )
+    native_floor_direct = floor_direct / resources_gradient
+    corner_known = jnp.isfinite(expected_at_floor) | jnp.isneginf(expected_at_floor)
+    construction_invalid = (
+        bracket.construction_invalid
+        | invalid_numeric
+        | ~corner_known
+        | ~jnp.isfinite(native_floor_direct)
+        | ~jnp.isfinite(resources_gradient)
+        | (resources_gradient <= 0.0)
+    )
+    return BoundedResult(
+        output=(
+            published_value,
+            policy,
+            ordinary_value,
+            mu,
+            saving,
+            bracket.owner_id,
+            bracket.side_id,
+            supported,
+            expected_at_floor,
+            native_floor_direct,
+        ),
+        bound_status=(),
+        query_status=(
+            *(child_status or ()),
+            QueryInputStatus(
+                jnp.asarray(a=False),
+                jnp.asarray(a=False),
+                construction_invalid,
+            ),
+        ),
+    )
+
+
+def _status_asset_rows(
+    *,
+    nodes: BoundedResult[_AssetNodeRows],
+    pieces: _EgmKernelPieces,
+    resources: Float1D,
+    combo_pool: EconFunctionKwargs,
+) -> BoundedResult[_ConditionalAssetRows]:
+    """Carry mandatory child integrity beside literal asset-row publication."""
+    V, policy, mu = nodes.output
+    n_padding = pieces.n_carry_rows - resources.shape[0]
+
+    def floats(array: Float1D) -> Float1D:
+        return jnp.pad(array, (0, n_padding), constant_values=jnp.nan)
+
+    value = floats(V)
+    marginal = floats(mu)
+    feasible = resources > pieces.borrowing_limit
+    if pieces.feasibility_func is not None:
+        predicate = pieces.feasibility_func(**combo_pool)
+        feasible &= predicate
+        V = jnp.where(predicate, V, -jnp.inf)
+        value = jnp.where(predicate, value, -jnp.inf)
+        marginal = jnp.where(predicate, marginal, 0.0)
+    return BoundedResult(
+        output=(
+            V,
+            floats(resources),
+            floats(policy),
+            value,
+            marginal,
+            jnp.asarray(a=False),
+            None,
+            feasible,
+        ),
+        bound_status=() if pieces.floor_status is None else (pieces.floor_status,),
+        query_status=nodes.query_status,
+    )
+
+
+def _conditional_asset_rows(
+    *,
+    nodes: BoundedResult[_OwnedAssetRows],
+    pieces: _EgmKernelPieces,
+    resources: Float1D,
+    combo_pool: EconFunctionKwargs,
+) -> BoundedResult[_ConditionalAssetRows]:
+    """Publish real J coordinates once and retain the independent liquid corner bank."""
+    spec = pieces.query_spec
+    if spec is None or spec.corner_coordinate_kind != "liquid_row":
+        raise TypeError(
+            "Conditional asset rows require installed liquid-row authority."
+        )
+    V, policy, value, mu, saving, owner, side, supported, Wb, direct = nodes.output
+    n_padding = pieces.n_carry_rows - resources.shape[0]
+
+    def floats(array: Float1D) -> Float1D:
+        return jnp.pad(array, (0, n_padding), constant_values=jnp.nan)
+
+    def integers(*, array: IntND, pad: int = 0) -> IntND:
+        return jnp.pad(array, (0, n_padding), constant_values=pad)
+
+    represented = integers(array=supported.astype(jnp.int32)).astype(jnp.bool_)
+    owners = integers(array=owner, pad=-1)
+    kinds = jnp.where(
+        represented,
+        jnp.where(
+            jnp.isneginf(floats(value)),
+            int(QueryNodeKind.ECONOMIC_MINUS_INF),
+            int(QueryNodeKind.FINITE),
+        ),
+        int(QueryNodeKind.PAD),
+    ).astype(jnp.int32)
+    corner_known = jnp.isfinite(Wb) | jnp.isneginf(Wb)
+    corner_kind = integers(
+        array=jnp.where(
+            corner_known,
+            jnp.where(
+                jnp.isneginf(Wb),
+                int(QueryNodeKind.ECONOMIC_MINUS_INF),
+                int(QueryNodeKind.FINITE),
+            ),
+            int(QueryNodeKind.PAD),
+        ).astype(jnp.int32)
+    )
+    corner = EGMLiquidCornerData(
+        continuation=floats(Wb)[:, None],
+        direct_marginal=floats(direct)[:, None],
+        node_kind=corner_kind[:, None],
+        link_valid=((corner_kind[:-1] != 0) & (corner_kind[1:] != 0))[:, None],
+        owner_id=jnp.full(
+            (pieces.n_carry_rows, 1), spec.interval_ids[0], dtype=jnp.int32
+        ),
+        side_id=jnp.full(
+            (pieces.n_carry_rows, 1), spec.interval_side_ids[0], dtype=jnp.int32
+        ),
+        interval_id=jnp.full(
+            (pieces.n_carry_rows, 1), spec.interval_ids[0], dtype=jnp.int32
+        ),
+    )
+    data = EGMQueryData(
+        savings=floats(saving),
+        node_kind=kinds,
+        link_valid=represented[:-1] & represented[1:] & (owners[:-1] == owners[1:]),
+        owner_id=owners,
+        side_id=integers(array=side),
+        floor_used=pieces.borrowing_limit,
+        liquid_corner_data=corner,
+    )
+    feasible = resources > pieces.borrowing_limit
+    if pieces.feasibility_func is not None:
+        feasible &= pieces.feasibility_func(**combo_pool)
+    return BoundedResult(
+        output=(
+            jnp.where(feasible, V, -jnp.inf),
+            floats(resources),
+            floats(policy),
+            floats(value),
+            floats(mu),
+            jnp.asarray(a=False),
+            data,
+            feasible,
+        ),
+        bound_status=() if pieces.floor_status is None else (pieces.floor_status,),
+        query_status=nodes.query_status,
+    )
 
 
 # keyword-only-exempt: library-callback=jax.grad
@@ -401,7 +862,7 @@ def _continuation_of_euler_state(
     dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND],
-) -> ScalarFloat:
+) -> ScalarFloat | BoundedResult[ScalarFloat]:
     """Expected continuation with the Euler slot as the grad argument.
 
     Rebuilds the per-combo continuation with the Euler slot of the combo pool
@@ -459,7 +920,7 @@ def _get_expected_continuation_value(
     dtype: np.dtype,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
-) -> Callable[[ScalarFloat], ScalarFloat]:
+) -> Callable[[ScalarFloat], ScalarFloat | BoundedResult[ScalarFloat]]:
     """Build the expected-continuation map $W(A)$ for one combo pool.
 
     Mirrors the expected-value aggregation of the per-savings-node Euler
@@ -491,12 +952,28 @@ def _get_expected_continuation_value(
 class _ExpectedContinuationValue:
     """The expected continuation value $W(A)$ of one combo pool."""
 
-    continuation: Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]
+    continuation: Callable[
+        [ScalarFloat],
+        tuple[ScalarFloat, ScalarFloat]
+        | BoundedResult[tuple[ScalarFloat, ScalarFloat]],
+    ]
     """The bound continuation, returning the value and marginal at a node."""
 
-    def __call__(self, savings_value: ScalarFloat) -> ScalarFloat:
-        expected_value, _ = self.continuation(savings_value)
-        return expected_value
+    def __call__(
+        self, savings_value: ScalarFloat
+    ) -> ScalarFloat | BoundedResult[ScalarFloat]:
+        result = self.continuation(savings_value)
+        if isinstance(result, BoundedResult):
+            if result.bound_status or result.query_status is None:
+                raise TypeError(
+                    "Child values require query slots and no own bound slots."
+                )
+            return BoundedResult(
+                output=result.output[0],
+                bound_status=(),
+                query_status=result.query_status,
+            )
+        return result[0]
 
 
 def _publish_node_V_and_policy(

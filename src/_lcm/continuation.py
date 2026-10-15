@@ -8,6 +8,7 @@ adds every layout property a reading parent needs.
 
 from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, fields, replace
+from dataclasses import field as dataclass_field
 from typing import Literal, cast
 
 import jax.numpy as jnp
@@ -21,6 +22,8 @@ from lcm.typing import ActionName, FunctionName, ReferenceName, StateName, UserF
 
 # Backward induction stores and forwards this channel without reading its fields.
 type ContinuationPayload = ContinuationArtifact
+
+_EXACT_ENVELOPE_SIDE_IDS = (-1, 0, 1)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -60,6 +63,34 @@ class AdaptiveOuterQuerySpec:
 
 
 @dataclass(frozen=True, kw_only=True)
+class EGMRowTopologySpec:
+    """Compiler-owned interpretation of emitted exact-envelope run identities."""
+
+    kind: Literal["exact_monotone_run"]
+    """Run topology emitted by the canonical exact-envelope compiler."""
+    owner_capacity: int
+    """Maximum number of source monotone runs admitted by the compiler."""
+    side_ids: tuple[int, ...] = _EXACT_ENVELOPE_SIDE_IDS
+    """Known outgoing, unsided and incoming side codes."""
+    schema_version: int = 1
+    """Static ownership semantics, independent of the numeric carry schema."""
+
+    def __post_init__(self) -> None:
+        if (
+            self.kind != "exact_monotone_run"
+            or type(self.owner_capacity) is not int
+            or self.owner_capacity < 1
+            or type(self.side_ids) is not tuple
+            or len(self.side_ids) != len(_EXACT_ENVELOPE_SIDE_IDS)
+            or any(type(side) is not int for side in self.side_ids)
+            or set(self.side_ids) != set(_EXACT_ENVELOPE_SIDE_IDS)
+            or type(self.schema_version) is not int
+            or self.schema_version != 1
+        ):
+            raise TypeError("Query row topology has invalid run/side/schema semantics.")
+
+
+@dataclass(frozen=True, kw_only=True)
 class EGMQuerySpec:
     """Model-owned meaning of conditional query rows and their evaluator inputs."""
 
@@ -95,10 +126,15 @@ class EGMQuerySpec:
     """Finite candidate count or adaptive keeper-plus-adjuster capacity."""
     adaptive_outer: AdaptiveOuterQuerySpec | None = None
     """Continuous-profile authority, present only for adaptive composition."""
+    row_topology: EGMRowTopologySpec | None = dataclass_field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Optional compiler-owned row runs, independent of corner interval labels."""
     schema_version: int = EGM_CONTINUATION.schema_version
     """Owning shared continuation schema."""
 
     def __post_init__(self) -> None:
+        _validate_row_topology(topology=self.row_topology)
         if self.schema_version != EGM_CONTINUATION.schema_version:
             raise TypeError("Query authority has an incompatible continuation schema.")
         if (
@@ -126,6 +162,34 @@ class EGMQuerySpec:
             and self.outer_capacity != self.adaptive_outer.adjuster_capacity + 1
         ):
             raise TypeError("Query adaptive capacity needs a separate keeper slot.")
+
+
+def _validate_row_topology(*, topology: EGMRowTopologySpec | None) -> None:
+    """Reject substituted or malformed static row ownership descriptors."""
+    if topology is not None:
+        if type(topology) is not EGMRowTopologySpec:
+            raise TypeError("Query row topology requires an exact compiler record.")
+        EGMRowTopologySpec.__post_init__(topology)
+
+
+def _validate_row_topology_authority(
+    *,
+    left: EGMRowTopologySpec | None,
+    right: EGMRowTopologySpec | None,
+) -> None:
+    """Compare every compiler topology field independently of record identity."""
+    same = (left is None and right is None) or (
+        left is not None
+        and right is not None
+        and all(
+            _same_bound_identity(
+                left=getattr(left, item.name), right=getattr(right, item.name)
+            )
+            for item in fields(EGMRowTopologySpec)
+        )
+    )
+    if not same:
+        raise TypeError("Query row topology differs from model authority.")
 
 
 def validate_query_bound_authority(
@@ -186,17 +250,22 @@ def validate_query_model_authority(
     """Bind query axes and the floor to independent canonical model declarations."""
     if type(spec) is not EGMQuerySpec:
         raise TypeError("Query authority must be an exact model-owned record.")
+    _validate_row_topology(topology=spec.row_topology)
     validate_query_bound_authority(declared=spec.bound, model_bound=model_bound)
     if spec.state_names != state_names or spec.action_names != action_names:
         raise TypeError("Query state/action roles differ from canonical model roles.")
     if model_spec is not None:
         if type(model_spec) is not EGMQuerySpec:
             raise TypeError("Query model authority must be an exact canonical record.")
+        _validate_row_topology(topology=model_spec.row_topology)
         validate_query_bound_authority(
             declared=model_spec.bound, model_bound=model_bound
         )
+        _validate_row_topology_authority(
+            left=spec.row_topology, right=model_spec.row_topology
+        )
         for field in fields(EGMQuerySpec):
-            if field.name == "bound":
+            if field.name in ("bound", "row_topology"):
                 continue
             left, right = getattr(spec, field.name), getattr(model_spec, field.name)
             if field.name == "adaptive_outer":
@@ -236,6 +305,7 @@ def build_query_model_authority(
     outer_mode: Literal["none", "finite_max", "adaptive_continuous"] = "none",
     outer_capacity: int = 0,
     adaptive_outer: AdaptiveOuterQuerySpec | None = None,
+    row_topology: EGMRowTopologySpec | None = None,
 ) -> EGMQuerySpec:
     """Bind trusted route declarations to the canonical evaluator dependency pool.
 
@@ -287,6 +357,7 @@ def build_query_model_authority(
         outer_mode=outer_mode,
         outer_capacity=outer_capacity,
         adaptive_outer=adaptive_outer,
+        row_topology=row_topology,
     )
 
 

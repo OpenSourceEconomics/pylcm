@@ -28,6 +28,7 @@ from _lcm.solution.feasibility import (
     BoundInputStatus,
     FeasibilityCounts,
     FeasibilityKernelOutput,
+    QueryInputStatus,
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import ArtifactPayload, RegimeName, SimulationPolicy
@@ -96,6 +97,8 @@ class ConsumedKernelOutput:
 
     bound_status: tuple[BoundInputStatus, ...] = ()
     """Native mandatory integrity records retained independently of artifacts."""
+    query_status: tuple[QueryInputStatus, ...] | None = None
+    """Bounded child query records, independent of ordinary artifact ownership."""
     feasibility_counts: FeasibilityCounts | None = None
     """Trusted native GridSearch summaries; None denotes an unmeasured domain."""
 
@@ -267,6 +270,9 @@ def consume_kernel_output(
         auxiliary_artifacts=declared_auxiliary,
         bound_status=(
             output.bound_status if type(output) is FeasibilityKernelOutput else ()
+        ),
+        query_status=(
+            output.query_status if type(output) is FeasibilityKernelOutput else None
         ),
         feasibility_counts=(
             output.feasibility_counts

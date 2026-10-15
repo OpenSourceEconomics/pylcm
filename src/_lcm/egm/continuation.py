@@ -61,7 +61,11 @@ from _lcm.execution.reductions import (
 from _lcm.grids import Grid
 from _lcm.grids.discrete import read_at_codes
 from _lcm.logsum import logsum_and_softmax
-from _lcm.probability import probabilities_form_distribution, scaled_by_power_of_two
+from _lcm.probability import (
+    is_live,
+    probabilities_form_distribution,
+    scaled_by_power_of_two,
+)
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
 from _lcm.regime_building.Q_and_F import (
@@ -70,6 +74,12 @@ from _lcm.regime_building.Q_and_F import (
 )
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.regime_law import RegimeLaws
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    QueryInputStatus,
+    merge_query_input_status,
+    reduce_query_input_status,
+)
 from _lcm.transition_plans import LotteryLifetime, TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
@@ -107,6 +117,14 @@ type _EZPartials = tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
 # A child carry read at one savings node: the linear `(value, marginal)` pair, or
 # the Epstein-Zin partials.
 type _ChildCarryRead = tuple[ScalarFloat, ScalarFloat] | _EZPartials
+type _ChildCarryResult = (
+    _ChildCarryRead
+    | BoundedResult[tuple[ScalarFloat, ScalarFloat]]
+    | BoundedResult[_EZPartials]
+)
+type _WeightedNodeState = tuple[
+    WeightedExpectationAccumulator, WeightedExpectationAccumulator
+]
 
 
 def _is_runtime_process(grid: Grid) -> bool:
@@ -351,6 +369,9 @@ class ContinuationPlan:
     weighted sum.
     """
 
+    query_targets: tuple[RegimeName, ...] = ()
+    """Installed child-query slots, in stateful target order."""
+
 
 def bind_continuation(
     *,
@@ -361,7 +382,10 @@ def bind_continuation(
     stochastic_node_width: int | None = None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
     co_map_state_names: tuple[StateName, ...] = (),
-) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
+) -> Callable[
+    [ScalarFloat],
+    tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]],
+]:
     """Bind a continuation plan to one combo pool and the next period's carries.
 
     Returns a map from an end-of-period savings node to the regime's expected
@@ -470,7 +494,7 @@ class _BoundContinuation:
     risk_aversion: FloatND | None
     """The Epstein-Zin risk-aversion coefficient; `None` for the linear read."""
 
-    child_readers: Mapping[RegimeName, Callable[[ScalarFloat], _ChildCarryRead]]
+    child_readers: Mapping[RegimeName, Callable[[ScalarFloat], _ChildCarryResult]]
     """Per stateful target, the carry read at a savings node."""
 
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
@@ -482,12 +506,15 @@ class _BoundContinuation:
     def __call__(
         self,
         savings_value: ScalarFloat,
-    ) -> tuple[ScalarFloat, ScalarFloat]:
+    ) -> (
+        tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]]
+    ):
         """Blend the reachable targets' continuations at one savings node."""
         plan = self.plan
         risk_aversion = self.risk_aversion
         regime_transition_probs = self.regime_transition_probs
         is_distribution = self._retains_a_distribution()
+        statuses: dict[RegimeName, QueryInputStatus] = {}
         if risk_aversion is not None:
             certainty_equivalents: list[ScalarFloat] = []
             weight_sums: list[ScalarFloat] = []
@@ -495,6 +522,11 @@ class _BoundContinuation:
             marginal_mantissas: list[ScalarFloat] = []
             probs: list[ScalarFloat] = []
             for target in plan.stateful_targets:
+                child_result, child_status = self._read_child(
+                    target=target, savings_value=savings_value
+                )
+                if child_status is not None:
+                    statuses[target] = child_status
                 (
                     certainty_equivalent,
                     weight_sum,
@@ -502,7 +534,7 @@ class _BoundContinuation:
                     marginal_mantissa,
                 ) = cast(
                     "_EZPartials",
-                    self.child_readers[target](savings_value),
+                    child_result,
                 )
                 certainty_equivalents.append(certainty_equivalent)
                 weight_sums.append(weight_sum)
@@ -544,17 +576,25 @@ class _BoundContinuation:
                 marginal_mantissa=blended_mantissa,
                 risk_aversion=risk_aversion,
             )
-            return (
-                jnp.where(is_distribution, nu, jnp.nan),
-                jnp.where(is_distribution, dnu_ds, jnp.nan),
+            return self._with_query_status(
+                output=(
+                    jnp.where(is_distribution, nu, jnp.nan),
+                    jnp.where(is_distribution, dnu_ds, jnp.nan),
+                ),
+                statuses=statuses,
             )
         blended_marginal = jnp.asarray(0.0, dtype=self.dtype)
         blended_value = jnp.asarray(0.0, dtype=self.dtype)
         for target in plan.stateful_targets:
+            child_result, child_status = self._read_child(
+                target=target, savings_value=savings_value
+            )
+            if child_status is not None:
+                statuses[target] = child_status
             # Linear mode: the reader returns the plain (value, marginal) pair.
             target_value, target_marginal = cast(
                 "tuple[ScalarFloat, ScalarFloat]",
-                self.child_readers[target](savings_value),
+                child_result,
             )
             prob = regime_transition_probs[target]
             # Zero unreachable-target contributions on the results, never by
@@ -573,9 +613,56 @@ class _BoundContinuation:
             blended_value = blended_value + jnp.where(
                 prob > 0.0, prob * constant_value, prob * 0.0
             )
-        return (
-            jnp.where(is_distribution, blended_value, jnp.nan),
-            jnp.where(is_distribution, blended_marginal, jnp.nan),
+        return self._with_query_status(
+            output=(
+                jnp.where(is_distribution, blended_value, jnp.nan),
+                jnp.where(is_distribution, blended_marginal, jnp.nan),
+            ),
+            statuses=statuses,
+        )
+
+    def _read_child(
+        self, *, target: RegimeName, savings_value: ScalarFloat
+    ) -> tuple[_ChildCarryRead, QueryInputStatus | None]:
+        """Read one declared child and mask only its auxiliary by edge activity."""
+        result = self.child_readers[target](savings_value)
+        if target not in self.plan.query_targets:
+            if isinstance(result, BoundedResult):
+                raise TypeError(
+                    "A child query summary requires an installed target slot."
+                )
+            return result, None
+        if (
+            not isinstance(result, BoundedResult)
+            or result.bound_status
+            or result.query_status is None
+            or len(result.query_status) != 1
+        ):
+            raise TypeError("An installed child query requires exactly one query slot.")
+        statuses = cast(
+            "tuple[QueryInputStatus, ...]",
+            reduce_query_input_status(
+                statuses=result.query_status,
+                active=is_live(self.regime_transition_probs[target]),
+            ),
+        )
+        return result.output, statuses[0]
+
+    def _with_query_status(
+        self,
+        *,
+        output: tuple[ScalarFloat, ScalarFloat],
+        statuses: Mapping[RegimeName, QueryInputStatus],
+    ) -> (
+        tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]]
+    ):
+        """Publish the numeric pair beside the statically installed child slots."""
+        if not self.plan.query_targets:
+            return output
+        return BoundedResult(
+            output=output,
+            bound_status=(),
+            query_status=tuple(statuses[target] for target in self.plan.query_targets),
         )
 
     def _retains_a_distribution(self) -> BoolND:
@@ -1242,11 +1329,14 @@ def _expect_over_stochastic_nodes(
     empty = reduction.initialize(
         value_template=jnp.zeros((), dtype=joint_weights.dtype)
     )
-    (value_state, marginal_state), _ = jax.lax.scan(
+    states, _ = jax.lax.scan(
         _WeightedNodeBlockFold(read_at_nodes=read_at_nodes, reduction=reduction),
         (empty, empty),
         (blocked_indices, blocked_weights),
     )
+    if isinstance(states, BoundedResult):
+        raise TypeError("A raw node expectation cannot publish query summaries.")
+    value_state, marginal_state = states
     # The mesh normalizes by the exact power of two its weights were lifted by,
     # not by the mass the fold accumulated, so the published quantity is the
     # weighted sum rather than the fold's mass-normalized mean. The mass rides
@@ -1347,7 +1437,10 @@ class _WeightedNodeBlockFold:
     reduction folds both and the scan carries the two states side by side.
     """
 
-    read_at_nodes: Callable[[tuple[IntND, ...]], tuple[FloatND, FloatND]]
+    read_at_nodes: Callable[
+        [tuple[IntND, ...]],
+        tuple[FloatND, FloatND] | BoundedResult[tuple[FloatND, FloatND]],
+    ]
     """The full carry read of one target at one child stochastic-node combo."""
 
     reduction: BoundWeightedExpectationReduction
@@ -1356,32 +1449,55 @@ class _WeightedNodeBlockFold:
     # keyword-only-exempt: library-callback=jax.lax.scan
     def __call__(
         self,
-        accumulators: tuple[
-            WeightedExpectationAccumulator, WeightedExpectationAccumulator
-        ],
+        accumulators: _WeightedNodeState | BoundedResult[_WeightedNodeState],
         block: tuple[tuple[IntND, ...], FloatND],
-    ) -> tuple[
-        tuple[WeightedExpectationAccumulator, WeightedExpectationAccumulator], None
-    ]:
+    ) -> tuple[_WeightedNodeState | BoundedResult[_WeightedNodeState], None]:
         """Fold one node block's value and marginal contributions."""
         block_indices, block_weights = block
-        block_values, block_marginals = jax.vmap(self.read_at_nodes)(block_indices)
-        value_state, marginal_state = accumulators
-        return (
-            (
-                self.reduction.add(
-                    accumulator=value_state,
-                    values=block_values,
-                    weights=block_weights,
+        block_result = jax.vmap(self.read_at_nodes)(block_indices)
+        if isinstance(accumulators, BoundedResult):
+            if (
+                not isinstance(block_result, BoundedResult)
+                or accumulators.bound_status
+                or block_result.bound_status
+                or accumulators.query_status is None
+                or block_result.query_status is None
+            ):
+                raise TypeError(
+                    "A bounded node fold requires declared child query slots."
+                )
+            block_values, block_marginals = block_result.output
+            value_state, marginal_state = accumulators.output
+            query_status = merge_query_input_status(
+                left=accumulators.query_status,
+                right=reduce_query_input_status(
+                    statuses=block_result.query_status,
+                    active=is_live(block_weights),
                 ),
-                self.reduction.add(
-                    accumulator=marginal_state,
-                    values=block_marginals,
-                    weights=block_weights,
-                ),
+            )
+        else:
+            if isinstance(block_result, BoundedResult):
+                raise TypeError("A child query summary requires a declared fold slot.")
+            block_values, block_marginals = block_result
+            value_state, marginal_state = accumulators
+            query_status = None
+        output = (
+            self.reduction.add(
+                accumulator=value_state,
+                values=block_values,
+                weights=block_weights,
             ),
-            None,
+            self.reduction.add(
+                accumulator=marginal_state,
+                values=block_marginals,
+                weights=block_weights,
+            ),
         )
+        return (
+            BoundedResult(output=output, bound_status=(), query_status=query_status)
+            if isinstance(accumulators, BoundedResult)
+            else output
+        ), None
 
 
 def _joint_node_weights(
@@ -1495,23 +1611,50 @@ def _accumulate_ez_partials_over_blocks(
         (one, zero, zero, zero),
         (blocked_indices, blocked_weights),
     )
+    if isinstance(partials, BoundedResult):
+        raise TypeError("A raw EZ expectation cannot publish query summaries.")
     return partials
 
 
 # keyword-only-exempt: library-callback=jax.lax.scan
 def _accumulate_ez_partials_block(
-    carry: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+    carry: _EZPartials | BoundedResult[_EZPartials],
     block: tuple[tuple[IntND, ...], FloatND],
     *,
     read_at_nodes: Callable[
-        [tuple[ScalarInt, ...] | tuple[IntND, ...]], tuple[FloatND, FloatND]
+        [tuple[ScalarInt, ...] | tuple[IntND, ...]],
+        tuple[FloatND, FloatND] | BoundedResult[tuple[FloatND, FloatND]],
     ],
     risk_aversion: ScalarFloat,
     unit_probs: Float1D,
-) -> tuple[tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat], None]:
+) -> tuple[_EZPartials | BoundedResult[_EZPartials], None]:
     """Blend one block's PowerMean partials into the running scan carry."""
     block_indices, block_weights = block
-    block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
+    block_result = jax.vmap(read_at_nodes)(block_indices)
+    if isinstance(carry, BoundedResult):
+        if (
+            not isinstance(block_result, BoundedResult)
+            or carry.bound_status
+            or block_result.bound_status
+            or carry.query_status is None
+            or block_result.query_status is None
+        ):
+            raise TypeError("A bounded EZ fold requires declared child query slots.")
+        block_values, block_marginals = block_result.output
+        partials = carry.output
+        query_status = merge_query_input_status(
+            left=carry.query_status,
+            right=reduce_query_input_status(
+                statuses=block_result.query_status,
+                active=is_live(block_weights),
+            ),
+        )
+    else:
+        if isinstance(block_result, BoundedResult):
+            raise TypeError("A child query summary requires a declared EZ fold slot.")
+        block_values, block_marginals = block_result
+        partials = carry
+        query_status = None
     block_partials = ez_transform_partials(
         child_values=block_values,
         child_marginals=block_marginals,
@@ -1519,14 +1662,18 @@ def _accumulate_ez_partials_block(
         risk_aversion=risk_aversion,
     )
     combined = ez_blend_partials(
-        certainty_equivalents=jnp.stack([carry[0], block_partials[0]]),
-        weight_sums=jnp.stack([carry[1], block_partials[1]]),
-        marginal_log_scales=jnp.stack([carry[2], block_partials[2]]),
-        marginal_mantissas=jnp.stack([carry[3], block_partials[3]]),
+        certainty_equivalents=jnp.stack([partials[0], block_partials[0]]),
+        weight_sums=jnp.stack([partials[1], block_partials[1]]),
+        marginal_log_scales=jnp.stack([partials[2], block_partials[2]]),
+        marginal_mantissas=jnp.stack([partials[3], block_partials[3]]),
         probs=unit_probs,
         risk_aversion=risk_aversion,
     )
-    return combined, None
+    return (
+        BoundedResult(output=combined, bound_status=(), query_status=query_status)
+        if isinstance(carry, BoundedResult)
+        else combined
+    ), None
 
 
 def euler_draw_nodes(
