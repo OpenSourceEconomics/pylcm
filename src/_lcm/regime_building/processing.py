@@ -7018,7 +7018,7 @@ def _validate_conditioned_grid_is_fixed(
         msg = (
             f"state-conditioned process '{name}' requires every grid parameter fixed "
             f"at construction; {missing} would be passed at runtime. Pass them to "
-            f"{type(grid).__name__}(...), or give it a scalar `sigma`."
+            f"{grid.constructor_name}(...), or give it a scalar `sigma`."
         )
         raise ModelInitializationError(msg)
     nodes = grid.get_gridpoints()

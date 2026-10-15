@@ -97,10 +97,10 @@ def test_budgeted_keys_preserve_seed_bits_and_split_streams(seed: int) -> None:
         ("rbg", "threefry2x32", "rbg"),
     ],
 )
-def test_cached_key_creation_follows_the_current_prng_implementation(
+def test_cached_key_creation_is_threefry_under_every_default_prng(
     implementations: tuple[str, ...],
 ) -> None:
-    """One memory/cache owner must follow each public default-PRNG context."""
+    """One memory/cache owner creates the same Threefry root under every default."""
     devices = (jax.devices()[0],)
     memory = SimulationMemory(
         budget_bytes=2**24,
@@ -112,7 +112,7 @@ def test_cached_key_creation_follows_the_current_prng_implementation(
     seed = 2**40 + 17
     for implementation in implementations:
         with jax.default_prng_impl(implementation):
-            expected = jax.random.key(seed=seed)
+            expected = jax.random.key(seed=seed, impl="threefry2x32")
             actual = create_simulation_key(seed=seed, memory=memory)
             assert actual.dtype == expected.dtype
             np.testing.assert_array_equal(
@@ -148,7 +148,7 @@ def test_cached_key_creation_follows_the_current_seed_offset(
         with jax.default_prng_impl(implementation):
             for offset in (0, 17, 0):
                 jax.config.update("jax_random_seed_offset", offset)
-                expected = jax.random.key(seed=seed)
+                expected = jax.random.key(seed=seed, impl="threefry2x32")
                 actual = create_simulation_key(seed=seed, memory=memory)
                 assert actual.dtype == expected.dtype
                 np.testing.assert_array_equal(

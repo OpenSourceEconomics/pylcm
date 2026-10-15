@@ -33,6 +33,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import ByAge, Model, StochasticTransition
+from lcm.exceptions import InvalidSimulationInputError
 from lcm.typing import RegimeName
 from lcm_examples.mahler_yum_2024 import (
     MODEL_EDGES,
@@ -478,6 +479,23 @@ def test_consumption_positive(simulation_result):
 def test_category_names_are_a_tuple_in_declaration_order() -> None:
     """A categorical class's names come back as a tuple in declaration order."""
     assert _category_names(Education) == ("low", "high")
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [np.int64(32), np.int32(32), np.asarray(32), jnp.int32(32), "32", None],
+    ids=["np_int64", "np_int32", "np_0d", "jnp_int32", "str", "none"],
+)
+def test_create_inputs_refuses_a_seed_that_is_not_an_int_or_typed_key(
+    seed: object,  # noqa: PAN001 - the refused seeds have no common type
+) -> None:
+    """The initial-population seed is a Python `int` or a scalar typed key."""
+    with pytest.raises(InvalidSimulationInputError):
+        create_inputs(
+            seed=seed,  # ty: ignore[invalid-argument-type]
+            n_simulation_subjects=16,
+            params=START_PARAMS,
+        )
 
 
 def test_create_inputs_typed_key_preserves_integer_population() -> None:
