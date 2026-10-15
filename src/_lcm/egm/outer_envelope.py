@@ -53,6 +53,25 @@ def stack_candidate_carries(
     if not candidates:
         raise ValueError("At least one outer candidate is required.")
     leaves = tuple(candidate.leaves() for candidate in candidates)
+    if all(candidate.query_data_for_transport() is None for candidate in candidates):
+        values = tuple(
+            jnp.where(jnp.isnan(leaf[("value",)]), -jnp.inf, leaf[("value",)])
+            if nan_is_infeasible
+            else leaf[("value",)]
+            for leaf in leaves
+        )
+        marginals = tuple(
+            jnp.where(jnp.isnan(leaf[("value",)]), 0.0, leaf[("marginal_utility",)])
+            if nan_is_infeasible
+            else leaf[("marginal_utility",)]
+            for leaf in leaves
+        )
+        return EGMCarry(
+            endog_grid=jnp.stack([leaf[("endog_grid",)] for leaf in leaves], axis=-2),
+            value=jnp.stack(values, axis=-2),
+            marginal_utility=jnp.stack(marginals, axis=-2),
+            taste_shock_scale=leaves[0][("taste_shock_scale",)],
+        )
     normalized = tuple(
         replace(
             candidate,

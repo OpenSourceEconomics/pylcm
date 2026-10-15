@@ -1133,6 +1133,20 @@ def _stack_carry_template(
     """
     if template is None:
         return None
+    if template.query_data_for_transport() is None:
+        leaves = template.leaves()
+        return EGMCarry(
+            endog_grid=_broadcast_over_candidates(
+                arr=leaves[("endog_grid",)], n_candidates=n_candidates
+            ),
+            value=_broadcast_over_candidates(
+                arr=leaves[("value",)], n_candidates=n_candidates
+            ),
+            marginal_utility=_broadcast_over_candidates(
+                arr=leaves[("marginal_utility",)], n_candidates=n_candidates
+            ),
+            taste_shock_scale=leaves[("taste_shock_scale",)],
+        )
     return stack_egm_carries(candidates=(template,) * n_candidates)
 
 
