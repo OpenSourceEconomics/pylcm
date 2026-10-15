@@ -13,46 +13,71 @@ Literal endogenous-grid declarations are checked against the grid origin.
 """
 
 import inspect
+from collections.abc import Hashable
 from dataclasses import dataclass
 from typing import Literal, cast
 
 from _lcm.grids import ContinuousGrid
 from _lcm.typing import FunctionName
-from lcm.typing import BoolND, FloatND, UserFunction
+from lcm.typing import (
+    ActionName,
+    BoolND,
+    FloatND,
+    ParameterName,
+    ReferenceName,
+    RegimeName,
+    StateName,
+    UserFunction,
+)
+
+type BoundDependencyValue = (
+    UserFunction
+    | tuple[UserFunction, Hashable]
+    | tuple[Literal["parameter"], RegimeName, FunctionName, ParameterName]
+    | ReferenceName
+)
+type BoundDependencyEntry = tuple[tuple[ReferenceName, ...], BoundDependencyValue]
+type BoundDependencyIdentity = tuple[
+    tuple[
+        tuple[str, ...],
+        BoundDependencyValue | float | int | bool | tuple[BoundDependencyEntry, ...],
+    ],
+    ...,
+]
 
 
 @dataclass(frozen=True, kw_only=True)
 class PostDecisionBoundSpec:
     """One canonical floor, with liquid roles and RHS-only leaf dependencies."""
 
-    post_decision: str
+    post_decision: FunctionName
     """Bounded liquid post-decision target."""
-    liquid_state: str
+    liquid_state: StateName
     """Current liquid state excluded from the RHS."""
-    action: str
+    action: ActionName
     """Current liquid action excluded from the RHS."""
-    resources_target: str
+    resources_target: FunctionName
     """Declared liquid resources target."""
     kind: Literal["literal", "dag"]
     """Whether the floor is a number or a named producer."""
     literal_value: float | None
     """Literal floor, when declared."""
-    lower_target: str | None
+    lower_target: FunctionName | None
     """Named RHS producer, when declared."""
-    lower_inputs: tuple[str, ...]
+    lower_inputs: tuple[ReferenceName, ...]
     """Ordered transitive leaves of the RHS alone."""
-    dependency_identity: tuple[tuple[tuple[str, ...], object], ...]
+    dependency_identity: BoundDependencyIdentity
     """Canonical producer and leaf paths, excluding generated root spelling."""
-    declaration_names: tuple[str, ...] = ()
+    declaration_names: tuple[FunctionName, ...] = ()
     """User declarations represented by this candidate identity."""
 
 
 def grid_origin_bound_spec(
     *,
-    post_decision: str,
-    liquid_state: str,
-    action: str,
-    resources_target: str,
+    post_decision: FunctionName,
+    liquid_state: StateName,
+    action: ActionName,
+    resources_target: FunctionName,
     grid: ContinuousGrid,
 ) -> PostDecisionBoundSpec | None:
     """Bind a literal capability only when the grid supplies its numerical origin."""

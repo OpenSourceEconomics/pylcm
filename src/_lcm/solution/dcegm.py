@@ -503,7 +503,7 @@ class DCEGM(OneMarginSolver):
         that pulls in no engine modules.
         """
 
-        from _lcm.egm.step import build_egm_step_functions  # noqa: PLC0415
+        from _lcm.egm.step import _EGMStep, build_egm_step_functions  # noqa: PLC0415
 
         assert context.compute_regime_transition_probs is not None  # noqa: S101
         assert context.koopmans_aggregator is not None  # noqa: S101
@@ -535,6 +535,7 @@ class DCEGM(OneMarginSolver):
             has_taste_shocks=context.has_taste_shocks,
             age_values=context.ages.values,
             query_model=query_model,
+            dcegm_query_models=context.dcegm_query_models,
         )
         steps: Mapping[int, EGMStepFunction[_DCEGMStepOutput]] = build.steps
         argument_builder = _DCEGMArgumentBuilder(
@@ -551,12 +552,41 @@ class DCEGM(OneMarginSolver):
         period_group_keys: dict[int, Hashable] = {}
         own_bound_specs = () if query_model is None else (query_model.authority.bound,)
         query_slots_by_period: dict[int, _DCEGMQuerySlots] = {}
+        reader_capabilities: dict[
+            int, Mapping[RegimeName, ContinuationCapabilities]
+        ] = {}
         for period, core in steps.items():
-            query_slots = (
-                None
+            plan = cast("_EGMStep", core).pieces.continuation_plan
+            child_queries = {
+                target: query
+                for target in plan.query_targets
+                if (query := plan.child_reads[target].query) is not None
+            }
+            if len(child_queries) != len(plan.query_targets):
+                raise TypeError(
+                    "DC child slots require actual installed query readers."
+                )
+            child_slots = tuple(
+                (
+                    target,
+                    period + 1,
+                    child_queries[target].model.authority.bound,
+                )
+                for target in plan.query_targets
+            )
+            own_slot = (
+                ()
                 if query_model is None
                 else ((context.regime_name, period, query_model.authority.bound),)
             )
+            query_slots = (*child_slots, *own_slot) or None
+            if plan.query_targets:
+                reader_capabilities[period] = MappingProxyType(
+                    {
+                        target: child_queries[target].capabilities
+                        for target in plan.query_targets
+                    }
+                )
             if query_slots is not None:
                 query_slots_by_period[period] = query_slots
             if id(core) not in programs_by_core:
@@ -634,6 +664,7 @@ class DCEGM(OneMarginSolver):
                 query_input_authorities=query_slots,
             )
         return SolutionKernels(
+            continuation_reader_capabilities=reader_capabilities or None,
             query_input_authorities=query_slots_by_period or None,
             period_kernels=MappingProxyType(period_kernels),
             period_group_keys=MappingProxyType(period_group_keys),

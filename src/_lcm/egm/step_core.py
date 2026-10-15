@@ -317,15 +317,11 @@ class _SolveOneCombo:
                 savings_point_width=self.savings_point_width,
             )
         else:
-            candidates = _compute_nodes_over_savings(
+            candidates, child_status = _legacy_candidates_with_child_status(
+                pieces=pieces,
                 compute_node=compute_node,
-                savings_nodes=pieces.savings_nodes,
                 savings_point_width=self.savings_point_width,
             )
-            if isinstance(candidates, BoundedResult):
-                raise TypeError(
-                    "Child query slots require conditional candidate publication."
-                )
         actions, endog_grid, values, expected_values = candidates
         own_resources_of_state = ResourcesOfState(
             resources_func=pieces.own_resources_func,
@@ -468,7 +464,7 @@ class _SolveOneCombo:
                 kinds=construction[1],
             )
 
-        return (
+        output: _ComboRows = (
             V_row,
             refined_grid.astype(dtype),
             refined_policy.astype(dtype),
@@ -476,6 +472,51 @@ class _SolveOneCombo:
             marginal_utility_row,
             read_supported,
         )
+        return _with_literal_child_status(
+            output=output,
+            pieces=pieces,
+            child_status=child_status,
+            node_feasible=(publish_resources > pieces.borrowing_limit) & feasible,
+        )
+
+
+def _with_literal_child_status(
+    *,
+    output: _ComboRows,
+    pieces: _EgmKernelPieces,
+    child_status: tuple[QueryInputStatus, ...] | None,
+    node_feasible: BoolND,
+) -> _ComboRows | BoundedResult[_ConditionalComboRows]:
+    """Transport inherited child integrity beside unchanged legacy source rows."""
+    if not pieces.continuation_plan.query_targets:
+        return output
+    if child_status is None:
+        raise TypeError("Installed child readers require reduced query summaries.")
+    return BoundedResult(
+        output=(*output, None, node_feasible),
+        bound_status=(),
+        query_status=child_status,
+    )
+
+
+def _legacy_candidates_with_child_status(
+    *,
+    pieces: _EgmKernelPieces,
+    compute_node: Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]],
+    savings_point_width: int | None,
+) -> tuple[_NodeRows, tuple[QueryInputStatus, ...] | None]:
+    """Map the legacy candidate schedule while reducing installed child summaries."""
+    candidates = _compute_nodes_over_savings(
+        compute_node=compute_node,
+        savings_nodes=pieces.savings_nodes,
+        savings_point_width=savings_point_width,
+        bound_summary=bool(pieces.continuation_plan.query_targets),
+    )
+    return (
+        (candidates.output, candidates.query_status)
+        if isinstance(candidates, BoundedResult)
+        else (candidates, None)
+    )
 
 
 def _refined_rows(

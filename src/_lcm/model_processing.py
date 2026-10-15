@@ -305,9 +305,10 @@ def _validate_borrowing_bound_routes(
                     f"Regime '{regime_name}' declares a callable borrowing "
                     f"bound but its savings grid supplies points only at runtime."
                 )
+            from _lcm.solution.dcegm import _BoundDCEGM  # noqa: PLC0415
             from _lcm.solution.egm import _BoundEGM  # noqa: PLC0415
 
-            if isinstance(user_regime.solver, _BoundEGM):
+            if isinstance(user_regime.solver, _BoundEGM | _BoundDCEGM):
                 continue
             raise ModelInitializationError(
                 f"Regime '{regime_name}' declares a callable borrowing bound; "

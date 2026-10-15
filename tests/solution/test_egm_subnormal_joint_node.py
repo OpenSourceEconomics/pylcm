@@ -28,6 +28,7 @@ from _lcm.egm.continuation import (
     _on_node_scale,
     _partials_on_node_scale,
 )
+from _lcm.solution.feasibility import BoundedResult
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, IntND
 
@@ -173,6 +174,7 @@ def test_the_epstein_zin_partials_come_down_by_the_same_scale() -> None:
         ),
         shift=shift,
     )
+    assert not isinstance(lowered, BoundedResult)
 
     assert float(lowered[0]) == 0.5
     assert float(lowered[1]) == 1.0
@@ -196,5 +198,6 @@ def test_an_unlifted_mesh_leaves_the_epstein_zin_partials_alone() -> None:
         partials=partials,
         shift=jnp.zeros((), jnp.int32),
     )
+    assert not isinstance(lowered, BoundedResult)
 
     assert [float(v) for v in lowered] == [0.5, 8.0, 1.0, 0.25]

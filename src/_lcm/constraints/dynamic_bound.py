@@ -1,9 +1,9 @@
 """Named, scalar borrowing floors and their model-owned dependency contract."""
 
 import inspect
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, cast, no_type_check
+from typing import TYPE_CHECKING, Literal, cast, no_type_check, overload
 
 import jax
 import jax.numpy as jnp
@@ -17,18 +17,30 @@ from _lcm.constraints.processed import (
     normalize_constraints,
 )
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.post_decision_bound import PostDecisionBoundSpec, _PostDecisionLowerBound
+from _lcm.post_decision_bound import (
+    BoundDependencyEntry,
+    PostDecisionBoundSpec,
+    _PostDecisionLowerBound,
+)
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_law import RegimeLaw
 from _lcm.time import TimeAxis, coordinate_kind, specialization_coordinate_at
 from _lcm.variables import from_regime
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import FloatND, UserFunction
+from lcm.typing import (
+    FloatND,
+    FunctionName,
+    ParameterName,
+    ReferenceName,
+    RegimeName,
+    UserFunction,
+)
 
 if TYPE_CHECKING:
     from lcm.regime import Regime as UserRegime
 else:
+    # Regime imports constraint normalization, so the claw needs a runtime fallback.
     type UserRegime = object
 
 
@@ -85,6 +97,14 @@ def get_floor_node(*, function: UserFunction, constraint_name: str) -> UserFunct
     return ScalarFloor(function=function, constraint_name=constraint_name)
 
 
+@overload
+def get_floor_source(*, function: UserFunction) -> UserFunction: ...
+
+
+@overload
+def get_floor_source(*, function: None) -> None: ...
+
+
 def get_floor_source(*, function: UserFunction | None) -> UserFunction | None:
     """Return the declared producer behind a scalar-result check."""
     if isinstance(function, ScalarFloor):
@@ -99,7 +119,7 @@ def get_floor_source(*, function: UserFunction | None) -> UserFunction | None:
 def _bound_surface(
     *,
     user_regime: UserRegime,
-    regime_name: str,
+    regime_name: RegimeName,
     name: str,
     constraint: ProcessedConstraint,
 ) -> tuple[tuple[str, str, str, str], Const | Ref] | None:
@@ -151,7 +171,7 @@ def _bound_surface(
 def validate_declared_bounds(
     *,
     user_regime: UserRegime,
-    regime_name: str,
+    regime_name: RegimeName,
     law: RegimeLaw,
     ages: TimeAxis,
     periods: tuple[int, ...],
@@ -240,15 +260,15 @@ def validate_declared_bounds(
 def _resolved_rhs_contract(
     *,
     user_regime: UserRegime,
-    regime_name: str,
+    regime_name: RegimeName,
     law: RegimeLaw,
     ages: TimeAxis,
     periods: tuple[int, ...],
     name: str,
-    target: str,
+    target: FunctionName,
     forbidden: frozenset[str],
     known_dtypes: Mapping[str, DTypeLike],
-) -> tuple[list[tuple[tuple[str, ...], object]], set[str]]:
+) -> tuple[list[tuple[tuple[str, ...], tuple[BoundDependencyEntry, ...]]], set[str]]:
     """Resolve every active RHS and compare canonical phase identities."""
     current_identity = []
     lower_inputs = set()
@@ -313,18 +333,18 @@ def _resolved_rhs_contract(
 def _walk_rhs(
     *,
     pool: Mapping[str, UserFunction],
-    target: str,
-    canonical_producers: Mapping[str, object],
+    target: FunctionName,
+    canonical_producers: Mapping[FunctionName, tuple[UserFunction, Hashable]],
     fixed_inputs: frozenset[str],
     forbidden: frozenset[str],
     constraint_name: str,
-    regime_name: str,
-) -> tuple[list[tuple[str, ...]], list[tuple[tuple[str, ...], object]]]:
+    regime_name: RegimeName,
+) -> tuple[list[tuple[ReferenceName, ...]], list[BoundDependencyEntry]]:
     """Retain leaf paths and producer identities without walking the comparison LHS."""
     paths = []
-    identity = []
+    identity: list[BoundDependencyEntry] = []
 
-    def visit(*, name: str, path: tuple[str, ...]) -> None:
+    def visit(*, name: ReferenceName, path: tuple[ReferenceName, ...]) -> None:
         if name in path:
             raise ModelInitializationError(
                 f"Borrowing floor has a dependency cycle: {' -> '.join((*path, name))}."
@@ -339,7 +359,9 @@ def _walk_rhs(
             )
         if function is None:
             paths.append(new_path)
-            owner = ("parameter", regime_name, path[-1] if path else target, name)
+            owner: tuple[
+                Literal["parameter"], RegimeName, FunctionName, ParameterName
+            ] = ("parameter", regime_name, path[-1] if path else target, name)
             identity.append((new_path[1:], name if name in fixed_inputs else owner))
             return
         original = canonical_producers.get(name, get_floor_source(function=function))
@@ -354,7 +376,7 @@ def _walk_rhs(
 def _validate_scalar_trace(
     *,
     pool: Mapping[str, UserFunction],
-    target: str,
+    target: FunctionName,
     name: str,
     known_dtypes: Mapping[str, DTypeLike],
 ) -> None:

@@ -2,7 +2,7 @@
 
 import functools
 from collections.abc import Iterable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from enum import IntEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.grids.discrete import read_at_codes
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarInt
 
 if TYPE_CHECKING:
@@ -118,6 +119,40 @@ class EGMQueryData:
 
 
 type QueryRecord = EGMQueryData | EGMLiquidCornerData | EGMAdaptiveOuterData
+
+
+def select_query_data(
+    *,
+    data: EGMQueryData,
+    positions: tuple[ScalarInt | int | slice, ...],
+    floor_positions: tuple[ScalarInt | int | slice, ...] | None = None,
+) -> EGMQueryData:
+    """Select DC row axes while preserving the floor's independently declared axes."""
+    if data.adaptive_outer_data is not None:
+        raise TypeError("DC row selection cannot reinterpret an adaptive outer bank.")
+
+    def select(leaf: NumericQueryLeaf | None) -> NumericQueryLeaf | None:
+        return None if leaf is None else read_at_codes(array=leaf, positions=positions)
+
+    return replace(
+        data,
+        savings=read_at_codes(array=data.savings, positions=positions),
+        node_kind=read_at_codes(array=data.node_kind, positions=positions),
+        link_valid=read_at_codes(array=data.link_valid, positions=positions),
+        owner_id=read_at_codes(array=data.owner_id, positions=positions),
+        side_id=read_at_codes(array=data.side_id, positions=positions),
+        floor_used=read_at_codes(
+            array=data.floor_used,
+            positions=positions if floor_positions is None else floor_positions,
+        ),
+        corner_continuation=select(data.corner_continuation),
+        corner_kind=select(data.corner_kind),
+        corner_interval_id=select(data.corner_interval_id),
+        corner_side_id=select(data.corner_side_id),
+        liquid_corner_data=None
+        if data.liquid_corner_data is None
+        else jax.tree.map(select, data.liquid_corner_data),
+    )
 
 
 def _query_record_leaves(

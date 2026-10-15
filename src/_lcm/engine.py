@@ -408,6 +408,11 @@ class SolutionPhase:
     layout does not supply this independently owned descriptor.
     """
 
+    query_constraint_functions: ConstraintFunctionsMapping | None = dataclasses.field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Canonical DC query predicates, including declarations proved by construction."""
+
     continuation_reader_capabilities: (
         Mapping[int, Mapping[RegimeName, ContinuationCapabilities]] | None
     ) = dataclasses.field(default=None, metadata={"fingerprint_omit_if_default": True})

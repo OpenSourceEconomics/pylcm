@@ -22,6 +22,7 @@ import numpy as np
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import _aggregate_child_choices
 from _lcm.egm.interp import prepare_padded_grid
+from _lcm.solution.feasibility import BoundedResult
 from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
 
@@ -70,17 +71,19 @@ def test_paired_read_marginal_is_the_derivative_of_the_hermite_value_read() -> N
     `t`; at `t = 0.25` that is `1.125`, while the marginal row itself reads
     zero everywhere.
     """
-    _, marginal = _aggregate_child_choices(
-        **_one_row_scene(0.25), paired_marginal_read=True
-    )
+    result = _aggregate_child_choices(**_one_row_scene(0.25), paired_marginal_read=True)
+    assert not isinstance(result, BoundedResult)
+    _, marginal = result
     np.testing.assert_allclose(np.asarray(marginal), 1.125, rtol=1e-10)
 
 
 def test_linear_read_keeps_the_separate_marginal_interpolation() -> None:
     """Without pairing, the marginal is the marginal row's own linear read."""
-    _, marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         **_one_row_scene(0.25), paired_marginal_read=False
     )
+    assert not isinstance(result, BoundedResult)
+    _, marginal = result
     np.testing.assert_allclose(np.asarray(marginal), 0.0, atol=1e-12)
 
 
@@ -94,15 +97,15 @@ def test_paired_read_marginal_at_an_exact_node_uses_the_declared_side() -> None:
     any other value would feed the Euler equation a marginal the value read
     does not have.
     """
-    _, marginal = _aggregate_child_choices(
-        **_one_row_scene(0.0), paired_marginal_read=True
-    )
+    result = _aggregate_child_choices(**_one_row_scene(0.0), paired_marginal_read=True)
+    assert not isinstance(result, BoundedResult)
+    _, marginal = result
     np.testing.assert_allclose(np.asarray(marginal), 0.0, atol=1e-12)
 
 
 def test_paired_read_marginal_above_support_is_zero() -> None:
     """Above the carry's support the value read clamps, so its slope is zero."""
-    _, marginal = _aggregate_child_choices(
-        **_one_row_scene(1.5), paired_marginal_read=True
-    )
+    result = _aggregate_child_choices(**_one_row_scene(1.5), paired_marginal_read=True)
+    assert not isinstance(result, BoundedResult)
+    _, marginal = result
     np.testing.assert_allclose(np.asarray(marginal), 0.0, atol=1e-12)

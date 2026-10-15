@@ -253,7 +253,11 @@ class _SolveOneComboAssetRows:
         # the fused vmap. The tiles are concatenated, so the two schedules name
         # the same result.
         block = tile_block_size(width=self.euler_point_width, extent=n_state)
-        if pieces.query_spec is not None or pieces.check_query_construction:
+        if (
+            pieces.query_spec is not None
+            or pieces.check_query_construction
+            or pieces.continuation_plan.query_targets
+        ):
             nodes = map_over_leading_axis(
                 func=solve_one_node,
                 xs=self.state_grid,
@@ -496,7 +500,7 @@ class _SolveOneNode:
             jnp.where(jnp.isnan(policy_node), 1.0, policy_node)
         )
         savings_at_optimum = resources_at_node - policy_node
-        if pieces.check_query_construction:
+        if pieces.check_query_construction or pieces.continuation_plan.query_targets:
             continuation_gradient, direct_status = _asset_direct_gradient(
                 node=self, node_value=node_value, saving=savings_at_optimum
             )
@@ -540,7 +544,22 @@ class _SolveOneNode:
                     ),
                 ),
             )
-        return V_node, policy_node, mu_node
+        return _with_asset_child_status(
+            output=(V_node, policy_node, mu_node),
+            installed=bool(pieces.continuation_plan.query_targets),
+            status=child_status,
+        )
+
+
+def _with_asset_child_status(
+    *, output: _AssetNode, installed: bool, status: tuple[QueryInputStatus, ...] | None
+) -> _AssetNode | BoundedResult[_AssetNode]:
+    """Keep child integrity independent of source bracket ownership."""
+    if not installed:
+        return output
+    if status is None:
+        raise TypeError("Installed asset child readers require query summaries.")
+    return BoundedResult(output=output, bound_status=(), query_status=status)
 
 
 def _asset_candidates_without_direct(
@@ -561,9 +580,10 @@ def _asset_candidates_without_direct(
         compute_node=compute_node,
         savings_nodes=pieces.savings_nodes,
         savings_point_width=savings_point_width,
+        bound_summary=bool(pieces.continuation_plan.query_targets),
     )
     if isinstance(candidates, BoundedResult):
-        raise TypeError("Child query slots require conditional asset candidates.")
+        return candidates.output, candidates.query_status
     return candidates, None
 
 

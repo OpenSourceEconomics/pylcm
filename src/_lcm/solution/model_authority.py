@@ -43,6 +43,7 @@ from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.regime_building.age_normalization import resolve_periodized_nodes
 from _lcm.regime_building.gated_edges import (
     edge_may_fold_at_period,
     gate_reads_dissolution_flag,
@@ -64,6 +65,7 @@ from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     ArtifactPayload,
+    EconFunctionsMapping,
     FlatParams,
     RegimeName,
     StateName,
@@ -1612,15 +1614,53 @@ def _validate_model_query_spec(
         raise TypeError(
             "Query outer roles differ from the canonical non-liquid margin."
         )
+    query_constraints = regime.solution.query_constraint_functions
+    predicate_targets = frozenset(
+        target
+        for purpose, target in expected.evaluator_targets
+        if purpose.startswith("predicate:")
+    )
+    query_constraints = (
+        MappingProxyType(
+            {
+                target: function
+                for target, function in query_constraints.items()
+                if target in predicate_targets
+            }
+        )
+        if query_constraints is not None
+        else None
+    )
+    functions = regime.solution.continuation_functions
+    if query_constraints is not None:
+        functions = cast(
+            "EconFunctionsMapping",
+            resolve_periodized_nodes(
+                mapping=MappingProxyType({**query_constraints, **functions}),
+                period=regime.active_periods[0],
+            ),
+        )
     validate_query_evaluator_authority(
         spec=expected,
-        functions=regime.solution.continuation_functions,
+        functions=functions,
         target_periods=regime.active_periods,
         functions_by_period=MappingProxyType(
             {
-                period: MappingProxyType({**functions, **constraints})
+                period: MappingProxyType(
+                    {
+                        **cast(
+                            "EconFunctionsMapping",
+                            resolve_periodized_nodes(
+                                mapping=query_constraints or MappingProxyType({}),
+                                period=period,
+                            ),
+                        ),
+                        **period_functions,
+                        **constraints,
+                    }
+                )
                 for period, (
-                    functions,
+                    period_functions,
                     constraints,
                 ) in regime.solution.feasibility_pools_by_period.items()
             }

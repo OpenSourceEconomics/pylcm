@@ -31,6 +31,8 @@ from _lcm.egm.carry import (
     read_value_and_slope_row,
     read_value_row,
 )
+from _lcm.egm.dcegm_query import DCEGMQuery, build_dcegm_query
+from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.ez_kernel import (
     ez_blend_partials,
     ez_invert_partials,
@@ -46,6 +48,7 @@ from _lcm.egm.interp import (
     prepare_padded_grid,
 )
 from _lcm.egm.outer_envelope import right_germ_winner
+from _lcm.egm.query_data import EGMQueryData, select_query_data
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
     _get_child_resources,
@@ -67,6 +70,10 @@ from _lcm.probability import (
     scaled_by_power_of_two,
 )
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.regime_building.age_normalization import (
+    resolve_periodized_node,
+    resolve_periodized_nodes,
+)
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
 from _lcm.regime_building.Q_and_F import (
     draw_dependencies_by_law,
@@ -83,11 +90,13 @@ from _lcm.solution.feasibility import (
 from _lcm.transition_plans import LotteryLifetime, TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
+    EconFunction,
     EconFunctionArg,
     EconFunctionKwargs,
     EconFunctionsMapping,
     FunctionName,
     NextStateSolutionFunction,
+    PytreeValue,
     QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
@@ -332,6 +341,15 @@ class _ChildRead:
     resources read still binds it from the combo pool. Empty in the replicated
     (non-co-mapped) read.
     """
+
+    query: DCEGMQuery | None = None
+    """Canonical target-period query adapter, absent on raw child reads."""
+    query_target: RegimeName | None = None
+    """Namespace owning the installed query's parameter leaves."""
+    query_action_names: tuple[ActionName, ...] = ()
+    """Canonical retained target action names."""
+    query_action_values: tuple[FloatND | IntND, ...] = ()
+    """Target action values aligned with the carry's action axes."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -696,6 +714,8 @@ def build_continuation_plan(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     age_values: FloatND | IntND,
     risk_aversion_param_name: QualifiedName | None = None,
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    source_period: int | None = None,
 ) -> ContinuationPlan:
     """Assemble a `ContinuationPlan` from the regime's continuation statics.
 
@@ -720,6 +740,8 @@ def build_continuation_plan(
         post_decision_name=post_decision_name,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         age_values=age_values,
+        dcegm_query_models=dcegm_query_models,
+        source_period=source_period,
     )
     return ContinuationPlan(
         stateful_targets=stateful_targets,
@@ -728,6 +750,11 @@ def build_continuation_plan(
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=post_decision_name,
         risk_aversion_param_name=risk_aversion_param_name,
+        query_targets=tuple(
+            target
+            for target in stateful_targets
+            if child_reads[target].query is not None
+        ),
     )
 
 
@@ -791,11 +818,7 @@ def _get_child_carry_reader(
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
     risk_aversion: FloatND | None = None,
-) -> Callable[
-    [ScalarFloat],
-    tuple[ScalarFloat, ScalarFloat]
-    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
-]:
+) -> Callable[[ScalarFloat], _ChildCarryResult]:
     """Build the per-savings-node carry read of one target for one combo.
 
     The returned callable maps a savings node to the target's smoothed
@@ -917,10 +940,7 @@ class _ChildCarryReader:
     def __call__(
         self,
         savings_value: ScalarFloat,
-    ) -> (
-        tuple[ScalarFloat, ScalarFloat]
-        | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
-    ):
+    ) -> _ChildCarryResult:
         """Read the child's carry at one savings node."""
         read = self.read
         combo_pool = self.combo_pool
@@ -978,10 +998,26 @@ class _ChildCarryReader:
             resources_param_kwargs=resources_param_kwargs,
             savings_value=savings_value,
         )
+        actual_query = (
+            None
+            if read.query is None
+            else _ActualChildQuery(
+                read=read,
+                combo_pool=combo_pool,
+                next_states=next_states,
+                child_euler_state=cast(
+                    "_ChildEulerState", queries_and_gradients.child_euler_state
+                ),
+                savings_value=savings_value,
+            )
+        )
 
         if not (read.stochastic_state_names or read.local_draw_names):
             queries, gradients = queries_and_gradients(())
-            value, marginal = _aggregate_child_choices(
+            query_pool, euler_gradient = (
+                ({}, jnp.asarray(1.0)) if actual_query is None else actual_query(())
+            )
+            result = _aggregate_child_choices(
                 carry=self.carry,
                 prepared_search_grid=self.prepared_search_grid,
                 prepared_valid_length=self.prepared_valid_length,
@@ -993,6 +1029,14 @@ class _ChildCarryReader:
                 row_gradients=gradients,
                 paired_marginal_read=risk_aversion is not None,
                 n_outer_candidates=read.n_outer_candidates,
+                query=read.query,
+                query_pool=query_pool,
+                query_euler_gradient=euler_gradient,
+                query_action_names=read.query_action_names,
+                query_action_values=read.query_action_values,
+            )
+            value, marginal = (
+                result.output if isinstance(result, BoundedResult) else result
             )
             if risk_aversion is not None:
                 # A target whose continuation carries no shock lottery at this
@@ -1001,13 +1045,22 @@ class _ChildCarryReader:
                 # envelope — contributes its stable Epstein-Zin partials to
                 # the joint regime blend: `ez_transform_partials` on a single
                 # unit-weight node.
-                return ez_transform_partials(
+                partials = ez_transform_partials(
                     child_values=value[..., None],
                     child_marginals=marginal[..., None],
                     weights=jnp.ones(1, dtype=value.dtype),
                     risk_aversion=risk_aversion,
                 )
-            return value, marginal
+                return (
+                    BoundedResult(
+                        output=partials,
+                        bound_status=(),
+                        query_status=result.query_status,
+                    )
+                    if isinstance(result, BoundedResult)
+                    else partials
+                )
+            return result
 
         return _expect_over_stochastic_nodes(
             read=read,
@@ -1022,6 +1075,7 @@ class _ChildCarryReader:
             resources_reads_stochastic=self.resources_reads_stochastic,
             stochastic_node_width=self.stochastic_node_width,
             risk_aversion=risk_aversion,
+            actual_query=actual_query,
         )
 
 
@@ -1055,6 +1109,61 @@ class _ChildEulerState:
     ) -> _ChildEulerState:
         """The Euler state with the draws it reads fixed at one node."""
         return replace(self, draws=draws)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ActualChildQuery:
+    """Bind actual target coordinates separately from stored passive-row coordinates."""
+
+    read: _ChildRead
+    """Canonical target reader and its coordinate/action declarations."""
+    combo_pool: EconFunctionKwargs
+    """Source values and namespaced target parameter leaves."""
+    next_states: Mapping[ReferenceName, EconFunctionArg]
+    """Actual deterministic target states at this source candidate."""
+    child_euler_state: _ChildEulerState
+    """Target Euler-state law, with source inputs bound."""
+    savings_value: ScalarFloat
+    """Source candidate at which the law and its gradient are evaluated."""
+
+    def __call__(
+        self, stochastic_values: tuple[ScalarFloat | ScalarInt, ...]
+    ) -> tuple[EconFunctionKwargs, ScalarFloat]:
+        read = self.read
+        query = read.query
+        if query is None or read.query_target is None:
+            raise TypeError("Actual child inputs require an installed canonical query.")
+        draw_values = dict(
+            zip(_draw_axis_names(read=read), stochastic_values, strict=True)
+        )
+        euler = self.child_euler_state.at_node(
+            draws={name: draw_values[name] for name in read.euler_draw_names}
+        )
+        liquid, gradient = jax.value_and_grad(euler)(self.savings_value)
+        states = {
+            name: self.next_states[f"next_{name}"]
+            if f"next_{name}" in self.next_states
+            else self.combo_pool[f"next_{name}"]
+            for name in (*read.discrete_state_names, *read.passive_state_names)
+            if name not in read.stochastic_state_names
+        }
+        states.update(
+            zip(
+                read.stochastic_state_names,
+                stochastic_values[: len(read.stochastic_state_names)],
+                strict=True,
+            )
+        )
+        states[read.euler_state_name] = liquid
+        period = cast("ScalarInt", self.combo_pool["period"]) + 1
+        time = {"period": period, "age": read.age_values[period]}
+        internal = {*states, *time, *read.query_action_names}
+        params = {
+            name: self.combo_pool[f"{read.query_target}__{name}"]
+            for name in query.input_names
+            if name not in internal
+        }
+        return {**params, **time, **states}, gradient
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -1220,10 +1329,8 @@ def _expect_over_stochastic_nodes(
     resources_reads_stochastic: bool,
     stochastic_node_width: int | None,
     risk_aversion: FloatND | None = None,
-) -> (
-    tuple[ScalarFloat, ScalarFloat]
-    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
-):
+    actual_query: _ActualChildQuery | None = None,
+) -> _ChildCarryResult:
     """Weight the carry read over the child's stochastic-node combos.
 
     Runs the full read (per-row queries, mixed passive interpolation, choice
@@ -1265,6 +1372,7 @@ def _expect_over_stochastic_nodes(
         queries_and_gradients=queries_and_gradients,
         shared_queries_and_gradients=shared_queries_and_gradients,
         risk_aversion=risk_aversion,
+        actual_query=actual_query,
     )
 
     node_index_mesh = jnp.meshgrid(
@@ -1318,6 +1426,7 @@ def _expect_over_stochastic_nodes(
                 blocked_indices=blocked_indices,
                 blocked_weights=blocked_weights,
                 risk_aversion=risk_aversion,
+                has_query=read.query is not None,
             ),
             shift=node_shift,
         )
@@ -1331,19 +1440,19 @@ def _expect_over_stochastic_nodes(
     )
     states, _ = jax.lax.scan(
         _WeightedNodeBlockFold(read_at_nodes=read_at_nodes, reduction=reduction),
-        (empty, empty),
+        _seed_child_query(output=(empty, empty), installed=read.query is not None),
         (blocked_indices, blocked_weights),
     )
-    if isinstance(states, BoundedResult):
-        raise TypeError("A raw node expectation cannot publish query summaries.")
-    value_state, marginal_state = states
+    value_state, marginal_state = (
+        states.output if isinstance(states, BoundedResult) else states
+    )
     # The mesh normalizes by the exact power of two its weights were lifted by,
     # not by the mass the fold accumulated, so the published quantity is the
     # weighted sum rather than the fold's mass-normalized mean. The mass rides
     # along in the scan carry unread and is dead code for this caller; the
     # accumulator is one shared state so every driver of the reduction merges
     # the same way, and XLA drops the unused half of it.
-    return (
+    output = (
         _on_node_scale(
             values=reduction.finalize(accumulator=value_state).weighted_sum,
             shift=node_shift,
@@ -1352,6 +1461,26 @@ def _expect_over_stochastic_nodes(
             values=reduction.finalize(accumulator=marginal_state).weighted_sum,
             shift=node_shift,
         ),
+    )
+    return (
+        BoundedResult(output=output, bound_status=(), query_status=states.query_status)
+        if isinstance(states, BoundedResult)
+        else output
+    )
+
+
+def _seed_child_query[Output: PytreeValue](
+    *, output: Output, installed: bool
+) -> Output | BoundedResult[Output]:
+    """Seed one statically installed target slot without evaluating its callback."""
+    return (
+        BoundedResult(
+            output=output,
+            bound_status=(),
+            query_status=(QueryInputStatus(*(jnp.asarray(a=False) for _ in range(3))),),
+        )
+        if installed
+        else output
     )
 
 
@@ -1395,21 +1524,31 @@ class _ReadAtNodes:
     risk_aversion: FloatND | None
     """The Epstein-Zin risk-aversion coefficient; `None` for the linear read."""
 
+    actual_query: _ActualChildQuery | None = None
+    """Actual target inputs, independent of shared row-node resource queries."""
+
     def __call__(
         self,
         node_indices: tuple[ScalarInt, ...],
-    ) -> tuple[ScalarFloat, ScalarFloat]:
+    ) -> (
+        tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]]
+    ):
         read = self.read
-        if self.shared_queries_and_gradients is None:
-            stochastic_values = tuple(
-                values[index]
-                for values, index in zip(
-                    self.stochastic_node_values, node_indices, strict=True
-                )
+        stochastic_values = tuple(
+            values[index]
+            for values, index in zip(
+                self.stochastic_node_values, node_indices, strict=True
             )
+        )
+        if self.shared_queries_and_gradients is None:
             queries, gradients = self.queries_and_gradients(stochastic_values)
         else:
             queries, gradients = self.shared_queries_and_gradients
+        query_pool, euler_gradient = (
+            ({}, jnp.asarray(1.0))
+            if self.actual_query is None
+            else self.actual_query(stochastic_values)
+        )
         return _aggregate_child_choices(
             carry=self.carry,
             prepared_search_grid=self.prepared_search_grid,
@@ -1426,6 +1565,11 @@ class _ReadAtNodes:
             row_gradients=gradients,
             paired_marginal_read=self.risk_aversion is not None,
             n_outer_candidates=read.n_outer_candidates,
+            query=read.query,
+            query_pool=query_pool,
+            query_euler_gradient=euler_gradient,
+            query_action_names=read.query_action_names,
+            query_action_values=read.query_action_values,
         )
 
 
@@ -1568,34 +1712,43 @@ def _on_node_scale(*, values: FloatND, shift: IntND) -> FloatND:
 
 def _partials_on_node_scale(
     *,
-    partials: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+    partials: _EZPartials | BoundedResult[_EZPartials],
     shift: IntND,
-) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
+) -> _EZPartials | BoundedResult[_EZPartials]:
     """Undo the common node-weight scale in PowerMean partials.
 
     The certainty equivalent and marginal mantissa are ratios and do not move.
     The mass returns to the model scale multiplicatively, while the marginal
     log scale loses the same power of two additively.
     """
-    certainty_equivalent, weight_sum, marginal_log_scale, marginal_mantissa = partials
+    certainty_equivalent, weight_sum, marginal_log_scale, marginal_mantissa = (
+        partials.output if isinstance(partials, BoundedResult) else partials
+    )
     ln_two = jnp.log(jnp.asarray(2.0, dtype=jnp.asarray(marginal_log_scale).dtype))
-    return (
+    output = (
         certainty_equivalent,
         _on_node_scale(values=weight_sum, shift=shift),
         marginal_log_scale - shift * ln_two,
         marginal_mantissa,
+    )
+    return (
+        replace(partials, output=output)
+        if isinstance(partials, BoundedResult)
+        else output
     )
 
 
 def _accumulate_ez_partials_over_blocks(
     *,
     read_at_nodes: Callable[
-        [tuple[ScalarInt, ...] | tuple[IntND, ...]], tuple[FloatND, FloatND]
+        [tuple[ScalarInt, ...] | tuple[IntND, ...]],
+        tuple[FloatND, FloatND] | BoundedResult[tuple[FloatND, FloatND]],
     ],
     blocked_indices: tuple[IntND, ...],
     blocked_weights: FloatND,
     risk_aversion: ScalarFloat,
-) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
+    has_query: bool = False,
+) -> _EZPartials | BoundedResult[_EZPartials]:
     """Accumulate one target PowerMean over streamed node blocks."""
     dtype = blocked_weights.dtype
     unit_probs = jnp.ones(2, dtype=dtype)
@@ -1608,11 +1761,9 @@ def _accumulate_ez_partials_over_blocks(
             risk_aversion=risk_aversion,
             unit_probs=unit_probs,
         ),
-        (one, zero, zero, zero),
+        _seed_child_query(output=(one, zero, zero, zero), installed=has_query),
         (blocked_indices, blocked_weights),
     )
-    if isinstance(partials, BoundedResult):
-        raise TypeError("A raw EZ expectation cannot publish query summaries.")
     return partials
 
 
@@ -1815,7 +1966,12 @@ def _aggregate_child_choices(
     row_gradients: FloatND,
     paired_marginal_read: bool = False,
     n_outer_candidates: int = 0,
-) -> tuple[ScalarFloat, ScalarFloat]:
+    query: DCEGMQuery | None = None,
+    query_pool: EconFunctionKwargs | None = None,
+    query_euler_gradient: ScalarFloat | None = None,
+    query_action_names: tuple[ActionName, ...] = (),
+    query_action_values: tuple[FloatND | IntND, ...] = (),
+) -> tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]]:
     """Read one child's carry with mixed interpolation and aggregate its choices.
 
     The carry rows matching the child's discrete-state values are selected
@@ -1881,6 +2037,32 @@ def _aggregate_child_choices(
     marginal_block = read_at_codes(
         array=leaves[("marginal_utility",)], positions=child_index
     )
+    data = carry.query_data_for_transport()
+    if query is not None:
+        return _read_feature_child_choices(
+            query=query,
+            data=data,
+            pool=query_pool,
+            euler_gradient=query_euler_gradient,
+            grid=grid_block,
+            value_rows=value_block,
+            marginal_rows=marginal_block,
+            child_index=child_index,
+            passive_values=child_passive_values,
+            passive_grids=child_passive_grids,
+            row_queries=row_queries,
+            row_gradients=row_gradients,
+            action_names=query_action_names,
+            action_values=query_action_values,
+            has_taste_shocks=has_taste_shocks,
+            scale=leaves[("taste_shock_scale",)],
+            paired_marginal_read=paired_marginal_read,
+            n_outer_candidates=n_outer_candidates,
+        )
+    if data is not None:
+        raise TypeError(
+            "Conditional DC rows require their installed model-bound query."
+        )
     # The prepared search key and valid length are indexed by the same
     # `child_index` as the carry rows, so each row reads its own precomputed
     # pair instead of recomputing the NaN mask per query.
@@ -1999,6 +2181,66 @@ def _aggregate_child_choices(
         )
     smoothed_marginal = jnp.sum(choice_probs * marginal_at_child)
     return smoothed_value, smoothed_marginal
+
+
+def _read_feature_child_choices(
+    *,
+    query: DCEGMQuery,
+    data: EGMQueryData | None,
+    pool: EconFunctionKwargs | None,
+    euler_gradient: ScalarFloat | None,
+    grid: FloatND,
+    value_rows: FloatND,
+    marginal_rows: FloatND,
+    child_index: tuple[ScalarInt, ...],
+    passive_values: tuple[ScalarFloat, ...],
+    passive_grids: tuple[Float1D, ...],
+    row_queries: FloatND,
+    row_gradients: FloatND,
+    action_names: tuple[ActionName, ...],
+    action_values: tuple[FloatND | IntND, ...],
+    has_taste_shocks: bool,
+    scale: ScalarFloat,
+    paired_marginal_read: bool,
+    n_outer_candidates: int,
+) -> BoundedResult[tuple[ScalarFloat, ScalarFloat]]:
+    """Read actual feasible conditional alternatives before ordinary choice ranking."""
+    if data is None or pool is None or euler_gradient is None:
+        raise TypeError("An installed DC child query lacks its canonical inputs.")
+    if n_outer_candidates:
+        raise TypeError("DC child query activation cannot reduce nested outer rows.")
+    result = query.read_choices(
+        grid=grid,
+        value=value_rows,
+        marginal=marginal_rows,
+        data=select_query_data(data=data, positions=child_index),
+        row_queries=row_queries,
+        row_gradients=row_gradients,
+        passive_values=passive_values,
+        passive_grids=passive_grids,
+        action_names=action_names,
+        action_values=action_values,
+        pool=pool,
+        euler_gradient=euler_gradient,
+        paired_marginal_read=paired_marginal_read,
+    )
+    if has_taste_shocks:
+        value, probabilities = logsum_and_softmax(
+            values=result.value, scale=scale, axes=(0,)
+        )
+    else:
+        value, probabilities = _hard_max_and_one_hot(values=result.value, axes=(0,))
+    return BoundedResult(
+        output=(value, jnp.sum(probabilities * result.marginal)),
+        bound_status=(),
+        query_status=(
+            QueryInputStatus(
+                nonfinite_floor=jnp.any(result.bound_status.nonfinite_floor),
+                invalid_shifted_grid=jnp.any(result.bound_status.invalid_shifted_grid),
+                coverage_missing=jnp.any(result.coverage_missing),
+            ),
+        ),
+    )
 
 
 def _blend_passive_axes(
@@ -2428,6 +2670,8 @@ def _build_child_reads(
     post_decision_name: FunctionName,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     age_values: FloatND | IntND,
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    source_period: int | None = None,
 ) -> MappingProxyType[RegimeName, _ChildRead]:
     """Build the per-carry-target statics of the EGM kernel's child reads.
 
@@ -2446,6 +2690,31 @@ def _build_child_reads(
     )
     reads: dict[RegimeName, _ChildRead] = {}
     for target in stateful_targets:
+        query_model = (dcegm_query_models or {}).get(target)
+        query = None
+        if query_model is not None:
+            if (
+                source_period is None
+                or source_period + 1 not in query_model.authority.target_periods
+            ):
+                raise TypeError(
+                    "DC child query lacks its canonical target-period binding."
+                )
+            query = build_dcegm_query(
+                model=query_model,
+                functions=cast(
+                    "EconFunctionsMapping",
+                    resolve_periodized_nodes(
+                        mapping=query_model.functions, period=source_period + 1
+                    ),
+                ),
+                koopmans_aggregator=cast(
+                    "EconFunction",
+                    resolve_periodized_node(
+                        node=query_model.koopmans_aggregator, period=source_period + 1
+                    ),
+                ),
+            )
         target_info = regime_to_v_interpolation_info[target]
         target_regime = user_regimes[target]
         euler_state_name = _get_child_state_name(user_regime=target_regime)
@@ -2609,6 +2878,10 @@ def _build_child_reads(
             row_arg_names=passive_state_names + action_names,
             row_values=row_values,
             row_block_shape=row_block_shape,
+            query=query,
+            query_target=target if query is not None else None,
+            query_action_names=action_names,
+            query_action_values=action_values,
             n_outer_candidates=n_outer_candidates,
         )
     return MappingProxyType(reads)

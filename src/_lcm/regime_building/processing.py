@@ -4152,6 +4152,11 @@ def _build_solution_phase(  # noqa: PLR0915
         continuation_reader_capabilities=solver_kernels.continuation_reader_capabilities,
         _variables=variables,
         query_authority=None if query_model is None else query_model.authority,
+        query_constraint_functions=(
+            core.constraint_functions
+            if isinstance(query_model, DCEGMQueryModel)
+            else None
+        ),
         query_input_authorities=solver_kernels.query_input_authorities,
         grids=all_grids[regime_name],
         functions=published_solution_functions,

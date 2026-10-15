@@ -270,6 +270,7 @@ def build_egm_step_functions(
     ) = None,
     age_values: FloatND | IntND,
     query_model: DCEGMQueryModel | None = None,
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
 ) -> EGMStepBuild:
     """Build per-period DC-EGM kernels and the regime's carry template.
 
@@ -449,6 +450,20 @@ def build_egm_step_functions(
                     # declared signature says the closures agree.
                     periodized_tree_signature(tree=functions, period=period),
                     periodized_tree_signature(tree=constraints, period=period),
+                    tuple(
+                        (
+                            target,
+                            periodized_tree_signature(
+                                tree=model.functions, period=period + 1
+                            ),
+                            periodized_tree_signature(
+                                tree={"koopmans_aggregator": model.koopmans_aggregator},
+                                period=period + 1,
+                            ),
+                        )
+                        for target in carry
+                        if (model := (dcegm_query_models or {}).get(target)) is not None
+                    ),
                 ),
             ),
             [],
@@ -529,6 +544,8 @@ def build_egm_step_functions(
             asset_row_mode=asset_row_mode,
             age_values=age_values,
             query_model=query_model,
+            dcegm_query_models=dcegm_query_models,
+            source_period=representative_period,
         )
         built[group_key] = kernel
         # Each group owns a distinct numerical core and its child mesh. A
@@ -614,6 +631,8 @@ def _get_egm_step(
     asset_row_mode: bool,
     age_values: FloatND | IntND,
     query_model: DCEGMQueryModel | None = None,
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    source_period: int | None = None,
 ) -> EGMStepFunction[_DCEGMStepOutput]:
     """Build the EGM kernel for one continuation-target configuration.
 
@@ -653,6 +672,8 @@ def _get_egm_step(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         age_values=age_values,
         query_model=query_model,
+        dcegm_query_models=dcegm_query_models,
+        source_period=source_period,
     )
 
     return _EGMStep(
@@ -812,7 +833,9 @@ class _EGMStep:
                 + self.own_passive_state_names,
                 cell_width=_lcm_cell_width,
                 bound_summary=(
-                    pieces.query_spec is not None or pieces.check_query_construction
+                    pieces.query_spec is not None
+                    or pieces.check_query_construction
+                    or bool(pieces.continuation_plan.query_targets)
                 ),
             )
             if isinstance(mapped, BoundedResult):
@@ -1172,6 +1195,8 @@ def _build_kernel_pieces(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     age_values: FloatND | IntND,
     query_model: DCEGMQueryModel | None = None,
+    dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    source_period: int | None = None,
 ) -> _EgmKernelPieces:
     """Assemble the build-time statics of the EGM kernel."""
     savings_nodes = jnp.asarray(
@@ -1190,6 +1215,8 @@ def _build_kernel_pieces(
         post_decision_name=solver.post_decision_function,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         age_values=age_values,
+        dcegm_query_models=dcegm_query_models,
+        source_period=source_period,
     )
     return _EgmKernelPieces(
         euler_state_name=solver.continuous_state,
