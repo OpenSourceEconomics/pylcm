@@ -4646,9 +4646,6 @@ class Model:
                 some subject admits no jointly feasible action combination, or
                 if subjects start in a collective regime without declaring
                 their role where routing needs one.
-            UnsupportedOperationError: If a constraint depends on an
-                age-specialized function while subjects start away from the
-                regime's representative age.
             ModelSealError: If a binding captured at `Model(...)` has moved.
 
         """
@@ -4694,9 +4691,6 @@ class Model:
         Raises:
             InvalidInitialConditionsError: If the structure is malformed or a
                 collective start lacks its role declaration.
-            UnsupportedOperationError: If a constraint depends on an
-                age-specialized function while subjects start away from the
-                regime's representative age.
             ModelSealError: If a binding captured at `Model(...)` has moved.
 
         """

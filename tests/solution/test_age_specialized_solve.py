@@ -26,7 +26,10 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidAdditionalTargetsError, UnsupportedOperationError
+from lcm.exceptions import (
+    InvalidAdditionalTargetsError,
+    InvalidInitialConditionsError,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
@@ -411,32 +414,68 @@ def test_additional_targets_all_rejects_age_specialized_constraint():
         result.to_dataframe(additional_targets="all")
 
 
+def _cap_falling_with_age(age: float) -> Callable[..., bool]:
+    """Return the age's consumption cap, one unit of wealth tighter per year past 25.
+
+    At 25 it coincides with `consumption <= wealth`; at 45 it demands twenty units
+    of wealth beyond the consumption, so a subject's verdict depends on which
+    age's closure judges it.
+    """
+
+    def wealth_cap(*, consumption: float, wealth: float) -> bool:
+        return consumption <= wealth - (age - 25.0)
+
+    return wealth_cap
+
+
+def _simulate_with_falling_cap(
+    *, ages: list[float], wealth: list[float], log_level: LogLevel
+):
+    model = _make_specialized_constraint_model(
+        AgeSpecializedFunction(build=_cap_falling_with_age, signature=lambda age: age)
+    )
+    return model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.array(ages),
+            "wealth": jnp.array(wealth),
+            "regime_id": jnp.full(len(ages), RegimeId.working_life),
+        },
+        log_level=log_level,
+    )
+
+
 @pytest.mark.parametrize("log_level", ["warning", "debug"])
-def test_initial_conditions_feasibility_check_rejects_age_specialized_constraint(
+def test_initial_feasibility_admits_subjects_under_their_own_start_ages_constraint(
     log_level: LogLevel,
 ):
-    """Feasibility validation cannot answer for a specialized constraint when
-    subjects start away from the regime's representative age, so it raises.
+    """Subjects starting at different ages simulate from their own start ages.
 
-    The published `regime.simulation.constraints` hold an `AgeSpecializedFunction`
-    resolved at the regime's representative (first active) age only. Checking a
-    subject who starts at a later age against that closure would silently apply
-    the wrong age's policy. This is a property of the model, not of the supplied
-    rows, so it is an unsupported operation and is never downgraded to a warning.
+    Wealth 100 leaves every action feasible under each age's cap along the whole
+    working life, so both subjects pass the feasibility check of their start
+    period and are simulated from there.
     """
-    model = _make_specialized_constraint_model(
-        AgeSpecializedFunction(build=_cap_of_age, signature=lambda age: age)
+    result = _simulate_with_falling_cap(
+        ages=[25.0, 45.0], wealth=[100.0, 100.0], log_level=log_level
     )
-    with pytest.raises(UnsupportedOperationError, match="policy-specialized"):
-        model.simulate(
-            params={"discount_factor": 0.95},
-            initial_conditions={
-                "age": jnp.array([25.0, 35.0, 45.0]),
-                "wealth": jnp.array([10.0, 50.0, 100.0]),
-                "regime_id": jnp.full(3, RegimeId.working_life),
-            },
-            log_level=log_level,
-        )
+    first_ages = result.to_dataframe().groupby("subject_id")["age"].min()
+    assert first_ages.tolist() == [25.0, 45.0]
+
+
+@pytest.mark.parametrize("log_level", ["warning", "debug"])
+def test_initial_feasibility_judges_a_late_starter_by_its_start_ages_constraint(
+    log_level: LogLevel,
+):
+    """A subject at 45 with wealth 10 fails the initial feasibility check.
+
+    The age-45 cap demands consumption at most -10, below every action node,
+    while the age-25 cap would admit consumption up to 10. Rejection therefore
+    shows the subject was judged by the constraint of its own start age.
+    """
+    with pytest.raises(
+        InvalidInitialConditionsError, match="satisfies all constraints jointly"
+    ):
+        _simulate_with_falling_cap(ages=[45.0], wealth=[10.0], log_level=log_level)
 
 
 def _cap_binding_at_age(age: float) -> Callable[..., bool]:

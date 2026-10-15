@@ -99,9 +99,9 @@ state-only constraint holds. Both methods apply every initial-condition check `s
 applies, including the `own_stakeholder` declaration a collective start needs, and take
 no `log_level`: they always raise. The verdict does not depend on how the check is
 executed; at present both run in one eager pass on the default device, without
-device-memory admission or subject padding. A constraint that depends on an
-age-specialized function while subjects start away from the regime's representative age
-raises `UnsupportedOperationError`, from these methods and from `simulate` alike.
+device-memory admission or subject padding. When a constraint depends on an
+age-specialized function, each subject is checked against the constraints and functions
+resolved at its own start period.
 
 `model._regimes` is private canonical engine state.
 

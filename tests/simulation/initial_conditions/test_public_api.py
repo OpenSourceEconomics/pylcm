@@ -19,7 +19,6 @@ from lcm import (
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     ModelSealError,
-    UnsupportedOperationError,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
@@ -518,23 +517,24 @@ def _age_specialized_model() -> Model:
     )
 
 
-@pytest.mark.parametrize(
-    "method", ["validate_initial_conditions", "initial_conditions_feasibility"]
-)
-def test_unsupported_age_specialized_check_raises(method: str) -> None:
-    """An age-specialized constraint with off-representative starts is unsupported."""
+def test_age_specialized_constraint_admits_starts_at_every_active_age() -> None:
+    """Subjects starting at different ages are each checked at their own start age.
+
+    The cap is slack at every age, so both subjects are feasible.
+    """
     model = _age_specialized_model()
     working_life = model.regime_names_to_ids["working_life"]
 
-    with pytest.raises(UnsupportedOperationError, match="policy-specialized"):
-        getattr(model, method)(
-            initial_conditions={
-                "age": jnp.array([25.0, 35.0]),
-                "wealth": jnp.array([10.0, 50.0]),
-                "regime_id": jnp.array([working_life, working_life]),
-            },
-            params={"discount_factor": 0.95},
-        )
+    mask = model.initial_conditions_feasibility(
+        initial_conditions={
+            "age": jnp.array([25.0, 35.0]),
+            "wealth": jnp.array([10.0, 50.0]),
+            "regime_id": jnp.array([working_life, working_life]),
+        },
+        params={"discount_factor": 0.95},
+    )
+
+    assert np.asarray(mask).tolist() == [True, True]
 
 
 def test_budget_is_irrelevant_to_the_public_mask_but_not_to_simulate() -> None:
