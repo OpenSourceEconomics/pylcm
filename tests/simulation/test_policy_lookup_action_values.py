@@ -179,6 +179,17 @@ def test_lookup_refuses_unknown_or_repeated_intermediates(
         lookup(solved=solved, period=0, keep_intermediates=keep_intermediates)
 
 
+# The public type check samples one entry per call, so each input is refused
+# many times to catch a call that reports a different error.
+@pytest.mark.parametrize("keep_intermediates", [("Q", ["U"]), ("Q", 1)])
+def test_lookup_refuses_non_string_intermediates_on_every_call(
+    *, solved, keep_intermediates
+):
+    for _ in range(30):
+        with pytest.raises(InvalidSimulationInputError, match="keep_intermediates"):
+            lookup(solved=solved, period=0, keep_intermediates=keep_intermediates)
+
+
 @pytest.mark.parametrize("period", [0, LAST_ALIVE_PERIOD])
 def test_action_values_cover_the_action_grid_with_a_leading_row_axis(*, solved, period):
     got = lookup(solved=solved, period=period, keep_intermediates=ALL_INTERMEDIATES)

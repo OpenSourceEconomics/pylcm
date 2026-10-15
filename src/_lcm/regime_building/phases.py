@@ -666,19 +666,20 @@ def _split_states(
             and isinstance(spec.solve, _ContinuousStochasticProcess)
             and isinstance(spec.simulate, _ContinuousStochasticProcess)
         ):
-            if any(
+            distinct = not spec.solve.has_same_law_as(spec.simulate)
+            if distinct and any(
                 isinstance(side, _IIDProcess) and side.fold
                 for side in (spec.solve, spec.simulate)
             ):
                 errors.append(
-                    f"states['{name}']: phased process laws do not support fold=True."
+                    f"states['{name}']: the solve and simulate laws differ, and "
+                    "distinct phased process laws do not support fold=True."
                 )
-            elif (
-                spec.simulate.simulate_draws == "nodes" and spec.solve != spec.simulate
-            ):
+            elif distinct and spec.simulate.simulate_draws == "nodes":
                 errors.append(
-                    f"states['{name}']: distinct phased simulation laws require "
-                    "continuous draws; nodes mode uses the solve support."
+                    f"states['{name}']: the solve and simulate laws differ, but "
+                    "simulate_draws='nodes' draws from the solve nodes; use "
+                    "continuous draws for a distinct simulation law."
                 )
             else:
                 solve_grid_states[name] = spec.solve

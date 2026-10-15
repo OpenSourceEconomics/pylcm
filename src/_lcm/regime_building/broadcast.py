@@ -191,19 +191,22 @@ def merge_model_slots(
             )
         )
         if not errors:
-            merged_regimes[regime_name] = user_regime.replace(
+            # A joint process may arrive from the model level, so the engine
+            # form is taken after the merge.
+            merged = user_regime.replace(
                 functions=functions,
                 constraints=constraints,
                 states=states,
                 state_transitions=state_transitions,
                 actions=actions,
-            )
+            ).lower_joint_normal_processes()
+            merged_regimes[regime_name] = merged
             broadcast_variables[regime_name] = frozenset(
                 (
                     set(model_slots.get("states", {}))
                     | set(model_slots.get("actions", {}))
                 )
-                & (set(states) | set(actions))
+                & (set(merged.states) | set(merged.actions))
             )
 
     if errors:

@@ -94,9 +94,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
+from beartype import beartype
 from scipy.interpolate import make_interp_spline
 
-from _lcm.simulation.random import canonicalize_simulation_seed, create_simulation_key
+from _lcm.beartype_conf import SIMULATION_INPUT_CONF
+from _lcm.simulation.random import create_simulation_key
 from _lcm.typing import DataclassInstance
 from lcm import (
     AgeGrid,
@@ -121,10 +123,10 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     Period,
+    PRNGKey,
     ScalarFloat,
     ScalarInt,
     UserParamsNode,
-    UserSeed,
 )
 
 _DATA_DIR = Path(__file__).parent / "data"
@@ -1107,8 +1109,9 @@ def _compute_pension_base(
     return pension_base
 
 
+@beartype(conf=SIMULATION_INPUT_CONF)
 def create_inputs(
-    *, seed: UserSeed, n_simulation_subjects: int, params: StructuralParams
+    *, seed: int | PRNGKey, n_simulation_subjects: int, params: StructuralParams
 ) -> tuple[dict[str, UserParamsNode], pd.DataFrame]:
     """Build model params and initial conditions.
 
@@ -1121,9 +1124,6 @@ def create_inputs(
         Tuple of (model_params, initial_conditions_df).
 
     """
-    root_seed = canonicalize_simulation_seed(seed=seed, name="seed")
-    if root_seed is None:
-        raise ValueError("The initial-population seed cannot be None.")
     # Economy-wide constants. Kept inside `create_inputs` so the public
     # surface — including the DAG functions on the living regimes — has no
     # implicit dependency on module globals.
@@ -1193,7 +1193,7 @@ def create_inputs(
     # at this calibration, but the guarantee is what the initial distribution
     # relies on, so it has to hold by construction rather than by luck.
     type_key, health_key, adjustment_key, shock_key = jax.random.split(
-        create_simulation_key(seed=root_seed), num=4
+        create_simulation_key(seed=seed), num=4
     )
     type_indices = np.asarray(
         jax.random.choice(

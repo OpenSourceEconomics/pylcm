@@ -45,9 +45,9 @@ _PROGRAM_MUTATIONS = (
 
 # Local controls for newly profiled helpers supplement the historical registry.
 _RANDOM_HELPER_MUTATIONS = {
-    "simulation_random:default_implementation_ignored": (
-        '"impl": jax.config.jax_default_prng_impl,',
+    "simulation_random:ambient_implementation_used": (
         '"impl": "threefry2x32",',
+        '"impl": jax.config.jax_default_prng_impl,',
     ),
     "simulation_random:offset_trace_guard_bypassed": (
         "if seed_offset != jax.config.jax_random_seed_offset:",
