@@ -278,9 +278,22 @@ def test_legacy_seed_names_typed_key_constructor_before_solving(role: str) -> No
         )
 
 
+@pytest.mark.parametrize("impl", ["rbg", "unsafe_rbg"])
+def test_simulate_refuses_a_non_threefry_ordinary_seed(impl: str) -> None:
+    """Only Threefry keeps ordinary draws independent of the subject chunk width."""
+    model = taste_shocks_toy.get_model()
+    with pytest.raises(InvalidSimulationInputError, match="threefry2x32"):
+        model.simulate(
+            params=taste_shocks_toy.get_params(scale=0.2),
+            initial_conditions=_initial_conditions(count=7),
+            seed=jax.random.key(11, impl=impl),
+            log_level="off",
+        )
+
+
 @pytest.mark.parametrize("budgeted", [False, True])
-def test_typed_ordinary_key_keeps_its_implementation(*, budgeted: bool) -> None:
-    """A supplied RBG key survives a different ambient default and chunk planning."""
+def test_integer_seed_draws_threefry_under_an_rbg_default(*, budgeted: bool) -> None:
+    """An integer `seed` gives the Threefry population whatever the default PRNG."""
     model = taste_shocks_toy.get_model(
         execution_config=ExecutionConfig(
             axis_widths={"subject": 3} if budgeted else {},
@@ -289,7 +302,7 @@ def test_typed_ordinary_key_keeps_its_implementation(*, budgeted: bool) -> None:
     )
     params = taste_shocks_toy.get_params(scale=0.2)
     solution = model.solve(params=params, log_level="off")
-    with jax.default_prng_impl("rbg"):
+    with jax.default_prng_impl("threefry2x32"):
         expected = model.simulate(
             params=params,
             initial_conditions=_initial_conditions(count=7),
@@ -297,15 +310,41 @@ def test_typed_ordinary_key_keeps_its_implementation(*, budgeted: bool) -> None:
             seed=11,
             log_level="off",
         ).to_dataframe(use_labels=False)
-    with jax.default_prng_impl("threefry2x32"):
+    with jax.default_prng_impl("rbg"):
         actual = model.simulate(
             params=params,
             initial_conditions=_initial_conditions(count=7),
             solution=solution,
-            seed=jax.random.key(11, impl="rbg"),
+            seed=11,
             log_level="off",
         ).to_dataframe(use_labels=False)
     pd.testing.assert_frame_equal(actual, expected, check_exact=True)
+
+
+@pytest.mark.parametrize("width", [1, 4])
+def test_integer_seed_draws_ignore_subject_width_under_an_rbg_default(
+    width: int,
+) -> None:
+    """Ordinary-stream choices do not move with the subject chunk width."""
+    params = taste_shocks_toy.get_params(scale=0.2)
+    frames = []
+    for subject_width in (width, 32):
+        model = taste_shocks_toy.get_model(
+            execution_config=ExecutionConfig(
+                axis_widths={"subject": subject_width},
+                device_memory_bytes=2**30,
+            )
+        )
+        with jax.default_prng_impl("rbg"):
+            frames.append(
+                model.simulate(
+                    params=params,
+                    initial_conditions=_initial_conditions(count=32),
+                    seed=11,
+                    log_level="off",
+                ).to_dataframe(use_labels=False)
+            )
+    pd.testing.assert_frame_equal(frames[0], frames[1], check_exact=True)
 
 
 @pytest.mark.parametrize("impl", ["rbg", "unsafe_rbg"])

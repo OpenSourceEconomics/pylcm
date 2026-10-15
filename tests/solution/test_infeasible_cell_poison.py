@@ -914,3 +914,102 @@ def test_domain_invalid_utility_and_marginal_preserve_supported_native_paths(
         atol=0.0,
     )
     _assert_same_public_result(solver_kind=solver_kind, domain="raw", poison=1.0)
+
+
+@categorical(ordered=False)
+class _Status:
+    ok: ScalarInt
+    broke: ScalarInt
+
+
+def _next_status(*, status: DiscreteState, work: DiscreteAction) -> DiscreteState:
+    return jnp.where(work == _Work.forbidden, _Status.broke, status)
+
+
+def _status_ok(status: DiscreteState) -> BoolND:
+    return status == _Status.ok
+
+
+def _no_work(work: DiscreteAction) -> BoolND:
+    return work == _Work.allowed
+
+
+def _status_terminal_utility(
+    *, wealth: ContinuousState, status: DiscreteState
+) -> FloatND:
+    return -1.0 / (wealth + 1.0) + 0.0 * status
+
+
+def _dead_branch_model(*, forbid_work: bool) -> Model:
+    """DC-EGM model whose forbidden-work branch leads to an all-infeasible state.
+
+    No action is allowed when `status` is broke, so in every alive period
+    before the last the `(ok, forbidden)` combo has a `-inf` continuation at
+    every savings node.
+    """
+    wealth_grid = LinSpacedGrid(start=3.0, stop=15.0, n_points=13)
+    status_grid = DiscreteGrid(_Status)
+    constraints: dict[FunctionName, UserFunction] = {"status_ok": _status_ok}
+    if forbid_work:
+        constraints["no_work"] = _no_work
+    alive = ConsumptionSavingsRegime(
+        states={"wealth": wealth_grid, "status": status_grid},
+        actions={
+            "consumption": LinSpacedGrid(start=0.25, stop=20.0, n_points=40),
+            "work": DiscreteGrid(_Work),
+        },
+        state_transitions={"wealth": _next_wealth, "status": _next_status},
+        functions={
+            "utility": _plain_utility,
+            "resources": _resources,
+            "savings": _savings,
+        },
+        constraints=constraints,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
+        solver=DCEGM(savings_grid=LinSpacedGrid(start=0.0, stop=15.0, n_points=40)),
+    )
+    dead = Regime(
+        states={"wealth": wealth_grid, "status": status_grid},
+        functions={"utility": _status_terminal_utility},
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        regime_id_class=_RegimeId,
+        edges={
+            "alive": Transition(
+                targets={"alive": (0, 1), "dead": (2,)},
+                law=ByAge.until(stop_age_exclusive=3, law="alive", then="dead"),
+            )
+        },
+        initial_nodes={0: "alive"},
+    )
+
+
+@pytest.mark.parametrize("runtime_checks", [True, False])
+def test_dcegm_combo_without_live_candidate_matches_forbidden_combo(
+    *, runtime_checks: bool
+) -> None:
+    """A branch whose continuation is `-inf` everywhere acts as an infeasible one.
+
+    Allowing forbidden work, which leads only into a state without any feasible
+    action, yields the same values bitwise as excluding it by a constraint.
+    """
+    params = {"discount_factor": 0.9}
+    expected = _dead_branch_model(forbid_work=True).solve(
+        params=params, log_level="off"
+    )
+    actual = _dead_branch_model(forbid_work=False).solve(
+        params=params, log_level="off", runtime_checks=runtime_checks
+    )
+    assert set(actual.values) == {0, 1, 2, 3}
+    for period, regimes in expected.values.items():
+        for regime_name, value in regimes.items():
+            np.testing.assert_array_equal(
+                np.asarray(actual.values[period][regime_name]), np.asarray(value)
+            )

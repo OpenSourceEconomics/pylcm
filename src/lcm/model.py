@@ -183,8 +183,8 @@ from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.shock_paths import (
     bind_shock_path_programs,
-    canonicalize_shock_paths,
-    seed_shock_paths,
+    kernel_param_names,
+    resolve_shock_paths,
 )
 from _lcm.simulation.simulate import (
     _lookup_values_from_indices,
@@ -282,6 +282,7 @@ from _lcm.typing import (
     PeriodToRegimeToVArr,
     PytreeByPeriod,
     PytreeValue,
+    QualifiedName,
     RegimeName,
     RegimeNamesToIds,
     RegimeParamsTemplateNode,
@@ -735,6 +736,16 @@ class Model:
     _simulate_runtime_regimes: dict[int, MappingProxyType[RegimeName, Regime]]
     """Program executors shared by calls with the same outer subject shape."""
 
+    _shock_path_runtime_regimes: dict[
+        tuple[
+            int,
+            frozenset[StateName],
+            frozenset[tuple[RegimeName, frozenset[QualifiedName]]],
+        ],
+        MappingProxyType[RegimeName, Regime],
+    ]
+    """Runtime regimes reading supplied shocks, by shape and supplied names."""
+
     _simulate_entry_operations: ProfiledSimulationOperations
     """Entry and validation executable profiles; no call owners or admissions.
 
@@ -858,6 +869,12 @@ class Model:
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
         self._edges = cast("ModelEdges", snapshot_transition_containers(edges))
+        # The engine reads each joint normal declaration in its lowered form;
+        # the caller's regimes keep the declarations as written.
+        regimes = {
+            name: regime.lower_joint_normal_processes()
+            for name, regime in regimes.items()
+        }
         laws, graph_edges = bind_edge_laws(
             edges=self._edges, regimes=regimes, ages=self._time
         )
@@ -886,6 +903,7 @@ class Model:
         )
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         self._simulate_runtime_regimes = {}
+        self._shock_path_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
         self._kept_parts_programs = {}
@@ -1408,6 +1426,7 @@ class Model:
             self._solution_model_instance_id = uuid.uuid4().hex
         self._identity_process_id = os.getpid()
         self._simulate_runtime_regimes = {}
+        self._shock_path_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
         self._kept_parts_programs = {}
@@ -1591,7 +1610,6 @@ class Model:
                 logger=get_call_logger(log_level="warning", runtime_checks=True),
                 process_grid_resolver=None,
                 memory=self._transition_memory(flat_params=flat_params),
-                count_when_silent=True,
             )
 
     def _transition_memory(self, *, flat_params: FlatParams) -> SimulationMemory | None:
@@ -2159,6 +2177,30 @@ class Model:
                     )
                 )
             return self._simulate_runtime_regimes[compile_batch_size]
+
+    def _shock_path_regimes_for_shape(
+        self,
+        *,
+        compile_batch_size: int,
+        supplied: frozenset[StateName],
+        flat_params: FlatParams,
+    ) -> MappingProxyType[RegimeName, Regime]:
+        """Return the runtime regimes with transitions reading the supplied shocks.
+
+        Bound once per shape, supplied shock names and parameter names, so calls
+        differing only in path values reuse one set of compiled programs.
+        """
+        regimes = self._runtime_regimes_for_shape(compile_batch_size=compile_batch_size)
+        if not supplied:
+            return regimes
+        param_names = kernel_param_names(regimes=regimes, params=flat_params)
+        key = (compile_batch_size, supplied, frozenset(param_names.items()))
+        with self._simulate_compile_lock:
+            if key not in self._shock_path_runtime_regimes:
+                self._shock_path_runtime_regimes[key] = bind_shock_path_programs(
+                    regimes=regimes, supplied=supplied, param_names=param_names
+                )
+            return self._shock_path_runtime_regimes[key]
 
     def _open_entry_allocations(
         self,
@@ -3441,10 +3483,10 @@ class Model:
                 initial-condition row order. Overrides the entry value and later
                 draws, including folded IID and persistent processes. Continuous
                 values must be in the distribution's support; discrete values are
-                exact category codes. Model-active periods must be covered; inactive
-                periods are ignored. Transition-local draws use the destination's
-                period. Solve expectations and unnamed shocks' seeded streams are
-                unchanged.
+                exact category codes. A value is checked against every regime the
+                subject may occupy when it is read; unread cells are ignored.
+                Transition-local draws use the destination's period. Solve
+                expectations and unnamed shocks' seeded streams are unchanged.
             log_level: Console verbosity: off, warning, progress or debug.
             runtime_checks: Validate computed transition probabilities, NaN values
                 and numerical feasibility/replay checks; raise on the first failure.
@@ -3599,18 +3641,14 @@ class Model:
                     )
                 if entry_allocations is not None:
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
-                resolved_shock_paths = canonicalize_shock_paths(
+                resolved_shock_paths, initial_conditions = resolve_shock_paths(
                     paths=shock_paths,
+                    initial=initial_conditions,
                     regimes=self._regimes,
                     draw_only=self._draw_only_processes,
                     params=flat_params,
-                    n_subjects=len(initial_conditions["regime_id"]),
-                )
-                initial_conditions = seed_shock_paths(
-                    initial=initial_conditions,
-                    paths=resolved_shock_paths,
                     ages=self._time,
-                    regimes=self._regimes,
+                    regime_names_to_ids=self.regime_names_to_ids,
                 )
                 initial_conditions = canonicalize_initial_conditions(
                     initial_conditions=initial_conditions,
@@ -3795,13 +3833,10 @@ class Model:
                     )
                 )
                 if entry_allocations is not None:
-                    simulate_regimes = self._runtime_regimes_for_shape(
+                    simulate_regimes = self._shock_path_regimes_for_shape(
                         compile_batch_size=padded_n_subjects,
-                    )
-                    simulate_regimes = bind_shock_path_programs(
-                        regimes=simulate_regimes,
-                        paths=resolved_shock_paths,
-                        params=flat_params,
+                        supplied=frozenset(resolved_shock_paths),
+                        flat_params=flat_params,
                     )
                     prepared_chunks = prepare_simulation_chunks(
                         regimes=simulate_regimes,
@@ -3820,11 +3855,7 @@ class Model:
                             if isinstance(taste_shock_seed, jax.Array)
                             else "threefry2x32"
                         ),
-                        prng_impl=(
-                            str(jax.random.key_impl(seed))
-                            if isinstance(seed, jax.Array)
-                            else jax.config.jax_default_prng_impl
-                        ),
+                        prng_impl="threefry2x32",
                         log_level=log_level,
                         runtime_checks=runtime_checks,
                         process_grid_resolver=process_grid_resolver,
@@ -3852,13 +3883,10 @@ class Model:
                             initial_conditions=initial_conditions,
                             multiple=compile_batch_size,
                         )
-                    simulate_regimes = self._runtime_regimes_for_shape(
+                    simulate_regimes = self._shock_path_regimes_for_shape(
                         compile_batch_size=compile_batch_size,
-                    )
-                    simulate_regimes = bind_shock_path_programs(
-                        regimes=simulate_regimes,
-                        paths=resolved_shock_paths,
-                        params=flat_params,
+                        supplied=frozenset(resolved_shock_paths),
+                        flat_params=flat_params,
                     )
             result = simulate(
                 flat_params=flat_params,
@@ -4055,7 +4083,11 @@ class Model:
             states: One 1-D array per state of the regime, all of equal length.
                 Discrete values must be grid codes; continuous values off the grid
                 are extrapolated exactly as in `simulate`. A regime without states
-                takes `{}`, which is one row.
+                takes `{}`, which is one row. A joint normal process is given
+                either by its physical shocks, as `initial_state_names` lists
+                them, or by its complete set of internal coordinates, as
+                `state_names` lists them, whose nodes `state_grid` returns; one
+                process cannot mix the two.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
@@ -4120,6 +4152,7 @@ class Model:
                         ),
                     },
                     flat_params=flat_params,
+                    accept_coordinates=True,
                 )
                 # The lowering preserves the supplied mapping/frame container kind.
                 lookup_inputs = {
@@ -4703,6 +4736,7 @@ class Model:
         *,
         initial_conditions: UserInitialConditions | pd.DataFrame,
         flat_params: FlatParams,
+        accept_coordinates: bool = False,
     ) -> UserInitialConditions | pd.DataFrame:
         """Resolve named physical shocks before canonical entry allocation."""
         return lower_joint_normal_initial_conditions(
@@ -4720,6 +4754,7 @@ class Model:
                 for name, regime in self._regimes.items()
             },
             regime_names_to_ids=self.regime_names_to_ids,
+            accept_coordinates=accept_coordinates,
         )
 
     def _fail_if_declared_entry_is_not_permitted(
@@ -4976,14 +5011,20 @@ _INTERMEDIATE_ROLES: MappingProxyType[Intermediate, str] = MappingProxyType(
 )
 
 
-def _fail_if_invalid_intermediates(*, keep_intermediates: tuple[str, ...]) -> None:
+def _fail_if_invalid_intermediates(
+    *,
+    keep_intermediates: tuple[object, ...],  # noqa: PAN001 - checked entry by entry
+) -> None:
     """Raise if `keep_intermediates` names an unknown intermediate or one twice.
 
-    The public type check samples a single entry of the tuple, so every name is
-    checked here, typed wide so that this check is the one that reports it.
+    The public type check samples a single entry of the tuple, so every entry is
+    checked here. Entries are typed `object`, so that this check, not the internal
+    type check, reports an entry that is not a string.
     """
-    unknown = sorted(
-        {name for name in keep_intermediates if name not in _INTERMEDIATE_ROLES}
+    unknown = tuple(
+        name
+        for name in keep_intermediates
+        if not (isinstance(name, str) and name in _INTERMEDIATE_ROLES)
     )
     if unknown:
         msg = (
@@ -4992,7 +5033,7 @@ def _fail_if_invalid_intermediates(*, keep_intermediates: tuple[str, ...]) -> No
         )
         raise InvalidSimulationInputError(msg)
     repeated = sorted(
-        {name for name in keep_intermediates if keep_intermediates.count(name) > 1}
+        {str(name) for name in keep_intermediates if keep_intermediates.count(name) > 1}
     )
     if repeated:
         msg = f"Policy lookup keeps each intermediate at most once; got {repeated}."
