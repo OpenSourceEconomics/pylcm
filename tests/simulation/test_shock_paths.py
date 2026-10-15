@@ -565,18 +565,25 @@ def test_supplied_paths_on_subject_mesh(*, budget: int | None) -> None:
             device_memory_bytes=budget,
         )
     )
-    df = (
-        model.simulate(
-            params={"discount_factor": 0.9},
-            initial_conditions=initial,
-            shock_paths={"shock": paths},
-            seed=0,
-            log_level="off",
-        )
-        .to_dataframe(use_labels=False)
-        .reset_index()
+    result = model.simulate(
+        params={"discount_factor": 0.9},
+        initial_conditions=initial,
+        shock_paths={"shock": paths},
+        seed=0,
+        log_level="off",
     )
-    rows = df.query("regime_name == 'alive'")
+    summary = result.plan_summary
+    assert summary is not None
+    assert (summary.route, summary.subject_device_ids, summary.subject_backend) == (
+        "subjects",
+        devices,
+        "cpu",
+    )
+    rows = (
+        result.to_dataframe(use_labels=False)
+        .reset_index()
+        .query("regime_name == 'alive'")
+    )
     expected = paths[rows.subject_id.to_numpy(), rows.period.to_numpy()]
     np.testing.assert_array_equal(rows.shock, expected)
     np.testing.assert_array_equal(rows.choice, expected)
@@ -1289,3 +1296,163 @@ def test_repeated_paths_reuse_compiled_transition_programs() -> None:
         )
         sizes.append(_runtime_cache_sizes(model))
     assert sizes[1:] == [sizes[0], sizes[0]]
+
+
+@categorical(ordered=False)
+class TwoEntryRegimeId:
+    short: ScalarInt
+    long: ScalarInt
+    dead: ScalarInt
+
+
+def _shock_utility(*, shock: ContinuousState) -> ScalarFloat:
+    return shock
+
+
+def _two_entry_model(
+    *, enable_jit: bool = False, width: int = 1, budget: int | None = None
+) -> Model:
+    """Return a model whose `short` entrants read one column and `long` ones two.
+
+    `short` exits to `dead` after period 0; `long` stays through period 1.
+    """
+
+    def live() -> Regime:
+        return Regime(
+            states={
+                "shock": NormalIIDProcess(
+                    n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0
+                )
+            },
+            functions={"utility": _shock_utility},
+        )
+
+    return Model(
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
+        regime_id_class=TwoEntryRegimeId,
+        enable_jit=enable_jit,
+        execution_config=ExecutionConfig(
+            axis_widths={"subject": width}, device_memory_bytes=budget
+        ),
+        initial_nodes={20: ("short", "long", "dead")},
+        regimes={
+            "short": live(),
+            "long": live(),
+            "dead": Regime(functions={"utility": _zero}),
+        },
+        edges={"short": {"dead": (20,)}, "long": {"long": (20,), "dead": (21,)}},
+    )
+
+
+def _two_entry_initial(names: tuple[str, ...]) -> dict[str, jax.Array]:
+    return {
+        "age": jnp.full(len(names), 20.0),
+        "shock": jnp.zeros(len(names)),
+        "regime_id": jnp.asarray(
+            [getattr(TwoEntryRegimeId, name) for name in names], dtype=jnp.int32
+        ),
+    }
+
+
+def _two_entry_expected_rows(
+    *, names: tuple[str, ...], path: np.ndarray
+) -> list[tuple[int, int, str, float | None]]:
+    """Enumerate each subject's literal trajectory and the level it reads."""
+    visits = {
+        "short": ((0, "short"), (1, "dead")),
+        "long": ((0, "long"), (1, "long"), (2, "dead")),
+        "dead": ((0, "dead"),),
+    }
+    return [
+        (
+            subject,
+            period,
+            regime,
+            None
+            if regime == "dead"
+            else float(path[period] if path.ndim == 1 else path[subject, period]),
+        )
+        for subject, name in enumerate(names)
+        for period, regime in visits[name]
+    ]
+
+
+def _two_entry_observed_rows(
+    *, model: Model, names: tuple[str, ...], path: np.ndarray
+) -> list[tuple[int, int, str, float | None]]:
+    frame = (
+        model.simulate(
+            params={"discount_factor": 0.5},
+            initial_conditions=_two_entry_initial(names),
+            shock_paths={"shock": path},
+            seed=7,
+            log_level="off",
+        )
+        .to_dataframe(use_labels=False)
+        .reset_index()
+        .sort_values(["subject_id", "period"])
+    )
+    return [
+        (int(subject), int(period), regime, None if regime == "dead" else float(shock))
+        for subject, period, regime, shock in zip(
+            frame.subject_id, frame.period, frame.regime_name, frame.shock, strict=True
+        )
+    ]
+
+
+@pytest.mark.parametrize("individual", [False, True], ids=["common", "individual"])
+@pytest.mark.parametrize("route", ["eager", "jit", "tiled", "budgeted"])
+def test_history_ending_where_the_population_stops_reading_simulates(
+    *, individual: bool, route: str
+) -> None:
+    """A history may end where every actual subject stops reading the shock.
+
+    Another regime the simulation graph allows at entry would read further, but
+    nobody occupies it.
+    """
+    names = ("short", "short", "short")
+    path = np.array([[0.5], [-1.0], [0.25]]) if individual else np.array([0.5])
+    model = _two_entry_model(
+        enable_jit=route != "eager",
+        width=2 if route in ("tiled", "budgeted") else 1,
+        budget=100_000_000 if route == "budgeted" else None,
+    )
+    assert _two_entry_observed_rows(
+        model=model, names=names, path=path
+    ) == _two_entry_expected_rows(names=names, path=path)
+
+
+@pytest.mark.parametrize("names", [("short", "long"), ("long", "short")])
+@pytest.mark.parametrize("individual", [False, True], ids=["common", "individual"])
+def test_history_missing_a_column_an_occupied_regime_reads_is_rejected(
+    *, names: tuple[str, ...], individual: bool
+) -> None:
+    path = np.full((2, 1), 0.5) if individual else np.array([0.5])
+    with pytest.raises(InvalidSimulationInputError, match=r"shock.*period 1"):
+        _two_entry_model().simulate(
+            params={"discount_factor": 0.5},
+            initial_conditions=_two_entry_initial(names),
+            shock_paths={"shock": path},
+            seed=7,
+            log_level="off",
+            runtime_checks=False,
+        )
+
+
+@pytest.mark.parametrize("order", [(0, 1, 2), (2, 0, 1)])
+def test_unread_history_tail_and_row_order_leave_observations_unchanged(
+    order: tuple[int, ...],
+) -> None:
+    """Padding the unread tail with zeros or NaN changes nothing, call after call."""
+    model = _two_entry_model(enable_jit=True, width=2)
+    path = np.array([[0.5], [-1.0], [0.25]])[list(order)]
+    names = ("short", "short", "short")
+    observed = [
+        _two_entry_observed_rows(
+            model=model,
+            names=names,
+            path=path if tail is None else np.column_stack((path, np.full(3, tail))),
+        )
+        for tail in (None, 0.0, np.nan, None)
+    ]
+    assert observed == [_two_entry_expected_rows(names=names, path=path)] * 4

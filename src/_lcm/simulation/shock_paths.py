@@ -419,12 +419,20 @@ def shock_path_values(
     subject_slice: slice | SubjectRows,
     n_subjects: int,
 ) -> dict[ReferenceName, np.ndarray]:
-    """Gather original rows, repeating the last real row for inert padding."""
+    """Gather original rows, repeating the last real row for inert padding.
+
+    A period beyond the history yields zeros: `resolve_shock_paths` requires every
+    column a subject may read, so only a regime no subject occupies can be
+    dispatched there, and its subject-masked work needs an operand, not a value.
+    """
     result = {}
     for argument in argument_names:
         if not argument.startswith("supplied_shock__"):
             continue
         path = paths[argument.removeprefix("supplied_shock__")]
+        if period >= path.shape[-1]:
+            result[argument] = np.zeros(n_subjects, dtype=path.dtype)
+            continue
         if path.ndim == 1:
             result[argument] = np.full(n_subjects, path[period], dtype=path.dtype)
         else:
