@@ -29,7 +29,7 @@ import jax.numpy as jnp
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import interp_on_regular_grid
 from _lcm.egm.preferences import Preferences
-from lcm.typing import Float1D, ScalarFloat
+from lcm.typing import Bool1D, Float1D, ScalarFloat
 
 
 class RetiredEGMResult(NamedTuple):
@@ -45,6 +45,8 @@ class RetiredEGMResult(NamedTuple):
     """Associated original saving candidates on feature rows."""
     corner_continuation: ScalarFloat | None = None
     """Already evaluated continuation at the shifted floor."""
+    coverage_missing: Bool1D | None = None
+    """Legal cash queries without represented viable support."""
 
 
 def egm_one_asset_step(
@@ -112,6 +114,16 @@ def egm_one_asset_step(
             x_query=next_liquid, xp=next_liquid_grid, fp=next_marginal
         )
     )
+    if feature_floor:
+        return _solve_viable_feature_row(
+            value_next=value_next,
+            marginal_next=marginal_next,
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            discount_factor=discount_factor,
+            preferences=preferences,
+            marginal_return=marginal_return,
+        )
 
     consumption = invert_euler(
         expected_marginal_continuation=marginal_return * marginal_next,
@@ -133,12 +145,9 @@ def egm_one_asset_step(
     min_savings = savings_grid[0]
     constrained = liquid_grid < liquid_endog[0]
     constrained_consumption = liquid_grid - min_savings
-    domain = liquid_grid > min_savings
-    if feature_floor:
-        constrained_consumption = jnp.where(domain, constrained_consumption, 1.0)
     value_at_min_savings = (
         value_next[0]
-        if continuation_value is not None or feature_floor
+        if continuation_value is not None
         else interp_on_regular_grid(
             x_query=next_liquid[0],
             xp=next_liquid_grid,
@@ -156,21 +165,112 @@ def egm_one_asset_step(
     # Envelope theorem: the marginal value of liquid is the marginal utility of the
     # optimal consumption.
     marginal = preferences.marginal_utility(consumption_on_grid)
-    if feature_floor:
-        saving_on_grid = jnp.where(
-            constrained,
-            min_savings,
-            jnp.interp(liquid_grid, liquid_endog, savings_grid),
-        )
-        value = jnp.where(domain, value, -jnp.inf)
-        marginal = jnp.where(domain & jnp.isfinite(value), marginal, 0.0)
-        return RetiredEGMResult(
-            value=value,
-            marginal=marginal,
-            consumption=consumption_on_grid,
-            savings=saving_on_grid,
-            corner_continuation=value_at_min_savings,
-        )
     return RetiredEGMResult(
         value=value, marginal=marginal, consumption=consumption_on_grid
+    )
+
+
+def _solve_viable_feature_row(
+    *,
+    value_next: Float1D,
+    marginal_next: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    marginal_return: Float1D,
+) -> RetiredEGMResult:
+    """Interpolate viable candidate tuples without crossing missing original links.
+
+    Economic minus-infinity continuations have neutral marginal placeholders, not
+    Euler targets. Compact only finite candidates into fixed-capacity support, retaining
+    original indices to distinguish adjacent support from a gap. The declared floor
+    owns its separate corner; the first viable saving never replaces it.
+    """
+    invalid = jnp.any(
+        jnp.isnan(value_next)
+        | jnp.isposinf(value_next)
+        | ~jnp.isfinite(marginal_next)
+        | (marginal_next < 0.0)
+        | ~jnp.isfinite(marginal_return)
+    )
+    viable = jnp.isfinite(value_next)
+    consumption = invert_euler(
+        expected_marginal_continuation=jnp.where(
+            viable, marginal_return * marginal_next, 1.0
+        ),
+        discount_factor=discount_factor,
+        inverse_marginal_utility=preferences.inverse_marginal_utility,
+    )
+    consumption = jnp.where(viable, consumption, 1.0)
+    liquid_endog = consumption + savings_grid
+    value_endog = preferences.utility(consumption) + discount_factor * jnp.where(
+        viable, value_next, 0.0
+    )
+    invalid |= jnp.any(
+        viable
+        & (
+            ~jnp.isfinite(consumption)
+            | (consumption <= 0.0)
+            | ~jnp.isfinite(liquid_endog)
+            | ~jnp.isfinite(value_endog)
+        )
+    )
+
+    capacity = savings_grid.size
+    count = jnp.sum(viable, dtype=jnp.int32)
+    original_indices = jnp.nonzero(viable, size=capacity, fill_value=0)[0]
+    positions = jnp.arange(capacity)
+    last = jnp.maximum(count - 1, 0)
+    indices = jnp.where(positions < count, original_indices, original_indices[last])
+    support = jnp.where(positions < count, liquid_endog[indices], jnp.inf)
+    ordered = jnp.all(
+        jnp.where(
+            positions[1:] < count, support[1:] > support[:-1], jnp.asarray(a=True)
+        )
+    )
+    lower = jnp.clip(jnp.searchsorted(support, liquid_grid, side="right") - 1, 0, last)
+    upper = jnp.minimum(lower + 1, last)
+    exact = liquid_grid == support[lower]
+    above = (count > 0) & (liquid_grid >= support[last])
+    adjacent = indices[upper] == indices[lower] + 1
+    interior_supported = (
+        (count > 0) & ordered & (liquid_grid >= support[0]) & (exact | above | adjacent)
+    )
+    interior_value = jnp.interp(liquid_grid, support, value_endog[indices])
+    interior_consumption = jnp.interp(liquid_grid, support, consumption[indices])
+    interior_savings = jnp.interp(liquid_grid, support, savings_grid[indices])
+
+    floor = savings_grid[0]
+    domain = liquid_grid > floor
+    corner_consumption = jnp.where(domain, liquid_grid - floor, 1.0)
+    corner_value = (
+        preferences.utility(corner_consumption) + discount_factor * value_next[0]
+    )
+    invalid |= jnp.any(jnp.isnan(corner_value) | jnp.isposinf(corner_value))
+    corner_supported = (
+        domain
+        & jnp.isfinite(value_next[0])
+        & ((count == 0) | (liquid_grid < support[0]))
+    )
+    choose_corner = corner_supported & (
+        ~interior_supported | (corner_value > interior_value)
+    )
+    supported = interior_supported | corner_supported
+    value = jnp.where(choose_corner, corner_value, interior_value)
+    consumption_on_grid = jnp.where(
+        choose_corner, corner_consumption, interior_consumption
+    )
+    saving_on_grid = jnp.where(choose_corner, floor, interior_savings)
+    value = jnp.where(domain & supported, value, -jnp.inf)
+    marginal = jnp.where(
+        domain & supported, preferences.marginal_utility(consumption_on_grid), 0.0
+    )
+    return RetiredEGMResult(
+        value=jnp.where(invalid, jnp.nan, value),
+        marginal=jnp.where(invalid, jnp.nan, marginal),
+        consumption=consumption_on_grid,
+        savings=saving_on_grid,
+        corner_continuation=value_next[0],
+        coverage_missing=domain & ~supported,
     )

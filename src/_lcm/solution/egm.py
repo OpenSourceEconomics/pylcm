@@ -1562,6 +1562,8 @@ class _EGMCore:
             **continuation_args,
             feature_floor=self.current_query is not None or self.next_query is not None,
         )
+        if step.coverage_missing is not None:
+            coverage |= jnp.any(step.coverage_missing)
         query_data = None
         if self.current_query is not None:
             if step.savings is None or step.corner_continuation is None:
