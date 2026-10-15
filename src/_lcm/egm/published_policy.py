@@ -89,7 +89,10 @@ class EGMSimPolicy:
 
     Leading axes match the regime's combo layout (discrete states, then passive
     states, then discrete actions, as in `EGMCarry`); the trailing axis is the
-    static refined-grid length. All rows are NaN-padded in lockstep in the tail.
+    static refined-grid length. All rows are NaN-padded in lockstep in the tail,
+    except dead rows (an infeasible combo, or one whose continuation is `-inf` at
+    every candidate): they carry the finite placeholder grid `0, 1, ..., n_pad - 1`
+    and policy `0.0` across every slot, with value `-inf`.
 
     A row whose upper envelope reports no read support (an interior coverage
     gap: NaN-dead candidates or a finite value decrease split the segment
@@ -103,6 +106,7 @@ class EGMSimPolicy:
     """Endogenous grid in resources space, NaN-padded in the tail.
 
     Shared with the period's `EGMCarry.endog_grid`; weakly ascending per row.
+    Dead rows carry the finite placeholder `0, 1, ..., n_pad - 1` instead.
     The off-grid read requires duplicated one-sided records at every switch
     and an explicit support verdict for every compacted gap. No shipped
     envelope currently proves both properties, so every backend remains on the
@@ -110,7 +114,10 @@ class EGMSimPolicy:
     """
 
     policy: FloatND
-    """Optimal continuous action at `endog_grid` (NaN on padding slots)."""
+    """Optimal continuous action at `endog_grid`.
+
+    NaN on padding slots; `0.0` across every slot of a dead row.
+    """
 
     value: FloatND
     """Conditional value at `endog_grid` (NaN on padding slots).

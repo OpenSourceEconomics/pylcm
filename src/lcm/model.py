@@ -853,6 +853,12 @@ class Model:
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
         self._edges = cast("ModelEdges", snapshot_transition_containers(edges))
+        # The engine reads each joint normal declaration in its lowered form;
+        # the caller's regimes keep the declarations as written.
+        regimes = {
+            name: regime.lower_joint_normal_processes()
+            for name, regime in regimes.items()
+        }
         laws, graph_edges = bind_edge_laws(
             edges=self._edges, regimes=regimes, ages=self._time
         )
@@ -3792,11 +3798,7 @@ class Model:
                             if isinstance(taste_shock_seed, jax.Array)
                             else "threefry2x32"
                         ),
-                        prng_impl=(
-                            str(jax.random.key_impl(seed))
-                            if isinstance(seed, jax.Array)
-                            else jax.config.jax_default_prng_impl
-                        ),
+                        prng_impl="threefry2x32",
                         log_level=log_level,
                         runtime_checks=runtime_checks,
                         process_grid_resolver=process_grid_resolver,
@@ -4022,7 +4024,11 @@ class Model:
             states: One 1-D array per state of the regime, all of equal length.
                 Discrete values must be grid codes; continuous values off the grid
                 are extrapolated exactly as in `simulate`. A regime without states
-                takes `{}`, which is one row.
+                takes `{}`, which is one row. A joint normal process is given
+                either by its physical shocks, as `initial_state_names` lists
+                them, or by its complete set of internal coordinates, as
+                `state_names` lists them, whose nodes `state_grid` returns; one
+                process cannot mix the two.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
@@ -4089,6 +4095,7 @@ class Model:
                         ),
                     },
                     flat_params=flat_params,
+                    accept_coordinates=True,
                 )
                 # The lowering preserves the supplied mapping/frame container kind.
                 lookup_inputs = {
@@ -4661,6 +4668,7 @@ class Model:
         *,
         initial_conditions: UserInitialConditions | pd.DataFrame,
         flat_params: FlatParams,
+        accept_coordinates: bool = False,
     ) -> UserInitialConditions | pd.DataFrame:
         """Resolve named physical shocks before canonical entry allocation."""
         return lower_joint_normal_initial_conditions(
@@ -4678,6 +4686,7 @@ class Model:
                 for name, regime in self._regimes.items()
             },
             regime_names_to_ids=self.regime_names_to_ids,
+            accept_coordinates=accept_coordinates,
         )
 
     def _fail_if_declared_entry_is_not_permitted(
@@ -4934,14 +4943,20 @@ _INTERMEDIATE_ROLES: MappingProxyType[Intermediate, str] = MappingProxyType(
 )
 
 
-def _fail_if_invalid_intermediates(*, keep_intermediates: tuple[str, ...]) -> None:
+def _fail_if_invalid_intermediates(
+    *,
+    keep_intermediates: tuple[object, ...],  # noqa: PAN001 - checked entry by entry
+) -> None:
     """Raise if `keep_intermediates` names an unknown intermediate or one twice.
 
-    The public type check samples a single entry of the tuple, so every name is
-    checked here, typed wide so that this check is the one that reports it.
+    The public type check samples a single entry of the tuple, so every entry is
+    checked here. Entries are typed `object`, so that this check, not the internal
+    type check, reports an entry that is not a string.
     """
-    unknown = sorted(
-        {name for name in keep_intermediates if name not in _INTERMEDIATE_ROLES}
+    unknown = tuple(
+        name
+        for name in keep_intermediates
+        if not (isinstance(name, str) and name in _INTERMEDIATE_ROLES)
     )
     if unknown:
         msg = (
@@ -4950,7 +4965,7 @@ def _fail_if_invalid_intermediates(*, keep_intermediates: tuple[str, ...]) -> No
         )
         raise InvalidSimulationInputError(msg)
     repeated = sorted(
-        {name for name in keep_intermediates if keep_intermediates.count(name) > 1}
+        {str(name) for name in keep_intermediates if keep_intermediates.count(name) > 1}
     )
     if repeated:
         msg = f"Policy lookup keeps each intermediate at most once; got {repeated}."

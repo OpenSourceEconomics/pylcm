@@ -19,7 +19,7 @@ from dags import with_signature
 
 import lcm
 import lcm.typing
-from lcm.exceptions import InvalidInitialConditionsError
+from lcm.exceptions import InvalidInitialConditionsError, RegimeInitializationError
 from lcm.solver_api import SolutionResult
 from lcm.typing import UserFunction
 
@@ -709,3 +709,151 @@ def test_cross_regime_input_and_publication_resolve_names_per_row(
     np.testing.assert_allclose(
         np.concatenate(observed), np.concatenate(wanted), atol=tolerance, rtol=0
     )
+
+
+@pytest.mark.parametrize("as_frame", [False, True])
+def test_integer_shared_coordinate_column_keeps_joint_initial_shocks(
+    *,
+    cross_regime_model: lcm.Model,
+    cross_regime_solution: SolutionResult,
+    as_frame: bool,
+) -> None:
+    """An integer column for a shared coordinate spelling truncates no joint row."""
+    rows = ("A", "A", "A", "B")
+    x = np.asarray((0.3, -0.7, 1.1, np.nan))
+    y = np.asarray((0.2, 0.4, -0.5, np.nan))
+    frame = (
+        cross_regime_model.simulate(
+            params={},
+            solution=cross_regime_solution,
+            initial_conditions=_public_input(
+                model=cross_regime_model,
+                rows=rows,
+                states={
+                    "x": x,
+                    "y": y,
+                    "wages_normal_0": np.asarray((7, 7, 7, 1), dtype=np.int32),
+                },
+                as_frame=as_frame,
+            ),
+            seed=521,
+            runtime_checks=True,
+            log_level="off",
+        )
+        .to_dataframe(use_labels=False)
+        .sort_values(["subject_id", "period"])
+    )
+    observed = np.concatenate(
+        (
+            frame["x"].to_numpy()[:3],
+            frame["y"].to_numpy()[:3],
+            frame["value"].to_numpy(),
+        )
+    )
+    np.testing.assert_allclose(
+        observed,
+        (*x[:3], *y[:3], 0.5, -0.3, 0.6, 1.0),
+        atol=1e-6,
+        rtol=1e-6,
+    )
+
+
+def _discrete_utility(
+    *, wages_normal_0: lcm.typing.DiscreteState
+) -> lcm.typing.FloatND:
+    return wages_normal_0 * 1.0
+
+
+@lcm.categorical(ordered=False)
+class _Level:
+    low: lcm.typing.ScalarInt
+    high: lcm.typing.ScalarInt
+
+
+def test_coordinate_spelling_of_a_discrete_state_is_rejected_at_model_build() -> None:
+    """A discrete state cannot share one initial column with a joint coordinate."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"State 'wages_normal_0' of regime 'B' is discrete",
+    ):
+        lcm.Model(
+            regimes={
+                "A": lcm.Regime(
+                    states={
+                        "wages": lcm.JointNormalIIDProcess(
+                            states=("x", "y"),
+                            n_points=3,
+                            gauss_hermite=True,
+                            mean=(0.0, 0.0),
+                            cov=((1.0, 0.0), (0.0, 1.0)),
+                        )
+                    },
+                    functions={"utility": _joint_utility},
+                ),
+                "B": lcm.Regime(
+                    states={"wages_normal_0": lcm.DiscreteGrid(_Level)},
+                    functions={"utility": _discrete_utility},
+                ),
+            },
+            n_periods=1,
+            regime_id_class=BoundaryRegimeId,
+            initial_nodes=lcm.InitialNodes(by_period={0: ("A", "B")}),
+            edges={},
+            execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
+        )
+
+
+def test_lookup_policy_accepts_internal_coordinates_at_the_solver_nodes(
+    *, cross_regime_model: lcm.Model, cross_regime_solution: SolutionResult
+) -> None:
+    """Querying `state_names` at `state_grid` nodes returns the solved values."""
+    names = cross_regime_model.state_names(regime_name="A")
+    nodes = np.meshgrid(
+        *(
+            np.asarray(
+                cross_regime_model.state_grid(
+                    params={}, regime_name="A", state_name=name
+                )
+            )
+            for name in names
+        ),
+        indexing="ij",
+    )
+    lookup = cross_regime_model.lookup_policy(
+        params={},
+        solution=cross_regime_solution,
+        period=0,
+        regime_name="A",
+        states={
+            name: jnp.asarray(node.ravel())
+            for name, node in zip(names, nodes, strict=True)
+        },
+    )
+    np.testing.assert_allclose(
+        np.asarray(lookup.value),
+        np.asarray(cross_regime_solution.values[0]["A"]).ravel(),
+        atol=1e-12,
+        rtol=0,
+    )
+
+
+@pytest.mark.parametrize(
+    "names",
+    [("wages_normal_0",), ("x", "wages_normal_1"), ("x", "y", "wages_normal_0")],
+    ids=["partial-coordinates", "mixed", "physical-plus-coordinate"],
+)
+def test_lookup_policy_rejects_partial_or_mixed_joint_inputs(
+    *,
+    cross_regime_model: lcm.Model,
+    cross_regime_solution: SolutionResult,
+    names: tuple[str, ...],
+) -> None:
+    """A joint process is queried by all physical shocks or all coordinates."""
+    with pytest.raises(InvalidInitialConditionsError, match="either"):
+        cross_regime_model.lookup_policy(
+            params={},
+            solution=cross_regime_solution,
+            period=0,
+            regime_name="A",
+            states={name: jnp.asarray((0.25,)) for name in names},
+        )
