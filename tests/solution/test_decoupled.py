@@ -1174,3 +1174,112 @@ def test_ev1_stored_value_is_invariant_to_objective_translations(*, seed: int) -
             parts=parts,
         )
         assert abs(float(got) - expected) <= tolerance, (offset, float(got), expected)
+
+
+def _ev1_cell_value(
+    *, objective: FloatND, value: FloatND, feasible: BoolND, scale: float
+) -> FloatND:
+    """The stored EV1 value of a cell with one continuous candidate per combination."""
+    from _lcm.regime_building.decoupled import (  # noqa: PLC0415
+        decoupled_logsum,
+        get_conditional_profiles,
+    )
+    from _lcm.regime_building.Q_and_F import QAndFParts  # noqa: PLC0415
+
+    parts = QAndFParts(
+        U=value,
+        F=feasible,
+        CE=jnp.zeros_like(value),
+        Q=value,
+        Q_objective=objective,
+    )
+    stored, _ = decoupled_logsum(
+        conditional=get_conditional_profiles(parts=parts, n_discrete_action_axes=1),
+        scale=jnp.asarray(scale),
+        parts=parts,
+    )
+    return stored
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_ev1_objective_gradient_ignores_an_empty_combination(
+    *, enable_jit: bool
+) -> None:
+    """An infeasible combination's `-inf` readout leaves the gradient finite.
+
+    With feasibility `[F, T, T]`, objective `[0, theta, 0]` and value `[7, 1, 3]`,
+    the stored value at `theta = 0` is `2 + log 2` and its derivative is `-1/2`.
+    """
+    import jax  # noqa: PLC0415
+
+    def stored(theta: FloatND) -> FloatND:
+        return _ev1_cell_value(
+            objective=jnp.stack([jnp.zeros_like(theta), theta, jnp.zeros_like(theta)]),
+            value=jnp.asarray([7.0, 1.0, 3.0]),
+            feasible=jnp.asarray([False, True, True]),
+            scale=1.0,
+        )
+
+    gradient = jax.grad(stored)
+    if enable_jit:
+        gradient = jax.jit(gradient)
+    assert_array_almost_equal(stored(jnp.asarray(0.0)), 2.0 + np.log(2.0))
+    assert_array_almost_equal(gradient(jnp.asarray(0.0)), -0.5)
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_ev1_objective_gradient_matches_finite_differences(*, seed: int) -> None:
+    """Menus with empty combinations: the gradient matches a central difference."""
+    import jax  # noqa: PLC0415
+
+    if jnp.asarray(0.0).dtype != jnp.float64:
+        pytest.skip("central differences need float64")
+    rng = np.random.default_rng(seed)
+    n = 5
+    base = jnp.asarray(rng.normal(size=n))
+    direction = jnp.asarray(rng.normal(size=n))
+    value = jnp.asarray(rng.normal(size=n) * 2.0)
+    mask = rng.uniform(size=n) > 0.4
+    mask[0], mask[1] = True, False
+    feasible = jnp.asarray(mask)
+
+    def along(step: FloatND) -> FloatND:
+        return _ev1_cell_value(
+            objective=base + step * direction,
+            value=value,
+            feasible=feasible,
+            scale=0.7,
+        )
+
+    h = 1e-6
+    central = (along(jnp.asarray(h)) - along(jnp.asarray(-h))) / (2 * h)
+    got = jax.grad(along)(jnp.asarray(0.0))
+    assert np.isfinite(float(got))
+    assert abs(float(got) - float(central)) < 1e-6
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ([2.0, -np.inf], -np.inf),
+        ([2.0, np.inf], np.inf),
+        ([-np.inf, np.inf], np.nan),
+    ],
+    ids=["minus-inf", "plus-inf", "both"],
+)
+def test_ev1_underflowed_feasible_infinite_value_is_kept(
+    *, value: list[float], expected: float
+) -> None:
+    """A feasible action has positive EV1 mass even when its probability underflows."""
+    got = float(
+        _ev1_cell_value(
+            objective=jnp.asarray([0.0, -1000.0]),
+            value=jnp.asarray(value),
+            feasible=jnp.asarray([True, True]),
+            scale=1.0,
+        )
+    )
+    if np.isnan(expected):
+        assert np.isnan(got)
+    else:
+        assert got == expected
