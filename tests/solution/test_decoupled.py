@@ -35,6 +35,7 @@ from lcm.exceptions import (
 )
 from lcm.typing import (
     BoolND,
+    ContinuousState,
     DiscreteAction,
     DiscreteState,
     FloatND,
@@ -1174,3 +1175,260 @@ def test_ev1_stored_value_is_invariant_to_objective_translations(*, seed: int) -
             parts=parts,
         )
         assert abs(float(got) - expected) <= tolerance, (offset, float(got), expected)
+
+
+def _ev1_cell_value(
+    *, objective: FloatND, value: FloatND, feasible: BoolND, scale: float
+) -> FloatND:
+    """The stored EV1 value of a cell with one continuous candidate per combination."""
+    from _lcm.regime_building.decoupled import (  # noqa: PLC0415
+        decoupled_logsum,
+        get_conditional_profiles,
+    )
+    from _lcm.regime_building.Q_and_F import QAndFParts  # noqa: PLC0415
+
+    parts = QAndFParts(
+        U=value,
+        F=feasible,
+        CE=jnp.zeros_like(value),
+        Q=value,
+        Q_objective=objective,
+    )
+    stored, _ = decoupled_logsum(
+        conditional=get_conditional_profiles(parts=parts, n_discrete_action_axes=1),
+        scale=jnp.asarray(scale),
+        parts=parts,
+    )
+    return stored
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_ev1_objective_gradient_ignores_an_empty_combination(
+    *, enable_jit: bool
+) -> None:
+    """An infeasible combination's `-inf` readout leaves the gradient finite.
+
+    With feasibility `[F, T, T]`, objective `[0, theta, 0]` and value `[7, 1, 3]`,
+    the stored value at `theta = 0` is `2 + log 2` and its derivative is `-1/2`.
+    """
+    import jax  # noqa: PLC0415
+
+    def stored(theta: FloatND) -> FloatND:
+        return _ev1_cell_value(
+            objective=jnp.stack([jnp.zeros_like(theta), theta, jnp.zeros_like(theta)]),
+            value=jnp.asarray([7.0, 1.0, 3.0]),
+            feasible=jnp.asarray([False, True, True]),
+            scale=1.0,
+        )
+
+    gradient = jax.grad(stored)
+    if enable_jit:
+        gradient = jax.jit(gradient)
+    assert_array_almost_equal(stored(jnp.asarray(0.0)), 2.0 + np.log(2.0))
+    assert_array_almost_equal(gradient(jnp.asarray(0.0)), -0.5)
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_ev1_objective_gradient_matches_finite_differences(*, seed: int) -> None:
+    """Menus with empty combinations: the gradient matches a central difference."""
+    import jax  # noqa: PLC0415
+
+    if jnp.asarray(0.0).dtype != jnp.float64:
+        pytest.skip("central differences need float64")
+    rng = np.random.default_rng(seed)
+    n = 5
+    base = jnp.asarray(rng.normal(size=n))
+    direction = jnp.asarray(rng.normal(size=n))
+    value = jnp.asarray(rng.normal(size=n) * 2.0)
+    mask = rng.uniform(size=n) > 0.4
+    mask[0], mask[1] = True, False
+    feasible = jnp.asarray(mask)
+
+    def along(step: FloatND) -> FloatND:
+        return _ev1_cell_value(
+            objective=base + step * direction,
+            value=value,
+            feasible=feasible,
+            scale=0.7,
+        )
+
+    h = 1e-6
+    central = (along(jnp.asarray(h)) - along(jnp.asarray(-h))) / (2 * h)
+    got = jax.grad(along)(jnp.asarray(0.0))
+    assert np.isfinite(float(got))
+    assert abs(float(got) - float(central)) < 1e-6
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ([2.0, -np.inf], -np.inf),
+        ([2.0, np.inf], np.inf),
+        ([-np.inf, np.inf], np.nan),
+    ],
+    ids=["minus-inf", "plus-inf", "both"],
+)
+def test_ev1_underflowed_feasible_infinite_value_is_kept(
+    *, value: list[float], expected: float
+) -> None:
+    """A feasible action has positive EV1 mass even when its probability underflows."""
+    got = float(
+        _ev1_cell_value(
+            objective=jnp.asarray([0.0, -1000.0]),
+            value=jnp.asarray(value),
+            feasible=jnp.asarray([True, True]),
+            scale=1.0,
+        )
+    )
+    if np.isnan(expected):
+        assert np.isnan(got)
+    else:
+        assert got == expected
+
+
+def _phase_aggregators(
+    declaration: UserFunction | lcm.Phased | lcm.Decoupled | None,
+) -> dict[str, tuple[UserFunction | None, UserFunction | None]]:
+    regime = lcm.Regime(
+        functions={"utility": lambda: jnp.asarray(0.0)},
+        koopmans_aggregator=declaration,
+    )
+    return {
+        phase: (
+            regime.get_koopmans_aggregator(phase=phase),
+            regime.get_objective_aggregator(phase=phase),
+        )
+        for phase in ("solve", "simulate")
+    }
+
+
+def test_aggregator_getters_resolve_every_declaration_form() -> None:
+    """Each phase gets the value aggregator and, for `Decoupled`, its objective."""
+    assert _phase_aggregators(None) == {
+        "solve": (None, None),
+        "simulate": (None, None),
+    }
+    assert _phase_aggregators(long_run) == {
+        "solve": (long_run, None),
+        "simulate": (long_run, None),
+    }
+    assert _phase_aggregators(
+        lcm.Phased(solve=perceived_future_choice, simulate=current_choice)
+    ) == {
+        "solve": (perceived_future_choice, None),
+        "simulate": (current_choice, None),
+    }
+    assert _phase_aggregators(PRESENT_BIAS) == {
+        "solve": (long_run, perceived_future_choice),
+        "simulate": (long_run, current_choice),
+    }
+    assert _phase_aggregators(
+        lcm.Decoupled(objective=current_choice, value=long_run)
+    ) == {
+        "solve": (long_run, current_choice),
+        "simulate": (long_run, current_choice),
+    }
+
+
+def value_with_own(
+    *, utility: FloatND, CE: FloatND, delta: float, value_only: float
+) -> FloatND:
+    return utility + delta * CE + 0.0 * value_only
+
+
+def solve_objective_with_own(
+    *, utility: FloatND, CE: FloatND, delta: float, solve_only: float
+) -> FloatND:
+    return utility + solve_only * delta * CE
+
+
+def simulate_objective_with_own(
+    *, utility: FloatND, CE: FloatND, delta: float, simulate_only: float
+) -> FloatND:
+    return utility + simulate_only * delta * CE
+
+
+def test_params_template_is_one_namespace_over_all_three_aggregators() -> None:
+    """Names of the value and both objectives form one namespace; shared is one."""
+    model = _model(
+        koopmans_aggregator=lcm.Decoupled(
+            objective=lcm.Phased(
+                solve=solve_objective_with_own, simulate=simulate_objective_with_own
+            ),
+            value=value_with_own,
+        )
+    )
+    assert set(model.get_params_template()["decide"]["koopmans_aggregator"]) == {
+        "delta",
+        "value_only",
+        "solve_only",
+        "simulate_only",
+    }
+
+
+@lcm.categorical(ordered=False)
+class GatedRegimeId:
+    alive: ScalarInt
+    couple: ScalarInt
+
+
+def _stay(wealth: ContinuousState) -> ContinuousState:
+    return wealth
+
+
+def _wealth_utility(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _couple_is_better(*, V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
+    return V_target_f >= V_target_m
+
+
+def test_a_gated_source_refuses_a_decoupled_aggregator() -> None:
+    """Which of the two values a gate would compare is not defined."""
+    wealth = lcm.LinSpacedGrid(start=1, stop=5, n_points=3)
+    with pytest.raises(
+        (ModelInitializationError, NotImplementedError), match="Decoupled"
+    ):
+        lcm.Model(
+            regimes={
+                "alive": lcm.Regime(
+                    states={"wealth": wealth},
+                    state_transitions={"wealth": _stay},
+                    functions={"utility": _wealth_utility},
+                    koopmans_aggregator=lcm.Decoupled(
+                        objective=additive, value=additive
+                    ),
+                ),
+                "couple": lcm.Regime(
+                    states={"wealth": wealth},
+                    functions={
+                        "utility": lcm.CollectiveUtility(
+                            utilities={"f": _wealth_utility, "m": _wealth_utility}
+                        )
+                    },
+                ),
+            },
+            n_periods=2,
+            regime_id_class=GatedRegimeId,
+            initial_nodes=lcm.InitialNodes(by_period={0: "alive"}),
+            edges={
+                "alive": lcm.Transition(
+                    law="couple",
+                    gates={
+                        "couple": lcm.Gate(
+                            predicate=_couple_is_better,
+                            routes={
+                                "her": lcm.StakeholderRoute(
+                                    target_stakeholder="f",
+                                    fallback=lcm.ProjectedRegimeValue(
+                                        regime="alive", projection={"wealth": _stay}
+                                    ),
+                                )
+                            },
+                        )
+                    },
+                )
+            },
+            enable_jit=False,
+        )
