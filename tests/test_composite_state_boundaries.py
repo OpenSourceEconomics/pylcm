@@ -28,7 +28,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidStateTransitionError
+from lcm.exceptions import InvalidInitialConditionsError, InvalidStateTransitionError
 from lcm.regime import ConstraintEntry, StateTransitionEntry
 from lcm.typing import (
     BoolND,
@@ -306,3 +306,56 @@ def test_labelled_frame_without_member_on_other_subjects_starts_like_dense() -> 
         for composite in (False, True)
     ]
     np.testing.assert_array_equal(masks[1], masks[0])
+
+
+def _only(*, regime_ids: tuple[int, ...], column: str) -> dict[str, jnp.ndarray]:
+    """Start conditions that supply one member column and omit the other."""
+    conditions = _start(regime_ids)
+    conditions.pop("b" if column == "a" else "a")
+    return conditions
+
+
+@pytest.mark.parametrize("column", ["a", "b"])
+def test_one_member_column_for_subjects_without_members_is_accepted(
+    column: str,
+) -> None:
+    """Without a carrying subject, a single optional member column is fine."""
+    masks = [
+        np.asarray(
+            _cohort(composite=composite).initial_conditions_feasibility(
+                params=_PARAMS,
+                initial_conditions=_only(regime_ids=(1, 1), column=column),
+            )
+        )
+        for composite in (False, True)
+    ]
+    np.testing.assert_array_equal(masks[1], masks[0])
+
+
+def test_carrying_subject_without_every_member_column_is_refused() -> None:
+    """A subject starting where the members exist needs every member column."""
+    with pytest.raises(InvalidInitialConditionsError, match="'b'"):
+        _cohort(composite=True).initial_conditions_feasibility(
+            params=_PARAMS, initial_conditions=_only(regime_ids=(0, 1), column="a")
+        )
+
+
+@pytest.mark.parametrize("value", [0.5, 2.0**31, float("nan")])
+def test_optional_member_column_is_still_checked_as_integers(value: float) -> None:
+    """An optional member column keeps the integrality and int32 range checks."""
+    conditions = _only(regime_ids=(1,), column="a") | {"a": jnp.asarray([value])}
+    with pytest.raises(ValueError, match=r"^a: "):
+        _cohort(composite=True).initial_conditions_feasibility(
+            params=_PARAMS, initial_conditions=conditions
+        )
+
+
+def test_optional_member_column_of_the_wrong_length_is_refused() -> None:
+    """An optional member column must have one entry per subject."""
+    conditions = _only(regime_ids=(1,), column="a") | {
+        "a": jnp.zeros(2, dtype=jnp.int32)
+    }
+    with pytest.raises(InvalidInitialConditionsError, match="'a'"):
+        _cohort(composite=True).initial_conditions_feasibility(
+            params=_PARAMS, initial_conditions=conditions
+        )

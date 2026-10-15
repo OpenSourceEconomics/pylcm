@@ -330,27 +330,47 @@ def lower_composite_initial_conditions(
         present = [member for member in lowering.members if member in out]
         if not present:
             continue
-        if len(present) != len(lowering.members):
-            missing = sorted(set(lowering.members) - set(present))
-            msg = f"Initial conditions give {present} but not {missing}."
+        columns = {
+            member: np.asarray(safe_to_int_dtype(value=out.pop(member), name=member))
+            for member in present
+        }
+        n_subjects = (
+            len(np.asarray(out["regime_id"]))
+            if "regime_id" in out
+            else len(columns[present[0]])
+        )
+        wrong_length = sorted(
+            member for member, codes in columns.items() if len(codes) != n_subjects
+        )
+        if wrong_length:
+            msg = (
+                f"Initial member columns {wrong_length} must give one code per "
+                f"subject ({n_subjects})."
+            )
             raise InvalidInitialConditionsError(msg)
-        rows = np.stack(
-            [
-                np.asarray(safe_to_int_dtype(value=out.pop(member), name=member))
-                for member in lowering.members
-            ],
-            axis=1,
-        ).astype(np.int64)
         carrying = (
             np.isin(
                 np.asarray(out["regime_id"]),
                 [int(regime_names_to_ids[regime]) for regime in lowering.carriers],
             )
             if "regime_id" in out
-            else np.ones(len(rows), dtype=bool)
+            else np.ones(n_subjects, dtype=bool)
         )
-        composite = np.full(len(rows), MISSING_CAT_CODE, dtype=np.int32)
-        composite[carrying] = _encode_or_fail(lowering=lowering, rows=rows[carrying])
+        composite = np.full(n_subjects, MISSING_CAT_CODE, dtype=np.int32)
+        if carrying.any():
+            missing = sorted(set(lowering.members) - set(present))
+            if missing:
+                msg = (
+                    f"Initial conditions give {present} but not {missing}, which "
+                    "subjects starting in a regime that carries them need."
+                )
+                raise InvalidInitialConditionsError(msg)
+            rows = np.stack(
+                [columns[member] for member in lowering.members], axis=1
+            ).astype(np.int64)
+            composite[carrying] = _encode_or_fail(
+                lowering=lowering, rows=rows[carrying]
+            )
         out[name] = jnp.asarray(composite)
     return MappingProxyType(out)
 
