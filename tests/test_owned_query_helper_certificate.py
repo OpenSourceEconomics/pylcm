@@ -131,6 +131,45 @@ _OWNED_QUERY_HELPER_MUTATIONS: dict[str, MutationSpec] = {
 _MUTATION_NAMES = (*_OWNED_QUERY_HELPER_MUTATIONS, _PRIORITY_MUTATION)
 
 
+@pytest.mark.parametrize("failure", [False, True], ids=["never", "always"])
+def test_child_failure_helper_body_adds_specific_diagnostic(
+    *, failure: bool, tmp_path: Path
+) -> None:
+    """Authenticate child failure detection independently of its coverage caller."""
+    root = Path(__file__).parents[1]
+    relative = "src/_lcm/solution/egm.py"
+    helper = "_has_mandatory_child_failure"
+    original = (root / relative).read_text()
+    tree = ast.parse(original)
+    function = _get_owned_helper(tree=tree, helper=helper)
+    function.body = [ast.Return(value=ast.Constant(value=failure))]
+    mutated_source = ast.unparse(ast.fix_missing_locations(tree)) + "\n"
+    _assert_single_body_change(original=original, mutated=mutated_source, helper=helper)
+    sources = direct_flow.verify_direct_candidate_flow(repo_root=root)[
+        "certified_corridor_sources"
+    ]
+    assert relative in sources
+    for source in sources:
+        destination = tmp_path / source
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        copyfile(root / source, destination)
+    baseline = direct_flow.verify_direct_candidate_flow(repo_root=tmp_path)
+    diagnostic = (
+        f"S02 query/status dependency: exact callable corridor {helper!r} changed"
+    )
+    assert diagnostic not in baseline["errors"], {
+        "unmodified_helper_must_lack_same_diagnostic": diagnostic,
+        "baseline_errors": baseline["errors"],
+    }
+    (tmp_path / relative).write_text(mutated_source, encoding="utf-8")
+    mutated = direct_flow.verify_direct_candidate_flow(repo_root=tmp_path)
+    assert diagnostic in mutated["errors"], {
+        "required_additional_diagnostic": diagnostic,
+        "baseline_errors": baseline["errors"],
+        "mutated_errors": mutated["errors"],
+    }
+
+
 @pytest.mark.parametrize("mutation", _MUTATION_NAMES)
 def test_owned_query_body_change_adds_specific_diagnostic(
     *, mutation: str, tmp_path: Path
@@ -217,3 +256,59 @@ def _assert_single_body_change(*, original: str, mutated: str, helper: str) -> N
     assert original_body != mutated_body
     mutated_function.body = copy.deepcopy(original_function.body)
     assert ast.dump(original_tree) == ast.dump(mutated_tree)
+
+
+@pytest.mark.parametrize(
+    "mutation", ["signature", "stub", "identity", "duplicate", "implementation"]
+)
+def test_floor_source_overloads_add_specific_diagnostic(
+    *, mutation: str, tmp_path: Path
+) -> None:
+    """Authenticate overload declarations beside their one runtime implementation."""
+    root = Path(__file__).parents[1]
+    relative = "src/_lcm/constraints/dynamic_bound.py"
+    tree = ast.parse((root / relative).read_text())
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "get_floor_source"
+    ]
+    assert len(functions) == 3
+    if mutation == "signature":
+        functions[0].returns = ast.Constant(value=None)
+    elif mutation == "stub":
+        functions[0].body = [ast.Return(value=ast.Name(id="function", ctx=ast.Load()))]
+    elif mutation == "identity":
+        imports = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom)
+            and any(alias.name == "overload" for alias in node.names)
+        ]
+        assert len(imports) == 1
+        assert imports[0].module == "typing"
+        imports[0].module = "untrusted_typing"
+    elif mutation == "duplicate":
+        tree.body.append(copy.deepcopy(functions[-1]))
+    else:
+        assert mutation == "implementation"
+        functions[-1].body = [ast.Return(value=ast.Constant(value=None))]
+    mutated_source = ast.unparse(ast.fix_missing_locations(tree)) + "\n"
+    diagnostic = (
+        "borrowing bound authority: exact callable corridor 'get_floor_source' changed"
+        if mutation == "implementation"
+        else "borrowing bound authority: get_floor_source overload declarations changed"
+    )
+    sources = direct_flow.verify_direct_candidate_flow(repo_root=root)[
+        "certified_corridor_sources"
+    ]
+    assert relative in sources
+    for source in sources:
+        destination = tmp_path / source
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        copyfile(root / source, destination)
+    baseline = direct_flow.verify_direct_candidate_flow(repo_root=tmp_path)
+    assert diagnostic not in baseline["errors"], baseline["errors"]
+    (tmp_path / relative).write_text(mutated_source, encoding="utf-8")
+    mutated = direct_flow.verify_direct_candidate_flow(repo_root=tmp_path)
+    assert diagnostic in mutated["errors"], mutated["errors"]

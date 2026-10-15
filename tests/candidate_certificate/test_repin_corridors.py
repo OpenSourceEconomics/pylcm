@@ -85,6 +85,52 @@ def _other_digest(digest: str) -> str:
     return "b" * 64 if digest != "b" * 64 else "c" * 64
 
 
+def test_repin_floor_source_digest_authenticates_exact_overloads(
+    certificate_root: Path,
+) -> None:
+    """Recompute the runtime body digest beside its exact typing overloads."""
+    module = repin_corridors._load_direct_flow(root=certificate_root)
+    pins = tuple(
+        pin
+        for pin in _collect_pins(repo_root=certificate_root)
+        if pin.source == module.DYNAMIC_BOUND_SOURCE
+        and pin.kind == "callable"
+        and pin.name == "get_floor_source"
+    )
+    assert len(pins) == 1
+    pin = pins[0]
+    tree = ast.parse((certificate_root / pin.source).read_text(encoding="utf-8"))
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "get_floor_source"
+    ]
+    assert len(functions) == 3
+    expected_overloads = ast.parse(
+        "@overload\n"
+        "def get_floor_source(*, function: UserFunction) -> UserFunction: ...\n"
+        "@overload\n"
+        "def get_floor_source(*, function: None) -> None: ...\n"
+    ).body
+    assert [ast.dump(node) for node in functions[:2]] == [
+        ast.dump(node) for node in expected_overloads
+    ]
+    assert functions[-1].decorator_list == []
+    assert module._relevant_imports(tree=tree, names={"overload"}) == [
+        "from typing import TYPE_CHECKING, Literal, cast, no_type_check, overload"
+    ]
+    bindings = module._scope_binding_counts(tree.body)
+    assert bindings["overload"] == 1
+    assert bindings["get_floor_source"] == 3
+    expected = "d7ab7aceedff9f318bebe82eee38fccdd496bb636d9054e26c499a1dfcb6e403"
+    assert pin.pinned == expected
+    assert module._callable_ast_sha256(functions[-1]) == expected
+
+    digest = repin_corridors._recompute(pin=pin, tree=tree, module=module)
+
+    assert digest == expected
+
+
 def test_each_corridor_pin_stands_once_in_the_certificate() -> None:
     """No source, kind and name is pinned at two places in `direct_flow.py`."""
     pins = _collect_pins(repo_root=_REPO_ROOT)

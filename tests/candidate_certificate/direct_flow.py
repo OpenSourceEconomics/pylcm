@@ -2236,6 +2236,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_scalar_egm_output_role": "66b3813ab42722b10b28d2a57008fcc40cc5bcfbd83ffbecd3c9fd6d0ceea641",
             "_build_egm_core": "c4b6deffacfba10c47608d8b4277f885bc63416243ba44f85020b346a945fd9b",
             "_RegimeMassGuardedCore.__call__": "c1627ad6fa12c501cc8bb00f0a524fcd3c6bf96c8e4e037cddbcb295d035883e",
+            "_has_mandatory_child_failure": "45e3c79e9d7c78c7e260fb7312f54913b533080fbeb6f4339a6ea6890be51299",
         },
     ),
     "src/_lcm/regime_building/Q_and_F.py": (
@@ -2383,6 +2384,10 @@ class DirectMutationControls(TypedDict):
     owned_query_helper_mutation_count: int
     owned_query_helper_names_match_expected: bool
     admitted_owned_query_helper_mutations: list[str]
+    child_failure_mutations: dict[str, MutationCase]
+    child_failure_mutation_count: int
+    child_failure_names_match_expected: bool
+    admitted_child_failure_mutations: list[str]
     all_rejected: bool
 
 
@@ -6706,12 +6711,60 @@ _BORROWING_BOUND_CONTRACTS = _contracts(
 )
 
 
+def _floor_source_implementation(*, tree: ast.Module) -> ast.FunctionDef:
+    """Authenticate two typing overloads and select their one runtime body."""
+    expected = ast.parse(
+        "@overload\n"
+        "def get_floor_source(*, function: UserFunction) -> UserFunction: ...\n"
+        "@overload\n"
+        "def get_floor_source(*, function: None) -> None: ...\n"
+    ).body
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "get_floor_source"
+    ]
+    bindings = _scope_binding_counts(tree.body)
+    imports = _relevant_imports(tree=tree, names={"overload"})
+    if (
+        len(functions) != 3
+        or bindings.get("get_floor_source") != 3
+        or bindings.get("overload") != 1
+        or imports
+        != ["from typing import TYPE_CHECKING, Literal, cast, no_type_check, overload"]
+        or [_ast_key(node) for node in functions[:2]]
+        != [_ast_key(node) for node in expected]
+        or functions[-1].decorator_list
+    ):
+        raise ValueError("get_floor_source overload declarations changed")
+    return functions[-1]
+
+
 def _borrowing_bound_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
     """Authenticate named floor composition and its validation/proof boundary."""
     surface, callables = _BORROWING_BOUND_CONTRACTS[source]
-    errors = _exact_callable_errors(
-        tree=tree, label="borrowing bound authority", contracts=callables
+    ordinary = (
+        {
+            name: digest
+            for name, digest in callables.items()
+            if name != "get_floor_source"
+        }
+        if source == DYNAMIC_BOUND_SOURCE
+        else callables
     )
+    errors = _exact_callable_errors(
+        tree=tree, label="borrowing bound authority", contracts=ordinary
+    )
+    if source == DYNAMIC_BOUND_SOURCE:
+        try:
+            implementation = _floor_source_implementation(tree=tree)
+        except ValueError as error:
+            errors.append(f"borrowing bound authority: {error}")
+        else:
+            if _callable_ast_sha256(implementation) != callables["get_floor_source"]:
+                errors.append(
+                    "borrowing bound authority: exact callable corridor 'get_floor_source' changed"
+                )
     if _transport_module_surface(tree) != surface:
         errors.append("borrowing bound authority: module or producer schema changed")
     return errors
@@ -6882,6 +6935,7 @@ _S02_QUERY_STATUS_CONTRACTS = _contracts(
         "src/_lcm/solution/egm.py": (
             "_EGMCore.__call__",
             "_EGMArgumentBuilder.__call__",
+            "_has_mandatory_child_failure",
         ),
         "src/_lcm/egm/budget.py": (
             "get_intrinsic_budget_constraint",
@@ -9384,8 +9438,18 @@ _S02_HELPER_MUTATIONS = {
         "src/_lcm/utils/dispatchers.py",
         "_map_with_bound_summary",
         "expression",
-        "(BoundedResult(output=output, bound_status=statuses), None)",
-        "(BoundedResult(output=output, bound_status=statuses), statuses)",
+        (
+            "(BoundedResult(output=output, bound_status=statuses, "
+            "query_status=merge_query_input_status(left=carry.query_status, "
+            "right=reduce_query_input_status(statuses=result.query_status, "
+            "active=valid))), None)"
+        ),
+        (
+            "(BoundedResult(output=output, bound_status=statuses, "
+            "query_status=merge_query_input_status(left=carry.query_status, "
+            "right=reduce_query_input_status(statuses=result.query_status, "
+            "active=valid))), statuses)"
+        ),
         1,
     ),
     "s02_status:subject_scalar_roles_ignored": (
@@ -9440,8 +9504,14 @@ _S02_HELPER_MUTATIONS = {
         "src/_lcm/solution/feasibility.py",
         "_flatten_bounded_result",
         "expression",
-        "((result.output, result.bound_status), None)",
-        "((result.output, result.bound_status), type(result))",
+        (
+            "((*children, result.query_status) if result.query_status is not None"
+            " else children, None)"
+        ),
+        (
+            "((*children, result.query_status) if result.query_status is not None"
+            " else children, type(result))"
+        ),
         1,
     ),
     "s02_status:bounded_keyed_leaf_swapped": (
@@ -9560,16 +9630,16 @@ _S02_HELPER_MUTATIONS = {
         "src/_lcm/egm/outer_envelope.py",
         "stack_candidate_carries",
         "expression",
-        'leaf[("marginal_utility",)]',
-        '-leaf[("marginal_utility",)]',
+        "replace(candidate, value=jnp.where(jnp.isnan(leaf['value',]), -jnp.inf, leaf['value',]), marginal_utility=jnp.where(jnp.isnan(leaf['value',]), 0.0, leaf['marginal_utility',]))",
+        "replace(candidate, value=jnp.where(jnp.isnan(leaf['value',]), -jnp.inf, leaf['value',]), marginal_utility=jnp.where(jnp.isnan(leaf['value',]), 0.0, -leaf['marginal_utility',]))",
         1,
     ),
     "s02_query:outer_query_record_call_seam_replaced": (
         "src/_lcm/egm/outer_envelope.py",
         "stack_candidate_carries",
         "expression",
-        "candidate.query_data_for_transport",
-        "candidate_filter.query_data_for_transport",
+        "nan_is_infeasible and candidate.query_data_for_transport() is None",
+        "nan_is_infeasible and candidate_filter.query_data_for_transport() is None",
         1,
     ),
     "s02_query:builder_query_record_call_seam_replaced": (
@@ -11433,6 +11503,35 @@ def owned_query_helper_mutation_specs(*, repo_root: Path) -> dict[str, dict[str,
         "path": relative,
         "source": ast.unparse(tree) + "\n",
     }
+    return specs
+
+
+_CHILD_FAILURE_MUTATIONS = {
+    "owned_child_status:never_detected": False,
+    "owned_child_status:always_detected": True,
+}
+EXPECTED_CHILD_FAILURE_MUTATION_COUNT = 2
+EXPECTED_CHILD_FAILURE_MUTATION_NAMES_SHA256 = (
+    "cfbf4195d3fb235d7ccec0a05d7d79712581053207d0ec36cfaeffaa9592b5df"
+)
+
+
+def child_failure_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build separate controls for mandatory-child and clean-coverage precedence."""
+    relative = "src/_lcm/solution/egm.py"
+    original = (repo_root / relative).read_text(encoding="utf-8")
+    specs = {}
+    for name, failure in _CHILD_FAILURE_MUTATIONS.items():
+        tree = ast.parse(original, filename=relative)
+        function = _definition(tree=tree, name="_has_mandatory_child_failure")
+        original_body = tuple(_ast_key(statement) for statement in function.body)
+        function.body = [ast.Return(value=ast.Constant(value=failure))]
+        if tuple(_ast_key(statement) for statement in function.body) == original_body:
+            raise ValueError(f"Child failure mutation did not change {name}")
+        specs[name] = {
+            "path": relative,
+            "source": ast.unparse(ast.fix_missing_locations(tree)) + "\n",
+        }
     return specs
 
 
@@ -14440,10 +14539,15 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         raise ValueError("Supplemental mutation names overlap the pinned registry")
     s03_scalar = s03_scalar_mutation_specs(repo_root=root)
     owned_query = owned_query_helper_mutation_specs(repo_root=root)
+    child_failure = child_failure_mutation_specs(repo_root=root)
     if (set(specs) | set(supplemental)) & set(s03_scalar):
         raise ValueError("S03 scalar mutations overlap existing populations")
     if (set(specs) | set(supplemental) | set(s03_scalar)) & set(owned_query):
         raise ValueError("Owned query helper mutations overlap existing populations")
+    if (set(specs) | set(supplemental) | set(s03_scalar) | set(owned_query)) & set(
+        child_failure
+    ):
+        raise ValueError("Child failure mutations overlap existing populations")
     mutated_paths = {
         spec["path"]
         for spec in (
@@ -14451,6 +14555,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             *supplemental.values(),
             *s03_scalar.values(),
             *owned_query.values(),
+            *child_failure.values(),
         )
     }
     certified_paths = (
@@ -14493,6 +14598,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
     supplemental = supplemental_direct_flow_mutation_specs(repo_root=root)
     s03_scalar = s03_scalar_mutation_specs(repo_root=root)
     owned_query = owned_query_helper_mutation_specs(repo_root=root)
+    child_failure = child_failure_mutation_specs(repo_root=root)
     uniform = uniform_process_mutation_specs(repo_root=root)
     action_grid = action_grid_mutation_specs(repo_root=root)
     feasibility = feasibility_mutation_specs(repo_root=root)
@@ -14513,6 +14619,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
             | supplemental
             | s03_scalar
             | owned_query
+            | child_failure
             | uniform
             | action_grid
             | feasibility
@@ -14533,6 +14640,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
                     "s03_scalar:",
                     "owned_query_status:",
                     "owned_query_authority:",
+                    "owned_child_status:",
                 )
             ):
                 _SOURCE_SEALS[relative] = sha256_file(target)
@@ -14540,9 +14648,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
                 result = verify_direct_candidate_flow(repo_root=temp_root)
             finally:
                 _SOURCE_SEALS[relative] = original_seal
+            rejected = not result["ok"]
+            if name in child_failure:
+                diagnostic = "S02 query/status dependency: exact callable corridor '_has_mandatory_child_failure' changed"
+                rejected = (
+                    diagnostic not in clean["errors"] and diagnostic in result["errors"]
+                )
             cases[name] = {
                 "path": relative,
-                "rejected": not result["ok"],
+                "rejected": rejected,
                 "errors": result["errors"],
                 "offending_paths": result["offending_paths"],
             }
@@ -14632,6 +14746,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
         and _mutation_name_digest(tuple(owned_query_cases))
         == EXPECTED_OWNED_QUERY_HELPER_MUTATION_NAMES_SHA256
     )
+    child_failure_cases = {name: cases.pop(name) for name in child_failure}
+    child_failure_admitted = sorted(
+        name for name, result in child_failure_cases.items() if not result["rejected"]
+    )
+    child_failure_names_match = (
+        len(child_failure_cases) == EXPECTED_CHILD_FAILURE_MUTATION_COUNT
+        and _mutation_name_digest(tuple(child_failure_cases))
+        == EXPECTED_CHILD_FAILURE_MUTATION_NAMES_SHA256
+    )
     supplemental_cases = {name: cases.pop(name) for name in supplemental}
     supplemental_admitted = sorted(
         name for name, result in supplemental_cases.items() if not result["rejected"]
@@ -14706,8 +14829,14 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
         "owned_query_helper_mutation_count": len(owned_query_cases),
         "owned_query_helper_names_match_expected": owned_query_names_match,
         "admitted_owned_query_helper_mutations": owned_query_admitted,
+        "child_failure_mutations": child_failure_cases,
+        "child_failure_mutation_count": len(child_failure_cases),
+        "child_failure_names_match_expected": child_failure_names_match,
+        "admitted_child_failure_mutations": child_failure_admitted,
         "all_rejected": (
-            not owned_query_admitted
+            not child_failure_admitted
+            and child_failure_names_match
+            and not owned_query_admitted
             and owned_query_names_match
             and not s03_scalar_admitted
             and s03_scalar_names_match

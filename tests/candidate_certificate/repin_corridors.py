@@ -317,7 +317,9 @@ def _recompute(*, pin: CorridorPin, tree: ast.Module, module: ModuleType) -> str
     """Recompute one pin with the certificate's own hashing helpers."""
     if pin.kind == "module surface":
         return str(module._transport_module_surface(tree))
-    if "." in pin.name:
+    if pin.source == module.DYNAMIC_BOUND_SOURCE and pin.name == "get_floor_source":
+        node = module._floor_source_implementation(tree=tree)
+    elif "." in pin.name:
         class_name, method_name = pin.name.split(".", maxsplit=1)
         _, node = module._method_definition(
             tree=tree, class_name=class_name, method_name=method_name
