@@ -43,6 +43,7 @@ from _lcm.typing import (
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from _lcm.utils.functools import is_user_function
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from lcm.decoupled import Decoupled
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
@@ -563,10 +564,11 @@ def _fail_if_gated_edge_source_out_of_scope(regime: Regime) -> None:
         raise NotImplementedError(
             "Gated edges on a taste-shock source regime are not implemented."
         )
-    if regime.selection_aggregator is not None:
+    if isinstance(regime.koopmans_aggregator, Decoupled):
         raise NotImplementedError(
-            "Gated edges on a source regime with a `selection_aggregator` are "
-            "not implemented."
+            "Gated edges on a source regime with a `Decoupled` Koopmans "
+            "aggregator are not implemented: which of its two values the gate "
+            "compares is not yet defined."
         )
     if aggregates_nonlinearly(regime.certainty_equivalent):
         raise NotImplementedError(
@@ -973,7 +975,6 @@ def _validate_completeness(
     error_messages.extend(_state_transition_coverage_errors(regime, law=law))
     error_messages.extend(_validate_function_output_grid_indexing(regime, law=law))
     error_messages.extend(_koopmans_aggregator_errors(regime, law=law))
-    error_messages.extend(_selection_aggregator_errors(regime, law=law))
     error_messages.extend(_certainty_equivalent_errors(regime, law=law))
     error_messages.extend(_expected_utility_aggregator_errors(regime))
 
@@ -1055,43 +1056,31 @@ def _koopmans_aggregator_errors(regime: Regime, *, law: RegimeLaw) -> tuple[str,
             "A terminal regime cannot declare `koopmans_aggregator`: there is "
             "no continuation value to aggregate."
         )
+    if isinstance(regime.koopmans_aggregator, Decoupled):
+        error_messages.extend(_decoupled_errors(regime))
     return tuple(error_messages)
 
 
-# keyword-only-exempt: primary-argument=regime
-def _selection_aggregator_errors(regime: Regime, *, law: RegimeLaw) -> tuple[str, ...]:
-    """Collect errors for a regime's `selection_aggregator` declaration.
+def _decoupled_errors(regime: Regime) -> tuple[str, ...]:
+    """Collect errors for a `Decoupled` Koopmans aggregator.
 
-    - terminal regimes have no continuation to select against
-    - only `GridSearch` reduces the action product in concrete values, so
-      only it can select on one aggregator and read out the other
-    - the taste-shock smoothed maximum and the collective household argmax
-      each reduce with their own objective
+    - only `GridSearch` reduces the action product in concrete values, so only
+      it can choose with one aggregator and store another
+    - a collective regime chooses with its Pareto-weighted objective
     """
-    if regime.selection_aggregator is None:
-        return ()
     error_messages: list[str] = []
-    if law.terminal:
-        error_messages.append(
-            "A terminal regime cannot declare `selection_aggregator`: there is "
-            "no continuation value to select against."
-        )
     if not isinstance(regime.solver, GridSearch):
         error_messages.append(
-            f"The {type(regime.solver).__name__} solver does not support "
-            "`selection_aggregator`: selecting with one aggregator and valuing "
-            "with another needs the full action product. Use "
+            f"The {type(regime.solver).__name__} solver does not support a "
+            "`Decoupled` Koopmans aggregator: choosing with one aggregator "
+            "and storing another needs the full action product. Use "
             "`solver=GridSearch()` for this regime."
-        )
-    if regime.taste_shocks is not None:
-        error_messages.append(
-            "A regime cannot combine `selection_aggregator` with "
-            "`taste_shocks` yet: the smoothed maximum reads one aggregator only."
         )
     if regime.stakeholders is not None:
         error_messages.append(
-            "A collective regime cannot declare `selection_aggregator`: the "
-            "household selects with its Pareto-weighted objective."
+            "A collective regime cannot declare a `Decoupled` Koopmans "
+            "aggregator: the household chooses with its Pareto-weighted "
+            "objective."
         )
     return tuple(error_messages)
 
@@ -1108,8 +1097,7 @@ def _expected_utility_aggregator_errors(regime: Regime) -> tuple[str, ...]:
         regime.certainty_equivalent
     ):
         return ()
-    declared = regime.koopmans_aggregator
-    solve_W = declared.solve if isinstance(declared, Phased) else declared
+    solve_W = regime.get_koopmans_aggregator(phase="solve")
     if solve_W is None or isinstance(solve_W, LinearAggregator):
         return ()
     msg = (
@@ -2016,13 +2004,6 @@ def _fold_scope_errors(
             "`fold=True`, or use the exact `LinearExpectation`. Custom "
             "subclasses and other certainty equivalents keep their realized "
             "outcomes; their semantics cannot be inferred from inheritance."
-        )
-    if regime.selection_aggregator is not None:
-        error_messages.append(
-            f"fold=True on state(s) {sorted(fold_names)} is not supported "
-            "together with a `selection_aggregator`: the selection route reduces "
-            "over actions without the fold's quadrature. Drop `fold=True`, or "
-            "drop the selection aggregator."
         )
     if not isinstance(regime.solver, GridSearch):
         error_messages.append(

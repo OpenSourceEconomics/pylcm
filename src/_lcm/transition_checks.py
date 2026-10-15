@@ -1920,13 +1920,23 @@ def _validate_discrete_state_laws(
                     if lottery.support_provider_name is not None
                 }
             )
-            stochastic = {
-                name
-                for name in transitions
-                if name in regime.stochastic_state_transitions
-                or f"{name}__{target}" in regime.stochastic_state_transitions
-                or (plan is not None and name in plan.lotteries and name not in draws)
-            }
+            # The canonical plan decides which lotteries are swept over their
+            # target's codes; the legacy names, which also list a draw that has a
+            # support of its own, apply only to a target without a plan.
+            stochastic = (
+                {
+                    name
+                    for name in transitions
+                    if name in regime.stochastic_state_transitions
+                    or f"{name}__{target}" in regime.stochastic_state_transitions
+                }
+                if plan is None
+                else {
+                    name
+                    for name in transitions
+                    if name in plan.lotteries and name not in draws
+                }
+            )
             target_grids = {
                 name: grid
                 for name in transitions

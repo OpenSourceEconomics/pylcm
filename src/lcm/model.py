@@ -167,6 +167,7 @@ from _lcm.simulation.program_types import (
     CONTINUATION_CE,
     DECISION_VALUE,
     FLOW_UTILITY,
+    OBJECTIVE_PROFILE,
     SimulationProgramExecutor,
 )
 from _lcm.simulation.programs import KeptPartsPrograms, with_kept_action_parts
@@ -305,6 +306,7 @@ from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.contract import ArtifactContractValue
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from lcm.decoupled import Decoupled
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidInitialConditionsError,
@@ -4064,7 +4066,9 @@ class Model:
                 the (possibly restricted) action grid, in any order: the action
                 values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and
                 the certainty-equivalent continuation `"CE"`, all from the one
-                kernel evaluation the decision maximizes over. They leave the
+                kernel evaluation the decision maximizes over, and for a regime
+                with a `Decoupled` Koopmans aggregator the objective's action
+                values `"Q_objective"`. They leave the
                 actions and value unchanged. `Q`, `U` and `CE` are unmasked; `F`
                 says which of their entries the decision admits. Any non-empty
                 choice materializes the whole action product, even where the
@@ -4401,6 +4405,7 @@ class Model:
                 Qc=by_role.get(CONDITIONAL_VALUE),
                 choice_probabilities=by_role.get(CHOICE_PROBABILITIES),
                 conditional_actions=actions if regime.has_taste_shocks else None,
+                Q_objective=by_role.get(OBJECTIVE_PROFILE),
             ),
             n_rows=n_query_rows,
             allocations=allocations,
@@ -4973,6 +4978,7 @@ _INTERMEDIATE_ROLES: MappingProxyType[Intermediate, str] = MappingProxyType(
         "F": ACTION_FEASIBILITY,
         "U": FLOW_UTILITY,
         "CE": CONTINUATION_CE,
+        "Q_objective": OBJECTIVE_PROFILE,
     }
 )
 
@@ -5161,7 +5167,7 @@ def _validate_sharded_state_capability(
         "normal/log-normal processes, fixed Rouwenhorst/Tauchen processes and "
         "carried linear grids. Runtime state grids, folded processes, "
         "mixed solvers, collective/gated/same-period routes, taste shocks and "
-        "selection aggregators are unsupported."
+        "`Decoupled` Koopmans aggregators are unsupported."
     )
     if len(sharded_states) != 1:
         raise ExecutionPlanningError(message)
@@ -5181,7 +5187,7 @@ def _validate_sharded_state_capability(
             or regime.value_constraints
             or regime.same_period_refs
             or regime.taste_shocks is not None
-            or regime.selection_aggregator is not None
+            or isinstance(regime.koopmans_aggregator, Decoupled)
         ):
             raise ExecutionPlanningError(
                 f"{message} Unsupported regime: {regime_name!r}."

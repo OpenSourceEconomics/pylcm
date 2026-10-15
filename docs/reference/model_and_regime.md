@@ -186,7 +186,7 @@ A general regime declares:
 | `derived_categoricals` | Discrete grids for categorical DAG outputs                                    |
 | `solver`               | `lcm.solvers.GridSearch()` by default                                         |
 | `taste_shocks`         | Optional EV1 taste-shock configuration                                        |
-| `koopmans_aggregator`  | Optional regime-level continuation aggregator                                 |
+| `koopmans_aggregator`  | Optional regime-level continuation aggregator, `Phased` or `Decoupled`        |
 | `certainty_equivalent` | Optional regime-level lottery reduction                                       |
 | `description`          | Human-readable description                                                    |
 
