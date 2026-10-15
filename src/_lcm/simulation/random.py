@@ -8,6 +8,7 @@ gave none.
 """
 
 import os
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -18,13 +19,52 @@ from jaxtyping import Int, Scalar, UInt32
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.typing import PRNGKeyND
-from lcm.exceptions import ExecutionPlanningError
+from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
+from lcm.typing import PRNGKey, UserSeed
+
+
+def canonicalize_simulation_seed(
+    *, seed: UserSeed | None, name: Literal["seed", "taste_shock_seed"]
+) -> int | PRNGKey | None:
+    """Refuse malformed random roots before processing inputs or solving.
+
+    The ordinary-stream `seed` must be a Threefry key: draws inside a subject chunk
+    are batched, and only Threefry gives every subject the same draws whatever the
+    chunk width. The taste stream draws per subject key, so `taste_shock_seed`
+    accepts any implementation.
+    """
+    if seed is None or (
+        isinstance(seed, int) and (name == "seed" or type(seed) is int)
+    ):
+        return seed
+    if isinstance(seed, jax.Array) and jax.dtypes.issubdtype(
+        seed.dtype, jax.dtypes.prng_key
+    ):
+        if seed.shape != ():
+            raise InvalidSimulationInputError(
+                f"{name} requires a scalar jax.random.key, got shape {seed.shape}."
+            )
+        impl = str(jax.random.key_impl(seed))
+        if name == "seed" and impl != "threefry2x32":
+            raise InvalidSimulationInputError(
+                f"seed requires a threefry2x32 key, got a {impl} key. Pass "
+                "jax.random.key(..., impl='threefry2x32') or an integer seed."
+            )
+        return seed
+    raise InvalidSimulationInputError(
+        f"{name} must be an integer, a scalar typed key from jax.random.key, "
+        f"or None; got {seed!r}."
+    )
 
 
 def create_simulation_key(
-    *, seed: int, memory: SimulationMemory | None = None
+    *, seed: int | PRNGKey, memory: SimulationMemory | None = None
 ) -> PRNGKeyND:
-    """Create the initial key under the optional forward workspace budget."""
+    """Create the initial Threefry key under the optional forward workspace budget."""
+    if isinstance(seed, jax.Array):
+        if memory is not None:
+            memory.hold(tree=seed)
+        return seed
     return run_simulation_operation(
         memory=memory,
         function=_create_simulation_key,
@@ -32,7 +72,7 @@ def create_simulation_key(
         # before staging them. Preserve its wrapping of unsigned high-bit seeds.
         arguments={"seed": seed if memory is None else np.int64(seed)},
         static_arguments={
-            "impl": jax.config.jax_default_prng_impl,
+            "impl": "threefry2x32",
             "seed_offset": jax.config.jax_random_seed_offset,
         },
     )

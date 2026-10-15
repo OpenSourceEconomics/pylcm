@@ -193,6 +193,7 @@ from lcm.typing import (
     FunctionName,
     Int1D,
     IntND,
+    PRNGKey,
     ReferenceName,
     ScalarFloat,
     ScalarInt,
@@ -219,8 +220,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
-    seed: int | None = None,
-    taste_shock_seed: int | None = None,
+    seed: int | PRNGKey | None = None,
+    taste_shock_seed: int | PRNGKey | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
     period_to_regime_to_dissolution_flags: MappingProxyType[
@@ -261,8 +262,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             built-in solver routes.
         simulation_output_dtypes: Mapping of variable name to `pd.CategoricalDtype`,
             used for building simulation metadata.
-        seed: Random number seed; will be passed to `jax.random.key`. If not provided,
-            a random seed will be generated.
+        seed: Integer seed or scalar Threefry key of the ordinary stream. An integer
+            becomes a Threefry key. If not provided, a random seed is generated.
         taste_shock_seed: Independent taste seed, or None for the ordinary stream.
         subject_batch_size: Concrete outer subject chunk extent, resolved by
             `Model.simulate` from ExecutionConfig and whole-chunk admission.
@@ -756,7 +757,7 @@ def _initialize_chunk_state(
     initial_own_stakeholder: Int1D,
     regimes: MappingProxyType[RegimeName, Regime],
     device_ids: tuple[int, ...],
-    seed: int,
+    seed: int | PRNGKey,
     memory: SimulationMemory | None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
     """Build a chunk's carriers, enrolling completed arrays before the next step."""
@@ -798,7 +799,7 @@ def _simulate_subject_chunk(
     ],
     flat_params: FlatParams,
     ages: TimeAxis,
-    seed: int,
+    seed: int | PRNGKey,
     logger: logging.Logger,
     initial_own_stakeholder: Int1D,
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
@@ -808,7 +809,7 @@ def _simulate_subject_chunk(
     device_ids: tuple[int, ...] = (),
     memory: SimulationMemory | None = None,
     call_inputs: SimulationCallInputs | None = None,
-    taste_shock_seed: int | None = None,
+    taste_shock_seed: int | PRNGKey | None = None,
     taste_addresses: Mapping[
         tuple[int, RegimeName], tuple[int, ...]
     ] = MappingProxyType({}),

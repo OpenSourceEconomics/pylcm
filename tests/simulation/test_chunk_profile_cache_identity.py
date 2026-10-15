@@ -181,7 +181,12 @@ def _budgeted_runtime(*, model: Model) -> SimulationRuntime:
 
 
 def _key_for_initial_conditions(
-    *, model: Model, initial: dict[str, jax.Array], runtime_checks: bool = True
+    *,
+    model: Model,
+    initial: dict[str, jax.Array],
+    runtime_checks: bool = True,
+    prng_impl: str | None = None,
+    taste_prng_impl: str = "threefry2x32",
 ) -> tuple[Hashable, ...]:
     regimes = model._runtime_regimes_for_shape(compile_batch_size=3)
     runtime = _budgeted_runtime(model=model)
@@ -207,6 +212,8 @@ def _key_for_initial_conditions(
         independent_taste=False,
         log_level="off",
         runtime_checks=runtime_checks,
+        prng_impl=prng_impl,
+        taste_prng_impl=taste_prng_impl,
     )
 
 
@@ -334,7 +341,59 @@ def test_key_is_stable_and_versioned() -> None:
     second = _simulation_chunk_profile_key(**key_kwargs)
     assert first == second
     assert hash(first) == hash(second)
-    assert first[0] == ("chunk-profile-key", 1)
+    assert first[0] == ("chunk-profile-key", 2)
+
+
+@pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])
+def test_actual_key_implementation_changes_profile_identity(role: str) -> None:
+    """Supplied implementation separates profiles under a fixed ambient default."""
+    model = _budgeted_model()
+    initial = _initial(n=3)
+    with jax.default_prng_impl("threefry2x32"):
+        keys = []
+        for impl in ("threefry2x32", "rbg", "threefry2x32"):
+            root = jax.random.key(11, impl=impl)
+            actual_impl = str(jax.random.key_impl(root))
+            keys.append(
+                _key_for_initial_conditions(
+                    model=model,
+                    initial=initial,
+                    prng_impl=actual_impl if role == "seed" else "threefry2x32",
+                    taste_prng_impl=actual_impl
+                    if role == "taste_shock_seed"
+                    else "threefry2x32",
+                )
+            )
+    assert keys[0] != keys[1]
+    assert keys[0] == keys[2]
+
+
+def test_actual_key_implementation_misses_then_repeat_hits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Public typed taste roots rebuild for a changed implementation, then reuse."""
+    model = _budgeted_model()
+    params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
+    solution = model.solve(params=params, log_level="off")
+    initial = _initial(n=3)
+    calls = _count_builds(monkeypatch)
+    builds = []
+    with jax.default_prng_impl("threefry2x32"):
+        for impl in ("threefry2x32", "rbg", "threefry2x32", "rbg"):
+            root = jax.random.key(11, impl=impl)
+            model.simulate(
+                params=params,
+                initial_conditions=initial,
+                solution=solution,
+                seed=11,
+                taste_shock_seed=root,
+                log_level="off",
+            )
+            builds.append(calls[0])
+    assert builds[0] > 0
+    assert builds[1] > builds[0]
+    assert builds[2] == builds[1]
+    assert builds[3] == builds[1]
 
 
 _RUNTIME_MARKER = ProfileCacheToken()

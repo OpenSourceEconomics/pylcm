@@ -17,10 +17,10 @@ def test_action_grid_controls_preserve_historical_mutation_populations() -> None
     supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
     uniform = direct_flow.uniform_process_mutation_specs(repo_root=root)
     action = direct_flow.action_grid_mutation_specs(repo_root=root)
-    assert len(registered) == 406
+    assert len(registered) == 407
     assert (
         _name_digest(registered)
-        == "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
+        == "60f4409ab18871f6413f57172303f9629ea88d3ec55bb7df425f6a6c981801f7"
     )
     assert len(supplemental) == 54
     assert (

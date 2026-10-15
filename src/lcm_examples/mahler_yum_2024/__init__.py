@@ -94,8 +94,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
+from beartype import beartype
 from scipy.interpolate import make_interp_spline
 
+from _lcm.beartype_conf import SIMULATION_INPUT_CONF
+from _lcm.simulation.random import create_simulation_key
 from _lcm.typing import DataclassInstance
 from lcm import (
     AgeGrid,
@@ -120,6 +123,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     Period,
+    PRNGKey,
     ScalarFloat,
     ScalarInt,
     UserParamsNode,
@@ -1105,8 +1109,9 @@ def _compute_pension_base(
     return pension_base
 
 
+@beartype(conf=SIMULATION_INPUT_CONF)
 def create_inputs(
-    *, seed: int, n_simulation_subjects: int, params: StructuralParams
+    *, seed: int | PRNGKey, n_simulation_subjects: int, params: StructuralParams
 ) -> tuple[dict[str, UserParamsNode], pd.DataFrame]:
     """Build model params and initial conditions.
 
@@ -1188,7 +1193,7 @@ def create_inputs(
     # at this calibration, but the guarantee is what the initial distribution
     # relies on, so it has to hold by construction rather than by luck.
     type_key, health_key, adjustment_key, shock_key = jax.random.split(
-        jax.random.key(seed), num=4
+        create_simulation_key(seed=seed), num=4
     )
     type_indices = np.asarray(
         jax.random.choice(

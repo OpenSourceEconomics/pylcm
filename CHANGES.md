@@ -5,6 +5,18 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Typed simulation random roots
+
+- `Model.simulate(seed=...)` and `taste_shock_seed=...` accept scalar typed
+  `jax.random.key` roots directly, preserving their PRNG implementation and the
+  existing integer-seeded streams. Legacy uint32 keys receive guidance naming the
+  typed constructor. Budgeted entry accounts for caller key buffers before uploads
+  or automatic solving; chunk profiles distinguish the actual implementations.
+  Independent taste draws from an RBG or unsafe-RBG root fold and draw each
+  subject's key as a scalar, so subject widths and padding do not change them.
+- The Mahler initial-population factory accepts the same typed roots with its
+  existing positional splits.
+
 ### Intermediates in policy lookup
 
 - `Model.lookup_policy(..., keep_intermediates=...)` replaces
