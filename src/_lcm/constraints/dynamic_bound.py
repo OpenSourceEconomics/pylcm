@@ -324,7 +324,7 @@ def _walk_rhs(
     paths = []
     identity = []
 
-    def visit(name: str, path: tuple[str, ...]) -> None:
+    def visit(*, name: str, path: tuple[str, ...]) -> None:
         if name in path:
             raise ModelInitializationError(
                 f"Borrowing floor has a dependency cycle: {' -> '.join((*path, name))}."
@@ -345,9 +345,9 @@ def _walk_rhs(
         original = canonical_producers.get(name, get_floor_source(function=function))
         identity.append((new_path[1:], original))
         for argument in sorted(inspect.signature(function).parameters):
-            visit(argument, new_path)
+            visit(name=argument, path=new_path)
 
-    visit(target, ())
+    visit(name=target, path=())
     return paths, identity
 
 

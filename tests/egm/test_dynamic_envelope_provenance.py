@@ -198,7 +198,7 @@ def test_connected_edges_share_run_and_keep_legacy_numerics() -> None:
 )
 @pytest.mark.parametrize("factory", [get_upper_envelope, get_bracket_finder])
 def test_other_backends_refuse_unavailable_owned_provenance(
-    envelope: EnvelopeConfig, factory: Callable[..., Callable[..., PytreeValue]]
+    *, envelope: EnvelopeConfig, factory: Callable[..., Callable[..., PytreeValue]]
 ) -> None:
     """A backend without original candidate ownership refuses feature publication."""
     with pytest.raises(ValueError, match=r"provenance.*ExactEnvelope"):

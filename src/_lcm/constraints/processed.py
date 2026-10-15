@@ -138,7 +138,7 @@ def normalize_constraints(
         {
             name: ProcessedConstraint(
                 name=name,
-                condition=_as_condition(declaration, name=name),
+                condition=_as_condition(declaration=declaration, name=name),
                 declaration=declaration,
             )
             for name, declaration in constraints.items()
@@ -146,7 +146,7 @@ def normalize_constraints(
     )
 
 
-def _as_condition(declaration: ConstraintLike, *, name: FunctionName) -> Condition:
+def _as_condition(*, declaration: ConstraintLike, name: FunctionName) -> Condition:
     """Recover as much structure from a declaration as it carries."""
     if isinstance(declaration, Condition):
         return declaration
