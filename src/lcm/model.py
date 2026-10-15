@@ -4084,6 +4084,14 @@ class Model:
             `Qc`, the choice probabilities and the continuous actions attaining
             `Qc`.
 
+            With a `Decoupled` Koopmans aggregator the actions maximize the
+            objective and the value is the value profile there. With taste shocks,
+            the continuous actions maximize the objective within each discrete
+            combination, `Qc` is the value profile at that choice, the choice
+            probabilities are a softmax of the objective, and the value is the
+            expected value profile at the noisy choice, shock included; it is not
+            a logsum of `Qc`.
+
         """
         self._check_identity_runtime()
         regime = self._regimes.get(regime_name)
