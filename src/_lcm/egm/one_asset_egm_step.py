@@ -16,10 +16,11 @@ At the savings grid's lower bound the borrowing constraint binds and the agent c
 everything above it.
 
 The step carries the **marginal value of liquid** $V'(\\text{liquid})$ between periods
-rather than finite-differencing the value array: by the envelope theorem
-$V'(\\text{liquid}) = u'(c^*)$, which is exact, whereas a finite difference of the value
-array is badly inaccurate where the value is steep (low liquid). Each step therefore
-both consumes `next_marginal` and publishes this period's marginal.
+as the economic envelope approximation $u'(c)$ rather than finite-differencing
+the value array. This channel is distinct from the derivative of the represented
+value interpolant: interpolated policies need not satisfy the Euler equation exactly
+between candidates. Each step consumes `next_marginal` and publishes its associated
+consumption marginal.
 """
 
 from typing import NamedTuple
@@ -42,11 +43,13 @@ class RetiredEGMResult(NamedTuple):
     consumption: Float1D
     """This period's optimal consumption on `liquid_grid`."""
     savings: Float1D | None = None
-    """Associated original saving candidates on feature rows."""
+    """Associated original saving candidates on the regular row."""
     corner_continuation: ScalarFloat | None = None
     """Already evaluated continuation at the shifted floor."""
     coverage_missing: Bool1D | None = None
     """Legal cash queries without represented viable support."""
+    rescore_interior: Bool1D | None = None
+    """Strict original adjacent interiors whose reconstructed actions need valuation."""
 
 
 def egm_one_asset_step(
@@ -136,6 +139,33 @@ def egm_one_asset_step(
     # Interior: interpolate the endogenous value and consumption onto the regular grid.
     interior_value = jnp.interp(liquid_grid, liquid_endog, value_endog)
     interior_consumption = jnp.interp(liquid_grid, liquid_endog, consumption)
+    interior_savings = jnp.interp(liquid_grid, liquid_endog, savings_grid)
+    lower = jnp.clip(
+        jnp.searchsorted(liquid_endog, liquid_grid, side="right") - 1,
+        0,
+        savings_grid.size - 2,
+    )
+    coordinates_supported = jnp.all(jnp.isfinite(liquid_endog)) & jnp.all(
+        liquid_endog[1:] > liquid_endog[:-1]
+    )
+    local_tuple_finite = (
+        jnp.isfinite(value_endog[lower])
+        & jnp.isfinite(value_endog[lower + 1])
+        & jnp.isfinite(consumption[lower])
+        & jnp.isfinite(consumption[lower + 1])
+        & jnp.isfinite(savings_grid[lower])
+        & jnp.isfinite(savings_grid[lower + 1])
+    )
+    rescore_interior = (
+        coordinates_supported
+        & local_tuple_finite
+        & (liquid_grid > liquid_endog[lower])
+        & (liquid_grid < liquid_endog[lower + 1])
+        & jnp.isfinite(interior_value)
+        & jnp.isfinite(interior_consumption)
+        & (interior_consumption > 0.0)
+        & jnp.isfinite(interior_savings)
+    )
 
     # Constrained: below the smallest endogenous liquid the household would want savings
     # the grid's lower bound forbids, so it takes that bound and consumes everything
@@ -162,11 +192,14 @@ def egm_one_asset_step(
         constrained, constrained_consumption, interior_consumption
     )
     value = jnp.where(constrained, constrained_value, interior_value)
-    # Envelope theorem: the marginal value of liquid is the marginal utility of the
-    # optimal consumption.
+    # Keep the economic envelope approximation separate from value interpolation.
     marginal = preferences.marginal_utility(consumption_on_grid)
     return RetiredEGMResult(
-        value=value, marginal=marginal, consumption=consumption_on_grid
+        value=value,
+        marginal=marginal,
+        consumption=consumption_on_grid,
+        savings=jnp.where(constrained, min_savings, interior_savings),
+        rescore_interior=rescore_interior,
     )
 
 
@@ -273,4 +306,16 @@ def _solve_viable_feature_row(
         savings=saving_on_grid,
         corner_continuation=value_next[0],
         coverage_missing=domain & ~supported,
+        rescore_interior=(
+            ~invalid
+            & domain
+            & interior_supported
+            & ~choose_corner
+            & ~exact
+            & ~above
+            & adjacent
+            & jnp.isfinite(value)
+            & jnp.isfinite(marginal)
+            & jnp.isfinite(saving_on_grid)
+        ),
     )

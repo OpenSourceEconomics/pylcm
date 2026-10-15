@@ -50,6 +50,16 @@ class ScalarEGMQueryResult(NamedTuple):
     bound_status: BoundInputStatus
 
 
+class PreparedScalarEGMQuery(NamedTuple):
+    """Canonical target inputs shared by dependent reads in one compiled cell."""
+
+    floor: ScalarFloat
+    nodes: Float1D
+    status: BoundInputStatus
+    preferences: Preferences
+    beta: ScalarFloat
+
+
 def build_scalar_egm_query(
     *,
     model: ScalarEGMQueryModel,
@@ -134,9 +144,38 @@ class ScalarEGMQuery:
         pool: EconFunctionKwargs,
     ) -> ScalarEGMQueryResult:
         """Keep exact actual domains separate from represented numerical coverage."""
+        return self.read_prepared(
+            query=query,
+            grid=grid,
+            value=value,
+            marginal=marginal,
+            data=data,
+            prepared=self.prepare(pool=pool),
+        )
+
+    def prepare(self, *, pool: EconFunctionKwargs) -> PreparedScalarEGMQuery:
+        """Evaluate the canonical floor and preferences once for dependent reads."""
         floor, nodes, status = self.evaluate_floor(pool=pool)
-        preferences = self.build_preferences(pool)
-        beta = self.read_discount_factor(pool)
+        return PreparedScalarEGMQuery(
+            floor=floor,
+            nodes=nodes,
+            status=status,
+            preferences=self.build_preferences(pool),
+            beta=self.read_discount_factor(pool),
+        )
+
+    def read_prepared(
+        self,
+        *,
+        query: Float1D,
+        grid: Float1D,
+        value: Float1D,
+        marginal: Float1D,
+        data: EGMQueryData,
+        prepared: PreparedScalarEGMQuery,
+    ) -> ScalarEGMQueryResult:
+        """Read with this cell's already checked canonical target context."""
+        floor, nodes, status, preferences, beta = prepared
         domain = query > floor
         provenance_matches = data.floor_used == floor
         lower, upper, weight_upper = locate_on_grid(x_query=query, grid=grid)

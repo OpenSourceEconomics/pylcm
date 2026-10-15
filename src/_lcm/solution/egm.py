@@ -28,6 +28,7 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree, egm_query_role_tree
+from _lcm.egm.interp import interp_on_regular_grid
 from _lcm.egm.one_asset_egm_step import RetiredEGMResult
 from _lcm.egm.preferences import Preferences
 from _lcm.egm.query_data import (
@@ -35,7 +36,11 @@ from _lcm.egm.query_data import (
     QueryNodeKind,
     build_template_egm_query_data,
 )
-from _lcm.egm.scalar_query import ScalarEGMQuery, build_scalar_egm_query
+from _lcm.egm.scalar_query import (
+    PreparedScalarEGMQuery,
+    ScalarEGMQuery,
+    build_scalar_egm_query,
+)
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -96,6 +101,7 @@ from _lcm.typing import (
     RegimeTransitionFunction,
     ShapeDtypePytree,
 )
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.exceptions import (
     InvalidValueFunctionError,
@@ -622,7 +628,16 @@ class EGM(OneMarginSolver):
                 )
             if group_key not in cores:
                 resolved = resolve_solver_build_context(context=context, period=period)
+                laws[group_key] = build_declared_liquid_law(
+                    transitions=resolved.transitions,
+                    functions=resolved.functions,
+                    post_decision_name=bound.post_decision_function,
+                    target=target,
+                    target_state=target_state,
+                    variable_names=variable_names,
+                )
                 core = _build_egm_core(
+                    declared_law=laws[group_key],
                     savings_grid=savings_grid
                     if current_model is None
                     else current_model.offsets,
@@ -664,14 +679,6 @@ class EGM(OneMarginSolver):
                 source_queries[group_key] = core.current_query
                 if core.next_query is not None:
                     child_capabilities[group_key] = core.next_query.capabilities
-                laws[group_key] = build_declared_liquid_law(
-                    transitions=resolved.transitions,
-                    functions=resolved.functions,
-                    post_decision_name=bound.post_decision_function,
-                    target=target,
-                    target_state=target_state,
-                    variable_names=variable_names,
-                )
             period_group_keys[period] = group_key
             if group_key in child_capabilities:
                 reader_capabilities[period] = MappingProxyType(
@@ -1055,11 +1062,7 @@ class _EGMArgumentBuilder:
                     transition_target_names=self.transition_target_names,
                 ),
                 "period": jnp.int32(context.period),
-                **(
-                    {"age": cast("TimeAxis", context.ages).values[context.period]}
-                    if self.current_query is not None
-                    else {}
-                ),
+                "age": cast("TimeAxis", context.ages).values[context.period],
             }
         )
 
@@ -1444,6 +1447,7 @@ def _build_egm_core(
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
     consumption_action: ActionName,
+    declared_law: Callable[..., tuple[Float1D, Float1D]],
     current_query: ScalarEGMQuery | None = None,
     next_query: ScalarEGMQuery | None = None,
 ) -> _EGMCore:
@@ -1455,10 +1459,9 @@ def _build_egm_core(
     with savings), and the regime's scalar params. It runs `egm_one_asset_step`
     and returns the value array and the marginal-value carry on the liquid grid.
 
-    The law's two readings arrive as arrays rather than being composed here:
-    they are properties of the params alone, so the period adapter evaluates
-    them once outside the compiled region — which is also what lets their
-    ordering be checked, a Python-level decision no traced value can make.
+    The period adapter checks the law's Euler-node readings outside the compiled
+    region. The core also uses the same composed law to value reconstructed interior
+    actions at their actual associated savings, with source time and parameters.
 
     Preferences and the discount factor come from the regime itself: the
     felicity trio is bound out of `functions` at each call, and beta is read
@@ -1483,6 +1486,7 @@ def _build_egm_core(
     )
     return _EGMCore(
         egm_one_asset_step=egm_one_asset_step,
+        declared_law=declared_law,
         build_preferences=build_preferences,
         read_discount_factor=read_discount_factor,
         current_query=current_query,
@@ -1496,6 +1500,8 @@ class _EGMCore:
 
     egm_one_asset_step: Callable[..., RetiredEGMResult]
     """The one-asset EGM step the core runs."""
+    declared_law: Callable[..., tuple[Float1D, Float1D]]
+    """Actual source law used to value reconstructed associated savings."""
     build_preferences: Callable[[EconFunctionKwargs], Preferences]
     """Build the felicity trio from the regime's scalar params."""
     read_discount_factor: Callable[[EconFunctionKwargs], ScalarFloat]
@@ -1524,6 +1530,7 @@ class _EGMCore:
     ) -> OneRowOutput:
         """Run one EGM step and return the value array and the marginal-value carry."""
         continuation_args = {}
+        prepared_child = None
         statuses = () if source_bound_status is None else (source_bound_status,)
         coverage = jnp.asarray(a=False)
         if self.next_query is not None:
@@ -1531,13 +1538,14 @@ class _EGMCore:
                 raise TypeError(
                     "A model-bound scalar query lacks its declared numeric inputs."
                 )
-            result = self.next_query(
+            prepared_child = self.next_query.prepare(pool=next_query_pool)
+            result = self.next_query.read_prepared(
                 query=next_liquid,
                 grid=next_liquid_grid,
                 value=next_value,
                 marginal=next_marginal,
                 data=next_query_data,
-                pool=next_query_pool,
+                prepared=prepared_child,
             )
             continuation_args = {
                 "continuation_value": result.value,
@@ -1549,14 +1557,16 @@ class _EGMCore:
             raise UnsupportedOperationError(
                 "Feature rows require the model-bound query adapter."
             )
+        preferences = self.build_preferences(params)
+        beta = self.read_discount_factor(params)
         step = self.egm_one_asset_step(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
             next_liquid_grid=next_liquid_grid,
             savings_grid=effective_savings_grid,
-            discount_factor=self.read_discount_factor(params),
-            preferences=self.build_preferences(params),
+            discount_factor=beta,
+            preferences=preferences,
             next_liquid=next_liquid,
             marginal_return=marginal_return,
             **continuation_args,
@@ -1564,6 +1574,19 @@ class _EGMCore:
         )
         if step.coverage_missing is not None:
             coverage |= jnp.any(step.coverage_missing)
+        value, marginal, valuation_coverage = self._value_reconstructed_action(
+            step=step,
+            effective_savings_grid=effective_savings_grid,
+            next_liquid_grid=next_liquid_grid,
+            next_value=next_value,
+            next_marginal=next_marginal,
+            next_query_data=next_query_data,
+            prepared_child=prepared_child,
+            preferences=preferences,
+            beta=beta,
+            params=params,
+        )
+        coverage |= valuation_coverage
         query_data = None
         if self.current_query is not None:
             if step.savings is None or step.corner_continuation is None:
@@ -1571,11 +1594,11 @@ class _EGMCore:
             legal = liquid > effective_savings_grid[0]
             finite = (
                 legal
-                & jnp.isfinite(step.value)
-                & jnp.isfinite(step.marginal)
+                & jnp.isfinite(value)
+                & jnp.isfinite(marginal)
                 & jnp.isfinite(step.savings)
             )
-            economic = legal & jnp.isneginf(step.value) & jnp.isfinite(step.savings)
+            economic = legal & jnp.isneginf(value) & jnp.isfinite(step.savings)
             kinds = jnp.where(
                 finite,
                 QueryNodeKind.FINITE,
@@ -1609,22 +1632,74 @@ class _EGMCore:
             )
         carry = EGMCarry(
             endog_grid=liquid,
-            value=step.value,
-            marginal_utility=step.marginal,
-            taste_shock_scale=jnp.asarray(0.0, dtype=step.value.dtype),
+            value=value,
+            marginal_utility=marginal,
+            taste_shock_scale=jnp.asarray(0.0, dtype=value.dtype),
             query_data=query_data,
         )
         if self.current_query is not None or self.next_query is not None:
             counts = count_current_feasibility(
                 budget_feasible=(liquid > effective_savings_grid[0])[:, None],
                 predicate_feasible=jnp.ones((liquid.size, 1, 0), dtype=jnp.bool_),
-                value=step.value,
+                value=value,
                 active_states=jnp.ones(liquid.shape, dtype=jnp.bool_),
             )
             return BoundedResult(
-                output=(step.value, carry, counts, coverage), bound_status=statuses
+                output=(value, carry, counts, coverage), bound_status=statuses
             )
-        return step.value, carry
+        return value, carry
+
+    def _value_reconstructed_action(
+        self,
+        *,
+        step: RetiredEGMResult,
+        effective_savings_grid: Float1D,
+        next_liquid_grid: Float1D,
+        next_value: Float1D,
+        next_marginal: Float1D,
+        next_query_data: EGMQueryData | None,
+        prepared_child: PreparedScalarEGMQuery | None,
+        preferences: Preferences,
+        beta: ScalarFloat,
+        params: EconFunctionKwargs,
+    ) -> tuple[Float1D, Float1D, BoolND]:
+        """Value strict interior actions against the installed child value reader."""
+        if step.savings is None or step.rescore_interior is None:
+            raise TypeError("A plain EGM producer lacks associated action provenance.")
+        rescore = step.rescore_interior
+        coverage = jnp.asarray(a=False)
+        valuation_landing, _ = self.declared_law(
+            savings_grid=jnp.where(rescore, step.savings, effective_savings_grid[0]),
+            **params,
+        )
+        if self.next_query is not None:
+            if next_query_data is None or prepared_child is None:
+                raise TypeError("A scalar valuation lacks its prepared target inputs.")
+            valuation = self.next_query.read_prepared(
+                query=valuation_landing,
+                grid=next_liquid_grid,
+                value=next_value,
+                marginal=next_marginal,
+                data=next_query_data,
+                prepared=prepared_child,
+            )
+            continuation_value = valuation.value
+            coverage |= jnp.any(rescore & valuation.coverage_missing)
+        else:
+            continuation_value = interp_on_regular_grid(
+                x_query=valuation_landing, xp=next_liquid_grid, fp=next_value
+            )
+        safe_consumption = jnp.where(rescore, step.consumption, 1.0)
+        action_value = preferences.utility(safe_consumption) + zero_safe_weighted_term(
+            weight=beta,
+            value=jnp.where(rescore, continuation_value, 0.0),
+            subnormal_is_accounted_for=False,
+        )
+        value = jnp.where(rescore, action_value, step.value)
+        # Finite actions retain their economic envelope approximation. An impossible
+        # continuation has the neutral marginal used by economic minus-infinity rows.
+        marginal = jnp.where(rescore & jnp.isneginf(action_value), 0.0, step.marginal)
+        return value, marginal, coverage
 
 
 def guard_regime_mass(*, core: OneRowCore, enable_jit: bool) -> OneRowCore:

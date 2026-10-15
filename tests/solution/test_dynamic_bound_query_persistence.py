@@ -579,6 +579,7 @@ def test_one_row_query_transport_has_explicit_model_adapter_refusal() -> None:
         state_shape=(), action_shape=(), row_capacity=5, interval_capacity=1
     )
     core = _EGMCore(
+        declared_law=lambda **_: pytest.fail("Query data reached the declared law."),
         egm_one_asset_step=lambda **_: pytest.fail(
             "Query data reached the legacy step."
         ),
