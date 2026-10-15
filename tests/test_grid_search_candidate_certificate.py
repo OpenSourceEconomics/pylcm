@@ -124,6 +124,7 @@ from lcm.typing import (
 from tests.candidate_certificate.direct_flow import (
     _feasibility_summary_errors,
     direct_flow_mutation_specs,
+    s03_scalar_mutation_specs,
     supplemental_direct_flow_mutation_specs,
     verify_direct_candidate_flow,
 )
@@ -3077,6 +3078,7 @@ def test_s03_scalar_sources_have_literal_inventory_obligations() -> None:
     assert isinstance(_parse("src/_lcm/constraints/bounds.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/budget.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/declared_law.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/euler.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/interp.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/numeric_inverse.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/one_asset_egm_step.py"), ast.Module)
@@ -3091,3 +3093,61 @@ def test_s03_scalar_sources_have_literal_inventory_obligations() -> None:
     assert isinstance(_parse("src/_lcm/solution/feasibility.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/model_authority.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/zero_safe.py"), ast.Module)
+
+
+_S03_OWNED_NUMERICAL_HELPERS = (
+    ("src/_lcm/egm/one_asset_egm_step.py", "_solve_viable_feature_row"),
+    ("src/_lcm/egm/euler.py", "invert_euler"),
+)
+
+
+@pytest.mark.parametrize(("relative", "helper"), _S03_OWNED_NUMERICAL_HELPERS)
+def test_s03_owned_numerical_helpers_have_body_mutation_controls(
+    *, relative: str, helper: str
+) -> None:
+    """Require named body mutation controls for owned viability and Euler helpers."""
+    specs = s03_scalar_mutation_specs(repo_root=_SRC_ROOT.parent)
+    key = f"s03_scalar:{relative}:{helper}"
+    assert key in specs, f"Missing owned numerical helper body control: {key}"
+    spec = specs[key]
+    assert spec["path"] == relative
+    assert relative in derive_source_paths(Path(__file__))
+    function = _definition(tree=ast.parse(spec["source"]), qualname=helper)
+    assert isinstance(function, ast.FunctionDef)
+    assert ast.dump(ast.Module(body=function.body, type_ignores=[])) == ast.dump(
+        ast.parse("return None")
+    )
+
+
+@pytest.mark.parametrize(("relative", "helper"), _S03_OWNED_NUMERICAL_HELPERS)
+def test_s03_owned_numerical_helper_body_adds_explicit_detection(
+    *, relative: str, helper: str, tmp_path: Path
+) -> None:
+    """Require helper corruption to add its diagnostic beyond existing pin errors."""
+    root = _SRC_ROOT.parent
+    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
+    for source in {*sources, relative}:
+        target = tmp_path / source
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text((root / source).read_text(), encoding="utf-8")
+    baseline = verify_direct_candidate_flow(repo_root=tmp_path)
+    diagnostic = f"S03 scalar dependency: exact callable corridor {helper!r} changed"
+    assert diagnostic not in baseline["errors"], (
+        (
+            "Unmodified helper already has a stale callable pin; mutation sensitivity "
+            "cannot be inferred from that baseline error."
+        ),
+        baseline["errors"],
+    )
+    target = tmp_path / relative
+    tree = ast.parse(target.read_text(encoding="utf-8"))
+    function = _definition(tree=tree, qualname=helper)
+    assert isinstance(function, ast.FunctionDef)
+    function.body = ast.parse("return None").body
+    target.write_text(ast.unparse(tree) + "\n", encoding="utf-8")
+    mutated = verify_direct_candidate_flow(repo_root=tmp_path)
+    assert diagnostic in mutated["errors"], {
+        "required_additional_diagnostic": diagnostic,
+        "baseline_errors": baseline["errors"],
+        "mutated_errors": mutated["errors"],
+    }

@@ -243,6 +243,7 @@ S02_LANDING_COUNTS_SOURCE = "src/_lcm/solution/landing_counts.py"
 
 S02__LCM_EGM_OUTER_ENVELOPE_SOURCE = "src/_lcm/egm/outer_envelope.py"
 
+S03_EULER_SOURCE = "src/_lcm/egm/euler.py"
 S03_DECLARED_LAW_SOURCE = "src/_lcm/egm/declared_law.py"
 S03_INTERP_SOURCE = "src/_lcm/egm/interp.py"
 S03_NUMERIC_INVERSE_SOURCE = "src/_lcm/egm/numeric_inverse.py"
@@ -251,6 +252,7 @@ S03_PREFERENCES_SOURCE = "src/_lcm/egm/preferences.py"
 S03_SCALAR_QUERY_SOURCE = "src/_lcm/egm/scalar_query.py"
 
 _CERTIFIED_CORRIDOR_SOURCES = (
+    S03_EULER_SOURCE,
     S03_DECLARED_LAW_SOURCE,
     S03_INTERP_SOURCE,
     S03_NUMERIC_INVERSE_SOURCE,
@@ -394,6 +396,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # Source seals and corridor anchors require semantic verification of the combined
 # inventories before refresh; these inherited pins deliberately retain that gate.
 _SOURCE_SEALS = {
+    S03_EULER_SOURCE: "a5e95cde939adcefdf3d8310f6617df4f203ae3479bc318cd92ac51c020d0f55",
     S03_DECLARED_LAW_SOURCE: "635329b1a16ebe7b80ae57acfcc3fa3fd2c1b65a7b6778d1f72dc985f47e0e69",
     S03_INTERP_SOURCE: "4eee527815c5a2fdec690a349f5bf303a13c667b3142036f07dbda3e0ba92765",
     S03_NUMERIC_INVERSE_SOURCE: "57b4d9983131c5b4ce102c96372c21517b7d8932e0e5d576a4e95e585a7597ea",
@@ -558,6 +561,12 @@ EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
 # `_surface_pin`, so one reviewed fact is never written twice, and a stored pin
 # that no family selects is a verifier error rather than a silent no-op.
 _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
+    S03_EULER_SOURCE: (
+        "944d6c6dbb26155884fc73c821f47f602361ae70cced81f2175ebce029824ad5",
+        {
+            "invert_euler": "4cf2bc5c6acf096274efe52bd4f82fc57afde7abdc86e9a2c7043e7a4a251f8e",
+        },
+    ),
     S03_DECLARED_LAW_SOURCE: (
         "8ad22099349717932ce8fd500fd77db9b11eadbbe3953c1caed31dd8c0198a17",
         {
@@ -586,6 +595,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         "b1d4d48a2adf58372e6e1e96fb49511098771bd5852a1f660848a1df96ad7457",
         {
             "egm_one_asset_step": "8b67637d065490a1d6523908daeb78a83af7bdffe9f96c8e5e6f3ab210f4b82a",
+            "_solve_viable_feature_row": "44044c5c0e8f63b08acc2ae142f650b1a4420dc5963477217a52cc48954e9f97",
         },
     ),
     S03_PREFERENCES_SOURCE: (
@@ -6693,6 +6703,7 @@ def _borrowing_bound_errors(*, tree: ast.Module, source: SourcePath) -> list[str
 
 _S03_SCALAR_CONTRACTS = _contracts(
     {
+        S03_EULER_SOURCE: ("invert_euler",),
         "src/_lcm/constraints/bounds.py": ("_SavingsGridLowerBoundProof.__call__",),
         "src/_lcm/egm/budget.py": (
             "get_intrinsic_budget_constraint",
@@ -6711,7 +6722,10 @@ _S03_SCALAR_CONTRACTS = _contracts(
             "_expand_upper_bracket",
             "_LogMarginalUtility.__call__",
         ),
-        S03_ONE_ASSET_STEP_SOURCE: ("egm_one_asset_step",),
+        S03_ONE_ASSET_STEP_SOURCE: (
+            "egm_one_asset_step",
+            "_solve_viable_feature_row",
+        ),
         S03_PREFERENCES_SOURCE: (
             "newton_action_ceiling",
             "get_numeric_inverse_marginal_utility",
@@ -11220,9 +11234,9 @@ def _callable_mutation_specs(
     return result
 
 
-EXPECTED_S03_SCALAR_MUTATION_COUNT = 55
+EXPECTED_S03_SCALAR_MUTATION_COUNT = 57
 EXPECTED_S03_SCALAR_MUTATION_NAMES_SHA256 = (
-    "e7d454beb07f5610f5b1a0c2d864d7e1361b47abbd9c8ace9362449c33a47bb3"
+    "070c43d068455d31f3b1c9c54502149253ca9ce3a97bc39a22158283310c7487"
 )
 
 
