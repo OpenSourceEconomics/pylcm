@@ -15,6 +15,7 @@ precision.
 
 import math
 from fractions import Fraction
+from functools import partial
 from types import MappingProxyType
 
 import jax
@@ -1629,3 +1630,167 @@ def test_authored_keeps_a_phased_object_and_strips_a_wrapped_side():
     assert stripped is not adapted
     assert stripped.solve is _identity_wealth
     assert stripped.simulate is _identity_wealth
+
+
+# A Markov draw on an edge whose target does not carry the drawn state is resolved
+# at the support nodes of the canonical plan, not on a target grid it lacks.
+
+
+def _source_only_values(*, zero_mass_last: bool) -> dict[str, list[float]]:
+    """Exact values: utility `x + a`, then `100 + y` with `y = 1{x' >= 1}`, beta 1/2."""
+    weights = (
+        (Fraction(1, 2), Fraction(1, 2), Fraction(0))
+        if zero_mass_last
+        else (Fraction(1, 4), Fraction(1, 4), Fraction(1, 2))
+    )
+    terminal = (Fraction(100), Fraction(101))
+    continuation = sum(
+        (mass * terminal[int(node >= 1)] for node, mass in enumerate(weights)),
+        start=Fraction(0),
+    )
+    source = [
+        float(max(Fraction(x + a) + Fraction(1, 2) * continuation for a in (0, 1)))
+        for x in (0, 1, 2)
+    ]
+    return {"source": source, "terminal": [float(value) for value in terminal]}
+
+
+def _source_utility(*, x: DiscreteState, a: DiscreteAction) -> FloatND:
+    return 1.0 * x + a
+
+
+def _y_terminal_utility(*, y: DiscreteState) -> FloatND:
+    return 100.0 + y
+
+
+def _y_from_next_x(*, next_x: DiscreteState) -> DiscreteState:
+    return (next_x >= 1).astype(jnp.int32)
+
+
+def _source_only_model(
+    *,
+    form: str,
+    enable_jit: bool,
+    zero_mass_last: bool,
+    invalid_phase: str | None = None,
+) -> Model:
+    lottery = StochasticTransition(
+        func=_half_half_nothing if zero_mass_last else _quarter_quarter_half
+    )
+    y_law = {
+        None: _y_from_next_x,
+        "both": _y_off_grid_at_high_x,
+        "solve": Phased(solve=_y_off_grid_at_high_x, simulate=_y_from_next_x),
+        "simulate": Phased(solve=_y_from_next_x, simulate=_y_off_grid_at_high_x),
+    }[invalid_phase]
+    return Model(
+        n_periods=2,
+        regimes={
+            "source": UserRegime(
+                states={"x": DiscreteGrid(category_class=_ThreeCodes)},
+                actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+                state_transitions={
+                    "x": (
+                        lottery
+                        if form == "bare"
+                        else Phased(solve=lottery, simulate=lottery)
+                    ),
+                    "y": y_law,
+                },
+                functions={"utility": _source_utility},
+            ),
+            "target": UserRegime(
+                states={"y": DiscreteGrid(category_class=_TwoCodes)},
+                functions={"utility": _y_terminal_utility},
+            ),
+        },
+        regime_id_class=_SourceTarget,
+        initial_nodes=InitialNodes(by_period={0: "source"}),
+        edges={"source": {"target": Periods(values=(0,))}},
+        enable_jit=enable_jit,
+    )
+
+
+@pytest.mark.parametrize("form", ["bare", "phased"])
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("zero_mass_last", [False, True])
+@pytest.mark.parametrize("runtime_checks", [False, True])
+def test_source_only_markov_draw_validates_and_solves_exactly(
+    *, form, enable_jit, zero_mass_last, runtime_checks
+):
+    """The target carries `y` but not `x`, whose draw lives on this edge only."""
+    model = _source_only_model(
+        form=form, enable_jit=enable_jit, zero_mass_last=zero_mass_last
+    )
+    model.validate_transitions(params=_LOTTERY_PARAMS)
+    got = model.solve(
+        params=_LOTTERY_PARAMS, log_level="off", runtime_checks=runtime_checks
+    )
+    expected = _source_only_values(zero_mass_last=zero_mass_last)
+    np.testing.assert_array_equal(
+        np.asarray(got.values[0]["source"]), expected["source"]
+    )
+    np.testing.assert_array_equal(
+        np.asarray(got.values[1]["target"]), expected["terminal"]
+    )
+
+
+@pytest.mark.parametrize("form", ["bare", "phased"])
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("supply_solution", [False, True])
+def test_checked_simulation_accepts_a_source_only_markov_draw(
+    *, form, enable_jit, supply_solution
+):
+    model = _source_only_model(form=form, enable_jit=enable_jit, zero_mass_last=False)
+    solution = (
+        model.solve(params=_LOTTERY_PARAMS, log_level="off", runtime_checks=False)
+        if supply_solution
+        else None
+    )
+    panel = model.simulate(
+        params=_LOTTERY_PARAMS,
+        initial_conditions={
+            "x": jnp.asarray([0, 1, 2], dtype=jnp.int32),
+            "period": jnp.asarray([0, 0, 0], dtype=jnp.int32),
+            "regime_id": jnp.asarray([_SourceTarget.source] * 3, dtype=jnp.int32),
+        },
+        solution=solution,
+        seed=19,
+        log_level="off",
+        runtime_checks=True,
+    ).to_dataframe(use_labels=False)
+    source = panel.loc[panel["period"] == 0]
+    target = panel.loc[panel["period"] == 1]
+    assert len(source) == len(target) == 3
+    np.testing.assert_array_equal(source["a"].to_numpy(), [1, 1, 1])
+    assert target["y"].notna().all()
+    assert set(target["y"].to_numpy()) <= {0, 1}
+
+
+@pytest.mark.parametrize("form", ["bare", "phased"])
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("zero_mass_last", [False, True])
+@pytest.mark.parametrize("invalid_phase", ["solve", "simulate", "both"])
+@pytest.mark.parametrize("entry", ["validate", "checked_solve"])
+def test_off_grid_output_of_a_source_only_markov_draw_is_refused(
+    *, form, enable_jit, zero_mass_last, invalid_phase, entry
+):
+    """Node 2 leaves `y`'s grid in each phase that reads it, at zero mass too."""
+    model = _source_only_model(
+        form=form,
+        enable_jit=enable_jit,
+        zero_mass_last=zero_mass_last,
+        invalid_phase=invalid_phase,
+    )
+    check = (
+        partial(model.validate_transitions, params=_LOTTERY_PARAMS)
+        if entry == "validate"
+        else partial(
+            model.solve, params=_LOTTERY_PARAMS, log_level="off", runtime_checks=True
+        )
+    )
+    with pytest.raises(InvalidStateTransitionError, match="next_y") as error:
+        check()
+    assert "'next_x': 2" in str(error.value)
+    assert "'source'" in str(error.value)
+    assert "'target'" in str(error.value)
