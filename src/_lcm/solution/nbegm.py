@@ -7801,6 +7801,8 @@ class _NBEGMDiscreteSpec:
     coh_param_names: tuple[QualifiedName, ...]
     """Qualified parameter names `coh` reads (excluding the liquid state and the
     discrete actions)."""
+    coh_action_names: tuple[ActionName, ...]
+    """Discrete action names read by the composed resource function."""
     liquid_state_name: StateName
     """Name of the liquid state the budget varies in."""
     discrete_actions: DiscreteActionCodes
@@ -7864,6 +7866,7 @@ def _collect_nbegm_discrete_spec(
     return _NBEGMDiscreteSpec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
+        coh_action_names=tuple(name for name in coh_args if name in action_names),
         liquid_state_name=liquid_state_name,
         discrete_actions=discrete_actions,
         param_checks=(affinity_check,),
@@ -7887,6 +7890,8 @@ class _NBEGMScheduleDiscreteSpec:
     coh_param_names: tuple[QualifiedName, ...]
     """Qualified parameter names the budget reads (excluding the liquid state and the
     discrete actions)."""
+    coh_action_names: tuple[ActionName, ...]
+    """Discrete action names read by the composed resource function."""
     liquid_state_name: StateName
     """Name of the liquid (Euler) state the budget varies in."""
     discrete_actions: DiscreteActionCodes
@@ -7991,6 +7996,7 @@ def _collect_nbegm_schedule_discrete_spec(
     return _NBEGMScheduleDiscreteSpec(
         coh_of_liquid_action_dag=coh_dag,
         coh_param_names=coh_param_names,
+        coh_action_names=tuple(name for name in coh_args if name in action_names),
         liquid_state_name=liquid_state_name,
         discrete_actions=discrete_actions,
         threshold_param_names=threshold_param_names,
@@ -8129,7 +8135,10 @@ class _NBEGMScheduleDiscreteCore:
                 func=spec.coh_of_liquid_action_dag,
                 argument_name=spec.liquid_state_name,
                 bound={
-                    **{name: jnp.asarray(code) for name, code in binding.items()},
+                    **{
+                        name: jnp.asarray(binding[name])
+                        for name in spec.coh_action_names
+                    },
                     **coh_params,
                 },
             )
@@ -8263,7 +8272,10 @@ class _NBEGMDiscreteCore:
                 func=discrete_spec.coh_of_liquid_dag,
                 argument_name=discrete_spec.liquid_state_name,
                 bound={
-                    **{name: jnp.asarray(code) for name, code in binding.items()},
+                    **{
+                        name: jnp.asarray(binding[name])
+                        for name in discrete_spec.coh_action_names
+                    },
                     **coh_params,
                 },
             )
