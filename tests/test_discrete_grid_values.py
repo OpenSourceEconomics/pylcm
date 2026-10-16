@@ -34,6 +34,7 @@ from _lcm.regime_building.value_adapter import (
     adapt_user_function,
     collect_value_grids,
 )
+from _lcm.simulation.transitions import _fail_if_realized_codes_leave_the_grid
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -47,6 +48,7 @@ from lcm import (
     JointTransition,
     LinSpacedGrid,
     Model,
+    NormalIIDProcess,
     Periods,
     Phased,
     ProjectedRegimeValue,
@@ -2221,3 +2223,21 @@ def test_on_grid_law_behind_a_value_gate_solves():
         params={"discount_factor": 1.0}, log_level="off", runtime_checks=True
     )
     np.testing.assert_array_equal(np.asarray(got.values[0]["source"]), [20.0, 20.0])
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_realized_code_check_takes_the_float_values_of_a_shock_process(*, enabled):
+    """The realized check sees every non-continuous state, a shock process too."""
+    process = NormalIIDProcess(
+        n_points=3, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0
+    )
+    _fail_if_realized_codes_leave_the_grid(
+        enabled=enabled,
+        codes=jnp.asarray([0.25, -1.5]),
+        grid=process,
+        subjects=jnp.asarray([True, True]),
+        new_regime_ids=jnp.asarray([0, 0], dtype=jnp.int32),
+        target_id=jnp.int32(0),
+        description="a shock process",
+        memory=None,
+    )
