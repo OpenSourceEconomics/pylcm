@@ -77,6 +77,7 @@ from _lcm.simulation.gated_routing import (
 from _lcm.simulation.initial_conditions import (
     _initial_own_stakeholder,
     build_initial_states,
+    physical_state_at_row,
     trim_pad_from_raw_results,
 )
 from _lcm.simulation.membership import (
@@ -183,6 +184,7 @@ from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
+    NoFeasibleActionError,
     UnrepresentableOuterCandidateError,
 )
 from lcm.result import SimulationResult
@@ -1882,6 +1884,30 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 value=V_arr,
                 n_subjects=n_chunk_subjects,
                 memory=memory,
+            )
+        empty_row = run_simulation_operation(
+            memory=memory,
+            function=_first_empty_action_row,
+            arguments={
+                "indices": indices_optimal_actions,
+                "in_regime": subject_ids_in_regime,
+            },
+            subject_arg_names=("indices", "in_regime"),
+        ).item()
+        if empty_row >= 0 and sim_policy is None:
+            state = physical_state_at_row(
+                regime=regime,
+                states=state_action_space.states,
+                row=empty_row,
+                regime_params={
+                    **regime.resolved_fixed_params,
+                    **regime_kernel_params(flat_params, regime_name=regime_name),
+                },
+                memory=memory,
+            )
+            raise NoFeasibleActionError(
+                f"Regime '{regime_name}', period {period}, state {state} "
+                "has no feasible action."
             )
         optimal_actions = run_simulation_operation(
             memory=memory,
@@ -4167,6 +4193,13 @@ def _resources_at_subjects(
         ),
         (n_subjects,),
     )
+
+
+def _first_empty_action_row(*, indices: IntND, in_regime: BoolND) -> IntND:
+    """Find an owned empty decision, excluding other regimes and padding."""
+    rows = jnp.arange(in_regime.shape[0], dtype=jnp.int32)
+    first = jnp.min(jnp.where(in_regime & (indices < 0), rows, in_regime.shape[0]))
+    return jnp.where(first < in_regime.shape[0], first, -1)
 
 
 def _lookup_values_from_indices(

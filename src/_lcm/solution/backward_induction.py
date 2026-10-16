@@ -186,7 +186,13 @@ from _lcm.solution.diagnostics import (
     _emit_post_loop_diagnostics,
     _fold_period_diagnostics,
     _init_diagnostic_accumulators,
+    _materialize_period_feasibility_counts,
     _states_for_period,
+)
+from _lcm.solution.feasibility import (
+    FeasibilityCounts,
+    FeasibilityKernelOutput,
+    add_feasibility_counts,
 )
 from _lcm.solution.grid_search import _GridSearchArgumentBuilder
 from _lcm.solution.kernel_attribution import (
@@ -337,6 +343,7 @@ type _DispatchOutputs = tuple[
     Mapping[ArtifactKey, ArtifactPayload],
     SimulationPolicy | None,
     BoolND | None,
+    FeasibilityCounts | None,
     tuple[FloatND | IntND | BoolND | None, ...],
 ]
 
@@ -999,6 +1006,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             diagnostic_mean=diagnostic_mean,
                             running_any_nan=running_any_nan,
                             running_any_inf=running_any_inf,
+                            feasibility_counts=result.feasibility_counts,
                         )
 
                         period_solution[regime_name] = V_arr
@@ -1015,6 +1023,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             result.auxiliary_artifacts,
                             result.simulation_policy,
                             result.dissolution,
+                            result.feasibility_counts,
                             _diagnostic_arrays(
                                 diagnostics=()
                                 if result.diagnostics is None
@@ -1057,6 +1066,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 period_auxiliary_artifacts,
                                 period_simulation_policies,
                                 period_dissolution_flags,
+                                result.feasibility_counts,
                                 _diagnostic_arrays(
                                     diagnostics=tuple(
                                         period_solver_diagnostics.values()
@@ -1134,6 +1144,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         # serialises dispatch order, so a finished `mean`
                         # implies a finished `min`/`max` too.
                         diagnostic_mean[-1].block_until_ready()
+                _materialize_period_feasibility_counts(
+                    diagnostic_rows=diagnostic_rows,
+                    period=period,
+                    enabled=logger.isEnabledFor(logging.WARNING),
+                )
 
                 # Fold each declared gated edge whose target
                 # was solved this period onto the target grid, and roll the resulting
@@ -1614,12 +1629,26 @@ def _run_dispatch_unit(
             True,
         )
     value: FloatND | None = None
+    feasibility_counts: FeasibilityCounts | None = None
     for name in bound:
         binding = cast("InvariantBinding", graph[name].invariant_binding)
         output = run_kernel(
             compiled_cores=MappingProxyType({name: compiled_cores[name]}),
             capture_target=None,
         )
+        if type(output) is FeasibilityKernelOutput:
+            counts = output.feasibility_counts
+            feasibility_counts = (
+                counts
+                if feasibility_counts is None
+                else add_feasibility_counts(
+                    total=feasibility_counts,
+                    block=(
+                        jax.device_put(counts[0], feasibility_counts[0].sharding),
+                        jax.device_put(counts[1], feasibility_counts[1].sharding),
+                    ),
+                )
+            )
         value = write_block(
             value=value,
             block=cast("FloatND", output.value),
@@ -1627,7 +1656,13 @@ def _run_dispatch_unit(
             axis=axis_names.index(binding.state_name),
             template=value_template,
         )
-    return KernelOutput(value=cast("FloatND", value)), True
+    return (
+        KernelOutput(value=cast("FloatND", value))
+        if feasibility_counts is None
+        else FeasibilityKernelOutput(
+            value=cast("FloatND", value), feasibility_counts=feasibility_counts
+        )
+    ), True
 
 
 def _cores_with_transfer_cache(
@@ -3121,17 +3156,53 @@ def _resident_inventory_by_triple(
         )
         for period in range(_model_n_periods(regimes=regimes))
     }
+    counters_by_period = {
+        period: _period_feasibility_counter_reservations(
+            active=_regimes_active_at_period(regimes=regimes, period=period),
+            device_ids_by_regime=device_ids_by_regime,
+        )
+        for period in range(_model_n_periods(regimes=regimes))
+    }
     return MappingProxyType(
         {
             (regime_name, period, core_key): dataclasses.replace(
                 resident[(period, regime_name)],
-                fixed_bytes=fixed_bytes,
+                fixed_bytes=MappingProxyType(
+                    {
+                        **fixed_bytes,
+                        **{
+                            device: fixed_bytes.get(device, 0) + size
+                            for device, size in counters_by_period[period].items()
+                        },
+                    }
+                ),
                 shared_copies=copies_by_period[period],
                 transfer_scratch_bytes=scratch_by_period[period],
             )
             for (regime_name, period), core_keys in program_keys_by_cell.items()
             for core_key in core_keys
         }
+    )
+
+
+def _period_feasibility_counter_reservations(
+    *,
+    active: frozenset[RegimeName],
+    device_ids_by_regime: Mapping[RegimeName, frozenset[int]],
+) -> MappingProxyType[int, int]:
+    """Reserve the period's native feasibility counters until its barrier.
+
+    Every active regime publishes an int32 pair, and merging invariant blocks
+    holds one more. Each pair is charged on every device an active regime runs
+    on, which conservatively covers wherever a replicated counter is placed;
+    a device no active regime runs on holds none.
+    """
+    size = 2 * np.dtype(np.int32).itemsize * (len(active) + 1)
+    return MappingProxyType(
+        dict.fromkeys(
+            sorted(frozenset().union(*(device_ids_by_regime[name] for name in active))),
+            size,
+        )
     )
 
 

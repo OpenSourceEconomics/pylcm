@@ -49,6 +49,16 @@ Applications with stronger finite-value requirements must retain their own infin
 invariant. See [Solving and Simulating](solving_and_simulating.md) for the independent
 output and validation controls and snapshot behavior.
 
+GridSearch simulation always raises `lcm.exceptions.NoFeasibleActionError` when an owned
+subject reaches a state with no feasible action, including with output and runtime
+checks disabled. The error names the regime, period and realized state. Solve may retain
+such states because they can be unreachable; warning output counts them per regime and
+period, separately from other infinite values. A feasible action whose value is negative
+infinity is not an empty action set. Collective counts refer to household decisions, and
+valid dissolution routes retain their fallback behavior. Folded counts describe the
+retained state cells with an empty decision anywhere on their positive-weight quadrature
+support. GridSearch state domains must fit its native int32 counters.
+
 ### Check transition laws without a solve
 
 While assembling a calibration, run the same transition preflight as a checked solve:

@@ -51,6 +51,11 @@ from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import ExecutableCache
 from _lcm.solution.contract import BackwardInductionResult, PeriodKernel
+from _lcm.solution.diagnostics import (
+    FeasibilityWarnings,
+    collect_component_feasibility_warnings,
+    emit_component_feasibility_warnings,
+)
 from _lcm.solution.grid_search import _GridSearchPeriodKernel
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.solution.v_topology import (
@@ -767,6 +772,8 @@ class ComponentSchedule:
         self._solve = solve
         self._cache = ExecutableCache()
         self._logger = logger
+        self._feasibility_warnings: FeasibilityWarnings = {}
+        self._unflushed_codes: list[int] = []
         self._retained = RetainedComponentValues(
             state_name=state_name,
             codes=tuple(component.code for component in every_component),
@@ -811,10 +818,12 @@ class ComponentSchedule:
         (component,) = (
             component for component in self._components if component.code == code
         )
-        result = self._solve(
-            regimes=component_regimes(regimes=self._regimes, component=component),
-            executable_cache=self._cache,
-        )
+        with collect_component_feasibility_warnings(counts=self._feasibility_warnings):
+            result = self._solve(
+                regimes=component_regimes(regimes=self._regimes, component=component),
+                executable_cache=self._cache,
+            )
+        self._unflushed_codes.append(code)
         values = result.value_functions
         published = {
             "simulation policies": result.simulation_policies,
@@ -851,6 +860,26 @@ class ComponentSchedule:
             self.retain_component(code=component.code, blocks=blocks)
         return self.finish()
 
+    def flush_feasibility_warnings(self) -> None:
+        """Log the empty-set and other-Inf counts of the components solved so far.
+
+        The counts are released once logged, so each is logged exactly once:
+        a later flush, including the one `finish` runs, logs only components
+        solved since. Counts that cover fewer than all components — a
+        selection of the codes, or a run refused before it solved every
+        component — label each message with the blocked-state codes they cover.
+        """
+        codes = tuple(self._unflushed_codes)
+        self._unflushed_codes.clear()
+        every_code = tuple(component.code for component in self._components)
+        emit_component_feasibility_warnings(
+            logger=self._logger,
+            counts=self._feasibility_warnings,
+            scope=""
+            if not codes or (self._subject_codes is None and codes == every_code)
+            else f", {self._components[0].state_name} codes {codes} only",
+        )
+
     def finish(self) -> RetainedComponentValues:
         """Return the complete retention after logging its record.
 
@@ -859,6 +888,7 @@ class ComponentSchedule:
 
         """
         self._retained.coverage.fail_if_incomplete()
+        self.flush_feasibility_warnings()
         if self._logger.isEnabledFor(logging.DEBUG):
             record = self._retained.retention_record()
             self._logger.debug(
@@ -920,10 +950,20 @@ class SolvingComponentValues:
         self._schedule.retain_component(code=code, blocks=self._live.pop(code))
 
     def abandon(self, *, code: int) -> None:
-        """Delete the code's device values without retaining them."""
+        """Delete the code's device values without retaining them.
+
+        The simulation abandons a code when it fails, so the counts of the
+        components solved so far are logged here: they explain a refused empty
+        action set.
+        """
         live = self._live.pop(code, None)
         if live is not None:
             delete_blocks(blocks=live)
+        self.flush_feasibility_warnings()
+
+    def flush_feasibility_warnings(self) -> None:
+        """Log the counts of the components solved so far, each exactly once."""
+        self._schedule.flush_feasibility_warnings()
 
     def values(self) -> _ValueStoreBoundary:
         """Return the complete logical value store once every code is retained."""
