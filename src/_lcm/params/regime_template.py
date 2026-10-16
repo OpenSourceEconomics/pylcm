@@ -50,6 +50,10 @@ from _lcm.typing import (
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args, is_user_function
 from lcm.collective import Gate
+from lcm.decoupled import (
+    koopmans_aggregator_variants,
+    resolve_koopmans_aggregator,
+)
 from lcm.exceptions import InvalidNameError, ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue, StateTransitionEntry
@@ -266,13 +270,9 @@ def create_regime_params_template(
             )
         function_params["taste_shocks"] = {"scale": "float"}
 
-    for slot, aggregator in _declared_aggregators(user_regime).items():
-        _add_aggregator_params(
-            function_params=function_params,
-            user_regime=user_regime,
-            slot=slot,
-            aggregator=aggregator,
-        )
+    _add_koopmans_aggregator_params(
+        function_params=function_params, user_regime=user_regime
+    )
     _add_certainty_equivalent_params(
         function_params=function_params, user_regime=user_regime
     )
@@ -919,7 +919,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
             for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
         }
-        consumers |= _declared_aggregators(user_regime)
+        consumers |= _koopmans_consumers(user_regime=user_regime, phase=phase)
         for name, func in consumers.items():
             _fail_if_a_joint_node_is_read(
                 consumer_name=name,
@@ -1123,7 +1123,7 @@ def _fail_if_a_next_name_is_read_outside_a_transition(
             for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
         }
-        consumers |= _declared_aggregators(user_regime)
+        consumers |= _koopmans_consumers(user_regime=user_regime, phase=phase)
         for name, func in consumers.items():
             _fail_if_a_next_name_is_read(
                 consumer_name=name,
@@ -1242,43 +1242,44 @@ def _fail_if_a_next_name_is_read(
     )
 
 
-def _declared_aggregators(
-    user_regime: UserRegime,
-) -> dict[FunctionName, UserFunction | Phased]:
-    """Return the regime's declared aggregators under their pseudo-function names."""
-    declared = {
-        "koopmans_aggregator": user_regime.koopmans_aggregator,
-        "selection_aggregator": user_regime.selection_aggregator,
-    }
-    return {name: func for name, func in declared.items() if func is not None}
+def _koopmans_consumers(
+    *, user_regime: UserRegime, phase: Literal["solve", "simulate"]
+) -> dict[str, UserFunction]:
+    """Name the aggregators the Koopmans slot runs in `phase`, for read checks."""
+    value, objective = resolve_koopmans_aggregator(
+        declaration=user_regime.koopmans_aggregator, phase=phase
+    )
+    consumers = {} if value is None else {"koopmans_aggregator": value}
+    if objective is not None:
+        consumers["koopmans_aggregator (objective)"] = objective
+    return consumers
 
 
-def _add_aggregator_params(
-    *,
-    function_params: dict[FunctionName, dict[str, str]],
-    user_regime: UserRegime,
-    slot: FunctionName,
-    aggregator: UserFunction | Phased,
+def _add_koopmans_aggregator_params(
+    *, function_params: dict[FunctionName, dict[str, str]], user_regime: UserRegime
 ) -> None:
-    """Add an aggregator's params under its pseudo-function name in place.
+    """Add the Koopmans aggregator's params under its pseudo-function name in place.
 
     The aggregator's parameters beyond `utility` and `CE` surface in the
-    template under the reserved key `slot`; a regime function of that name
-    collides and is rejected. Parameters that are states, actions, or regime
-    functions are wired at call time and never surface.
+    template under the reserved key `koopmans_aggregator`; a regime function
+    of that name collides and is rejected. Parameters that are states,
+    actions, or regime functions are wired at call time and never surface.
     """
-    if slot in function_params:
+    if user_regime.koopmans_aggregator is None:
+        return
+    if "koopmans_aggregator" in function_params:
         raise InvalidNameError(
-            f"The regime declares `{slot}`, whose parameters live under the "
-            f"pseudo-function name '{slot}' in the params — this conflicts "
-            "with a regime function of the same name."
+            "The regime declares `koopmans_aggregator`, whose parameters live "
+            "under the pseudo-function name 'koopmans_aggregator' in the "
+            "params — this conflicts with a regime function of the same name."
         )
-    if isinstance(aggregator, Phased):
-        tree = _input_types({slot: aggregator.solve}) | _input_types(
-            {slot: aggregator.simulate}
-        )
-    else:
-        tree = _input_types({slot: aggregator})
+    # Every aggregator the slot runs reads its params from one namespace, so a
+    # name that two of them declare is one parameter.
+    tree: dict[str, str] = {}
+    for aggregator in reversed(
+        koopmans_aggregator_variants(declaration=user_regime.koopmans_aggregator)
+    ):
+        tree |= _input_types({"koopmans_aggregator": aggregator})
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
@@ -1289,7 +1290,7 @@ def _add_aggregator_params(
         "CE",
     }
     params = {k: v for k, v in sorted(tree.items()) if k not in variables}
-    function_params[slot] = params
+    function_params["koopmans_aggregator"] = params
 
 
 def _add_pareto_objective_params(

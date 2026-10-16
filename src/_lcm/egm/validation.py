@@ -211,8 +211,7 @@ def fail_if_custom_koopmans_aggregator(
             Koopmans aggregator.
 
     """
-    declared = user_regime.koopmans_aggregator
-    solve_W = declared.solve if isinstance(declared, Phased) else declared
+    solve_W = user_regime.get_koopmans_aggregator(phase="solve")
     if solve_W is not None and not isinstance(solve_W, LinearAggregator):
         msg = (
             f"Regime '{regime_name}' declares a custom solve-phase Koopmans "

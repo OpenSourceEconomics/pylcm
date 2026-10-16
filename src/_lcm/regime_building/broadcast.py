@@ -186,7 +186,11 @@ def merge_model_slots(
             regime_name=regime_name,
             actions=actions,
             constraints=constraints,
-            functions=functions,
+            readers=(
+                *functions.values(),
+                *constraints.values(),
+                *state_transitions.values(),
+            ),
         )
         errors.extend(
             (
@@ -199,19 +203,22 @@ def merge_model_slots(
             )
         )
         if not errors:
-            merged_regimes[regime_name] = user_regime.replace(
+            # A joint process may arrive from the model level, so the engine
+            # form is taken after the merge.
+            merged = user_regime.replace(
                 functions=functions,
                 constraints=constraints,
                 states=states,
                 state_transitions=state_transitions,
                 actions=actions,
-            )
+            ).lower_joint_normal_processes()
+            merged_regimes[regime_name] = merged
             broadcast_variables[regime_name] = frozenset(
                 (
                     set(model_slots.get("states", {}))
                     | set(model_slots.get("actions", {}))
                 )
-                & (set(states) | set(actions))
+                & (set(merged.states) | set(merged.actions))
             )
 
     if errors:
@@ -703,9 +710,9 @@ def _valuation_roots(
         aggregator = regime.get_koopmans_aggregator(phase=phase) or koopmans_aggregator
         if aggregator is not None:
             roots["__koopmans_aggregator"] = aggregator
-        selection = regime.get_selection_aggregator(phase=phase)
-        if selection is not None:
-            roots["__selection_aggregator"] = selection
+        objective = regime.get_objective_aggregator(phase=phase)
+        if objective is not None:
+            roots["__koopmans_aggregator__objective"] = objective
     return MappingProxyType(roots)
 
 

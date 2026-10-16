@@ -45,9 +45,9 @@ _PROGRAM_MUTATIONS = (
 
 # Local controls for newly profiled helpers supplement the historical registry.
 _RANDOM_HELPER_MUTATIONS = {
-    "simulation_random:default_implementation_ignored": (
-        '"impl": jax.config.jax_default_prng_impl,',
+    "simulation_random:ambient_implementation_used": (
         '"impl": "threefry2x32",',
+        '"impl": jax.config.jax_default_prng_impl,',
     ),
     "simulation_random:offset_trace_guard_bypassed": (
         "if seed_offset != jax.config.jax_random_seed_offset:",
@@ -1345,6 +1345,22 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
     root = Path(__file__).parents[1]
     registered = direct_flow_mutation_specs(repo_root=root)
     supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
+    s03_scalar = direct_flow.s03_scalar_mutation_specs(repo_root=root)
+    owned_query = direct_flow.owned_query_helper_mutation_specs(repo_root=root)
+    child_failure = direct_flow.child_failure_mutation_specs(repo_root=root)
+    reviewed_prefix = direct_flow.reviewed_prefix_mutation_specs(repo_root=root)
+    decoupled = direct_flow.decoupled_bound_mutation_specs(repo_root=root)
+
+    assert set(decoupled) == {
+        "decoupled_bound:action_adapter_bypassed",
+        "decoupled_bound:action_summary_disabled",
+        "decoupled_bound:state_tiled_summary_disabled",
+        "decoupled_bound:state_untiled_summary_disabled",
+        "decoupled_bound:readout_parts_recomputed",
+        "decoupled_bound:hard_return_wrong_status_owner",
+        "decoupled_bound:ev1_solve_return_wrong_status_owner",
+        "decoupled_bound:ev1_simulate_return_wrong_status_owner",
+    }
 
     assert set(supplemental) == {
         "solve_completion:conflict_wait_bypassed",
@@ -1446,7 +1462,19 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "s02_query:outer_query_record_call_seam_replaced",
     }
     assert not set(registered) & set(supplemental)
-    assert {spec["path"] for spec in (registered | supplemental).values()} == (
+    families = (
+        registered,
+        supplemental,
+        s03_scalar,
+        owned_query,
+        child_failure,
+        reviewed_prefix,
+        decoupled,
+    )
+    for index, left in enumerate(families):
+        for right in families[index + 1 :]:
+            assert not set(left) & set(right)
+    assert {spec["path"] for family in families for spec in family.values()} == (
         set(direct_flow._CERTIFIED_CORRIDOR_SOURCES)
         - set(direct_flow._UNIFORM_PROCESS_SOURCES)
         - set(direct_flow._ACTION_GRID_SOURCES)

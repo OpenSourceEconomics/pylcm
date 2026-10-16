@@ -565,7 +565,7 @@ def test_feature_free_fingerprint_retains_recorded_identity() -> None:
     if jnp.dtype(jnp.asarray(0.0).dtype) == jnp.dtype(jnp.float32):
         assert (
             observed
-            == "d8313bf3386ac6f713ed589792c208150278cb941908b05f4897c323e099033a"
+            == "e4b1d7bf71d601e3b8b1d8b3e222ea5daeaffe5d994845062bcd0019e565b236"
         )
 
 

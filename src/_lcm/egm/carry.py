@@ -87,7 +87,10 @@ class EGMCarry:
     """Endogenous grid in resources space, NaN-padded in the tail.
 
     Weakly ascending per row: envelope kink abscissae appear twice, carrying
-    the left- and right-extrapolated policy values.
+    the left- and right-extrapolated policy values. A dead row (an infeasible
+    combo, or one whose continuation is `-inf` at every candidate) is the
+    finite placeholder `0, 1, ..., n_pad - 1` across every slot instead, so
+    continuation reads and their JVPs stay finite; its `value` is `-inf`.
     """
 
     value: FloatND

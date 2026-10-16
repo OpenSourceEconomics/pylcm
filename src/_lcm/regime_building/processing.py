@@ -139,6 +139,7 @@ from _lcm.regime_building.collective import (
     build_pareto_weights,
     build_role_vocabulary,
 )
+from _lcm.regime_building.decoupled import get_decoupled_Q_over_a
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.fixed_components import FixedComponentLaw
@@ -155,7 +156,6 @@ from _lcm.regime_building.invariant_blocking import bound_state_names
 from _lcm.regime_building.max_Q_over_a import (
     BoundedArgmaxOutput,
     get_argmax_and_max_Q_over_a,
-    get_selection_readout_Q_over_a,
 )
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.next_state import get_next_state_function_for_simulation
@@ -204,7 +204,7 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F_collective,
     get_Q_and_F_terminal,
     get_Q_and_F_terminal_collective,
-    has_selection_aggregator,
+    has_objective_profile,
     partition_continuation_targets,
 )
 from _lcm.regime_building.stochastic_state_transitions import (
@@ -577,7 +577,7 @@ def process_regimes(
             for regime_name, user_regime in representative_user_regimes.items()
         }
     )
-    _validate_all_conditioned_processes(all_grids=all_grids)
+    _validate_all_conditioned_processes(all_grids=all_grids, specs=specs)
     # Only a state can be entered: entry places a next-period value on the
     # target's support, and an action is chosen inside the target's own period,
     # so it has no axis in that regime's value function to place anything on.
@@ -3241,17 +3241,23 @@ def _state_handoff_errors(
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
                     # A value reaching a process the source does not hold
-                    # identically has to be placed on the target's support from
-                    # inside the source's Bellman equation -- as the process's
-                    # own unconditional weights without an entry law, and as a
+                    # has to be placed on the target's support from inside the
+                    # source's Bellman equation -- as the process's own
+                    # unconditional weights without an entry law, and as a
                     # coordinate on its nodes with one. Either way that support
                     # is built where only the source's parameters are readable,
                     # so a law the target parameterizes at runtime cannot be
                     # entered at all. A source holding the same process places
                     # nothing: the process transitions under its own law.
-                    if (
-                        isinstance(target_grid, _ContinuousStochasticProcess)
-                        and source_slice.grid_states.get(state_name) != target_grid
+                    #
+                    # Holding is decided on the solve laws, in either phase.
+                    # They name the runtime parameters both regimes read, and a
+                    # simulation law or draw mode only changes how the carried
+                    # value is realized, not whether the source carries it.
+                    if isinstance(
+                        target_grid, _ContinuousStochasticProcess
+                    ) and not _solve_laws_agree(
+                        specs=specs, source=source, target=target, state_name=state_name
                     ):
                         entry_error = _runtime_param_entry_error(
                             phase_name=phase_name,
@@ -3353,6 +3359,23 @@ def _fail_if_a_law_reads_a_draw_the_edge_lacks(
         ]
     if errors:
         raise ModelInitializationError(format_messages(errors))
+
+
+def _solve_laws_agree(
+    *,
+    specs: Mapping[RegimeName, PhasedRegimeSpec],
+    source: RegimeName,
+    target: RegimeName,
+    state_name: StateName,
+) -> bool:
+    """Return whether source and target declare one solve law for a process."""
+    target_law = specs[target].solution.grid_states.get(state_name)
+    source_law = specs[source].solution.grid_states.get(state_name)
+    return (
+        isinstance(target_law, _ContinuousStochasticProcess)
+        and isinstance(source_law, _ContinuousStochasticProcess)
+        and target_law.has_same_law_as(source_law)
+    )
 
 
 def _runtime_param_entry_error(
@@ -3777,7 +3800,7 @@ def _build_solution_phase(  # noqa: PLR0915
         source_regime_name=regime_name,
         scalar_query_model=query_model,
         koopmans_aggregator=spec.solution.koopmans_aggregator,
-        selection_aggregator=spec.solution.selection_aggregator,
+        objective_aggregator=spec.solution.objective_aggregator,
         functions=spec.solution.functions,
         constraints=spec.solution.constraints,
         evaluated_constraint_names=routing.evaluated_names,
@@ -3946,7 +3969,7 @@ def _build_solution_phase(  # noqa: PLR0915
             # through that code's block, which has the state's axis removed.
             co_map_state_names=(*co_map_state_names, *invariant_bindings),
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
-            selection_aggregator=core.selection_aggregator,
+            objective_aggregator=core.objective_aggregator,
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
             value_constraints=value_aware_feasibility.value_constraints,
@@ -4920,7 +4943,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     core = _process_regime_core(
         source_regime_name=regime_name,
         koopmans_aggregator=spec.simulation.koopmans_aggregator,
-        selection_aggregator=spec.simulation.selection_aggregator,
+        objective_aggregator=spec.simulation.objective_aggregator,
         functions=decision_functions,
         constraints=spec.simulation.constraints,
         evaluated_constraint_names=routing.evaluated_names,
@@ -5159,7 +5182,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             flat_param_names=flat_param_names,
             period_to_regime_v_interp=period_to_regime_v_interp,
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
-            selection_aggregator=core.selection_aggregator,
+            objective_aggregator=core.objective_aggregator,
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
             value_constraints=value_aware_feasibility.value_constraints,
@@ -5673,9 +5696,9 @@ class _CoreResult:
     """The Bellman aggregator with params renamed to qnames; `None` in a
     terminal regime."""
 
-    selection_aggregator: EconFunction | None
-    """The aggregator that selects the action, with params renamed to qnames;
-    `None` when the Bellman aggregator selects."""
+    objective_aggregator: EconFunction | None
+    """The aggregator the actions are chosen with, params renamed to qnames;
+    `None` when the Bellman aggregator also chooses."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -5807,7 +5830,7 @@ def _process_regime_core(
     constraints: ProcessedConstraintsMapping,
     evaluated_constraint_names: frozenset[FunctionName],
     koopmans_aggregator: UserFunction | None,
-    selection_aggregator: UserFunction | None,
+    objective_aggregator: UserFunction | None,
     state_transitions: Mapping[StateName, _PhaseStateTransition],
     markov_draw_laws: Mapping[StateName, StochasticTransition],
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
@@ -5838,8 +5861,8 @@ def _process_regime_core(
             feasibility kernel after routing.
         koopmans_aggregator: The regime's Bellman aggregator, or `None` in a
             terminal regime.
-        selection_aggregator: The aggregator that selects the action, or
-            `None` when the Bellman aggregator selects.
+        objective_aggregator: The aggregator the actions are chosen with, or
+            `None` when the Bellman aggregator also chooses.
         state_transitions: This phase's `state_transitions` slice, used to
             detect per-target dicts and stochastic transitions.
         markov_draw_laws: Markov laws declared once for every target, by state;
@@ -6081,6 +6104,8 @@ def _process_regime_core(
                 name=process,
                 grid=grid,
                 grids=all_grids[user_regime],
+                clip_coordinate=phase_name == "simulation"
+                and grid.simulate_draws == "nodes",
             )
             for (user_regime, process), grid in carried_process_grids.items()
         }
@@ -6271,13 +6296,14 @@ def _process_regime_core(
             param_key="koopmans_aggregator",
         )
     )
-    processed_selection_aggregator = (
+    # An objective aggregator reads its params from the Koopmans namespace too.
+    processed_objective_aggregator = (
         None
-        if selection_aggregator is None
+        if objective_aggregator is None
         else _process_one_function(
-            func=selection_aggregator,
+            func=objective_aggregator,
             regime_params_template=regime_params_template,
-            param_key="selection_aggregator",
+            param_key="koopmans_aggregator",
         )
     )
 
@@ -6291,7 +6317,7 @@ def _process_regime_core(
         next_regime_func=next_regime_func,
         next_regime_cells=next_regime_cells,
         koopmans_aggregator=processed_koopmans_aggregator,
-        selection_aggregator=processed_selection_aggregator,
+        objective_aggregator=processed_objective_aggregator,
     )
 
 
@@ -7417,7 +7443,7 @@ def _validate_conditioned_grid_is_fixed(
         msg = (
             f"state-conditioned process '{name}' requires every grid parameter fixed "
             f"at construction; {missing} would be passed at runtime. Pass them to "
-            f"{type(grid).__name__}(...), or give it a scalar `sigma`."
+            f"{grid.constructor_name}(...), or give it a scalar `sigma`."
         )
         raise ModelInitializationError(msg)
     nodes = grid.get_gridpoints()
@@ -7453,7 +7479,9 @@ def _validate_conditioned_grid_is_fixed(
 
 
 def _validate_all_conditioned_processes(
-    *, all_grids: Mapping[RegimeName, Mapping[StateOrActionName, Grid]]
+    *,
+    all_grids: Mapping[RegimeName, Mapping[StateOrActionName, Grid]],
+    specs: Mapping[RegimeName, PhasedRegimeSpec],
 ) -> None:
     """Check every state-conditioned declaration in the model.
 
@@ -7463,7 +7491,8 @@ def _validate_all_conditioned_processes(
     synthesize, wrong as a validation domain: a regime whose only edge the temporal
     activity intersection drops would never be checked, and an invalid declaration
     would then solve silently. Every check is a property of the declaration alone, so
-    reachability cannot turn an invalid one valid.
+    reachability cannot turn an invalid one valid. A simulation law, read from
+    `specs`, is held to the code agreement as well.
     """
     for regime_grids in all_grids.values():
         for process_name, process_grid in regime_grids.items():
@@ -7481,6 +7510,29 @@ def _validate_all_conditioned_processes(
             _validate_conditioning_codes_agree_across_regimes(
                 on=state_conditioned.on, all_grids=all_grids
             )
+    _validate_simulation_conditioning_codes(specs=specs, all_grids=all_grids)
+
+
+def _validate_simulation_conditioning_codes(
+    *,
+    specs: Mapping[RegimeName, PhasedRegimeSpec],
+    all_grids: Mapping[RegimeName, Mapping[StateOrActionName, Grid]],
+) -> None:
+    """Require model-wide conditioning codes for state-conditioned simulation laws.
+
+    A simulation law gathers its per-category sigma by the conditioning state's
+    codes exactly as a solve law does, so the same agreement rule applies to it.
+    """
+    for on in sorted(
+        {
+            grid.state_conditioned.on
+            for spec in specs.values()
+            for grid in spec.simulation.grid_states.values()
+            if isinstance(grid, _ContinuousStochasticProcess)
+            and grid.state_conditioned is not None
+        }
+    ):
+        _validate_conditioning_codes_agree_across_regimes(on=on, all_grids=all_grids)
 
 
 def _validate_conditioned_process(
@@ -7612,6 +7664,7 @@ def _get_weights_func_for_process(
     name: str,
     grid: _ContinuousStochasticProcess,
     grids: Mapping[StateOrActionName, Grid] = MappingProxyType({}),
+    clip_coordinate: bool = False,
 ) -> Callable[..., FloatND]:
     """Get function that uses linear interpolation to calculate the process weights.
 
@@ -7620,6 +7673,10 @@ def _get_weights_func_for_process(
     state-conditioned process the row is instead computed directly at the from-value
     (`_get_conditioned_weights_func`), and `grids` is that regime's grid mapping, from
     which the conditioning state is resolved.
+
+    With `clip_coordinate`, a value beyond the nodes takes its nearest edge node's row.
+    A node draw needs this: rows extrapolated along the edge segment can carry
+    negative weights, which are no probabilities to sample with.
 
     """
     sc = grid.state_conditioned
@@ -7650,6 +7707,8 @@ def _get_weights_func_for_process(
             gridpoints = grid.compute_gridpoints(**process_kw)
             transition_probs = grid.compute_transition_probs(**process_kw)
             coord = get_irreg_coordinate(value=kwargs[name], points=gridpoints)
+            if clip_coordinate:
+                coord = jnp.clip(coord, 0, n_points - 1)
             return map_coordinates(
                 input=transition_probs,
                 coordinates=[
@@ -7670,6 +7729,8 @@ def _get_weights_func_for_process(
     )
     def weights_func(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
         coordinate = get_irreg_coordinate(value=kwargs[f"{name}"], points=gridpoints)
+        if clip_coordinate:
+            coordinate = jnp.clip(coordinate, 0, grid.n_points - 1)
         return map_coordinates(
             input=transition_probs,
             coordinates=[
@@ -8806,7 +8867,7 @@ def _build_Q_and_F_per_period(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[QualifiedName],
     koopmans_aggregator: EconFunction,
-    selection_aggregator: EconFunction | None = None,
+    objective_aggregator: EconFunction | None = None,
     certainty_equivalent: CertaintyEquivalent | None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
@@ -8854,8 +8915,8 @@ def _build_Q_and_F_per_period(
         flat_param_names: Frozenset of flat parameter names for the regime.
         koopmans_aggregator: The regime's Bellman aggregator, with params
             renamed to qnames.
-        selection_aggregator: The aggregator that selects the action, with
-            params renamed, or `None` when the Bellman aggregator selects.
+        objective_aggregator: The aggregator the actions are chosen with, params
+            renamed, or `None` when the Bellman aggregator also chooses.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
         stakeholders: Ordered stakeholder names for a collective regime, or
@@ -9041,7 +9102,7 @@ def _build_Q_and_F_per_period(
             regime_to_v_interpolation_info=continuation_info(representative_period),
             co_map_state_names=co_map_state_names,
             koopmans_aggregator=koopmans_aggregator,
-            selection_aggregator=selection_aggregator,
+            objective_aggregator=objective_aggregator,
             certainty_equivalent=certainty_equivalent,
             # Resolve the perceived continuation pool at this group's own period.
             # Safe because that pool's per-period signature is part of the group key
@@ -9085,14 +9146,18 @@ def _build_per_subject_decisions_per_period(
     result: dict[int, ArgmaxQOverAFunction[BoundedArgmaxOutput]] = {}
     for period, Q_and_F in Q_and_F_functions.items():
         q_id = id(Q_and_F)
-        if q_id not in built and has_selection_aggregator(Q_and_F=Q_and_F):
+        if q_id not in built and has_objective_profile(Q_and_F=Q_and_F):
             built[q_id] = cast(
                 "ArgmaxQOverAFunction",
-                get_selection_readout_Q_over_a(
+                get_decoupled_Q_over_a(
                     Q_and_F=Q_and_F,
                     action_names=state_action_space.action_names,
                     state_names=state_action_space.state_names,
                     publishes_index=True,
+                    n_discrete_action_axes=len(state_action_space.discrete_actions)
+                    if has_taste_shocks
+                    else 0,
+                    has_taste_shocks=has_taste_shocks,
                 ),
             )
         elif q_id not in built:

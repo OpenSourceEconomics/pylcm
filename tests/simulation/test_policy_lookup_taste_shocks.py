@@ -276,6 +276,14 @@ def test_lookup_under_a_device_budget_decodes_the_same_conditional_actions():
     np.testing.assert_array_equal(
         np.asarray(got.conditional_actions["consumption"]), EXPECTED_CONSUMPTION
     )
+    for name, expected in (
+        ("Qc", EXPECTED_QC),
+        ("choice_probabilities", EXPECTED_PROBABILITIES),
+        ("value", EXPECTED_VALUE),
+    ):
+        np.testing.assert_array_almost_equal(
+            np.asarray(getattr(got, name)), expected, decimal=HAND_DECIMALS
+        )
 
 
 def test_lookup_small_scale_puts_all_mass_on_the_best_combination():
@@ -299,6 +307,19 @@ def test_lookup_restricted_work_grid_shrinks_the_discrete_axis(solved):
     assert (got.Qc.shape, np.asarray(got.choice_probabilities).tolist()) == (
         (2, 1),
         [[1.0], [1.0]],
+    )
+    # Shape and unit mass alone would also accept the wrong singleton work code.
+    column = int(Work.on)
+    expected_Qc = EXPECTED_QC[:, column : column + 1]
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.Qc), expected_Qc, decimal=HAND_DECIMALS
+    )
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.value), expected_Qc[:, 0], decimal=HAND_DECIMALS
+    )
+    np.testing.assert_array_equal(
+        np.asarray(got.conditional_actions["consumption"]),
+        EXPECTED_CONSUMPTION[:, column : column + 1],
     )
 
 
@@ -418,12 +439,145 @@ def test_lookup_with_phased_utility_smooths_the_simulated_Qc(phased_solved):
     np.testing.assert_array_almost_equal(
         np.asarray(got.value), expected, decimal=HAND_DECIMALS
     )
+    weights = np.exp((simulated_Qc - simulated_Qc.max(axis=1, keepdims=True)) / SCALE)
+    expected_probabilities = weights / weights.sum(axis=1, keepdims=True)
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.choice_probabilities),
+        expected_probabilities,
+        decimal=HAND_DECIMALS,
+    )
 
 
 def test_solve_with_phased_utility_stores_the_solve_phase_value(phased_solved):
     solution, _ = phased_solved
     np.testing.assert_array_almost_equal(
         np.asarray(solution.values[0]["alive"]), EXPECTED_VALUE, decimal=HAND_DECIMALS
+    )
+
+
+# Two discrete and two continuous actions: `work` and `job` index the discrete
+# combinations, `consumption` and `training` are maximized out. The extra terms
+# `0.2 * job - (training - job - 1)**2` leave the wealth law and feasibility of
+# the hand model unchanged, so each combination keeps its own optimum.
+JOB_CODES = np.array([0, 1, 2])
+TRAINING = np.array([0.0, 1.0, 2.0, 3.0])
+
+
+@categorical(ordered=True)
+class Job:
+    none: ScalarInt
+    part: ScalarInt
+    full: ScalarInt
+
+
+def utility_with_job_and_training(
+    *,
+    consumption: ContinuousAction,
+    work: DiscreteAction,
+    job: DiscreteAction,
+    training: ContinuousAction,
+) -> FloatND:
+    return (
+        utility_alive(consumption=consumption, work=work)
+        + 0.2 * job
+        - (training - job - 1.0) ** 2
+    )
+
+
+def get_two_axis_model() -> Model:
+    alive = UserRegime(
+        states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
+        state_transitions={"wealth": next_wealth},
+        actions={
+            "work": DiscreteGrid(category_class=Work),
+            "job": DiscreteGrid(category_class=Job),
+            "consumption": LinSpacedGrid(start=0.5, stop=1.5, n_points=3),
+            "training": LinSpacedGrid(start=0.0, stop=3.0, n_points=4),
+        },
+        constraints={"budget_constraint": budget_constraint},
+        functions={"utility": utility_with_job_and_training},
+        taste_shocks=ExtremeValueTasteShocks(),
+    )
+    done = UserRegime(
+        states={"wealth": LinSpacedGrid(start=0.0, stop=3.0, n_points=7)},
+        functions={"utility": utility_done},
+    )
+    return Model(
+        edges={"alive": {"done": 40}},
+        regimes={"alive": alive, "done": done},
+        ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={40: "alive"},
+    )
+
+
+def two_axis_reference() -> dict[str, np.ndarray]:
+    """Enumerate every action tuple of the two-axis model with NumPy.
+
+    Axes are row, work, job, consumption, training. Returns the conditional value,
+    the conditional consumption and training, the choice probabilities and the
+    smoothed value per row.
+    """
+    wealth = WEALTH[:, None, None, None, None]
+    work = np.array([0.0, 1.0])[None, :, None, None, None]
+    job = JOB_CODES[None, None, :, None, None].astype(float)
+    consumption = CONSUMPTION[None, None, None, :, None]
+    training = TRAINING[None, None, None, None, :]
+    flow = np.log(consumption) - 0.3 * work + 0.2 * job - (training - job - 1.0) ** 2
+    Q = flow + DISCOUNT_FACTOR * np.log(wealth - consumption + work + 1.0)
+    Q = np.where(consumption <= wealth, Q, -np.inf)
+    by_combination = Q.reshape(*Q.shape[:3], -1)
+    Qc = by_combination.max(axis=-1)
+    best = by_combination.argmax(axis=-1)
+    top = Qc.max(axis=(1, 2), keepdims=True)
+    weights = np.exp((Qc - top) / SCALE)
+    total = weights.sum(axis=(1, 2), keepdims=True)
+    return {
+        "Qc": Qc,
+        "consumption": CONSUMPTION[best // len(TRAINING)],
+        "training": TRAINING[best % len(TRAINING)],
+        "choice_probabilities": weights / total,
+        "value": (top + SCALE * np.log(total)).reshape(-1),
+    }
+
+
+@pytest.fixture(scope="module")
+def two_axis_looked_up():
+    return lookup(model=get_two_axis_model(), params=get_params())
+
+
+def test_lookup_keeps_one_axis_per_discrete_action_of_two(two_axis_looked_up):
+    """`Qc`, the probabilities and both conditional actions are (row, work, job)."""
+    got = two_axis_looked_up
+    assert (
+        got.Qc.shape,
+        got.choice_probabilities.shape,
+        {name: a.shape for name, a in got.conditional_actions.items()},
+    ) == ((2, 2, 3), (2, 2, 3), {"consumption": (2, 2, 3), "training": (2, 2, 3)})
+
+
+def test_lookup_with_two_discrete_actions_matches_the_enumerated_reference(
+    two_axis_looked_up,
+):
+    """Every combination of `work` and `job` gets its own `Qc` and probability."""
+    got, expected = two_axis_looked_up, two_axis_reference()
+    for name in ("Qc", "choice_probabilities", "value"):
+        np.testing.assert_array_almost_equal(
+            np.asarray(getattr(got, name)), expected[name], decimal=HAND_DECIMALS
+        )
+    for name in ("consumption", "training"):
+        np.testing.assert_array_equal(
+            np.asarray(got.conditional_actions[name]), expected[name]
+        )
+
+
+def test_lookup_with_two_discrete_actions_trains_one_above_the_job(
+    two_axis_looked_up,
+):
+    """The conditional training is `job + 1` in every row and `work` column."""
+    np.testing.assert_array_equal(
+        np.asarray(two_axis_looked_up.conditional_actions["training"]),
+        np.broadcast_to(JOB_CODES + 1.0, (2, 2, 3)),
     )
 
 

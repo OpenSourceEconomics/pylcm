@@ -164,20 +164,44 @@ def lower_joint_normal_initial_conditions(
     grids_by_regime: Mapping[RegimeName, Mapping[StateName, Grid]],
     params_by_regime: Mapping[RegimeName, FlatRegimeParams],
     regime_names_to_ids: RegimeNamesToIds,
+    accept_coordinates: bool = False,
 ) -> UserInitialConditions | pd.DataFrame:
-    """Convert named physical entry shocks to internal coordinates on the host."""
+    """Convert named physical entry shocks to internal coordinates on the host.
+
+    A coordinate spelling may also be an ordinary continuous state of another
+    regime, so the shared column is carried as floats: joint rows receive their
+    coordinates and the other regime's rows keep their own values.
+
+    Args:
+        initial_conditions: Per-subject inputs keyed by state name.
+        grids_by_regime: Each regime's simulation grids.
+        params_by_regime: Each regime's flat parameters, for runtime laws.
+        regime_names_to_ids: Regime codes, for a mapping keyed by `regime_id`.
+        accept_coordinates: Whether a joint process may instead be given by its
+            complete set of internal coordinates. The inputs then describe the
+            rows of one regime, so another regime's states play no part.
+
+    Raises:
+        InvalidInitialConditionsError: If a joint process is given neither by
+            all of its physical shocks nor, where accepted, by all of its
+            coordinates alone.
+    """
     declarations = {
         name: joint_normal_declarations(grids)
         for name, grids in grids_by_regime.items()
     }
     if not any(declarations.values()):
         return initial_conditions
-    ordinary_state_names = {
-        name
-        for grids in grids_by_regime.values()
-        for name, grid in grids.items()
-        if not isinstance(grid, _JointNormalCoordinate)
-    }
+    ordinary_state_names = (
+        set()
+        if accept_coordinates
+        else {
+            name
+            for grids in grids_by_regime.values()
+            for name, grid in grids.items()
+            if not isinstance(grid, _JointNormalCoordinate)
+        }
+    )
     is_frame = isinstance(initial_conditions, pd.DataFrame)
     regime_column = np.asarray(
         initial_conditions["regime_name" if is_frame else "regime_id"]
@@ -194,19 +218,18 @@ def lower_joint_normal_initial_conditions(
             consumed |= present
             if not rows.any():
                 continue
-            if any(
-                name in initial_conditions and name not in ordinary_state_names
-                for name in names
+            if _is_given_as_coordinates(
+                group=group,
+                process=process,
+                present=present,
+                given_coordinates={
+                    name
+                    for name in names
+                    if name in initial_conditions and name not in ordinary_state_names
+                },
+                accept_coordinates=accept_coordinates,
             ):
-                raise InvalidInitialConditionsError(
-                    f"Joint normal process '{group}' requires physical shocks "
-                    f"{process.states}, not internal coordinates."
-                )
-            if present != set(process.states):
-                raise InvalidInitialConditionsError(
-                    f"Joint normal process '{group}' requires initial shocks "
-                    f"{process.states}."
-                )
+                continue
             params = params_by_regime[regime_name]
             mean = np.asarray(
                 process.mean if process.mean is not None else params[f"{group}__mean"],
@@ -236,7 +259,7 @@ def lower_joint_normal_initial_conditions(
             )
             for dimension, name in enumerate(names):
                 values = (
-                    np.asarray(out[name]).copy()
+                    np.array(out[name], dtype=float)
                     if name in out
                     else np.full(len(regime_column), np.nan)
                 )
@@ -249,6 +272,37 @@ def lower_joint_normal_initial_conditions(
     for name in consumed - retained:
         out.pop(name)
     return MappingProxyType(out)
+
+
+def _is_given_as_coordinates(
+    *,
+    group: ProcessName,
+    process: JointNormalIIDProcess,
+    present: set[str],
+    given_coordinates: set[str],
+    accept_coordinates: bool,
+) -> bool:
+    """Classify which complete input form a joint process arrives in."""
+    names = coordinate_names(group=group, process=process)
+    if accept_coordinates and not present and given_coordinates == set(names):
+        return True
+    if accept_coordinates and (given_coordinates or present != set(process.states)):
+        raise InvalidInitialConditionsError(
+            f"Joint normal process '{group}' takes either its physical "
+            f"shocks {process.states} or its internal coordinates "
+            f"{names}, each complete and alone; got "
+            f"{sorted(present | given_coordinates)}."
+        )
+    if given_coordinates:
+        raise InvalidInitialConditionsError(
+            f"Joint normal process '{group}' requires physical shocks "
+            f"{process.states}, not internal coordinates."
+        )
+    if present != set(process.states):
+        raise InvalidInitialConditionsError(
+            f"Joint normal process '{group}' requires initial shocks {process.states}."
+        )
+    return False
 
 
 def _physical_inputs(

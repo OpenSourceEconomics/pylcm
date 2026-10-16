@@ -246,10 +246,22 @@ class _SuccessorEvaluator:
         rows = np.asarray(sorted(tuples), dtype=np.int32).reshape(
             len(tuples), len(self._members)
         )
+        target_grids = getattr(self._regimes[target], phase_name).grids
+        domains = tuple(frozenset(_codes(target_grids[m])) for m in self._members)
         out: set[Codes] = set()
         chunk = max(1, _MAX_ROWS_PER_EVALUATION // len(program.other_rows))
         for start in range(0, len(rows), chunk):
-            out.update(program.evaluate(rows[start : start + chunk]))
+            # Skipping a constraint may expose an infeasible off-grid law output.
+            # Such a tuple is not a state. Do not alter or clip the actual law:
+            # normal transition validation must still catch a feasible violation.
+            out.update(
+                successor
+                for successor in program.evaluate(rows[start : start + chunk])
+                if all(
+                    code in domain
+                    for code, domain in zip(successor, domains, strict=True)
+                )
+            )
         return out
 
     def _program(
@@ -402,10 +414,13 @@ def _build_program(
     other_names = tuple(
         sorted(name for name in leaves if name in discrete and name not in members)
     )
-    other_rows = np.asarray(
-        list(itertools.product(*(_codes(phase.grids[name]) for name in other_names))),
-        dtype=np.int32,
-    ).reshape(-1, len(other_names))
+    # The product of zero inputs has one empty row, not zero scenarios.
+    other_codes = list(
+        itertools.product(*(_codes(phase.grids[name]) for name in other_names))
+    )
+    other_rows = np.asarray(other_codes, dtype=np.int32).reshape(
+        len(other_codes), len(other_names)
+    )
 
     def evaluate(**row: jax.Array) -> tuple[dict[str, jax.Array], jax.Array]:
         values = row | scalars

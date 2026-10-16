@@ -36,6 +36,10 @@ from lcm.collective import (
     ProjectedRegimeValue,
     ValueDependentConstraint,
 )
+from lcm.decoupled import (
+    Decoupled,
+    resolve_koopmans_aggregator,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.taste_shocks import ExtremeValueTasteShocks
@@ -87,8 +91,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     derived_categoricals: Mapping[FunctionName, DiscreteGrid]
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
-    koopmans_aggregator: UserFunction | Phased | None
-    selection_aggregator: UserFunction | Phased | None
+    koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
     description: str
 
@@ -145,6 +148,9 @@ class Regime:
     An `AgeSpecializedGrid` value is a continuous state whose grid bounds vary
     with age (fixed `n_points`); it is resolved to a concrete grid per period at
     model build.
+    A `JointNormalIIDProcess` value declares correlated physical shocks. It
+    stays here as declared; `lower_joint_normal_processes` gives the
+    coordinate states and generated functions the engine runs.
     """
 
     state_transitions: Mapping[StateName, StateTransitionEntry] = field(
@@ -259,33 +265,17 @@ class Regime:
     `NNBEGM`.
     """
 
-    koopmans_aggregator: UserFunction | Phased | None = None
+    koopmans_aggregator: UserFunction | Phased | Decoupled | None = None
     """Combines current-period utility with the certainty equivalent into `Q`.
 
     Signature `W(utility, CE, ...)`; further arguments are runtime params
     under the pseudo-function name `koopmans_aggregator`, or outputs of
     regime functions of the same name. `Phased(solve=..., simulate=...)`
-    gives the two phases different aggregators (a naive/sophisticated
-    beta-delta split, say). `None` means the regime takes the model-level
+    gives the two phases different aggregators. `Decoupled(objective=...,
+    value=...)` chooses actions with one aggregator and stores the value of
+    another (time-inconsistent agents). `None` means the regime takes the model-level
     aggregator (`lcm.LinearAggregator` unless the `Model` says otherwise). Terminal
     regimes have no continuation and take none.
-    """
-
-    selection_aggregator: UserFunction | Phased | None = None
-    """Selects the action that `koopmans_aggregator` then values.
-
-    Same signature and calling convention as `koopmans_aggregator`, with
-    runtime params under the pseudo-function name `selection_aggregator`. The
-    action maximizes `selection_aggregator(utility, CE, ...)` over the feasible
-    set, and the value passed back is `koopmans_aggregator(utility, CE, ...)`
-    at that action. `Phased(solve=..., simulate=...)` gives the selves the
-    solve anticipates and the self that simulation follows different
-    selection rules: with `u + β̃δ·CE` in the solve and `u + βδ·CE` in
-    simulation, `β̃ = 1` is the naive, `β̃ = β` the sophisticated and
-    `β < β̃ < 1` the partially naive beta-delta agent. `None` means the
-    Koopmans aggregator selects as well. Only `GridSearch` supports it.
-    Terminal and collective regimes, regimes with taste shocks or folded
-    states, and gated-edge sources refuse it.
     """
 
     certainty_equivalent: CertaintyEquivalent | None = None
@@ -439,25 +429,16 @@ class Regime:
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
-        if any(
-            isinstance(state, JointNormalIIDProcess) for state in self.states.values()
-        ):
-            states, functions = lower_joint_normal_processes(
-                states=self.states,
-                functions=self.functions,
-                other_names=frozenset(self.actions)
-                | frozenset(self.constraints)
-                | frozenset(self.state_transitions),
-            )
-            object.__setattr__(self, "states", states)
-            object.__setattr__(self, "functions", functions)
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()
         # What depends on the law is validated once the model binds it from
         # `Model(edges=...)`; completeness (a `utility` entry, aggregator
         # injection, transition coverage) is validated when the model finalizes
-        # its regimes, since model-level slots may still satisfy it.
-        validate_regime(self)
+        # its regimes, since model-level slots may still satisfy it. A regime
+        # declaring a joint process is validated in the form the engine runs,
+        # which constructing that form does.
+        if self.lower_joint_normal_processes() is self:
+            validate_regime(self)
         self._make_field_immutable(name="functions")
         self._make_field_immutable(name="states")
         self._make_field_immutable(name="state_transitions")
@@ -483,6 +464,37 @@ class Regime:
         """
         self._lower_collective_utility()
         self._lower_value_dependent_constraints()
+
+    def lower_joint_normal_processes(self) -> Regime:
+        """Return the regime the engine runs for its joint normal declarations.
+
+        Each `JointNormalIIDProcess` in `states` becomes one standard-normal
+        coordinate state `<group>_normal_<d>` per dimension, and `functions`
+        gains the generated `<group>` vector and one function per physical
+        shock. The declarations themselves stay in this regime's `states` and
+        `functions`, so `replace` swaps a joint process or a function without
+        meeting the generated names.
+
+        Returns:
+            This regime when it declares no joint process; otherwise a new
+            regime holding the lowered states and functions.
+
+        Raises:
+            RegimeInitializationError: If a generated name collides with a
+                declaration of this regime.
+        """
+        if not any(
+            isinstance(state, JointNormalIIDProcess) for state in self.states.values()
+        ):
+            return self
+        states, functions = lower_joint_normal_processes(
+            states=self.states,
+            functions=self.functions,
+            other_names=frozenset(self.actions)
+            | frozenset(self.constraints)
+            | frozenset(self.state_transitions),
+        )
+        return self.replace(states=states, functions=functions)
 
     @cached_property
     def decomposed_functions(
@@ -674,31 +686,29 @@ class Regime:
             terminal regime, or one taking the model-level value).
 
         """
-        if isinstance(self.koopmans_aggregator, Phased):
-            variant = (
-                self.koopmans_aggregator.solve
-                if phase == "solve"
-                else self.koopmans_aggregator.simulate
-            )
-            return cast("UserFunction", variant)
-        return self.koopmans_aggregator
+        value, _ = resolve_koopmans_aggregator(
+            declaration=self.koopmans_aggregator, phase=phase
+        )
+        return value
 
-    def get_selection_aggregator(
+    def get_objective_aggregator(
         self,
         phase: Literal["solve", "simulate"] = "solve",
     ) -> UserFunction | None:
-        """Get the selection aggregator this phase runs.
+        """Get the aggregator this phase chooses actions with, if separate.
 
         Args:
-            phase: Which variant to use when the declaration is `Phased`.
+            phase: Which variant to use when the objective is `Phased`.
 
         Returns:
-            The aggregator, or `None` when the regime declares none.
+            The objective aggregator of a `Decoupled` declaration, or `None`
+            when the Koopmans aggregator also chooses.
 
         """
-        if self.selection_aggregator is None:
-            return None
-        return _resolve_phase_variant(value=self.selection_aggregator, phase=phase)
+        _, objective = resolve_koopmans_aggregator(
+            declaration=self.koopmans_aggregator, phase=phase
+        )
+        return objective
 
     # keyword-only-exempt: primary-argument=phase
     def get_all_functions(

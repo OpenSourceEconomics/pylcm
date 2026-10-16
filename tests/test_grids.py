@@ -823,6 +823,44 @@ def test_float_value_grid_tolerance_admits_a_value_near_a_node():
     assert int(grid.encode(jnp.nextafter(node, jnp.inf))) == 1
 
 
+def test_float_value_grid_without_tolerance_flags_one_ulp_above_the_smallest_normal():
+    """The difference to the smallest normal node is subnormal and must not flush."""
+    finfo = np.finfo(_canonical_float())
+    grid = DiscreteGrid(values=[float(finfo.tiny), 1.0])
+    node = jnp.asarray(finfo.tiny, dtype=canonical_float_dtype())
+    assert grid.encode(jnp.stack([node, jnp.nextafter(node, jnp.inf)])).tolist() == [
+        0,
+        MISSING_CAT_CODE,
+    ]
+
+
+def test_float_value_grid_tolerance_holds_at_the_smallest_normal():
+    """A subnormal distance is compared exactly against a subnormal tolerance.
+
+    The nodes are the smallest normal and twice it; their spacing allows a
+    tolerance of two subnormal steps. Two steps above the lower node matches it,
+    three steps do not.
+    """
+    finfo = np.finfo(_canonical_float())
+    step = float(finfo.smallest_subnormal)
+    grid = DiscreteGrid(
+        values=[float(finfo.tiny), 2 * float(finfo.tiny)], tolerance=2 * step
+    )
+    queries = jnp.asarray(
+        [float(finfo.tiny) + 2 * step, float(finfo.tiny) + 3 * step],
+        dtype=canonical_float_dtype(),
+    )
+    assert grid.encode(queries).tolist() == [0, MISSING_CAT_CODE]
+
+
+def test_float_value_grid_large_tolerance_flags_a_value_beyond_it():
+    """A tolerance near the dtype's top end still bounds the match at a small node."""
+    large, tolerance = (1e300, 1e295) if X64_ENABLED else (1e35, 1e32)
+    grid = DiscreteGrid(values=[0.0, large], tolerance=tolerance)
+    queries = jnp.asarray([tolerance, 2 * tolerance], dtype=canonical_float_dtype())
+    assert grid.encode(queries).tolist() == [0, MISSING_CAT_CODE]
+
+
 @pytest.mark.parametrize("value", [0.3, -0.5, 2.0, float("nan")])
 def test_float_value_grid_tolerance_flags_values_between_nodes(value):
     """Values farther than the tolerance from every node get the sentinel."""

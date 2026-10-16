@@ -426,6 +426,17 @@ class _SolveOneCombo:
             else None
         )
 
+        # A row with no live candidate has finite placeholder geometry for
+        # continuation reads and their JVPs. NaN-valued candidates stay live.
+        refined_grid, refined_policy = (
+            jnp.where(
+                no_live_candidate,
+                jnp.arange(refined_grid.size, dtype=dtype),
+                refined_grid,
+            ),
+            jnp.where(no_live_candidate, 0.0, refined_policy),
+        )
+
         feasible = jnp.asarray(True)  # noqa: FBT003
         if pieces.feasibility_func is not None:
             # Infeasible discrete combos: -inf value rows so they win no

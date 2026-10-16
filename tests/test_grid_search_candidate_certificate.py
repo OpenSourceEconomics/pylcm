@@ -122,7 +122,10 @@ from lcm.typing import (
     UserParamsNode,
 )
 from tests.candidate_certificate.direct_flow import (
+    _DECOUPLED_BOUND_MUTATION_NAMES,
+    _decoupled_bound_transport_errors,
     _feasibility_summary_errors,
+    decoupled_bound_mutation_source,
     direct_flow_mutation_specs,
     s03_scalar_mutation_specs,
     supplemental_direct_flow_mutation_specs,
@@ -3151,3 +3154,54 @@ def test_s03_owned_numerical_helper_body_adds_explicit_detection(
         "baseline_errors": baseline["errors"],
         "mutated_errors": mutated["errors"],
     }
+
+
+def test_decoupled_bound_metadata_has_an_explicit_source_corridor() -> None:
+    """The dense Decoupled owner authenticates its separate bound metadata."""
+    tree = _parse("src/_lcm/regime_building/decoupled.py")
+    assert _decoupled_bound_transport_errors(tree) == []
+    result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
+    assert (
+        "src/_lcm/regime_building/decoupled.py" in result["certified_corridor_sources"]
+    )
+
+
+@pytest.mark.parametrize("mutation", _DECOUPLED_BOUND_MUTATION_NAMES)
+def test_decoupled_bound_metadata_mutations_fail_after_byte_reseal(
+    *, mutation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Byte resealing cannot hide a changed actual bound-metadata connection."""
+    root = _SRC_ROOT.parent
+    relative = "src/_lcm/regime_building/decoupled.py"
+    original = (root / relative).read_text(encoding="utf-8")
+    mutated = decoupled_bound_mutation_source(source=original, mutation=mutation)
+    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
+    for source_path in sources:
+        target = tmp_path / source_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            mutated
+            if source_path == relative
+            else (root / source_path).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(
+        "tests.candidate_certificate.direct_flow._SOURCE_SEALS",
+        {source_path: sha256_file(tmp_path / source_path) for source_path in sources},
+    )
+    result = verify_direct_candidate_flow(repo_root=tmp_path)
+    assert result["offending_paths"] == [relative]
+    assert not any("source seal mismatch" in error for error in result["errors"])
+    assert any("Decoupled bound metadata:" in error for error in result["errors"])
+
+
+def test_reviewed_prefix_sources_have_literal_inventory_obligations() -> None:
+    """Inventory numerical-reader and checked-program dependencies."""
+    assert isinstance(_parse("src/_lcm/egm/asset_row.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/continuation.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/dcegm_query.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/dcegm_query_model.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/regime_introspection.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/step.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/step_core.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/dcegm.py"), ast.Module)
