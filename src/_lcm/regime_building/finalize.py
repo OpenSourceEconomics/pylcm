@@ -25,7 +25,11 @@ from dags.annotations import ensure_annotations_are_strings
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import Condition
 from _lcm.egm.nbegm import PieceSet
-from _lcm.grids import DiscreteGrid
+from _lcm.grids import DiscreteGrid, Grid
+from _lcm.processes.joint_normal_lowering import (
+    coordinate_names,
+    joint_normal_declarations,
+)
 from _lcm.regime_building.value_adapter import (
     AdaptableEntry,
     AdapterMemo,
@@ -99,6 +103,7 @@ def finalize_regimes(
 
     """
     _fail_if_collective_regime_folds(user_regimes=user_regimes)
+    _fail_if_a_joint_coordinate_is_a_discrete_state(user_regimes=user_regimes)
     _fail_if_continuation_slot_is_mixed(
         user_regimes=user_regimes, laws=laws, slot="koopmans_aggregator"
     )
@@ -250,6 +255,44 @@ def _adapt_slot(
             for name, entry in slot.items()
         }
     )
+
+
+def _fail_if_a_joint_coordinate_is_a_discrete_state(
+    *, user_regimes: Mapping[RegimeName, UserRegime]
+) -> None:
+    """Reject a discrete state spelled like another regime's joint coordinate.
+
+    Initial conditions are one table over every regime, so a coordinate
+    `<group>_normal_<d>` and an ordinary state of the same spelling share one
+    column. The joint rows write standard-normal coordinates into it, which a
+    discrete state's integer codes cannot hold.
+    """
+    owners = {
+        name: (regime_name, group)
+        for regime_name, regime in user_regimes.items()
+        for group, process in joint_normal_declarations(
+            {
+                name: grid
+                for name, grid in regime.states.items()
+                if isinstance(grid, Grid)
+            }
+        ).items()
+        for name in coordinate_names(group=group, process=process)
+    }
+    error_messages = [
+        f"State '{name}' of regime '{regime_name}' is discrete, but regime "
+        f"'{owners[name][0]}' names a coordinate of its joint normal process "
+        f"'{owners[name][1]}' the same way, and both would share one "
+        "initial-conditions column. Rename the state."
+        for regime_name, regime in user_regimes.items()
+        for name, entry in regime.states.items()
+        if name in owners
+        and isinstance(
+            entry.simulate if isinstance(entry, Phased) else entry, DiscreteGrid
+        )
+    ]
+    if error_messages:
+        raise RegimeInitializationError(format_messages(error_messages))
 
 
 def _compose_case_piece_outputs(
