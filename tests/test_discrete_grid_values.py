@@ -1828,11 +1828,16 @@ def _kind_leaves_when_working(
     return jnp.where(a == 1, 2, kind).astype(jnp.int32)
 
 
-def _participation_model(*, threshold: float) -> Model:
-    """`Q_alice = 1 - 2a`; only `a = 1` sends `kind` to code 2, off `{0, 1}`."""
+def _participation_model(*, threshold: float, forbids_working: bool) -> Model:
+    """`Q_alice = 1 - 2a`; only `a = 1` sends `kind` to code 2, off `{0, 1}`.
 
-    def participation(Q_alice: FloatND) -> BoolND:
-        return Q_alice >= threshold
+    With `forbids_working` the participation constraint is the review's
+    `(a == 0) & (Q_alice >= threshold)`, which excludes `a = 1` whatever its
+    value; otherwise it reads `Q_alice` alone.
+    """
+
+    def participation(*, Q_alice: FloatND, a: DiscreteAction) -> BoolND:
+        return ((a == 0) | (not forbids_working)) & (Q_alice >= threshold)
 
     return Model(
         regimes={
@@ -1868,7 +1873,7 @@ def _participation_model(*, threshold: float) -> Model:
 @pytest.mark.parametrize("runtime_checks", [False, True])
 def test_law_leaving_the_grid_only_where_participation_fails_solves(*, runtime_checks):
     """Participation forbids `a = 1`, the only action that leaves the grid."""
-    got = _participation_model(threshold=0.0).solve(
+    got = _participation_model(threshold=0.0, forbids_working=True).solve(
         params={"discount_factor": 1.0},
         log_level="off",
         runtime_checks=runtime_checks,
@@ -1880,7 +1885,7 @@ def test_law_leaving_the_grid_only_where_participation_fails_solves(*, runtime_c
 
 def test_value_constrained_cells_are_not_counted_by_validate_transitions():
     """Feasibility that reads values is unknown before the solve."""
-    _participation_model(threshold=0.0).validate_transitions(
+    _participation_model(threshold=-2.0, forbids_working=False).validate_transitions(
         params={"discount_factor": 1.0}
     )
 
@@ -2041,3 +2046,88 @@ def test_dcegm_continuation_reads_nan_at_an_off_grid_child_code():
     ]
     assert nan_pattern == [[True, True], [False, True]]
     assert finite_pattern == [[False, False], [True, False]]
+
+
+def test_law_leaving_the_grid_where_participation_holds_fails_the_checked_solve():
+    """`Q` at `a = 1` reads the off-grid code, so participation is undecided there.
+
+    The solve counts the code-2 landing unless the constraint fails whatever `Q`
+    is, as the review's `a == 0` part does.
+    """
+    model = _participation_model(threshold=-2.0, forbids_working=False)
+    model.validate_transitions(params={"discount_factor": 1.0})
+    with pytest.raises(InvalidStateTransitionError, match="kind"):
+        model.solve(
+            params={"discount_factor": 1.0}, log_level="off", runtime_checks=True
+        )
+
+
+def test_value_constrained_off_grid_landing_is_not_raised_without_checks():
+    """Without runtime checks the solve reads NaN there, as in any other regime."""
+    _participation_model(threshold=-2.0, forbids_working=False).solve(
+        params={"discount_factor": 1.0}, log_level="off", runtime_checks=False
+    )
+
+
+def _working_flow(*, kind: DiscreteState, a: DiscreteAction) -> FloatND:
+    return 1.0 * a + 0.0 * kind
+
+
+def _kind_stays(*, kind: DiscreteState, a: DiscreteAction) -> DiscreteState:
+    return kind + 0 * a
+
+
+def test_realized_off_grid_code_of_a_value_constrained_regime_fails_simulation():
+    """The simulate law sends `kind` to code 2 at the chosen `a = 1`."""
+
+    def participation(Q_alice: FloatND) -> BoolND:
+        return Q_alice >= -2.0
+
+    model = Model(
+        regimes={
+            "source": UserRegime(
+                states={"kind": DiscreteGrid(category_class=_TwoCodes)},
+                actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"alice": _working_flow, "bob": _working_flow}
+                    )
+                },
+                state_transitions={
+                    "kind": Phased(
+                        solve=_kind_stays, simulate=_kind_leaves_when_working
+                    )
+                },
+                constraints={
+                    "participation": ValueDependentConstraint(predicate=participation)
+                },
+            ),
+            "terminal": UserRegime(
+                states={"kind": DiscreteGrid(category_class=_TwoCodes)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"alice": _pair_terminal, "bob": _pair_terminal}
+                    )
+                },
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"source": {"terminal": 0}},
+        initial_nodes={0: "source"},
+        regime_id_class=_SourceTerminal,
+    )
+    params = {"discount_factor": 1.0}
+    solution = model.solve(params=params, log_level="off", runtime_checks=True)
+    with pytest.raises(InvalidStateTransitionError, match="kind"):
+        model.simulate(
+            params=params,
+            initial_conditions={
+                "kind": jnp.asarray([0, 1], dtype=jnp.int32),
+                "age": jnp.asarray([0.0, 0.0]),
+                "regime_id": jnp.asarray([_SourceTerminal.source] * 2, dtype=jnp.int32),
+            },
+            solution=solution,
+            seed=3,
+            log_level="off",
+            runtime_checks=True,
+        )

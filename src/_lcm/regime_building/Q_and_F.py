@@ -29,7 +29,7 @@ from dags.tree import qname_from_tree_path
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.grids import ContinuousGrid, IrregSpacedGrid
-from _lcm.grids.discrete import read_at_codes
+from _lcm.grids.discrete import DiscreteGrid, read_at_codes
 from _lcm.probability import (
     is_live,
     is_negative,
@@ -80,7 +80,7 @@ from _lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
-from _lcm.utils.counts import sum_counts
+from _lcm.utils.counts import CodeLandingCheck, sum_counts
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import (
@@ -1837,16 +1837,46 @@ class _CollectiveQAndF:
         # values, and ordinary cell kwargs — into the mask. The household
         # argmax downstream runs over the masked set; an all-infeasible cell
         # sets the dissolution flag D there (`collective_readout`).
+        ordinary_F = jnp.asarray(F_arr)
         if self.value_constraint_machinery.evaluators:
             F_arr = _apply_value_constraints(
                 machinery=self.value_constraint_machinery,
                 Q_arr=jnp.asarray(Q_arr),
                 # A constraint-less regime's F is the Python `True` scalar.
-                F_arr=jnp.asarray(F_arr),
+                F_arr=ordinary_F,
                 states_actions_params=states_actions_params,
             )
+        if landing_counts and self.counts_premasked:
+            # A discrete code off its grid reads NaN, so a predicate on `Q` cannot
+            # tell whether that action is feasible: its landing counts unless
+            # the predicate fails whatever `Q` is.
+            possible = _possibly_feasible(
+                machinery=self.value_constraint_machinery,
+                Q_arr=jnp.asarray(Q_arr),
+                F_arr=ordinary_F,
+                states_actions_params=states_actions_params,
+            )
+            is_code = jnp.asarray(
+                [isinstance(check, CodeLandingCheck) for check in self.landing_checks]
+            )
+            (counts,) = landing_counts
+            mask = jnp.where(
+                is_code, jnp.asarray(possible)[..., None], jnp.asarray(F_arr)[..., None]
+            )
+            landing_counts = [jnp.where(mask, counts, 0)]
 
         return (jnp.asarray(Q_arr), jnp.asarray(F_arr), *landing_counts)
+
+    @property
+    def counts_premasked(self) -> bool:
+        """Whether the landing counts arrive masked, so the reduction only sums.
+
+        Set where value constraints decide feasibility and discrete codes are
+        counted, since those codes are masked by a wider set than `F`.
+        """
+        return any(
+            isinstance(check, CodeLandingCheck) for check in self.landing_checks
+        ) and bool(self.value_constraint_machinery.evaluators)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1982,6 +2012,38 @@ def _apply_value_constraints(
             else:
                 predicate_kwargs[arg] = states_actions_params[arg]
         F_arr = jnp.logical_and(F_arr, evaluate(**predicate_kwargs))
+    return F_arr
+
+
+def _possibly_feasible(
+    *,
+    machinery: _ValueConstraintMachinery,
+    Q_arr: FloatND,
+    F_arr: BoolND,
+    states_actions_params: QAndFKwargs,
+) -> BoolND:
+    """Return where every value constraint holds for some value of an unknown `Q`.
+
+    A NaN `Q_<s>` is undecided. Each predicate is evaluated with NaN read as
+    `+inf` and as `-inf`, and a cell is possibly feasible when either holds,
+    on top of the ordinary feasibility `F_arr`.
+    """
+    for constraint_name in machinery.evaluators:
+        holds = jnp.zeros((), dtype=bool)
+        for fill in (jnp.inf, -jnp.inf):
+            single = dataclasses.replace(
+                machinery,
+                evaluators=MappingProxyType(
+                    {constraint_name: machinery.evaluators[constraint_name]}
+                ),
+            )
+            holds = holds | _apply_value_constraints(
+                machinery=single,
+                Q_arr=jnp.where(jnp.isnan(Q_arr), fill, Q_arr),
+                F_arr=jnp.ones((), dtype=bool),
+                states_actions_params=states_actions_params,
+            )
+        F_arr = F_arr & holds
     return F_arr
 
 
@@ -3994,12 +4056,21 @@ def _plan_landing_counting(
     landing_grids = _raise_rule_grids(
         v_interpolation_info=v_interpolation_info, state_names=landing_state_names
     )
+    # A discrete state's code counts where nodes are the raw landings; elsewhere
+    # its law is checked in the transition preflight.
+    code_grids = (
+        _code_grids(
+            v_interpolation_info=v_interpolation_info, state_names=landing_state_names
+        )
+        if counts_nodes_as_landings
+        else ()
+    )
     fallback_checks = (
         _fallback_raise_checks(projected_readers=gated_continuation.projected_readers)
         if gated_continuation is not None
         else ()
     )
-    if not landing_grids and not fallback_checks:
+    if not landing_grids and not code_grids and not fallback_checks:
         return _NO_LANDING_COUNTING
     if not counts_nodes_as_landings:
         msg = (
@@ -4011,8 +4082,8 @@ def _plan_landing_counting(
         )
         raise ModelInitializationError(msg)
     counter: Callable[..., IntND] | None = None
-    if landing_grids:
-        counter = _get_raise_landing_counter(grids=landing_grids)
+    if landing_grids or code_grids:
+        counter = _get_raise_landing_counter(grids=landing_grids, code_grids=code_grids)
         if draw_resolution.draw_dependent_names:
             counter = _get_interpolator_resolving_draws(
                 next_V_interpolator=counter,
@@ -4029,6 +4100,7 @@ def _plan_landing_counting(
         fallback_checks=tuple((name, grids) for name, _, grids in fallback_checks),
         checks=(
             *((target_regime_name, state) for state, _ in landing_grids),
+            *(CodeLandingCheck((target_regime_name, state)) for state, _ in code_grids),
             *(
                 (regime, state)
                 for _, regime, grids in fallback_checks
@@ -4053,6 +4125,17 @@ def _raise_rule_grids(
         and isinstance(grid, ContinuousGrid)
         and not isinstance(grid, _ContinuousStochasticProcess)
         and grid.off_grid == "raise"
+    )
+
+
+def _code_grids(
+    *, v_interpolation_info: VInterpolationInfo, state_names: tuple[StateName, ...]
+) -> tuple[tuple[StateName, DiscreteGrid], ...]:
+    """Return the named discrete states, whose codes lie in `0..n-1` of their grid."""
+    return tuple(
+        (state, grid)
+        for state, grid in v_interpolation_info.discrete_states.items()
+        if state in state_names and isinstance(grid, DiscreteGrid)
     )
 
 
@@ -4106,9 +4189,15 @@ def _count_outside_grid(*, values: FloatND, points: Float1D) -> IntND:
 
 
 def _get_raise_landing_counter(
-    *, grids: tuple[tuple[StateName, ContinuousGrid], ...]
+    *,
+    grids: tuple[tuple[StateName, ContinuousGrid], ...],
+    code_grids: tuple[tuple[StateName, DiscreteGrid], ...] = (),
 ) -> _RaiseLandingCounter:
-    """Build the per-node counter of one target's raw raise-rule landings."""
+    """Build the per-node counter of one target's raw raise-rule landings.
+
+    The continuous states count raw values outside their grid, then each discrete
+    state counts a code outside `0..n-1`.
+    """
     points_params = tuple(
         qname_from_tree_path((state, "points"))
         if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime
@@ -4122,8 +4211,11 @@ def _get_raise_landing_counter(
             for (_, grid), param in zip(grids, points_params, strict=True)
         ),
         points_params=points_params,
+        code_states=tuple(state for state, _ in code_grids),
+        code_sizes=tuple(len(grid.codes) for _, grid in code_grids),
         arg_names=(
             *(f"next_{state}" for state, _ in grids),
+            *(f"next_{state}" for state, _ in code_grids),
             *(param for param in points_params if param is not None),
         ),
     )
@@ -4141,6 +4233,10 @@ class _RaiseLandingCounter:
     """Each state's runtime points argument, or `None` for fixed points."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
+    code_states: tuple[StateName, ...] = ()
+    """The checked discrete states, after `states` in output order."""
+    code_sizes: tuple[int, ...] = ()
+    """Each discrete state's number of codes."""
 
     def __post_init__(self) -> None:
         _publish_signature(
@@ -4154,13 +4250,24 @@ class _RaiseLandingCounter:
     def __call__(self, **kwargs: EconFunctionArg) -> IntND:
         return jnp.stack(
             [
-                _count_outside_grid(
-                    values=kwargs[f"next_{state}"],
-                    points=kwargs[param] if param is not None else points,
-                )
-                for state, points, param in zip(
-                    self.states, self.points, self.points_params, strict=True
-                )
+                *(
+                    _count_outside_grid(
+                        values=kwargs[f"next_{state}"],
+                        points=kwargs[param] if param is not None else points,
+                    )
+                    for state, points, param in zip(
+                        self.states, self.points, self.points_params, strict=True
+                    )
+                ),
+                *(
+                    sum_counts(
+                        counts=(kwargs[f"next_{state}"] < 0)
+                        | (kwargs[f"next_{state}"] >= size)
+                    )
+                    for state, size in zip(
+                        self.code_states, self.code_sizes, strict=True
+                    )
+                ),
             ]
         )
 
