@@ -6,8 +6,13 @@ when working. The conditional declaration and the hand-written pin constraint
 models solve and simulate identically.
 """
 
+import functools
+import subprocess
+import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -19,9 +24,12 @@ from lcm import (
     AgeSpecializedFunction,
     ConditionalAction,
     DiscreteGrid,
+    InitialNodes,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    Periods,
+    PeriodSpecializedFunction,
     Phased,
     categorical,
 )
@@ -551,24 +559,50 @@ def test_saved_solution_is_accepted_only_by_the_same_declaration(
             )
 
 
-def _age_specialized_utility_at(
-    age: float,  # noqa: ARG001
-) -> Callable[..., FloatND]:
-    def utility(*, labor: IntND, hours: FloatND) -> FloatND:
-        return 100.0 * (1 - labor) + hours
+def _annotated_utility(*, labor: IntND, hours: FloatND) -> FloatND:
+    return 100.0 * (1 - labor) + hours
 
-    return utility
+
+def _scaled_utility(*, labor: IntND, hours: FloatND, scale: float) -> FloatND:
+    return scale * (1 - labor) + hours
+
+
+def _unannotated_utility(*, labor, hours):
+    return 100.0 * (1 - labor) + hours
+
+
+type _Reader = Literal["annotated", "partial", "unannotated"]
+type _Coordinate = Literal["age", "period"]
+
+
+@dataclass(frozen=True)
+class _UtilityAt:
+    """Build the utility at an age or period; every age gets the same function."""
+
+    reader: _Reader
+
+    def __call__(self, coordinate: float) -> Callable[..., FloatND]:  # noqa: ARG002
+        if self.reader == "partial":
+            return functools.partial(_scaled_utility, scale=100.0)
+        if self.reader == "unannotated":
+            return _unannotated_utility
+        return _annotated_utility
 
 
 def _array_annotated_hours_pin(*, labor: IntND, hours: FloatND) -> BoolND:
     return (labor == Labor.yes) | (hours == 0.0)
 
 
-def _age_specialized_model(*, conditional: bool, model_level: bool) -> Model:
-    """The utility is the only reader of labor and hours, declared per age, and
-    annotates them as plain arrays. With `model_level`, labor and hours are declared
-    on the model, so broadcast pruning sees them only through their readers."""
-    ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
+def _unannotated_hours_pin(*, labor, hours):
+    return (labor == Labor.yes) | (hours == 0.0)
+
+
+def _age_specialized_model(
+    *, conditional: bool, model_level: bool, reader: _Reader, coordinate: _Coordinate
+) -> Model:
+    """The utility is the only reader of labor and hours and is built per age or
+    period. With `model_level`, labor and hours are declared on the model, so
+    broadcast pruning sees them only through their readers."""
     grid = IrregSpacedGrid(points=(0.0, 1.0, 2.0))
     hours: ContinuousGrid = (
         ConditionalAction(
@@ -578,40 +612,74 @@ def _age_specialized_model(*, conditional: bool, model_level: bool) -> Model:
         else grid
     )
     actions = {"labor": DiscreteGrid(category_class=Labor), "hours": hours}
-    constraints = {} if conditional else {"hours_only": _array_annotated_hours_pin}
+    pin = (
+        _unannotated_hours_pin
+        if reader == "unannotated"
+        else _array_annotated_hours_pin
+    )
+    constraints = {} if conditional else {"hours_only": pin}
+    marker_class = (
+        PeriodSpecializedFunction if coordinate == "period" else AgeSpecializedFunction
+    )
     working = Regime(
         actions={} if model_level else actions,
         functions={
-            "utility": AgeSpecializedFunction(
-                build=_age_specialized_utility_at,
-                signature=lambda age: 0,  # noqa: ARG005
+            "utility": marker_class(
+                build=_UtilityAt(reader=reader), signature=_same_key
             )
         },
         constraints={} if model_level else constraints,
     )
     dead = Regime(
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _zero},
         actions={"labor": None, "hours": None} if model_level else {},
         constraints=dict.fromkeys(constraints) if model_level else {},
     )
+    regimes = {"working": working, "dead": dead}
+    model_actions = actions if model_level else {}
+    model_constraints = constraints if model_level else {}
+    if coordinate == "period":
+        return Model(
+            regimes=regimes,
+            actions=model_actions,
+            constraints=model_constraints,
+            regime_id_class=RegimeId,
+            n_periods=2,
+            initial_nodes=InitialNodes(by_period={0: "working"}),
+            edges={"working": {"dead": Periods(values=(0,))}},
+        )
+    ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
     return Model(
-        regimes={"working": working, "dead": dead},
-        actions=actions if model_level else {},
-        constraints=constraints if model_level else {},
-        ages=ages,
+        regimes=regimes,
+        actions=model_actions,
+        constraints=model_constraints,
         regime_id_class=RegimeId,
+        ages=ages,
         initial_nodes={ages.exact_values[0]: "working"},
         edges={"working": {"dead": 0}},
     )
+
+
+def _same_key(coordinate: float) -> int:  # noqa: ARG001
+    return 0
+
+
+def _zero() -> FloatND:
+    return jnp.asarray(0.0)
 
 
 _AGE_PARAMS = {"discount_factor": 0.95, "working": {}, "dead": {}}
 
 
 def _age_specialized_outputs(
-    *, conditional: bool, model_level: bool
+    *, conditional: bool, model_level: bool, reader: _Reader, coordinate: _Coordinate
 ) -> tuple[FloatND, dict[ActionName, np.ndarray], pd.DataFrame]:
-    model = _age_specialized_model(conditional=conditional, model_level=model_level)
+    model = _age_specialized_model(
+        conditional=conditional,
+        model_level=model_level,
+        reader=reader,
+        coordinate=coordinate,
+    )
     solution = model.solve(params=_AGE_PARAMS, log_level="off")
     lookup = model.lookup_policy(
         params=_AGE_PARAMS,
@@ -621,11 +689,14 @@ def _age_specialized_outputs(
         states={},
     )
     assert lookup.actions is not None
+    time_column = "period" if coordinate == "period" else "age"
     frame = model.simulate(
         params=_AGE_PARAMS,
         solution=solution,
         initial_conditions={
-            "age": jnp.zeros(2),
+            time_column: jnp.zeros(2, dtype=jnp.int32)
+            if coordinate == "period"
+            else jnp.zeros(2),
             "regime_id": jnp.full(2, RegimeId.working, dtype=jnp.int32),
         },
         log_level="off",
@@ -637,20 +708,35 @@ def _age_specialized_outputs(
     return solution.values[0]["working"], actions, panel
 
 
+@pytest.mark.parametrize("coordinate", ["age", "period"])
+@pytest.mark.parametrize("reader", ["annotated", "partial", "unannotated"])
 @pytest.mark.parametrize("model_level", [False, True])
 def test_age_specialized_reader_solves_looks_up_and_simulates_like_the_pin(
-    *, model_level: bool
+    *, model_level: bool, reader: _Reader, coordinate: _Coordinate
 ) -> None:
-    """When the only reader of the actions is age-specialized and annotates them as
-    plain arrays, the declaration matches the hand-written constraint in the value
-    function, `lookup_policy` and the simulated panel."""
+    """When the only reader of the actions is built per age or period, whether it
+    annotates them as plain arrays, is a partial or is unannotated, the declaration
+    matches the hand-written constraint in the value function, `lookup_policy` and
+    the simulated panel."""
     values, actions, panel = _age_specialized_outputs(
-        conditional=True, model_level=model_level
+        conditional=True, model_level=model_level, reader=reader, coordinate=coordinate
     )
     expected_values, expected_actions, expected_panel = _age_specialized_outputs(
-        conditional=False, model_level=model_level
+        conditional=False, model_level=model_level, reader=reader, coordinate=coordinate
     )
     assert_agrees_to_ulp(got=values, expected=expected_values, n_ulp=4)
     for name, expected in expected_actions.items():
         np.testing.assert_array_equal(actions[name], expected, err_msg=name)
     pd.testing.assert_frame_equal(panel, expected_panel)
+
+
+def test_lowering_module_imports_without_beartype_warnings() -> None:
+    """The beartype claw decorates every function of the lowering module."""
+    code = (
+        "import warnings; warnings.simplefilter('error');"
+        "import lcm, _lcm.regime_building.conditional_actions"
+    )
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
