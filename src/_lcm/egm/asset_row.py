@@ -43,6 +43,7 @@ from _lcm.egm.step_core import (
     _NodeOutput,
     _NodeRows,
     bind_cell_floor,
+    current_node_feasibility,
     tile_block_size,
 )
 from _lcm.egm.upper_envelope import OwnedQueryBracket
@@ -51,8 +52,11 @@ from _lcm.egm.upper_envelope.fues import (
 )
 from _lcm.solution.feasibility import (
     BoundedResult,
+    ContinuationReadCounts,
     QueryInputStatus,
+    merge_continuation_read_counts,
     merge_query_input_status,
+    reduce_continuation_read_counts,
 )
 from _lcm.typing import (
     EconFunctionKwargs,
@@ -257,6 +261,7 @@ class _SolveOneComboAssetRows:
             pieces.query_spec is not None
             or pieces.check_query_construction
             or pieces.continuation_plan.query_targets
+            or pieces.collect_continuation_read_counts
         ):
             nodes = map_over_leading_axis(
                 func=solve_one_node,
@@ -284,6 +289,7 @@ class _SolveOneComboAssetRows:
                 pieces=pieces,
                 resources=jax.vmap(own_resources_of_state)(self.state_grid),
                 combo_pool=combo_pool,
+                state_grid=self.state_grid,
             )
         if block:
             mapped_nodes = jax.lax.map(
@@ -389,15 +395,17 @@ class _SolveOneNode:
         child_status = None
         floor_direct = jnp.asarray(0.0, dtype=self.dtype)
         if pieces.query_spec is not None:
-            candidates, floor_direct, child_status = _asset_candidates_with_direct(
-                node=self,
-                pieces=pieces,
-                node_value=node_value,
-                utility_of_action=utility_of_action,
-                compute_node=compute_node,
+            candidates, floor_direct, child_status, read_counts = (
+                _asset_candidates_with_direct(
+                    node=self,
+                    pieces=pieces,
+                    node_value=node_value,
+                    utility_of_action=utility_of_action,
+                    compute_node=compute_node,
+                )
             )
         else:
-            candidates, child_status = _asset_candidates_without_direct(
+            candidates, child_status, read_counts = _asset_candidates_without_direct(
                 pieces=pieces,
                 compute_node=compute_node,
                 savings_point_width=self.savings_point_width,
@@ -471,6 +479,7 @@ class _SolveOneNode:
                 expected_at_floor=expected_values[0],
                 floor_direct=floor_direct,
                 child_status=child_status,
+                read_counts=read_counts,
             )
 
         construction_invalid = jnp.asarray(a=False)
@@ -500,12 +509,21 @@ class _SolveOneNode:
             jnp.where(jnp.isnan(policy_node), 1.0, policy_node)
         )
         savings_at_optimum = resources_at_node - policy_node
-        if pieces.check_query_construction or pieces.continuation_plan.query_targets:
-            continuation_gradient, direct_status = _asset_direct_gradient(
-                node=self, node_value=node_value, saving=savings_at_optimum
+        if (
+            pieces.check_query_construction
+            or pieces.continuation_plan.query_targets
+            or pieces.collect_continuation_read_counts
+        ):
+            continuation_gradient, direct_status, direct_counts = (
+                _asset_direct_gradient(
+                    node=self, node_value=node_value, saving=savings_at_optimum
+                )
             )
             child_status = merge_query_input_status(
                 left=child_status, right=direct_status
+            )
+            read_counts = merge_continuation_read_counts(
+                left=read_counts, right=direct_counts
             )
         else:
             continuation_gradient = jax.grad(self.continuation_of_euler_state)(
@@ -537,6 +555,7 @@ class _SolveOneNode:
             return BoundedResult(
                 output=(V_node, policy_node, mu_node),
                 bound_status=(),
+                continuation_read_counts=read_counts,
                 query_status=(
                     *(child_status or ()),
                     QueryInputStatus(
@@ -548,18 +567,28 @@ class _SolveOneNode:
             output=(V_node, policy_node, mu_node),
             installed=bool(pieces.continuation_plan.query_targets),
             status=child_status,
+            read_counts=read_counts,
         )
 
 
 def _with_asset_child_status(
-    *, output: _AssetNode, installed: bool, status: tuple[QueryInputStatus, ...] | None
+    *,
+    output: _AssetNode,
+    installed: bool,
+    status: tuple[QueryInputStatus, ...] | None,
+    read_counts: ContinuationReadCounts | None,
 ) -> _AssetNode | BoundedResult[_AssetNode]:
     """Keep child integrity independent of source bracket ownership."""
-    if not installed:
+    if not installed and read_counts is None:
         return output
-    if status is None:
+    if installed and status is None:
         raise TypeError("Installed asset child readers require query summaries.")
-    return BoundedResult(output=output, bound_status=(), query_status=status)
+    return BoundedResult(
+        output=output,
+        bound_status=(),
+        query_status=status,
+        continuation_read_counts=read_counts,
+    )
 
 
 def _asset_candidates_without_direct(
@@ -567,7 +596,9 @@ def _asset_candidates_without_direct(
     pieces: _EgmKernelPieces,
     compute_node: Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]],
     savings_point_width: int | None,
-) -> tuple[_NodeRows, tuple[QueryInputStatus, ...] | None]:
+) -> tuple[
+    _NodeRows, tuple[QueryInputStatus, ...] | None, ContinuationReadCounts | None
+]:
     """Evaluate candidates once and summarize only statically declared child slots."""
     if pieces.check_query_construction:
         return _compute_nodes_after_first(
@@ -580,30 +611,48 @@ def _asset_candidates_without_direct(
         compute_node=compute_node,
         savings_nodes=pieces.savings_nodes,
         savings_point_width=savings_point_width,
-        bound_summary=bool(pieces.continuation_plan.query_targets),
+        bound_summary=bool(pieces.continuation_plan.query_targets)
+        or pieces.collect_continuation_read_counts,
     )
     if isinstance(candidates, BoundedResult):
-        return candidates.output, candidates.query_status
-    return candidates, None
+        return (
+            candidates.output,
+            candidates.query_status,
+            candidates.continuation_read_counts,
+        )
+    return candidates, None, None
 
 
 def _asset_direct_gradient(
     *, node: _SolveOneNode, node_value: ScalarFloat, saving: ScalarFloat
-) -> tuple[ScalarFloat, tuple[QueryInputStatus, ...] | None]:
+) -> tuple[
+    ScalarFloat, tuple[QueryInputStatus, ...] | None, ContinuationReadCounts | None
+]:
     """Differentiate the numeric continuation while retaining its child slots."""
 
     def continuation(
         state_value: ScalarFloat,
-    ) -> tuple[ScalarFloat, tuple[QueryInputStatus, ...] | None]:
+    ) -> tuple[
+        ScalarFloat,
+        tuple[tuple[QueryInputStatus, ...] | None, ContinuationReadCounts | None],
+    ]:
         result = node.continuation_of_euler_state(state_value, saving)
         if isinstance(result, BoundedResult):
-            if result.bound_status or result.query_status is None:
+            if result.bound_status or (
+                result.query_status is None
+                and (
+                    node.pieces.continuation_plan.query_targets
+                    or result.continuation_read_counts is None
+                )
+            ):
                 raise TypeError("Direct child reads require declared query slots.")
-            return result.output, result.query_status
-        return result, None
+            return result.output, (result.query_status, result.continuation_read_counts)
+        return result, (None, None)
 
-    (_, status), gradient = jax.value_and_grad(continuation, has_aux=True)(node_value)
-    return gradient, status
+    (_, (status, counts)), gradient = jax.value_and_grad(continuation, has_aux=True)(
+        node_value
+    )
+    return gradient, status, counts
 
 
 def _asset_candidates_with_direct(
@@ -613,7 +662,12 @@ def _asset_candidates_with_direct(
     node_value: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     compute_node: Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]],
-) -> tuple[_NodeRows, ScalarFloat, tuple[QueryInputStatus, ...] | None]:
+) -> tuple[
+    _NodeRows,
+    ScalarFloat,
+    tuple[QueryInputStatus, ...] | None,
+    ContinuationReadCounts | None,
+]:
     """Differentiate first-node W and retain its numeric candidate as auxiliary."""
 
     def first(
@@ -634,13 +688,13 @@ def _asset_candidates_with_direct(
         return output[3], result
 
     (_, first_result), direct = jax.value_and_grad(first, has_aux=True)(node_value)
-    candidates, child_status = _compute_nodes_after_first(
+    candidates, child_status, read_counts = _compute_nodes_after_first(
         first=first_result,
         compute_node=compute_node,
         savings_nodes=pieces.savings_nodes,
         savings_point_width=node.savings_point_width,
     )
-    return candidates, direct, child_status
+    return candidates, direct, child_status, read_counts
 
 
 def _conditional_asset_node(
@@ -655,6 +709,7 @@ def _conditional_asset_node(
     expected_at_floor: ScalarFloat,
     floor_direct: ScalarFloat,
     child_status: tuple[QueryInputStatus, ...] | None,
+    read_counts: ContinuationReadCounts | None,
 ) -> BoundedResult[_OwnedAssetNode]:
     """Keep owned ordinary and independently evaluated corner candidates separate."""
     pair = bracket.bracket
@@ -685,10 +740,14 @@ def _conditional_asset_node(
     safe_policy = jnp.where(supported, policy, 1.0)
     safe_saving = jnp.where(supported, saving, pieces.borrowing_limit)
 
-    chosen_direct, direct_status = _asset_direct_gradient(
+    chosen_direct, direct_status, direct_counts = _asset_direct_gradient(
         node=node, node_value=node_value, saving=safe_saving
     )
     child_status = merge_query_input_status(left=child_status, right=direct_status)
+    read_counts = merge_continuation_read_counts(
+        left=read_counts,
+        right=reduce_continuation_read_counts(counts=direct_counts, active=supported),
+    )
     mu = (
         jax.grad(utility_of_action)(safe_policy)
         + node.discount_factor * chosen_direct / resources_gradient
@@ -733,6 +792,7 @@ def _conditional_asset_node(
             native_floor_direct,
         ),
         bound_status=(),
+        continuation_read_counts=read_counts,
         query_status=(
             *(child_status or ()),
             QueryInputStatus(
@@ -780,6 +840,12 @@ def _status_asset_rows(
         ),
         bound_status=() if pieces.floor_status is None else (pieces.floor_status,),
         query_status=nodes.query_status,
+        continuation_read_counts=reduce_continuation_read_counts(
+            counts=nodes.continuation_read_counts,
+            active=jnp.asarray(a=True)
+            if pieces.feasibility_func is None
+            else predicate,
+        ),
     )
 
 
@@ -789,6 +855,7 @@ def _conditional_asset_rows(
     pieces: _EgmKernelPieces,
     resources: Float1D,
     combo_pool: EconFunctionKwargs,
+    state_grid: Float1D,
 ) -> BoundedResult[_ConditionalAssetRows]:
     """Publish real J coordinates once and retain the independent liquid corner bank."""
     spec = pieces.query_spec
@@ -854,7 +921,9 @@ def _conditional_asset_rows(
     )
     feasible = resources > pieces.borrowing_limit
     if pieces.feasibility_func is not None:
-        feasible &= pieces.feasibility_func(**combo_pool)
+        feasible &= current_node_feasibility(
+            pieces=pieces, pool=combo_pool, state_grid=state_grid
+        )
     return BoundedResult(
         output=(
             jnp.where(feasible, V, -jnp.inf),
@@ -868,6 +937,8 @@ def _conditional_asset_rows(
         ),
         bound_status=() if pieces.floor_status is None else (pieces.floor_status,),
         query_status=nodes.query_status,
+        # The retained conditional and liquid-corner records require these reads.
+        continuation_read_counts=nodes.continuation_read_counts,
     )
 
 
@@ -964,7 +1035,9 @@ def _get_expected_continuation_value(
             dtype=dtype,
             stochastic_node_width=stochastic_node_width,
             resolved_process_grids=resolved_process_grids,
-        )
+            collect_continuation_read_counts=pieces.collect_continuation_read_counts,
+        ),
+        query_slots_required=bool(pieces.continuation_plan.query_targets),
     )
 
 
@@ -978,13 +1051,20 @@ class _ExpectedContinuationValue:
         | BoundedResult[tuple[ScalarFloat, ScalarFloat]],
     ]
     """The bound continuation, returning the value and marginal at a node."""
+    query_slots_required: bool = False
+    """Canonical child-slot presence, independently of optional counters."""
 
     def __call__(
         self, savings_value: ScalarFloat
     ) -> ScalarFloat | BoundedResult[ScalarFloat]:
         result = self.continuation(savings_value)
         if isinstance(result, BoundedResult):
-            if result.bound_status or result.query_status is None:
+            if result.bound_status or (
+                result.query_status is None
+                and (
+                    self.query_slots_required or result.continuation_read_counts is None
+                )
+            ):
                 raise TypeError(
                     "Child values require query slots and no own bound slots."
                 )
@@ -992,6 +1072,7 @@ class _ExpectedContinuationValue:
                 output=result.output[0],
                 bound_status=(),
                 query_status=result.query_status,
+                continuation_read_counts=result.continuation_read_counts,
             )
         return result[0]
 

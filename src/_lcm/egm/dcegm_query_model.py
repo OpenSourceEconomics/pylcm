@@ -19,3 +19,10 @@ class DCEGMQueryModel:
     """Processed canonical aggregator reused by the solution phase."""
     offsets: Float1D
     """One supplied saving-offset vector, without cell or period expansion."""
+
+    literal_nodes: Float1D | None = None
+    """Original physical savings nodes for an installed literal floor.
+
+    Literal queries reuse these nodes directly, avoiding a floating subtraction
+    and retranslation of a grid the producer does not shift.
+    """

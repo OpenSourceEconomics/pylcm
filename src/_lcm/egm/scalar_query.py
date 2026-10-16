@@ -19,8 +19,13 @@ from _lcm.egm.preferences import (
     newton_action_ceiling,
 )
 from _lcm.egm.query_data import EGMQueryData, QueryNodeKind
-from _lcm.solution.feasibility import BoundInputStatus, shift_savings_grid
+from _lcm.solution.feasibility import (
+    BoundInputStatus,
+    ContinuationReadCounts,
+    shift_savings_grid,
+)
 from _lcm.typing import EconFunction, EconFunctionKwargs, EconFunctionsMapping
+from _lcm.utils.counts import sum_counts
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.solver_api import ContinuationCapabilities
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ReferenceName, ScalarFloat
@@ -175,6 +180,57 @@ class ScalarEGMQuery:
         prepared: PreparedScalarEGMQuery,
     ) -> ScalarEGMQueryResult:
         """Read with this cell's already checked canonical target context."""
+        result, _ = self._read_prepared_with_summary(
+            query=query,
+            grid=grid,
+            value=value,
+            marginal=marginal,
+            data=data,
+            prepared=prepared,
+            collect_continuation_read_counts=False,
+            active=None,
+        )
+        return result
+
+    def read_prepared_with_counts(
+        self,
+        *,
+        query: Float1D,
+        grid: Float1D,
+        value: Float1D,
+        marginal: Float1D,
+        data: EGMQueryData,
+        prepared: PreparedScalarEGMQuery,
+        active: BoolND | None = None,
+    ) -> tuple[ScalarEGMQueryResult, ContinuationReadCounts]:
+        """Count paired raw scalar-row attempts before its actual corner recovery."""
+        result, counts = self._read_prepared_with_summary(
+            query=query,
+            grid=grid,
+            value=value,
+            marginal=marginal,
+            data=data,
+            prepared=prepared,
+            collect_continuation_read_counts=True,
+            active=active,
+        )
+        if counts is None:
+            raise TypeError("A checked scalar read requires its paired population.")
+        return result, counts
+
+    def _read_prepared_with_summary(
+        self,
+        *,
+        query: Float1D,
+        grid: Float1D,
+        value: Float1D,
+        marginal: Float1D,
+        data: EGMQueryData,
+        prepared: PreparedScalarEGMQuery,
+        collect_continuation_read_counts: bool,
+        active: BoolND | None,
+    ) -> tuple[ScalarEGMQueryResult, ContinuationReadCounts | None]:
+        """Share one original support/owner calculation across static variants."""
         floor, nodes, status, preferences, beta = prepared
         domain = query > floor
         provenance_matches = data.floor_used == floor
@@ -292,7 +348,7 @@ class ScalarEGMQuery:
         )
         take_row = row_legal & (~corner_finite | (row_value >= corner_value))
         represented = row_legal | corner_finite
-        return ScalarEGMQueryResult(
+        result = ScalarEGMQueryResult(
             value=jnp.where(
                 domain, jnp.where(take_row, row_value, corner_value), -jnp.inf
             ),
@@ -308,6 +364,19 @@ class ScalarEGMQuery:
             | (domain & ~represented),
             bound_status=status,
         )
+        counts = None
+        if collect_continuation_read_counts:
+            supported_node = live & owned & ~invalid_node & jnp.isfinite(grid)
+            first = grid[jnp.argmax(supported_node)]
+            activity = (
+                jnp.ones(query.shape, dtype=jnp.bool_) if active is None else active
+            )
+            eligible = activity & jnp.any(supported_node)
+            counts = ContinuationReadCounts(
+                below_first_live=sum_counts(counts=eligible & (query < first)),
+                eligible=sum_counts(counts=eligible),
+            )
+        return result, counts
 
 
 def _weighted_pair(

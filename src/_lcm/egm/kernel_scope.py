@@ -31,6 +31,7 @@ from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
+    FunctionName,
     QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
@@ -61,6 +62,7 @@ def _find_unsupported_feature(
     own_passive_state_names: tuple[StateName, ...],
     own_discrete_action_names: tuple[ActionName, ...],
     asset_row_mode: bool,
+    post_inversion_predicate_names: frozenset[FunctionName] = frozenset(),
 ) -> str | None:
     """Return a message naming the first feature outside the kernel's scope.
 
@@ -104,6 +106,7 @@ def _find_unsupported_feature(
             own_passive_state_names=own_passive_state_names,
             own_discrete_action_names=own_discrete_action_names,
             asset_row_mode=asset_row_mode,
+            post_inversion_predicate_names=post_inversion_predicate_names,
         )
 
     if message is None:
@@ -320,6 +323,7 @@ def _find_unsupported_function_args(
     own_passive_state_names: tuple[StateName, ...],
     own_discrete_action_names: tuple[ActionName, ...],
     asset_row_mode: bool,
+    post_inversion_predicate_names: frozenset[FunctionName] = frozenset(),
 ) -> str | None:
     """Return a message naming the first function with out-of-scope arguments."""
     # Combo inputs are bound per (discrete state, passive node, discrete
@@ -395,7 +399,13 @@ def _find_unsupported_function_args(
             (
                 f"the constraint '{constraint_name}'",
                 frozenset(get_union_of_args([constraint_func])),
-                allowed_combo_inputs | allowed_params,
+                allowed_combo_inputs
+                | allowed_params
+                | (
+                    {solver.continuous_state}
+                    if constraint_name in post_inversion_predicate_names
+                    else set()
+                ),
             )
         )
     for label, needed, allowed in arg_requirements:

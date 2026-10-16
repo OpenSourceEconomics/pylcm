@@ -375,6 +375,7 @@ def _observe_installed_consumer(
         self: DCEGMQuery, **kwargs: Unpack[_ChoiceInputs]
     ) -> DCEGMQueryResult:
         result = original_choices(self, **kwargs)
+        assert isinstance(result, DCEGMQueryResult)
         pool = kwargs["pool"]
         assert kwargs["row_queries"].shape == (2, 3, 2)
         assert kwargs["row_gradients"].shape == (2, 3, 2)

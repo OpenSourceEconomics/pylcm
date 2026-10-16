@@ -17,15 +17,24 @@ from typing import cast
 
 import jax.numpy as jnp
 
-from _lcm.continuation import ContinuationPayload
+from _lcm.continuation import ContinuationPayload, EGMQuerySpec
+from _lcm.egm.adaptive_mesh_authority import (
+    admit_continuation_mesh,
+    validate_continuation_mesh,
+)
+from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.solution.contract import (
+    GENERATED_CONTINUATION_AUTHORITY,
     GENERATED_REPLAY_AUTHORITY,
+    GeneratedContinuationAuthority,
     GeneratedReplayAuthority,
 )
 from _lcm.solution.feasibility import (
     BoundInputStatus,
+    ContinuationCountedKernelOutput,
+    ContinuationReadCounts,
     FeasibilityCounts,
     FeasibilityKernelOutput,
     QueryInputStatus,
@@ -74,6 +83,9 @@ class ConsumedKernelOutput:
     generated_replay_authority: GeneratedReplayAuthority | None
     """The engine-private replay facts emitted beside an adaptive policy."""
 
+    generated_continuation_authority: GeneratedContinuationAuthority | None
+    """The engine-private completed mesh emitted beside an adaptive continuation."""
+
     dissolution: BoolND | None
     """A collective regime's empty-feasible-set flag on the state axes.
 
@@ -101,6 +113,48 @@ class ConsumedKernelOutput:
     """Bounded child query records, independent of ordinary artifact ownership."""
     feasibility_counts: FeasibilityCounts | None = None
     """Trusted native GridSearch summaries; None denotes an unmeasured domain."""
+    continuation_read_counts: ContinuationReadCounts | None = None
+    """Optional native paired-read inventory, without retaining its input rows."""
+
+
+def _validate_generated_continuation_authority(
+    *,
+    continuation: ContinuationPayload | None,
+    continuation_query_spec: EGMQuerySpec | None,
+    generated_continuation_authority: GeneratedContinuationAuthority | None,
+) -> None:
+    """Validate a published adaptive mesh against independently generated authority."""
+    adaptive = (
+        None
+        if continuation_query_spec is None
+        else continuation_query_spec.adaptive_outer
+    )
+    if continuation_query_spec is not None and adaptive is not None:
+        if generated_continuation_authority is None or not isinstance(
+            continuation, EGMCarry
+        ):
+            raise TypeError(
+                "Adaptive continuation publication "
+                "requires independent generated mesh authority."
+            )
+        if (
+            generated_continuation_authority.model_identity
+            != adaptive.mesh_authority_identity
+        ):
+            raise TypeError(
+                "Generated continuation mesh belongs to a different canonical search."
+            )
+        nodes = admit_continuation_mesh(
+            nodes=generated_continuation_authority.adaptive_outer_nodes,
+            spec=continuation_query_spec,
+        )
+        validate_continuation_mesh(
+            carry=continuation, nodes=nodes, capacity=adaptive.adjuster_capacity
+        )
+    elif generated_continuation_authority is not None:
+        raise TypeError(
+            "Generated continuation authority has no canonical adaptive consumer."
+        )
 
 
 def consume_kernel_output(
@@ -109,6 +163,7 @@ def consume_kernel_output(
     continuation_key: ArtifactKey | None,
     regime_name: RegimeName,
     period: int,
+    continuation_query_spec: EGMQuerySpec | None = None,
     artifact_authorities: Mapping[ArtifactKey, ArtifactAuthority] = (
         MappingProxyType({})
     ),
@@ -230,6 +285,19 @@ def consume_kernel_output(
         regime_name=regime_name,
         period=period,
     )
+    generated_continuation_authority = _pop_typed_artifact(
+        channel="auxiliary",
+        artifacts=auxiliary,
+        key=GENERATED_CONTINUATION_AUTHORITY,
+        expected_types=(GeneratedContinuationAuthority,),
+        regime_name=regime_name,
+        period=period,
+    )
+    _validate_generated_continuation_authority(
+        continuation=continuation,
+        continuation_query_spec=continuation_query_spec,
+        generated_continuation_authority=generated_continuation_authority,
+    )
     if generated_replay_authority is not None and simulation_policy is None:
         msg = (
             f"Regime '{regime_name}' in period {period} published artifact "
@@ -263,6 +331,7 @@ def consume_kernel_output(
         continuation=continuation,
         simulation_policy=simulation_policy,
         generated_replay_authority=generated_replay_authority,
+        generated_continuation_authority=generated_continuation_authority,
         dissolution=dissolution,
         diagnostics=diagnostics,
         continuation_artifacts=MappingProxyType(published_continuations),
@@ -277,6 +346,12 @@ def consume_kernel_output(
         feasibility_counts=(
             output.feasibility_counts
             if type(output) is FeasibilityKernelOutput
+            else None
+        ),
+        continuation_read_counts=(
+            output.continuation_read_counts
+            if type(output) is FeasibilityKernelOutput
+            or type(output) is ContinuationCountedKernelOutput
             else None
         ),
     )

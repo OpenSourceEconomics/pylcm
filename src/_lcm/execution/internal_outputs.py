@@ -21,22 +21,15 @@ from _lcm.execution.core_program import (
     ResolvedCoreProgram,
     _topological_program_order,
 )
-from _lcm.typing import DataclassInstance, PytreeValue, ShapeDtypePytree
+from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 
 # Shape, dtype name and weak typing of one array leaf: what a consumer traces against.
 type _LeafSignature = tuple[tuple[int, ...], str, bool]
 
-# A published output tree with every array leaf replaced by its signature.
-type _SignatureTree = (
-    _LeafSignature
-    | tuple[_SignatureTree, ...]
-    | list[_SignatureTree]
-    | Mapping[str, _SignatureTree]
-    | DataclassInstance
-    | None
-)
+# Pytree structure and ordered leaf metadata, independent of container equality.
+type _SignatureTree = tuple[jax.tree_util.PyTreeDef, tuple[_LeafSignature, ...]]
 
 
 # The ordering lives beside the graph validation that needs it, and `core_program`
@@ -164,8 +157,8 @@ def assert_internal_inputs(
                 f"{name!r}."
             )
             raise ValueError(msg)
-        expected = jax.tree.map(_leaf_signature, template)
-        actual = jax.tree.map(_leaf_signature, arguments[name])
+        expected = _tree_signature(tree=template)
+        actual = _tree_signature(tree=arguments[name])
         if expected != actual:
             msg = (
                 f"Core program {label!r} received internal input {name!r} with "
@@ -238,15 +231,20 @@ def _published_signature(
     *, record: ResolvedProducer, spec: InternalOutputSpec
 ) -> _SignatureTree:
     """Return the tracing-relevant array metadata tree a label publishes."""
-    return jax.tree.map(
-        _leaf_signature,
-        _select_path(
+    return _tree_signature(
+        tree=_select_path(
             tree=record.abstract_output,
             path=spec.path,
             producer_name=record.name,
             label=spec.label,
         ),
     )
+
+
+def _tree_signature(*, tree: PytreeValue | ShapeDtypePytree) -> _SignatureTree:
+    """Return exact pytree structure and tracing metadata without rebuilding records."""
+    leaves, structure = jax.tree.flatten(tree)
+    return structure, tuple(_leaf_signature(leaf) for leaf in leaves)
 
 
 def _leaf_signature(leaf: PytreeValue | ShapeDtypePytree) -> _LeafSignature:

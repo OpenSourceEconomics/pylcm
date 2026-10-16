@@ -1340,7 +1340,7 @@ def test_donation_argument_adapter_is_in_the_reviewed_source_inventory(
     assert source in clean_corridor_sources
 
 
-def test_supplemental_sources_complete_the_pinned_registry_coverage():
+def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
     """Every added corridor has its own separate, nonoverlapping control."""
     root = Path(__file__).parents[1]
     registered = direct_flow_mutation_specs(repo_root=root)
@@ -1350,6 +1350,9 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
     child_failure = direct_flow.child_failure_mutation_specs(repo_root=root)
     reviewed_prefix = direct_flow.reviewed_prefix_mutation_specs(repo_root=root)
     decoupled = direct_flow.decoupled_bound_mutation_specs(repo_root=root)
+    associated_saving = direct_flow.associated_saving_mutation_specs(repo_root=root)
+    retained_prefix = direct_flow.retained_prefix_mutation_specs(repo_root=root)
+    outer_helpers = direct_flow.outer_helper_mutation_specs(repo_root=root)
 
     assert set(decoupled) == {
         "decoupled_bound:action_adapter_bypassed",
@@ -1470,6 +1473,9 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         child_failure,
         reviewed_prefix,
         decoupled,
+        associated_saving,
+        retained_prefix,
+        outer_helpers,
     )
     for index, left in enumerate(families):
         for right in families[index + 1 :]:

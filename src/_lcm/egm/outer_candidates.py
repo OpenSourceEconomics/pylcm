@@ -26,7 +26,12 @@ import jax.numpy as jnp
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy
-from lcm.typing import BoolND, FloatND, ScalarFloat
+from _lcm.solution.feasibility import (
+    BoundInputStatus,
+    ContinuationReadCounts,
+    QueryInputStatus,
+)
+from lcm.typing import BoolND, FloatND, ScalarFloat, ValueND
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -44,6 +49,15 @@ class OuterCandidateResult:
 
     sim_policy: EGMSimPolicy | None
     """The conditional published simulation policy, or `None`."""
+
+    bound_status: tuple[BoundInputStatus, ...] = ()
+    """Mandatory status from this actual solve, including losing candidates."""
+    query_status: tuple[QueryInputStatus, ...] | None = None
+    """Actual child diagnostic slots; absent on the ordinary path."""
+    continuation_read_counts: ContinuationReadCounts | None = None
+    """Optional counts from this executed solve, never reconstructed from value."""
+    current_feasibility: BoolND | None = None
+    """Actual per-state/per-D feasibility before the enclosing outer fold."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -146,6 +160,6 @@ def build_outer_candidate_bank(
     )
 
 
-def _stack_leaves(*leaves: FloatND) -> FloatND:
+def _stack_leaves(*leaves: ValueND) -> ValueND:
     """Stack one leaf position of several pytrees along a new leading axis."""
     return jnp.stack(leaves)

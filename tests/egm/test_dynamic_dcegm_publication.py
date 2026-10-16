@@ -657,6 +657,7 @@ def test_conditional_step_publishes_query_carry_counts_and_integrity(
     )
     jax.effects_barrier()
     assert isinstance(result, BoundedResult)
+    assert len(result.output) == 4
     value, carry, policy, counts = result.output
     tolerance = 10 ** (-DECIMAL_PRECISION)
     np.testing.assert_array_equal(value[:1], [-np.inf])
@@ -700,6 +701,7 @@ def test_conditional_values_core_retains_counts_and_integrity_without_policy(
     )
     jax.effects_barrier()
     assert isinstance(result, BoundedResult)
+    assert len(result.output) == 3
     value, carry, counts = result.output
     np.testing.assert_array_equal(value[:1], [-np.inf])
     np.testing.assert_allclose(

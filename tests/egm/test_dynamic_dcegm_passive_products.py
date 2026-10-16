@@ -176,7 +176,7 @@ def _installed_query(*, model: Model) -> DCEGMQuery:
     """Read the actual target-bound factory from the installed parent program."""
     plan = _continuation_plan(model=model, regime="parent", period=0)
     query = plan.child_reads["child"].query
-    assert query is not None
+    assert isinstance(query, DCEGMQuery)
     authority = query.model.authority
     assert authority.state_names == ("z", "w")
     assert authority.action_names == ()

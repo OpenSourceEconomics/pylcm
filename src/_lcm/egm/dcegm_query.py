@@ -5,12 +5,18 @@ import inspect
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import NamedTuple
+from types import MappingProxyType
+from typing import Literal, NamedTuple, overload
 
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.carry import EGM_ENDOGENOUS_COORDINATE, OwnedRowRead, read_owned_row
+from _lcm.egm.carry import (
+    EGM_ENDOGENOUS_COORDINATE,
+    OwnedRowRead,
+    _read_owned_row_with_support,
+    read_owned_row,
+)
 from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.interp import locate_on_grid
 from _lcm.egm.preferences import (
@@ -24,8 +30,13 @@ from _lcm.egm.preferences import (
 from _lcm.egm.query_data import EGMQueryData, QueryNodeKind, select_query_data
 from _lcm.grids.discrete import read_at_codes
 from _lcm.probability import exact_product, is_negative, is_represented_zero
-from _lcm.solution.feasibility import BoundInputStatus, shift_savings_grid
+from _lcm.solution.feasibility import (
+    BoundInputStatus,
+    ContinuationReadCounts,
+    shift_savings_grid,
+)
 from _lcm.typing import EconFunction, EconFunctionKwargs, EconFunctionsMapping
+from _lcm.utils.counts import sum_counts
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.solver_api import ContinuationCapabilities
 from lcm.typing import (
@@ -50,6 +61,18 @@ class DCEGMQueryResult(NamedTuple):
     bound_status: BoundInputStatus
 
 
+class FiniteNEGMQueryResult(NamedTuple):
+    """Nodewise outer envelope without a fictitious common policy after blending."""
+
+    value: FloatND
+    marginal: FloatND
+    coverage_missing: BoolND
+    bound_status: BoundInputStatus
+
+
+type DCEGMChoiceResult = DCEGMQueryResult | FiniteNEGMQueryResult
+
+
 def build_dcegm_query(
     *,
     model: DCEGMQueryModel,
@@ -57,13 +80,25 @@ def build_dcegm_query(
     koopmans_aggregator: EconFunction,
 ) -> DCEGMQuery:
     """Bind conditional reads to the independently compiled target model."""
-    if model.authority.row_topology is None:
+    if (
+        model.authority.row_topology is None
+        or model.authority.row_topology.kind != "exact_monotone_run"
+    ):
         raise TypeError("A DC query requires independently compiled row topology.")
     bound = model.authority.bound
-    if bound.lower_target is None:
+    if bound.kind == "dag" and bound.lower_target is None:
         raise TypeError("A DC feature query requires the installed floor target.")
     if len(model.authority.interval_ids) != 1:
         raise TypeError("A smooth DC query requires one model-owned corner interval.")
+    finite = model.authority.finite_outer
+    if finite is not None:
+        functions = MappingProxyType(
+            {
+                name: function
+                for name, function in functions.items()
+                if name != finite.outer_post_decision
+            }
+        )
     predicates = tuple(
         concatenate_regime_function(functions=functions, target=target)
         for purpose, target in model.authority.evaluator_targets
@@ -71,8 +106,10 @@ def build_dcegm_query(
     )
     return DCEGMQuery(
         model=model,
-        lower=concatenate_regime_function(
-            functions=functions, target=bound.lower_target
+        lower=(
+            concatenate_regime_function(functions=functions, target=bound.lower_target)
+            if bound.lower_target is not None
+            else None
         ),
         resources=concatenate_regime_function(
             functions=functions, target=bound.resources_target
@@ -87,6 +124,13 @@ def build_dcegm_query(
         read_discount_factor=get_discount_factor_reader(
             functions=functions, koopmans_aggregator=koopmans_aggregator
         ),
+        finite_keeper=(
+            concatenate_regime_function(
+                functions=functions, target=finite.keeper_target
+            )
+            if finite is not None and finite.keeper_target is not None
+            else None
+        ),
     )
 
 
@@ -95,17 +139,21 @@ class DCEGMQuery:
     """Select complete owned tuples before passive interpolation and choice ranking."""
 
     model: DCEGMQueryModel
-    lower: Callable[..., FloatND]
+    lower: Callable[..., FloatND] | None
     resources: Callable[..., FloatND]
     predicates: tuple[Callable[..., BoolND], ...]
     build_preferences: Callable[[EconFunctionKwargs], Preferences]
     read_discount_factor: Callable[[EconFunctionKwargs], ScalarFloat]
+    finite_keeper: Callable[..., FloatND] | None = None
 
     @property
     def input_names(self) -> frozenset[ReferenceName]:
         """External actual-target inputs, excluding internally chosen quantities."""
         bound = self.model.authority.bound
         internal = {bound.action, bound.post_decision, "utility", "CE"}
+        finite = self.model.authority.finite_outer
+        if finite is not None:
+            internal |= {finite.outer_action, finite.outer_post_decision}
         return frozenset(
             name
             for _, names in self.model.authority.evaluator_inputs
@@ -119,6 +167,66 @@ class DCEGMQuery:
         return ContinuationCapabilities(
             value=True, marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE})
         )
+
+    @overload
+    def read_choices(
+        self,
+        *,
+        grid: FloatND,
+        value: FloatND,
+        marginal: FloatND,
+        data: EGMQueryData,
+        row_queries: FloatND,
+        row_gradients: FloatND,
+        passive_values: tuple[ScalarFloat, ...],
+        passive_grids: tuple[Float1D, ...],
+        action_names: tuple[ActionName, ...],
+        action_values: tuple[FloatND | IntND, ...],
+        pool: EconFunctionKwargs,
+        euler_gradient: ScalarFloat,
+        paired_marginal_read: bool = False,
+        collect_continuation_read_counts: Literal[False] = False,
+    ) -> DCEGMChoiceResult: ...
+
+    @overload
+    def read_choices(
+        self,
+        *,
+        grid: FloatND,
+        value: FloatND,
+        marginal: FloatND,
+        data: EGMQueryData,
+        row_queries: FloatND,
+        row_gradients: FloatND,
+        passive_values: tuple[ScalarFloat, ...],
+        passive_grids: tuple[Float1D, ...],
+        action_names: tuple[ActionName, ...],
+        action_values: tuple[FloatND | IntND, ...],
+        pool: EconFunctionKwargs,
+        euler_gradient: ScalarFloat,
+        paired_marginal_read: bool = False,
+        collect_continuation_read_counts: Literal[True],
+    ) -> tuple[DCEGMChoiceResult, ContinuationReadCounts]: ...
+
+    @overload
+    def read_choices(
+        self,
+        *,
+        grid: FloatND,
+        value: FloatND,
+        marginal: FloatND,
+        data: EGMQueryData,
+        row_queries: FloatND,
+        row_gradients: FloatND,
+        passive_values: tuple[ScalarFloat, ...],
+        passive_grids: tuple[Float1D, ...],
+        action_names: tuple[ActionName, ...],
+        action_values: tuple[FloatND | IntND, ...],
+        pool: EconFunctionKwargs,
+        euler_gradient: ScalarFloat,
+        paired_marginal_read: bool = False,
+        collect_continuation_read_counts: bool,
+    ) -> DCEGMChoiceResult | tuple[DCEGMChoiceResult, ContinuationReadCounts]: ...
 
     def read_choices(
         self,
@@ -136,14 +244,39 @@ class DCEGMQuery:
         pool: EconFunctionKwargs,
         euler_gradient: ScalarFloat,
         paired_marginal_read: bool = False,
-    ) -> DCEGMQueryResult:
+        collect_continuation_read_counts: bool = False,
+    ) -> DCEGMChoiceResult | tuple[DCEGMChoiceResult, ContinuationReadCounts]:
         """Read each conditional action using one actual fixed-cell floor evaluation."""
         if action_names != self.model.authority.action_names:
             raise TypeError("DC query actions differ from canonical target authority.")
+        if self.model.authority.finite_outer is not None:
+            from _lcm.egm.finite_negm_query import (  # noqa: PLC0415
+                read_finite_outer_choices,
+            )
+
+            return read_finite_outer_choices(
+                query=self,
+                grid=grid,
+                value=value,
+                marginal=marginal,
+                data=data,
+                row_queries=row_queries,
+                row_gradients=row_gradients,
+                passive_values=passive_values,
+                passive_grids=passive_grids,
+                action_names=action_names,
+                action_values=action_values,
+                pool=pool,
+                euler_gradient=euler_gradient,
+                paired_marginal_read=paired_marginal_read,
+                collect_continuation_read_counts=collect_continuation_read_counts,
+            )
         floor_state = self.evaluate_floor(pool=pool)
         action_shape = tuple(values.size for values in action_values)
 
-        def read_one(index: ScalarInt) -> DCEGMQueryResult:
+        def read_one(
+            index: ScalarInt,
+        ) -> tuple[DCEGMChoiceResult, ContinuationReadCounts | None]:
             action_index = (
                 jnp.unravel_index(index, action_shape) if action_shape else ()
             )
@@ -165,7 +298,7 @@ class DCEGMQuery:
                 )
 
             resource_slope = jax.grad(resources_at)(actual[state_name])
-            return self._read_at_floor(
+            return self._read_at_floor_with_summary(
                 grid=read_at_codes(array=grid, positions=positions),
                 value=read_at_codes(array=value, positions=positions),
                 marginal=read_at_codes(array=marginal, positions=positions),
@@ -180,9 +313,21 @@ class DCEGMQuery:
                 resource_gradient=resource_slope * euler_gradient,
                 floor_state=floor_state,
                 paired_marginal_read=paired_marginal_read,
+                read_rows=self._read_rows_with_counts
+                if collect_continuation_read_counts
+                else self._read_rows_without_counts,
             )
 
-        return jax.vmap(read_one)(jnp.arange(math.prod(action_shape), dtype=jnp.int32))
+        result, counts = jax.vmap(read_one)(
+            jnp.arange(math.prod(action_shape), dtype=jnp.int32)
+        )
+        if collect_continuation_read_counts:
+            if counts is None:
+                raise TypeError("Checked choices require their original row summary.")
+            return result, ContinuationReadCounts(
+                *(sum_counts(counts=count) for count in counts)
+            )
+        return result
 
     def __call__(
         self,
@@ -247,6 +392,39 @@ class DCEGMQuery:
             paired_marginal_read=paired_marginal_read,
         )
 
+    def read_prepared_with_counts(
+        self,
+        *,
+        grid: FloatND,
+        value: FloatND,
+        marginal: FloatND,
+        data: EGMQueryData,
+        row_queries: FloatND,
+        row_gradients: FloatND,
+        passive_values: tuple[ScalarFloat, ...],
+        passive_grids: tuple[Float1D, ...],
+        pool: EconFunctionKwargs,
+        resource_gradient: ScalarFloat,
+        floor_state: tuple[ScalarFloat, Float1D, BoundInputStatus],
+        paired_marginal_read: bool = False,
+    ) -> tuple[DCEGMQueryResult, ContinuationReadCounts]:
+        """Count original paired row attempts before recovery and choice masking."""
+        return self._read_at_floor_with_summary(
+            grid=grid,
+            value=value,
+            marginal=marginal,
+            data=data,
+            row_queries=row_queries,
+            row_gradients=row_gradients,
+            passive_values=passive_values,
+            passive_grids=passive_grids,
+            pool=pool,
+            resource_gradient=resource_gradient,
+            floor_state=floor_state,
+            paired_marginal_read=paired_marginal_read,
+            read_rows=self._read_rows_with_counts,
+        )
+
     def _read_at_floor(
         self,
         *,
@@ -264,6 +442,41 @@ class DCEGMQuery:
         paired_marginal_read: bool = False,
     ) -> DCEGMQueryResult:
         """Read one conditional alternative with its cell's already evaluated floor."""
+        result, _ = self._read_at_floor_with_summary(
+            grid=grid,
+            value=value,
+            marginal=marginal,
+            data=data,
+            row_queries=row_queries,
+            row_gradients=row_gradients,
+            passive_values=passive_values,
+            passive_grids=passive_grids,
+            pool=pool,
+            resource_gradient=resource_gradient,
+            floor_state=floor_state,
+            paired_marginal_read=paired_marginal_read,
+            read_rows=self._read_rows_without_counts,
+        )
+        return result
+
+    def _read_at_floor_with_summary[Summary: ContinuationReadCounts | None](
+        self,
+        *,
+        grid: FloatND,
+        value: FloatND,
+        marginal: FloatND,
+        data: EGMQueryData,
+        row_queries: FloatND,
+        row_gradients: FloatND,
+        passive_values: tuple[ScalarFloat, ...],
+        passive_grids: tuple[Float1D, ...],
+        pool: EconFunctionKwargs,
+        resource_gradient: ScalarFloat,
+        floor_state: tuple[ScalarFloat, Float1D, BoundInputStatus],
+        paired_marginal_read: bool,
+        read_rows: Callable[..., tuple[_BlendedRow, Summary]],
+    ) -> tuple[DCEGMQueryResult, Summary]:
+        """Share one economic read with a statically selected row-summary callable."""
         floor, nodes, bound_status = floor_state
         resources = _evaluate(function=self.resources, pool=pool)
         eligible = jnp.asarray(a=True)
@@ -280,7 +493,7 @@ class DCEGMQuery:
             active.reshape(-1),
             negative.reshape(-1),
         )
-        row = self._read_rows(
+        row, summary = read_rows(
             grid=grid,
             value=value,
             marginal=marginal,
@@ -345,7 +558,7 @@ class DCEGMQuery:
         )
         take_row = row_legal & (~finite_corner | (row.value >= corner_value))
         represented = row_legal | finite_corner
-        return DCEGMQueryResult(
+        result = DCEGMQueryResult(
             value=jnp.where(
                 eligible & domain & represented,
                 jnp.where(take_row, row.value, corner_value),
@@ -362,11 +575,27 @@ class DCEGMQuery:
             | (eligible & domain & ~represented),
             bound_status=bound_status,
         )
+        return result, summary
 
     def evaluate_floor(
         self, *, pool: EconFunctionKwargs
     ) -> tuple[ScalarFloat, Float1D, BoundInputStatus]:
         """Evaluate actual bound arithmetic before any economic eligibility mask."""
+        if self.lower is None:
+            literal = self.model.authority.bound.literal_value
+            nodes = self.model.literal_nodes
+            if literal is None or nodes is None:
+                raise TypeError(
+                    "A literal DC query requires its original physical grid."
+                )
+            floor = jnp.asarray(literal, dtype=nodes.dtype)
+            status = BoundInputStatus(
+                nonfinite_floor=~jnp.isfinite(floor),
+                invalid_shifted_grid=(
+                    ~jnp.all(jnp.isfinite(nodes)) | jnp.any(nodes[1:] <= nodes[:-1])
+                ),
+            )
+            return floor, nodes, status
         floor = _evaluate(function=self.lower, pool=pool)
         nodes, status = shift_savings_grid(floor=floor, offsets=self.model.offsets)
         invalid = status.nonfinite_floor | status.invalid_shifted_grid
@@ -375,6 +604,34 @@ class DCEGMQuery:
             jnp.where(invalid, self.model.offsets, nodes),
             status,
         )
+
+    def _read_rows_without_counts(
+        self,
+        *,
+        grid: FloatND,
+        value: FloatND,
+        marginal: FloatND,
+        data: EGMQueryData,
+        row_queries: FloatND,
+        row_gradients: FloatND,
+        weights: tuple[Float1D, ...],
+        active: BoolND,
+        negative: BoolND,
+        paired_marginal_read: bool,
+    ) -> tuple[_BlendedRow, None]:
+        """Keep ordinary row reads free of optional count work and output leaves."""
+        return self._read_rows(
+            grid=grid,
+            value=value,
+            marginal=marginal,
+            data=data,
+            row_queries=row_queries,
+            row_gradients=row_gradients,
+            weights=weights,
+            active=active,
+            negative=negative,
+            paired_marginal_read=paired_marginal_read,
+        ), None
 
     def _read_rows(
         self,
@@ -414,33 +671,75 @@ class DCEGMQuery:
             marginal=marginal.reshape(n_rows, capacity),
             data=rows,
         )
-        economic = jnp.isneginf(result.value)
-        negative_economic = jnp.any(active & economic & negative)
-        positive_economic = jnp.any(active & economic & ~negative)
-        finite_values = jnp.where(economic, 0.0, result.value)
-        read_value = _weighted_sum(weights=weights, values=finite_values)
-        read_marginal = _weighted_sum(
+        return _blend_owned_rows(
+            result=result,
+            row_gradients=row_gradients,
             weights=weights,
-            values=result.marginal,
-            cofactors=(row_gradients.reshape(-1),),
+            active=active,
+            negative=negative,
         )
-        read_savings = _weighted_sum(weights=weights, values=result.savings)
-        supported = jnp.all(~active | result.supported) & ~negative_economic
-        invalid_numeric = jnp.any(active & result.invalid_numeric) | (
-            supported
-            & (
-                (~jnp.isfinite(read_value) & ~positive_economic)
-                | ~jnp.isfinite(read_marginal)
-                | ~jnp.isfinite(read_savings)
+
+    def _read_rows_with_counts(
+        self,
+        *,
+        grid: FloatND,
+        value: FloatND,
+        marginal: FloatND,
+        data: EGMQueryData,
+        row_queries: FloatND,
+        row_gradients: FloatND,
+        weights: tuple[Float1D, ...],
+        active: BoolND,
+        negative: BoolND,
+        paired_marginal_read: bool,
+    ) -> tuple[_BlendedRow, ContinuationReadCounts]:
+        """Reduce one event per active original row using its validated node mask."""
+        topology = self.model.authority.row_topology
+        if topology is None:
+            raise TypeError("A DC query requires independently compiled row topology.")
+        capacity = grid.shape[-1]
+        n_rows = row_queries.size
+        rows = jax.tree.map(
+            lambda leaf: leaf.reshape(n_rows, *leaf.shape[row_queries.ndim :]), data
+        )
+        read = (
+            _read_owned_derivative_with_support
+            if paired_marginal_read
+            else _read_owned_row_with_support
+        )
+        result, supported_node = jax.vmap(
+            functools.partial(
+                read,
+                owner_capacity=topology.owner_capacity,
+                side_is_row_side=self.model.authority.corner_coordinate_kind
+                != "liquid_row",
             )
+        )(
+            query=row_queries.reshape(n_rows),
+            grid=grid.reshape(n_rows, capacity),
+            value=value.reshape(n_rows, capacity),
+            marginal=marginal.reshape(n_rows, capacity),
+            data=rows,
         )
-        return _BlendedRow(
-            value=jnp.where(positive_economic, -jnp.inf, read_value),
-            marginal=jnp.where(positive_economic, 0.0, read_marginal),
-            savings=read_savings,
-            supported=supported,
-            invalid_numeric=invalid_numeric,
+        has_first = jnp.any(supported_node, axis=-1)
+        first_index = jnp.argmax(supported_node, axis=-1)
+        first = jnp.take_along_axis(
+            grid.reshape(n_rows, capacity), first_index[:, None], axis=-1
+        )[:, 0]
+        eligible = active & has_first
+        counts = ContinuationReadCounts(
+            below_first_live=sum_counts(
+                counts=eligible & (row_queries.reshape(n_rows) < first)
+            ),
+            eligible=sum_counts(counts=eligible),
         )
+        return _blend_owned_rows(
+            result=result,
+            row_gradients=row_gradients,
+            weights=weights,
+            active=active,
+            negative=negative,
+        ), counts
 
     def _read_liquid_corner(
         self,
@@ -493,6 +792,44 @@ class DCEGMQuery:
             supported=result.supported,
             invalid_numeric=result.invalid_numeric,
         )
+
+
+def _blend_owned_rows(
+    *,
+    result: OwnedRowRead,
+    row_gradients: FloatND,
+    weights: tuple[Float1D, ...],
+    active: BoolND,
+    negative: BoolND,
+) -> _BlendedRow:
+    """Blend an associated row result with the canonical signed stencil."""
+    economic = jnp.isneginf(result.value)
+    negative_economic = jnp.any(active & economic & negative)
+    positive_economic = jnp.any(active & economic & ~negative)
+    finite_values = jnp.where(economic, 0.0, result.value)
+    read_value = _weighted_sum(weights=weights, values=finite_values)
+    read_marginal = _weighted_sum(
+        weights=weights,
+        values=result.marginal,
+        cofactors=(row_gradients.reshape(-1),),
+    )
+    read_savings = _weighted_sum(weights=weights, values=result.savings)
+    supported = jnp.all(~active | result.supported) & ~negative_economic
+    invalid_numeric = jnp.any(active & result.invalid_numeric) | (
+        supported
+        & (
+            (~jnp.isfinite(read_value) & ~positive_economic)
+            | ~jnp.isfinite(read_marginal)
+            | ~jnp.isfinite(read_savings)
+        )
+    )
+    return _BlendedRow(
+        value=jnp.where(positive_economic, -jnp.inf, read_value),
+        marginal=jnp.where(positive_economic, 0.0, read_marginal),
+        savings=read_savings,
+        supported=supported,
+        invalid_numeric=invalid_numeric,
+    )
 
 
 class _BlendedRow(NamedTuple):
@@ -619,6 +956,58 @@ def _read_owned_derivative(
     )
     return result._replace(
         marginal=jnp.where(jnp.isneginf(result.value), 0.0, tangent.value)
+    )
+
+
+def _read_owned_derivative_with_support(
+    *,
+    query: ScalarFloat,
+    grid: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    data: EGMQueryData,
+    owner_capacity: int,
+    side_is_row_side: bool = True,
+) -> tuple[OwnedRowRead, BoolND]:
+    """Differentiate the same raw read while retaining its existing node mask."""
+    (result, supported_node), (tangent, _) = jax.jvp(
+        functools.partial(
+            _owned_at_query_with_support,
+            grid=grid,
+            value=value,
+            marginal=marginal,
+            data=data,
+            owner_capacity=owner_capacity,
+            side_is_row_side=side_is_row_side,
+        ),
+        (query,),
+        (jnp.ones_like(query),),
+    )
+    return result._replace(
+        marginal=jnp.where(jnp.isneginf(result.value), 0.0, tangent.value)
+    ), supported_node
+
+
+# keyword-only-exempt: library-callback=jax.jvp
+def _owned_at_query_with_support(
+    query: ScalarFloat,
+    *,
+    grid: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    data: EGMQueryData,
+    owner_capacity: int,
+    side_is_row_side: bool = True,
+) -> tuple[OwnedRowRead, BoolND]:
+    """Expose the same scalar query and mask to one owning-piece JVP."""
+    return _read_owned_row_with_support(
+        query=query,
+        grid=grid,
+        value=value,
+        marginal=marginal,
+        data=data,
+        owner_capacity=owner_capacity,
+        side_is_row_side=side_is_row_side,
     )
 
 

@@ -13,7 +13,7 @@ import logging
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, NamedTuple, cast, overload
 
 import jax
 import jax.numpy as jnp
@@ -28,9 +28,12 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree, egm_query_role_tree
-from _lcm.egm.dcegm_query import DCEGMQuery, build_dcegm_query
+from _lcm.egm.dcegm_query import DCEGMQuery, DCEGMQueryResult, build_dcegm_query
+from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.interp import interp_on_regular_grid
-from _lcm.egm.one_asset_egm_step import RetiredEGMResult
+from _lcm.egm.nbegm_query import NBEGMQuery, NBEGMQueryResult, build_nbegm_query
+from _lcm.egm.nbegm_query_model import NBEGMQueryModel
+from _lcm.egm.one_asset_egm_step import RetiredEGMResult, _EGMSavingsSupport
 from _lcm.egm.preferences import Preferences
 from _lcm.egm.query_data import (
     EGMQueryData,
@@ -40,6 +43,7 @@ from _lcm.egm.query_data import (
 from _lcm.egm.scalar_query import (
     PreparedScalarEGMQuery,
     ScalarEGMQuery,
+    ScalarEGMQueryResult,
     build_scalar_egm_query,
 )
 from _lcm.engine import StateActionSpace
@@ -48,6 +52,8 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    _CheckedCoreVariant,
+    bind_core_program_fixed_params,
 )
 from _lcm.execution.output_layout import VALUE, OutputRoleLeaf, StateAxesLeading
 from _lcm.grids import ContinuousGrid
@@ -79,11 +85,16 @@ from _lcm.solution.contract import (
 from _lcm.solution.feasibility import (
     BoundedResult,
     BoundInputStatus,
+    ContinuationCountedKernelOutput,
+    ContinuationReadCounts,
     FeasibilityCounts,
     FeasibilityKernelOutput,
     QueryInputStatus,
+    _unflatten_continuation_read_counts,
     count_current_feasibility,
+    merge_continuation_read_counts,
     merge_query_input_status,
+    reduce_continuation_read_counts,
     reduce_query_input_status,
     validate_runtime_bound_status,
 )
@@ -137,9 +148,13 @@ from lcm.typing import (
 
 # A jit-able one-row core: the value array and the marginal-value carry on the
 # liquid grid.
-type BoundedOneRowOutput = BoundedResult[
-    tuple[FloatND, EGMCarry, FeasibilityCounts, ScalarBool]
-]
+type BoundedOneRowOutput = (
+    BoundedResult[tuple[FloatND, EGMCarry]]
+    | BoundedResult[
+        tuple[FloatND, EGMCarry, FeasibilityCounts | None, ScalarBool | None]
+    ]
+    | BoundedResult[tuple[FloatND, EGMCarry, FeasibilityCounts, BoolND]]
+)
 type OneRowOutput = tuple[FloatND, EGMCarry] | BoundedOneRowOutput
 type OneRowCore = Callable[..., OneRowOutput]
 
@@ -590,7 +605,7 @@ class EGM(OneMarginSolver):
             | frozenset(context.state_action_space.discrete_actions)
         )
         period_to_target = period_to_continuation_target(context=context)
-        cores: dict[Hashable, OneRowCore] = {}
+        cores: dict[Hashable, tuple[OneRowCore, OneRowCore]] = {}
         source_queries: dict[Hashable, ScalarEGMQuery | None] = {}
         child_capabilities: dict[Hashable, ContinuationCapabilities] = {}
         reader_capabilities: dict[
@@ -615,7 +630,9 @@ class EGM(OneMarginSolver):
         for period, target in period_to_target.items():
             target_state = target_state_names[target]
             next_model = query_models.get(target)
-            next_dc_model = (context.dcegm_query_models or {}).get(target)
+            next_dc_model = (context.dcegm_query_models or {}).get(target) or (
+                context.nbegm_query_models or {}
+            ).get(target)
             from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
                 periodized_tree_signature,
                 resolve_periodized_node,
@@ -711,8 +728,9 @@ class EGM(OneMarginSolver):
                     ),
                     next_dc_query=None
                     if next_dc_model is None
-                    else build_dcegm_query(
+                    else _build_one_row_feature_query(
                         model=next_dc_model,
+                        target_period=period + 1,
                         functions=cast(
                             "EconFunctionsMapping",
                             resolve_periodized_nodes(
@@ -728,8 +746,12 @@ class EGM(OneMarginSolver):
                         ),
                     ),
                 )
-                cores[group_key] = guard_regime_mass(
-                    core=core, enable_jit=context.enable_jit
+                cores[group_key] = (
+                    guard_regime_mass(core=core, enable_jit=context.enable_jit),
+                    guard_regime_mass(
+                        core=replace(core, collect_continuation_read_counts=True),
+                        enable_jit=context.enable_jit,
+                    ),
                 )
                 source_queries[group_key] = core.current_query
                 if core.next_query is not None:
@@ -749,7 +771,8 @@ class EGM(OneMarginSolver):
             if query_slots is not None:
                 query_slots_by_period[period] = query_slots
             period_kernels[period] = _build_egm_period_kernel(
-                core=cores[group_key],
+                core=cores[group_key][0],
+                checked_core=cores[group_key][1],
                 declared_law=laws[group_key],
                 compute_regime_transition_probs=context.compute_regime_transition_probs,
                 savings_grid=savings_grid,
@@ -764,6 +787,7 @@ class EGM(OneMarginSolver):
                     target_state_name=target_state,
                 ),
                 current_query=source_queries[group_key],
+                augment_plain_savings=True,
                 query_template=None
                 if current_model is None
                 else build_template_egm_query_data(
@@ -1024,6 +1048,8 @@ def _build_egm_period_kernel(
     query_input_authorities: tuple[tuple[RegimeName, int, PostDecisionBoundSpec], ...]
     | None = None,
     literal_dc_resources: _LiteralDCResourceTransport | None = None,
+    checked_core: OneRowCore | None = None,
+    augment_plain_savings: bool = False,
 ) -> _EGMPeriodKernel:
     """Declare one period's EGM program graph around a shared core.
 
@@ -1051,6 +1077,7 @@ def _build_egm_period_kernel(
         has_child_query=bool(inherited_bound_specs or query_input_authorities),
         own_bound_specs=own_bound_specs,
         literal_dc_resources=literal_dc_resources,
+        augment_plain_savings=augment_plain_savings,
     )
     scalar_role = StateAxesLeading(state_names=(), shape=())
     ordinary_roles = (
@@ -1102,6 +1129,33 @@ def _build_egm_period_kernel(
         output_roles=output_roles,
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
+        checked_variant=None
+        if checked_core is None
+        else _CheckedCoreVariant(
+            function=checked_core,
+            output_roles=replace(
+                output_roles,
+                continuation_read_counts=_unflatten_continuation_read_counts(
+                    None,
+                    tuple(
+                        StateAxesLeading(state_names=(), shape=(), dtype=jnp.int32)
+                        for _ in range(2)
+                    ),
+                ),
+            )
+            if isinstance(output_roles, BoundedResult)
+            else BoundedResult(
+                output=(*output_roles, None, None),
+                bound_status=(),
+                continuation_read_counts=_unflatten_continuation_read_counts(
+                    None,
+                    tuple(
+                        StateAxesLeading(state_names=(), shape=(), dtype=jnp.int32)
+                        for _ in range(2)
+                    ),
+                ),
+            ),
+        ),
     )
     return _EGMPeriodKernel(
         _core_programs=MappingProxyType({"main": program}),
@@ -1165,6 +1219,8 @@ class _EGMArgumentBuilder:
 
     literal_dc_resources: _LiteralDCResourceTransport | None = None
     """Period-local literal DC coordinate map, absent on other target readers."""
+    augment_plain_savings: bool = False
+    """Whether nonempty child boundary banks carry plain-row support provenance."""
 
     def __call__(
         self, context: CoreBuildContext
@@ -1183,6 +1239,7 @@ class _EGMArgumentBuilder:
             boundary_savings_targets,
             boundary_next_liquid,
             source_bound_status,
+            savings_support,
         ) = self._law_readings(
             flat_params=flat_params,
             next_breakpoints=leaves.get(("breakpoints",)),
@@ -1241,6 +1298,11 @@ class _EGMArgumentBuilder:
                 "effective_savings_grid": effective_savings_grid,
                 "boundary_savings_targets": boundary_savings_targets,
                 "boundary_next_liquid": boundary_next_liquid,
+                **(
+                    {"savings_support": savings_support}
+                    if savings_support is not None
+                    else {}
+                ),
                 "next_value": leaves[("value",)],
                 "next_marginal": leaves[("marginal_utility",)],
                 **(
@@ -1321,7 +1383,15 @@ class _EGMArgumentBuilder:
         next_breakpoints: FloatND | None,
         period: int,
         age: ParamsLeaf,
-    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, BoundInputStatus | None]:
+    ) -> tuple[
+        Float1D,
+        Float1D,
+        Float1D,
+        Float1D,
+        Float1D,
+        BoundInputStatus | None,
+        _EGMSavingsSupport | None,
+    ]:
         """Read the declared law on the savings grid and check it can be inverted.
 
         Evaluated here rather than inside the compiled core: the readings depend
@@ -1344,9 +1414,10 @@ class _EGMArgumentBuilder:
         )
 
         saving_nodes = self.savings_grid
+        floor = saving_nodes[0]
         status = None
         if self.current_query is not None:
-            _floor, saving_nodes, status = self.current_query.evaluate_floor(
+            floor, saving_nodes, status = self.current_query.evaluate_floor(
                 pool=law_params
             )
         next_liquid, marginal_return = self.declared_law(
@@ -1377,10 +1448,13 @@ class _EGMArgumentBuilder:
                 empty,
                 empty,
                 status,
+                None,
             )
 
+        augmented = self.augment_plain_savings and next_breakpoints.size > 0
+        original_nodes = saving_nodes if augmented else self.savings_grid
         boundary_targets = _one_sided_boundary_savings_targets(
-            savings_grid=self.savings_grid,
+            savings_grid=original_nodes,
             next_liquid=next_liquid,
             breakpoints=jnp.ravel(next_breakpoints),
             declared_law=self.declared_law,
@@ -1389,11 +1463,32 @@ class _EGMArgumentBuilder:
         safe_boundary_targets = jnp.where(
             jnp.isfinite(boundary_targets),
             boundary_targets,
-            self.savings_grid[0],
+            original_nodes[0],
         )
-        effective_savings_grid = jnp.sort(
-            a=jnp.concatenate((self.savings_grid, safe_boundary_targets))
-        )
+        candidates = jnp.concatenate((original_nodes, safe_boundary_targets))
+        savings_support = None
+        if augmented:
+            active = jnp.concatenate(
+                (
+                    jnp.ones(original_nodes.shape, dtype=jnp.bool_),
+                    jnp.isfinite(boundary_targets),
+                )
+            )
+            candidate_id = jnp.concatenate(
+                (
+                    jnp.arange(original_nodes.size, dtype=jnp.int32),
+                    -1 - jnp.arange(boundary_targets.size, dtype=jnp.int32),
+                )
+            )
+            order = jnp.argsort(jnp.where(active, candidates, jnp.inf), stable=True)
+            effective_savings_grid = candidates[order]
+            savings_support = _EGMSavingsSupport(
+                floor=floor,
+                active=active[order],
+                candidate_id=candidate_id[order],
+            )
+        else:
+            effective_savings_grid = jnp.sort(a=candidates)
         next_liquid, marginal_return = self.declared_law(
             savings_grid=effective_savings_grid,
             **law_params,
@@ -1409,6 +1504,7 @@ class _EGMArgumentBuilder:
             boundary_targets,
             boundary_next_liquid,
             status,
+            savings_support,
         )
 
 
@@ -1492,8 +1588,7 @@ class _EGMPeriodKernel:
             _core_programs=MappingProxyType(
                 {
                     "main": replace(
-                        program,
-                        function=functools.partial(program.function, **bound),
+                        bind_core_program_fixed_params(program=program, params=bound),
                         argument_builder=replace(
                             argument_builder,
                             bound_params=MappingProxyType(
@@ -1504,6 +1599,17 @@ class _EGMPeriodKernel:
                 }
             ),
         )
+
+    def _validate_query_period(self, *, period: int) -> None:
+        """Require feature inputs to use the model-owned source period."""
+        if (
+            self.own_bound_specs
+            or self.inherited_bound_specs
+            or self.query_input_authorities
+        ) and period != self.source_period:
+            raise TypeError(
+                "Scalar query period differs from its model-owned authority."
+            )
 
     def __call__(
         self,
@@ -1518,14 +1624,7 @@ class _EGMPeriodKernel:
         logger: logging.Logger,  # noqa: ARG002
     ) -> KernelOutput:
         """Run the compiled `main` program and publish its typed continuation."""
-        if (
-            self.own_bound_specs
-            or self.inherited_bound_specs
-            or self.query_input_authorities
-        ) and period != self.source_period:
-            raise TypeError(
-                "Scalar query period differs from its model-owned authority."
-            )
+        self._validate_query_period(period=period)
         program = self._core_programs["main"]
         arguments = program.argument_builder(
             CoreBuildContext(
@@ -1561,6 +1660,8 @@ class _EGMPeriodKernel:
                 period=period + 1,
             )
             V_arr, carry, counts, coverage = evaluated.output
+            if counts is None or coverage is None:
+                raise TypeError("Mandatory scalar output requires measured summaries.")
             if len(evaluated.query_status or ()) != len(
                 self.query_input_authorities or ()
             ):
@@ -1586,6 +1687,24 @@ class _EGMPeriodKernel:
                 feasibility_counts=counts,
                 bound_status=evaluated.bound_status[:own_count],
                 query_status=evaluated.query_status,
+                continuation_read_counts=evaluated.continuation_read_counts,
+            )
+        if isinstance(evaluated, BoundedResult):
+            if (
+                evaluated.bound_status
+                or evaluated.query_status is not None
+                or evaluated.continuation_read_counts is None
+            ):
+                raise TypeError(
+                    "Count-only scalar output cannot declare integrity slots."
+                )
+            V_arr, carry, feasibility, coverage = evaluated.output
+            if feasibility is not None or coverage is not None:
+                raise TypeError("Count-only scalar output cannot measure feasibility.")
+            return ContinuationCountedKernelOutput(
+                value=V_arr,
+                continuations={EGM_CONTINUATION: carry},
+                continuation_read_counts=evaluated.continuation_read_counts,
             )
         V_arr, carry = cast("tuple[FloatND, EGMCarry]", evaluated)
         return KernelOutput(
@@ -1702,7 +1821,7 @@ def _build_egm_core(
     literal_dc_resources: _LiteralDCResourceTransport | None = None,
     current_query: ScalarEGMQuery | None = None,
     next_query: ScalarEGMQuery | None = None,
-    next_dc_query: DCEGMQuery | None = None,
+    next_dc_query: DCEGMQuery | NBEGMQuery | None = None,
 ) -> _EGMCore:
     """Build the jit-able 1-D EGM core for the savings grid.
 
@@ -1750,6 +1869,19 @@ def _build_egm_core(
     )
 
 
+class _PreparedChildContinuation(NamedTuple):
+    """The actual initial read and immutable floor operands reused by valuation."""
+
+    continuation_args: dict[ReferenceName, Float1D]
+    scalar: PreparedScalarEGMQuery | None
+    dc: tuple[ScalarFloat, Float1D, BoundInputStatus] | None
+    literal: tuple[Float1D, ScalarInt] | None
+    statuses: tuple[BoundInputStatus, ...]
+    coverage: ScalarBool
+    query_status: tuple[QueryInputStatus, ...] | None
+    counts: ContinuationReadCounts | None
+
+
 @dataclass(frozen=True, eq=False)
 class _EGMCore:
     """The jit-able 1-D EGM core bound to one regime's preferences and discounting."""
@@ -1770,8 +1902,10 @@ class _EGMCore:
     """Source feature activation, sharing the installed canonical bound."""
     next_query: ScalarEGMQuery | None = None
     """Trusted scalar target adapter bound before leaf-read declarations."""
-    next_dc_query: DCEGMQuery | None = None
-    """Installed one-row DC target adapter in its canonical resource coordinate."""
+    next_dc_query: DCEGMQuery | NBEGMQuery | None = None
+    """Installed one-row target adapter in resources or native NB liquid."""
+    collect_continuation_read_counts: bool = False
+    """Static diagnostic specialization, absent from the dynamic argument tree."""
 
     def __call__(
         self,
@@ -1785,6 +1919,7 @@ class _EGMCore:
         boundary_savings_targets: Float1D,  # noqa: ARG002
         boundary_next_liquid: Float1D,  # noqa: ARG002
         effective_savings_grid: Float1D,
+        savings_support: _EGMSavingsSupport | None = None,
         next_query_data: EGMQueryData | None = None,
         source_bound_status: BoundInputStatus | None = None,
         next_query_pool: EconFunctionKwargs | None = None,
@@ -1792,69 +1927,29 @@ class _EGMCore:
         **params: ValueND,
     ) -> OneRowOutput:
         """Run one EGM step and return the value array and the marginal-value carry."""
-        continuation_args = {}
-        prepared_child = None
-        prepared_dc_child = None
-        prepared_literal_child = None
-        statuses = () if source_bound_status is None else (source_bound_status,)
-        coverage = jnp.asarray(a=False)
-        query_status = None
-        if self.next_query is not None:
-            if next_query_data is None or next_query_pool is None:
-                raise TypeError(
-                    "A model-bound scalar query lacks its declared numeric inputs."
-                )
-            prepared_child = self.next_query.prepare(pool=next_query_pool)
-            result = self.next_query.read_prepared(
-                query=next_liquid,
-                grid=next_liquid_grid,
-                value=next_value,
-                marginal=next_marginal,
-                data=next_query_data,
-                prepared=prepared_child,
-            )
-            continuation_args = {
-                "continuation_value": result.value,
-                "continuation_marginal": result.marginal,
-            }
-            statuses = (*statuses, result.bound_status)
-            coverage = jnp.any(result.coverage_missing)
-        elif self.next_dc_query is not None:
-            child_value, child_marginal, child_status, prepared_dc_child = (
-                _read_one_row_dc_child(
-                    query=self.next_dc_query,
-                    liquid=next_liquid,
-                    grid=next_liquid_grid,
-                    value=next_value,
-                    marginal=next_marginal,
-                    data=next_query_data,
-                    pool=next_query_pool,
-                )
-            )
-            continuation_args = {
-                "continuation_value": child_value,
-                "continuation_marginal": child_marginal,
-            }
-            query_status = (child_status,)
-        elif next_query_data is not None:
-            raise UnsupportedOperationError(
-                "Feature rows require the model-bound query adapter."
-            )
-        elif self.literal_dc_child:
-            from _lcm.egm.interp import prepare_padded_grid  # noqa: PLC0415
-
-            prepared_literal_child = prepare_padded_grid(next_liquid_grid)
-            child_value, child_marginal = _read_literal_dc_linear_child(
-                query=next_liquid,
-                grid=next_liquid_grid,
-                value=next_value,
-                marginal=next_marginal,
-                prepared=prepared_literal_child,
-            )
-            continuation_args = {
-                "continuation_value": child_value,
-                "continuation_marginal": child_marginal,
-            }
+        prepared = self._prepare_child_read(
+            next_liquid=next_liquid,
+            next_liquid_grid=next_liquid_grid,
+            next_value=next_value,
+            next_marginal=next_marginal,
+            next_query_data=next_query_data,
+            source_bound_status=source_bound_status,
+            next_query_pool=next_query_pool,
+            savings_support=savings_support,
+        )
+        continuation_args = prepared.continuation_args
+        prepared_child = prepared.scalar
+        prepared_dc_child = prepared.dc
+        prepared_literal_child = prepared.literal
+        statuses = prepared.statuses
+        coverage = prepared.coverage
+        query_status = prepared.query_status
+        read_counts = prepared.counts
+        floor = (
+            effective_savings_grid[0]
+            if savings_support is None
+            else savings_support.floor
+        )
         preferences = self.build_preferences(params)
         beta = self.read_discount_factor(params)
         step = self.egm_one_asset_step(
@@ -1871,13 +1966,18 @@ class _EGMCore:
             feature_floor=self.current_query is not None
             or self.next_query is not None
             or self.next_dc_query is not None,
+            **(
+                {"savings_support": savings_support}
+                if savings_support is not None
+                else {}
+            ),
         )
         if step.coverage_missing is not None:
             coverage |= jnp.any(step.coverage_missing)
-        value, marginal, valuation_coverage, valuation_status = (
+        value, marginal, valuation_coverage, valuation_status, valuation_counts = (
             self._value_reconstructed_action(
                 step=step,
-                effective_savings_grid=effective_savings_grid,
+                floor=floor,
                 next_liquid_grid=next_liquid_grid,
                 next_value=next_value,
                 next_marginal=next_marginal,
@@ -1896,11 +1996,14 @@ class _EGMCore:
         query_status = merge_query_input_status(
             left=query_status, right=valuation_status
         )
+        read_counts = merge_continuation_read_counts(
+            left=read_counts, right=valuation_counts
+        )
         query_data = None
         if self.current_query is not None:
             if step.savings is None or step.corner_continuation is None:
                 raise TypeError("A scalar floor producer lacks candidate provenance.")
-            legal = liquid > effective_savings_grid[0]
+            legal = liquid > floor
             finite = (
                 legal
                 & jnp.isfinite(value)
@@ -1922,7 +2025,7 @@ class _EGMCore:
                 & (kinds[1:] != QueryNodeKind.PAD),
                 owner_id=jnp.zeros(liquid.shape, dtype=jnp.int32),
                 side_id=jnp.zeros(liquid.shape, dtype=jnp.int32),
-                floor_used=effective_savings_grid[0],
+                floor_used=floor,
                 corner_continuation=jnp.reshape(step.corner_continuation, (1,)),
                 corner_kind=jnp.reshape(
                     jnp.where(
@@ -1952,7 +2055,7 @@ class _EGMCore:
             or self.next_dc_query is not None
         ):
             counts = count_current_feasibility(
-                budget_feasible=(liquid > effective_savings_grid[0])[:, None],
+                budget_feasible=(liquid > floor)[:, None],
                 predicate_feasible=jnp.ones((liquid.size, 1, 0), dtype=jnp.bool_),
                 value=value,
                 active_states=jnp.ones(liquid.shape, dtype=jnp.bool_),
@@ -1961,14 +2064,143 @@ class _EGMCore:
                 output=(value, carry, counts, coverage),
                 bound_status=statuses,
                 query_status=query_status,
+                continuation_read_counts=read_counts,
+            )
+        if self.collect_continuation_read_counts:
+            return BoundedResult(
+                output=(value, carry, None, None),
+                bound_status=(),
+                continuation_read_counts=read_counts,
             )
         return value, carry
+
+    def _prepare_child_read(
+        self,
+        *,
+        next_liquid: Float1D,
+        next_liquid_grid: Float1D,
+        next_value: Float1D,
+        next_marginal: Float1D,
+        next_query_data: EGMQueryData | None,
+        source_bound_status: BoundInputStatus | None,
+        next_query_pool: EconFunctionKwargs | None,
+        savings_support: _EGMSavingsSupport | None = None,
+    ) -> _PreparedChildContinuation:
+        """Read the real initial child once and retain its prepared floor for F2."""
+        continuation_args = {}
+        read_counts = (
+            ContinuationReadCounts(jnp.int32(0), jnp.int32(0))
+            if self.collect_continuation_read_counts
+            else None
+        )
+        prepared_child = None
+        prepared_dc_child = None
+        prepared_literal_child = None
+        statuses = () if source_bound_status is None else (source_bound_status,)
+        coverage = jnp.asarray(a=False)
+        query_status = None
+        if self.next_query is not None:
+            if next_query_data is None or next_query_pool is None:
+                raise TypeError(
+                    "A model-bound scalar query lacks its declared numeric inputs."
+                )
+            prepared_child = self.next_query.prepare(pool=next_query_pool)
+            if self.collect_continuation_read_counts:
+                evaluated = self.next_query.read_prepared_with_counts(
+                    query=next_liquid,
+                    grid=next_liquid_grid,
+                    value=next_value,
+                    marginal=next_marginal,
+                    data=next_query_data,
+                    prepared=prepared_child,
+                    active=None if savings_support is None else savings_support.active,
+                )
+            else:
+                evaluated = self.next_query.read_prepared(
+                    query=next_liquid,
+                    grid=next_liquid_grid,
+                    value=next_value,
+                    marginal=next_marginal,
+                    data=next_query_data,
+                    prepared=prepared_child,
+                )
+            result, read_counts = _unpack_scalar_child_read(
+                evaluated=evaluated, checked=self.collect_continuation_read_counts
+            )
+            continuation_args = {
+                "continuation_value": result.value,
+                "continuation_marginal": result.marginal,
+            }
+            statuses = (*statuses, result.bound_status)
+            coverage = (
+                jnp.any(result.coverage_missing)
+                if savings_support is None
+                else jnp.any(savings_support.active & result.coverage_missing)
+            )
+        elif self.next_dc_query is not None:
+            child_read = _read_one_row_dc_child(
+                query=self.next_dc_query,
+                liquid=next_liquid,
+                grid=next_liquid_grid,
+                value=next_value,
+                marginal=next_marginal,
+                data=next_query_data,
+                pool=next_query_pool,
+                collect_continuation_read_counts=self.collect_continuation_read_counts,
+                active=None if savings_support is None else savings_support.active,
+            )
+            (
+                child_value,
+                child_marginal,
+                child_status,
+                prepared_dc_child,
+                child_counts,
+            ) = _unpack_dc_child_read(
+                evaluated=child_read,
+                checked=self.collect_continuation_read_counts,
+            )
+            if self.collect_continuation_read_counts:
+                read_counts = child_counts
+            continuation_args = {
+                "continuation_value": child_value,
+                "continuation_marginal": child_marginal,
+            }
+            query_status = (child_status,)
+        elif next_query_data is not None:
+            raise UnsupportedOperationError(
+                "Feature rows require the model-bound query adapter."
+            )
+        elif self.literal_dc_child:
+            from _lcm.egm.interp import prepare_padded_grid  # noqa: PLC0415
+
+            prepared_literal_child = prepare_padded_grid(next_liquid_grid)
+            child_value, child_marginal = _read_literal_dc_linear_child(
+                query=next_liquid,
+                grid=next_liquid_grid,
+                value=next_value,
+                marginal=next_marginal,
+                prepared=prepared_literal_child,
+            )
+            continuation_args = {
+                "continuation_value": child_value,
+                "continuation_marginal": child_marginal,
+            }
+        return _PreparedChildContinuation(
+            continuation_args,
+            prepared_child,
+            prepared_dc_child,
+            prepared_literal_child,
+            statuses,
+            coverage,
+            query_status,
+            read_counts,
+        )
 
     def _value_reconstructed_action(
         self,
         *,
         step: RetiredEGMResult,
-        effective_savings_grid: Float1D,
+        floor: ScalarFloat,
         next_liquid_grid: Float1D,
         next_value: Float1D,
         next_marginal: Float1D,
@@ -1981,34 +2213,52 @@ class _EGMCore:
         preferences: Preferences,
         beta: ScalarFloat,
         params: EconFunctionKwargs,
-    ) -> tuple[Float1D, Float1D, BoolND, tuple[QueryInputStatus, ...] | None]:
+    ) -> tuple[
+        Float1D,
+        Float1D,
+        BoolND,
+        tuple[QueryInputStatus, ...] | None,
+        ContinuationReadCounts | None,
+    ]:
         """Value strict interior actions against the installed child value reader."""
         if step.savings is None or step.rescore_interior is None:
             raise TypeError("A plain EGM producer lacks associated action provenance.")
         rescore = step.rescore_interior
         coverage = jnp.asarray(a=False)
         query_status = None
+        read_counts = None
         valuation_landing, _ = self.declared_law(
-            savings_grid=jnp.where(rescore, step.savings, effective_savings_grid[0]),
+            savings_grid=jnp.where(rescore, step.savings, floor),
             **params,
         )
         if self.next_query is not None:
             if next_query_data is None or prepared_child is None:
                 raise TypeError("A scalar valuation lacks its prepared target inputs.")
-            valuation = self.next_query.read_prepared(
-                query=valuation_landing,
-                grid=next_liquid_grid,
-                value=next_value,
-                marginal=next_marginal,
-                data=next_query_data,
-                prepared=prepared_child,
-            )
+            if self.collect_continuation_read_counts:
+                valuation, read_counts = self.next_query.read_prepared_with_counts(
+                    query=valuation_landing,
+                    grid=next_liquid_grid,
+                    value=next_value,
+                    marginal=next_marginal,
+                    data=next_query_data,
+                    prepared=prepared_child,
+                    active=rescore,
+                )
+            else:
+                valuation = self.next_query.read_prepared(
+                    query=valuation_landing,
+                    grid=next_liquid_grid,
+                    value=next_value,
+                    marginal=next_marginal,
+                    data=next_query_data,
+                    prepared=prepared_child,
+                )
             continuation_value = valuation.value
             coverage |= jnp.any(rescore & valuation.coverage_missing)
         elif self.next_dc_query is not None:
             if prepared_dc_child is None:
                 raise TypeError("A DC valuation lacks its prepared target floor.")
-            continuation_value, _, child_status, _ = _read_one_row_dc_child(
+            child_read = _read_one_row_dc_child(
                 query=self.next_dc_query,
                 liquid=valuation_landing,
                 grid=next_liquid_grid,
@@ -2018,6 +2268,11 @@ class _EGMCore:
                 pool=next_query_pool,
                 floor_state=prepared_dc_child,
                 active=rescore,
+                collect_continuation_read_counts=self.collect_continuation_read_counts,
+            )
+            continuation_value, _, child_status, _, read_counts = _unpack_dc_child_read(
+                evaluated=child_read,
+                checked=self.collect_continuation_read_counts,
             )
             query_status = (child_status,)
         elif self.literal_dc_child:
@@ -2058,12 +2313,119 @@ class _EGMCore:
         # Finite actions retain their economic envelope approximation. An impossible
         # continuation has the neutral marginal used by economic minus-infinity rows.
         marginal = jnp.where(rescore & jnp.isneginf(action_value), 0.0, step.marginal)
-        return value, marginal, coverage, query_status
+        return value, marginal, coverage, query_status, read_counts
+
+
+type _DCFloorState = tuple[ScalarFloat, Float1D, BoundInputStatus]
+type _DCChildRead = tuple[Float1D, Float1D, QueryInputStatus, _DCFloorState]
+type _CountedDCChildRead = tuple[
+    Float1D, Float1D, QueryInputStatus, _DCFloorState, ContinuationReadCounts
+]
+_COUNTED_DC_CHILD_FIELDS: Literal[5] = 5
+
+
+def _unpack_scalar_child_read(
+    *,
+    evaluated: ScalarEGMQueryResult
+    | tuple[ScalarEGMQueryResult, ContinuationReadCounts],
+    checked: bool,
+) -> tuple[ScalarEGMQueryResult, ContinuationReadCounts | None]:
+    """Validate the scalar reader tuple before consuming its associated summary."""
+    if checked:
+        if isinstance(evaluated, ScalarEGMQueryResult):
+            raise TypeError("A checked scalar read lacks its paired summary.")
+        result, read_counts = evaluated
+    else:
+        if not isinstance(evaluated, ScalarEGMQueryResult):
+            raise TypeError("An ordinary scalar read changed its tuple schema.")
+        result = evaluated
+        read_counts = None
+    return result, read_counts
+
+
+def _unpack_dc_child_read(
+    *,
+    evaluated: _DCChildRead | _CountedDCChildRead,
+    checked: bool,
+) -> tuple[
+    Float1D, Float1D, QueryInputStatus, _DCFloorState, ContinuationReadCounts | None
+]:
+    """Separate the declared paired summary without changing ordinary channels."""
+    if checked:
+        if len(evaluated) != _COUNTED_DC_CHILD_FIELDS:
+            raise TypeError("A checked child read lacks its paired summary.")
+        return (*evaluated[:4], evaluated[4])
+    return (*evaluated[:4], None)
+
+
+def _dc_query_result_with_counts(
+    *,
+    evaluated: DCEGMQueryResult
+    | NBEGMQueryResult
+    | tuple[DCEGMQueryResult | NBEGMQueryResult, ContinuationReadCounts],
+    checked: bool,
+) -> tuple[DCEGMQueryResult | NBEGMQueryResult, ContinuationReadCounts | None]:
+    """Require the selected conditional row schema before forwarding its fields."""
+    if checked:
+        if isinstance(evaluated, DCEGMQueryResult | NBEGMQueryResult):
+            raise TypeError("A checked DC read lacks its paired summary.")
+        return evaluated
+    if not isinstance(evaluated, DCEGMQueryResult | NBEGMQueryResult):
+        raise TypeError("An ordinary DC read changed its tuple schema.")
+    return evaluated, None
+
+
+@overload
+def _read_one_row_dc_child(
+    *,
+    query: DCEGMQuery | NBEGMQuery,
+    liquid: Float1D,
+    grid: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    data: EGMQueryData | None,
+    pool: EconFunctionKwargs | None,
+    floor_state: _DCFloorState | None = None,
+    active: BoolND | None = None,
+    collect_continuation_read_counts: Literal[False] = False,
+) -> _DCChildRead: ...
+
+
+@overload
+def _read_one_row_dc_child(
+    *,
+    query: DCEGMQuery | NBEGMQuery,
+    liquid: Float1D,
+    grid: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    data: EGMQueryData | None,
+    pool: EconFunctionKwargs | None,
+    floor_state: _DCFloorState | None = None,
+    active: BoolND | None = None,
+    collect_continuation_read_counts: Literal[True],
+) -> _CountedDCChildRead: ...
+
+
+@overload
+def _read_one_row_dc_child(
+    *,
+    query: DCEGMQuery | NBEGMQuery,
+    liquid: Float1D,
+    grid: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    data: EGMQueryData | None,
+    pool: EconFunctionKwargs | None,
+    floor_state: _DCFloorState | None = None,
+    active: BoolND | None = None,
+    collect_continuation_read_counts: bool,
+) -> _DCChildRead | _CountedDCChildRead: ...
 
 
 def _read_one_row_dc_child(
     *,
-    query: DCEGMQuery,
+    query: DCEGMQuery | NBEGMQuery,
     liquid: Float1D,
     grid: Float1D,
     value: Float1D,
@@ -2072,13 +2434,9 @@ def _read_one_row_dc_child(
     pool: EconFunctionKwargs | None,
     floor_state: tuple[ScalarFloat, Float1D, BoundInputStatus] | None = None,
     active: BoolND | None = None,
-) -> tuple[
-    Float1D,
-    Float1D,
-    QueryInputStatus,
-    tuple[ScalarFloat, Float1D, BoundInputStatus],
-]:
-    """Read a one-row DC child in resources and return its physical-state marginal."""
+    collect_continuation_read_counts: bool = False,
+) -> _DCChildRead | _CountedDCChildRead:
+    """Read a conditional child in its native coordinate and return liquid marginal."""
     if data is None or pool is None:
         raise TypeError("A plain DC child reader lacks its declared query operands.")
     authority = query.model.authority
@@ -2095,8 +2453,39 @@ def _read_one_row_dc_child(
 
     def read_one(
         state: ScalarFloat,
-    ) -> tuple[ScalarFloat, ScalarFloat, QueryInputStatus]:
+    ) -> tuple[
+        ScalarFloat, ScalarFloat, QueryInputStatus, ContinuationReadCounts | None
+    ]:
         actual = {**pool, state_name: state}
+        if isinstance(query, NBEGMQuery):
+            nb_read = (
+                query.read_prepared_with_counts
+                if collect_continuation_read_counts
+                else query.read_prepared
+            )
+            nb_evaluated = nb_read(
+                grid=grid,
+                value=value,
+                marginal=marginal,
+                data=data,
+                row_queries=state,
+                row_gradients=jnp.ones_like(state),
+                passive_values=(),
+                passive_grids=(),
+                pool=actual,
+                euler_gradient=jnp.ones_like(state),
+                floor_state=floor_state,
+            )
+            nb_result, nb_summary = _dc_query_result_with_counts(
+                evaluated=nb_evaluated,
+                checked=collect_continuation_read_counts,
+            )
+            return (
+                nb_result.value,
+                nb_result.marginal,
+                QueryInputStatus(*nb_result.bound_status, nb_result.coverage_missing),
+                nb_summary,
+            )
 
         def resources_at(state_value: ScalarFloat) -> ScalarFloat:
             resource_pool = {**actual, state_name: state_value}
@@ -2105,7 +2494,12 @@ def _read_one_row_dc_child(
             )
 
         resources, resource_gradient = jax.value_and_grad(resources_at)(state)
-        result = query.read_prepared(
+        read = (
+            query.read_prepared_with_counts
+            if collect_continuation_read_counts
+            else query.read_prepared
+        )
+        evaluated = read(
             grid=grid,
             value=value,
             marginal=marginal,
@@ -2118,23 +2512,37 @@ def _read_one_row_dc_child(
             resource_gradient=resource_gradient,
             floor_state=floor_state,
         )
+        result, summary = _dc_query_result_with_counts(
+            evaluated=evaluated,
+            checked=collect_continuation_read_counts,
+        )
         return (
             result.value,
             result.marginal,
             QueryInputStatus(*result.bound_status, result.coverage_missing),
+            summary,
         )
 
-    values, marginals, status = jax.vmap(read_one)(liquid)
+    values, marginals, status, counts = jax.vmap(read_one)(liquid)
+    activity = jnp.ones(liquid.shape, dtype=jnp.bool_) if active is None else active
     reduced = reduce_query_input_status(
         statuses=(status,),
-        active=jnp.ones(liquid.shape, dtype=jnp.bool_) if active is None else active,
+        active=activity,
     )
-    return (
+    output = (
         values,
         marginals,
         cast("tuple[QueryInputStatus, ...]", reduced)[0],
         floor_state,
     )
+    if collect_continuation_read_counts:
+        if counts is None:
+            raise TypeError("A checked row read must return its event summary.")
+        summary = reduce_continuation_read_counts(counts=counts, active=activity)
+        if summary is None:
+            raise TypeError("A checked child reduction lacks its paired summary.")
+        return (*output, summary)
+    return output
 
 
 def guard_regime_mass(*, core: OneRowCore, enable_jit: bool) -> OneRowCore:
@@ -2195,4 +2603,24 @@ def _build_one_asset_carry_template(*, liquid_grid: Float1D) -> EGMCarry:
         value=jnp.zeros_like(liquid_grid),
         marginal_utility=jnp.zeros_like(liquid_grid),
         taste_shock_scale=jnp.asarray(0.0, dtype=liquid_grid.dtype),
+    )
+
+
+def _build_one_row_feature_query(
+    *,
+    model: DCEGMQueryModel | NBEGMQueryModel,
+    functions: EconFunctionsMapping,
+    koopmans_aggregator: EconFunction,
+    target_period: int,
+) -> DCEGMQuery | NBEGMQuery:
+    """Choose the target's independent adapter before the scalar core is built."""
+    if isinstance(model, NBEGMQueryModel):
+        return build_nbegm_query(
+            model=model,
+            functions=functions,
+            koopmans_aggregator=koopmans_aggregator,
+            target_period=target_period,
+        )
+    return build_dcegm_query(
+        model=model, functions=functions, koopmans_aggregator=koopmans_aggregator
     )

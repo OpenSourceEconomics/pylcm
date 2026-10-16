@@ -11,7 +11,7 @@ orchestration that maps it over the discrete-combo product.
 """
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -29,6 +29,7 @@ from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import (
     interp_on_padded_grid,
 )
+from _lcm.egm.nested_floor import PreparedNestedFloor, nested_floor_at_cell
 from _lcm.egm.preferences import (
     AnalyticInverseMarginalUtility,
     BoundUtilityOfAction,
@@ -37,12 +38,19 @@ from _lcm.egm.preferences import (
 from _lcm.egm.query_data import EGMQueryData, QueryNodeKind
 from _lcm.egm.upper_envelope import OwnedQueryBracket
 from _lcm.egm.upper_envelope.fues import QueryBracket
-from _lcm.egm.upper_envelope.segment_envelope import OwnedEnvelope
+from _lcm.egm.upper_envelope.segment_envelope import (
+    OwnedEnvelope,
+    _NegmBindingEnvelope,
+    _OwnedNegmBindingEnvelope,
+)
 from _lcm.solution.feasibility import (
     BoundedResult,
     BoundInputStatus,
+    ContinuationReadCounts,
     QueryInputStatus,
+    merge_continuation_read_counts,
     merge_query_input_status,
+    reduce_continuation_read_counts,
     shift_savings_grid,
 )
 from _lcm.typing import (
@@ -54,9 +62,11 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import map_over_leading_axis
 from lcm.typing import (
+    Bool1D,
     BoolND,
     Float1D,
     FloatND,
+    Int1D,
     IntND,
     ReferenceName,
     ScalarBool,
@@ -141,7 +151,7 @@ class _EgmKernelPieces:
     """The regime's concatenated resources function."""
 
     feasibility_func: Callable[..., ScalarBool] | None
-    """Discrete-feasibility predicate of a combo, or `None`."""
+    """Current predicate evaluated with the state names bound at its route site."""
 
     build_W_kwargs: Callable[[EconFunctionKwargs], dict[ReferenceName, EconFunctionArg]]
     """Closure assembling the Bellman aggregator's keyword arguments."""
@@ -150,7 +160,9 @@ class _EgmKernelPieces:
         ...,
         tuple[Float1D, Float1D, Float1D, ScalarInt]
         | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]
-        | OwnedEnvelope,
+        | OwnedEnvelope
+        | _NegmBindingEnvelope
+        | _OwnedNegmBindingEnvelope,
     ]
     """The configured upper-envelope backend (single-post-state carry)."""
 
@@ -172,13 +184,54 @@ class _EgmKernelPieces:
 
     check_query_construction: bool = False
     """The compiled source owns a mandatory query-construction summary slot."""
+    collect_continuation_read_counts: bool = False
+    """Python-static optional event reduction on the original continuation calls."""
+
+    _negm_current_publication: bool = False
+    """The literal single-post-state exact backend can classify current queries."""
+
+    _retain_nested_feasibility: bool = field(
+        default=False, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Keep current eligibility per ordinary action for an enclosing outer choice."""
+
+    _prepared_nested_floor: PreparedNestedFloor | None = None
+    """Invocation-local floor bank from the enclosing nested graph."""
+
+    _prepared_nested_axes: tuple[tuple[StateName, Float1D | Int1D], ...] = ()
+    """The actual supplied fixed-current grids indexing that transient bank."""
 
 
 def bind_cell_floor(
     *, pieces: _EgmKernelPieces, pool: EconFunctionKwargs
 ) -> _EgmKernelPieces:
     """Translate the supplied savings offsets once at their fixed-cell owner."""
+    if pieces._prepared_nested_floor is not None:  # noqa: SLF001
+        floor, nodes, status = nested_floor_at_cell(
+            prepared=pieces._prepared_nested_floor,  # noqa: SLF001
+            offsets=pieces.savings_nodes - pieces.savings_nodes[0],
+            axes=pieces._prepared_nested_axes,  # noqa: SLF001
+            pool=pool,
+        )
+        return replace(
+            pieces,
+            savings_nodes=nodes,
+            borrowing_limit=floor,
+            lower_func=None,
+            floor_status=status,
+        )
     if pieces.lower_func is None:
+        if pieces.query_spec is not None and pieces.query_spec.bound.kind == "literal":
+            nodes = pieces.savings_nodes
+            return replace(
+                pieces,
+                floor_status=BoundInputStatus(
+                    nonfinite_floor=~jnp.isfinite(pieces.borrowing_limit),
+                    invalid_shifted_grid=(
+                        ~jnp.all(jnp.isfinite(nodes)) | jnp.any(nodes[1:] <= nodes[:-1])
+                    ),
+                ),
+            )
         return pieces
     floor = jnp.asarray(pieces.lower_func(**pool), dtype=pieces.savings_nodes.dtype)
     offsets = pieces.savings_nodes - pieces.savings_nodes[0]
@@ -310,17 +363,19 @@ class _SolveOneCombo:
         child_status = None
         conditional = pieces.query_spec is not None or pieces.check_query_construction
         if conditional:
-            candidates, child_status = _compute_nodes_after_first(
+            candidates, child_status, read_counts = _compute_nodes_after_first(
                 first=compute_node(pieces.savings_nodes[0]),
                 compute_node=compute_node,
                 savings_nodes=pieces.savings_nodes,
                 savings_point_width=self.savings_point_width,
             )
         else:
-            candidates, child_status = _legacy_candidates_with_child_status(
-                pieces=pieces,
-                compute_node=compute_node,
-                savings_point_width=self.savings_point_width,
+            candidates, child_status, read_counts = (
+                _legacy_candidates_with_child_status(
+                    pieces=pieces,
+                    compute_node=compute_node,
+                    savings_point_width=self.savings_point_width,
+                )
             )
         actions, endog_grid, values, expected_values = candidates
         own_resources_of_state = ResourcesOfState(
@@ -340,29 +395,20 @@ class _SolveOneCombo:
             discounted_expected_value_at_limit=discount_factor * expected_values[0],
         )
 
-        candidate_grid = jnp.concatenate(
-            [pieces.borrowing_limit + constrained_actions, endog_grid]
+        (
+            candidate_grid,
+            candidate_policy,
+            candidate_value,
+            candidate_savings,
+            candidate_dead,
+        ) = _assemble_combo_candidates(
+            pieces=pieces,
+            constrained_actions=constrained_actions,
+            constrained_values=constrained_values,
+            endog_grid=endog_grid,
+            actions=actions,
+            values=values,
         )
-        candidate_policy = jnp.concatenate([constrained_actions, actions])
-        candidate_value = jnp.concatenate([constrained_values, values])
-        # Exogenous source savings per candidate: the savings node for each Euler
-        # candidate (`endog_grid = savings_node + action`, so the implied
-        # `endog_grid - policy` equals it in exact arithmetic), the borrowing
-        # limit for the constrained candidates (their savings is pinned there).
-        # FUES compares these pristine sources instead of the lossy implied
-        # difference, so a same-source tie is never dropped by rounding.
-        candidate_savings = jnp.concatenate(
-            [
-                jnp.full_like(constrained_actions, pieces.borrowing_limit),
-                pieces.savings_nodes,
-            ]
-        )
-        # A `-inf`-valued candidate (e.g. a corner whose continuation is
-        # `-inf`) is dominated by every finite candidate and would inject
-        # `-inf - (-inf) = NaN` into the envelope scan's gradient arithmetic.
-        # Mask the triple to NaN — the scan's absent form. NaN-valued
-        # candidates stay as they are: genuine poison must keep propagating.
-        candidate_dead = jnp.isneginf(candidate_value)
         candidate_marginal = _candidate_supgradient(
             policy=candidate_policy,
             dead=candidate_dead,
@@ -381,6 +427,14 @@ class _SolveOneCombo:
         # A backend that cannot certify off-grid read support returns the
         # four-element row and the read is treated as supported; only a backend
         # that computes the flag can withhold it.
+        binding_request = (
+            {
+                "_binding_source_count": pieces.n_constrained + 1,
+                "_binding_queries": publish_resources,
+            }
+            if pieces._negm_current_publication  # noqa: SLF001
+            else {}
+        )
         refined = pieces.refine(
             cell_width=self.envelope_cell_width,
             endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
@@ -388,7 +442,15 @@ class _SolveOneCombo:
             value=jnp.where(candidate_dead, jnp.nan, candidate_value),
             marginal_utility=candidate_marginal,
             savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
+            **binding_request,
         )
+        binding_query = (
+            refined.binding_query
+            if isinstance(refined, _NegmBindingEnvelope | _OwnedNegmBindingEnvelope)
+            else None
+        )
+        if isinstance(refined, _OwnedNegmBindingEnvelope):
+            refined = refined.owned
         refined_grid, refined_policy, refined_value, n_kept, read_supported = (
             _refined_rows(
                 refined=refined,
@@ -407,14 +469,18 @@ class _SolveOneCombo:
             borrowing_limit=pieces.borrowing_limit,
             utility_of_action=utility_of_action,
             discounted_expected_value_at_limit=discount_factor * expected_values[0],
+            _negm_current_publication=binding_query is not None,
+            _binding_query=binding_query,
         )
 
-        # A combo with no live candidate (its entire continuation is `-inf`)
-        # is worth `-inf` everywhere, like an infeasible combo.
-        no_live_candidate = jnp.all(candidate_dead)
-        V_row = jnp.where(no_live_candidate, -jnp.inf, V_row)
-        value_row = jnp.where(no_live_candidate, -jnp.inf, value_row)
-        marginal_utility_row = jnp.where(no_live_candidate, 0.0, marginal_utility_row)
+        no_live_candidate, V_row, value_row, marginal_utility_row = (
+            _mask_dead_combo_rows(
+                candidate_dead=candidate_dead,
+                V_row=V_row,
+                value_row=value_row,
+                marginal_utility_row=marginal_utility_row,
+            )
+        )
 
         construction = (
             _source_construction_status(
@@ -425,6 +491,12 @@ class _SolveOneCombo:
             if conditional
             else None
         )
+        if construction is not None and pieces._negm_current_publication:  # noqa: SLF001
+            # Mandatory current-resource integrity survives node-feasibility masks.
+            construction = (
+                construction[0] | jnp.any(~jnp.isfinite(publish_resources)),
+                construction[1],
+            )
 
         # A row with no live candidate has finite placeholder geometry for
         # continuation reads and their JVPs. NaN-valued candidates stay live.
@@ -439,10 +511,16 @@ class _SolveOneCombo:
 
         feasible = jnp.asarray(True)  # noqa: FBT003
         if pieces.feasibility_func is not None:
-            # Infeasible discrete combos: -inf value rows so they win no
-            # maximum and carry zero choice probability; exactly-zero
-            # marginal utility so probability-weighted sums stay finite.
-            feasible = pieces.feasibility_func(**combo_pool)
+            # Owned rows evaluate current-state predicates only for publication.
+            # Combo-only rows suppress their value and marginal together so
+            # an infeasible alternative contributes no choice probability.
+            feasible = (
+                current_node_feasibility(
+                    pieces=pieces, pool=combo_pool, state_grid=self.state_grid
+                )
+                if pieces.query_spec is not None
+                else pieces.feasibility_func(**combo_pool)
+            )
             if pieces.query_spec is None:
                 V_row = jnp.where(feasible, V_row, -jnp.inf)
                 value_row = jnp.where(feasible, value_row, -jnp.inf)
@@ -452,6 +530,10 @@ class _SolveOneCombo:
                     feasible, refined_grid, jnp.arange(refined_grid.size, dtype=dtype)
                 )
                 refined_policy = jnp.where(feasible, refined_policy, 0.0)
+
+        if pieces._negm_current_publication and not conditional:  # noqa: SLF001
+            # Current publication integrity takes precedence over economic masks.
+            V_row = jnp.where(jnp.isfinite(publish_resources), V_row, jnp.nan)
 
         if conditional:
             if not isinstance(refined, OwnedEnvelope) or construction is None:
@@ -473,22 +555,111 @@ class _SolveOneCombo:
                 policy_row=refined_policy,
                 construction_invalid=construction[0],
                 kinds=construction[1],
+                # Conditional banks require these reads even at rejected public states.
+                continuation_read_counts=read_counts,
             )
 
-        output: _ComboRows = (
-            V_row,
-            refined_grid.astype(dtype),
-            refined_policy.astype(dtype),
-            value_row,
-            marginal_utility_row,
-            read_supported,
-        )
         return _with_literal_child_status(
-            output=output,
+            output=(
+                V_row,
+                refined_grid.astype(dtype),
+                refined_policy.astype(dtype),
+                value_row,
+                marginal_utility_row,
+                read_supported,
+            ),
             pieces=pieces,
             child_status=child_status,
             node_feasible=(publish_resources > pieces.borrowing_limit) & feasible,
+            continuation_read_counts=reduce_continuation_read_counts(
+                counts=read_counts, active=feasible
+            ),
         )
+
+
+def _assemble_combo_candidates(
+    *,
+    pieces: _EgmKernelPieces,
+    constrained_actions: Float1D,
+    constrained_values: Float1D,
+    endog_grid: Float1D,
+    actions: Float1D,
+    values: Float1D,
+) -> tuple[Float1D, Float1D, Float1D, Float1D, Bool1D]:
+    """Append constrained and Euler candidates with their pristine savings sources."""
+    candidate_grid = jnp.concatenate(
+        [pieces.borrowing_limit + constrained_actions, endog_grid]
+    )
+    candidate_policy = jnp.concatenate([constrained_actions, actions])
+    candidate_value = jnp.concatenate([constrained_values, values])
+    # Exogenous source savings per candidate: the savings node for each Euler
+    # candidate (`endog_grid = savings_node + action`, so the implied
+    # `endog_grid - policy` equals it in exact arithmetic), the borrowing
+    # limit for the constrained candidates (their savings is pinned there).
+    # FUES compares these pristine sources instead of the lossy implied
+    # difference, so a same-source tie is never dropped by rounding.
+    candidate_savings = jnp.concatenate(
+        [
+            jnp.full_like(constrained_actions, pieces.borrowing_limit),
+            pieces.savings_nodes,
+        ]
+    )
+    # A `-inf`-valued candidate (e.g. a corner whose continuation is
+    # `-inf`) is dominated by every finite candidate and would inject
+    # `-inf - (-inf) = NaN` into the envelope scan's gradient arithmetic.
+    # Mask the triple to NaN — the scan's absent form. NaN-valued
+    # candidates stay as they are: genuine poison must keep propagating.
+    candidate_dead = jnp.isneginf(candidate_value)
+    return (
+        candidate_grid,
+        candidate_policy,
+        candidate_value,
+        candidate_savings,
+        candidate_dead,
+    )
+
+
+def _mask_dead_combo_rows(
+    *,
+    candidate_dead: Bool1D,
+    V_row: Float1D,
+    value_row: Float1D,
+    marginal_utility_row: Float1D,
+) -> tuple[ScalarBool, Float1D, Float1D, Float1D]:
+    """Publish zero marginal and absent values when every candidate is dead."""
+    # A combo with no live candidate (its entire continuation is `-inf`)
+    # is worth `-inf` everywhere, like an infeasible combo.
+    no_live_candidate = jnp.all(candidate_dead)
+    V_row = jnp.where(no_live_candidate, -jnp.inf, V_row)
+    value_row = jnp.where(no_live_candidate, -jnp.inf, value_row)
+    marginal_utility_row = jnp.where(no_live_candidate, 0.0, marginal_utility_row)
+
+    return no_live_candidate, V_row, value_row, marginal_utility_row
+
+
+def current_node_feasibility(
+    *, pieces: _EgmKernelPieces, pool: EconFunctionKwargs, state_grid: Float1D
+) -> BoolND:
+    """Evaluate predicates on the actual publication grid after inversion."""
+    if pieces.feasibility_func is None:
+        return jnp.ones(state_grid.shape, dtype=jnp.bool_)
+    return jax.vmap(_CurrentNodeFeasibility(pieces=pieces, pool=pool))(state_grid)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _CurrentNodeFeasibility:
+    """Bind the actual current Euler node beside a fixed combo and its clock."""
+
+    pieces: _EgmKernelPieces
+    """The installed current-state predicate and liquid role."""
+    pool: EconFunctionKwargs
+    """Actual discrete/passive values and qualified parameters for this period."""
+
+    def __call__(self, state: ScalarFloat) -> ScalarBool:
+        predicate = self.pieces.feasibility_func
+        if predicate is None:
+            raise TypeError("A current-node predicate must be installed.")
+        return predicate(**{**self.pool, self.pieces.euler_state_name: state})
 
 
 def _with_literal_child_status(
@@ -497,16 +668,22 @@ def _with_literal_child_status(
     pieces: _EgmKernelPieces,
     child_status: tuple[QueryInputStatus, ...] | None,
     node_feasible: BoolND,
+    continuation_read_counts: ContinuationReadCounts | None = None,
 ) -> _ComboRows | BoundedResult[_ConditionalComboRows]:
     """Transport inherited child integrity beside unchanged legacy source rows."""
-    if not pieces.continuation_plan.query_targets:
+    if (
+        not pieces.continuation_plan.query_targets
+        and continuation_read_counts is None
+        and not pieces._retain_nested_feasibility  # noqa: SLF001
+    ):
         return output
-    if child_status is None:
+    if pieces.continuation_plan.query_targets and child_status is None:
         raise TypeError("Installed child readers require reduced query summaries.")
     return BoundedResult(
         output=(*output, None, node_feasible),
         bound_status=(),
         query_status=child_status,
+        continuation_read_counts=continuation_read_counts,
     )
 
 
@@ -515,18 +692,25 @@ def _legacy_candidates_with_child_status(
     pieces: _EgmKernelPieces,
     compute_node: Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]],
     savings_point_width: int | None,
-) -> tuple[_NodeRows, tuple[QueryInputStatus, ...] | None]:
+) -> tuple[
+    _NodeRows, tuple[QueryInputStatus, ...] | None, ContinuationReadCounts | None
+]:
     """Map the legacy candidate schedule while reducing installed child summaries."""
     candidates = _compute_nodes_over_savings(
         compute_node=compute_node,
         savings_nodes=pieces.savings_nodes,
         savings_point_width=savings_point_width,
-        bound_summary=bool(pieces.continuation_plan.query_targets),
+        bound_summary=bool(pieces.continuation_plan.query_targets)
+        or pieces.collect_continuation_read_counts,
     )
     return (
-        (candidates.output, candidates.query_status)
+        (
+            candidates.output,
+            candidates.query_status,
+            candidates.continuation_read_counts,
+        )
         if isinstance(candidates, BoundedResult)
-        else (candidates, None)
+        else (candidates, None, None)
     )
 
 
@@ -534,7 +718,8 @@ def _refined_rows(
     *,
     refined: tuple[Float1D, Float1D, Float1D, ScalarInt]
     | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]
-    | OwnedEnvelope,
+    | OwnedEnvelope
+    | _NegmBindingEnvelope,
     query_spec: EGMQuerySpec | None,
     check_query_construction: bool = False,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
@@ -554,6 +739,14 @@ def _refined_rows(
         )
     if isinstance(refined, OwnedEnvelope):
         raise TypeError("Owned envelope rows require installed source authority.")
+    if isinstance(refined, _NegmBindingEnvelope):
+        return (
+            refined.grid,
+            refined.policy,
+            refined.value,
+            refined.n_kept,
+            jnp.asarray(a=True),
+        )
     grid, policy, value, n_kept = refined[:_REFINED_ROW_FIELDS]
     support = (
         refined[_REFINED_ROW_FIELDS]
@@ -567,7 +760,8 @@ def _source_construction_status(
     *,
     refined: tuple[Float1D, Float1D, Float1D, ScalarInt]
     | tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]
-    | OwnedEnvelope,
+    | OwnedEnvelope
+    | _NegmBindingEnvelope,
     marginal_row: Float1D,
     expected_at_floor: ScalarFloat,
 ) -> tuple[ScalarBool, IntND]:
@@ -615,6 +809,7 @@ def _conditional_combo_output(
     policy_row: Float1D,
     construction_invalid: ScalarBool,
     kinds: IntND,
+    continuation_read_counts: ContinuationReadCounts | None = None,
 ) -> BoundedResult[_ConditionalComboRows]:
     """Publish original source records and mandatory prefix integrity separately."""
     spec = pieces.query_spec
@@ -656,6 +851,7 @@ def _conditional_combo_output(
             node_feasible,
         ),
         bound_status=() if pieces.floor_status is None else (pieces.floor_status,),
+        continuation_read_counts=continuation_read_counts,
         query_status=(
             *(child_status or ()),
             QueryInputStatus(
@@ -732,14 +928,21 @@ def _compute_nodes_after_first(
     compute_node: Callable[[ScalarFloat], _NodeOutput | BoundedResult[_NodeOutput]],
     savings_nodes: Float1D,
     savings_point_width: int | None,
-) -> tuple[_NodeRows, tuple[QueryInputStatus, ...] | None]:
+) -> tuple[
+    _NodeRows, tuple[QueryInputStatus, ...] | None, ContinuationReadCounts | None
+]:
     """Reuse the first candidate and fold the remaining child slots within tiles."""
     first_output = first.output if isinstance(first, BoundedResult) else first
     status = first.query_status if isinstance(first, BoundedResult) else None
+    counts = (
+        first.continuation_read_counts if isinstance(first, BoundedResult) else None
+    )
     if savings_nodes.size == 1:
-        return cast(
-            "_NodeRows", tuple(jnp.atleast_1d(value) for value in first_output)
-        ), status
+        return (
+            cast("_NodeRows", tuple(jnp.atleast_1d(value) for value in first_output)),
+            status,
+            counts,
+        )
     tail = _compute_nodes_over_savings(
         compute_node=compute_node,
         savings_nodes=savings_nodes[1:],
@@ -749,11 +952,14 @@ def _compute_nodes_after_first(
     tail_output = tail.output if isinstance(tail, BoundedResult) else tail
     if isinstance(tail, BoundedResult):
         status = merge_query_input_status(left=status, right=tail.query_status)
+        counts = merge_continuation_read_counts(
+            left=counts, right=tail.continuation_read_counts
+        )
     candidates = tuple(
         jnp.concatenate((jnp.atleast_1d(value), tail_value))
         for value, tail_value in zip(first_output, tail_output, strict=True)
     )
-    return cast("_NodeRows", candidates), status
+    return cast("_NodeRows", candidates), status, counts
 
 
 def _get_compute_node(
@@ -775,6 +981,7 @@ def _get_compute_node(
         dtype=dtype,
         stochastic_node_width=stochastic_node_width,
         resolved_process_grids=resolved_process_grids,
+        collect_continuation_read_counts=pieces.collect_continuation_read_counts,
     )
 
     analytic_inverse = pieces.inverse_marginal_utility_func
@@ -812,6 +1019,7 @@ def _get_compute_node(
         discount_factor=discount_factor,
         inverse_marginal_utility=inverse_marginal_utility,
         utility_of_action=utility_of_action,
+        query_slots_required=bool(pieces.continuation_plan.query_targets),
     )
 
 
@@ -834,6 +1042,8 @@ class _ComputeNode:
 
     utility_of_action: Callable[[ScalarFloat], ScalarFloat]
     """Felicity of the consumption action, everything else bound."""
+    query_slots_required: bool = False
+    """Whether this installed continuation independently declares child slots."""
 
     def __call__(
         self,
@@ -844,7 +1054,13 @@ class _ComputeNode:
             continuation = cast(
                 "BoundedResult[tuple[ScalarFloat, ScalarFloat]]", continuation
             )
-            if continuation.bound_status or continuation.query_status is None:
+            if continuation.bound_status or (
+                continuation.query_status is None
+                and (
+                    self.query_slots_required
+                    or continuation.continuation_read_counts is None
+                )
+            ):
                 raise TypeError(
                     "Child continuation requires query slots and no own bound slots."
                 )
@@ -866,6 +1082,7 @@ class _ComputeNode:
                 output=output,
                 bound_status=(),
                 query_status=continuation.query_status,
+                continuation_read_counts=continuation.continuation_read_counts,
             )
         return output
 
@@ -984,6 +1201,8 @@ def _publish_V_and_carry_rows(
     borrowing_limit: ScalarFloat,
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     discounted_expected_value_at_limit: ScalarFloat,
+    _negm_current_publication: bool = False,
+    _binding_query: BoolND | None = None,
 ) -> tuple[FloatND, Float1D, Float1D]:
     """Interpolate V onto the exogenous grid and finish the carry value rows.
 
@@ -1060,6 +1279,22 @@ def _publish_V_and_carry_rows(
         jnp.maximum(value_interpolated, value_constrained),
     )
     V_row = jnp.where(overflowed, jnp.nan, V_row).astype(dtype)
+
+    if _negm_current_publication:
+        if _binding_query is None:
+            raise TypeError("Nested current publication requires native query flags.")
+        live = jnp.arange(refined_grid.size) < n_kept
+        refused = overflowed | jnp.any(
+            live
+            & ~(
+                jnp.isfinite(refined_grid)
+                & jnp.isfinite(refined_policy)
+                & jnp.isfinite(refined_value)
+            )
+        )
+        V_row = jnp.where(_binding_query, value_constrained, V_row)
+        V_row = jnp.where(publish_resources <= borrowing_limit, -jnp.inf, V_row)
+        V_row = jnp.where(~jnp.isfinite(publish_resources) | refused, jnp.nan, V_row)
 
     # The carry value row is the refined upper envelope itself — the correct
     # object for a parent to interpolate. The constrained floor applies only to

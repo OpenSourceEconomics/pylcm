@@ -310,3 +310,57 @@ def _min_finite_margin(*, first: FloatND, second: FloatND) -> FloatND:
     both = jnp.isfinite(first) & jnp.isfinite(second)
     gap = jnp.where(both, jnp.abs(first - second), jnp.inf)
     return jnp.min(gap)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContinuousValueCollapse:
+    """Physical node-masked value and diagnostics without a second carry bank."""
+
+    V_arr: FloatND
+    value_search: SafeguardedSearchResult
+    keeper_adjuster_margin: FloatND
+    best_second_best_margin: FloatND
+    adjustment_probability: FloatND | None
+
+
+def collapse_continuous_values(
+    *,
+    keeper_v_arr: FloatND,
+    bank: OuterCandidateBank,
+    config: AdaptiveOuterMesh,
+    fixed_cost_scale: FloatND | None,
+    fixed_cost_support: tuple[float, float] | None,
+) -> ContinuousValueCollapse:
+    """Use the ordinary physical-value fold while publishing raw conditional rows."""
+    search = _continuous_outer_argmax(
+        nodes=bank.outer_nodes, stacked=bank.V_arr, config=config
+    )
+    if fixed_cost_scale is None:
+        value = _fold_continuous(
+            running=keeper_v_arr,
+            stacked=bank.V_arr,
+            search=search,
+            candidate=search.value,
+        )
+        probability = None
+    else:
+        if fixed_cost_support is None:
+            raise ValueError("fixed_cost_scale requires fixed_cost_support")
+        value, probability = _fold_expected_fixed_cost(
+            running=keeper_v_arr,
+            stacked=bank.V_arr,
+            search=search,
+            scale=fixed_cost_scale,
+            support=fixed_cost_support,
+        )
+    return ContinuousValueCollapse(
+        V_arr=value,
+        value_search=search,
+        keeper_adjuster_margin=_min_finite_margin(
+            first=keeper_v_arr, second=search.value
+        ),
+        best_second_best_margin=_min_finite_margin(
+            first=search.value, second=search.second_best_value
+        ),
+        adjustment_probability=probability,
+    )

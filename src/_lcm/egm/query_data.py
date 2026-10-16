@@ -155,6 +155,38 @@ def select_query_data(
     )
 
 
+def select_adaptive_query_data(
+    *,
+    data: EGMQueryData,
+    cell_positions: tuple[ScalarInt | int | slice, ...],
+    floor_positions: tuple[ScalarInt | int | slice, ...] | None = None,
+) -> EGMQueryData:
+    """Select declared cell/D axes without indexing the global adaptive mesh."""
+    mesh = data.adaptive_outer_data
+    if mesh is None:
+        raise TypeError("Adaptive row selection requires its declared mesh subtree.")
+    selected = select_query_data(
+        data=replace(data, adaptive_outer_data=None),
+        positions=cell_positions,
+        floor_positions=floor_positions,
+    )
+    return replace(
+        selected,
+        adaptive_outer_data=replace(
+            mesh,
+            outer_link_valid=read_at_codes(
+                array=mesh.outer_link_valid, positions=cell_positions
+            ),
+            outer_owner_id=read_at_codes(
+                array=mesh.outer_owner_id, positions=cell_positions
+            ),
+            outer_side_id=read_at_codes(
+                array=mesh.outer_side_id, positions=cell_positions
+            ),
+        ),
+    )
+
+
 def _query_record_leaves(
     *, record: QueryRecord, prefix: tuple[str, ...]
 ) -> tuple[tuple[tuple[str, ...], NumericQueryLeaf], ...]:

@@ -46,7 +46,7 @@ from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
 from _lcm.egm.outer_search import AdaptiveOuterMesh
 from _lcm.optimization.golden_section import maximize_golden_section
 from lcm.exceptions import OuterSearchConvergenceError
-from lcm.typing import BoolND, Float1D, FloatND
+from lcm.typing import BoolND, Float1D, FloatND, ScalarInt
 
 # Tightening factor for optimum-containing intervals: they must validate to
 # 1/10 of the ordinary normalized-error threshold before they stop being
@@ -115,6 +115,11 @@ class SafeguardedSearchResult:
     valid: BoolND
     """Whether the cell had any finite candidate at all."""
 
+    probe_status: BoolND | None = None
+    """Mandatory valid-probe failures, absent from ordinary numerical searches."""
+    companions: tuple[FloatND, ...] | None = None
+    """Associated channels from the selected node or continuous tuple probe."""
+
 
 def safeguarded_continuous_argmax(
     *,
@@ -123,6 +128,12 @@ def safeguarded_continuous_argmax(
     node_values: FloatND,
     golden_iterations: int,
     max_brackets: int | None = None,
+    valid_count: ScalarInt | None = None,
+    objective_with_status: Callable[
+        [FloatND], tuple[FloatND, tuple[FloatND, ...], BoolND]
+    ]
+    | None = None,
+    node_companions: tuple[FloatND, ...] | None = None,
 ) -> SafeguardedSearchResult:
     """Continuous outer argmax, safeguarded by the exact candidate mesh.
 
@@ -143,6 +154,8 @@ def safeguarded_continuous_argmax(
             brackets (the top ones by exact value) as a performance knob; the
             remaining local maxima still compete as exact nodes, so only their
             OFF-node peaks are at risk — set it only when that is acceptable.
+        valid_count: Runtime length of the strictly increasing active node
+            prefix, containing at least two nodes. `None` uses every node.
 
     The deterministic action fold breaks value ties within a dtype-aware
     rounding band (``_TIE_BAND_ULPS`` ULPs) toward the smaller abscissa, so a
@@ -157,6 +170,11 @@ def safeguarded_continuous_argmax(
     node_values = jnp.asarray(node_values)
     n_nodes = nodes.shape[0]
     state_shape = node_values.shape[1:]
+    if valid_count is not None:
+        active = jnp.arange(n_nodes) < valid_count
+        active_values = active.reshape((n_nodes,) + (1,) * len(state_shape))
+        node_values = jnp.where(active_values, node_values, -jnp.inf)
+        nodes = jnp.where(active, nodes, nodes[0])
     finite_values = jnp.where(jnp.isfinite(node_values), node_values, -jnp.inf)
     valid = jnp.any(jnp.isfinite(node_values), axis=0)
     is_local_max = _node_local_max_mask(finite_values)
@@ -169,8 +187,28 @@ def safeguarded_continuous_argmax(
     top_values, top_idx = jax.lax.top_k(masked_last, n_brackets)  # (*S, K)
     top_idx = jnp.moveaxis(top_idx, -1, 0)  # (K, *S)
     bracket_valid = jnp.moveaxis(jnp.isfinite(top_values), -1, 0)  # (K, *S)
-    lower = nodes[jnp.clip(top_idx - 1, 0, n_nodes - 1)]
-    upper = nodes[jnp.clip(top_idx + 1, 0, n_nodes - 1)]
+    if valid_count is None:
+        lower = nodes[jnp.clip(top_idx - 1, 0, n_nodes - 1)]
+        upper = nodes[jnp.clip(top_idx + 1, 0, n_nodes - 1)]
+    else:
+        lower = nodes[jnp.clip(top_idx - 1, 0, valid_count - 1)]
+        upper = nodes[jnp.clip(top_idx + 1, 0, valid_count - 1)]
+        active_objective = objective
+
+        def prefix_objective(query: FloatND) -> FloatND:
+            return active_objective(jnp.where(bracket_valid, query, nodes[0]))
+
+        objective = prefix_objective
+
+    if objective_with_status is not None:
+        active_status_objective = objective_with_status
+
+        def status_objective(
+            query: FloatND,
+        ) -> tuple[FloatND, tuple[FloatND, ...], BoolND]:
+            return active_status_objective(jnp.where(bracket_valid, query, nodes[0]))
+
+        objective_with_status = status_objective
 
     refined = maximize_golden_section(
         objective=objective,
@@ -178,31 +216,43 @@ def safeguarded_continuous_argmax(
         upper=upper,
         iterations=golden_iterations,
         valid=bracket_valid,
+        **(
+            {"objective_with_status": objective_with_status}
+            if objective_with_status is not None
+            else {}
+        ),
     )
 
-    # Coarse selection: fold the exact nodes in increasing order.
-    best_x = jnp.broadcast_to(nodes[0], state_shape)
-    best_v = finite_values[0]
-    second_x = jnp.broadcast_to(nodes[0], state_shape)
-    second_v = jnp.full(state_shape, -jnp.inf)
-    width = jnp.zeros(state_shape)
-    for index in range(1, n_nodes):
-        best_x, best_v, second_x, second_v, width = _consider(
-            cand_x=jnp.broadcast_to(nodes[index], state_shape),
-            cand_v=finite_values[index],
-            cand_width=jnp.zeros(state_shape),
-            best_x=best_x,
-            best_v=best_v,
-            second_x=second_x,
-            second_v=second_v,
-            width=width,
+    best_x, best_v, second_x, second_v, width, best_companions = (
+        _fold_exact_outer_nodes(
+            nodes=nodes,
+            finite_values=finite_values,
+            state_shape=state_shape,
+            n_nodes=n_nodes,
+            node_companions=node_companions,
         )
+    )
     coarse_x = best_x
     coarse_v = best_v
 
     # Refined bracket optima join the competition.
     refined_width = refined.upper - refined.lower
     for index in range(n_brackets):
+        if best_companions is not None:
+            if refined.companions is None:
+                raise TypeError("A tuple search lacks its selected probe companions.")
+            take = _companion_candidate_wins(
+                cand_x=refined.x[index],
+                cand_v=refined.value[index],
+                best_x=best_x,
+                best_v=best_v,
+            )
+            best_companions = tuple(
+                jnp.where(take, item[index], current)
+                for item, current in zip(
+                    refined.companions, best_companions, strict=True
+                )
+            )
         best_x, best_v, second_x, second_v, width = _consider(
             cand_x=refined.x[index],
             cand_v=refined.value[index],
@@ -224,8 +274,70 @@ def safeguarded_continuous_argmax(
         refinement_gain=jnp.where(valid, best_v - coarse_v, 0.0),
         bracket_width=jnp.where(valid, width, 0.0),
         at_lower_bound=valid & (best_x == nodes[0]),
-        at_upper_bound=valid & (best_x == nodes[-1]),
+        at_upper_bound=valid
+        & (best_x == (nodes[-1] if valid_count is None else nodes[valid_count - 1])),
         valid=valid,
+        probe_status=None
+        if refined.probe_status is None
+        else jnp.any(refined.probe_status, axis=0),
+        companions=best_companions,
+    )
+
+
+def _fold_exact_outer_nodes(
+    *,
+    nodes: FloatND,
+    finite_values: FloatND,
+    state_shape: tuple[int, ...],
+    n_nodes: int,
+    node_companions: tuple[FloatND, ...] | None,
+) -> tuple[FloatND, FloatND, FloatND, FloatND, FloatND, tuple[FloatND, ...] | None]:
+    """Fold exact nodes in increasing order with their associated tuple channels."""
+    # Coarse selection: fold the exact nodes in increasing order.
+    best_x = jnp.broadcast_to(nodes[0], state_shape)
+    best_v = finite_values[0]
+    second_x = jnp.broadcast_to(nodes[0], state_shape)
+    second_v = jnp.full(state_shape, -jnp.inf)
+    width = jnp.zeros(state_shape)
+    best_companions = (
+        None if node_companions is None else tuple(item[0] for item in node_companions)
+    )
+    for index in range(1, n_nodes):
+        if best_companions is not None:
+            if node_companions is None:
+                raise TypeError(
+                    "Associated nodal channels must accompany the selected tuple."
+                )
+            take = _companion_candidate_wins(
+                cand_x=jnp.broadcast_to(nodes[index], state_shape),
+                cand_v=finite_values[index],
+                best_x=best_x,
+                best_v=best_v,
+            )
+            best_companions = tuple(
+                jnp.where(take, item[index], current)
+                for item, current in zip(node_companions, best_companions, strict=True)
+            )
+        best_x, best_v, second_x, second_v, width = _consider(
+            cand_x=jnp.broadcast_to(nodes[index], state_shape),
+            cand_v=finite_values[index],
+            cand_width=jnp.zeros(state_shape),
+            best_x=best_x,
+            best_v=best_v,
+            second_x=second_x,
+            second_v=second_v,
+            width=width,
+        )
+    return best_x, best_v, second_x, second_v, width, best_companions
+
+
+def _companion_candidate_wins(
+    *, cand_x: FloatND, cand_v: FloatND, best_x: FloatND, best_v: FloatND
+) -> BoolND:
+    """Apply the existing outer fold's exact value/abscissa ownership to channels."""
+    tie = _tie_band(a=cand_v, b=best_v)
+    return (cand_v > best_v + tie) | (
+        (jnp.abs(cand_v - best_v) <= tie) & (cand_x < best_x)
     )
 
 

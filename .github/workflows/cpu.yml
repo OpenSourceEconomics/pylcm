@@ -408,6 +408,10 @@ jobs:
           pixi run -e tests-cpu pytest \
             tests/test_simulation_candidate_program_certificate.py \
             tests/test_uniform_process_grid_certificate.py \
+            tests/test_outer_helper_certificate.py \
+            tests/test_final_nested_aggregate_certificate.py \
+            tests/test_additional_helper_aggregate_certificate.py \
+            tests/test_child_native_aggregate_certificate.py \
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=1800 --timeout-method=thread -v --max-worker-restart=0 \
             --durations=25 \

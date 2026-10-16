@@ -28,6 +28,11 @@ from beartype import beartype
 from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF, SIMULATION_INPUT_CONF
+from _lcm.egm.adaptive_mesh_authority import (
+    ACTIVE_CONTINUATION_MESH_AXIS,
+    validate_bound_continuation_mesh,
+)
+from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import (
@@ -3115,6 +3120,32 @@ class Model:
         PeriodToRegimeToDissolutionFlags,
     ]:
         """Require every replay artifact the labelled solution's routes consume."""
+        for ref in solution.retained_continuations:
+            if ref.key != EGM_CONTINUATION:
+                continue
+            expected = authority.artifacts[ref]
+            if not any(
+                axis.name == ACTIVE_CONTINUATION_MESH_AXIS for axis in expected.axes
+            ):
+                continue
+            supplied = (
+                solution.retained_continuations._materialize_from_template_snapshot(  # noqa: SLF001
+                    ref,
+                    template_snapshot=snapshot_artifact_template_declaration(expected),
+                )
+            )
+            canonical = _canonicalize_artifact_payload(
+                payload=supplied, authority=expected
+            )
+            if isinstance(canonical, EGMCarry):
+                try:
+                    validate_bound_continuation_mesh(
+                        carry=canonical, authority=expected
+                    )
+                except (TypeError, ValueError) as error:
+                    raise InvalidSimulationInputError(
+                        f"Artifact {ref!r} mismatched continuation mesh: {error}"
+                    ) from error
         policies = _materialize_artifact_projection(
             store=solution.replay_artifacts,
             key=SIMULATION_POLICY,
@@ -3332,6 +3363,12 @@ class Model:
                 descriptor = authority.replay[ref]
                 policy_read = descriptor.route
                 if not isinstance(policy_read, EGMPolicyRead | NNBEGMPolicyRead):
+                    continue
+                if (
+                    not descriptor.applicable
+                    and not descriptor.required
+                    and ref not in authority.artifacts
+                ):
                     continue
                 supplied = policies.get(period, {}).get(regime_name)
                 omission = solution.omissions.get(ref)

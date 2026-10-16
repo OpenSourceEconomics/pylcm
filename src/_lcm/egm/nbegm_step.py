@@ -40,8 +40,8 @@ strict/non-strict comparison split.
 
 import functools
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from typing import Literal, NamedTuple, overload
+from dataclasses import dataclass, field, replace
+from typing import Literal, NamedTuple, cast, overload
 
 import jax
 import jax.numpy as jnp
@@ -61,15 +61,27 @@ from _lcm.egm.nbegm_segments import (
     segment_ids_from_folds,
 )
 from _lcm.egm.preferences import Preferences
+from _lcm.egm.query_data import EGMQueryData, QueryNodeKind
 from _lcm.egm.upper_envelope.query import (
     ComparisonArithmetic,
     EnvelopeWinner,
+    _SavingsEnvelopeWinner,
     empty_envelope_winner,
     envelope_at_query,
     finish_envelope_winner,
     merge_envelope_winner,
     published_owner,
 )
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    ContinuationReadCounts,
+    QueryInputStatus,
+    merge_continuation_read_counts,
+    merge_query_input_status,
+    reduce_continuation_read_counts,
+    reduce_query_input_status,
+)
+from _lcm.typing import PytreeValue
 from lcm.case_piece import EqualityOwner
 from lcm.typing import (
     BoolND,
@@ -108,6 +120,227 @@ _FLAT_SPAN_REL_TOL = 1e-6
 # _CHUNK_SIZE`.
 _CHUNK_SIZE = 4
 
+_RETAINED_FLOOR_ARITY = 3
+_RETAINED_BOUNDARY_ARITY = 5
+_RETAINED_CASE_ARITY = 6
+
+
+class _AssociatedNBEGMChannels(NamedTuple):
+    """Native case channels with the original saving chosen by the same owner."""
+
+    value: Float1D
+    marginal: Float1D
+    policy: Float1D
+    savings: Float1D
+
+
+class _NBEGMDiscreteQueryStep(NamedTuple):
+    """Ordinary hard choice beside every complete conditional native tuple."""
+
+    value: Float1D
+    marginal: Float1D
+    policy: Float1D
+    choice: IntND
+    conditional_value: FloatND
+    conditional_marginal: FloatND
+    conditional_policy: FloatND
+    query_data: EGMQueryData
+
+
+class _NBEGMQueryStep(NamedTuple):
+    """Associated query channels with optional leading mapped axes."""
+
+    value: FloatND
+    """Value at each supplied liquid query."""
+    marginal: FloatND
+    """Native envelope marginal with respect to liquid."""
+    policy: FloatND
+    """Consumption associated with the same winning record."""
+    query_data: EGMQueryData
+    """Original saving, budget-run support and held floor continuation."""
+
+
+def _single_row_nbegm_query_step(
+    *,
+    value: Float1D,
+    marginal: Float1D,
+    policy: Float1D,
+    query_data: EGMQueryData,
+) -> _NBEGMQueryStep:
+    """Publish one checked liquid-query row before any leading-axis map."""
+    return _NBEGMQueryStep(
+        value=value,
+        marginal=marginal,
+        policy=policy,
+        query_data=query_data,
+    )
+
+
+class _OwnedNBEGMQueryStep(NamedTuple):
+    """Conditional query records and the separate native envelope owner."""
+
+    value: Float1D
+    """Value at each supplied liquid query."""
+    marginal: Float1D
+    """Native envelope marginal with respect to liquid."""
+    policy: Float1D
+    """Consumption associated with the same winning record."""
+    query_data: EGMQueryData
+    """Conditional query records independent of native winner identity."""
+    owner: Int1D
+    """Existing stable native winner identity, or NO_OWNER."""
+
+
+class _IntervalQueryWinner(NamedTuple):
+    """A streamed associated winner and compact source-floor continuation."""
+
+    winner: _SavingsEnvelopeWinner
+    """The existing comparison winner with original saving endpoints."""
+    corner_continuation: Float1D
+    """One unmasked source-floor value per canonical interval."""
+    corner_kind: Int1D
+    """Independent represented support of each compact floor value."""
+
+
+class _IntervalIntegrityWinner(NamedTuple):
+    """A standing numeric winner beside scalar canonical child-integrity slots."""
+
+    winner: EnvelopeWinner | _IntervalQueryWinner
+    """Unchanged numeric standing tuple and optional compact corner buffers."""
+    query_status: tuple[QueryInputStatus, ...] | None
+    """One scalar mandatory summary per statically declared target slot."""
+    continuation_read_counts: ContinuationReadCounts | None = None
+
+
+type _NBEGMIntervalRows = tuple[FloatND, ...] | BoundedResult[tuple[FloatND, ...]]
+type _NBEGMIntervalStep = (
+    tuple[Float1D, Float1D, Float1D]
+    | tuple[Float1D, Float1D, Float1D, Int1D]
+    | _NBEGMQueryStep
+    | _OwnedNBEGMQueryStep
+)
+type _NBEGMIntervalResult = (
+    _NBEGMIntervalStep
+    | BoundedResult[_NBEGMIntervalStep]
+    | BoundedResult[_NBEGMUnownedIntervalStep]
+)
+type _NBEGMUnownedIntervalStep = tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep
+type _NBEGMUnownedIntervalResult = (
+    _NBEGMUnownedIntervalStep | BoundedResult[_NBEGMUnownedIntervalStep]
+)
+type _NBEGMStreamChannels = (
+    tuple[Float1D, Float1D, Float1D, Int1D]
+    | tuple[Float1D, Float1D, Float1D, Float1D, Int1D, Float1D, Int1D]
+)
+type _NBEGMStreamResult = _NBEGMStreamChannels | BoundedResult[_NBEGMStreamChannels]
+type _NBEGMIntervalWinner = (
+    EnvelopeWinner | _IntervalQueryWinner | _IntervalIntegrityWinner
+)
+
+
+def _required_nbegm_floor_saving(
+    *,
+    result: tuple[ScalarFloat, ScalarFloat]
+    | tuple[ScalarFloat, ScalarFloat, ScalarFloat],
+) -> ScalarFloat:
+    """Read the retained original saving from a flat-budget optimum."""
+    if len(result) != _RETAINED_FLOOR_ARITY:
+        raise TypeError("A retained NB floor optimum must publish its original saving.")
+    return result[2]
+
+
+def _required_nbegm_boundary_savings(
+    *,
+    result: tuple[Float1D, Float1D, Float1D, Float1D]
+    | tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
+) -> Float1D:
+    """Read original savings from the actual retained boundary candidates."""
+    if len(result) != _RETAINED_BOUNDARY_ARITY:
+        raise TypeError(
+            "Retained NB boundary candidates must publish original savings."
+        )
+    return result[4]
+
+
+def _required_nbegm_case_candidate_savings(
+    *,
+    result: tuple[Float1D, Float1D, Float1D, Float1D, Float1D]
+    | tuple[Float1D, Float1D, Float1D, Float1D, Float1D, Float1D],
+) -> Float1D:
+    """Read the associated saving channel from retained recurring-case candidates."""
+    if len(result) != _RETAINED_CASE_ARITY:
+        raise TypeError("Retained NB case candidates must publish original savings.")
+    return result[5]
+
+
+def _required_nbegm_case_savings(
+    *, result: tuple[Float1D, Float1D, Float1D] | _AssociatedNBEGMChannels
+) -> Float1D:
+    """Require the actual case result that retains its selected savings."""
+    if not isinstance(result, _AssociatedNBEGMChannels):
+        raise TypeError("A retained NB case must publish its selected savings.")
+    return result.savings
+
+
+def _query_node_kind(*, value: FloatND, supported: BoolND) -> IntND:
+    """Distinguish represented finite and economic values from absent nodes."""
+    return jnp.where(
+        supported & jnp.isfinite(value),
+        QueryNodeKind.FINITE,
+        jnp.where(
+            supported & jnp.isneginf(value),
+            QueryNodeKind.ECONOMIC_MINUS_INF,
+            QueryNodeKind.PAD,
+        ),
+    ).astype(jnp.int32)
+
+
+def _make_nbegm_query_data(
+    *,
+    value: Float1D,
+    marginal: Float1D,
+    policy: Float1D,
+    savings: Float1D,
+    floor_used: ScalarFloat,
+    liquid_grid: Float1D,
+    breakpoints: Float1D,
+    corner_continuation: Float1D,
+    corner_kind: Int1D | None = None,
+) -> EGMQueryData:
+    """Package represented original actions separately from unmasked held corners."""
+    node_kind = _query_node_kind(
+        value=value,
+        supported=(
+            jnp.isfinite(savings)
+            & jnp.isfinite(policy)
+            & (policy > 0.0)
+            & jnp.isfinite(marginal)
+        ),
+    )
+    supported = node_kind != QueryNodeKind.PAD
+    budget_run = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+    return EGMQueryData(
+        savings=jnp.where(supported, savings, jnp.nan),
+        node_kind=node_kind,
+        link_valid=(
+            supported[:-1] & supported[1:] & (budget_run[:-1] == budget_run[1:])
+        ),
+        owner_id=jnp.where(supported, budget_run, -1).astype(jnp.int32),
+        side_id=jnp.where(supported, 0, -1).astype(jnp.int32),
+        floor_used=floor_used,
+        corner_continuation=corner_continuation,
+        corner_kind=(
+            _query_node_kind(
+                value=corner_continuation,
+                supported=jnp.ones_like(corner_continuation, dtype=bool),
+            )
+            if corner_kind is None
+            else corner_kind
+        ),
+        corner_interval_id=jnp.arange(corner_continuation.shape[0], dtype=jnp.int32),
+        corner_side_id=jnp.zeros(corner_continuation.shape, dtype=jnp.int32),
+    )
+
 
 def _interp_continuation_value(
     *, query: FloatND, grid: Float1D, value: Float1D
@@ -144,6 +377,7 @@ def _interp_continuation_value(
     )
 
 
+@overload
 def nbegm_multi_interval_step(
     *,
     next_value: Float1D,
@@ -164,7 +398,90 @@ def nbegm_multi_interval_step(
     feasible_interval_mask: BoolND | None = None,
     boundary_savings_targets: Float1D | None = None,
     boundary_next_liquid: Float1D | None = None,
-) -> tuple[Float1D, Float1D, Float1D]:
+    retain_query: Literal[False] = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def nbegm_multi_interval_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    flat_interval_mask: tuple[bool, ...] | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
+    retain_query: Literal[True],
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> _NBEGMQueryStep: ...
+
+
+@overload
+def nbegm_multi_interval_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    flat_interval_mask: tuple[bool, ...] | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep: ...
+
+
+def nbegm_multi_interval_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    flat_interval_mask: tuple[bool, ...] | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep:
     """Solve one period of a piecewise-affine, continuous-budget regime by EGM.
 
     The breakpoints partition the liquid axis into intervals on which cash-on-hand
@@ -247,10 +564,13 @@ def nbegm_multi_interval_step(
         coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
     )
 
-    value_next = _interp_continuation_value(
-        query=next_liquid, grid=next_liquid_grid, value=next_value
-    )
-    marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
+    if continuation_read is None:
+        value_next = _interp_continuation_value(
+            query=next_liquid, grid=next_liquid_grid, value=next_value
+        )
+        marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
+    else:
+        value_next, marginal_next = next_value, next_marginal
 
     consumption = preferences.inverse_marginal_utility(
         discount_factor * marginal_return * marginal_next
@@ -279,30 +599,33 @@ def nbegm_multi_interval_step(
     # just above; a flat corner below carries the constant value across the interval.
     # The floor's optimum is read by a dense consumption search at `coh = floor` —
     # robust to a recurring flat continuation, where the Euler inversion is degenerate.
-    flat_corners: list[tuple[Float1D, Float1D, Float1D, Float1D]] = []
-    for i in flat_indices:
-        floor_value, floor_policy = _floor_optimum(
-            floor_coh=coh_intercepts[i],
-            next_liquid_grid=next_liquid_grid,
-            next_value=next_value,
-            discount_factor=discount_factor,
-            preferences=preferences,
-            savings_grid=savings_grid,
-            next_liquid=next_liquid,
-        )
-        in_flat = endog_interval == i
-        liquid_endog = jnp.where(in_flat, upper_edges[i], liquid_endog)
-        value_endog = jnp.where(in_flat, floor_value, value_endog)
-        consumption = jnp.where(in_flat, floor_policy, consumption)
-        marginal_endog = jnp.where(in_flat, 0.0, marginal_endog)
-        flat_corners.append(
-            (
-                jnp.stack([lower_edges[i], upper_edges[i]]),
-                jnp.full((2,), floor_value),
-                jnp.full((2,), floor_policy),
-                jnp.zeros((2,)),
-            )
-        )
+    (
+        liquid_endog,
+        value_endog,
+        consumption,
+        marginal_endog,
+        saving_endog,
+        flat_corners,
+        flat_savings,
+    ) = _nbegm_flat_interval_candidates(
+        flat_indices=flat_indices,
+        coh_intercepts=coh_intercepts,
+        endog_interval=endog_interval,
+        lower_edges=lower_edges,
+        upper_edges=upper_edges,
+        liquid_endog=liquid_endog,
+        value_endog=value_endog,
+        consumption=consumption,
+        marginal_endog=marginal_endog,
+        next_liquid_grid=next_liquid_grid,
+        next_value=next_value,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        savings_grid=savings_grid,
+        next_liquid=next_liquid,
+        retain_query=retain_query,
+        continuation_read=continuation_read,
+    )
     # Degenerate-inversion guard: where the continuation is flat (a recurring floor
     # gives zero marginal value of liquid), the Euler inversion sends consumption to
     # infinity, so those interior candidates are spurious. Drop the ones not already
@@ -320,6 +643,11 @@ def nbegm_multi_interval_step(
     policy_parts: list[Float1D] = [consumption]
     marginal_parts: list[Float1D] = [marginal_endog]
     segment_parts: list[Float1D] = [interior_segment]
+    saving_parts = (
+        [jnp.where(jnp.isnan(liquid_endog), jnp.nan, saving_endog)]
+        if retain_query
+        else None
+    )
 
     # Hard borrowing corner: save nothing, consume all of this point's cash-on-hand,
     # and land wherever the declared law sends the savings grid's lowest node. A
@@ -340,6 +668,7 @@ def nbegm_multi_interval_step(
         policy_parts=policy_parts,
         marginal_parts=marginal_parts,
         segment_parts=segment_parts,
+        saving_parts=saving_parts,
     )
 
     for offset, (edges, values, policies, marginals) in enumerate(flat_corners):
@@ -347,6 +676,8 @@ def nbegm_multi_interval_step(
         value_parts.append(values)
         policy_parts.append(policies)
         marginal_parts.append(marginals)
+        if saving_parts is not None:
+            saving_parts.append(jnp.full((2,), flat_savings[offset]))
         segment_parts.append(
             jnp.full((2,), next_segment + float(n_endpoint_segments + offset))
         )
@@ -369,10 +700,12 @@ def nbegm_multi_interval_step(
         policy_parts=policy_parts,
         marginal_parts=marginal_parts,
         segment_parts=segment_parts,
+        saving_parts=saving_parts,
     )
     _append_boundary_savings_corners(
         boundary_savings_targets=boundary_savings_targets,
         boundary_next_liquid=boundary_next_liquid,
+        lowest_savings=savings_grid[0],
         liquid_grid=liquid_grid,
         coh_grid=coh_grid,
         coh_slope=coh_slopes[interval_of_grid],
@@ -386,7 +719,49 @@ def nbegm_multi_interval_step(
         policy_parts=policy_parts,
         marginal_parts=marginal_parts,
         segment_parts=segment_parts,
+        saving_parts=saving_parts,
+        continuation_read=continuation_read,
     )
+
+    if retain_query:
+        if saving_parts is None:
+            raise TypeError(
+                "NB original saving channels must accompany their candidates."
+            )
+        value, policy, marginal, saving = envelope_at_query(
+            endog_grid=jnp.concatenate(endog_parts),
+            policy=jnp.concatenate(policy_parts),
+            value=jnp.concatenate(value_parts),
+            marginal=jnp.concatenate(marginal_parts),
+            segment_id=jnp.concatenate(segment_parts),
+            x_query=liquid_grid,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+            candidate_savings=jnp.concatenate(saving_parts),
+        )
+        value, marginal, policy = _publish_no_action_carry(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            coh=coh_grid,
+            lowest_savings=savings_grid[0],
+        )
+        return _single_row_nbegm_query_step(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            query_data=_make_nbegm_query_data(
+                value=value,
+                marginal=marginal,
+                policy=policy,
+                savings=saving,
+                floor_used=savings_grid[0],
+                liquid_grid=liquid_grid,
+                breakpoints=breakpoints,
+                corner_continuation=jnp.broadcast_to(value_next[0], coh_slopes.shape),
+            ),
+        )
 
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),
@@ -406,6 +781,117 @@ def nbegm_multi_interval_step(
         coh=coh_grid,
         lowest_savings=savings_grid[0],
     )
+
+
+class _NBEGMFlatIntervalCandidates(NamedTuple):
+    """The unchanged native rows and their flat-budget corner records."""
+
+    liquid_endog: Float1D
+    value_endog: Float1D
+    consumption: Float1D
+    marginal_endog: Float1D
+    saving_endog: Float1D
+    flat_corners: list[tuple[Float1D, Float1D, Float1D, Float1D]]
+    flat_savings: list[ScalarFloat]
+
+
+def _nbegm_flat_interval_candidates(
+    *,
+    flat_indices: tuple[int, ...],
+    coh_intercepts: Float1D,
+    endog_interval: IntND,
+    lower_edges: Float1D,
+    upper_edges: Float1D,
+    liquid_endog: Float1D,
+    value_endog: Float1D,
+    consumption: Float1D,
+    marginal_endog: Float1D,
+    next_liquid_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    retain_query: bool,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]] | None,
+) -> _NBEGMFlatIntervalCandidates:
+    """Build actual flat-budget optimum candidates in their stored interval order."""
+    flat_corners: list[tuple[Float1D, Float1D, Float1D, Float1D]] = []
+    flat_savings: list[ScalarFloat] = []
+    saving_endog = savings_grid
+    for i in flat_indices:
+        floor_result = _floor_optimum(
+            floor_coh=coh_intercepts[i],
+            next_liquid_grid=next_liquid_grid,
+            next_value=next_value,
+            discount_factor=discount_factor,
+            preferences=preferences,
+            savings_grid=savings_grid,
+            next_liquid=next_liquid,
+            retain_savings=retain_query,
+            continuation_read=continuation_read,
+        )
+        floor_value, floor_policy = floor_result[:2]
+        in_flat = endog_interval == i
+        if retain_query:
+            floor_saving = _required_nbegm_floor_saving(result=floor_result)
+            flat_savings.append(floor_saving)
+            saving_endog = jnp.where(in_flat, floor_saving, saving_endog)
+        liquid_endog = jnp.where(in_flat, upper_edges[i], liquid_endog)
+        value_endog = jnp.where(in_flat, floor_value, value_endog)
+        consumption = jnp.where(in_flat, floor_policy, consumption)
+        marginal_endog = jnp.where(in_flat, 0.0, marginal_endog)
+        edges = jnp.stack([lower_edges[i], upper_edges[i]])
+        if retain_query:
+            floor_live = jnp.isfinite(floor_saving)
+            liquid_endog = jnp.where(in_flat & ~floor_live, jnp.nan, liquid_endog)
+            edges = jnp.where(floor_live, edges, jnp.nan)
+        flat_corners.append(
+            (
+                edges,
+                jnp.full((2,), floor_value),
+                jnp.full((2,), floor_policy),
+                jnp.zeros((2,)),
+            )
+        )
+    return _NBEGMFlatIntervalCandidates(
+        liquid_endog,
+        value_endog,
+        consumption,
+        marginal_endog,
+        saving_endog,
+        flat_corners,
+        flat_savings,
+    )
+
+
+def _new_nbegm_candidate_parts() -> tuple[
+    list[Float1D], list[Float1D], list[Float1D], list[Float1D], list[Float1D]
+]:
+    """Create the five associated candidate lists without copying numeric leaves."""
+    return [], [], [], [], []
+
+
+def _append_nbegm_candidate_parts(
+    *,
+    parts: tuple[
+        list[Float1D], list[Float1D], list[Float1D], list[Float1D], list[Float1D]
+    ],
+    candidate: tuple[Float1D, Float1D, Float1D, Float1D, Float1D],
+) -> None:
+    """Append one associated grid/value/policy/marginal/segment record in order."""
+    for target, channel in zip(parts, candidate, strict=True):
+        target.append(channel)
+
+
+def _append_nbegm_economic_parts(
+    *,
+    parts: tuple[list[Float1D], list[Float1D], list[Float1D], list[Float1D]],
+    candidate: tuple[Float1D, Float1D, Float1D, Float1D],
+) -> None:
+    """Append one associated grid/value/policy/marginal record in order."""
+    for target, channel in zip(parts, candidate, strict=True):
+        target.append(channel)
 
 
 def _linear_extension(
@@ -473,6 +959,7 @@ def _append_current_feasibility_boundary_candidates(
     policy_parts: list[Float1D],
     marginal_parts: list[Float1D],
     segment_parts: list[Float1D],
+    saving_parts: list[Float1D] | None = None,
 ) -> int:
     """Offer every savings node at an equality-owned feasibility boundary.
 
@@ -523,6 +1010,8 @@ def _append_current_feasibility_boundary_candidates(
     value_parts.append(jnp.where(live, value, jnp.nan).reshape(-1))
     policy_parts.append(jnp.where(live, consumption, jnp.nan).reshape(-1))
     marginal_parts.append(jnp.where(live, marginal, jnp.nan).reshape(-1))
+    if saving_parts is not None:
+        saving_parts.append(jnp.where(live, savings_grid[None, :], jnp.nan).reshape(-1))
     segment_parts.append(
         first_segment + jnp.arange(n_boundaries * n_savings, dtype=liquid_grid.dtype)
     )
@@ -533,6 +1022,7 @@ def _append_boundary_savings_corners(
     *,
     boundary_savings_targets: Float1D | None,
     boundary_next_liquid: Float1D | None,
+    lowest_savings: ScalarFloat,
     liquid_grid: Float1D,
     coh_grid: Float1D,
     coh_slope: Float1D,
@@ -546,6 +1036,9 @@ def _append_boundary_savings_corners(
     policy_parts: list[Float1D],
     marginal_parts: list[Float1D],
     segment_parts: list[Float1D],
+    saving_parts: list[Float1D] | None = None,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
 ) -> None:
     """Add fixed-savings branches where a child feasibility boundary binds."""
     if boundary_savings_targets is None or boundary_next_liquid is None:
@@ -553,11 +1046,17 @@ def _append_boundary_savings_corners(
 
     for offset in range(boundary_savings_targets.shape[0]):
         fixed_savings = boundary_savings_targets[offset]
-        continuation = _interp_continuation_value(
-            query=boundary_next_liquid[offset],
-            grid=next_liquid_grid,
-            value=next_value,
-        )
+        if continuation_read is None:
+            continuation = _interp_continuation_value(
+                query=boundary_next_liquid[offset],
+                grid=next_liquid_grid,
+                value=next_value,
+            )
+        else:
+            continuation, _unused_marginal = continuation_read(
+                fixed_savings,
+                jnp.isfinite(fixed_savings) & (fixed_savings >= lowest_savings),
+            )
         boundary_consumption = coh_grid - fixed_savings
         live = (boundary_consumption > 0.0) & jnp.isfinite(continuation)
         boundary_value = (
@@ -570,6 +1069,8 @@ def _append_boundary_savings_corners(
         value_parts.append(jnp.where(live, boundary_value, jnp.nan))
         policy_parts.append(jnp.where(live, boundary_consumption, jnp.nan))
         marginal_parts.append(jnp.where(live, boundary_marginal, jnp.nan))
+        if saving_parts is not None:
+            saving_parts.append(jnp.where(live, fixed_savings, jnp.nan))
         segment_parts.append(
             jnp.full_like(
                 liquid_grid,
@@ -793,6 +1294,66 @@ def _ez_flow_power_structure(
     return log_flow_coefficient, flow_exponent
 
 
+@overload
+def nbegm_multi_interval_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    inverse_eis: ScalarFloat | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    retain_query: Literal[False] = ...,
+) -> tuple[Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def nbegm_multi_interval_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    inverse_eis: ScalarFloat | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    retain_query: Literal[True],
+) -> _NBEGMQueryStep: ...
+
+
+@overload
+def nbegm_multi_interval_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    inverse_eis: ScalarFloat | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    retain_query: bool = ...,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep: ...
+
+
 def nbegm_multi_interval_step_savings(
     *,
     cont_value: Float1D,
@@ -808,7 +1369,8 @@ def nbegm_multi_interval_step_savings(
     arithmetic: ComparisonArithmetic = "certified",
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
-) -> tuple[Float1D, Float1D, Float1D]:
+    retain_query: bool = False,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep:
     """Solve a continuous piecewise-affine regime against savings-space continuation.
 
     Same EGM geometry as `nbegm_multi_interval_step`, but the continuation is
@@ -971,6 +1533,54 @@ def nbegm_multi_interval_step_savings(
     marginal_parts = [marginal_endog, _as_pairs(node_marginal.ravel())]
     segment_parts = [interior_segment, _as_pairs(node_segment.ravel())]
 
+    if retain_query:
+        candidate_savings = jnp.concatenate(
+            [
+                jnp.where(degenerate, jnp.nan, savings_grid),
+                _as_pairs(
+                    jnp.where(
+                        node_feasible,
+                        jnp.broadcast_to(savings_grid[:, None], node_consumption.shape),
+                        jnp.nan,
+                    ).ravel()
+                ),
+            ]
+        )
+        value, policy, marginal, saving = envelope_at_query(
+            endog_grid=jnp.concatenate(endog_parts),
+            policy=jnp.concatenate(policy_parts),
+            value=jnp.concatenate(value_parts),
+            marginal=jnp.concatenate(marginal_parts),
+            segment_id=jnp.concatenate(segment_parts),
+            x_query=liquid_grid,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+            candidate_savings=candidate_savings,
+        )
+        value, marginal, policy = _publish_no_action_carry(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            coh=coh_grid,
+            lowest_savings=savings_grid[0],
+        )
+        return _single_row_nbegm_query_step(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            query_data=_make_nbegm_query_data(
+                value=value,
+                marginal=marginal,
+                policy=policy,
+                savings=saving,
+                floor_used=savings_grid[0],
+                liquid_grid=liquid_grid,
+                breakpoints=breakpoints,
+                corner_continuation=jnp.broadcast_to(cont_value[0], coh_slopes.shape),
+            ),
+        )
+
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),
         policy=jnp.concatenate(policy_parts),
@@ -1007,6 +1617,7 @@ def _interval_corner_candidates(
     preferences: Preferences,
     base: ScalarFloat,
     next_segment: ScalarFloat,
+    retain_query: bool = False,
 ) -> tuple[Float1D, ...]:
     """Build one interval lower- and upper-savings corner candidates.
 
@@ -1083,6 +1694,22 @@ def _interval_corner_candidates(
     smax_pair = tuple(jnp.repeat(channel, 2) for channel in smax)
     lower_segment = jnp.repeat(jnp.full_like(liquid_grid, base + next_segment), 2)
     smax_segment = jnp.repeat(jnp.full_like(liquid_grid, base + next_segment + 1.0), 2)
+    if retain_query:
+        lower_saving = jnp.where(flat, savings_grid[best_floor], savings_grid[0])
+        lower_savings = jnp.where(
+            in_interval & jnp.where(flat, floor_affordable, lower_feasible),
+            lower_saving,
+            jnp.nan,
+        )
+        upper_savings = jnp.where(smax_feasible, savings_grid[-1], jnp.nan)
+        return (
+            *lower_pair,
+            lower_segment,
+            *smax_pair,
+            smax_segment,
+            _as_pairs(lower_savings),
+            _as_pairs(upper_savings),
+        )
     return (*lower_pair, lower_segment, *smax_pair, smax_segment)
 
 
@@ -1105,10 +1732,13 @@ def nbegm_per_interval_continuation_step_savings(
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
-    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = ...,
+    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,
     interval_width: int = ...,
     interval_indices: Int1D | None = ...,
+    query_status_slots: Literal[0] = ...,
+    collect_continuation_read_counts: Literal[False] = False,
     return_owner: Literal[False] = ...,
+    retain_query: Literal[False] = ...,
 ) -> tuple[Float1D, Float1D, Float1D]: ...
 
 
@@ -1131,10 +1761,13 @@ def nbegm_per_interval_continuation_step_savings(
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
-    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = ...,
+    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,
     interval_width: int = ...,
     interval_indices: Int1D | None = ...,
+    query_status_slots: Literal[0] = ...,
+    collect_continuation_read_counts: Literal[False] = False,
     return_owner: Literal[True],
+    retain_query: Literal[False] = ...,
 ) -> tuple[Float1D, Float1D, Float1D, Int1D]: ...
 
 
@@ -1157,11 +1790,130 @@ def nbegm_per_interval_continuation_step_savings(
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
-    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = ...,
+    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,
     interval_width: int = ...,
     interval_indices: Int1D | None = ...,
+    query_status_slots: Literal[0] = ...,
+    collect_continuation_read_counts: Literal[False] = False,
     return_owner: bool,
+    retain_query: Literal[False] = ...,
 ) -> tuple[Float1D, Float1D, Float1D] | tuple[Float1D, Float1D, Float1D, Int1D]: ...
+
+
+@overload
+def nbegm_per_interval_continuation_step_savings(
+    *,
+    cont_value: FloatND | None,
+    cont_marginal: FloatND | None,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None = ...,
+    envelope_segment_width: int = ...,
+    extra_savings: FloatND | None = ...,
+    extra_cont_value: FloatND | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,
+    interval_width: int = ...,
+    interval_indices: Int1D | None = ...,
+    query_status_slots: Literal[0] = ...,
+    collect_continuation_read_counts: Literal[False] = False,
+    return_owner: Literal[False] = ...,
+    retain_query: Literal[True],
+) -> _NBEGMQueryStep: ...
+
+
+@overload
+def nbegm_per_interval_continuation_step_savings(
+    *,
+    cont_value: FloatND | None,
+    cont_marginal: FloatND | None,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None = ...,
+    envelope_segment_width: int = ...,
+    extra_savings: FloatND | None = ...,
+    extra_cont_value: FloatND | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,
+    interval_width: int = ...,
+    interval_indices: Int1D | None = ...,
+    query_status_slots: Literal[0] = ...,
+    collect_continuation_read_counts: Literal[False] = False,
+    return_owner: Literal[True],
+    retain_query: Literal[True],
+) -> _OwnedNBEGMQueryStep: ...
+
+
+@overload
+def nbegm_per_interval_continuation_step_savings(
+    *,
+    cont_value: FloatND | None,
+    cont_marginal: FloatND | None,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None = ...,
+    envelope_segment_width: int = ...,
+    extra_savings: FloatND | None = ...,
+    extra_cont_value: FloatND | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,
+    interval_width: int = ...,
+    interval_indices: Int1D | None = ...,
+    query_status_slots: int = ...,
+    collect_continuation_read_counts: bool = False,
+    return_owner: Literal[False] = ...,
+    retain_query: bool = ...,
+) -> _NBEGMUnownedIntervalResult: ...
+
+
+@overload
+def nbegm_per_interval_continuation_step_savings(
+    *,
+    cont_value: FloatND | None,
+    cont_marginal: FloatND | None,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None = ...,
+    envelope_segment_width: int = ...,
+    extra_savings: FloatND | None = ...,
+    extra_cont_value: FloatND | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,
+    interval_width: int = ...,
+    interval_indices: Int1D | None = ...,
+    query_status_slots: int = ...,
+    collect_continuation_read_counts: bool = False,
+    return_owner: bool = ...,
+    retain_query: bool = ...,
+) -> _NBEGMIntervalResult: ...
 
 
 def nbegm_per_interval_continuation_step_savings(
@@ -1182,11 +1934,14 @@ def nbegm_per_interval_continuation_step_savings(
     arithmetic: ComparisonArithmetic = "certified",
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
-    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = None,
+    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = None,
     interval_width: int = 0,
     interval_indices: Int1D | None = None,
+    query_status_slots: int = 0,
+    collect_continuation_read_counts: bool = False,
     return_owner: bool = False,
-) -> tuple[Float1D, Float1D, Float1D] | tuple[Float1D, Float1D, Float1D, Int1D]:
+    retain_query: bool = False,
+) -> _NBEGMIntervalResult:
     """Solve a budget whose continuation differs per liquid interval.
 
     When the next-period state law carries a current-asset boundary — a transfer,
@@ -1277,6 +2032,7 @@ def nbegm_per_interval_continuation_step_savings(
         discount_factor=discount_factor,
         preferences=preferences,
         coh_grid=coh_grid,
+        retain_query=retain_query,
     )
 
     if interval_block_reader is not None:
@@ -1302,16 +2058,46 @@ def nbegm_per_interval_continuation_step_savings(
             arithmetic=arithmetic,
             feasibility_partition=feasibility_partition,
             feasible_interval_mask=feasible_interval_mask,
+            retain_query=retain_query,
+            query_status_slots=query_status_slots,
+            collect_continuation_read_counts=collect_continuation_read_counts,
         )
-        return _publish_interval_step(
-            published=streamed,
-            liquid_grid=liquid_grid,
-            savings_grid=savings_grid,
-            coh_slopes=coh_slopes,
-            coh_intercepts=coh_intercepts,
-            breakpoints=breakpoints,
-            coh_grid=coh_grid,
-            return_owner=return_owner,
+        summary = streamed if isinstance(streamed, BoundedResult) else None
+        if summary is not None:
+            streamed = summary.output
+        if retain_query:
+            value, marginal, policy, saving, owner, corner_value, corner_kind = cast(
+                "tuple[Float1D, Float1D, Float1D, Float1D, Int1D, Float1D, Int1D]",
+                streamed,
+            )
+            return _with_nbegm_interval_summary(
+                summary=summary,
+                output=_publish_interval_step(
+                    published=(value, marginal, policy, owner),
+                    liquid_grid=liquid_grid,
+                    savings_grid=savings_grid,
+                    coh_slopes=coh_slopes,
+                    coh_intercepts=coh_intercepts,
+                    breakpoints=breakpoints,
+                    coh_grid=coh_grid,
+                    return_owner=return_owner,
+                    retained_savings=saving,
+                    corner_continuation=corner_value,
+                    corner_kind=corner_kind,
+                ),
+            )
+        return _with_nbegm_interval_summary(
+            summary=summary,
+            output=_publish_interval_step(
+                published=cast("tuple[Float1D, Float1D, Float1D, Int1D]", streamed),
+                liquid_grid=liquid_grid,
+                savings_grid=savings_grid,
+                coh_slopes=coh_slopes,
+                coh_intercepts=coh_intercepts,
+                breakpoints=breakpoints,
+                coh_grid=coh_grid,
+                return_owner=return_owner,
+            ),
         )
 
     if cont_value is None or cont_marginal is None:
@@ -1342,6 +2128,19 @@ def nbegm_per_interval_continuation_step_savings(
         _solve_packed_interval, solve_interval=solve_interval
     )
 
+    solved = jax.lax.map(
+        solve_packed,
+        (
+            interval_indices,
+            cont_value,
+            cont_marginal,
+            coh_slopes,
+            coh_intercepts,
+            lowers,
+            uppers,
+        ),
+        batch_size=_CHUNK_SIZE,
+    )
     (
         int_endog,
         int_value,
@@ -1358,19 +2157,7 @@ def nbegm_per_interval_continuation_step_savings(
         smax_policy,
         smax_marginal,
         smax_segment,
-    ) = jax.lax.map(
-        solve_packed,
-        (
-            interval_indices,
-            cont_value,
-            cont_marginal,
-            coh_slopes,
-            coh_intercepts,
-            lowers,
-            uppers,
-        ),
-        batch_size=_CHUNK_SIZE,
-    )
+    ) = solved[:15] if retain_query else solved
 
     node_segment_base, cliff_segment_base = _point_candidate_segment_bases(
         interval_block_end=n_padded * interval_stride,
@@ -1378,20 +2165,20 @@ def nbegm_per_interval_continuation_step_savings(
         n_nodes=savings_grid.shape[-1],
     )
 
-    node_endog, node_value, node_policy, node_marginal, node_segment = (
-        _savings_node_point_candidates(
-            liquid_grid=liquid_grid,
-            savings_grid=savings_grid,
-            cont_value=cont_value,
-            discount_factor=discount_factor,
-            preferences=preferences,
-            coh_slopes=coh_slopes,
-            coh_intercepts=coh_intercepts,
-            breakpoints=breakpoints,
-            coh_grid=coh_grid,
-            segment_base=float(node_segment_base),
-        )
+    node_parts = _savings_node_point_candidates(
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        cont_value=cont_value,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        coh_grid=coh_grid,
+        segment_base=float(node_segment_base),
+        retain_query=retain_query,
     )
+    node_endog, node_value, node_policy, node_marginal, node_segment = node_parts[:5]
 
     # Save-to-cliff point candidates: interval-dependent one-sided savings
     # targets with the continuation's exact one-sided values, offered at every
@@ -1408,9 +2195,61 @@ def nbegm_per_interval_continuation_step_savings(
             breakpoints=breakpoints,
             coh_grid=coh_grid,
             segment_base=float(cliff_segment_base),
+            retain_query=retain_query,
         )
     else:
         cliff_parts = (jnp.empty(0),) * 5
+
+    if retain_query:
+        candidate_savings = _stack_flat(
+            solved[15],
+            solved[16],
+            solved[17],
+            node_parts[5],
+            cliff_parts[5]
+            if extra_savings is not None and extra_cont_value is not None
+            else jnp.empty(0),
+        )
+        value, policy, marginal, saving, owner = envelope_at_query(
+            endog_grid=_stack_flat(
+                int_endog, s0_endog, smax_endog, node_endog, cliff_parts[0]
+            ),
+            policy=_stack_flat(
+                int_policy, s0_policy, smax_policy, node_policy, cliff_parts[2]
+            ),
+            value=_stack_flat(
+                int_value, s0_value, smax_value, node_value, cliff_parts[1]
+            ),
+            marginal=_stack_flat(
+                int_marginal,
+                s0_marginal,
+                smax_marginal,
+                node_marginal,
+                cliff_parts[3],
+            ),
+            segment_id=_stack_flat(
+                int_segment, s0_segment, smax_segment, node_segment, cliff_parts[4]
+            ),
+            x_query=liquid_grid,
+            segment_block_size=envelope_segment_width,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+            return_owner=True,
+            candidate_savings=candidate_savings,
+        )
+        return _publish_interval_step(
+            published=(value, marginal, policy, owner),
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            coh_grid=coh_grid,
+            return_owner=return_owner,
+            retained_savings=saving,
+            corner_continuation=cont_value[:, 0],
+        )
 
     value, policy, marginal, owner = envelope_at_query(
         endog_grid=_stack_flat(
@@ -1455,7 +2294,15 @@ def _publish_interval_step(
     breakpoints: Float1D,
     coh_grid: Float1D | None,
     return_owner: bool,
-) -> tuple[Float1D, Float1D, Float1D] | tuple[Float1D, Float1D, Float1D, Int1D]:
+    retained_savings: Float1D | None = None,
+    corner_continuation: Float1D | None = None,
+    corner_kind: Int1D | None = None,
+) -> (
+    tuple[Float1D, Float1D, Float1D]
+    | tuple[Float1D, Float1D, Float1D, Int1D]
+    | _NBEGMQueryStep
+    | _OwnedNBEGMQueryStep
+):
     """Apply the no-action carry to a per-interval step and name its owners.
 
     The budget is the true cash-on-hand where supplied and otherwise each node's
@@ -1476,6 +2323,36 @@ def _publish_interval_step(
         coh=coh_grid,
         lowest_savings=savings_grid[0],
     )
+    if retained_savings is not None:
+        if corner_continuation is None:
+            raise TypeError(
+                "Retained query rows require their held floor continuation."
+            )
+        data = _make_nbegm_query_data(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            savings=retained_savings,
+            floor_used=savings_grid[0],
+            liquid_grid=liquid_grid,
+            breakpoints=breakpoints,
+            corner_continuation=corner_continuation,
+            corner_kind=corner_kind,
+        )
+        if return_owner:
+            return _OwnedNBEGMQueryStep(
+                value,
+                marginal,
+                policy,
+                data,
+                published_owner(value=value, stable_index=owner),
+            )
+        return _single_row_nbegm_query_step(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            query_data=data,
+        )
     if not return_owner:
         return value, marginal, policy
     return (
@@ -1514,6 +2391,11 @@ class _IntervalCaseSolver:
     coh_grid: Float1D | None
     """True cash-on-hand at each liquid grid point, or `None` for the affine
     per-interval budget."""
+
+    retain_query: bool = field(
+        default=False, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Retain original saving beside the fifteen ordinary candidate columns."""
 
     def __call__(
         self,
@@ -1596,7 +2478,20 @@ class _IntervalCaseSolver:
             preferences=preferences,
             base=base,
             next_segment=next_segment,
+            retain_query=self.retain_query,
         )
+        if self.retain_query:
+            return (
+                interior[0],
+                interior[1],
+                interior[2],
+                interior[3],
+                segment + base,
+                *corners[:10],
+                jnp.where(in_case, savings_grid, jnp.nan),
+                corners[10],
+                corners[11],
+            )
         return (
             interior[0],
             interior[1],
@@ -1753,7 +2648,7 @@ def _streamed_block_candidate_positions(
 def _streamed_interval_continuation_envelope(
     *,
     solve_interval: Callable[..., tuple[Float1D, ...]],
-    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]],
+    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows],
     interval_width: int,
     interval_indices: Int1D | None = None,
     n_intervals: int,
@@ -1773,7 +2668,10 @@ def _streamed_interval_continuation_envelope(
     arithmetic: ComparisonArithmetic,
     feasibility_partition: ResolvedAxisPartition | None,
     feasible_interval_mask: BoolND | None,
-) -> tuple[Float1D, Float1D, Float1D, Int1D]:
+    retain_query: bool = False,
+    query_status_slots: int = 0,
+    collect_continuation_read_counts: bool = False,
+) -> _NBEGMStreamResult:
     """Read and fold the interval axis in blocks of `interval_width`.
 
     Each block solves its own intervals, stacks their candidate families, and
@@ -1834,7 +2732,68 @@ def _streamed_interval_continuation_envelope(
         arithmetic=arithmetic,
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
+        retain_query=retain_query,
+        n_intervals=n_intervals if retain_query else 0,
     )
+    if query_status_slots or collect_continuation_read_counts:
+        if query_status_slots < 0:
+            raise ValueError("NB query-integrity slot count must be nonnegative.")
+        winner = (
+            _IntervalQueryWinner(
+                empty_envelope_winner(query=liquid_grid, retain_savings=True),
+                jnp.full((n_intervals,), jnp.nan, dtype=liquid_grid.dtype),
+                jnp.full((n_intervals,), QueryNodeKind.PAD, dtype=jnp.int32),
+            )
+            if retain_query
+            else empty_envelope_winner(query=liquid_grid)
+        )
+        zero = jnp.asarray(a=False)
+        initial = _IntervalIntegrityWinner(
+            winner,
+            tuple(QueryInputStatus(zero, zero, zero) for _ in range(query_status_slots))
+            if query_status_slots
+            else None,
+            ContinuationReadCounts(jnp.int32(0), jnp.int32(0))
+            if collect_continuation_read_counts
+            else None,
+        )
+        held, _ = jax.lax.scan(
+            interval_winner_step, initial, (layout.safe_indices, layout.live)
+        )
+        return _finish_nbegm_integrity_stream(
+            held=held,
+            query=liquid_grid,
+            retain_query=retain_query,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+        )
+    if retain_query:
+        retained, _ = jax.lax.scan(
+            interval_winner_step,
+            _IntervalQueryWinner(
+                empty_envelope_winner(query=liquid_grid, retain_savings=True),
+                jnp.full((n_intervals,), jnp.nan, dtype=liquid_grid.dtype),
+                jnp.full((n_intervals,), QueryNodeKind.PAD, dtype=jnp.int32),
+            ),
+            (layout.safe_indices, layout.live),
+        )
+        value, policy, marginal, savings, owner = finish_envelope_winner(
+            winner=retained.winner,
+            query=liquid_grid,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+        )
+        return (
+            value,
+            marginal,
+            policy,
+            savings,
+            published_owner(value=value, stable_index=owner),
+            retained.corner_continuation,
+            retained.corner_kind,
+        )
     winner, _ = jax.lax.scan(
         interval_winner_step,
         empty_envelope_winner(query=liquid_grid),
@@ -1855,6 +2814,58 @@ def _streamed_interval_continuation_envelope(
     )
 
 
+class _NBEGMPreparedIntervalBlock(NamedTuple):
+    """Numeric standing winner and rows beside the actual reduced child slots."""
+
+    held: EnvelopeWinner | _IntervalQueryWinner
+    rows: tuple[FloatND, ...]
+    query_status: tuple[QueryInputStatus, ...] | None
+    continuation_read_counts: ContinuationReadCounts | None
+
+
+def _prepare_nbegm_interval_block(
+    *,
+    held: _NBEGMIntervalWinner,
+    rows: _NBEGMIntervalRows,
+    interval_live: BoolND,
+    indices: IntND,
+    lowers: Float1D,
+    uppers: Float1D,
+) -> _NBEGMPreparedIntervalBlock:
+    """Reduce the same declared child slots before consuming an interval block."""
+    query_status = None
+    read_counts = None
+    if isinstance(held, _IntervalIntegrityWinner):
+        if (
+            not isinstance(rows, BoundedResult)
+            or rows.bound_status
+            or (rows.query_status is None) != (held.query_status is None)
+            or (rows.continuation_read_counts is None)
+            != (held.continuation_read_counts is None)
+        ):
+            raise TypeError(
+                "A bounded NB interval reader must preserve its declared child slots."
+            )
+        active = interval_live & ~(lowers[indices] >= uppers[indices])
+        query_status = merge_query_input_status(
+            left=held.query_status,
+            right=reduce_query_input_status(statuses=rows.query_status, active=active),
+        )
+        read_counts = merge_continuation_read_counts(
+            left=held.continuation_read_counts,
+            right=reduce_continuation_read_counts(
+                counts=rows.continuation_read_counts, active=active
+            ),
+        )
+        held = held.winner
+        rows = rows.output
+    elif isinstance(rows, BoundedResult):
+        raise TypeError(
+            "An NB interval summary requires declared standing child slots."
+        )
+    return _NBEGMPreparedIntervalBlock(held, rows, query_status, read_counts)
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _IntervalWinnerStep:
     """One `lax.scan` step of the streamed interval envelope.
@@ -1870,7 +2881,7 @@ class _IntervalWinnerStep:
     solve_interval: Callable[..., tuple[Float1D, ...]]
     """The per-interval case solver."""
 
-    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]]
+    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows]
     """Callback yielding one block's continuation rows (and cliff targets)."""
 
     liquid_grid: Float1D
@@ -1912,16 +2923,56 @@ class _IntervalWinnerStep:
     feasible_interval_mask: BoolND | None
     """Per-interval feasibility mask, if any."""
 
+    retain_query: bool = field(
+        default=False, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Retain original saving and compact floor continuation in the scan."""
+
+    n_intervals: int = field(default=0, metadata={"fingerprint_omit_if_default": True})
+    """Compact interval extent when query data is retained."""
+
     # keyword-only-exempt: library-callback=jax.lax.scan
+    @overload
     def __call__(
         self,
         held: EnvelopeWinner,
         block_inputs: tuple[IntND, BoolND],
-    ) -> tuple[EnvelopeWinner, None]:
+    ) -> tuple[EnvelopeWinner, None]: ...
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    @overload
+    def __call__(
+        self,
+        held: _IntervalQueryWinner,
+        block_inputs: tuple[IntND, BoolND],
+    ) -> tuple[_IntervalQueryWinner, None]: ...
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    @overload
+    def __call__(
+        self,
+        held: _IntervalIntegrityWinner,
+        block_inputs: tuple[IntND, BoolND],
+    ) -> tuple[_IntervalIntegrityWinner, None]: ...
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def __call__(
+        self,
+        held: _NBEGMIntervalWinner,
+        block_inputs: tuple[IntND, BoolND],
+    ) -> tuple[_NBEGMIntervalWinner, None]:
         layout = self.layout
         n_savings = layout.n_savings
         indices, interval_live = block_inputs
         rows = self.interval_block_reader(indices)
+        held, rows, query_status, read_counts = _prepare_nbegm_interval_block(
+            held=held,
+            rows=rows,
+            interval_live=interval_live,
+            indices=indices,
+            lowers=self.lowers,
+            uppers=self.uppers,
+        )
         if len(rows) == _ROWS_WITHOUT_CLIFFS:
             block_value, block_marginal = rows
             block_cliff_savings = None
@@ -1968,7 +3019,7 @@ class _IntervalWinnerStep:
             smax_policy,
             smax_marginal,
             smax_segment,
-        ) = solved
+        ) = solved[:15] if self.retain_query else solved
 
         int_endog, int_value, int_policy, int_marginal = (
             _kill_padding(channel=channel, interval_live=interval_live)
@@ -1996,6 +3047,7 @@ class _IntervalWinnerStep:
             breakpoints=self.breakpoints,
             coh_grid=self.coh_grid,
             segment_base=float(layout.node_segment_base),
+            retain_query=self.retain_query,
         )
         if block_cliff_savings is not None and block_extra_value is not None:
             cliff_parts = _savings_node_point_candidates_for_interval_block(
@@ -2011,6 +3063,7 @@ class _IntervalWinnerStep:
                 breakpoints=self.breakpoints,
                 coh_grid=self.coh_grid,
                 segment_base=float(layout.cliff_segment_base),
+                retain_query=self.retain_query,
             )
             n_extra = block_cliff_savings.shape[-1]
         else:
@@ -2047,9 +3100,20 @@ class _IntervalWinnerStep:
         stable_links = jnp.concatenate(
             [positions[:-1], (total_candidates - 1) + positions]
         )
-        return (
-            merge_envelope_winner(
-                held=held,
+        if self.retain_query:
+            retained = cast("_IntervalQueryWinner", held)
+            savings = _stack_flat(
+                *(
+                    _kill_padding(channel=channel, interval_live=interval_live)
+                    for channel in solved[15:18]
+                ),
+                node_parts[5],
+                cliff_parts[5]
+                if block_cliff_savings is not None and block_extra_value is not None
+                else jnp.empty((0,), dtype=self.liquid_grid.dtype),
+            )
+            winner = merge_envelope_winner(
+                held=retained.winner,
                 endog_grid=endog,
                 policy=policies,
                 value=values,
@@ -2060,6 +3124,40 @@ class _IntervalWinnerStep:
                 arithmetic=self.arithmetic,
                 feasibility_partition=self.feasibility_partition,
                 feasible_interval_mask=self.feasible_interval_mask,
+                candidate_savings=savings,
+            )
+            # Padding repeats a safe source index but owns no compact destination.
+            destinations = jnp.where(interval_live, indices, self.n_intervals)
+            corner_value = retained.corner_continuation.at[destinations].set(
+                block_value[:, 0], mode="drop"
+            )
+            corner_kind = retained.corner_kind.at[destinations].set(
+                _query_node_kind(value=block_value[:, 0], supported=interval_live),
+                mode="drop",
+            )
+            numeric = _IntervalQueryWinner(winner, corner_value, corner_kind)
+            return (
+                numeric
+                if query_status is None and read_counts is None
+                else _IntervalIntegrityWinner(numeric, query_status, read_counts)
+            ), None
+        return (
+            _with_nbegm_interval_winner_status(
+                winner=merge_envelope_winner(
+                    held=cast("EnvelopeWinner", held),
+                    endog_grid=endog,
+                    policy=policies,
+                    value=values,
+                    marginal=marginals,
+                    segment_id=segments,
+                    stable_index=stable_links,
+                    query=self.liquid_grid,
+                    arithmetic=self.arithmetic,
+                    feasibility_partition=self.feasibility_partition,
+                    feasible_interval_mask=self.feasible_interval_mask,
+                ),
+                query_status=query_status,
+                continuation_read_counts=read_counts,
             ),
             None,
         )
@@ -2108,6 +3206,7 @@ def _savings_node_point_candidates_for_interval_block(
     breakpoints: Float1D,
     coh_grid: Float1D | None,
     segment_base: float,
+    retain_query: bool = False,
 ) -> tuple[Float1D, ...]:
     """Build only one interval block's live savings-node point candidates.
 
@@ -2153,6 +3252,15 @@ def _savings_node_point_candidates_for_interval_block(
     node_segment = segment_base + jnp.arange(
         consumption.size, dtype=jnp.result_type(float)
     ).reshape(consumption.shape)
+    if retain_query:
+        return (
+            _as_pairs(node_endog),
+            _as_pairs(node_value),
+            _as_pairs(node_policy),
+            _as_pairs(node_marginal),
+            _as_pairs(node_segment),
+            _as_pairs(jnp.where(feasible, savings_at_grid, jnp.nan)),
+        )
     return (
         _as_pairs(node_endog),
         _as_pairs(node_value),
@@ -2174,6 +3282,7 @@ def _savings_node_point_candidates(
     breakpoints: Float1D,
     coh_grid: Float1D | None,
     segment_base: float,
+    retain_query: bool = False,
 ) -> tuple[Float1D, ...]:
     """Build the savings-node point candidates of the per-interval merge.
 
@@ -2226,6 +3335,15 @@ def _savings_node_point_candidates(
     node_segment = segment_base + jnp.arange(
         node_consumption.size, dtype=jnp.result_type(float)
     ).reshape(node_consumption.shape)
+    if retain_query:
+        return (
+            _as_pairs(node_endog),
+            _as_pairs(node_value),
+            _as_pairs(node_consumption_safe),
+            _as_pairs(node_marginal),
+            _as_pairs(node_segment),
+            _as_pairs(jnp.where(node_feasible, savings_at_grid, jnp.nan)),
+        )
     return (
         _as_pairs(node_endog),
         _as_pairs(node_value),
@@ -2233,6 +3351,66 @@ def _savings_node_point_candidates(
         _as_pairs(node_marginal),
         _as_pairs(node_segment),
     )
+
+
+@overload
+def nbegm_unified_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    jump_positions: tuple[JumpPosition, ...],
+    extra_savings: Float1D | None = None,
+    extra_cont_value: Float1D | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: Literal[False] = False,
+) -> tuple[Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def nbegm_unified_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    jump_positions: tuple[JumpPosition, ...],
+    extra_savings: Float1D | None = None,
+    extra_cont_value: Float1D | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: Literal[True],
+) -> _NBEGMQueryStep: ...
+
+
+@overload
+def nbegm_unified_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    jump_positions: tuple[JumpPosition, ...],
+    extra_savings: Float1D | None = None,
+    extra_cont_value: Float1D | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: bool = False,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep: ...
 
 
 def nbegm_unified_step_savings(
@@ -2250,7 +3428,8 @@ def nbegm_unified_step_savings(
     extra_savings: Float1D | None = None,
     extra_cont_value: Float1D | None = None,
     arithmetic: ComparisonArithmetic = "certified",
-) -> tuple[Float1D, Float1D, Float1D]:
+    retain_query: bool = False,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep:
     """Solve a mixed jump-and-kink piecewise-affine budget against savings continuation.
 
     The savings-space analogue of `nbegm_unified_step`: the continuation is the
@@ -2319,11 +3498,10 @@ def nbegm_unified_step_savings(
     degenerate = _degenerate_inversion(marginal=cont_marginal, consumption=consumption)
     grid_interval = jnp.searchsorted(breakpoints, liquid_grid, side="right")
 
-    endog_parts: list[Float1D] = []
-    value_parts: list[Float1D] = []
-    policy_parts: list[Float1D] = []
-    marginal_parts: list[Float1D] = []
-    segment_parts: list[Float1D] = []
+    endog_parts, value_parts, policy_parts, marginal_parts, segment_parts = (
+        _new_nbegm_candidate_parts()
+    )
+    saving_parts: list[Float1D] = []
     for case, (start, end) in enumerate(zip(case_starts, case_ends, strict=True)):
         case_grid_interval = jnp.clip(grid_interval, start, end)
         coh_case_grid = (
@@ -2356,11 +3534,24 @@ def nbegm_unified_step_savings(
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
         next_segment = _next_segment_id(segment=segment)
-        endog_parts.append(interior[0])
-        value_parts.append(interior[1])
-        policy_parts.append(interior[2])
-        marginal_parts.append(interior[3])
-        segment_parts.append(segment + float(case) * case_stride)
+        _append_nbegm_candidate_parts(
+            parts=(
+                endog_parts,
+                value_parts,
+                policy_parts,
+                marginal_parts,
+                segment_parts,
+            ),
+            candidate=(
+                interior[0],
+                interior[1],
+                interior[2],
+                interior[3],
+                segment + float(case) * case_stride,
+            ),
+        )
+        if retain_query:
+            saving_parts.append(jnp.where(in_case, savings_grid, jnp.nan))
 
         # Hard borrowing corner (save nothing) over this case's liquid range, dead
         # wherever cash-on-hand affords no action.
@@ -2374,13 +3565,26 @@ def nbegm_unified_step_savings(
             coh_slope=coh_slopes[case_grid_interval],
             valid=(liquid_grid >= lower) & (liquid_grid < upper),
         )
-        endog_parts.append(s0[0])
-        value_parts.append(s0[1])
-        policy_parts.append(s0[2])
-        marginal_parts.append(s0[3])
-        segment_parts.append(
-            jnp.full_like(liquid_grid, float(case) * case_stride + next_segment)
+        _append_nbegm_candidate_parts(
+            parts=(
+                endog_parts,
+                value_parts,
+                policy_parts,
+                marginal_parts,
+                segment_parts,
+            ),
+            candidate=(
+                s0[0],
+                s0[1],
+                s0[2],
+                s0[3],
+                jnp.full_like(liquid_grid, float(case) * case_stride + next_segment),
+            ),
         )
+        if retain_query:
+            saving_parts.append(
+                jnp.where(jnp.isfinite(s0[0]), savings_grid[0], jnp.nan)
+            )
 
     # Save-to-cliff point candidates: the continuation's one-sided values at
     # the child cliffs' savings targets, offered at every liquid grid point.
@@ -2401,12 +3605,60 @@ def nbegm_unified_step_savings(
             breakpoints=breakpoints,
             coh_grid=None,
             segment_base=float(n_cases * case_stride),
+            retain_query=retain_query,
         )
-        endog_parts.append(cliff[0])
-        value_parts.append(cliff[1])
-        policy_parts.append(cliff[2])
-        marginal_parts.append(cliff[3])
-        segment_parts.append(cliff[4])
+        _append_nbegm_candidate_parts(
+            parts=(
+                endog_parts,
+                value_parts,
+                policy_parts,
+                marginal_parts,
+                segment_parts,
+            ),
+            candidate=(
+                cliff[0],
+                cliff[1],
+                cliff[2],
+                cliff[3],
+                cliff[4],
+            ),
+        )
+        if retain_query:
+            saving_parts.append(cliff[5])
+
+    if retain_query:
+        value, policy, marginal, saving = envelope_at_query(
+            endog_grid=jnp.concatenate(endog_parts),
+            policy=jnp.concatenate(policy_parts),
+            value=jnp.concatenate(value_parts),
+            marginal=jnp.concatenate(marginal_parts),
+            segment_id=jnp.concatenate(segment_parts),
+            x_query=liquid_grid,
+            arithmetic=arithmetic,
+            candidate_savings=jnp.concatenate(saving_parts),
+        )
+        value, marginal, policy = _publish_no_action_carry(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            coh=coh_slopes[grid_interval] * liquid_grid + coh_intercepts[grid_interval],
+            lowest_savings=savings_grid[0],
+        )
+        return _single_row_nbegm_query_step(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            query_data=_make_nbegm_query_data(
+                value=value,
+                marginal=marginal,
+                policy=policy,
+                savings=saving,
+                floor_used=savings_grid[0],
+                liquid_grid=liquid_grid,
+                breakpoints=breakpoints,
+                corner_continuation=jnp.broadcast_to(cont_value[0], coh_slopes.shape),
+            ),
+        )
 
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),
@@ -2435,6 +3687,7 @@ def _flat_interval_indices(
     return tuple(i for i in range(n_intervals) if flat_interval_mask[i])
 
 
+@overload
 def _floor_optimum(
     *,
     floor_coh: ScalarFloat,
@@ -2445,7 +3698,60 @@ def _floor_optimum(
     savings_grid: Float1D,
     next_liquid: Float1D,
     n_dense: int = 512,
-) -> tuple[ScalarFloat, ScalarFloat]:
+    retain_savings: Literal[False] = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[ScalarFloat, ScalarFloat]: ...
+
+
+@overload
+def _floor_optimum(
+    *,
+    floor_coh: ScalarFloat,
+    next_liquid_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    n_dense: int = 512,
+    retain_savings: Literal[True],
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]: ...
+
+
+@overload
+def _floor_optimum(
+    *,
+    floor_coh: ScalarFloat,
+    next_liquid_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    n_dense: int = 512,
+    retain_savings: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[ScalarFloat, ScalarFloat] | tuple[ScalarFloat, ScalarFloat, ScalarFloat]: ...
+
+
+def _floor_optimum(
+    *,
+    floor_coh: ScalarFloat,
+    next_liquid_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    n_dense: int = 512,
+    retain_savings: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[ScalarFloat, ScalarFloat] | tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
     """Find the value and policy at a fixed floor cash-on-hand by a dense search.
 
     Where the floor binds, cash-on-hand equals `floor_coh` for every liquid, so the
@@ -2454,6 +3760,40 @@ def _floor_optimum(
     continuation, where the Euler inversion is degenerate. The search saves what it
     does not consume, so it reads the regime's own law at those savings levels.
     """
+    if retain_savings or continuation_read is not None:
+        fractions = jnp.linspace(1e-4, 1.0, n_dense)
+        consumption = fractions * floor_coh
+        candidate_savings = floor_coh - consumption
+        live = (
+            (candidate_savings >= savings_grid[0])
+            & (consumption > 0.0)
+            & jnp.isfinite(candidate_savings)
+        )
+        landing = _law_at_savings(
+            savings=jnp.where(live, candidate_savings, savings_grid[0]),
+            savings_grid=savings_grid,
+            next_liquid=next_liquid,
+        )
+        if continuation_read is None:
+            continuation = _interp_continuation_value(
+                query=landing, grid=next_liquid_grid, value=next_value
+            )
+        else:
+            continuation, _unused_marginal = continuation_read(candidate_savings, live)
+        values = (
+            preferences.utility(jnp.where(live, consumption, 1.0))
+            + discount_factor * continuation
+        )
+
+        values = jnp.where(live, values, -jnp.inf)
+        best = jnp.argmax(values)
+        if not retain_savings:
+            return values[best], consumption[best]
+        return (
+            values[best],
+            consumption[best],
+            jnp.where(live[best], candidate_savings[best], jnp.nan),
+        )
     fractions = jnp.linspace(1e-4, 1.0, n_dense)
     consumption = fractions * floor_coh
     landing = _law_at_savings(
@@ -2472,6 +3812,7 @@ def _floor_optimum(
     return value[best], consumption[best]
 
 
+@overload
 def nbegm_discrete_envelope_step(
     *,
     next_value: Float1D,
@@ -2486,7 +3827,72 @@ def nbegm_discrete_envelope_step(
     choices: tuple[Mapping[str, Float1D], ...],
     taste_shock_scale: float = 0.0,
     arithmetic: ComparisonArithmetic = "certified",
-) -> tuple[Float1D, Float1D, Float1D, IntND]:
+    retain_query: Literal[False] = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D, IntND]: ...
+
+
+@overload
+def nbegm_discrete_envelope_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences | tuple[Preferences, ...],
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    choices: tuple[Mapping[str, Float1D], ...],
+    taste_shock_scale: float = 0.0,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: Literal[True],
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> _NBEGMDiscreteQueryStep: ...
+
+
+@overload
+def nbegm_discrete_envelope_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences | tuple[Preferences, ...],
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    choices: tuple[Mapping[str, Float1D], ...],
+    taste_shock_scale: float = 0.0,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D, IntND] | _NBEGMDiscreteQueryStep: ...
+
+
+def nbegm_discrete_envelope_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences | tuple[Preferences, ...],
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    choices: tuple[Mapping[str, Float1D], ...],
+    taste_shock_scale: float = 0.0,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D, IntND] | _NBEGMDiscreteQueryStep:
     """Compose per-discrete-choice NBEGM solves into a discrete upper envelope.
 
     Each discrete choice (e.g. buy private insurance or not) shifts cash-on-hand
@@ -2541,11 +3947,12 @@ def nbegm_discrete_envelope_step(
     values: list[Float1D] = []
     marginals: list[Float1D] = []
     policies: list[Float1D] = []
+    query_rows: list[EGMQueryData] = []
     branch_preferences = (
         preferences if isinstance(preferences, tuple) else (preferences,) * len(choices)
     )
     for choice, branch_preference in zip(choices, branch_preferences, strict=True):
-        value, marginal, policy = nbegm_multi_interval_step(
+        branch = nbegm_multi_interval_step(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid_grid,
@@ -2559,7 +3966,16 @@ def nbegm_discrete_envelope_step(
             coh_intercepts=choice["coh_intercepts"],
             breakpoints=choice["breakpoints"],
             arithmetic=arithmetic,
+            retain_query=retain_query,
+            continuation_read=continuation_read,
         )
+        value, marginal, policy = branch[:3]
+        if retain_query:
+            if not isinstance(branch, _NBEGMQueryStep):
+                raise TypeError(
+                    "A retained NB branch must publish its conditional query record."
+                )
+            query_rows.append(branch.query_data)
         values.append(value)
         marginals.append(marginal)
         policies.append(policy)
@@ -2569,6 +3985,25 @@ def nbegm_discrete_envelope_step(
     policy_stack = jnp.stack(policies)
     modal = jnp.argmax(value_stack, axis=0).astype(jnp.int32)
     index = jnp.arange(liquid_grid.shape[0])
+    if retain_query:
+        # NB's existing family guard excludes EV1; keep conditional native rows
+        # before the ordinary hard choice, rather than rebuilding them from it.
+        if taste_shock_scale != 0.0:
+            raise TypeError(
+                "Conditional NB rows require the admitted hard-choice route."
+            )
+        data = jax.tree.map(lambda *leaves: jnp.stack(leaves), *query_rows)
+        data = replace(data, floor_used=data.floor_used[0])
+        return _NBEGMDiscreteQueryStep(
+            value_stack[modal, index],
+            marginal_stack[modal, index],
+            policy_stack[modal, index],
+            modal,
+            value_stack,
+            marginal_stack,
+            policy_stack,
+            data,
+        )
     if taste_shock_scale == 0.0:
         return (
             value_stack[modal, index],
@@ -2592,6 +4027,7 @@ def nbegm_discrete_envelope_step(
     )
 
 
+@overload
 def nbegm_unified_step(
     *,
     next_value: Float1D,
@@ -2609,7 +4045,81 @@ def nbegm_unified_step(
     jump_mask: tuple[bool, ...],
     equality_owner: EqualityOwner = "otherwise",
     arithmetic: ComparisonArithmetic = "certified",
-) -> tuple[Float1D, Float1D, Float1D]:
+    retain_query: Literal[False] = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def nbegm_unified_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    jump_mask: tuple[bool, ...],
+    equality_owner: EqualityOwner = "otherwise",
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: Literal[True],
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> _NBEGMQueryStep: ...
+
+
+@overload
+def nbegm_unified_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    jump_mask: tuple[bool, ...],
+    equality_owner: EqualityOwner = "otherwise",
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep: ...
+
+
+def nbegm_unified_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    jump_mask: tuple[bool, ...],
+    equality_owner: EqualityOwner = "otherwise",
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep:
     """Solve one period of a mixed jump-and-kink piecewise-affine budget by EGM.
 
     The breakpoints split the liquid axis into intervals; `jump_mask` marks which
@@ -2674,20 +4184,24 @@ def nbegm_unified_step(
     case_ends = (*jump_positions, last_interval)
     case_stride = 4 * (savings_grid.shape[0] + liquid_grid.shape[0])
 
-    value_next = _jump_aware_interp(
-        query=next_liquid,
-        grid=next_liquid_grid,
-        values=next_value,
-        breakpoints=jump_breakpoints,
-        equality_owner=equality_owner,
-    )
-    marginal_next = _jump_aware_interp(
-        query=next_liquid,
-        grid=next_liquid_grid,
-        values=next_marginal,
-        breakpoints=jump_breakpoints,
-        equality_owner=equality_owner,
-    )
+    if continuation_read is None:
+        value_next = _jump_aware_interp(
+            query=next_liquid,
+            grid=next_liquid_grid,
+            values=next_value,
+            breakpoints=jump_breakpoints,
+            equality_owner=equality_owner,
+        )
+        marginal_next = _jump_aware_interp(
+            query=next_liquid,
+            grid=next_liquid_grid,
+            values=next_marginal,
+            breakpoints=jump_breakpoints,
+            equality_owner=equality_owner,
+        )
+    else:
+        value_next, marginal_next = next_value, next_marginal
+
     consumption = preferences.inverse_marginal_utility(
         discount_factor * marginal_return * marginal_next
     )
@@ -2697,11 +4211,10 @@ def nbegm_unified_step(
 
     grid_interval = jnp.searchsorted(breakpoints, liquid_grid, side="right")
 
-    endog_parts: list[Float1D] = []
-    value_parts: list[Float1D] = []
-    policy_parts: list[Float1D] = []
-    marginal_parts: list[Float1D] = []
-    segment_parts: list[Float1D] = []
+    endog_parts, value_parts, policy_parts, marginal_parts, segment_parts = (
+        _new_nbegm_candidate_parts()
+    )
+    saving_parts: list[Float1D] = []
     for case, (start, end) in enumerate(zip(case_starts, case_ends, strict=True)):
         case_grid_interval = jnp.clip(grid_interval, start, end)
         coh_case_grid = (
@@ -2731,11 +4244,24 @@ def nbegm_unified_step(
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
         next_segment = _next_segment_id(segment=segment)
-        endog_parts.append(interior[0])
-        value_parts.append(interior[1])
-        policy_parts.append(interior[2])
-        marginal_parts.append(interior[3])
-        segment_parts.append(segment + float(case) * case_stride)
+        _append_nbegm_candidate_parts(
+            parts=(
+                endog_parts,
+                value_parts,
+                policy_parts,
+                marginal_parts,
+                segment_parts,
+            ),
+            candidate=(
+                interior[0],
+                interior[1],
+                interior[2],
+                interior[3],
+                segment + float(case) * case_stride,
+            ),
+        )
+        if retain_query:
+            saving_parts.append(jnp.where(in_case, savings_grid, jnp.nan))
 
         # Both finite savings endpoints compete over this case.s liquid range.
         in_case_range = (liquid_grid >= lower) & (liquid_grid < upper)
@@ -2754,6 +4280,7 @@ def nbegm_unified_step(
             policy_parts=policy_parts,
             marginal_parts=marginal_parts,
             segment_parts=segment_parts,
+            saving_parts=saving_parts if retain_query else None,
         )
 
         # Boundary-targeting at each jump: save to land on either side of it for
@@ -2786,13 +4313,22 @@ def nbegm_unified_step(
                     next_limit=next_limit,
                     equality_owner=equality_owner,
                     side=side,
+                    retain_savings=retain_query,
+                    continuation_read=continuation_read,
                     coh_slope=coh_slopes[case_grid_interval],
                     valid=in_case_range,
                 )
-                endog_parts.append(kink[0])
-                value_parts.append(kink[1])
-                policy_parts.append(kink[2])
-                marginal_parts.append(kink[3])
+                _append_nbegm_economic_parts(
+                    parts=(endog_parts, value_parts, policy_parts, marginal_parts),
+                    candidate=(
+                        kink[0],
+                        kink[1],
+                        kink[2],
+                        kink[3],
+                    ),
+                )
+                if retain_query:
+                    saving_parts.append(_required_nbegm_boundary_savings(result=kink))
                 segment_parts.append(
                     jnp.where(
                         jnp.isnan(kink[0]),
@@ -2804,6 +4340,40 @@ def nbegm_unified_step(
                     )
                 )
                 n_boundary_branches += 1
+
+    if retain_query:
+        value, policy, marginal, saving = envelope_at_query(
+            endog_grid=jnp.concatenate(endog_parts),
+            policy=jnp.concatenate(policy_parts),
+            value=jnp.concatenate(value_parts),
+            marginal=jnp.concatenate(marginal_parts),
+            segment_id=jnp.concatenate(segment_parts),
+            x_query=liquid_grid,
+            arithmetic=arithmetic,
+            candidate_savings=jnp.concatenate(saving_parts),
+        )
+        value, marginal, policy = _publish_no_action_carry(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            coh=coh_slopes[grid_interval] * liquid_grid + coh_intercepts[grid_interval],
+            lowest_savings=savings_grid[0],
+        )
+        return _single_row_nbegm_query_step(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            query_data=_make_nbegm_query_data(
+                value=value,
+                marginal=marginal,
+                policy=policy,
+                savings=saving,
+                floor_used=savings_grid[0],
+                liquid_grid=liquid_grid,
+                breakpoints=breakpoints,
+                corner_continuation=jnp.broadcast_to(value_next[0], coh_slopes.shape),
+            ),
+        )
 
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),
@@ -2823,6 +4393,7 @@ def nbegm_unified_step(
     )
 
 
+@overload
 def _boundary_targeting_coh(
     *,
     liquid_grid: Float1D,
@@ -2838,9 +4409,89 @@ def _boundary_targeting_coh(
     next_limit: ScalarFloat | float,
     equality_owner: EqualityOwner,
     side: Literal["below", "above"],
+    retain_savings: Literal[False] = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
     coh_slope: Float1D,
     valid: BoolND,
-) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+) -> tuple[Float1D, Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def _boundary_targeting_coh(
+    *,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    coh_case_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    asset_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    side: Literal["below", "above"],
+    retain_savings: Literal[True],
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+    coh_slope: Float1D,
+    valid: BoolND,
+) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def _boundary_targeting_coh(
+    *,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    coh_case_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    asset_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    side: Literal["below", "above"],
+    retain_savings: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+    coh_slope: Float1D,
+    valid: BoolND,
+) -> (
+    tuple[Float1D, Float1D, Float1D, Float1D]
+    | tuple[Float1D, Float1D, Float1D, Float1D, Float1D]
+): ...
+
+
+def _boundary_targeting_coh(
+    *,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    coh_case_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    asset_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    side: Literal["below", "above"],
+    retain_savings: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+    coh_slope: Float1D,
+    valid: BoolND,
+) -> (
+    tuple[Float1D, Float1D, Float1D, Float1D]
+    | tuple[Float1D, Float1D, Float1D, Float1D, Float1D]
+):
     """Save to land next-period liquid on one chosen side of a cliff.
 
     The case's cash-on-hand `coh_case_grid` funds consumption `coh - s_kink`, where
@@ -2865,31 +4516,41 @@ def _boundary_targeting_coh(
             if owns_limit
             else jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=limit_at.dtype))
         )
-        value_at_target = _bounded_limit_below(
-            grid=next_liquid_grid,
-            values=next_value,
-            limit=asset_limit,
-            prev_limit=prev_limit,
-            n=next_liquid_grid.shape[0],
-            owns_limit_node=owns_limit,
-        )
+        if continuation_read is None:
+            value_at_target = _bounded_limit_below(
+                grid=next_liquid_grid,
+                values=next_value,
+                limit=asset_limit,
+                prev_limit=prev_limit,
+                n=next_liquid_grid.shape[0],
+                owns_limit_node=owns_limit,
+            )
+        else:
+            value_at_target = jnp.asarray(0.0, dtype=liquid_grid.dtype)
     else:
         target = (
             limit_at
             if owns_limit
             else jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=limit_at.dtype))
         )
-        value_at_target = _bounded_limit_above(
-            grid=next_liquid_grid,
-            values=next_value,
-            limit=asset_limit,
-            next_limit=next_limit,
-            n=next_liquid_grid.shape[0],
-            owns_limit_node=owns_limit,
-        )
+        if continuation_read is None:
+            value_at_target = _bounded_limit_above(
+                grid=next_liquid_grid,
+                values=next_value,
+                limit=asset_limit,
+                next_limit=next_limit,
+                n=next_liquid_grid.shape[0],
+                owns_limit_node=owns_limit,
+            )
+        else:
+            value_at_target = jnp.asarray(0.0, dtype=liquid_grid.dtype)
     s_kink = _savings_reaching(
         target=target, savings_grid=savings_grid, next_liquid=next_liquid, side=side
     )
+    if continuation_read is not None:
+        value_at_target, _unused_marginal = continuation_read(
+            s_kink, jnp.isfinite(s_kink) & (s_kink >= savings_grid[0])
+        )
     kink_consumption = coh_case_grid - s_kink
     kink_value = (
         preferences.utility(kink_consumption) + discount_factor * value_at_target
@@ -2900,6 +4561,16 @@ def _boundary_targeting_coh(
     # candidates.
     kink_marginal = coh_slope * preferences.marginal_utility(kink_consumption)
     kink_valid = valid & affords_an_action(kink_consumption) & (jnp.isfinite(s_kink))
+    if retain_savings:
+        result = mask_dead_candidates(
+            endog_grid=liquid_grid,
+            value=kink_value,
+            policy=kink_consumption,
+            marginal=kink_marginal,
+            valid=kink_valid,
+        )
+        return (*result, jnp.where(kink_valid, s_kink, jnp.nan))
+
     return mask_dead_candidates(
         endog_grid=liquid_grid,
         value=kink_value,
@@ -2907,6 +4578,72 @@ def _boundary_targeting_coh(
         marginal=kink_marginal,
         valid=kink_valid,
     )
+
+
+@overload
+def nbegm_recurring_jump_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy_levels: Float1D,
+    jump_breakpoints: Float1D,
+    equality_owner: EqualityOwner = "otherwise",
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: Literal[False] = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def nbegm_recurring_jump_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy_levels: Float1D,
+    jump_breakpoints: Float1D,
+    equality_owner: EqualityOwner = "otherwise",
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: Literal[True],
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> _NBEGMQueryStep: ...
+
+
+@overload
+def nbegm_recurring_jump_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy_levels: Float1D,
+    jump_breakpoints: Float1D,
+    equality_owner: EqualityOwner = "otherwise",
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep: ...
 
 
 def nbegm_recurring_jump_step(
@@ -2924,7 +4661,10 @@ def nbegm_recurring_jump_step(
     jump_breakpoints: Float1D,
     equality_owner: EqualityOwner = "otherwise",
     arithmetic: ComparisonArithmetic = "certified",
-) -> tuple[Float1D, Float1D, Float1D]:
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep:
     """Solve one period of an N-cliff budget with a recurring jumped continuation.
 
     The N-cliff generalization of the binary `nbegm_one_asset_step`. Each of the
@@ -2986,23 +4726,25 @@ def nbegm_recurring_jump_step(
     policy_parts: list[Float1D] = []
     marginal_parts: list[Float1D] = []
     segment_parts: list[Float1D] = []
+    saving_parts: list[Float1D] = []
     for k in range(n_cases):
-        case_value, case_policy, case_marginal, case_endog, case_segment = (
-            _recurring_jump_case(
-                next_value=next_value,
-                next_marginal=next_marginal,
-                liquid_grid=liquid_grid,
-                next_liquid_grid=next_liquid_grid,
-                savings_grid=savings_grid,
-                discount_factor=discount_factor,
-                preferences=preferences,
-                next_liquid=next_liquid,
-                marginal_return=marginal_return,
-                subsidy=subsidy_levels[k],
-                jump_breakpoints=jump_breakpoints,
-                equality_owner=equality_owner,
-            )
+        case_rows = _recurring_jump_case(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            liquid_grid=liquid_grid,
+            next_liquid_grid=next_liquid_grid,
+            savings_grid=savings_grid,
+            discount_factor=discount_factor,
+            preferences=preferences,
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
+            subsidy=subsidy_levels[k],
+            jump_breakpoints=jump_breakpoints,
+            equality_owner=equality_owner,
+            retain_query=retain_query,
+            continuation_read=continuation_read,
         )
+        case_value, case_policy, case_marginal, case_endog, case_segment = case_rows[:5]
         in_case = (case_endog >= lower_edges[k]) & (case_endog < upper_edges[k])
         masked = mask_dead_candidates(
             endog_grid=case_endog,
@@ -3016,6 +4758,60 @@ def nbegm_recurring_jump_step(
         policy_parts.append(masked[2])
         marginal_parts.append(masked[3])
         segment_parts.append(case_segment + float(k) * case_stride)
+        if retain_query:
+            saving_parts.append(
+                jnp.where(
+                    in_case,
+                    _required_nbegm_case_candidate_savings(result=case_rows),
+                    jnp.nan,
+                )
+            )
+
+    if retain_query:
+        value, policy, marginal, saving = envelope_at_query(
+            endog_grid=jnp.concatenate(endog_parts),
+            policy=jnp.concatenate(policy_parts),
+            value=jnp.concatenate(value_parts),
+            marginal=jnp.concatenate(marginal_parts),
+            segment_id=jnp.concatenate(segment_parts),
+            x_query=liquid_grid,
+            arithmetic=arithmetic,
+            candidate_savings=jnp.concatenate(saving_parts),
+        )
+        case_of_node = jnp.searchsorted(jump_breakpoints, liquid_grid, side="right")
+        value, marginal, policy = _publish_no_action_carry(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            coh=liquid_grid + subsidy_levels[case_of_node],
+            lowest_savings=savings_grid[0],
+        )
+        continuation = (
+            _jump_aware_interp(
+                query=next_liquid[:1],
+                grid=next_liquid_grid,
+                values=next_value,
+                breakpoints=jump_breakpoints,
+                equality_owner=equality_owner,
+            )[0]
+            if continuation_read is None
+            else next_value[0]
+        )
+        return _single_row_nbegm_query_step(
+            value=value,
+            marginal=marginal,
+            policy=policy,
+            query_data=_make_nbegm_query_data(
+                value=value,
+                marginal=marginal,
+                policy=policy,
+                savings=saving,
+                floor_used=savings_grid[0],
+                liquid_grid=liquid_grid,
+                breakpoints=jump_breakpoints,
+                corner_continuation=jnp.full((n_cases,), continuation),
+            ),
+        )
 
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),
@@ -3038,6 +4834,7 @@ def nbegm_recurring_jump_step(
     )
 
 
+@overload
 def _recurring_jump_case(
     *,
     next_value: Float1D,
@@ -3052,7 +4849,78 @@ def _recurring_jump_case(
     subsidy: ScalarFloat | float,
     jump_breakpoints: Float1D,
     equality_owner: EqualityOwner,
-) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+    retain_query: Literal[False] = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def _recurring_jump_case(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy: ScalarFloat | float,
+    jump_breakpoints: Float1D,
+    equality_owner: EqualityOwner,
+    retain_query: Literal[True],
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def _recurring_jump_case(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy: ScalarFloat | float,
+    jump_breakpoints: Float1D,
+    equality_owner: EqualityOwner,
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> (
+    tuple[Float1D, Float1D, Float1D, Float1D, Float1D]
+    | tuple[Float1D, Float1D, Float1D, Float1D, Float1D, Float1D]
+): ...
+
+
+def _recurring_jump_case(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy: ScalarFloat | float,
+    jump_breakpoints: Float1D,
+    equality_owner: EqualityOwner,
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> (
+    tuple[Float1D, Float1D, Float1D, Float1D, Float1D]
+    | tuple[Float1D, Float1D, Float1D, Float1D, Float1D, Float1D]
+):
     """Build one subsidy case's candidate path: Euler, per-cliff target, s=0 corner.
 
     `coh = liquid + subsidy`, so the endogenous liquid recovered from the Euler
@@ -3061,20 +4929,24 @@ def _recurring_jump_case(
     contributes, beyond the Euler path, a boundary-targeting candidate on each side
     of every cliff and the hard borrowing corner, all over the liquid grid.
     """
-    value_next = _jump_aware_interp(
-        query=next_liquid,
-        grid=next_liquid_grid,
-        values=next_value,
-        breakpoints=jump_breakpoints,
-        equality_owner=equality_owner,
-    )
-    marginal_next = _jump_aware_interp(
-        query=next_liquid,
-        grid=next_liquid_grid,
-        values=next_marginal,
-        breakpoints=jump_breakpoints,
-        equality_owner=equality_owner,
-    )
+    if continuation_read is None:
+        value_next = _jump_aware_interp(
+            query=next_liquid,
+            grid=next_liquid_grid,
+            values=next_value,
+            breakpoints=jump_breakpoints,
+            equality_owner=equality_owner,
+        )
+        marginal_next = _jump_aware_interp(
+            query=next_liquid,
+            grid=next_liquid_grid,
+            values=next_marginal,
+            breakpoints=jump_breakpoints,
+            equality_owner=equality_owner,
+        )
+    else:
+        value_next, marginal_next = next_value, next_marginal
+
     consumption = preferences.inverse_marginal_utility(
         discount_factor * marginal_return * marginal_next
     )
@@ -3093,6 +4965,11 @@ def _recurring_jump_case(
     policy_parts: list[Float1D] = [consumption]
     marginal_parts: list[Float1D] = [marginal_endog]
     segment_parts: list[Float1D] = [interior_segment]
+    saving_parts = (
+        [jnp.where(jnp.isnan(liquid_endog), jnp.nan, savings_grid)]
+        if retain_query
+        else None
+    )
 
     n_cliffs = jump_breakpoints.shape[0]
     n_boundary_branches = 0
@@ -3117,11 +4994,15 @@ def _recurring_jump_case(
                 next_limit=next_cliff,
                 equality_owner=equality_owner,
                 side=side,
+                retain_savings=retain_query,
+                continuation_read=continuation_read,
             )
             endog_parts.append(kink[0])
             value_parts.append(kink[1])
             policy_parts.append(kink[2])
             marginal_parts.append(kink[3])
+            if saving_parts is not None:
+                saving_parts.append(_required_nbegm_boundary_savings(result=kink))
             segment_parts.append(
                 jnp.where(
                     jnp.isnan(kink[0]),
@@ -3146,8 +5027,18 @@ def _recurring_jump_case(
         policy_parts=policy_parts,
         marginal_parts=marginal_parts,
         segment_parts=segment_parts,
+        saving_parts=saving_parts,
     )
 
+    if saving_parts is not None:
+        return (
+            jnp.concatenate(value_parts),
+            jnp.concatenate(policy_parts),
+            jnp.concatenate(marginal_parts),
+            jnp.concatenate(endog_parts),
+            jnp.concatenate(segment_parts),
+            jnp.concatenate(saving_parts),
+        )
     return (
         jnp.concatenate(value_parts),
         jnp.concatenate(policy_parts),
@@ -3210,6 +5101,7 @@ def _jump_aware_interp(
     return jnp.interp(query, aug_grid[order], aug_values[order])
 
 
+@overload
 def nbegm_one_asset_step(
     *,
     next_value: Float1D,
@@ -3226,7 +5118,78 @@ def nbegm_one_asset_step(
     asset_limit: ScalarFloat | float,
     equality_owner: EqualityOwner,
     arithmetic: ComparisonArithmetic = "certified",
-) -> tuple[Float1D, Float1D, Float1D]:
+    retain_query: Literal[False] = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def nbegm_one_asset_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy_when: ScalarFloat | float,
+    subsidy_otherwise: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: Literal[True],
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> _NBEGMQueryStep: ...
+
+
+@overload
+def nbegm_one_asset_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy_when: ScalarFloat | float,
+    subsidy_otherwise: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep: ...
+
+
+def nbegm_one_asset_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy_when: ScalarFloat | float,
+    subsidy_otherwise: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep:
     """Solve one period of the Medicaid one-asset toy by case-piece EGM.
 
     Args:
@@ -3266,7 +5229,7 @@ def nbegm_one_asset_step(
         policy, each on `liquid_grid`.
 
     """
-    when_value, when_marginal, when_policy = _case_step(
+    when_rows = _case_step(
         next_value=next_value,
         next_marginal=next_marginal,
         liquid_grid=liquid_grid,
@@ -3280,8 +5243,10 @@ def nbegm_one_asset_step(
         asset_limit=asset_limit,
         equality_owner=equality_owner,
         arithmetic=arithmetic,
+        retain_query=retain_query,
+        continuation_read=continuation_read,
     )
-    otherwise_value, otherwise_marginal, otherwise_policy = _case_step(
+    otherwise_rows = _case_step(
         next_value=next_value,
         next_marginal=next_marginal,
         liquid_grid=liquid_grid,
@@ -3295,7 +5260,12 @@ def nbegm_one_asset_step(
         asset_limit=asset_limit,
         equality_owner=equality_owner,
         arithmetic=arithmetic,
+        retain_query=retain_query,
+        continuation_read=continuation_read,
     )
+
+    when_value, when_marginal, when_policy = when_rows[:3]
+    otherwise_value, otherwise_marginal, otherwise_policy = otherwise_rows[:3]
 
     # The owning side keeps the exact boundary point: `equality_owner="otherwise"`
     # gives it to the otherwise case through the strict `<` / non-strict `>=`
@@ -3332,6 +5302,66 @@ def nbegm_one_asset_step(
             jnp.ones(n_grid, dtype=liquid_grid.dtype),
         ]
     )
+    if retain_query:
+        candidate_savings = jnp.concatenate(
+            [
+                jnp.where(
+                    when_valid, _required_nbegm_case_savings(result=when_rows), jnp.nan
+                ),
+                jnp.where(
+                    otherwise_valid,
+                    _required_nbegm_case_savings(result=otherwise_rows),
+                    jnp.nan,
+                ),
+            ]
+        )
+        env_value, env_policy, env_marginal, saving = envelope_at_query(
+            endog_grid=endog_grid,
+            policy=policy,
+            value=value,
+            marginal=marginal,
+            segment_id=segment_id,
+            x_query=liquid_grid,
+            arithmetic=arithmetic,
+            candidate_savings=candidate_savings,
+        )
+        env_value, env_marginal, env_policy = _publish_no_action_carry(
+            value=env_value,
+            marginal=env_marginal,
+            policy=env_policy,
+            coh=liquid_grid + jnp.where(when_valid, subsidy_when, subsidy_otherwise),
+            lowest_savings=savings_grid[0],
+        )
+        continuation = (
+            _kink_aware_interp(
+                query=next_liquid[:1],
+                grid=next_liquid_grid,
+                values=next_value,
+                limit=asset_limit,
+                equality_owner=equality_owner,
+            )[0]
+            if continuation_read is None
+            else next_value[0]
+        )
+        selection = jnp.asarray(asset_limit, dtype=liquid_grid.dtype)
+        if equality_owner == "when":
+            selection = jnp.nextafter(selection, jnp.inf)
+        return _single_row_nbegm_query_step(
+            value=env_value,
+            marginal=env_marginal,
+            policy=env_policy,
+            query_data=_make_nbegm_query_data(
+                value=env_value,
+                marginal=env_marginal,
+                policy=env_policy,
+                savings=saving,
+                floor_used=savings_grid[0],
+                liquid_grid=liquid_grid,
+                breakpoints=selection[jnp.newaxis],
+                corner_continuation=jnp.full((2,), continuation),
+            ),
+        )
+
     env_value, env_policy, env_marginal = envelope_at_query(
         endog_grid=endog_grid,
         policy=policy,
@@ -3350,6 +5380,7 @@ def nbegm_one_asset_step(
     )
 
 
+@overload
 def _case_step(
     *,
     next_value: Float1D,
@@ -3365,7 +5396,75 @@ def _case_step(
     asset_limit: ScalarFloat | float,
     equality_owner: EqualityOwner,
     arithmetic: ComparisonArithmetic = "certified",
-) -> tuple[Float1D, Float1D, Float1D]:
+    retain_query: Literal[False] = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def _case_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: Literal[True],
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> _AssociatedNBEGMChannels: ...
+
+
+@overload
+def _case_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _AssociatedNBEGMChannels: ...
+
+
+def _case_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    arithmetic: ComparisonArithmetic = "certified",
+    retain_query: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D] | _AssociatedNBEGMChannels:
     """Solve one case's 1-D consumption--saving sub-problem as an upper envelope.
 
     `coh = liquid + subsidy`, so the endogenous state recovered from the Euler
@@ -3383,20 +5482,24 @@ def _case_step(
     The continuation is read kink-aware at `asset_limit`: a query landing in the
     boundary cell reads the equality-owning side rather than a bridged average.
     """
-    value_next = _kink_aware_interp(
-        query=next_liquid,
-        grid=next_liquid_grid,
-        values=next_value,
-        limit=asset_limit,
-        equality_owner=equality_owner,
-    )
-    marginal_next = _kink_aware_interp(
-        query=next_liquid,
-        grid=next_liquid_grid,
-        values=next_marginal,
-        limit=asset_limit,
-        equality_owner=equality_owner,
-    )
+    if continuation_read is None:
+        value_next = _kink_aware_interp(
+            query=next_liquid,
+            grid=next_liquid_grid,
+            values=next_value,
+            limit=asset_limit,
+            equality_owner=equality_owner,
+        )
+        marginal_next = _kink_aware_interp(
+            query=next_liquid,
+            grid=next_liquid_grid,
+            values=next_marginal,
+            limit=asset_limit,
+            equality_owner=equality_owner,
+        )
+
+    else:
+        value_next, marginal_next = next_value, next_marginal
 
     consumption = preferences.inverse_marginal_utility(
         discount_factor * marginal_return * marginal_next
@@ -3429,10 +5532,14 @@ def _case_step(
             next_limit=next_liquid_grid[-1] + 1.0,
             equality_owner=equality_owner,
             side=side,
+            retain_savings=retain_query,
+            continuation_read=continuation_read,
         )
         for side in ("below", "above")
     }
-    kink_grid, kink_value, kink_consumption, kink_marginal = boundary_branches["below"]
+    kink_grid, kink_value, kink_consumption, kink_marginal = boundary_branches["below"][
+        :4
+    ]
     kink_segment = jnp.where(
         jnp.isnan(kink_grid), jnp.nan, _next_segment_id(segment=interior_segment)
     )
@@ -3441,7 +5548,7 @@ def _case_step(
         above_value,
         above_consumption,
         above_marginal,
-    ) = boundary_branches["above"]
+    ) = boundary_branches["above"][:4]
     above_segment = jnp.where(
         jnp.isnan(above_grid),
         jnp.nan,
@@ -3453,6 +5560,15 @@ def _case_step(
     policy_parts = [consumption, kink_consumption, above_consumption]
     marginal_parts = [marginal_endog, kink_marginal, above_marginal]
     segment_parts = [interior_segment, kink_segment, above_segment]
+    saving_parts = (
+        [
+            jnp.where(jnp.isnan(liquid_endog), jnp.nan, savings_grid),
+            _required_nbegm_boundary_savings(result=boundary_branches["below"]),
+            _required_nbegm_boundary_savings(result=boundary_branches["above"]),
+        ]
+        if retain_query
+        else None
+    )
     _append_savings_endpoint_corners(
         endog_grid=liquid_grid,
         coh=liquid_grid + subsidy,
@@ -3468,7 +5584,23 @@ def _case_step(
         policy_parts=policy_parts,
         marginal_parts=marginal_parts,
         segment_parts=segment_parts,
+        saving_parts=saving_parts,
     )
+
+    if retain_query:
+        if saving_parts is None:
+            raise TypeError("NB case saving channels must accompany their candidates.")
+        value, consumption_on_grid, marginal, saving = envelope_at_query(
+            endog_grid=jnp.concatenate(endog_parts),
+            policy=jnp.concatenate(policy_parts),
+            value=jnp.concatenate(value_parts),
+            marginal=jnp.concatenate(marginal_parts),
+            segment_id=jnp.concatenate(segment_parts),
+            x_query=liquid_grid,
+            arithmetic=arithmetic,
+            candidate_savings=jnp.concatenate(saving_parts),
+        )
+        return _AssociatedNBEGMChannels(value, marginal, consumption_on_grid, saving)
 
     value, consumption_on_grid, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),
@@ -3480,6 +5612,75 @@ def _case_step(
         arithmetic=arithmetic,
     )
     return value, marginal, consumption_on_grid
+
+
+@overload
+def _boundary_targeting_branch(
+    *,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    subsidy: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    side: Literal["below", "above"],
+    retain_savings: Literal[False] = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def _boundary_targeting_branch(
+    *,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    subsidy: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    side: Literal["below", "above"],
+    retain_savings: Literal[True],
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def _boundary_targeting_branch(
+    *,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    subsidy: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    side: Literal["below", "above"],
+    retain_savings: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> (
+    tuple[Float1D, Float1D, Float1D, Float1D]
+    | tuple[Float1D, Float1D, Float1D, Float1D, Float1D]
+): ...
 
 
 def _boundary_targeting_branch(
@@ -3497,7 +5698,13 @@ def _boundary_targeting_branch(
     next_limit: ScalarFloat | float,
     equality_owner: EqualityOwner,
     side: Literal["below", "above"],
-) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+    retain_savings: bool = False,
+    continuation_read: Callable[[FloatND, BoolND], tuple[FloatND, FloatND]]
+    | None = None,
+) -> (
+    tuple[Float1D, Float1D, Float1D, Float1D]
+    | tuple[Float1D, Float1D, Float1D, Float1D, Float1D]
+):
     """Build a save-to-the-boundary candidate as a masked grid-aligned branch.
 
     Landing on a boundary is a corner the Euler equation never produces, and which
@@ -3526,37 +5733,57 @@ def _boundary_targeting_branch(
             if owns_limit
             else jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=limit_at.dtype))
         )
-        value_at_target = _bounded_limit_below(
-            grid=next_liquid_grid,
-            values=next_value,
-            limit=asset_limit,
-            prev_limit=prev_limit,
-            n=next_liquid_grid.shape[0],
-            owns_limit_node=owns_limit,
-        )
+        if continuation_read is None:
+            value_at_target = _bounded_limit_below(
+                grid=next_liquid_grid,
+                values=next_value,
+                limit=asset_limit,
+                prev_limit=prev_limit,
+                n=next_liquid_grid.shape[0],
+                owns_limit_node=owns_limit,
+            )
+        else:
+            value_at_target = jnp.asarray(0.0, dtype=liquid_grid.dtype)
     else:
         target = (
             limit_at
             if owns_limit
             else jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=limit_at.dtype))
         )
-        value_at_target = _bounded_limit_above(
-            grid=next_liquid_grid,
-            values=next_value,
-            limit=asset_limit,
-            next_limit=next_limit,
-            n=next_liquid_grid.shape[0],
-            owns_limit_node=owns_limit,
-        )
+        if continuation_read is None:
+            value_at_target = _bounded_limit_above(
+                grid=next_liquid_grid,
+                values=next_value,
+                limit=asset_limit,
+                next_limit=next_limit,
+                n=next_liquid_grid.shape[0],
+                owns_limit_node=owns_limit,
+            )
+        else:
+            value_at_target = jnp.asarray(0.0, dtype=liquid_grid.dtype)
     s_kink = _savings_reaching(
         target=target, savings_grid=savings_grid, next_liquid=next_liquid, side=side
     )
+    if continuation_read is not None:
+        value_at_target, _unused_marginal = continuation_read(
+            s_kink, jnp.isfinite(s_kink) & (s_kink >= savings_grid[0])
+        )
     kink_consumption = liquid_grid + subsidy - s_kink
     kink_value = (
         preferences.utility(kink_consumption) + discount_factor * value_at_target
     )
     kink_marginal = preferences.marginal_utility(kink_consumption)
     kink_valid = affords_an_action(kink_consumption) & (jnp.isfinite(s_kink))
+    if retain_savings:
+        result = mask_dead_candidates(
+            endog_grid=liquid_grid,
+            value=kink_value,
+            policy=kink_consumption,
+            marginal=kink_marginal,
+            valid=kink_valid,
+        )
+        return (*result, jnp.where(kink_valid, s_kink, jnp.nan))
+
     return mask_dead_candidates(
         endog_grid=liquid_grid,
         value=kink_value,
@@ -3770,6 +5997,7 @@ def _append_savings_endpoint_corners(
     policy_parts: list[Float1D],
     marginal_parts: list[Float1D],
     segment_parts: list[Float1D],
+    saving_parts: list[Float1D] | None = None,
 ) -> int:
     """Append the lower and upper savings-grid endpoint candidates."""
     for offset, index in enumerate((0, -1)):
@@ -3787,6 +6015,10 @@ def _append_savings_endpoint_corners(
         value_parts.append(corner[1])
         policy_parts.append(corner[2])
         marginal_parts.append(corner[3])
+        if saving_parts is not None:
+            saving_parts.append(
+                jnp.where(jnp.isnan(corner[0]), jnp.nan, savings_grid[index])
+            )
         segment_parts.append(
             jnp.where(
                 jnp.isnan(corner[0]),
@@ -3893,4 +6125,85 @@ def _publish_no_action_carry(
         jnp.where(no_action, -jnp.inf, value),
         jnp.where(no_action, 0.0, marginal),
         jnp.where(no_action, jnp.nan, policy),
+    )
+
+
+def _with_nbegm_interval_winner_status(
+    *,
+    winner: EnvelopeWinner,
+    query_status: tuple[QueryInputStatus, ...] | None,
+    continuation_read_counts: ContinuationReadCounts | None = None,
+) -> EnvelopeWinner | _IntervalIntegrityWinner:
+    """Keep the no-feature winner unchanged or attach standing scalar slots."""
+    return (
+        winner
+        if query_status is None and continuation_read_counts is None
+        else _IntervalIntegrityWinner(winner, query_status, continuation_read_counts)
+    )
+
+
+def _with_nbegm_interval_summary[Source: PytreeValue, Output: PytreeValue](
+    *,
+    summary: BoundedResult[Source] | None,
+    output: Output,
+) -> Output | BoundedResult[Output]:
+    """Publish ordinary numeric channels beside an existing scalar summary."""
+    if summary is None:
+        return output
+    return BoundedResult(
+        output=output,
+        bound_status=(),
+        query_status=summary.query_status,
+        continuation_read_counts=summary.continuation_read_counts,
+    )
+
+
+def _finish_nbegm_integrity_stream(
+    *,
+    held: _IntervalIntegrityWinner,
+    query: Float1D,
+    retain_query: bool,
+    arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None,
+    feasible_interval_mask: BoolND | None,
+) -> BoundedResult[_NBEGMStreamChannels]:
+    """Finish the same numeric winner with no retained interval flag history."""
+    if retain_query:
+        retained = cast("_IntervalQueryWinner", held.winner)
+        value, policy, marginal, saving, owner = finish_envelope_winner(
+            winner=retained.winner,
+            query=query,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+        )
+        output = (
+            value,
+            marginal,
+            policy,
+            saving,
+            published_owner(value=value, stable_index=owner),
+            retained.corner_continuation,
+            retained.corner_kind,
+        )
+    else:
+        winner = cast("EnvelopeWinner", held.winner)
+        value, policy, marginal = finish_envelope_winner(
+            winner=winner,
+            query=query,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+        )
+        output = (
+            value,
+            marginal,
+            policy,
+            published_owner(value=value, stable_index=winner.stable_index),
+        )
+    return BoundedResult(
+        output=output,
+        bound_status=(),
+        query_status=held.query_status,
+        continuation_read_counts=held.continuation_read_counts,
     )

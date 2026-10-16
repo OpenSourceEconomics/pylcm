@@ -3577,7 +3577,11 @@
    "junit": "junit-cpu-fp64-source-contract.xml",
    "files": [
     "tests/test_simulation_candidate_program_certificate.py",
-    "tests/test_uniform_process_grid_certificate.py"
+    "tests/test_uniform_process_grid_certificate.py",
+    "tests/test_outer_helper_certificate.py",
+    "tests/test_final_nested_aggregate_certificate.py",
+    "tests/test_additional_helper_aggregate_certificate.py",
+    "tests/test_child_native_aggregate_certificate.py"
    ],
    "predicted_payload_minutes": 2.36
   },

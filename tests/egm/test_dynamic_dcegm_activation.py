@@ -424,28 +424,13 @@ def _plain_parent_value(*, carry: EGMCarry, literal: bool, asset: bool) -> float
     parent_resources = 0.25
     consumption = 1.0 / saving_marginal
     endogenous = savings + consumption
+    candidate_value = np.log(consumption) + continuation
     assert endogenous[0] < endogenous[1]
     assert endogenous[1] > parent_resources
     if endogenous[0] >= parent_resources:
         return float(np.log(parent_resources - savings[0]) + continuation[0])
     fraction = (parent_resources - endogenous[0]) / (endogenous[1] - endogenous[0])
-    assert 0.0 < fraction < 1.0
-    action_consumption = consumption[0] + fraction * (consumption[1] - consumption[0])
-    action_saving = savings[0] + fraction * (savings[1] - savings[0])
-    actual_child_liquid = 5.0 * action_saving - 1.0
-    actual_child_resources = 2.0 * actual_child_liquid + 1.0
-    if literal:
-        action_continuation = _row_read(
-            carry=carry, resources=float(actual_child_resources), hermite=False
-        )
-    else:
-        action_continuation, _ = _represented_plain_child_pair(
-            carry=carry,
-            resources=float(actual_child_resources),
-            liquid=float(actual_child_liquid),
-            asset=asset,
-        )
-    return float(np.log(action_consumption) + action_continuation)
+    return float((1.0 - fraction) * candidate_value[0] + fraction * candidate_value[1])
 
 
 def _represented_plain_child_pair(

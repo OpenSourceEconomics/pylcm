@@ -22,8 +22,10 @@ from jax import vmap
 from _lcm.solution.feasibility import (
     BoundedResult,
     merge_bound_input_status,
+    merge_continuation_read_counts,
     merge_query_input_status,
     reduce_bound_input_status,
+    reduce_continuation_read_counts,
     reduce_query_input_status,
 )
 from _lcm.typing import ActionName, PytreeValue, QAndFArg, StateName
@@ -130,7 +132,9 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
         inputs = jax.tree.map(lambda leaf: leaf[selected], xs)
         result = jax.vmap(func)(inputs)
         if type(result) is not BoundedResult or not (
-            result.bound_status or result.query_status
+            result.bound_status
+            or result.query_status
+            or result.continuation_read_counts is not None
         ):
             raise TypeError(
                 "Bound-summary maps require declared BoundedResult records."
@@ -147,9 +151,15 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
     query_summary = reduce_query_input_status(
         statuses=first.query_status, active=first_active
     )
+    read_summary = reduce_continuation_read_counts(
+        counts=first.continuation_read_counts, active=first_active
+    )
     if n_windows == 1:
         return BoundedResult(
-            output=first.output, bound_status=summary, query_status=query_summary
+            output=first.output,
+            bound_status=summary,
+            query_status=query_summary,
+            continuation_read_counts=read_summary,
         )
     buffers = cast(
         "Output",
@@ -201,17 +211,29 @@ def _map_with_bound_summary[InputTree, Output: PytreeValue](
                     statuses=result.query_status, active=valid
                 ),
             ),
+            continuation_read_counts=merge_continuation_read_counts(
+                left=carry.continuation_read_counts,
+                right=reduce_continuation_read_counts(
+                    counts=result.continuation_read_counts, active=valid
+                ),
+            ),
         ), None
 
     final, _ = jax.lax.scan(
         one_window,
-        BoundedResult(output=buffers, bound_status=summary, query_status=query_summary),
+        BoundedResult(
+            output=buffers,
+            bound_status=summary,
+            query_status=query_summary,
+            continuation_read_counts=read_summary,
+        ),
         jnp.arange(1, n_windows, dtype=jnp.int32),
     )
     return BoundedResult(
         output=cast("Output", jax.tree.map(lambda leaf: leaf[:n_rows], final.output)),
         bound_status=final.bound_status,
         query_status=final.query_status,
+        continuation_read_counts=final.continuation_read_counts,
     )
 
 
@@ -386,7 +408,9 @@ class _BoundVmap:
     def __call__(self, *args: PytreeValue) -> BoundedResult[PytreeValue]:
         result = self.function(*args)
         if type(result) is not BoundedResult or not (
-            result.bound_status or result.query_status
+            result.bound_status
+            or result.query_status
+            or result.continuation_read_counts is not None
         ):
             raise TypeError(
                 "Bound-summary co-maps require mandatory integrity records."
@@ -400,6 +424,12 @@ class _BoundVmap:
             ),
             query_status=reduce_query_input_status(
                 statuses=result.query_status,
+                active=jnp.ones((extent,), dtype=jnp.bool_),
+            ),
+            continuation_read_counts=None
+            if result.continuation_read_counts is None
+            else reduce_continuation_read_counts(
+                counts=result.continuation_read_counts,
                 active=jnp.ones((extent,), dtype=jnp.bool_),
             ),
         )
@@ -617,6 +647,7 @@ class _RestoreProductAxisOrder:
                 output=jax.tree.map(restore, result.output),
                 bound_status=result.bound_status,
                 query_status=result.query_status,
+                continuation_read_counts=result.continuation_read_counts,
             )
         return jax.tree.map(restore, mapped)
 
@@ -889,6 +920,7 @@ def _restore_mapped_product(
             output=jax.tree.map(restore, result.output),
             bound_status=result.bound_status,
             query_status=result.query_status,
+            continuation_read_counts=result.continuation_read_counts,
         )
     return jax.tree.map(restore, mapped)
 

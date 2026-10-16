@@ -145,6 +145,7 @@ def _observe_choices(
 
     def observe(self: DCEGMQuery, **kwargs: Unpack[_ChoiceInputs]) -> DCEGMQueryResult:
         result = original(self, **kwargs)
+        assert isinstance(result, DCEGMQueryResult)
         facts = jnp.stack([cast("FloatND", kwargs["pool"][name]) for name in names])
         jax.debug.callback(
             record,

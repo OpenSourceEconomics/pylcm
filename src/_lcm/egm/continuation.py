@@ -17,7 +17,7 @@ import functools
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -31,7 +31,12 @@ from _lcm.egm.carry import (
     read_value_and_slope_row,
     read_value_row,
 )
-from _lcm.egm.dcegm_query import DCEGMQuery, build_dcegm_query
+from _lcm.egm.dcegm_query import (
+    DCEGMQuery,
+    DCEGMQueryResult,
+    FiniteNEGMQueryResult,
+    build_dcegm_query,
+)
 from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.ez_kernel import (
     ez_blend_partials,
@@ -47,8 +52,19 @@ from _lcm.egm.interp import (
     locate_on_grid,
     prepare_padded_grid,
 )
+from _lcm.egm.nbegm_query import (
+    AdaptiveNBEGMQueryResult,
+    NBEGMQuery,
+    NBEGMQueryResult,
+    build_nbegm_query,
+)
+from _lcm.egm.nbegm_query_model import NBEGMQueryModel
 from _lcm.egm.outer_envelope import right_germ_winner
-from _lcm.egm.query_data import EGMQueryData, select_query_data
+from _lcm.egm.query_data import (
+    EGMQueryData,
+    select_adaptive_query_data,
+    select_query_data,
+)
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
     _get_child_resources,
@@ -66,6 +82,7 @@ from _lcm.grids.discrete import read_at_codes
 from _lcm.logsum import logsum_and_softmax
 from _lcm.probability import (
     is_live,
+    is_represented_zero,
     probabilities_form_distribution,
     scaled_by_power_of_two,
 )
@@ -83,8 +100,11 @@ from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.regime_law import RegimeLaws
 from _lcm.solution.feasibility import (
     BoundedResult,
+    ContinuationReadCounts,
     QueryInputStatus,
+    merge_continuation_read_counts,
     merge_query_input_status,
+    reduce_continuation_read_counts,
     reduce_query_input_status,
 )
 from _lcm.transition_plans import LotteryLifetime, TargetTransitionPlans
@@ -342,7 +362,7 @@ class _ChildRead:
     (non-co-mapped) read.
     """
 
-    query: DCEGMQuery | None = None
+    query: DCEGMQuery | NBEGMQuery | None = None
     """Canonical target-period query adapter, absent on raw child reads."""
     query_target: RegimeName | None = None
     """Namespace owning the installed query's parameter leaves."""
@@ -400,6 +420,7 @@ def bind_continuation(
     stochastic_node_width: int | None = None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
     co_map_state_names: tuple[StateName, ...] = (),
+    collect_continuation_read_counts: bool = False,
 ) -> Callable[
     [ScalarFloat],
     tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]],
@@ -470,6 +491,7 @@ def bind_continuation(
             stochastic_node_width=stochastic_node_width,
             resolved_process_grids=resolved_process_grids,
             risk_aversion=risk_aversion,
+            collect_continuation_read_counts=collect_continuation_read_counts,
         )
         for target in plan.stateful_targets
     }
@@ -481,6 +503,7 @@ def bind_continuation(
         child_readers=child_readers,
         next_regime_to_continuation=next_regime_to_continuation,
         dtype=dtype,
+        collect_continuation_read_counts=collect_continuation_read_counts,
     )
 
 
@@ -520,6 +543,8 @@ class _BoundContinuation:
 
     dtype: DTypeLike
     """The canonical float dtype of the blended results."""
+    collect_continuation_read_counts: bool = False
+    """Static choice to retain paired-read events at this owning edge fold."""
 
     def __call__(
         self,
@@ -533,6 +558,11 @@ class _BoundContinuation:
         regime_transition_probs = self.regime_transition_probs
         is_distribution = self._retains_a_distribution()
         statuses: dict[RegimeName, QueryInputStatus] = {}
+        read_counts = (
+            ContinuationReadCounts(jnp.int32(0), jnp.int32(0))
+            if self.collect_continuation_read_counts
+            else None
+        )
         if risk_aversion is not None:
             certainty_equivalents: list[ScalarFloat] = []
             weight_sums: list[ScalarFloat] = []
@@ -540,11 +570,14 @@ class _BoundContinuation:
             marginal_mantissas: list[ScalarFloat] = []
             probs: list[ScalarFloat] = []
             for target in plan.stateful_targets:
-                child_result, child_status = self._read_child(
+                child_result, child_status, child_counts = self._read_child(
                     target=target, savings_value=savings_value
                 )
                 if child_status is not None:
                     statuses[target] = child_status
+                read_counts = merge_continuation_read_counts(
+                    left=read_counts, right=child_counts
+                )
                 (
                     certainty_equivalent,
                     weight_sum,
@@ -600,15 +633,19 @@ class _BoundContinuation:
                     jnp.where(is_distribution, dnu_ds, jnp.nan),
                 ),
                 statuses=statuses,
+                read_counts=read_counts,
             )
         blended_marginal = jnp.asarray(0.0, dtype=self.dtype)
         blended_value = jnp.asarray(0.0, dtype=self.dtype)
         for target in plan.stateful_targets:
-            child_result, child_status = self._read_child(
+            child_result, child_status, child_counts = self._read_child(
                 target=target, savings_value=savings_value
             )
             if child_status is not None:
                 statuses[target] = child_status
+            read_counts = merge_continuation_read_counts(
+                left=read_counts, right=child_counts
+            )
             # Linear mode: the reader returns the plain (value, marginal) pair.
             target_value, target_marginal = cast(
                 "tuple[ScalarFloat, ScalarFloat]",
@@ -637,19 +674,35 @@ class _BoundContinuation:
                 jnp.where(is_distribution, blended_marginal, jnp.nan),
             ),
             statuses=statuses,
+            read_counts=read_counts,
         )
 
     def _read_child(
         self, *, target: RegimeName, savings_value: ScalarFloat
-    ) -> tuple[_ChildCarryRead, QueryInputStatus | None]:
+    ) -> tuple[_ChildCarryRead, QueryInputStatus | None, ContinuationReadCounts | None]:
         """Read one declared child and mask only its auxiliary by edge activity."""
         result = self.child_readers[target](savings_value)
+        counts = None
+        if (
+            isinstance(result, BoundedResult)
+            and result.continuation_read_counts is not None
+        ):
+            counts = reduce_continuation_read_counts(
+                counts=result.continuation_read_counts,
+                active=~is_represented_zero(self.regime_transition_probs[target]),
+            )
         if target not in self.plan.query_targets:
-            if isinstance(result, BoundedResult):
+            if isinstance(result, BoundedResult) and (
+                result.bound_status or result.query_status is not None
+            ):
                 raise TypeError(
                     "A child query summary requires an installed target slot."
                 )
-            return result, None
+            return (
+                result.output if isinstance(result, BoundedResult) else result,
+                None,
+                counts,
+            )
         if (
             not isinstance(result, BoundedResult)
             or result.bound_status
@@ -664,23 +717,27 @@ class _BoundContinuation:
                 active=is_live(self.regime_transition_probs[target]),
             ),
         )
-        return result.output, statuses[0]
+        return result.output, statuses[0], counts
 
     def _with_query_status(
         self,
         *,
         output: tuple[ScalarFloat, ScalarFloat],
         statuses: Mapping[RegimeName, QueryInputStatus],
+        read_counts: ContinuationReadCounts | None,
     ) -> (
         tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]]
     ):
         """Publish the numeric pair beside the statically installed child slots."""
-        if not self.plan.query_targets:
+        if not self.plan.query_targets and read_counts is None:
             return output
         return BoundedResult(
             output=output,
             bound_status=(),
-            query_status=tuple(statuses[target] for target in self.plan.query_targets),
+            query_status=tuple(statuses[target] for target in self.plan.query_targets)
+            if self.plan.query_targets
+            else None,
+            continuation_read_counts=read_counts,
         )
 
     def _retains_a_distribution(self) -> BoolND:
@@ -715,6 +772,7 @@ def build_continuation_plan(
     age_values: FloatND | IntND,
     risk_aversion_param_name: QualifiedName | None = None,
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
     source_period: int | None = None,
 ) -> ContinuationPlan:
     """Assemble a `ContinuationPlan` from the regime's continuation statics.
@@ -741,6 +799,7 @@ def build_continuation_plan(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         age_values=age_values,
         dcegm_query_models=dcegm_query_models,
+        nbegm_query_models=nbegm_query_models,
         source_period=source_period,
     )
     return ContinuationPlan(
@@ -818,6 +877,7 @@ def _get_child_carry_reader(
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
     risk_aversion: FloatND | None = None,
+    collect_continuation_read_counts: bool = False,
 ) -> Callable[[ScalarFloat], _ChildCarryResult]:
     """Build the per-savings-node carry read of one target for one combo.
 
@@ -893,6 +953,7 @@ def _get_child_carry_reader(
         resources_reads_stochastic=resources_reads_stochastic,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
+        collect_continuation_read_counts=collect_continuation_read_counts,
     )
 
 
@@ -936,6 +997,8 @@ class _ChildCarryReader:
 
     prepared_valid_length: IntND
     """The carry rows' valid prefix lengths."""
+    collect_continuation_read_counts: bool = False
+    """Static read specialization, shared across this target's node windows."""
 
     def __call__(
         self,
@@ -1034,6 +1097,7 @@ class _ChildCarryReader:
                 query_euler_gradient=euler_gradient,
                 query_action_names=read.query_action_names,
                 query_action_values=read.query_action_values,
+                collect_continuation_read_counts=self.collect_continuation_read_counts,
             )
             value, marginal = (
                 result.output if isinstance(result, BoundedResult) else result
@@ -1056,6 +1120,7 @@ class _ChildCarryReader:
                         output=partials,
                         bound_status=(),
                         query_status=result.query_status,
+                        continuation_read_counts=result.continuation_read_counts,
                     )
                     if isinstance(result, BoundedResult)
                     else partials
@@ -1076,6 +1141,7 @@ class _ChildCarryReader:
             stochastic_node_width=self.stochastic_node_width,
             risk_aversion=risk_aversion,
             actual_query=actual_query,
+            collect_continuation_read_counts=self.collect_continuation_read_counts,
         )
 
 
@@ -1230,6 +1296,12 @@ def _compute_row_queries_and_gradients(
             draws={name: draw_values[name] for name in read.euler_draw_names}
         )
     stochastic_values = stochastic_values[: len(read.stochastic_state_names)]
+    if isinstance(read.query, NBEGMQuery):
+        query, gradient = jax.value_and_grad(child_euler_state)(savings_value)
+        return (
+            jnp.broadcast_to(query, read.row_block_shape),
+            jnp.broadcast_to(gradient, read.row_block_shape),
+        )
     if read.resources_is_simple:
         composed = functools.partial(
             _composed_simple_resources,
@@ -1330,6 +1402,7 @@ def _expect_over_stochastic_nodes(
     stochastic_node_width: int | None,
     risk_aversion: FloatND | None = None,
     actual_query: _ActualChildQuery | None = None,
+    collect_continuation_read_counts: bool = False,
 ) -> _ChildCarryResult:
     """Weight the carry read over the child's stochastic-node combos.
 
@@ -1373,6 +1446,7 @@ def _expect_over_stochastic_nodes(
         shared_queries_and_gradients=shared_queries_and_gradients,
         risk_aversion=risk_aversion,
         actual_query=actual_query,
+        collect_continuation_read_counts=collect_continuation_read_counts,
     )
 
     node_index_mesh = jnp.meshgrid(
@@ -1418,6 +1492,14 @@ def _expect_over_stochastic_nodes(
     blocked_weights = jnp.concatenate(
         [joint_weights, jnp.zeros(pad, dtype=joint_weights.dtype)]
     ).reshape(n_blocks, width)
+    blocked_activity = None
+    if collect_continuation_read_counts:
+        node_activity = jnp.ones((n_nodes,), dtype=jnp.bool_)
+        for values, indices in zip(weight_vecs, flat_node_indices, strict=True):
+            node_activity &= ~is_represented_zero(values[indices])
+        blocked_activity = jnp.pad(
+            node_activity, (0, pad), constant_values=False
+        ).reshape(n_blocks, width)
 
     if risk_aversion is not None:
         return _partials_on_node_scale(
@@ -1427,6 +1509,8 @@ def _expect_over_stochastic_nodes(
                 blocked_weights=blocked_weights,
                 risk_aversion=risk_aversion,
                 has_query=read.query is not None,
+                collect_continuation_read_counts=collect_continuation_read_counts,
+                blocked_activity=blocked_activity,
             ),
             shift=node_shift,
         )
@@ -1440,8 +1524,14 @@ def _expect_over_stochastic_nodes(
     )
     states, _ = jax.lax.scan(
         _WeightedNodeBlockFold(read_at_nodes=read_at_nodes, reduction=reduction),
-        _seed_child_query(output=(empty, empty), installed=read.query is not None),
-        (blocked_indices, blocked_weights),
+        _seed_child_query(
+            output=(empty, empty),
+            installed=read.query is not None,
+            collect_continuation_read_counts=collect_continuation_read_counts,
+        ),
+        (blocked_indices, blocked_weights)
+        if blocked_activity is None
+        else (blocked_indices, blocked_weights, blocked_activity),
     )
     value_state, marginal_state = (
         states.output if isinstance(states, BoundedResult) else states
@@ -1463,23 +1553,33 @@ def _expect_over_stochastic_nodes(
         ),
     )
     return (
-        BoundedResult(output=output, bound_status=(), query_status=states.query_status)
+        BoundedResult(
+            output=output,
+            bound_status=states.bound_status,
+            query_status=states.query_status,
+            continuation_read_counts=states.continuation_read_counts,
+        )
         if isinstance(states, BoundedResult)
         else output
     )
 
 
 def _seed_child_query[Output: PytreeValue](
-    *, output: Output, installed: bool
+    *, output: Output, installed: bool, collect_continuation_read_counts: bool = False
 ) -> Output | BoundedResult[Output]:
     """Seed one statically installed target slot without evaluating its callback."""
     return (
         BoundedResult(
             output=output,
             bound_status=(),
-            query_status=(QueryInputStatus(*(jnp.asarray(a=False) for _ in range(3))),),
+            query_status=(QueryInputStatus(*(jnp.asarray(a=False) for _ in range(3))),)
+            if installed
+            else None,
+            continuation_read_counts=ContinuationReadCounts(jnp.int32(0), jnp.int32(0))
+            if collect_continuation_read_counts
+            else None,
         )
-        if installed
+        if installed or collect_continuation_read_counts
         else output
     )
 
@@ -1526,6 +1626,8 @@ class _ReadAtNodes:
 
     actual_query: _ActualChildQuery | None = None
     """Actual target inputs, independent of shared row-node resource queries."""
+    collect_continuation_read_counts: bool = False
+    """Static optional inventory on the same actual node read."""
 
     def __call__(
         self,
@@ -1570,6 +1672,7 @@ class _ReadAtNodes:
             query_euler_gradient=euler_gradient,
             query_action_names=read.query_action_names,
             query_action_values=read.query_action_values,
+            collect_continuation_read_counts=self.collect_continuation_read_counts,
         )
 
 
@@ -1594,23 +1697,25 @@ class _WeightedNodeBlockFold:
     def __call__(
         self,
         accumulators: _WeightedNodeState | BoundedResult[_WeightedNodeState],
-        block: tuple[tuple[IntND, ...], FloatND],
+        block: tuple[tuple[IntND, ...], FloatND]
+        | tuple[tuple[IntND, ...], FloatND, BoolND],
     ) -> tuple[_WeightedNodeState | BoundedResult[_WeightedNodeState], None]:
         """Fold one node block's value and marginal contributions."""
-        block_indices, block_weights = block
+        block_indices, block_weights = block[:2]
         block_result = jax.vmap(self.read_at_nodes)(block_indices)
         if isinstance(accumulators, BoundedResult):
             if (
                 not isinstance(block_result, BoundedResult)
                 or accumulators.bound_status
                 or block_result.bound_status
-                or accumulators.query_status is None
-                or block_result.query_status is None
+                or (accumulators.query_status is None)
+                != (block_result.query_status is None)
             ):
                 raise TypeError(
                     "A bounded node fold requires declared child query slots."
                 )
             block_values, block_marginals = block_result.output
+            block_counts = block_result.continuation_read_counts
             value_state, marginal_state = accumulators.output
             query_status = merge_query_input_status(
                 left=accumulators.query_status,
@@ -1625,6 +1730,7 @@ class _WeightedNodeBlockFold:
             block_values, block_marginals = block_result
             value_state, marginal_state = accumulators
             query_status = None
+            block_counts = None
         output = (
             self.reduction.add(
                 accumulator=value_state,
@@ -1638,10 +1744,37 @@ class _WeightedNodeBlockFold:
             ),
         )
         return (
-            BoundedResult(output=output, bound_status=(), query_status=query_status)
+            BoundedResult(
+                output=output,
+                bound_status=(),
+                query_status=query_status,
+                continuation_read_counts=merge_continuation_read_counts(
+                    left=accumulators.continuation_read_counts,
+                    right=_reduce_node_block_read_counts(
+                        counts=block_counts, block=block
+                    ),
+                ),
+            )
             if isinstance(accumulators, BoundedResult)
             else output
         ), None
+
+
+_COUNTED_NODE_BLOCK_FIELDS: Literal[3] = 3
+
+
+def _reduce_node_block_read_counts(
+    *,
+    counts: ContinuationReadCounts | None,
+    block: tuple[tuple[IntND, ...], FloatND]
+    | tuple[tuple[IntND, ...], FloatND, BoolND],
+) -> ContinuationReadCounts | None:
+    """Fold node attempts with factorwise activity, independent of weight products."""
+    if counts is None:
+        return None
+    if len(block) != _COUNTED_NODE_BLOCK_FIELDS:
+        raise TypeError("Checked node summaries require their factorwise activity.")
+    return reduce_continuation_read_counts(counts=counts, active=block[2])
 
 
 def _joint_node_weights(
@@ -1748,6 +1881,8 @@ def _accumulate_ez_partials_over_blocks(
     blocked_weights: FloatND,
     risk_aversion: ScalarFloat,
     has_query: bool = False,
+    collect_continuation_read_counts: bool = False,
+    blocked_activity: BoolND | None = None,
 ) -> _EZPartials | BoundedResult[_EZPartials]:
     """Accumulate one target PowerMean over streamed node blocks."""
     dtype = blocked_weights.dtype
@@ -1761,8 +1896,14 @@ def _accumulate_ez_partials_over_blocks(
             risk_aversion=risk_aversion,
             unit_probs=unit_probs,
         ),
-        _seed_child_query(output=(one, zero, zero, zero), installed=has_query),
-        (blocked_indices, blocked_weights),
+        _seed_child_query(
+            output=(one, zero, zero, zero),
+            installed=has_query,
+            collect_continuation_read_counts=collect_continuation_read_counts,
+        ),
+        (blocked_indices, blocked_weights)
+        if blocked_activity is None
+        else (blocked_indices, blocked_weights, blocked_activity),
     )
     return partials
 
@@ -1770,7 +1911,8 @@ def _accumulate_ez_partials_over_blocks(
 # keyword-only-exempt: library-callback=jax.lax.scan
 def _accumulate_ez_partials_block(
     carry: _EZPartials | BoundedResult[_EZPartials],
-    block: tuple[tuple[IntND, ...], FloatND],
+    block: tuple[tuple[IntND, ...], FloatND]
+    | tuple[tuple[IntND, ...], FloatND, BoolND],
     *,
     read_at_nodes: Callable[
         [tuple[ScalarInt, ...] | tuple[IntND, ...]],
@@ -1780,18 +1922,18 @@ def _accumulate_ez_partials_block(
     unit_probs: Float1D,
 ) -> tuple[_EZPartials | BoundedResult[_EZPartials], None]:
     """Blend one block's PowerMean partials into the running scan carry."""
-    block_indices, block_weights = block
+    block_indices, block_weights = block[:2]
     block_result = jax.vmap(read_at_nodes)(block_indices)
     if isinstance(carry, BoundedResult):
         if (
             not isinstance(block_result, BoundedResult)
             or carry.bound_status
             or block_result.bound_status
-            or carry.query_status is None
-            or block_result.query_status is None
+            or (carry.query_status is None) != (block_result.query_status is None)
         ):
             raise TypeError("A bounded EZ fold requires declared child query slots.")
         block_values, block_marginals = block_result.output
+        block_counts = block_result.continuation_read_counts
         partials = carry.output
         query_status = merge_query_input_status(
             left=carry.query_status,
@@ -1806,6 +1948,7 @@ def _accumulate_ez_partials_block(
         block_values, block_marginals = block_result
         partials = carry
         query_status = None
+        block_counts = None
     block_partials = ez_transform_partials(
         child_values=block_values,
         child_marginals=block_marginals,
@@ -1821,7 +1964,15 @@ def _accumulate_ez_partials_block(
         risk_aversion=risk_aversion,
     )
     return (
-        BoundedResult(output=combined, bound_status=(), query_status=query_status)
+        BoundedResult(
+            output=combined,
+            bound_status=(),
+            query_status=query_status,
+            continuation_read_counts=merge_continuation_read_counts(
+                left=carry.continuation_read_counts,
+                right=_reduce_node_block_read_counts(counts=block_counts, block=block),
+            ),
+        )
         if isinstance(carry, BoundedResult)
         else combined
     ), None
@@ -1966,11 +2117,12 @@ def _aggregate_child_choices(
     row_gradients: FloatND,
     paired_marginal_read: bool = False,
     n_outer_candidates: int = 0,
-    query: DCEGMQuery | None = None,
+    query: DCEGMQuery | NBEGMQuery | None = None,
     query_pool: EconFunctionKwargs | None = None,
     query_euler_gradient: ScalarFloat | None = None,
     query_action_names: tuple[ActionName, ...] = (),
     query_action_values: tuple[FloatND | IntND, ...] = (),
+    collect_continuation_read_counts: bool = False,
 ) -> tuple[ScalarFloat, ScalarFloat] | BoundedResult[tuple[ScalarFloat, ScalarFloat]]:
     """Read one child's carry with mixed interpolation and aggregate its choices.
 
@@ -2058,6 +2210,7 @@ def _aggregate_child_choices(
             scale=leaves[("taste_shock_scale",)],
             paired_marginal_read=paired_marginal_read,
             n_outer_candidates=n_outer_candidates,
+            collect_continuation_read_counts=collect_continuation_read_counts,
         )
     if data is not None:
         raise TypeError(
@@ -2185,7 +2338,7 @@ def _aggregate_child_choices(
 
 def _read_feature_child_choices(
     *,
-    query: DCEGMQuery,
+    query: DCEGMQuery | NBEGMQuery,
     data: EGMQueryData | None,
     pool: EconFunctionKwargs | None,
     euler_gradient: ScalarFloat | None,
@@ -2203,17 +2356,24 @@ def _read_feature_child_choices(
     scale: ScalarFloat,
     paired_marginal_read: bool,
     n_outer_candidates: int,
+    collect_continuation_read_counts: bool = False,
 ) -> BoundedResult[tuple[ScalarFloat, ScalarFloat]]:
     """Read actual feasible conditional alternatives before ordinary choice ranking."""
     if data is None or pool is None or euler_gradient is None:
+        if isinstance(query, NBEGMQuery):
+            raise TypeError("An installed NB child query lacks its canonical inputs.")
         raise TypeError("An installed DC child query lacks its canonical inputs.")
-    if n_outer_candidates:
-        raise TypeError("DC child query activation cannot reduce nested outer rows.")
-    result = query.read_choices(
+    selected = _select_feature_child_rows(
+        query=query,
+        data=data,
+        child_index=child_index,
+        n_outer_candidates=n_outer_candidates,
+    )
+    evaluated = query.read_choices(
         grid=grid,
         value=value_rows,
         marginal=marginal_rows,
-        data=select_query_data(data=data, positions=child_index),
+        data=selected,
         row_queries=row_queries,
         row_gradients=row_gradients,
         passive_values=passive_values,
@@ -2223,7 +2383,28 @@ def _read_feature_child_choices(
         pool=pool,
         euler_gradient=euler_gradient,
         paired_marginal_read=paired_marginal_read,
+        collect_continuation_read_counts=collect_continuation_read_counts,
     )
+    if collect_continuation_read_counts:
+        if isinstance(
+            evaluated,
+            DCEGMQueryResult
+            | NBEGMQueryResult
+            | FiniteNEGMQueryResult
+            | AdaptiveNBEGMQueryResult,
+        ):
+            raise TypeError("Checked choices require their paired read summary.")
+        result, read_counts = evaluated
+    else:
+        if not isinstance(
+            evaluated,
+            DCEGMQueryResult
+            | NBEGMQueryResult
+            | FiniteNEGMQueryResult
+            | AdaptiveNBEGMQueryResult,
+        ):
+            raise TypeError("Ordinary choices require their unchanged query tuple.")
+        result, read_counts = evaluated, None
     if has_taste_shocks:
         value, probabilities = logsum_and_softmax(
             values=result.value, scale=scale, axes=(0,)
@@ -2240,6 +2421,60 @@ def _read_feature_child_choices(
                 coverage_missing=jnp.any(result.coverage_missing),
             ),
         ),
+        continuation_read_counts=read_counts,
+    )
+
+
+def _select_feature_child_rows(
+    *,
+    query: DCEGMQuery | NBEGMQuery,
+    data: EGMQueryData,
+    child_index: tuple[ScalarInt, ...],
+    n_outer_candidates: int,
+) -> EGMQueryData:
+    """Validate the declared outer axis before selecting its actual child rows."""
+    adaptive = (
+        query.model.authority.adaptive_outer if isinstance(query, NBEGMQuery) else None
+    )
+    finite_nb = (
+        query.model.authority.finite_outer if isinstance(query, NBEGMQuery) else None
+    )
+    if n_outer_candidates:
+        if isinstance(query, NBEGMQuery):
+            if adaptive is not None:
+                valid_outer = n_outer_candidates == adaptive.adjuster_capacity + 1
+            else:
+                authority = query.model.authority
+                topology = authority.row_topology
+                valid_outer = (
+                    finite_nb is not None
+                    and authority.outer_mode == "finite_max"
+                    and authority.coordinate_kind == "liquid"
+                    and authority.corner_coordinate_kind == "compact_interval"
+                    and topology is not None
+                    and topology.kind == "nb_budget_interval_run"
+                    and query.finite_queries is not None
+                    and n_outer_candidates == authority.outer_capacity
+                )
+            if not valid_outer:
+                raise TypeError(
+                    "Nested NB rows require their canonical outer authority."
+                )
+        elif (
+            query.model.authority.outer_mode != "finite_max"
+            or query.model.authority.outer_capacity != n_outer_candidates
+        ):
+            raise TypeError(
+                "Nested DC rows require their canonical finite outer authority."
+            )
+    elif adaptive is not None:
+        raise TypeError("Adaptive child query omitted its declared outer capacity.")
+    elif finite_nb is not None:
+        raise TypeError("Finite NB child query omitted its declared outer capacity.")
+    return (
+        select_adaptive_query_data(data=data, cell_positions=child_index)
+        if adaptive is not None
+        else select_query_data(data=data, positions=child_index)
     )
 
 
@@ -2671,6 +2906,7 @@ def _build_child_reads(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     age_values: FloatND | IntND,
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
     source_period: int | None = None,
 ) -> MappingProxyType[RegimeName, _ChildRead]:
     """Build the per-carry-target statics of the EGM kernel's child reads.
@@ -2691,30 +2927,10 @@ def _build_child_reads(
     reads: dict[RegimeName, _ChildRead] = {}
     for target in stateful_targets:
         query_model = (dcegm_query_models or {}).get(target)
-        query = None
-        if query_model is not None:
-            if (
-                source_period is None
-                or source_period + 1 not in query_model.authority.target_periods
-            ):
-                raise TypeError(
-                    "DC child query lacks its canonical target-period binding."
-                )
-            query = build_dcegm_query(
-                model=query_model,
-                functions=cast(
-                    "EconFunctionsMapping",
-                    resolve_periodized_nodes(
-                        mapping=query_model.functions, period=source_period + 1
-                    ),
-                ),
-                koopmans_aggregator=cast(
-                    "EconFunction",
-                    resolve_periodized_node(
-                        node=query_model.koopmans_aggregator, period=source_period + 1
-                    ),
-                ),
-            )
+        nb_model = (nbegm_query_models or {}).get(target)
+        query = _build_feature_child_query(
+            query_model=query_model, nb_model=nb_model, source_period=source_period
+        )
         target_info = regime_to_v_interpolation_info[target]
         target_regime = user_regimes[target]
         euler_state_name = _get_child_state_name(user_regime=target_regime)
@@ -2806,7 +3022,7 @@ def _build_child_reads(
         # publishes a value array already maxed over its discrete actions, so the
         # read carries no per-action rows; only a choice-retaining child (DC-EGM)
         # leaves them for the parent to aggregate.
-        if layout.retains_discrete_action_rows:
+        if query is not None or layout.retains_discrete_action_rows:
             action_names, action_values = _get_child_discrete_actions(
                 user_regime=target_regime
             )
@@ -2841,6 +3057,12 @@ def _build_child_reads(
         # envelope) carries no candidate axis, and broadcasting queries over a
         # phantom axis would desync rows and queries in the read.
         n_outer_candidates = layout.n_stacked_candidates
+        if query is not None:
+            n_outer_candidates = query.model.authority.outer_capacity
+            if action_names != query.model.authority.action_names:
+                raise TypeError(
+                    "Actual conditional D order differs from canonical child authority."
+                )
         reads[target] = _ChildRead(
             next_state_func=get_next_state_function_for_solution(
                 transitions=draw_reads.laws,
@@ -2885,6 +3107,66 @@ def _build_child_reads(
             n_outer_candidates=n_outer_candidates,
         )
     return MappingProxyType(reads)
+
+
+def _build_feature_child_query(
+    *,
+    query_model: DCEGMQueryModel | None,
+    nb_model: NBEGMQueryModel | None,
+    source_period: int | None,
+) -> DCEGMQuery | NBEGMQuery | None:
+    """Bind one independently declared child authority to its canonical period."""
+    if query_model is not None and nb_model is not None:
+        raise TypeError(
+            "A child cannot have both independent DC and NB query authorities."
+        )
+    query = None
+    if query_model is not None:
+        if (
+            source_period is None
+            or source_period + 1 not in query_model.authority.target_periods
+        ):
+            raise TypeError("DC child query lacks its canonical target-period binding.")
+        query = build_dcegm_query(
+            model=query_model,
+            functions=cast(
+                "EconFunctionsMapping",
+                resolve_periodized_nodes(
+                    mapping=query_model.functions, period=source_period + 1
+                ),
+            ),
+            koopmans_aggregator=cast(
+                "EconFunction",
+                resolve_periodized_node(
+                    node=query_model.koopmans_aggregator, period=source_period + 1
+                ),
+            ),
+        )
+    elif nb_model is not None:
+        if (
+            source_period is None
+            or source_period + 1 not in nb_model.authority.target_periods
+        ):
+            raise TypeError(
+                "An NB child query lacks its canonical target-period binding."
+            )
+        query = build_nbegm_query(
+            model=nb_model,
+            target_period=source_period + 1,
+            functions=cast(
+                "EconFunctionsMapping",
+                resolve_periodized_nodes(
+                    mapping=nb_model.functions, period=source_period + 1
+                ),
+            ),
+            koopmans_aggregator=cast(
+                "EconFunction",
+                resolve_periodized_node(
+                    node=nb_model.koopmans_aggregator, period=source_period + 1
+                ),
+            ),
+        )
+    return query
 
 
 @dataclass(frozen=True, kw_only=True)

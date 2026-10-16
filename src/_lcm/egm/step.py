@@ -159,6 +159,8 @@ from _lcm.egm.continuation_grids import (
 )
 from _lcm.egm.dcegm_query_model import DCEGMQueryModel
 from _lcm.egm.kernel_scope import _find_unsupported_feature
+from _lcm.egm.nbegm_query_model import NBEGMQueryModel
+from _lcm.egm.nested_floor import PreparedNestedFloor
 from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.egm.query_data import EGMQueryData, build_template_egm_query_data
@@ -193,6 +195,7 @@ from _lcm.solution.dcegm import (
     ExactEnvelope,
     _BoundDCEGM,
     _DCEGMStepOutput,
+    _NestedDCEGMStepChannels,
 )
 from _lcm.solution.feasibility import (
     BoundedResult,
@@ -271,6 +274,7 @@ def build_egm_step_functions(
     age_values: FloatND | IntND,
     query_model: DCEGMQueryModel | None = None,
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
 ) -> EGMStepBuild:
     """Build per-period DC-EGM kernels and the regime's carry template.
 
@@ -462,7 +466,13 @@ def build_egm_step_functions(
                             ),
                         )
                         for target in carry
-                        if (model := (dcegm_query_models or {}).get(target)) is not None
+                        if (
+                            model := (
+                                (dcegm_query_models or {}).get(target)
+                                or (nbegm_query_models or {}).get(target)
+                            )
+                        )
+                        is not None
                     ),
                 ),
             ),
@@ -509,6 +519,20 @@ def build_egm_step_functions(
             own_passive_state_names=own_passive_state_names,
             own_discrete_action_names=tuple(own_discrete_action_values),
             asset_row_mode=asset_row_mode,
+            post_inversion_predicate_names=(
+                frozenset(
+                    target
+                    for purpose, target in query_model.authority.evaluator_targets
+                    if purpose == f"predicate:{target}"
+                    and target in group_constraints
+                    and target in query_model.functions
+                    and solver.continuous_state
+                    in dict(query_model.authority.evaluator_inputs)[purpose]
+                )
+                if isinstance(query_model, DCEGMQueryModel)
+                and isinstance(solver.envelope, ExactEnvelope)
+                else frozenset()
+            ),
         )
         if unsupported is not None:
             raise ModelInitializationError(unsupported)
@@ -545,6 +569,7 @@ def build_egm_step_functions(
             age_values=age_values,
             query_model=query_model,
             dcegm_query_models=dcegm_query_models,
+            nbegm_query_models=nbegm_query_models,
             source_period=representative_period,
         )
         built[group_key] = kernel
@@ -632,6 +657,7 @@ def _get_egm_step(
     age_values: FloatND | IntND,
     query_model: DCEGMQueryModel | None = None,
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
     source_period: int | None = None,
 ) -> EGMStepFunction[_DCEGMStepOutput]:
     """Build the EGM kernel for one continuation-target configuration.
@@ -673,7 +699,9 @@ def _get_egm_step(
         age_values=age_values,
         query_model=query_model,
         dcegm_query_models=dcegm_query_models,
+        nbegm_query_models=nbegm_query_models,
         source_period=source_period,
+        asset_row_mode=asset_row_mode,
     )
 
     return _EGMStep(
@@ -737,6 +765,7 @@ class _EGMStep:
         _lcm_savings_point_width: int | None = None,
         _lcm_euler_point_width: int | None = None,
         _lcm_envelope_cell_width: int = 1,
+        _lcm_prepared_nested_floor: PreparedNestedFloor | None = None,
         **kwargs: EconFunctionArg,
     ) -> _DCEGMStepOutput:
         """Run the DC-EGM step and publish V on the exogenous grid.
@@ -765,6 +794,16 @@ class _EGMStep:
 
         """
         pieces = self.pieces
+        if _lcm_prepared_nested_floor is not None:
+            pieces = replace(
+                pieces,
+                _prepared_nested_floor=_lcm_prepared_nested_floor,
+                _prepared_nested_axes=tuple(
+                    (name, jnp.asarray(kwargs[name]))
+                    for name in self.own_discrete_state_names
+                    + self.own_passive_state_names
+                ),
+            )
         dtype = canonical_float_dtype()
         own_state_names = {
             pieces.euler_state_name,
@@ -836,6 +875,8 @@ class _EGMStep:
                     pieces.query_spec is not None
                     or pieces.check_query_construction
                     or bool(pieces.continuation_plan.query_targets)
+                    or pieces.collect_continuation_read_counts
+                    or pieces._retain_nested_feasibility  # noqa: SLF001
                 ),
             )
             if isinstance(mapped, BoundedResult):
@@ -906,6 +947,7 @@ class _EGMStep:
                     combo=combo,
                     taste_shock_scale=own_taste_shock_scale,
                     mask_gap_rows=self.mask_gap_rows,
+                    retain_nested_feasibility=pieces._retain_nested_feasibility,  # noqa: SLF001
                 )
             V_arr, grid_row, policy_row, value_row, marginal_row, read_supported = combo
             carry = EGMCarry(
@@ -938,7 +980,10 @@ def _publish_conditional_product(
     discrete_state_names: tuple[StateName, ...],
     passive_state_names: tuple[StateName, ...],
     discrete_action_names: tuple[ActionName, ...],
-) -> BoundedResult[tuple[FloatND, EGMCarry, EGMSimPolicy, FeasibilityCounts]]:
+) -> (
+    BoundedResult[tuple[FloatND, EGMCarry, EGMSimPolicy, FeasibilityCounts | None]]
+    | BoundedResult[_NestedDCEGMStepChannels]
+):
     """Publish conditional choice rows and reduce feasibility on state nodes."""
     V, grid, policy, value, marginal, read_supported, data, feasible = rows.output
     n_state_axes = len(discrete_state_names) + len(passive_state_names)
@@ -976,6 +1021,43 @@ def _publish_conditional_product(
         row_passive_state_names=passive_state_names,
         row_discrete_action_names=discrete_action_names,
     )
+    if pieces._retain_nested_feasibility:  # noqa: SLF001
+        node_feasible = jnp.moveaxis(feasible, -1, n_state_axes).reshape(
+            *V_state.shape, -1
+        )
+        counts = (
+            count_current_feasibility(
+                budget_feasible=node_feasible,
+                predicate_feasible=jnp.ones((*node_feasible.shape, 0), dtype=jnp.bool_),
+                value=V_state,
+                active_states=jnp.ones(V_state.shape, dtype=jnp.bool_),
+            )
+            if rows.bound_status or rows.query_status is not None
+            else None
+        )
+        return BoundedResult(
+            output=(
+                jnp.moveaxis(V_state, -1, pieces.euler_axis_in_V),
+                carry,
+                sim_policy,
+                counts,
+                jnp.moveaxis(node_feasible, -2, pieces.euler_axis_in_V),
+            ),
+            bound_status=rows.bound_status,
+            query_status=rows.query_status,
+            continuation_read_counts=rows.continuation_read_counts,
+        )
+    if not rows.bound_status and rows.query_status is None:
+        return BoundedResult(
+            output=(
+                jnp.moveaxis(V_state, -1, pieces.euler_axis_in_V),
+                carry,
+                sim_policy,
+                None,
+            ),
+            bound_status=(),
+            continuation_read_counts=rows.continuation_read_counts,
+        )
     node_feasible = jnp.moveaxis(feasible, -1, n_state_axes).reshape(*V_state.shape, -1)
     counts = count_current_feasibility(
         budget_feasible=node_feasible,
@@ -992,6 +1074,7 @@ def _publish_conditional_product(
         ),
         bound_status=rows.bound_status,
         query_status=rows.query_status,
+        continuation_read_counts=rows.continuation_read_counts,
     )
 
 
@@ -1000,7 +1083,11 @@ def _publish_conditional_combo(
     combo: BoundedResult[_ConditionalComboRows],
     taste_shock_scale: ScalarFloat,
     mask_gap_rows: bool,
-) -> BoundedResult[tuple[FloatND, EGMCarry, EGMSimPolicy, FeasibilityCounts]]:
+    retain_nested_feasibility: bool = False,
+) -> (
+    BoundedResult[tuple[FloatND, EGMCarry, EGMSimPolicy, FeasibilityCounts | None]]
+    | BoundedResult[_NestedDCEGMStepChannels]
+):
     """Publish one conditional row with independent counts and bounded integrity."""
     value, grid, policy, row_value, marginal, read_supported, data, feasible = (
         combo.output
@@ -1019,6 +1106,29 @@ def _publish_conditional_combo(
         value=jnp.where(read_ok, row_value, jnp.nan),
         marginal_utility=jnp.where(read_ok, marginal, jnp.nan),
     )
+    if retain_nested_feasibility:
+        counts = (
+            count_current_feasibility(
+                budget_feasible=feasible[:, None],
+                predicate_feasible=jnp.ones((*feasible.shape, 1, 0), dtype=jnp.bool_),
+                value=value,
+                active_states=jnp.ones(feasible.shape, dtype=jnp.bool_),
+            )
+            if combo.bound_status or combo.query_status is not None
+            else None
+        )
+        return BoundedResult(
+            output=(value, carry, sim_policy, counts, feasible[:, None]),
+            bound_status=combo.bound_status,
+            query_status=combo.query_status,
+            continuation_read_counts=combo.continuation_read_counts,
+        )
+    if not combo.bound_status and combo.query_status is None:
+        return BoundedResult(
+            output=(value, carry, sim_policy, None),
+            bound_status=(),
+            continuation_read_counts=combo.continuation_read_counts,
+        )
     counts = count_current_feasibility(
         budget_feasible=feasible[:, None],
         predicate_feasible=jnp.ones((*feasible.shape, 1, 0), dtype=jnp.bool_),
@@ -1029,6 +1139,7 @@ def _publish_conditional_combo(
         output=(value, carry, sim_policy, counts),
         bound_status=combo.bound_status,
         query_status=combo.query_status,
+        continuation_read_counts=combo.continuation_read_counts,
     )
 
 
@@ -1136,6 +1247,7 @@ def _map_combo_product(
             ),
             bound_status=stacked.bound_status,
             query_status=stacked.query_status,
+            continuation_read_counts=stacked.continuation_read_counts,
         )
     return tuple(
         _reorder_combo_axes(
@@ -1196,7 +1308,9 @@ def _build_kernel_pieces(
     age_values: FloatND | IntND,
     query_model: DCEGMQueryModel | None = None,
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
     source_period: int | None = None,
+    asset_row_mode: bool = False,
 ) -> _EgmKernelPieces:
     """Assemble the build-time statics of the EGM kernel."""
     savings_nodes = jnp.asarray(
@@ -1216,6 +1330,7 @@ def _build_kernel_pieces(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         age_values=age_values,
         dcegm_query_models=dcegm_query_models,
+        nbegm_query_models=nbegm_query_models,
         source_period=source_period,
     )
     return _EgmKernelPieces(
@@ -1264,6 +1379,12 @@ def _build_kernel_pieces(
         ),
         continuation_plan=continuation_plan,
         query_spec=None if query_model is None else query_model.authority,
+        _retain_nested_feasibility=solver._retain_nested_feasibility,  # noqa: SLF001
+        _negm_current_publication=(
+            solver._negm_current_publication  # noqa: SLF001
+            and isinstance(solver.envelope, ExactEnvelope)
+            and not asset_row_mode
+        ),
         lower_func=(
             concatenate_regime_function(
                 functions=functions, target=solver.post_decision_bound.lower_target
@@ -1281,14 +1402,14 @@ def _build_feasibility_function(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
 ) -> Callable[..., ScalarBool] | None:
-    """Build the discrete-feasibility predicate of a combo, or `None`.
+    """Build current feasibility, or `None` when no predicate remains.
 
-    DC-EGM validation guarantees that no constraint reaches the continuous
-    state or action, so every constraint is evaluable per discrete combo.
+    The route binds either a discrete combo or a published current-state node.
+    Continuous actions are unavailable at both predicate sites.
 
     Returns:
-        Callable mapping a combo's pool (discrete values plus flat params)
-        to a scalar feasibility indicator, or `None` without constraints.
+        Callable mapping the bound current-state pool to a scalar feasibility
+        indicator, or `None` without constraints.
 
     """
     if not constraints:
@@ -1309,7 +1430,7 @@ def _build_feasibility_function(
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _ComboFeasibility:
-    """All of a regime's constraints, evaluated and conjoined for one combo."""
+    """Evaluate and conjoin current constraints at the route's bound state."""
 
     constraints_func: Callable[..., Mapping[str, BoolND]]
     """The concatenated constraint DAG, returning every constraint by name."""

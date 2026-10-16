@@ -389,12 +389,41 @@ def read_owned_row(
     Below support the first owning secant extends; above support the last
     original candidate clamps. No gap or foreign run becomes represented.
     """
+    result, _ = _read_owned_row_with_support(
+        query=query,
+        grid=grid,
+        value=value,
+        marginal=marginal,
+        data=data,
+        owner_capacity=owner_capacity,
+        side_is_row_side=side_is_row_side,
+    )
+    return result
+
+
+def _read_owned_row_with_support(
+    *,
+    query: ScalarFloat,
+    grid: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    data: EGMQueryData,
+    owner_capacity: int,
+    side_is_row_side: bool = True,
+    _left_endpoint: bool = False,
+) -> tuple[OwnedRowRead, BoolND]:
+    """Retain the node-support mask already required by the associated row read."""
     search, count = prepare_padded_grid(grid)
     last = jnp.maximum(count - 1, 0)
     insertion = jnp.searchsorted(search, query, side="right")
     exact_index = jnp.clip(insertion - 1, 0, last).astype(jnp.int32)
+    if _left_endpoint:
+        left = jnp.clip(jnp.searchsorted(search, query, side="left"), 0, last)
+        exact_index = jnp.where(grid[left] == query, left, exact_index)
     endpoint = (count > 0) & ((grid[exact_index] == query) | (query >= grid[last]))
     endpoint_index = jnp.where(query >= grid[last], last, exact_index)
+    if _left_endpoint:
+        endpoint_index = jnp.where(query > grid[last], last, exact_index)
     upper = jnp.clip(insertion, 1, jnp.maximum(count - 1, 1)).astype(jnp.int32)
     lower = upper - 1
     pair_link = (
@@ -458,6 +487,7 @@ def read_owned_row(
         node_index=endpoint_index,
         last=last,
         side_is_row_side=side_is_row_side,
+        _left_endpoint=_left_endpoint,
     )
     complete_nodes = (~active_lower | supported_node[lower]) & (
         ~active_upper | supported_node[upper]
@@ -477,7 +507,7 @@ def read_owned_row(
     supported = (
         (count > 0) & complete_nodes & connected & ~negative_economic & ~invalid_numeric
     )
-    return OwnedRowRead(
+    result = OwnedRowRead(
         value=jnp.where(
             supported, jnp.where(positive_economic, -jnp.inf, row_value), 0.0
         ),
@@ -488,6 +518,7 @@ def read_owned_row(
         owner_id=jnp.where(supported, data.owner_id[lower], -1),
         side_id=jnp.where(supported & endpoint, data.side_id[lower], 0),
     )
+    return result, supported_node
 
 
 def _read_owned_channels(
@@ -505,6 +536,7 @@ def _read_owned_channels(
     node_index: ScalarInt,
     last: ScalarInt,
     side_is_row_side: bool,
+    _left_endpoint: bool = False,
 ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
     """Reuse the declared interpolants on one safe, already owned local piece.
 
@@ -513,9 +545,51 @@ def _read_owned_channels(
     available. Outgoing endpoints use their left piece; incoming nodes use
     their right piece. Local scratch never adds represented row support.
     """
-    use_left = (node_index == last) | (
-        side_is_row_side & (data.side_id[node_index] == -1)
+    use_left = (
+        _left_endpoint
+        | (node_index == last)
+        | (side_is_row_side & (data.side_id[node_index] == -1))
     )
+    indices, count, _ = _get_owned_local_piece(
+        grid=grid,
+        data=data,
+        supported_node=supported_node,
+        lower=lower,
+        upper=upper,
+        endpoint=endpoint,
+        node_index=node_index,
+        last=last,
+        use_left=use_left,
+    )
+    local_grid = grid[indices]
+    search_grid = jnp.where(jnp.arange(2) < count, local_grid, jnp.inf)
+    read = functools.partial(
+        interp_on_prepared_grid,
+        x_query=query,
+        search_grid=search_grid,
+        valid_length=count,
+        xp=local_grid,
+    )
+    return (
+        read(fp=value[indices], fp_slopes=marginal[indices]),
+        read(fp=marginal[indices]),
+        read(fp=savings[indices]),
+    )
+
+
+def _get_owned_local_piece(
+    *,
+    grid: Float1D,
+    data: EGMQueryData,
+    supported_node: BoolND,
+    lower: ScalarInt,
+    upper: ScalarInt,
+    endpoint: ScalarBool,
+    node_index: ScalarInt,
+    last: ScalarInt,
+    use_left: ScalarBool,
+) -> tuple[Int1D, ScalarInt, ScalarBool]:
+    """Locate an authenticated adjacent piece or its original singleton fallback."""
     piece_lower = jnp.where(
         endpoint, jnp.where(use_left, jnp.maximum(node_index - 1, 0), node_index), lower
     )
@@ -541,21 +615,8 @@ def _read_owned_channels(
     piece_lower = jnp.where(has_piece, piece_lower, fallback)
     piece_upper = jnp.where(has_piece, piece_upper, fallback)
     indices = jnp.stack((piece_lower, piece_upper))
-    local_grid = grid[indices]
     count = jnp.where(has_piece, jnp.int32(2), jnp.int32(1))
-    search_grid = jnp.where(jnp.arange(2) < count, local_grid, jnp.inf)
-    read = functools.partial(
-        interp_on_prepared_grid,
-        x_query=query,
-        search_grid=search_grid,
-        valid_length=count,
-        xp=local_grid,
-    )
-    return (
-        read(fp=value[indices], fp_slopes=marginal[indices]),
-        read(fp=marginal[indices]),
-        read(fp=savings[indices]),
-    )
+    return indices, count, has_piece
 
 
 def read_value_row(

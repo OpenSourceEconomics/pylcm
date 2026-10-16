@@ -54,7 +54,16 @@ import jax.numpy as jnp
 from _lcm.egm.upper_envelope._exact_affine import exact_affine_read
 from _lcm.egm.upper_envelope.cell_hull import hull_owners
 from _lcm.egm.upper_envelope.topology import count_linked_runs, monotone_run_ids
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarBool, ScalarInt
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    LoopIndex,
+    ScalarBool,
+    ScalarInt,
+)
 
 # Static capacity for the number of x-monotone runs a candidate chain may fold
 # into. One discrete action can fold arbitrarily often, so this is a validated
@@ -82,6 +91,55 @@ class OwnedEnvelope(NamedTuple):
     link_valid: BoolND
     source_left_index: Int1D
     source_right_index: Int1D
+
+
+class _NegmBindingEnvelope(NamedTuple):
+    """Associate current publication queries with native floor-source ownership."""
+
+    grid: Float1D
+    policy: Float1D
+    value: Float1D
+    n_kept: ScalarInt
+    binding_query: BoolND
+
+
+class _OwnedNegmBindingEnvelope(NamedTuple):
+    """Keep native publication flags beside the same envelope's original owners."""
+
+    owned: OwnedEnvelope
+    binding_query: BoolND
+
+
+@overload
+def refine_envelope_exact(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    n_refined: int,
+    savings: Float1D,
+    _binding_source_count: int,
+    _binding_queries: FloatND,
+    segment_id: Float1D | None = None,
+    max_runs: int = DEFAULT_MAX_RUNS,
+    cell_width: int = 1,
+) -> _OwnedNegmBindingEnvelope: ...
+
+
+@overload
+def refine_envelope_exact(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    n_refined: int,
+    _binding_source_count: int,
+    _binding_queries: FloatND,
+    segment_id: Float1D | None = None,
+    max_runs: int = DEFAULT_MAX_RUNS,
+    cell_width: int = 1,
+    savings: None = None,
+) -> _NegmBindingEnvelope: ...
 
 
 @overload
@@ -122,7 +180,14 @@ def refine_envelope_exact(
     max_runs: int = DEFAULT_MAX_RUNS,
     cell_width: int = 1,
     savings: Float1D | None = None,
-) -> tuple[Float1D, Float1D, Float1D, ScalarInt] | OwnedEnvelope:
+    _binding_source_count: int | None = None,
+    _binding_queries: FloatND | None = None,
+) -> (
+    tuple[Float1D, Float1D, Float1D, ScalarInt]
+    | OwnedEnvelope
+    | _NegmBindingEnvelope
+    | _OwnedNegmBindingEnvelope
+):
     """Refine a candidate value correspondence to its exact upper envelope.
 
     Args:
@@ -148,6 +213,8 @@ def refine_envelope_exact(
         then not publishable.
 
     """
+    if (_binding_source_count is None) != (_binding_queries is None):
+        raise ValueError("Binding queries require their source-prefix count.")
     dead = jnp.isnan(endog_grid) | jnp.isnan(value)
     run_id = monotone_run_ids(endog_grid=endog_grid, dead=dead, segment_id=segment_id)
     n_runs = count_linked_runs(endog_grid=endog_grid, dead=dead, segment_id=segment_id)
@@ -187,8 +254,9 @@ def refine_envelope_exact(
     out_grid = jnp.where(uncertain, poison, out_grid)
     out_policy = jnp.where(uncertain, poison, out_policy)
     out_value = jnp.where(uncertain, poison, out_value)
+    owned = None
     if isinstance(emitted, OwnedEnvelope):
-        return OwnedEnvelope(
+        owned = OwnedEnvelope(
             grid=out_grid,
             policy=out_policy,
             value=out_value,
@@ -200,6 +268,25 @@ def refine_envelope_exact(
             source_left_index=jnp.where(uncertain, -1, emitted.source_left_index),
             source_right_index=jnp.where(uncertain, -1, emitted.source_right_index),
         )
+    if _binding_queries is not None and _binding_source_count is not None:
+        binding_query = _classify_binding_queries(
+            sub_cells=sub_cells,
+            endog_grid=endog_grid,
+            queries=_binding_queries,
+            source_count=_binding_source_count,
+            emitted_grid=out_grid,
+            emitted_policy=out_policy,
+            emitted_value=out_value,
+            n_kept=n_kept,
+            uncertain=uncertain,
+        )
+        if owned is not None:
+            return _OwnedNegmBindingEnvelope(owned, binding_query)
+        return _NegmBindingEnvelope(
+            out_grid, out_policy, out_value, n_kept, binding_query
+        )
+    if owned is not None:
+        return owned
     return out_grid, out_policy, out_value, n_kept
 
 
@@ -255,6 +342,82 @@ class _SubCells:
         """How many sub-cells were owned, counted before any were dropped."""
         self.poisoned = poisoned
         """Whether any ownership decision could not be certified."""
+
+
+def _classify_binding_queries(
+    *,
+    sub_cells: _SubCells,
+    endog_grid: Float1D,
+    queries: FloatND,
+    source_count: int,
+    emitted_grid: Float1D,
+    emitted_policy: Float1D,
+    emitted_value: Float1D,
+    n_kept: ScalarInt,
+    uncertain: ScalarBool,
+) -> BoolND:
+    """Locate each query's native sub-cell without a query-by-cell workspace.
+
+    At a shared boundary the incoming sub-cell owns the query. An exact original
+    endpoint uses that endpoint's source; every other query needs both owning
+    link endpoints in the producer's floor prefix. Unresolved ownership,
+    capacity overflow and refused live emitted channels withhold all flags.
+    """
+    capacity = sub_cells.left.size
+    n_live = jnp.clip(sub_cells.n_live, 0, capacity)
+    lower = jnp.zeros(queries.shape, dtype=jnp.int32)
+    upper = jnp.full(queries.shape, n_live, dtype=jnp.int32)
+    safe_query = jnp.where(jnp.isfinite(queries), queries, 0.0)
+
+    # keyword-only-exempt: library-callback=jax.lax.fori_loop
+    def bisect(_: LoopIndex, bounds: tuple[IntND, IntND]) -> tuple[IntND, IntND]:
+        low, high = bounds
+        middle = low + (high - low) // 2
+        searching = low < high
+        go_right = (
+            searching
+            & (middle < n_live)
+            & (sub_cells.left[jnp.minimum(middle, capacity - 1)] <= safe_query)
+        )
+        return (
+            jnp.where(go_right, middle + 1, low),
+            jnp.where(searching & ~go_right, middle, high),
+        )
+
+    lower, _ = jax.lax.fori_loop(0, capacity.bit_length(), bisect, (lower, upper))
+    selected = jnp.clip(lower - 1, 0, capacity - 1)
+    low = sub_cells.owner_left_index[selected]
+    high = sub_cells.owner_right_index[selected]
+    low_floor = (low >= 0) & (low < source_count)
+    high_floor = (high >= 0) & (high < source_count)
+    source_is_floor = jnp.where(
+        safe_query == endog_grid[low],
+        low_floor,
+        jnp.where(safe_query == endog_grid[high], high_floor, low_floor & high_floor),
+    )
+    covered = (
+        jnp.isfinite(queries)
+        & (lower > 0)
+        & (selected < n_live)
+        & (safe_query >= sub_cells.left[selected])
+        & (safe_query <= sub_cells.right[selected])
+    )
+    live = jnp.arange(emitted_grid.size) < n_kept
+    readable = jnp.all(
+        ~live
+        | (
+            jnp.isfinite(emitted_grid)
+            & jnp.isfinite(emitted_policy)
+            & jnp.isfinite(emitted_value)
+        )
+    )
+    resolved = (
+        ~uncertain
+        & (sub_cells.n_live <= capacity)
+        & (n_kept <= emitted_grid.size)
+        & readable
+    )
+    return covered & source_is_floor & resolved
 
 
 def _node_cells(

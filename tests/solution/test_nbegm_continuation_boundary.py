@@ -15,6 +15,7 @@ from _lcm.solution.feasibility import BoundedResult, QueryInputStatus
 from _lcm.solution.nbegm import (
     _interval_rows,
     _NBEGMCellContinuation,
+    _NBEGMContinuationRows,
     _NBEGMRideAlongStatics,
     _NBEGMScheduleSpec,
 )
@@ -178,7 +179,7 @@ def test_nbegm_plain_boundary_refuses_uninstalled_query_status(
     )
     cell = _cell(continuation=continuation)
 
-    def read_rows() -> tuple[FloatND, ...]:
+    def read_rows() -> _NBEGMContinuationRows:
         if boundary == "cell":
             return cell._cell_rows_for_pool(combo_pool={})
         return _interval_rows(
@@ -198,5 +199,6 @@ def test_nbegm_plain_boundary_refuses_uninstalled_query_status(
             read_rows()
     else:
         rows = read_rows()
+        assert not isinstance(rows, BoundedResult)
         np.testing.assert_array_equal(rows[0], [7.0, 9.0, 11.0])
         np.testing.assert_array_equal(rows[1], [2.0, 2.0, 2.0])

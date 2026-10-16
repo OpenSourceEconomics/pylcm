@@ -23,14 +23,22 @@ between candidates. Each step consumes `next_marginal` and publishes its associa
 consumption marginal.
 """
 
-from typing import NamedTuple
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, NamedTuple, cast
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import interp_on_regular_grid
 from _lcm.egm.preferences import Preferences
-from lcm.typing import Bool1D, Float1D, ScalarFloat
+from lcm.typing import Bool1D, Float1D, Int1D, ScalarFloat
+
+if TYPE_CHECKING:
+    from _lcm.typing import PytreeChild
+else:
+    # EGM records are imported while the engine type vocabulary is initialized.
+    type PytreeChild = object
 
 
 class RetiredEGMResult(NamedTuple):
@@ -52,6 +60,51 @@ class RetiredEGMResult(NamedTuple):
     """Strict original adjacent interiors whose reconstructed actions need valuation."""
 
 
+class _EGMSavingsSupport(NamedTuple):
+    """Identify the declared floor and represented augmented savings candidates."""
+
+    floor: ScalarFloat
+    """Evaluated lower bound, independent of augmented sorting positions."""
+    active: Bool1D
+    """Participation of original nodes and admitted boundary candidates."""
+    candidate_id: Int1D
+    """Original index or negative flattened boundary-side construction index."""
+
+
+def _flatten_egm_savings_support(
+    support: _EGMSavingsSupport,
+) -> tuple[tuple[PytreeChild, ...], None]:
+    return tuple(support), None
+
+
+def _flatten_egm_savings_support_with_keys(
+    support: _EGMSavingsSupport,
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
+    return tuple(
+        (jax.tree_util.GetAttrKey(name), leaf)
+        for name, leaf in zip(_EGMSavingsSupport._fields, support, strict=True)
+    ), None
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_egm_savings_support(
+    _aux: None, children: Iterable[PytreeChild]
+) -> _EGMSavingsSupport:
+    """Restore compiler descriptors and temporary batch axes without scalar checks."""
+    leaves = tuple(children)
+    if len(leaves) != len(_EGMSavingsSupport._fields):
+        raise TypeError("Savings support requires all its associated fields.")
+    return cast("_EGMSavingsSupport", tuple.__new__(_EGMSavingsSupport, leaves))
+
+
+jax.tree_util.register_pytree_with_keys(
+    _EGMSavingsSupport,
+    _flatten_egm_savings_support_with_keys,
+    _unflatten_egm_savings_support,
+    _flatten_egm_savings_support,
+)
+
+
 def egm_one_asset_step(
     *,
     next_value: Float1D,
@@ -66,6 +119,7 @@ def egm_one_asset_step(
     continuation_value: Float1D | None = None,
     continuation_marginal: Float1D | None = None,
     feature_floor: bool = False,
+    savings_support: _EGMSavingsSupport | None = None,
 ) -> RetiredEGMResult:
     """Solve one period of the 1-D consumption--saving problem by EGM.
 
@@ -117,8 +171,8 @@ def egm_one_asset_step(
             x_query=next_liquid, xp=next_liquid_grid, fp=next_marginal
         )
     )
-    if feature_floor:
-        return _solve_viable_feature_row(
+    if feature_floor or savings_support is not None:
+        result = _solve_viable_feature_row(
             value_next=value_next,
             marginal_next=marginal_next,
             liquid_grid=liquid_grid,
@@ -126,7 +180,10 @@ def egm_one_asset_step(
             discount_factor=discount_factor,
             preferences=preferences,
             marginal_return=marginal_return,
+            next_liquid=next_liquid,
+            savings_support=savings_support,
         )
+        return result if feature_floor else result._replace(coverage_missing=None)
 
     consumption = invert_euler(
         expected_marginal_continuation=marginal_return * marginal_next,
@@ -212,6 +269,8 @@ def _solve_viable_feature_row(
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
     marginal_return: Float1D,
+    next_liquid: Float1D,
+    savings_support: _EGMSavingsSupport | None = None,
 ) -> RetiredEGMResult:
     """Interpolate viable candidate tuples without crossing missing original links.
 
@@ -220,14 +279,38 @@ def _solve_viable_feature_row(
     original indices to distinguish adjacent support from a gap. The declared floor
     owns its separate corner; the first viable saving never replaces it.
     """
-    invalid = jnp.any(
-        jnp.isnan(value_next)
-        | jnp.isposinf(value_next)
-        | ~jnp.isfinite(marginal_next)
-        | (marginal_next < 0.0)
-        | ~jnp.isfinite(marginal_return)
-    )
-    viable = jnp.isfinite(value_next)
+    logical_rank = None
+    floor_index = 0
+    if savings_support is None:
+        invalid = jnp.any(
+            jnp.isnan(value_next)
+            | jnp.isposinf(value_next)
+            | ~jnp.isfinite(marginal_next)
+            | (marginal_next < 0.0)
+            | ~jnp.isfinite(marginal_return)
+        )
+        viable = jnp.isfinite(value_next)
+    else:
+        invalid = jnp.any(
+            savings_support.active
+            & (
+                jnp.isnan(value_next)
+                | jnp.isposinf(value_next)
+                | ~jnp.isfinite(marginal_next)
+                | (marginal_next < 0.0)
+                | ~jnp.isfinite(marginal_return)
+            )
+        )
+        active, logical_rank = _prepare_augmented_savings_support(
+            savings_grid=savings_grid,
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
+            value_next=value_next,
+            marginal_next=marginal_next,
+            savings_support=savings_support,
+        )
+        floor_index = jnp.argmax(savings_support.candidate_id == 0)
+        viable = active & jnp.isfinite(value_next)
     consumption = invert_euler(
         expected_marginal_continuation=jnp.where(
             viable, marginal_return * marginal_next, 1.0
@@ -257,33 +340,54 @@ def _solve_viable_feature_row(
     last = jnp.maximum(count - 1, 0)
     indices = jnp.where(positions < count, original_indices, original_indices[last])
     support = jnp.where(positions < count, liquid_endog[indices], jnp.inf)
+    # Canonical duplicate inputs have already folded. Equal cash from distinct
+    # remaining tuples has no declared winner and cannot authorize an interval.
     ordered = jnp.all(
         jnp.where(
-            positions[1:] < count, support[1:] > support[:-1], jnp.asarray(a=True)
+            positions[1:] < count, support[1:] >= support[:-1], jnp.asarray(a=True)
         )
     )
     lower = jnp.clip(jnp.searchsorted(support, liquid_grid, side="right") - 1, 0, last)
     upper = jnp.minimum(lower + 1, last)
     exact = liquid_grid == support[lower]
     above = (count > 0) & (liquid_grid >= support[last])
-    adjacent = indices[upper] == indices[lower] + 1
+    adjacent = (
+        indices[upper] == indices[lower] + 1
+        if logical_rank is None
+        else logical_rank[indices[upper]] == logical_rank[indices[lower]] + 1
+    )
     interior_supported = (
         (count > 0) & ordered & (liquid_grid >= support[0]) & (exact | above | adjacent)
     )
-    interior_value = jnp.interp(liquid_grid, support, value_endog[indices])
-    interior_consumption = jnp.interp(liquid_grid, support, consumption[indices])
-    interior_savings = jnp.interp(liquid_grid, support, savings_grid[indices])
+    at_endpoint = exact | above
+    selected_original = indices[lower]
+    interior_value = jnp.where(
+        at_endpoint,
+        value_endog[selected_original],
+        jnp.interp(liquid_grid, support, value_endog[indices]),
+    )
+    interior_consumption = jnp.where(
+        at_endpoint,
+        consumption[selected_original],
+        jnp.interp(liquid_grid, support, consumption[indices]),
+    )
+    interior_savings = jnp.where(
+        at_endpoint,
+        savings_grid[selected_original],
+        jnp.interp(liquid_grid, support, savings_grid[indices]),
+    )
 
-    floor = savings_grid[0]
+    floor = savings_grid[0] if savings_support is None else savings_support.floor
     domain = liquid_grid > floor
     corner_consumption = jnp.where(domain, liquid_grid - floor, 1.0)
     corner_value = (
-        preferences.utility(corner_consumption) + discount_factor * value_next[0]
+        preferences.utility(corner_consumption)
+        + discount_factor * value_next[floor_index]
     )
     invalid |= jnp.any(jnp.isnan(corner_value) | jnp.isposinf(corner_value))
     corner_supported = (
         domain
-        & jnp.isfinite(value_next[0])
+        & jnp.isfinite(value_next[floor_index])
         & ((count == 0) | (liquid_grid < support[0]))
     )
     choose_corner = corner_supported & (
@@ -304,7 +408,7 @@ def _solve_viable_feature_row(
         marginal=jnp.where(invalid, jnp.nan, marginal),
         consumption=consumption_on_grid,
         savings=saving_on_grid,
-        corner_continuation=value_next[0],
+        corner_continuation=value_next[floor_index],
         coverage_missing=domain & ~supported,
         rescore_interior=(
             ~invalid
@@ -319,3 +423,35 @@ def _solve_viable_feature_row(
             & jnp.isfinite(saving_on_grid)
         ),
     )
+
+
+def _prepare_augmented_savings_support(
+    *,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    value_next: Float1D,
+    marginal_next: Float1D,
+    savings_support: _EGMSavingsSupport,
+) -> tuple[Bool1D, Int1D]:
+    """Rank represented canonical reads before removing economic missing nodes.
+
+    Every record is read by the same canonical numeric child reader. An exact
+    repeated saving can be omitted only when its complete evaluated law and child
+    tuple agrees. Generated side indices describe construction, not child owners.
+    Activity is independent of economic viability, so an absent slot never splits
+    an edge and removing an economic original never creates an edge.
+    """
+    active = savings_support.active
+    same_read = (
+        active[1:]
+        & active[:-1]
+        & (savings_grid[1:] == savings_grid[:-1])
+        & (next_liquid[1:] == next_liquid[:-1])
+        & (marginal_return[1:] == marginal_return[:-1])
+        & (value_next[1:] == value_next[:-1])
+        & (marginal_next[1:] == marginal_next[:-1])
+    )
+    keep = active & ~jnp.concatenate((jnp.asarray([False]), same_read))
+    logical_rank = jnp.cumsum(keep, dtype=jnp.int32) - 1
+    return keep, logical_rank

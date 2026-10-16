@@ -762,6 +762,44 @@ def envelope_at_query(
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[False] = ...,
+    candidate_savings: Float1D,
+) -> tuple[FloatND, FloatND, FloatND, FloatND]: ...
+
+
+@overload
+def envelope_at_query(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[True],
+    candidate_savings: Float1D,
+) -> tuple[FloatND, FloatND, FloatND, FloatND, IntND]: ...
+
+
+@overload
+def envelope_at_query(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
     return_owner: bool = ...,
     candidate_savings: Float1D,
 ) -> (

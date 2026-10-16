@@ -95,5 +95,18 @@ It prevents the name in the condition from drifting away from the
 `LiquidMargin.post_decision_state` name and lets the solver compare the lower bound with
 its savings grid.
 
+## State and discrete-action predicates in EGM continuation queries
+
+DC-EGM and admitted NB-EGM routes evaluate eligible current-state and discrete-action
+predicates at the actual continuation query. They retain each conditional alternative,
+apply its budget and predicates, then aggregate the surviving choices. This also
+preserves a feasible region lying between stored nodes. Predicates depending on a
+continuous action still require an existing solver proof or compilation route.
+
+Generic value-function interpolation, including a GridSearch parent and canonical
+simulation continuation valuation, uses values masked at stored nodes. Its off-node
+value can therefore differ from an EGM-family conditional carry query. Simulation
+checks current-action constraints on the actual subjects and candidate actions.
+
 Budget kinks and cliffs are not ordinary feasibility constraints. Declare them with
 [case pieces](case_pieces.md) or a [piecewise-affine schedule](piecewise_affine.md).

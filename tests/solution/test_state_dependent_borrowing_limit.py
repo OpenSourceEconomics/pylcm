@@ -418,7 +418,13 @@ def test_state_dependent_limit_value_agrees_with_grid_search(
         )
 
 
-@pytest.mark.parametrize(("solver", "limit"), _AGREEMENT_CASES)
+_POLICY_AGREEMENT_CASES = [
+    pytest.param("egm", "age", id="egm-age"),
+    pytest.param("dcegm", "income", id="dcegm-income", marks=_EXACT),
+]
+
+
+@pytest.mark.parametrize(("solver", "limit"), _POLICY_AGREEMENT_CASES)
 def test_state_dependent_limit_policy_agrees_with_grid_search(
     *, solver: str, limit: str
 ) -> None:

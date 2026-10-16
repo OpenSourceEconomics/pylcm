@@ -35,10 +35,15 @@ from dags.signature import rename_arguments
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
-from _lcm.certainty_equivalent import CertaintyEquivalent
+from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.constraints.dynamic_bound import validate_declared_bounds
-from _lcm.continuation import ContinuationSpec, EGMContinuationSpec
+from _lcm.continuation import (
+    AdaptiveOuterQuerySpec,
+    ContinuationSpec,
+    EGMContinuationSpec,
+    FiniteOuterQuerySpec,
+)
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
@@ -47,6 +52,8 @@ from _lcm.egm.budget import (
 )
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry, shard_carry_template
 from _lcm.egm.dcegm_query_model import DCEGMQueryModel
+from _lcm.egm.nbegm import NBEGMRegistry
+from _lcm.egm.nbegm_query_model import NBEGMQueryModel
 from _lcm.egm.regime_introspection import (
     _get_discrete_state_names,
     _get_passive_state_names,
@@ -180,6 +187,7 @@ from _lcm.simulation.programs import (
 
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
+    from _lcm.solution.nbegm import _BoundNBEGM
     from _lcm.solution.nnbegm import _BoundNNBEGM
 else:
     # Importing the private bound solver here would close the solution/processing
@@ -187,13 +195,23 @@ else:
     # needs a decoratable broad alias.
     type _BoundNNBEGM = object
 
-from _lcm.constraints.dispositions import ConstraintContext, Evaluate, Reject
+from _lcm.constraints.dispositions import (
+    CompileBoundary,
+    ConstraintContext,
+    Evaluate,
+    Reject,
+)
 from _lcm.constraints.materialize import as_constraint_function
 from _lcm.constraints.processed import (
     ProcessedConstraintsMapping,
     normalize_constraints,
 )
-from _lcm.constraints.routes import ConstraintPlan, plan_constraints
+from _lcm.constraints.routes import (
+    BoundConstraint,
+    ConstraintPlan,
+    ConstraintSite,
+    plan_constraints,
+)
 from _lcm.gated_edge import GatedEdge
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_V_ARG,
@@ -310,6 +328,7 @@ from lcm.solvers import (
 )
 from lcm.transition import JointTransition, StochasticTransition, Transition
 from lcm.typing import (
+    ActionName,
     BoolND,
     Float1D,
     FloatND,
@@ -1155,6 +1174,7 @@ class _CanonicalRegimeBuilder:
         solution_builds: dict[RegimeName, _SolutionBuild] = {}
         scalar_query_models = _prepare_scalar_egm_query_models(processor=self)
         dcegm_query_models = _prepare_dcegm_query_models(processor=self)
+        nbegm_query_models = _prepare_nbegm_query_models(processor=self)
         # Iterate the representative-resolved regimes: identical to the user regimes
         # except that any `AgeSpecializedGrid` state is a concrete representative-age
         # grid, so every grid-derived call below is age-invariant.
@@ -1225,6 +1245,7 @@ class _CanonicalRegimeBuilder:
                 spec=spec,
                 scalar_query_models=scalar_query_models,
                 dcegm_query_models=dcegm_query_models,
+                nbegm_query_models=nbegm_query_models,
                 post_decision_bounds=self.post_decision_bounds[regime_name],
                 regime_name=regime_name,
                 # Representative, not raw: these reach `SolverBuildContext`, and
@@ -1464,6 +1485,7 @@ def _prepare_dcegm_query_models(
     """Prepare canonical DC pools from declarations before numerical builders."""
     from _lcm.continuation import (  # noqa: PLC0415
         EGMRowTopologySpec,
+        FiniteOuterQuerySpec,
         build_query_model_authority,
     )
     from _lcm.egm.step import compute_egm_carry_length  # noqa: PLC0415
@@ -1471,21 +1493,35 @@ def _prepare_dcegm_query_models(
         ExactEnvelope,
         _BoundDCEGM,
     )
+    from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
 
     models = {}
     for name, user_regime in processor.representative_user_regimes.items():
-        solver = user_regime.solver
+        outer_solver = user_regime.solver
+        solver = (
+            outer_solver.inner if isinstance(outer_solver, _BoundNEGM) else outer_solver
+        )
         bounds = processor.post_decision_bounds[name]
-        if not isinstance(solver, _BoundDCEGM) or not any(
-            bound.kind == "dag" for bound in bounds
+        if not isinstance(solver, _BoundDCEGM):
+            continue
+        phase = processor.specs[name].solution
+        bound_names = {target for bound in bounds for target in bound.declaration_names}
+        has_predicates = any(target not in bound_names for target in phase.constraints)
+        dynamic_floor = any(bound.kind == "dag" for bound in bounds)
+        if not dynamic_floor and not (
+            has_predicates and isinstance(solver.envelope, ExactEnvelope)
         ):
             continue
         if not isinstance(solver.envelope, ExactEnvelope):
             raise RegimeInitializationError(
                 "DC query provenance requires ExactEnvelope."
             )
-        bound = dataclass_replace(bounds[0], resources_target=solver.resources)
-        phase = processor.specs[name].solution
+        installed_bound = bounds[0] if bounds else solver.post_decision_bound
+        if installed_bound is None:
+            raise RegimeInitializationError(
+                "DC conditional predicates require a model-bound savings-grid origin."
+            )
+        bound = dataclass_replace(installed_bound, resources_target=solver.resources)
         template = processor.regime_to_params_template[name]
         declarations = {
             **phase.functions,
@@ -1540,7 +1576,11 @@ def _prepare_dcegm_query_models(
                 v_interpolation_info=info, euler_state_name=solver.continuous_state
             ),
             action_names=tuple(processor.state_action_spaces[name].discrete_actions),
-            coordinate_kind="resources",
+            coordinate_kind=(
+                "nested_common_resources"
+                if isinstance(outer_solver, _BoundNEGM)
+                else "resources"
+            ),
             marginal_convention="ordinary_linear",
             corner_coordinate_kind="liquid_row" if asset_row else "compact_interval",
             row_capacity=capacity,
@@ -1551,6 +1591,28 @@ def _prepare_dcegm_query_models(
                 ("utility", "utility"),
                 ("koopmans_aggregator", "koopmans_aggregator"),
                 *((f"predicate:{target}", target) for target in phase.constraints),
+                *(
+                    (
+                        ("outer_post_decision", outer_solver.outer_post_decision),
+                        *(
+                            (
+                                (
+                                    "outer_keeper",
+                                    outer_solver.outer_no_adjustment_candidate,
+                                ),
+                            )
+                            if outer_solver.outer_no_adjustment_candidate is not None
+                            else ()
+                        ),
+                        *(
+                            (("outer_cost", outer_solver.outer_cost),)
+                            if outer_solver.outer_cost is not None
+                            else ()
+                        ),
+                    )
+                    if isinstance(outer_solver, _BoundNEGM)
+                    else ()
+                ),
             ),
             functions=by_period[periods[0]],
             functions_by_period=by_period,
@@ -1558,15 +1620,543 @@ def _prepare_dcegm_query_models(
             row_topology=EGMRowTopologySpec(
                 kind="exact_monotone_run", owner_capacity=solver.envelope.max_runs
             ),
+            outer_mode=(
+                "finite_max" if isinstance(outer_solver, _BoundNEGM) else "none"
+            ),
+            outer_capacity=(
+                int(outer_solver.outer_grid.to_jax().size) + 1
+                if isinstance(outer_solver, _BoundNEGM)
+                else 0
+            ),
+            finite_outer=(
+                FiniteOuterQuerySpec(
+                    outer_state=outer_solver.outer_state,
+                    outer_action=outer_solver.outer_action,
+                    outer_post_decision=outer_solver.outer_post_decision,
+                    keeper_target=outer_solver.outer_no_adjustment_candidate,
+                    cost_target=outer_solver.outer_cost,
+                    outer_nodes=tuple(
+                        float(node) for node in outer_solver.outer_grid.to_jax()
+                    ),
+                )
+                if isinstance(outer_solver, _BoundNEGM)
+                else None
+            ),
         )
+        predicate_inputs = dict(authority.evaluator_inputs)
+        if not dynamic_floor and not any(
+            set(predicate_inputs[f"predicate:{target}"]) & info.continuous_states.keys()
+            for target in phase.constraints
+            if target not in bound_names
+        ):
+            continue
         nodes = solver.savings_grid.to_jax()
         models[name] = DCEGMQueryModel(
             authority=authority,
             functions=functions,
             koopmans_aggregator=aggregator,
             offsets=nodes - nodes[0],
+            literal_nodes=nodes if bound.kind == "literal" else None,
         )
     return MappingProxyType(models) if models else None
+
+
+def _prepare_nbegm_query_models(
+    *,
+    processor: _CanonicalRegimeBuilder,
+) -> MappingProxyType[RegimeName, NBEGMQueryModel] | None:
+    """Prepare independent NB liquid authority before any numerical core exists."""
+    from _lcm.continuation import (  # noqa: PLC0415
+        EGMRowTopologySpec,
+        build_query_model_authority,
+    )
+    from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
+    from _lcm.egm.outer_search import (  # noqa: PLC0415
+        AdaptiveOuterMesh,
+        FiniteOuterGrid,
+    )
+    from _lcm.solution.nbegm import (  # noqa: PLC0415
+        _BoundNBEGM,
+        build_nbegm_interval_recipe,
+    )
+    from _lcm.solution.nnbegm import _BoundNNBEGM  # noqa: PLC0415
+
+    models = {}
+    for name, user_regime in processor.representative_user_regimes.items():
+        outer_solver = user_regime.solver
+        adaptive_solver = (
+            outer_solver
+            if isinstance(outer_solver, _BoundNNBEGM)
+            and isinstance(outer_solver.outer_search, AdaptiveOuterMesh)
+            else None
+        )
+        finite_solver = (
+            outer_solver
+            if isinstance(outer_solver, _BoundNNBEGM)
+            and isinstance(outer_solver.outer_search, FiniteOuterGrid)
+            else None
+        )
+        nested_solver = adaptive_solver or finite_solver
+        solver = nested_solver.inner if nested_solver is not None else outer_solver
+        bounds = processor.post_decision_bounds[name]
+        if not isinstance(solver, _BoundNBEGM):
+            continue
+        phase = processor.specs[name].solution
+        dynamic_floor = any(bound.kind == "dag" for bound in bounds)
+        declaration_names = {
+            target for bound in bounds for target in bound.declaration_names
+        }
+        predicate_names = tuple(
+            target for target in phase.constraints if target not in declaration_names
+        )
+        if not dynamic_floor and not predicate_names:
+            continue
+        installed_bound = bounds[0] if bounds else solver.post_decision_bound
+        if installed_bound is None:
+            raise RegimeInitializationError(
+                "NB predicates require their canonical savings-grid origin."
+            )
+        bound = dataclass_replace(
+            installed_bound, resources_target=solver.budget_target
+        )
+        functions, aggregator, periods, by_period, declarations_by_period = (
+            _nbegm_query_function_pools(processor=processor, name=name, phase=phase)
+        )
+        info = processor.regime_to_v_interpolation_info[name]
+        passive_states, state_names = _nbegm_query_row_state_names(
+            info=info, liquid_name=solver.continuous_state
+        )
+        action_names = tuple(processor.state_action_spaces[name].discrete_actions)
+        recipes = MappingProxyType(
+            {
+                period: build_nbegm_interval_recipe(
+                    declarations=declarations_by_period[period],
+                    functions=by_period[period],
+                    liquid_name=solver.continuous_state,
+                    state_names=(*state_names, solver.continuous_state),
+                    action_names=action_names,
+                )
+                for period in periods
+            }
+        )
+        recipe = recipes[periods[0]]
+        registries_by_period = {
+            period: collect_nbegm_metadata(functions=declarations_by_period[period])
+            for period in periods
+        }
+        registry = registries_by_period[periods[0]]
+        source_variables, case_targets, case_threshold_targets, n_jumps = (
+            _nbegm_query_evaluator_targets(
+                registry=registry,
+                liquid_name=solver.continuous_state,
+                state_names=state_names,
+                action_names=action_names,
+                functions=by_period[periods[0]],
+                jump_read=solver.jump_read,
+            )
+        )
+        interval_ids = tuple(range(len(recipe.source_identity) + 1))
+        # Resolve actual transitive leaves over every period pool BEFORE
+        # activating an authority; ordinary compiled literals stay absent.
+        evaluated_predicates = []
+        ordinary_topology = (
+            nested_solver is None
+            and solver.jump_read == "one_sided"
+            and all(
+                not period_registry.piece_sets
+                and not any(
+                    point.kind == "jump"
+                    for schedule in period_registry.piecewise_affine_schedules
+                    for point in schedule.breakpoints
+                )
+                for period_registry in registries_by_period.values()
+            )
+        )
+        if ordinary_topology:
+            evaluated_predicates = _nbegm_evaluated_query_predicates(
+                processor=processor,
+                name=name,
+                phase=phase,
+                info=info,
+                action_names=action_names,
+                functions=functions,
+                by_period=by_period,
+                periods=periods,
+                predicate_names=predicate_names,
+                liquid_name=solver.continuous_state,
+            )
+        if not dynamic_floor and not evaluated_predicates:
+            continue
+        n_feasibility_boundaries = sum(
+            len(constraint.boundary_surfaces or ())
+            for target, constraint in phase.constraints.items()
+            if target not in bound.declaration_names
+            and target not in evaluated_predicates
+        )
+        adaptive_spec, finite_spec = _nbegm_nested_query_specs(
+            adaptive_solver=adaptive_solver,
+            finite_solver=finite_solver,
+            name=name,
+            cost_target=solver.budget_target,
+        )
+        authority = build_query_model_authority(
+            bound=bound,
+            state_names=state_names,
+            action_names=action_names,
+            coordinate_kind="liquid",
+            marginal_convention="ordinary_linear",
+            corner_coordinate_kind="compact_interval",
+            row_capacity=int(
+                info.continuous_states[solver.continuous_state].to_jax().size
+            )
+            + 2 * ((n_jumps if state_names else 0) + n_feasibility_boundaries),
+            interval_ids=interval_ids,
+            interval_side_ids=(0,) * len(interval_ids),
+            evaluator_targets=(
+                ("resources", bound.resources_target),
+                ("utility", "utility"),
+                ("koopmans_aggregator", "koopmans_aggregator"),
+                *((f"predicate:{target}", target) for target in phase.constraints),
+                *(
+                    (f"interval_variable:{target}", target)
+                    for target in source_variables
+                ),
+                *((f"case_boundary:{target}", target) for target in case_targets),
+                *(
+                    (f"case_threshold:{target}", target)
+                    for target in dict.fromkeys(case_threshold_targets)
+                ),
+            ),
+            functions=by_period[periods[0]],
+            functions_by_period=by_period,
+            target_periods=periods,
+            outer_mode=(
+                "adaptive_continuous"
+                if adaptive_spec is not None
+                else "finite_max"
+                if finite_spec is not None
+                else "none"
+            ),
+            outer_capacity=(
+                adaptive_spec.adjuster_capacity + 1
+                if adaptive_spec is not None
+                else len(finite_spec.outer_nodes) + 1
+                if finite_spec is not None
+                else 0
+            ),
+            adaptive_outer=adaptive_spec,
+            finite_outer=finite_spec,
+            row_topology=EGMRowTopologySpec(
+                kind="nb_budget_interval_run", owner_capacity=len(interval_ids)
+            ),
+            interval_source_identity=recipe.source_identity,
+        )
+        nodes = solver.savings_grid.to_jax()
+        models[name] = NBEGMQueryModel(
+            authority=authority,
+            functions=functions,
+            koopmans_aggregator=aggregator,
+            offsets=nodes - nodes[0],
+            literal_nodes=nodes if bound.kind == "literal" else None,
+            evaluated_predicate_names=tuple(evaluated_predicates),
+            intervals=recipe,
+            intervals_by_period=recipes,
+            passive_state_names=passive_states,
+            inverse_eis_name=(
+                "koopmans_aggregator__intertemporal_elasticity_of_substitution"
+                if user_regime.certainty_equivalent is not None
+                and not isinstance(user_regime.certainty_equivalent, LinearExpectation)
+                else None
+            ),
+        )
+        models[name] = _with_nbegm_nested_role_models(
+            model=models[name],
+            functions_by_period=by_period,
+            declarations_by_period=declarations_by_period,
+        )
+    return MappingProxyType(models) if models else None
+
+
+def _nbegm_nested_query_specs(
+    *,
+    adaptive_solver: _BoundNNBEGM | None,
+    finite_solver: _BoundNNBEGM | None,
+    name: RegimeName,
+    cost_target: FunctionName,
+) -> tuple[AdaptiveOuterQuerySpec | None, FiniteOuterQuerySpec | None]:
+    """Bind each declared nested search to its canonical query descriptor."""
+    from _lcm.egm.outer_search import FiniteOuterGrid  # noqa: PLC0415
+
+    adaptive_spec = None
+    if adaptive_solver is not None:
+        adaptive_spec = _nbegm_adaptive_query_spec(
+            adaptive_solver=adaptive_solver, name=name, cost_target=cost_target
+        )
+    finite_spec = None
+    if finite_solver is not None:
+        search = finite_solver.outer_search
+        if not isinstance(search, FiniteOuterGrid):
+            raise TypeError("Finite NB authority requires its declared finite grid.")
+        finite_spec = FiniteOuterQuerySpec(
+            outer_state=finite_solver.outer_state,
+            outer_action=finite_solver.outer_action,
+            outer_post_decision=finite_solver.outer_post_decision,
+            keeper_target=finite_solver.outer_no_adjustment_candidate,
+            cost_target=cost_target,
+            outer_nodes=tuple(float(node) for node in search.grid.to_jax()),
+        )
+    return adaptive_spec, finite_spec
+
+
+def _with_nbegm_nested_role_models(
+    *,
+    model: NBEGMQueryModel,
+    functions_by_period: Mapping[int, EconFunctionsMapping],
+    declarations_by_period: Mapping[int, Mapping[FunctionName, UserFunction]],
+) -> NBEGMQueryModel:
+    """Attach only the actual nested role models selected by canonical authority."""
+    from _lcm.egm.nbegm_query_model import (  # noqa: PLC0415
+        derive_adaptive_inner_models,
+        derive_finite_inner_models,
+    )
+
+    if model.authority.adaptive_outer is not None:
+        return dataclass_replace(
+            model,
+            adaptive_inner_models=derive_adaptive_inner_models(
+                model=model,
+                functions_by_period=functions_by_period,
+                declarations_by_period=declarations_by_period,
+            ),
+            functions_by_period=functions_by_period,
+        )
+    if model.authority.finite_outer is not None:
+        return dataclass_replace(
+            model,
+            finite_inner_models=derive_finite_inner_models(
+                model=model,
+                functions_by_period=functions_by_period,
+                declarations_by_period=declarations_by_period,
+            ),
+            functions_by_period=functions_by_period,
+        )
+    return model
+
+
+def _nbegm_query_row_state_names(
+    *, info: VInterpolationInfo, liquid_name: StateName
+) -> tuple[tuple[StateName, ...], tuple[StateName, ...]]:
+    """Return passive axes and their canonical discrete-first query row order."""
+    discrete_states = _get_discrete_state_names(v_interpolation_info=info)
+    passive_states = _get_passive_state_names(
+        v_interpolation_info=info, euler_state_name=liquid_name
+    )
+    state_names = discrete_states + passive_states
+    return passive_states, state_names
+
+
+def _nbegm_query_function_pools(
+    *, processor: _CanonicalRegimeBuilder, name: RegimeName, phase: RegimePhaseSpec
+) -> tuple[
+    EconFunctionsMapping,
+    EconFunction,
+    tuple[int, ...],
+    MappingProxyType[int, EconFunctionsMapping],
+    dict[int, Mapping[FunctionName, UserFunction]],
+]:
+    """Process each declaration once and resolve its canonical active-period pools."""
+    template = processor.regime_to_params_template[name]
+    declarations = {
+        **phase.functions,
+        **{
+            target: as_constraint_function(constraint=constraint, pool=phase.functions)
+            for target, constraint in phase.constraints.items()
+        },
+    }
+    functions = MappingProxyType(
+        {
+            target: _process_one_function(
+                func=function, regime_params_template=template, param_key=target
+            )
+            for target, function in declarations.items()
+        }
+    )
+    aggregator = _process_one_function(
+        func=cast("UserFunction", phase.koopmans_aggregator),
+        regime_params_template=template,
+        param_key="koopmans_aggregator",
+    )
+    functions = MappingProxyType({**functions, "koopmans_aggregator": aggregator})
+    periods = processor.regimes_to_active_periods[name]
+    by_period = MappingProxyType(
+        {
+            period: cast(
+                "EconFunctionsMapping",
+                resolve_periodized_nodes(mapping=functions, period=period),
+            )
+            for period in periods
+        }
+    )
+    declarations_by_period = {
+        period: cast(
+            "Mapping[FunctionName, UserFunction]",
+            resolve_periodized_nodes(mapping=phase.functions, period=period),
+        )
+        for period in periods
+    }
+    return functions, aggregator, periods, by_period, declarations_by_period
+
+
+def _nbegm_query_evaluator_targets(
+    *,
+    registry: NBEGMRegistry,
+    liquid_name: StateName,
+    state_names: tuple[StateName, ...],
+    action_names: tuple[ActionName, ...],
+    functions: EconFunctionsMapping,
+    jump_read: str,
+) -> tuple[tuple[FunctionName, ...], tuple[FunctionName, ...], list[FunctionName], int]:
+    """Resolve source, case and threshold targets from the original declarations."""
+    from _lcm.constraints.ir import Ref  # noqa: PLC0415
+    from _lcm.solution.nbegm import _normalize_case_boundary  # noqa: PLC0415
+
+    source_variables = tuple(
+        dict.fromkeys(
+            schedule.variable
+            for schedule in registry.piecewise_affine_schedules
+            if schedule.variable != liquid_name
+        )
+    )
+    case_targets = tuple(
+        dict.fromkeys(piece.predicate_name for piece in registry.piece_sets)
+    )
+    case_threshold_targets = []
+    for piece in registry.piece_sets:
+        threshold, _when_below, _owner = _normalize_case_boundary(
+            boundary=registry.boundaries[piece.predicate_name],
+            predicate_name=piece.predicate_name,
+            liquid_state_name=liquid_name,
+            reserved_names=frozenset((*state_names, liquid_name, *action_names)),
+        )
+        if isinstance(threshold, Ref) and threshold.name in functions:
+            case_threshold_targets.append(threshold.name)
+    n_jumps = (
+        sum(
+            schedule_breakpoint.kind == "jump"
+            for schedule in registry.piecewise_affine_schedules
+            for schedule_breakpoint in schedule.breakpoints
+        )
+        if jump_read == "one_sided"
+        else 0
+    )
+    return source_variables, case_targets, case_threshold_targets, n_jumps
+
+
+def _nbegm_evaluated_query_predicates(
+    *,
+    processor: _CanonicalRegimeBuilder,
+    name: RegimeName,
+    phase: RegimePhaseSpec,
+    info: VInterpolationInfo,
+    action_names: tuple[ActionName, ...],
+    functions: EconFunctionsMapping,
+    by_period: MappingProxyType[int, EconFunctionsMapping],
+    periods: tuple[int, ...],
+    predicate_names: tuple[FunctionName, ...],
+    liquid_name: StateName,
+) -> list[FunctionName]:
+    """Separate current-query predicates from supported compiled boundaries."""
+    from _lcm.continuation import _query_evaluator_contract  # noqa: PLC0415
+
+    evaluated_predicates = []
+    from _lcm.egm.nbegm_constraint_boundaries import (  # noqa: PLC0415
+        build_nbegm_feasibility_boundary_compiler,
+    )
+
+    allowed = (
+        frozenset(info.state_names)
+        | frozenset(action_names)
+        | processor.regime_to_flat_param_names[name]
+        | {"age", "period"}
+    )
+    compiler = build_nbegm_feasibility_boundary_compiler(liquid_state=liquid_name)
+    compiler_context = ConstraintContext(
+        regime_name=name,
+        phase="solve",
+        grids=processor.all_grids[name],
+        function_names=frozenset(functions),
+        param_names=processor.regime_to_flat_param_names[name],
+    )
+    site = ConstraintSite(
+        stage="savings_stage",
+        function_pool=by_period[periods[0]],
+        available_names=frozenset(),
+    )
+    inputs, _identities = _query_evaluator_contract(
+        functions=by_period[periods[0]],
+        functions_by_period=by_period,
+        targets=tuple((f"predicate:{target}", target) for target in predicate_names),
+    )
+    input_names = dict(inputs)
+    for target in predicate_names:
+        leaves = frozenset(input_names[f"predicate:{target}"])
+        if not leaves <= allowed:
+            continue
+        verdict = compiler(
+            bound=BoundConstraint(
+                constraint=phase.constraints[target],
+                site=site,
+                transitive_inputs=leaves,
+            ),
+            context=compiler_context,
+        )
+        # Preserve supported compiled boundaries; only independent
+        # current-node evaluation avoids a discrete boundary topology.
+        if isinstance(verdict, CompileBoundary) and not action_names:
+            continue
+        evaluated_predicates.append(target)
+    return evaluated_predicates
+
+
+def _nbegm_adaptive_query_spec(
+    *, adaptive_solver: _BoundNNBEGM, name: RegimeName, cost_target: FunctionName
+) -> AdaptiveOuterQuerySpec:
+    """Bind declared search and branch aggregation into canonical mesh authority."""
+    search = adaptive_solver.outer_search
+    if not isinstance(search, AdaptiveOuterMesh):
+        raise TypeError("Adaptive NB authority requires its declared mesh search.")
+    aggregation = adaptive_solver.branch_aggregator
+    uniform = aggregation if isinstance(aggregation, UniformObservedFixedCost) else None
+    return AdaptiveOuterQuerySpec(
+        outer_state=adaptive_solver.outer_state,
+        outer_action=adaptive_solver.outer_action,
+        outer_post_decision=adaptive_solver.outer_post_decision,
+        keeper_target=adaptive_solver.outer_no_adjustment_candidate,
+        cost_target=cost_target,
+        adjuster_capacity=search.max_nodes,
+        golden_iterations=search.golden_iterations,
+        evaluator_identity=(),
+        evaluator_inputs=(),
+        branch_aggregation="uniform_observed_fixed_cost"
+        if uniform is not None
+        else "deterministic",
+        fixed_cost_target=uniform.scale_function if uniform is not None else None,
+        fixed_cost_support=(uniform.lower, uniform.upper)
+        if uniform is not None
+        else None,
+        mesh_authority_identity=(
+            "adaptive_nbegm",
+            name,
+            search.max_nodes,
+            search.max_refinement_rounds,
+            search.value_atol,
+            search.value_rtol,
+            search.golden_iterations,
+            search.outer_lipschitz_bound,
+            search.fail_closed,
+            tuple(float(point) for point in search.initial_grid.to_jax()),
+        ),
+    )
 
 
 def _with_declared_continuation_reads(
@@ -3646,6 +4236,52 @@ class _SolutionBuild:
     """The context the kernels were built under; its continuation specs are empty."""
 
 
+def _solver_with_query_authority(
+    *,
+    solver: Solver,
+    query_model: ScalarEGMQueryModel | DCEGMQueryModel | NBEGMQueryModel,
+) -> Solver:
+    """Install the same canonical bound and private flags on the owning solver."""
+    from _lcm.solution.egm import _BoundEGM  # noqa: PLC0415
+    from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
+    from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
+    from _lcm.solution.nnbegm import _BoundNNBEGM  # noqa: PLC0415
+
+    if isinstance(solver, _BoundNEGM):
+        solver = dataclass_replace(
+            solver,
+            inner=dataclass_replace(
+                solver.inner,
+                post_decision_bound=query_model.authority.bound,
+                _retain_nested_feasibility=True,
+            ),
+        )
+    elif isinstance(solver, _BoundNNBEGM):
+        solver = dataclass_replace(
+            solver,
+            inner=dataclass_replace(
+                solver.inner, post_decision_bound=query_model.authority.bound
+            ),
+            _adaptive_query=query_model.authority.adaptive_outer is not None,
+        )
+    elif isinstance(solver, _BoundNBEGM):
+        if not isinstance(query_model, NBEGMQueryModel):
+            raise TypeError(
+                "NB predicate capability requires its independent canonical model."
+            )
+        solver = dataclass_replace(
+            solver,
+            post_decision_bound=query_model.authority.bound,
+            _evaluated_predicate_names=query_model.evaluated_predicate_names,
+        )
+    else:
+        solver = dataclass_replace(
+            cast("_BoundEGM | _BoundDCEGM | _BoundNBEGM", solver),
+            post_decision_bound=query_model.authority.bound,
+        )
+    return solver
+
+
 def _build_solution_phase(  # noqa: PLR0915
     *,
     spec: PhasedRegimeSpec,
@@ -3697,6 +4333,7 @@ def _build_solution_phase(  # noqa: PLR0915
     post_decision_bounds: tuple[PostDecisionBoundSpec, ...] = (),
     scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None,
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None,
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = None,
 ) -> _SolutionBuild:
     """Build all compiled functions for the backward-induction (solve) phase.
 
@@ -3760,16 +4397,13 @@ def _build_solution_phase(  # noqa: PLR0915
         context the continuation-read declaration pass re-reads.
 
     """
-    query_model = (scalar_query_models or {}).get(regime_name) or (
-        dcegm_query_models or {}
-    ).get(regime_name)
+    query_model = (
+        (scalar_query_models or {}).get(regime_name)
+        or (dcegm_query_models or {}).get(regime_name)
+        or (nbegm_query_models or {}).get(regime_name)
+    )
     if query_model is not None:
-        from _lcm.solution.egm import _BoundEGM  # noqa: PLC0415
-
-        solver = dataclass_replace(
-            cast("_BoundEGM | _BoundDCEGM", solver),
-            post_decision_bound=query_model.authority.bound,
-        )
+        solver = _solver_with_query_authority(solver=solver, query_model=query_model)
         post_decision_bounds = (query_model.authority.bound,)
     flat_param_names = _engine_flat_param_names(
         regime_params_template=regime_params_template,
@@ -4025,6 +4659,7 @@ def _build_solution_phase(  # noqa: PLR0915
         regime_name=regime_name,
         scalar_query_models=scalar_query_models,
         dcegm_query_models=dcegm_query_models,
+        nbegm_query_models=nbegm_query_models,
         ages=ages,
         user_regimes=user_regimes,
         laws=laws,
@@ -4177,7 +4812,7 @@ def _build_solution_phase(  # noqa: PLR0915
         query_authority=None if query_model is None else query_model.authority,
         query_constraint_functions=(
             core.constraint_functions
-            if isinstance(query_model, DCEGMQueryModel)
+            if isinstance(query_model, DCEGMQueryModel | NBEGMQueryModel)
             else None
         ),
         query_input_authorities=solver_kernels.query_input_authorities,
@@ -4781,6 +5416,59 @@ def _outer_state_domain_by_period(
     return MappingProxyType(domains)
 
 
+def _share_finite_nbegm_policy_floor(
+    *,
+    model: NBEGMQueryModel,
+    functions: EconFunctionsMapping,
+    periods: tuple[int, ...],
+    phase_variations: tuple[str, ...],
+) -> EconFunctionsMapping:
+    """Share only the verified invariant floor DAG's qualified canonical nodes."""
+    from dags import get_ancestors  # noqa: PLC0415
+
+    bound = model.authority.bound
+    pools = model.functions_by_period
+    if (
+        phase_variations
+        or model.authority.finite_outer is None
+        or bound.kind != "dag"
+        or bound.lower_target is None
+        or pools is None
+        or not set(periods) <= set(model.authority.target_periods)
+        or not set(periods) <= pools.keys()
+    ):
+        raise TypeError("Finite policy floors require invariant canonical period DAGs.")
+    shared_names = set()
+    for period in periods:
+        canonical = pools[period]
+        actual = resolve_periodized_nodes(mapping=functions, period=period)
+        ancestors = get_ancestors(
+            canonical, targets=bound.lower_target, include_targets=True
+        )
+        names = ancestors & canonical.keys()
+        if not names <= actual.keys() or not names <= model.functions.keys():
+            raise TypeError(
+                "Finite policy floor nodes are absent from their phase pool."
+            )
+        for name in names:
+            left = inspect.signature(canonical[name]).parameters
+            actual_node = actual[name]
+            if not callable(actual_node):
+                raise TypeError("Finite policy floor nodes must be callable.")
+            right = inspect.signature(actual_node).parameters
+            if tuple((key, value.kind) for key, value in left.items()) != tuple(
+                (key, value.kind) for key, value in right.items()
+            ):
+                raise TypeError("Finite policy floor qualified argument roles differ.")
+        shared_names.update(names)
+    return MappingProxyType(
+        {
+            name: model.functions[name] if name in shared_names else function
+            for name, function in functions.items()
+        }
+    )
+
+
 def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     *,
     spec: PhasedRegimeSpec,
@@ -4962,6 +5650,22 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         # `source_regime_name` is already passed above; only `phase_name` is new.
         phase_name="simulation",
     )
+    finite_policy_model = (solver_context.nbegm_query_models or {}).get(regime_name)
+    if finite_policy_model is not None and (
+        finite_policy_model.authority.finite_outer is None
+        or finite_policy_model.authority.bound.kind != "dag"
+    ):
+        finite_policy_model = None
+    if finite_policy_model is not None:
+        core = dataclass_replace(
+            core,
+            functions=_share_finite_nbegm_policy_floor(
+                model=finite_policy_model,
+                functions=core.functions,
+                periods=simulated_periods[regime_name],
+                phase_variations=solver_context.phase_variation_paths,
+            ),
+        )
     functions = core.functions
     constraints = core.constraints
     if isinstance(solver, INTRINSIC_BUDGET_SOLVERS):
@@ -5351,7 +6055,11 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             state_axis_lengths_by_period=_replay_axis_lengths_by_period(
                 axis_names=state_names,
                 regime_name=regime_name,
-                active_periods=active_periods,
+                active_periods=(
+                    active_periods
+                    if replay_policy_is_nested
+                    else regimes_to_active_periods[regime_name]
+                ),
                 grids=grids,
                 grid_schedule=grid_schedule,
             ),
@@ -5377,6 +6085,11 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             liquid_state_name=bound_nnbegm.inner.continuous_state,
             resources_target=bound_nnbegm.inner.budget_target,
             savings_lower_bound=float(bound_nnbegm.inner.savings_grid.to_jax()[0]),
+            finite_query_authority=(
+                finite_policy_model.authority
+                if finite_policy_model is not None and not replay_policy_is_nested
+                else None
+            ),
             golden_iterations=golden_iterations,
             value_atol=value_atol,
             value_rtol=value_rtol,
@@ -5844,7 +6557,10 @@ def _process_regime_core(
     draw_only_processes: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     phase_reachability: PhaseReachability,
     phase_name: PhaseName,
-    scalar_query_model: ScalarEGMQueryModel | DCEGMQueryModel | None = None,
+    scalar_query_model: ScalarEGMQueryModel
+    | DCEGMQueryModel
+    | NBEGMQueryModel
+    | None = None,
 ) -> _CoreResult:
     """Process one phase's regime functions and transitions.
 
@@ -9495,13 +10211,13 @@ def _describe_node_disagreement(*, solve_axis: Float1D, simulate_axis: Float1D) 
 
 def _canonical_constraint_routing_inputs(
     *,
-    query_model: ScalarEGMQueryModel | DCEGMQueryModel | None,
+    query_model: ScalarEGMQueryModel | DCEGMQueryModel | NBEGMQueryModel | None,
     functions: MappingProxyType[FunctionName, UserFunction],
     constraints: ProcessedConstraintsMapping,
     active_periods: tuple[int, ...],
 ) -> tuple[MappingProxyType[FunctionName, UserFunction], ProcessedConstraintsMapping]:
-    """Qualify opaque DC predicates while retaining structured compiler inputs."""
-    if not isinstance(query_model, DCEGMQueryModel):
+    """Qualify evaluated predicates while retaining structured compiler inputs."""
+    if not isinstance(query_model, (DCEGMQueryModel, NBEGMQueryModel)):
         return functions, constraints
     functions = cast(
         "MappingProxyType[FunctionName, UserFunction]", query_model.functions
@@ -9514,7 +10230,13 @@ def _canonical_constraint_routing_inputs(
                 constraints={
                     name: cast("UserFunction", pool[name])
                     for name, constraint in constraints.items()
-                    if constraint.is_opaque
+                    if (
+                        constraint.is_opaque
+                        or (
+                            isinstance(query_model, NBEGMQueryModel)
+                            and name in query_model.evaluated_predicate_names
+                        )
+                    )
                     and name not in query_model.authority.bound.declaration_names
                 }
             ),

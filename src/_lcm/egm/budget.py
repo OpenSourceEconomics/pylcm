@@ -99,7 +99,9 @@ def get_intrinsic_budget_constraint(
         resources_name = inner.resources
 
     bound = getattr(
-        inner if isinstance(solver, (EGM, DCEGM, NEGM)) else solver,
+        (nested_inner if isinstance(solver, NNBEGM) else inner)
+        if isinstance(solver, (EGM, DCEGM, NEGM, NNBEGM))
+        else solver,
         "post_decision_bound",
         None,
     )

@@ -63,13 +63,41 @@ class AdaptiveOuterQuerySpec:
 
 
 @dataclass(frozen=True, kw_only=True)
-class EGMRowTopologySpec:
-    """Compiler-owned interpretation of emitted exact-envelope run identities."""
+class FiniteOuterQuerySpec:
+    """Canonical keeper and finite adjuster identities in common resources."""
 
-    kind: Literal["exact_monotone_run"]
-    """Run topology emitted by the canonical exact-envelope compiler."""
+    outer_state: StateName
+    """Actual fixed current stock, including at an off-grid query."""
+    outer_action: ActionName
+    """Chosen outer action, excluded from the fixed-current floor."""
+    outer_post_decision: FunctionName
+    """Canonical target internally bound to a keeper or grid-node identity."""
+    keeper_target: FunctionName | None
+    """Canonical keeper map; absent for the actual current-stock identity."""
+    cost_target: FunctionName | None
+    """Canonical adjustment cost, absent only for a cost-free declared margin."""
+    outer_nodes: tuple[float, ...]
+    """Declared adjuster grid in its retained order, excluding keeper slot zero."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class EGMRowTopologySpec:
+    """Compiler-owned connected runs of represented conditional ordinary rows.
+
+    - "exact_monotone_run" retains the exact envelope's emitted run identities.
+    - "nb_budget_interval_run" retains NB ordinary-row connectivity. Scalar
+      sampled rows may connect across continuous budget kinks; interval-held,
+      jump and one-sided rows retain their own declared cuts.
+
+    An ordinary owner code establishes compatible row connectivity. Compact
+    borrowing corners select budget intervals through "corner_interval_id";
+    an ordinary owner code is not a compact corner's interval selector.
+    """
+
+    kind: Literal["exact_monotone_run", "nb_budget_interval_run"]
+    """Connected-row family emitted by the canonical source producer."""
     owner_capacity: int
-    """Maximum number of source monotone runs admitted by the compiler."""
+    """Exclusive upper bound for the source producer's ordinary-row owner codes."""
     side_ids: tuple[int, ...] = _EXACT_ENVELOPE_SIDE_IDS
     """Known outgoing, unsided and incoming side codes."""
     schema_version: int = 1
@@ -77,7 +105,7 @@ class EGMRowTopologySpec:
 
     def __post_init__(self) -> None:
         if (
-            self.kind != "exact_monotone_run"
+            self.kind not in ("exact_monotone_run", "nb_budget_interval_run")
             or type(self.owner_capacity) is not int
             or self.owner_capacity < 1
             or type(self.side_ids) is not tuple
@@ -130,6 +158,14 @@ class EGMQuerySpec:
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
     """Optional compiler-owned row runs, independent of corner interval labels."""
+    interval_source_identity: tuple[Hashable, ...] = dataclass_field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Canonical NB source order, comparisons and threshold-table selectors."""
+    finite_outer: FiniteOuterQuerySpec | None = dataclass_field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Finite nested identities, independent of incidental numerical row shape."""
     schema_version: int = EGM_CONTINUATION.schema_version
     """Owning shared continuation schema."""
 
@@ -157,6 +193,25 @@ class EGMQuerySpec:
             self.adaptive_outer is not None
         ):
             raise TypeError("Query adaptive and finite authority must be distinct.")
+        if (self.outer_mode == "finite_max") != (self.finite_outer is not None):
+            raise TypeError("Finite nested queries require canonical outer identities.")
+        if self.finite_outer is not None and (
+            type(self.finite_outer) is not FiniteOuterQuerySpec
+            or not (
+                self.coordinate_kind == "nested_common_resources"
+                or (
+                    self.coordinate_kind == "liquid"
+                    and self.marginal_convention == "ordinary_linear"
+                    and self.corner_coordinate_kind == "compact_interval"
+                    and self.row_topology is not None
+                    and self.row_topology.kind == "nb_budget_interval_run"
+                )
+            )
+            or self.outer_capacity != len(self.finite_outer.outer_nodes) + 1
+        ):
+            raise TypeError(
+                "Finite nested coordinates and candidate authority disagree."
+            )
         if (
             self.adaptive_outer is not None
             and self.outer_capacity != self.adaptive_outer.adjuster_capacity + 1
@@ -268,7 +323,7 @@ def validate_query_model_authority(
             if field.name in ("bound", "row_topology"):
                 continue
             left, right = getattr(spec, field.name), getattr(model_spec, field.name)
-            if field.name == "adaptive_outer":
+            if field.name in ("adaptive_outer", "finite_outer"):
                 if (left is None) != (right is None) or (
                     left is not None
                     and any(
@@ -276,7 +331,7 @@ def validate_query_model_authority(
                             left=getattr(left, item.name),
                             right=getattr(right, item.name),
                         )
-                        for item in fields(AdaptiveOuterQuerySpec)
+                        for item in fields(type(left))
                     )
                 ):
                     raise TypeError(
@@ -306,6 +361,8 @@ def build_query_model_authority(
     outer_capacity: int = 0,
     adaptive_outer: AdaptiveOuterQuerySpec | None = None,
     row_topology: EGMRowTopologySpec | None = None,
+    interval_source_identity: tuple[Hashable, ...] = (),
+    finite_outer: FiniteOuterQuerySpec | None = None,
 ) -> EGMQuerySpec:
     """Bind trusted route declarations to the canonical evaluator dependency pool.
 
@@ -358,6 +415,8 @@ def build_query_model_authority(
         outer_capacity=outer_capacity,
         adaptive_outer=adaptive_outer,
         row_topology=row_topology,
+        interval_source_identity=interval_source_identity,
+        finite_outer=finite_outer,
     )
 
 

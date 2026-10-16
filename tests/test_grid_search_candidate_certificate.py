@@ -3205,3 +3205,36 @@ def test_reviewed_prefix_sources_have_literal_inventory_obligations() -> None:
     assert isinstance(_parse("src/_lcm/egm/step.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/step_core.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/dcegm.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/utils/counts.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/nbegm_step.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/nbegm_segments.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/framed_arithmetic.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/ez_kernel.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/power_mean.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/upper_envelope/query.py"), ast.Module)
+
+
+def test_outer_helper_sources_have_literal_inventory_obligations() -> None:
+    """Inventory interpolation and safeguarded-search dependency owners."""
+    assert isinstance(_parse("src/_lcm/egm/outer_interpolation.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/outer_refinement.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/optimization/golden_section.py"), ast.Module)
+
+
+def test_final_nested_sources_have_literal_inventory_obligations() -> None:
+    """Inventory nested reader, producer and conditional-bank source owners."""
+    assert isinstance(_parse("src/_lcm/egm/nested_floor.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/finite_negm_query.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/adaptive_mesh_authority.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/adaptive_nbegm_carry.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/adaptive_nbegm_producer.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/adaptive_nbegm_query.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/nbegm_query_model.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/nbegm_query.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/negm.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/nnbegm.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/outer_candidates.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/upper_envelope/__init__.py"), ast.Module)
+    assert isinstance(
+        _parse("src/_lcm/egm/upper_envelope/segment_envelope.py"), ast.Module
+    )

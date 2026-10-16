@@ -380,14 +380,15 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                         arguments={"live": bank[2], "represented": bank[3]},
                         subject_arg_names=("live", "represented"),
                     )
-                actions, value, fallback = cast(
-                    "_FiniteRankOutput",
+                rank_outputs = cast(
+                    "tuple[ShapeDtypePytree, ...]",
                     _record_core(
                         inventory=inventory,
                         profile=cores["decision"],
                         family="policy_rank",
                     ),
                 )
+                actions, value, fallback = cast("_FiniteRankOutput", rank_outputs[:3])
             else:
                 decision = cores["decision"]
                 decision_outputs = cast(

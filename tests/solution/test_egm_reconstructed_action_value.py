@@ -340,6 +340,7 @@ def _assert_query_records(
     assert result.query_status is None
     assert not bool(result.bound_status[0].nonfinite_floor)
     assert not bool(result.bound_status[0].invalid_shifted_grid)
+    assert len(result.output) == 4
     value, carry, counts, coverage = result.output
     assert bool(coverage) is active
     expected = [0.61875, 1.71875] if active else [0.1375, 2.475]

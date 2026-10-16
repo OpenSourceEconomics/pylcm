@@ -316,6 +316,7 @@ else:
     type _PluginPytree = DataclassInstance
 
 if TYPE_CHECKING:
+    from _lcm.execution.output_layout import StateAxesLeading
     from lcm._solver_api.authority import _ArtifactLeafToken
 
     # A child handed to a registered pytree's `unflatten`:
@@ -332,6 +333,7 @@ if TYPE_CHECKING:
         | jax.stages.ArgInfo
         | jax.sharding.Sharding
         | _ArtifactLeafToken
+        | StateAxesLeading
         | bool
         | int
         | float
@@ -341,6 +343,13 @@ else:
     # JAX also unflattens with placeholder leaves of its own (`PytreeLeaf` proxies,
     # `object()` sentinels), so the claw accepts any child.
     type PytreeChild = object
+
+if TYPE_CHECKING:
+    from _lcm.egm.nested_floor import PreparedNestedFloor
+else:
+    # The floor module imports these aliases; its accessor checks the exact record.
+    # A prepared bank is a dataclass; its numeric/status schema stays with that owner.
+    type PreparedNestedFloor = DataclassInstance
 
 # A runtime annotation object. Python admits any value as an annotation, including
 # `Annotated` and `Literal` forms, so each consumer classifies the forms it reads.
@@ -615,6 +624,7 @@ class EGMStepFunction[Output: PytreeValue = tuple[FloatND, EGMCarry, EGMSimPolic
         _lcm_savings_point_width: int | None = None,
         _lcm_euler_point_width: int | None = None,
         _lcm_envelope_cell_width: int = 1,
+        _lcm_prepared_nested_floor: PreparedNestedFloor | None = None,
         **kwargs: EconFunctionArg,
     ) -> Output: ...
 

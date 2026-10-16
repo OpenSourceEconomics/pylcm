@@ -153,6 +153,7 @@ from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.feasibility import (
     BoundedResult,
     consume_runtime_bound_outputs,
+    reduce_bound_input_status,
     validate_runtime_bound_status,
 )
 from _lcm.solution.solve_phase_records import CallId, solve_phase
@@ -2162,22 +2163,28 @@ def _execute_finite_replay(
                 regime_name=regime.name,
                 period=period,
             )
+    ranked = execute_simulation_program(
+        programs=regime.simulation.programs,
+        family="policy_rank",
+        period=period,
+        n_subjects=n_subjects,
+        arguments=policy_rank_arguments(
+            payload=payload,
+            bank=bank,
+            canonical_states=canonical_states,
+            params=flat_params,
+            age=age,
+            next_values=next_regime_to_V_arr,
+            references=referenced_value_kwargs,
+        ),
+    )
     return cast(
         "tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]",
-        execute_simulation_program(
-            programs=regime.simulation.programs,
-            family="policy_rank",
+        consume_runtime_bound_outputs(
+            outputs=cast("tuple[QAndFArg, ...]", ranked),
+            bound_specs=regime.simulation.post_decision_bounds,
+            regime_name=regime.name,
             period=period,
-            n_subjects=n_subjects,
-            arguments=policy_rank_arguments(
-                payload=payload,
-                bank=bank,
-                canonical_states=canonical_states,
-                params=flat_params,
-                age=age,
-                next_values=next_regime_to_V_arr,
-                references=referenced_value_kwargs,
-            ),
         ),
     )
 
@@ -3524,7 +3531,8 @@ def _score_nnbegm_candidate_bank(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
-) -> tuple[FloatND, BoolND]:
+    bound_summary: bool = False,
+) -> tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]:
     """Construct complete candidate action tuples and score canonical Q."""
     n_candidates, n_subjects = candidate_inner.shape
     excluded_action_names = {
@@ -3567,7 +3575,7 @@ def _score_nnbegm_candidate_bank(
         )
 
     score_actions = functools.partial(
-        _canonical_Q_at_actions,
+        _evaluate_canonical_Q_at_actions,
         regime=regime,
         canonical_states=canonical_states,
         action_names=action_names,
@@ -3577,7 +3585,29 @@ def _score_nnbegm_candidate_bank(
         period=period,
         age=age,
     )
-    return jax.vmap(score_actions)(candidate_actions=candidate_actions)
+    scored = jax.vmap(score_actions)(candidate_actions=candidate_actions)
+    if type(scored) is not BoundedResult:
+        return cast("tuple[FloatND, BoolND]", scored)
+    statuses = reduce_bound_input_status(
+        statuses=scored.bound_status,
+        active=jnp.ones((n_candidates,), dtype=bool),
+    )
+    if bound_summary:
+        return BoundedResult[tuple[FloatND, BoolND]](
+            output=cast("tuple[FloatND, BoolND]", scored.output),
+            bound_status=statuses,
+        )
+    validate_runtime_bound_status(
+        statuses=statuses,
+        bound_specs=tuple(
+            bound
+            for bound in regime.simulation.post_decision_bounds
+            if bound.kind == "dag"
+        ),
+        regime_name=regime.name,
+        period=period,
+    )
+    return cast("tuple[FloatND, BoolND]", scored.output)
 
 
 def _invert_nnbegm_outer_targets(
@@ -3789,20 +3819,23 @@ def _replay_nnbegm_candidates(
         regime_name=regime.name,
         period=period,
     )
-    return _rank_nnbegm_candidate_bank(
-        candidate_inner=candidate_inner,
-        candidate_outer=candidate_outer,
-        represented=represented,
-        optimal_actions=optimal_actions,
-        regime=regime,
-        sim_policy=sim_policy,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-        canonical_states=canonical_states,
-        action_names=action_names,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        referenced_value_kwargs=referenced_value_kwargs,
+    return cast(
+        "tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]",
+        _rank_nnbegm_candidate_bank(
+            candidate_inner=candidate_inner,
+            candidate_outer=candidate_outer,
+            represented=represented,
+            optimal_actions=optimal_actions,
+            regime=regime,
+            sim_policy=sim_policy,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+            canonical_states=canonical_states,
+            action_names=action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            referenced_value_kwargs=referenced_value_kwargs,
+        ),
     )
 
 
@@ -3874,10 +3907,14 @@ def _rank_nnbegm_candidate_bank(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     referenced_value_kwargs: QAndFKwargs,
-) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
+    bound_summary: bool = False,
+) -> (
+    tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]
+    | BoundedResult[tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]]
+):
     """Pure canonical scoring and first-maximum ranking of the represented bank."""
     n_candidates = candidate_inner.shape[0]
-    canonical_values, canonical_feasible = _score_nnbegm_candidate_bank(
+    scored = _score_nnbegm_candidate_bank(
         optimal_actions=optimal_actions,
         regime=regime,
         sim_policy=sim_policy,
@@ -3890,6 +3927,11 @@ def _rank_nnbegm_candidate_bank(
         action_names=action_names,
         next_regime_to_V_arr=next_regime_to_V_arr,
         referenced_value_kwargs=referenced_value_kwargs,
+        bound_summary=bound_summary,
+    )
+    canonical_values, canonical_feasible = cast(
+        "tuple[FloatND, BoolND]",
+        scored.output if type(scored) is BoundedResult else scored,
     )
     valid = represented & canonical_feasible & jnp.isfinite(canonical_values)
     ranking_values = jnp.where(valid, canonical_values, -jnp.inf)
@@ -3916,7 +3958,7 @@ def _rank_nnbegm_candidate_bank(
             name: jnp.where(any_valid, selected_discrete_actions[name], -1)
             for name in sim_policy.discrete_action_names
         }
-    return (
+    output = (
         MappingProxyType(
             {
                 **optimal_actions,
@@ -3926,6 +3968,13 @@ def _rank_nnbegm_candidate_bank(
             }
         ),
         chosen_value,
+    )
+    return (
+        BoundedResult[tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]](
+            output=output, bound_status=scored.bound_status
+        )
+        if type(scored) is BoundedResult
+        else output
     )
 
 
@@ -4155,14 +4204,16 @@ def _canonical_Q_at_actions(
         Tuple of the per-subject canonical value and feasibility.
 
     """
-    evaluated = regime.simulation.Q_and_F[period](
-        **canonical_states,
-        **{name: jnp.asarray(candidate_actions[name]) for name in action_names},
+    evaluated = _evaluate_canonical_Q_at_actions(
+        candidate_actions=candidate_actions,
+        regime=regime,
+        canonical_states=canonical_states,
+        action_names=action_names,
         next_regime_to_V_arr=next_regime_to_V_arr,
-        **referenced_value_kwargs,
-        **flat_params,
-        period=jnp.int32(period),
+        flat_params=flat_params,
+        period=period,
         age=age,
+        referenced_value_kwargs=referenced_value_kwargs,
     )
     if type(evaluated) is BoundedResult:
         validate_runtime_bound_status(
@@ -4175,13 +4226,49 @@ def _canonical_Q_at_actions(
             regime_name=regime.name,
             period=period,
         )
-        values, feasible = cast("tuple[FloatND, BoolND]", evaluated.output)
-    else:
-        if any(bound.kind == "dag" for bound in regime.simulation.post_decision_bounds):
+        return cast("tuple[FloatND, BoolND]", evaluated.output)
+    return cast("tuple[FloatND, BoolND]", evaluated)
+
+
+def _evaluate_canonical_Q_at_actions(
+    *,
+    candidate_actions: Mapping[ActionName, FloatND | IntND],
+    regime: Regime,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
+) -> tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]:
+    """Evaluate canonical actions once, retaining integrity through transformations."""
+    evaluated = regime.simulation.Q_and_F[period](
+        **canonical_states,
+        **{name: jnp.asarray(candidate_actions[name]) for name in action_names},
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        **referenced_value_kwargs,
+        **flat_params,
+        period=jnp.int32(period),
+        age=age,
+    )
+    if type(evaluated) is BoundedResult:
+        if len(evaluated.bound_status) != sum(
+            bound.kind == "dag" for bound in regime.simulation.post_decision_bounds
+        ):
             raise TypeError(
-                "Canonical actual-action evaluation must produce mandatory integrity."
+                "Runtime bound status must match model declaration authority."
             )
-        values, feasible = cast("tuple[FloatND, BoolND]", evaluated)
+        values, feasible = cast("tuple[FloatND, BoolND]", evaluated.output)
+        return BoundedResult(
+            output=(jnp.asarray(values), jnp.asarray(feasible).astype(bool)),
+            bound_status=evaluated.bound_status,
+        )
+    if any(bound.kind == "dag" for bound in regime.simulation.post_decision_bounds):
+        raise TypeError(
+            "Canonical actual-action evaluation must produce mandatory integrity."
+        )
+    values, feasible = cast("tuple[FloatND, BoolND]", evaluated)
     return jnp.asarray(values), jnp.asarray(feasible).astype(bool)
 
 

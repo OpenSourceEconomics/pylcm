@@ -490,6 +490,7 @@ def _assert_fault_observations(
         validate_query_input_status(statuses=result.query_status, authorities=slots[0])
     for status in result.bound_status:
         np.testing.assert_array_equal(status, [False, False])
+    assert len(result.output) == 4
     value, carry, _, source_coverage = result.output
     _assert_close(actual=value, expected=reference[0])
     _assert_close(actual=carry.marginal_utility, expected=reference[1])

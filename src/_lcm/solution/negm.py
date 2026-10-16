@@ -38,6 +38,12 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree, stack_egm_carries
+from _lcm.egm.dcegm_query_model import DCEGMQueryModel
+from _lcm.egm.nested_floor import (
+    NESTED_FLOOR_INPUT,
+    PreparedNestedFloor,
+    prepare_nested_floor,
+)
 from _lcm.egm.outer_envelope import build_stacked_outer_carry
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
@@ -49,9 +55,10 @@ from _lcm.execution.core_program import (
     InternalInputRef,
     InternalOutputSpec,
     ReducedAxis,
+    _CheckedCoreVariant,
     core_program_graph,
 )
-from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.execution.reductions import HARD_MAX_WITH_CARRY_REDUCTION
 from _lcm.grids import ContinuousGrid
 from _lcm.params.edges import regime_kernel_params
@@ -76,7 +83,23 @@ from _lcm.solution.dcegm import (
     DCEGM,
     _BoundDCEGM,
     _combination_inputs,
+    _consume_bounded_dcegm_output,
+    _counted_dcegm_output_roles,
+    _DCEGMPeriodKernel,
     dcegm_kernel_with_declared_reads,
+)
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    ContinuationCountedKernelOutput,
+    FeasibilityCounts,
+    _unflatten_bound_status,
+    count_current_feasibility,
+    merge_bound_input_status,
+    merge_continuation_read_counts,
+    merge_query_input_status,
+    reduce_bound_input_status,
+    reduce_continuation_read_counts,
+    reduce_query_input_status,
 )
 from _lcm.time import TimeAxis
 from _lcm.typing import (
@@ -101,6 +124,7 @@ from lcm.solver_api import (
 )
 from lcm.typing import (
     ActionName,
+    BoolND,
     Float1D,
     FloatND,
     FunctionName,
@@ -123,8 +147,24 @@ _OUTER_CANDIDATE_WIDTH_KEYWORD = "_lcm_outer_candidate_width"
 _TRANSPORT_PREFIX = "__lcm_negm_"
 _KEEPER_VALUE = f"{_TRANSPORT_PREFIX}keeper_value"
 _KEEPER_CARRY = f"{_TRANSPORT_PREFIX}keeper_carry"
+_KEEPER_RESULT = f"{_TRANSPORT_PREFIX}keeper_result"
 _OUTER_NODES = f"{_TRANSPORT_PREFIX}outer_nodes"
 _COH_SHIFTS = f"{_TRANSPORT_PREFIX}coh_shifts"
+_DURABLE_NODES = f"{_TRANSPORT_PREFIX}durable_nodes"
+_COH_PARAMS = f"{_TRANSPORT_PREFIX}coh_params"
+
+_NESTED_INNER_FIELD_COUNT = 4
+_NESTED_KEEPER_FIELD_COUNT = 5
+
+type _NestedInnerOutput = BoundedResult[
+    tuple[FloatND, EGMCarry, FeasibilityCounts | None, BoolND]
+]
+type _NestedKeeperOutput = BoundedResult[
+    tuple[FloatND, EGMCarry, FeasibilityCounts | None, BoolND, PreparedNestedFloor]
+]
+type _NestedSweepOutput = BoundedResult[
+    tuple[FloatND, EGMCarry, FeasibilityCounts | None]
+]
 
 
 @beartype(conf=REGIME_CONF)
@@ -214,7 +254,10 @@ class NEGM(TwoMarginSolver):
             bind_roles(
                 solver=self,
                 role_type=_BoundNEGM,
-                inner=self.inner._with_liquid_margin(liquid),  # noqa: SLF001
+                inner=replace(
+                    self.inner._with_liquid_margin(liquid),  # noqa: SLF001
+                    _negm_current_publication=True,
+                ),
                 outer_action=outer.action,
                 outer_state=outer.state,
                 outer_post_decision=outer.post_decision_state,
@@ -406,6 +449,9 @@ class NEGM(TwoMarginSolver):
         per-node candidates and collapses the outer axis by `max`.
         """
         bound_self = cast("_BoundNEGM", self)
+        query_model = (context.dcegm_query_models or {}).get(context.regime_name)
+        if query_model is not None and query_model.authority.finite_outer is None:
+            raise TypeError("Finite NEGM requires its canonical outer query authority.")
         # The adjuster is the inner DC-EGM with the outer post-decision supplied
         # per outer-grid node rather than recomputed from the outer action:
         # `_with_outer_post_decision` binds it into the regime's flat params at
@@ -430,7 +476,19 @@ class NEGM(TwoMarginSolver):
             flat_param_names=context.flat_param_names
             | {bound_self.outer_post_decision},
         )
-        adjuster_kernels = bound_self.inner.build_period_kernels(
+        if query_model is not None:
+            adjuster_context = replace(
+                adjuster_context,
+                dcegm_source_query_model=_derive_negm_inner_query_model(
+                    model=query_model,
+                    functions=adjuster_context.functions,
+                    periods=query_model.authority.target_periods,
+                ),
+            )
+        inner_with_child_transport = replace(
+            bound_self.inner, _retain_child_feasibility=True
+        )
+        adjuster_kernels = inner_with_child_transport.build_period_kernels(
             context=adjuster_context
         )
         # The keeper is a normal passive DC-EGM: the outer post-decision is held
@@ -516,7 +574,16 @@ class NEGM(TwoMarginSolver):
                     no_adjustment_func=no_adjustment_func,
                 ),
             )
-            group_keeper_kernels = bound_self.inner.build_period_kernels(
+            if query_model is not None:
+                keeper_context = replace(
+                    keeper_context,
+                    dcegm_source_query_model=_derive_negm_inner_query_model(
+                        model=query_model,
+                        functions=keeper_context.functions,
+                        periods=group_periods or (template_period,),
+                    ),
+                )
+            group_keeper_kernels = inner_with_child_transport.build_period_kernels(
                 context=keeper_context
             )
             keeper_param_checks += group_keeper_kernels.param_checks
@@ -561,6 +628,16 @@ class NEGM(TwoMarginSolver):
                     ),
                     durable_axis_in_carry=durable_axis_in_carry,
                     carry_row_state_names=carry_row_state_names,
+                    floor_preparation=(
+                        None
+                        if query_model is None
+                        or query_model.authority.bound.kind != "dag"
+                        else _build_negm_floor_preparation(
+                            model=query_model,
+                            period=period,
+                            fixed_state_names=carry_row_state_names,
+                        )
+                    ),
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
@@ -574,6 +651,10 @@ class NEGM(TwoMarginSolver):
         assert stacked_template is not None  # noqa: S101
         return SolutionKernels(
             period_kernels=period_kernels,
+            continuation_reader_capabilities=(
+                adjuster_kernels.continuation_reader_capabilities
+            ),
+            query_input_authorities=(adjuster_kernels.query_input_authorities),
             # The outer helper pool splits the keeper build, and the inner
             # solver may split either branch further, so a period is grouped by
             # its own declared helper signature together with both inner keys.
@@ -592,12 +673,125 @@ class NEGM(TwoMarginSolver):
             ),
             continuation_spec=EGMContinuationSpec(
                 template=stacked_template,
-                layout=self.egm_continuation_layout,
+                layout=(
+                    self.egm_continuation_layout
+                    if query_model is None
+                    else replace(
+                        self.egm_continuation_layout, query_spec=query_model.authority
+                    )
+                ),
             ),
             # Both inner margins are solved by the inner solver, so both sets of
             # parameter-dependent preconditions still apply to this regime.
             param_checks=(*adjuster_kernels.param_checks, *keeper_param_checks),
         )
+
+
+def _derive_negm_inner_query_model(
+    *,
+    model: DCEGMQueryModel,
+    functions: EconFunctionsMapping,
+    periods: tuple[int, ...],
+) -> DCEGMQueryModel:
+    """Derive an inner producer view from the canonical finite outer declaration."""
+    from _lcm.continuation import build_query_model_authority  # noqa: PLC0415
+    from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+        resolve_periodized_nodes,
+    )
+
+    if model.authority.finite_outer is None:
+        raise TypeError("An inner query view needs canonical finite outer authority.")
+    pool = MappingProxyType(
+        {
+            **{
+                name: function
+                for name, function in model.functions.items()
+                if name != model.authority.finite_outer.outer_post_decision
+            },
+            **functions,
+        }
+    )
+    by_period = MappingProxyType(
+        {
+            period: cast(
+                "EconFunctionsMapping",
+                resolve_periodized_nodes(mapping=pool, period=period),
+            )
+            for period in periods
+        }
+    )
+    parent = model.authority
+    authority = build_query_model_authority(
+        bound=parent.bound,
+        state_names=parent.state_names,
+        action_names=parent.action_names,
+        coordinate_kind="resources",
+        marginal_convention=parent.marginal_convention,
+        corner_coordinate_kind=parent.corner_coordinate_kind,
+        row_capacity=parent.row_capacity,
+        interval_ids=parent.interval_ids,
+        interval_side_ids=parent.interval_side_ids,
+        evaluator_targets=tuple(
+            (purpose, target)
+            for purpose, target in parent.evaluator_targets
+            if not purpose.startswith("outer_")
+        ),
+        functions=by_period[periods[0]],
+        functions_by_period=by_period,
+        target_periods=periods,
+        row_topology=parent.row_topology,
+    )
+    return replace(model, authority=authority, functions=pool)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _NestedFloorPreparation:
+    """Canonical fixed-current computation and the exact transient role tree."""
+
+    function: Callable[..., PreparedNestedFloor]
+    """One b(C) evaluation, independent of O and D."""
+
+    output_roles: BoundedResult[OutputRoleTree]
+    """Named C axes for the shared floors, shifted nodes and input flags."""
+
+
+def _build_negm_floor_preparation(
+    *,
+    model: DCEGMQueryModel,
+    period: int,
+    fixed_state_names: tuple[StateName, ...],
+) -> _NestedFloorPreparation:
+    """Declare one canonical b(C) producer before either nested cost evaluation."""
+    from _lcm.egm.preferences import concatenate_regime_function  # noqa: PLC0415
+    from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+        resolve_periodized_nodes,
+    )
+
+    target = model.authority.bound.lower_target
+    if target is None or fixed_state_names != model.authority.state_names:
+        raise TypeError(
+            "Nested floor preparation requires its canonical fixed-state roles."
+        )
+    functions = cast(
+        "EconFunctionsMapping",
+        resolve_periodized_nodes(mapping=model.functions, period=period),
+    )
+    floating = StateAxesLeading(
+        state_names=fixed_state_names, dtype=model.offsets.dtype
+    )
+    boolean = StateAxesLeading(state_names=fixed_state_names, dtype=jnp.bool_)
+    return _NestedFloorPreparation(
+        function=functools.partial(
+            prepare_nested_floor,
+            lower=concatenate_regime_function(functions=functions, target=target),
+            offsets=model.offsets,
+            state_names=fixed_state_names,
+        ),
+        output_roles=BoundedResult(
+            output=floating,
+            bound_status=(_unflatten_bound_status(None, (boolean, boolean)),),
+        ),
+    )
 
 
 def _durable_values_at(
@@ -777,6 +971,9 @@ class _NEGMPeriodKernel:
     fixed_sweep_kwargs: Mapping[QualifiedName, ParamsLeaf] = MappingProxyType({})
     """The regime's and its targets' fixed params, bound into the sweep."""
 
+    floor_preparation: _NestedFloorPreparation | None = None
+    """Canonical current-floor preparation preceding both nested cost paths."""
+
     _core_programs: MappingProxyType[str, CoreProgram] = field(
         init=False, repr=False, compare=False
     )
@@ -786,6 +983,19 @@ class _NEGMPeriodKernel:
         """Derive the graph from the inner kernels and the sweep's bindings."""
         keeper = core_program_graph(kernel=self.keeper_kernel)["main"]
         adjuster = core_program_graph(kernel=self.adjuster_kernel)["main"]
+        retaining = (
+            isinstance(self.keeper_kernel, _DCEGMPeriodKernel)
+            and self.keeper_kernel.retains_current_feasibility
+        )
+        if retaining:
+            object.__setattr__(
+                self,
+                "_core_programs",
+                _nested_feasibility_programs(
+                    kernel=self, keeper=keeper, adjuster=adjuster
+                ),
+            )
+            return
         sweep_function = functools.partial(
             _outer_sweep_program,
             inner_core=adjuster.function,
@@ -803,6 +1013,8 @@ class _NEGMPeriodKernel:
             "keeper": replace(
                 keeper,
                 name="keeper",
+                # The outer composition owns checked event folds and locators.
+                checked_variant=None,
                 requirements=replace(
                     keeper.requirements,
                     value_reads=rekeyed_value_reads(reads=inherited, core_key="keeper"),
@@ -903,6 +1115,21 @@ class _NEGMPeriodKernel:
                     ),
                 }
             ),
+            floor_preparation=(
+                None
+                if self.floor_preparation is None
+                else replace(
+                    self.floor_preparation,
+                    function=functools.partial(
+                        self.floor_preparation.function,
+                        **union_fixed_params(
+                            fixed_flat_params=fixed_flat_params,
+                            regime_name=self.regime_name,
+                            transition_target_names=self.transition_target_names,
+                        ),
+                    ),
+                )
+            ),
         )
 
     def __call__(
@@ -929,6 +1156,22 @@ class _NEGMPeriodKernel:
         the published continuation so the parent read can take the exact
         `max_j V_j(q)` at its own query.
         """
+        if (
+            isinstance(self.keeper_kernel, _DCEGMPeriodKernel)
+            and self.keeper_kernel.retains_current_feasibility
+        ):
+            return _run_nested_feasibility_kernel(
+                kernel=self,
+                compiled_cores=compiled_cores,
+                context=CoreBuildContext(
+                    state_action_space=state_action_space,
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    next_regime_to_continuation=next_regime_to_continuation,
+                    flat_params=flat_params,
+                    period=period,
+                    ages=ages,
+                ),
+            )
         keeper_output = self.keeper_kernel(
             compiled_cores={"main": compiled_cores["keeper"]},
             state_action_space=state_action_space,
@@ -963,6 +1206,376 @@ class _NEGMPeriodKernel:
         return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
 
 
+def _nested_feasibility_programs(
+    *, kernel: _NEGMPeriodKernel, keeper: CoreProgram, adjuster: CoreProgram
+) -> MappingProxyType[str, CoreProgram]:
+    """Connect actual action eligibility and integrity through both graph variants."""
+    keeper_kernel = kernel.keeper_kernel
+    adjuster_kernel = kernel.adjuster_kernel
+    if (
+        not isinstance(keeper_kernel, _DCEGMPeriodKernel)
+        or not isinstance(adjuster_kernel, _DCEGMPeriodKernel)
+        or not adjuster_kernel.retains_current_feasibility
+        or keeper_kernel.own_bound_specs != adjuster_kernel.own_bound_specs
+        or keeper_kernel.query_input_authorities
+        != adjuster_kernel.query_input_authorities
+        or keeper.checked_variant is None
+        or adjuster.checked_variant is None
+        or type(keeper.output_roles) is not BoundedResult
+        or type(keeper.checked_variant.output_roles) is not BoundedResult
+    ):
+        raise TypeError("Nested DC producers must preserve common integrity owners.")
+    keeper_roles = _nested_tuple_roles(roles=keeper.output_roles)
+    checked_keeper_roles = _nested_tuple_roles(
+        roles=keeper.checked_variant.output_roles
+    )
+    result_output = (InternalOutputSpec(label="result", path=()),)
+    keeper_program = replace(
+        keeper,
+        name="keeper",
+        requirements=replace(
+            keeper.requirements,
+            value_reads=rekeyed_value_reads(
+                reads=keeper.requirements.value_reads, core_key="keeper"
+            ),
+        ),
+        internal_outputs=result_output,
+        checked_variant=replace(keeper.checked_variant, internal_outputs=result_output),
+    )
+    if kernel.floor_preparation is not None:
+        preparation = kernel.floor_preparation
+        keeper_program = replace(
+            keeper_program,
+            function=functools.partial(
+                _keeper_with_prepared_floor,
+                inner=keeper.function,
+                prepare_floor=preparation.function,
+            ),
+            output_roles=replace(
+                keeper_roles,
+                output=(*keeper_roles.output, preparation.output_roles),
+            ),
+            checked_variant=replace(
+                keeper.checked_variant,
+                function=functools.partial(
+                    _keeper_with_prepared_floor,
+                    inner=keeper.checked_variant.function,
+                    prepare_floor=preparation.function,
+                ),
+                output_roles=replace(
+                    checked_keeper_roles,
+                    output=(
+                        *checked_keeper_roles.output,
+                        preparation.output_roles,
+                    ),
+                ),
+                internal_outputs=result_output,
+            ),
+        )
+    output_roles = replace(
+        keeper_roles,
+        output=(
+            VALUE,
+            _stacked_nested_carry_roles(
+                roles=keeper_roles.output[1],
+                n_candidates=kernel.outer_grid_values.shape[0] + 1,
+            ),
+            keeper_roles.output[2],
+        ),
+    )
+    requirements = CoreExecutionRequirements(
+        reduced_axes=(
+            *adjuster.requirements.reduced_axes,
+            ReducedAxis(
+                name=OUTER_CANDIDATE_AXIS,
+                coordinate_names=(_OUTER_NODES,),
+                coordinate_extents=(kernel.outer_grid_values.shape[0],),
+                canonical_order="c",
+                reduction=HARD_MAX_WITH_CARRY_REDUCTION,
+                width_keyword=_OUTER_CANDIDATE_WIDTH_KEYWORD,
+            ),
+        ),
+        tiled_axes=adjuster.requirements.tiled_axes,
+        internal_inputs=MappingProxyType(
+            {
+                _KEEPER_RESULT: InternalInputRef(producer="keeper", label="result"),
+            }
+        ),
+        value_reads=rekeyed_value_reads(
+            reads=keeper.requirements.value_reads, core_key="outer_sweep"
+        ),
+    )
+    common = {
+        "outer_post_decision": kernel.outer_post_decision,
+        "durable_axis": kernel.durable_axis_in_carry,
+        "coh_shift_func": (
+            kernel.coh_shift_func if kernel.floor_preparation is not None else None
+        ),
+        **kernel.fixed_sweep_kwargs,
+    }
+    return MappingProxyType(
+        {
+            "keeper": keeper_program,
+            "outer_sweep": CoreProgram(
+                name="outer_sweep",
+                function=functools.partial(
+                    _nested_outer_sweep_program,
+                    inner_core=adjuster.function,
+                    **common,
+                ),
+                compiler_options=adjuster.compiler_options,
+                argument_builder=_NEGMSweepArgumentBuilder(
+                    adjuster_builder=adjuster.argument_builder,
+                    regime_name=kernel.regime_name,
+                    outer_post_decision=kernel.outer_post_decision,
+                    outer_grid_values=kernel.outer_grid_values,
+                    durable_grid_values=kernel.durable_grid_values,
+                    coh_shift_func=kernel.coh_shift_func,
+                    defer_costs=kernel.floor_preparation is not None,
+                ),
+                requirements=requirements,
+                output_roles=output_roles,
+                disposition=CoreExecutionDisposition.PLANNED,
+                donation_candidates=(),
+                checked_variant=_CheckedCoreVariant(
+                    function=functools.partial(
+                        _nested_outer_sweep_program,
+                        inner_core=adjuster.checked_variant.function,
+                        **common,
+                    ),
+                    output_roles=_counted_dcegm_output_roles(roles=output_roles),
+                ),
+            ),
+        }
+    )
+
+
+def _nested_tuple_roles(
+    *, roles: OutputRoleTree
+) -> BoundedResult[tuple[OutputRoleTree, ...]]:
+    """Require the bounded tuple roles already declared by the nested DC producer."""
+    if type(roles) is not BoundedResult or type(roles.output) is not tuple:
+        raise TypeError("A nested DC program must declare bounded tuple roles.")
+    return cast("BoundedResult[tuple[OutputRoleTree, ...]]", roles)
+
+
+def _stacked_nested_carry_roles(
+    *, roles: OutputRoleTree, n_candidates: int
+) -> OutputRoleTree:
+    """Apply the actual carry stack's axis insertion to exact query-buffer shapes."""
+    return jax.tree.map_with_path(
+        functools.partial(_stacked_nested_carry_role, n_candidates=n_candidates),
+        roles,
+    )
+
+
+# keyword-only-exempt: library-callback=jax.tree.map_with_path
+def _stacked_nested_carry_role(
+    path: tuple[jax.tree_util.GetAttrKey, ...],
+    role: StateAxesLeading,
+    *,
+    n_candidates: int,
+) -> StateAxesLeading:
+    """Keep fixed-cell floors shared and stack candidate-dependent leaves."""
+    names = tuple(key.name for key in path)
+    if (
+        role.shape is None
+        or names in (("taste_shock_scale",), ("query_data", "floor_used"))
+        or "adaptive_outer_data" in names
+    ):
+        return role
+    axis = len(role.shape) - (2 if "liquid_corner_data" in names else 1)
+    return replace(role, shape=(*role.shape[:axis], n_candidates, *role.shape[axis:]))
+
+
+def _keeper_with_prepared_floor(
+    *,
+    inner: Callable[..., PytreeValue],
+    prepare_floor: Callable[..., PreparedNestedFloor],
+    **arguments: PytreeValue,
+) -> _NestedKeeperOutput:
+    """Prepare b(C) before keeper costs and transport it to all adjuster cores."""
+    prepared = prepare_floor(**arguments)
+    result = inner(**arguments, **{NESTED_FLOOR_INPUT: prepared})
+    if (
+        type(result) is not BoundedResult
+        or type(result.output) is not tuple
+        or len(result.output) != _NESTED_INNER_FIELD_COUNT
+    ):
+        raise TypeError("A prepared keeper requires the genuine inner output channels.")
+    native = cast("_NestedInnerOutput", result)
+    return BoundedResult(
+        output=(*native.output, prepared),
+        bound_status=native.bound_status,
+        query_status=native.query_status,
+        continuation_read_counts=native.continuation_read_counts,
+    )
+
+
+def _run_nested_feasibility_kernel(
+    *,
+    kernel: _NEGMPeriodKernel,
+    compiled_cores: Mapping[str, Callable[..., PytreeValue]],
+    context: CoreBuildContext,
+) -> KernelOutput:
+    """Dispatch the raw keeper record before the sole composite host publication."""
+    keeper_program = kernel.core_programs()["keeper"]
+    keeper = compiled_cores["keeper"](**keeper_program.argument_builder(context))
+    sweep_program = kernel.core_programs()["outer_sweep"]
+    evaluated = compiled_cores["outer_sweep"](
+        **sweep_program.argument_builder(context),
+        **{_KEEPER_RESULT: keeper},
+    )
+    if type(evaluated) is not BoundedResult:
+        raise TypeError("A nested sweep must return its declared integrity record.")
+    inner = cast("_DCEGMPeriodKernel", kernel.keeper_kernel)
+    if inner.query_input_authorities is not None:
+        return _consume_bounded_dcegm_output(
+            evaluated=evaluated,
+            variant="main",
+            own_bound_specs=inner.own_bound_specs,
+            query_slots=inner.query_input_authorities,
+        )
+    value, carry, summary = evaluated.output
+    if (
+        evaluated.bound_status
+        or evaluated.query_status is not None
+        or summary is not None
+    ):
+        raise TypeError("Nested integrity records require model-owned output slots.")
+    if evaluated.continuation_read_counts is not None:
+        return ContinuationCountedKernelOutput(
+            value=value,
+            continuations={EGM_CONTINUATION: carry},
+            continuation_read_counts=evaluated.continuation_read_counts,
+        )
+    return KernelOutput(value=value, continuations={EGM_CONTINUATION: carry})
+
+
+def _nested_outer_sweep_program(
+    *,
+    inner_core: Callable[..., _NestedInnerOutput],
+    outer_post_decision: FunctionName,
+    durable_axis: int,
+    _lcm_outer_candidate_width: int,
+    coh_shift_func: Callable[..., FloatND] | None = None,
+    **arguments: PytreeValue,
+) -> _NestedSweepOutput:
+    """Fold every actual outer result while retaining action identity until counting."""
+    adjuster_arguments = dict(arguments)
+    keeper = cast("_NestedInnerOutput", adjuster_arguments.pop(_KEEPER_RESULT))
+    outer_nodes = cast("Float1D", adjuster_arguments.pop(_OUTER_NODES))
+    if coh_shift_func is None:
+        coh_shifts = cast("FloatND", adjuster_arguments.pop(_COH_SHIFTS))
+    else:
+        if len(keeper.output) != _NESTED_KEEPER_FIELD_COUNT:
+            raise TypeError("A prepared nested keeper must transport its shared floor.")
+        prepared = keeper.output[-1]
+        keeper = replace(keeper, output=keeper.output[:-1])
+        adjuster_arguments[NESTED_FLOOR_INPUT] = prepared
+        coh_shifts = coh_shift_func(
+            durable_values=adjuster_arguments.pop(_DURABLE_NODES),
+            outer_values=outer_nodes,
+            **cast("FlatRegimeParams", adjuster_arguments.pop(_COH_PARAMS)),
+        )
+    n_nodes = outer_nodes.shape[0]
+    results = jax.lax.map(
+        _NestedNodeSolver(
+            inner_core=inner_core,
+            outer_post_decision=outer_post_decision,
+            adjuster_arguments=MappingProxyType(adjuster_arguments),
+        ),
+        outer_nodes,
+        batch_size=min(_lcm_outer_candidate_width, n_nodes),
+    )
+    keeper_value, keeper_carry, _keeper_counts, keeper_feasible = keeper.output
+    node_values, node_carries, _node_counts, node_feasible = results.output
+    value = jnp.maximum(keeper_value, jnp.max(node_values, axis=0))
+    carry = build_stacked_outer_carry(
+        keeper_carry=keeper_carry,
+        adjuster_carries=tuple(
+            jax.tree.map(operator.itemgetter(index), node_carries)
+            for index in range(n_nodes)
+        ),
+        coh_shifts=coh_shifts,
+        durable_axis=durable_axis,
+    )
+    active_outer = jnp.ones(outer_nodes.shape, dtype=jnp.bool_)
+    node_bound_status = reduce_bound_input_status(
+        statuses=results.bound_status, active=active_outer
+    )
+    if len(keeper.bound_status) != len(node_bound_status):
+        raise TypeError("Nested outer results must retain canonical bound slots.")
+    return BoundedResult(
+        output=(
+            value,
+            carry,
+            (
+                _count_nested_current_feasibility(
+                    keeper=keeper_feasible, adjusters=node_feasible, value=value
+                )
+                if keeper.bound_status or keeper.query_status is not None
+                else None
+            ),
+        ),
+        bound_status=tuple(
+            merge_bound_input_status(left=left, right=right)
+            for left, right in zip(keeper.bound_status, node_bound_status, strict=True)
+        ),
+        query_status=merge_query_input_status(
+            left=keeper.query_status,
+            right=reduce_query_input_status(
+                statuses=results.query_status, active=active_outer
+            ),
+        ),
+        continuation_read_counts=merge_continuation_read_counts(
+            left=keeper.continuation_read_counts,
+            right=reduce_continuation_read_counts(
+                counts=results.continuation_read_counts, active=active_outer
+            ),
+        ),
+    )
+
+
+def _count_nested_current_feasibility(
+    *, keeper: BoolND, adjusters: BoolND, value: FloatND
+) -> FeasibilityCounts:
+    """Count physical states after joint eligibility over genuine outer/action pairs."""
+    if (
+        keeper.shape[:-1] != value.shape
+        or adjusters.shape[1:] != keeper.shape
+        or keeper.shape[-1] < 1
+    ):
+        raise TypeError("Nested eligibility must retain state, outer and action axes.")
+    joint = keeper | jnp.any(adjusters, axis=0)
+    return count_current_feasibility(
+        budget_feasible=joint,
+        predicate_feasible=jnp.ones((*joint.shape, 0), dtype=jnp.bool_),
+        value=value,
+        active_states=jnp.ones(value.shape, dtype=jnp.bool_),
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _NestedNodeSolver:
+    """Return a genuine inner result with its independent integrity/count channels."""
+
+    inner_core: Callable[..., _NestedInnerOutput]
+    """The actual adjuster producer, including its retained action mask."""
+
+    outer_post_decision: FunctionName
+    """Name under which the outer node enters the actual inner DAG."""
+
+    adjuster_arguments: Mapping[ReferenceName, PytreeValue]
+    """The inner producer's declared live arguments."""
+
+    def __call__(self, node: ScalarFloat) -> _NestedInnerOutput:
+        """Evaluate one actual outer node without selecting diagnostic winners."""
+        return self.inner_core(
+            **{**self.adjuster_arguments, self.outer_post_decision: node}
+        )
+
+
 @dataclass(frozen=True, kw_only=True)
 class _NEGMSweepArgumentBuilder:
     """Build the outer sweep's arguments for lowering and execution.
@@ -994,6 +1607,9 @@ class _NEGMSweepArgumentBuilder:
     coh_shift_func: Callable[..., FloatND]
     """The per-(durable, outer-node) cash-on-hand shift of each adjuster."""
 
+    defer_costs: bool = False
+    """Evaluate costs inside the sweep after the shared floor and keeper dependency."""
+
     def __call__(
         self, context: CoreBuildContext
     ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
@@ -1012,6 +1628,18 @@ class _NEGMSweepArgumentBuilder:
                 )
             )
         )
+        if self.defer_costs:
+            own = {
+                _OUTER_NODES: self.outer_grid_values,
+                _DURABLE_NODES: self.durable_grid_values,
+                _COH_PARAMS: regime_kernel_params(
+                    flat_params, regime_name=self.regime_name
+                ),
+            }
+            _fail_if_sweep_inputs_collide_with_the_adjusters(
+                arguments=arguments, own=own, regime_name=self.regime_name
+            )
+            return MappingProxyType({**arguments, **own})
         own = {
             _OUTER_NODES: self.outer_grid_values,
             _COH_SHIFTS: self.coh_shift_func(
@@ -1106,7 +1734,7 @@ class _NodeSolver:
 def _fail_if_sweep_inputs_collide_with_the_adjusters(
     *,
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
-    own: Mapping[ReferenceName, FloatND],
+    own: Mapping[ReferenceName, PytreeValue],
     regime_name: RegimeName,
 ) -> None:
     collisions = sorted(set(arguments) & set(own))

@@ -53,6 +53,8 @@ from _lcm.egm.upper_envelope.rfc import refine_envelope as refine_envelope_rfc
 from _lcm.egm.upper_envelope.segment_envelope import (
     OwnedEnvelope,
     _line_read,
+    _NegmBindingEnvelope,
+    _OwnedNegmBindingEnvelope,
     refine_envelope_exact,
 )
 from _lcm.solution.dcegm import (
@@ -63,7 +65,7 @@ from _lcm.solution.dcegm import (
     MSSEnvelope,
     RFCEnvelope,
 )
-from lcm.typing import Float1D, ScalarBool, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, FloatND, ScalarBool, ScalarFloat, ScalarInt
 
 
 class OwnedQueryBracket(NamedTuple):
@@ -122,6 +124,21 @@ class UpperEnvelopeBackend(Protocol):
 class _OwnedUpperEnvelopeBackend(Protocol):
     """Refine candidates while publishing their associated original provenance."""
 
+    @overload
+    def __call__(
+        self,
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal_utility: Float1D,
+        savings: Float1D,
+        _binding_source_count: int,
+        _binding_queries: FloatND,
+        cell_width: int = 1,
+    ) -> _OwnedNegmBindingEnvelope: ...
+
+    @overload
     def __call__(
         self,
         *,
@@ -342,7 +359,14 @@ def _exact_backend(
     envelope: ExactEnvelope,
     n_refined: int,
     publish_provenance: bool = False,
-) -> tuple[Float1D, Float1D, Float1D, ScalarInt] | OwnedEnvelope:
+    _binding_source_count: int | None = None,
+    _binding_queries: FloatND | None = None,
+) -> (
+    tuple[Float1D, Float1D, Float1D, ScalarInt]
+    | OwnedEnvelope
+    | _NegmBindingEnvelope
+    | _OwnedNegmBindingEnvelope
+):
     """Build the exact segment envelope of the candidate cloud.
 
     The construction reads its topology off the candidate order and its geometry
@@ -350,6 +374,31 @@ def _exact_backend(
     provenance is requested; the candidate supgradient is not consumed.
     """
     del marginal_utility
+    if (_binding_source_count is None) != (_binding_queries is None):
+        raise ValueError("Binding queries require their source-prefix count.")
+    if _binding_queries is not None and _binding_source_count is not None:
+        if publish_provenance:
+            return refine_envelope_exact(
+                endog_grid=endog_grid,
+                policy=policy,
+                value=value,
+                n_refined=n_refined,
+                max_runs=envelope.max_runs,
+                cell_width=cell_width,
+                savings=savings,
+                _binding_source_count=_binding_source_count,
+                _binding_queries=_binding_queries,
+            )
+        return refine_envelope_exact(
+            endog_grid=endog_grid,
+            policy=policy,
+            value=value,
+            n_refined=n_refined,
+            max_runs=envelope.max_runs,
+            cell_width=cell_width,
+            _binding_source_count=_binding_source_count,
+            _binding_queries=_binding_queries,
+        )
     return refine_envelope_exact(
         endog_grid=endog_grid,
         policy=policy,

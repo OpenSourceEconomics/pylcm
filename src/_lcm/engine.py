@@ -989,6 +989,11 @@ class NNBEGMPolicyRead:
     savings_lower_bound: float | None = None
     """Nested route's model-owned intrinsic borrowing limit, if applicable."""
 
+    finite_query_authority: EGMQuerySpec | None = dataclasses.field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Canonical finite NB floor consumed by actual-action Q/F scoring."""
+
     golden_iterations: int | None = None
     """Nested route's exact outer-refinement iteration budget."""
 

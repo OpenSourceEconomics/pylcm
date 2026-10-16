@@ -52,6 +52,7 @@ from _lcm.continuation import (
 )
 from _lcm.egm.branch_aggregation import OuterBranchAggregator
 from _lcm.egm.dcegm_query_model import DCEGMQueryModel
+from _lcm.egm.nbegm_query_model import NBEGMQueryModel
 from _lcm.egm.scalar_query import ScalarEGMQueryModel
 from _lcm.engine import (
     ParamCheck,
@@ -256,6 +257,18 @@ class SolverBuildContext:
 
     dcegm_query_models: Mapping[RegimeName, DCEGMQueryModel] | None = None
     """Trusted DC query pools, independent of the consuming solver family."""
+
+    nbegm_query_models: Mapping[RegimeName, NBEGMQueryModel] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Independent canonical NB liquid/interval query pools for actual targets."""
+    nbegm_source_query_model: NBEGMQueryModel | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Derived inner source authority; target reads retain the global registry."""
+
+    dcegm_source_query_model: DCEGMQueryModel | None = None
+    """Canonical derived inner producer view, leaving target-read authority intact."""
 
     solve_functions: MappingProxyType[FunctionName, UserFunction]
     """Normalized, unprocessed solve-phase declarations for this regime."""
@@ -535,6 +548,19 @@ class SolverBuildContext:
 
 
 @dataclass(frozen=True, kw_only=True)
+class GeneratedContinuationAuthority:
+    """Trusted completed mesh facts emitted independently of any replay payload."""
+
+    adaptive_outer_nodes: tuple[float, ...]
+    model_identity: Hashable
+
+
+GENERATED_CONTINUATION_AUTHORITY = ArtifactKey(
+    type_id="pylcm.engine.generated_continuation_authority", schema_version=1
+)
+
+
+@dataclass(frozen=True, kw_only=True)
 class GeneratedReplayAuthority:
     """Trusted dynamic replay facts emitted beside, never read from, a payload."""
 
@@ -555,6 +581,7 @@ _ENGINE_ARTIFACT_TYPE_IDS = frozenset(
         DISSOLUTION_FLAG.type_id,
         EGM_CONTINUATION.type_id,
         GENERATED_REPLAY_AUTHORITY.type_id,
+        GENERATED_CONTINUATION_AUTHORITY.type_id,
         SIMULATION_POLICY.type_id,
         SOLVER_DIAGNOSTICS.type_id,
     }
@@ -581,6 +608,11 @@ class BackwardInductionResult:
 
     Sparse over regimes: only kernels that publish a policy contribute entries.
     """
+
+    generated_continuation_authorities: MappingProxyType[
+        int, MappingProxyType[RegimeName, GeneratedContinuationAuthority]
+    ] = MappingProxyType({})
+    """Trusted generated mesh data retained even when replay is absent."""
 
     generated_replay_authorities: MappingProxyType[
         int, MappingProxyType[RegimeName, GeneratedReplayAuthority]

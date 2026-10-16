@@ -295,25 +295,45 @@ def _validate_borrowing_bound_routes(
                         f"cannot jointly construct them."
                     )
         if any(spec.kind == "dag" for spec in specs) and post_decision is not None:
-            solver = user_regime.solver
-            while (inner := getattr(solver, "inner", None)) is not None:
-                solver = inner
-            if getattr(
-                getattr(solver, "savings_grid", None), "pass_points_at_runtime", False
-            ):
-                raise ModelInitializationError(
-                    f"Regime '{regime_name}' declares a callable borrowing "
-                    f"bound but its savings grid supplies points only at runtime."
-                )
-            from _lcm.solution.dcegm import _BoundDCEGM  # noqa: PLC0415
-            from _lcm.solution.egm import _BoundEGM  # noqa: PLC0415
-
-            if isinstance(user_regime.solver, _BoundEGM | _BoundDCEGM):
-                continue
-            raise ModelInitializationError(
-                f"Regime '{regime_name}' declares a callable borrowing bound; "
-                f"its EGM-family route does not implement dynamic floors."
+            _validate_callable_borrowing_solver(
+                user_regime=user_regime, regime_name=regime_name
             )
+
+
+def _validate_callable_borrowing_solver(
+    *, user_regime: UserRegime, regime_name: RegimeName
+) -> None:
+    """Require static saving offsets and a solver route that owns dynamic floors."""
+    solver = user_regime.solver
+    while (inner := getattr(solver, "inner", None)) is not None:
+        solver = inner
+    if getattr(getattr(solver, "savings_grid", None), "pass_points_at_runtime", False):
+        raise ModelInitializationError(
+            f"Regime '{regime_name}' declares a callable borrowing "
+            f"bound but its savings grid supplies points only at runtime."
+        )
+    from _lcm.egm.outer_search import (  # noqa: PLC0415
+        AdaptiveOuterMesh,
+        FiniteOuterGrid,
+    )
+    from _lcm.solution.dcegm import _BoundDCEGM  # noqa: PLC0415
+    from _lcm.solution.egm import _BoundEGM  # noqa: PLC0415
+    from _lcm.solution.nbegm import _BoundNBEGM  # noqa: PLC0415
+    from _lcm.solution.negm import _BoundNEGM  # noqa: PLC0415
+    from _lcm.solution.nnbegm import _BoundNNBEGM  # noqa: PLC0415
+
+    if isinstance(
+        user_regime.solver, _BoundEGM | _BoundDCEGM | _BoundNBEGM | _BoundNEGM
+    ):
+        return
+    if isinstance(user_regime.solver, _BoundNNBEGM) and isinstance(
+        user_regime.solver.outer_search, AdaptiveOuterMesh | FiniteOuterGrid
+    ):
+        return
+    raise ModelInitializationError(
+        f"Regime '{regime_name}' declares a callable borrowing bound; "
+        f"its EGM-family route does not implement dynamic floors."
+    )
 
 
 def validate_model_inputs(

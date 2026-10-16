@@ -1,14 +1,22 @@
 """Mandatory solve/simulation input integrity and independent feasibility summaries."""
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Literal, NamedTuple, cast
+from enum import Enum
+from typing import TYPE_CHECKING, Literal, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
 
 from _lcm.post_decision_bound import PostDecisionBoundSpec
-from _lcm.typing import PytreeChild, PytreeValue, QAndFArg, ShapeDtypeTree, ShardingTree
+from _lcm.typing import (
+    DataclassInstance,
+    PytreeChild,
+    PytreeValue,
+    QAndFArg,
+    ShapeDtypeTree,
+    ShardingTree,
+)
 from _lcm.utils.counts import add_counts, sum_counts
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.solver_api import KernelOutput
@@ -27,6 +35,24 @@ type FeasibilityCounts = tuple[IntND, IntND]
 type CountedGridSearchOutput = (
     tuple[FloatND, IntND, IntND] | tuple[FloatND, BoolND, IntND, IntND]
 )
+
+if TYPE_CHECKING:
+    from _lcm.execution.output_layout import OutputRoleTree
+else:
+    # Importing the role resolver here cycles through core_program. The claw
+    # checks the recursive role-tree shape; the existing resolver validates
+    # its exact enum/dataclass leaves before lowering.
+    type OutputRoleTree = (
+        Enum
+        | str
+        | DataclassInstance
+        | tuple[OutputRoleTree, ...]
+        | Mapping[str, OutputRoleTree]
+        | None
+    )
+
+# The same registered record represents numerical outputs and their pure roles.
+type _BoundedPayload = PytreeValue | OutputRoleTree
 
 
 class BoundInputStatus(NamedTuple):
@@ -182,9 +208,9 @@ def _flatten_continuation_read_counts_with_keys(
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
 def _unflatten_continuation_read_counts(
-    _aux: None, children: Iterable[PytreeChild]
+    _aux: None, children: Iterable[PytreeChild | DataclassInstance]
 ) -> ContinuationReadCounts:
-    """Restore temporary batch axes and role placeholders without scalar checks."""
+    """Restore arrays or declared dataclass roles without allocating numeric leaves."""
     leaves = tuple(children)
     if len(leaves) != 2:  # noqa: PLR2004
         raise TypeError("A continuation-read record has exactly two leaves.")
@@ -199,11 +225,35 @@ jax.tree_util.register_pytree_with_keys(
 )
 
 
+def reduce_continuation_read_counts(
+    *, counts: ContinuationReadCounts | None, active: BoolND
+) -> ContinuationReadCounts | None:
+    """Fold actual active read events without weighting their integer populations."""
+    if counts is None:
+        return None
+    return ContinuationReadCounts(
+        *(sum_counts(counts=jnp.where(active, count, 0)) for count in counts)
+    )
+
+
+def merge_continuation_read_counts(
+    *, left: ContinuationReadCounts | None, right: ContinuationReadCounts | None
+) -> ContinuationReadCounts | None:
+    """Add bounded event summaries while preserving absent diagnostic work."""
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return ContinuationReadCounts(
+        *(add_counts(left=a, right=b) for a, b in zip(left, right, strict=True))
+    )
+
+
 type _BoundedResultAux = tuple[Literal["continuation_read_counts"], bool] | None
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class BoundedResult[Output: PytreeValue]:
+class BoundedResult[Output: _BoundedPayload]:
     """Ordinary mapped outputs beside separately reduced bound-integrity records."""
 
     output: Output
@@ -216,7 +266,7 @@ class BoundedResult[Output: PytreeValue]:
     """Optional diagnostic summary, independent of mandatory integrity records."""
 
 
-def _flatten_bounded_result[Output: PytreeValue](
+def _flatten_bounded_result[Output: _BoundedPayload](
     result: BoundedResult[Output],
 ) -> tuple[
     tuple[
@@ -242,7 +292,7 @@ def _flatten_bounded_result[Output: PytreeValue](
     )
 
 
-def _flatten_bounded_result_with_keys[Output: PytreeValue](
+def _flatten_bounded_result_with_keys[Output: _BoundedPayload](
     result: BoundedResult[Output],
 ) -> tuple[
     tuple[
@@ -283,8 +333,8 @@ def _flatten_bounded_result_with_keys[Output: PytreeValue](
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
 def _unflatten_bounded_result(
     _aux: _BoundedResultAux,
-    children: Iterable[PytreeValue | ShapeDtypeTree | ShardingTree | PytreeChild],
-) -> BoundedResult[PytreeValue]:
+    children: Iterable[_BoundedPayload | ShapeDtypeTree | ShardingTree | PytreeChild],
+) -> BoundedResult[_BoundedPayload]:
     """Restore numeric, abstract and role trees before their owning trust seam."""
     leaves = tuple(children)
     if _aux is None:
@@ -315,7 +365,7 @@ def _unflatten_bounded_result(
     query_status = leaves[2] if has_query else None
     object.__setattr__(result, "query_status", query_status)
     object.__setattr__(result, "continuation_read_counts", counts)
-    return cast("BoundedResult[PytreeValue]", result)
+    return cast("BoundedResult[_BoundedPayload]", result)
 
 
 jax.tree_util.register_pytree_with_keys(
@@ -545,6 +595,22 @@ def consume_runtime_bound_outputs(
 
 
 @dataclass(frozen=True, kw_only=True)
+class ContinuationCountedKernelOutput(KernelOutput):
+    """A checked literal result with only its independent paired-read summary."""
+
+    continuation_read_counts: ContinuationReadCounts
+    """Exactly two native int32 scalars, without a fabricated feasibility pair."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if type(self.continuation_read_counts) is not ContinuationReadCounts or any(
+            count.shape != () or count.dtype != jnp.int32
+            for count in self.continuation_read_counts
+        ):
+            raise TypeError("Continuation-read summaries require two int32 scalars.")
+
+
+@dataclass(frozen=True, kw_only=True)
 class FeasibilityKernelOutput(KernelOutput):
     """Private scalar summaries beside the unchanged public artifact channels."""
 
@@ -558,10 +624,20 @@ class FeasibilityKernelOutput(KernelOutput):
     """Reached landing totals retained until mandatory integrity is accepted."""
     landing_checks: tuple[tuple[str, str], ...] = ()
     """Canonical qualified landing checks corresponding to the totals."""
+    continuation_read_counts: ContinuationReadCounts | None = None
+    """Optional paired-read population, materialized independently of feasibility."""
 
     def __post_init__(self) -> None:
         """Require native scalar integer counters without a host transfer."""
         super().__post_init__()
+        if self.continuation_read_counts is not None and (
+            type(self.continuation_read_counts) is not ContinuationReadCounts
+            or any(
+                count.shape != () or count.dtype != jnp.int32
+                for count in self.continuation_read_counts
+            )
+        ):
+            raise TypeError("Continuation-read summaries require two int32 scalars.")
         if bool(self.landing_checks) != (self.landing_totals is not None) or (
             self.landing_totals is not None
             and (
