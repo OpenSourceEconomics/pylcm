@@ -99,3 +99,14 @@ def sum_counts(
         )
         total = add_counts(left=total, right=scaled)
     return total
+
+
+class CodeLandingCheck(tuple[str, str]):
+    """A `(regime, state)` landing check on the codes of a discrete state.
+
+    A plain `(regime, state)` check counts raw values off a continuous grid that
+    declares `off_grid="raise"`; this marker says the count is of codes outside
+    `0..n-1`, which the solve reports as an invalid state transition.
+    """
+
+    __slots__ = ()

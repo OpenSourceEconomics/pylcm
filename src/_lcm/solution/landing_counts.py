@@ -44,10 +44,10 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
-from _lcm.utils.counts import sum_counts
+from _lcm.utils.counts import CodeLandingCheck, sum_counts
 from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d
 from _lcm.utils.functools import allow_args, allow_only_kwargs
-from lcm.exceptions import OffGridStateError
+from lcm.exceptions import InvalidStateTransitionError, OffGridStateError
 from lcm.typing import BoolND, FloatND, IntND
 
 type LandingCheck = tuple[RegimeName, StateName]
@@ -123,7 +123,10 @@ def get_landing_counting_max_Q_over_a(
         )
     )
     max_Q_over_a = with_signature(
-        _LandingCountingReduction(reducer=reducer),
+        _LandingCountingReduction(
+            reducer=reducer,
+            counts_premasked=bool(getattr(Q_and_F, "counts_premasked", False)),
+        ),
         args=["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names],
         return_annotation="tuple[FloatND, BoolND, IntND]",
         enforce=False,
@@ -220,19 +223,34 @@ def fail_on_reached_landings(
     checks: tuple[LandingCheck, ...],
     regime_name: RegimeName,
     period: int,
+    check_codes: bool = True,
 ) -> None:
     """Raise for the first check whose raw landings the solve reached.
+
+    A discrete state's code counts only with `check_codes`, when the runtime
+    checks are on, as the transition preflight it stands in for does.
 
     Raises:
         OffGridStateError: A reached landing lies outside, or is not a finite
             point of, a grid declaring `off_grid="raise"`.
+        InvalidStateTransitionError: A reached feasible cell's law sends a
+            discrete state to a code outside `0..n-1`.
 
     """
-    for (target, state), count in zip(checks, jax.device_get(totals), strict=True):
-        if int(count):
+    for check, count in zip(checks, jax.device_get(totals), strict=True):
+        if not int(count):
+            continue
+        target, state = check
+        if not isinstance(check, CodeLandingCheck):
             raise OffGridStateError(
                 f"Invalid next state: regime={regime_name!r}, target={target!r}, "
                 f"period={period}, state={state!r}"
+            )
+        if check_codes:
+            raise InvalidStateTransitionError(
+                f"In regime {regime_name!r} (period {period}), the law of "
+                f"{state!r} to regime {target!r} leaves its grid at a feasible "
+                "choice: it returns a code outside its grid."
             )
 
 
@@ -265,6 +283,8 @@ class _LandingCountingReduction:
 
     reducer: _HardMaxQOverA | _SmoothedMaxQOverA
     """The dense reduction, whose `Q_and_F` also returns landing counts."""
+    counts_premasked: bool = False
+    """Whether `Q_and_F` masks the counts itself, so they are only summed."""
 
     def __call__(
         self,
@@ -284,7 +304,10 @@ class _LandingCountingReduction:
         return (
             value,
             feasibility,
-            _feasible_landing_counts(F_arr=F_arr, landing_counts=landing_counts),
+            _feasible_landing_counts(
+                F_arr=jnp.ones((), dtype=bool) if self.counts_premasked else F_arr,
+                landing_counts=landing_counts,
+            ),
         )
 
 
