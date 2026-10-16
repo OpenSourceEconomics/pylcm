@@ -1116,3 +1116,63 @@ def test_initial_joint_empty_state_uses_each_current_runtime_law(*, fold: bool) 
     assert [state for state, _ in observed] == [
         pytest.approx(entered, abs=10.0**-DECIMAL_PRECISION) for _, entered in observed
     ]
+
+
+@pytest.mark.parametrize("keep_intermediates", [(), ("F",)])
+def test_lookup_policy_refuses_a_state_without_a_feasible_action(
+    *, keep_intermediates: tuple[Literal["F"], ...]
+) -> None:
+    """A queried state with an empty action set is refused, with or without parts."""
+    model = _model(enable_jit=True)
+    solution = model.solve(params={"discount_factor": 0.5}, log_level="off")
+    with pytest.raises(
+        exceptions.NoFeasibleActionError, match=r"working.*period 1.*wealth.*0"
+    ):
+        model.lookup_policy(
+            params={"discount_factor": 0.5},
+            solution=solution,
+            period=1,
+            regime_name="working",
+            states={"wealth": jnp.asarray([0.0, 2.0])},
+            keep_intermediates=keep_intermediates,
+        )
+
+
+@pytest.mark.parametrize(
+    ("schedule", "expected"),
+    [
+        (InvariantBlockSchedule.PERIOD_MAJOR, [(5, "")]),
+        (InvariantBlockSchedule.BLOCK_MAJOR, [(4, ", pref_type codes (0, 1) only")]),
+    ],
+)
+def test_simulation_logs_the_solve_counts_before_refusing_an_empty_set(
+    *,
+    schedule: InvariantBlockSchedule,
+    expected: list[tuple[int, str]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The solve's empty-set counts are logged even when the simulation refuses.
+
+    Block-major has solved the empty and the first type when the first-type
+    subject reaches wealth zero, so its count covers those two codes and says so.
+    """
+    with pytest.raises(exceptions.NoFeasibleActionError):
+        _blocked_model(schedule=schedule).simulate(
+            params=_BLOCKED_PARAMS,
+            initial_conditions={**_BLOCKED_SUBJECT, "wealth": jnp.asarray([1.0])},
+            seed=0,
+            log_level="warning",
+        )
+    messages = [record.getMessage() for record in caplog.records]
+
+    assert [
+        (int(match.group(1)), _scope_of(message))
+        for message in messages
+        if (match := _COUNT_PATTERNS["empty"].match(message)) is not None
+    ] == expected
+
+
+def _scope_of(message: str) -> str:
+    """Return the codes label a component count carries, or `""`."""
+    match = re.search(r", pref_type codes \(.*\) only", message)
+    return match.group(0) if match else ""

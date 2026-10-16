@@ -147,6 +147,7 @@ from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
     initial_conditions_feasibility_mask,
     pad_initial_conditions_to_multiple,
+    physical_state_at_row,
     resolve_initial_periods,
     validate_simulation_inputs,
 )
@@ -271,6 +272,7 @@ from _lcm.typing import (
     FlatParams,
     FunctionName,
     InitialConditions,
+    ParamsLeaf,
     ParamsTemplate,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
@@ -307,6 +309,7 @@ from lcm.exceptions import (
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     ModelInitializationError,
+    NoFeasibleActionError,
     UnsupportedOperationError,
 )
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule
@@ -4077,6 +4080,11 @@ class Model:
             (possibly restricted) action grid, one entry per state row, and the
             intermediates named in `keep_intermediates`; the others are `None`.
 
+        Raises:
+            NoFeasibleActionError: A queried state of a regime with actions has no
+                feasible action, as `simulate` refuses it. A regime without actions
+                returns the value negative infinity there instead.
+
         """
         self._check_identity_runtime()
         regime = self._regimes.get(regime_name)
@@ -4174,7 +4182,7 @@ class Model:
             if allocations is not None:
                 allocations.close()
 
-    def _lookup_policy(
+    def _lookup_policy(  # noqa: PLR0915
         self,
         *,
         params: UserParams,
@@ -4360,6 +4368,19 @@ class Model:
         roles = cast("tuple[str, ...]", program.output_roles)
         by_role = dict(zip(roles, outputs, strict=True))
         indices, value = by_role[ACTION_INDEX], by_role[DECISION_VALUE]
+        _fail_if_a_queried_state_has_no_feasible_action(
+            indices=indices,
+            has_actions=bool(space.actions),
+            n_query_rows=n_query_rows,
+            regime=regime,
+            states=space.states,
+            regime_params={
+                **regime.resolved_fixed_params,
+                **regime_kernel_params(flat_params, regime_name=regime_name),
+            },
+            regime_name=regime_name,
+            period=period,
+        )
         lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
         if unit is None or allocations is None:
             actions = _lookup_values_from_indices(
@@ -5427,6 +5448,49 @@ def _lookup_live_footprint(
     return union_buffer_footprints(
         footprints=(allocations.snapshot(), measure_buffer_footprint(tree=call_roots))
     )
+
+
+def _fail_if_a_queried_state_has_no_feasible_action(
+    *,
+    indices: IntND,
+    has_actions: bool,
+    n_query_rows: int | None,
+    regime: Regime,
+    states: Mapping[StateName, FloatND | IntND],
+    regime_params: Mapping[QualifiedName, ParamsLeaf],
+    regime_name: RegimeName,
+    period: int,
+) -> None:
+    """Refuse a lookup whose queried state has no feasible action.
+
+    The decision publishes flat index -1 for an empty action set, which no
+    action grid can decode. A regime without actions has nothing to decode; its
+    infeasible state keeps the value negative infinity. Padding rows beyond
+    `n_query_rows` are not queried and never count.
+
+    Raises:
+        NoFeasibleActionError: At the first queried row with an empty action set,
+            naming the regime, period and state.
+
+    """
+    if not has_actions:
+        return
+    queried = np.asarray(indices)[:n_query_rows]
+    empty_rows = np.flatnonzero(queried < 0)
+    if empty_rows.size == 0:
+        return
+    state = physical_state_at_row(
+        regime=regime,
+        states=states,
+        row=int(empty_rows[0]),
+        regime_params=regime_params,
+        memory=None,
+    )
+    msg = (
+        f"Regime '{regime_name}', period {period}, state {state} "
+        "has no feasible action."
+    )
+    raise NoFeasibleActionError(msg)
 
 
 def _trim_lookup_rows(
