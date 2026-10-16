@@ -42,12 +42,15 @@ from lcm import (
     Decoupled,
     DeterministicTransition,
     DiscreteGrid,
+    Gate,
     InitialNodes,
     JointTransition,
     LinSpacedGrid,
     Model,
     Periods,
     Phased,
+    ProjectedRegimeValue,
+    StakeholderRoute,
     Transition,
     case_boundary,
     categorical,
@@ -2131,3 +2134,90 @@ def test_realized_off_grid_code_of_a_value_constrained_regime_fails_simulation()
             log_level="off",
             runtime_checks=True,
         )
+
+
+# A gate that reads the target's value is undecided at an off-grid code, which
+# reads NaN there; the code landing counts, not the fallback the gate closes onto.
+
+
+@categorical(ordered=True)
+class _SourceTargetFallback:
+    source: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+
+
+def _gated_flow(*, kind: DiscreteState, a: DiscreteAction) -> FloatND:
+    return 20.0 * a + 0.0 * kind
+
+
+def _kind_utility_zero(*, kind: DiscreteState) -> FloatND:
+    return 0.0 * kind
+
+
+def _kind_utility_low(*, kind: DiscreteState) -> FloatND:
+    return -10.0 + 0.0 * kind
+
+
+def _gate_on_target_value(V_target: FloatND) -> BoolND:
+    return V_target > -5.0
+
+
+def _project_kind(kind: DiscreteState) -> DiscreteState:
+    return jnp.clip(kind, 0, 1).astype(jnp.int32)
+
+
+def _gated_model(*, law: UserFunction) -> Model:
+    kind = DiscreteGrid(category_class=_TwoCodes)
+    return Model(
+        regimes={
+            "source": UserRegime(
+                states={"kind": kind},
+                actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+                functions={"utility": _gated_flow},
+                state_transitions={"kind": law},
+            ),
+            "target": UserRegime(
+                states={"kind": kind}, functions={"utility": _kind_utility_zero}
+            ),
+            "fallback": UserRegime(
+                states={"kind": kind}, functions={"utility": _kind_utility_low}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={
+            "source": Transition(
+                law="target",
+                gates={
+                    "target": Gate(
+                        predicate=_gate_on_target_value,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"kind": _project_kind},
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
+        initial_nodes={0: "source"},
+        regime_id_class=_SourceTargetFallback,
+    )
+
+
+def test_off_grid_code_behind_a_value_gate_fails_the_checked_solve():
+    """`a = 1` sends `kind` to code 2; the gate reads NaN there, not a closed gate."""
+    with pytest.raises(InvalidStateTransitionError, match="kind"):
+        _gated_model(law=_kind_leaves_when_working).solve(
+            params={"discount_factor": 1.0}, log_level="off", runtime_checks=True
+        )
+
+
+def test_on_grid_law_behind_a_value_gate_solves():
+    got = _gated_model(law=_kind_stays).solve(
+        params={"discount_factor": 1.0}, log_level="off", runtime_checks=True
+    )
+    np.testing.assert_array_equal(np.asarray(got.values[0]["source"]), [20.0, 20.0])

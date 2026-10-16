@@ -2195,6 +2195,7 @@ def _get_pointwise_gated_interpolator(
     draw_resolution: _NodeDrawResolution | None = None,
     landing_counter: Callable[..., IntND] | None = None,
     fallback_checks: tuple[tuple[str, tuple[tuple[StateName, Float1D], ...]], ...] = (),
+    code_count_mask: tuple[bool, ...] = (),
 ) -> Callable[..., FloatND | tuple[FloatND, IntND]]:
     """Read a gated edge's operand surfaces at the landing point, then gate.
 
@@ -2236,6 +2237,9 @@ def _get_pointwise_gated_interpolator(
         fallback_checks: Per leg fallback reader name, the raise-rule grids of
             the regime it projects onto, as `(state, points)` pairs. Counted
             only where the gate closes and the leg reads its fallback.
+        code_count_mask: Per output of `landing_counter`, whether it counts the
+            codes of a discrete state. A code off its grid reads NaN, so such a
+            count is taken where the gate opens or is undecided.
 
     Returns:
         A callable returning the gated continuation, one trailing axis per leg
@@ -2338,8 +2342,19 @@ def _get_pointwise_gated_interpolator(
         landing_counter=landing_counter,
         landing_counter_args=tuple(sorted(landing_counter_args)),
         fallback_checks=fallback_checks,
+        code_count_mask=code_count_mask,
         arg_names=tuple(outer_arg_names),
     )
+
+
+def _nan_read_as(*, kwargs: Mapping[str, FloatND], fill: float) -> dict[str, FloatND]:
+    """Return the gate's arguments with every NaN float read as `fill`."""
+    return {
+        name: jnp.where(jnp.isnan(value), fill, value)
+        if jnp.issubdtype(jnp.asarray(value).dtype, jnp.floating)
+        else value
+        for name, value in kwargs.items()
+    }
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -2390,6 +2405,10 @@ class _PointwiseGatedInterpolator:
         field(default=(), metadata={"fingerprint_omit_if_default": True})
     )
     """Per fallback reader name, the raise-rule grids it projects onto."""
+    code_count_mask: tuple[bool, ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Per `landing_counter` output, whether it counts a discrete state's codes."""
 
     def __post_init__(self) -> None:
         _publish_signature(
@@ -2410,9 +2429,24 @@ class _PointwiseGatedInterpolator:
         gate = self.combine.gate(**combine_kwargs)
         counts = []
         if self.landing_counter is not None:
+            opens = gate
+            if any(self.code_count_mask):
+                # An off-grid code reads NaN, so a gate on the target's value
+                # cannot close on it: count the code where the gate opens for
+                # some value of the undecided channels.
+                undecided_opens = self.combine.gate(
+                    **_nan_read_as(kwargs=combine_kwargs, fill=jnp.inf)
+                ) | self.combine.gate(
+                    **_nan_read_as(kwargs=combine_kwargs, fill=-jnp.inf)
+                )
+                opens = jnp.where(
+                    jnp.asarray(self.code_count_mask),
+                    jnp.asarray(undecided_opens)[..., None],
+                    jnp.asarray(gate)[..., None],
+                )
             counts.append(
                 jnp.where(
-                    gate,
+                    opens,
                     self.landing_counter(
                         **{name: kwargs[name] for name in self.landing_counter_args}
                     ),
@@ -3919,6 +3953,7 @@ def _build_target_continuation(
             draw_resolution=draw_resolution,
             landing_counter=landing_counting.counter,
             fallback_checks=landing_counting.fallback_checks,
+            code_count_mask=landing_counting.code_count_mask,
         )
     elif n_stakeholders is None:
         mapped_interpolator = landing_counting.paired_with(next_V_interpolator)
@@ -3998,6 +4033,13 @@ class _LandingCounting:
     """The counted `(regime, state)` landings, the target's first."""
     node_weight_names: tuple[str, ...] = ()
     """Marginal weight of each lottery axis, set only beside `checks`."""
+
+    @property
+    def code_count_mask(self) -> tuple[bool, ...]:
+        """Per output of `counter`, whether it counts a discrete state's codes."""
+        n_fallback = sum(len(grids) for _, grids in self.fallback_checks)
+        target_checks = self.checks[: len(self.checks) - n_fallback]
+        return tuple(isinstance(check, CodeLandingCheck) for check in target_checks)
 
     def paired_with(
         self, read_value: Callable[..., FloatND]
