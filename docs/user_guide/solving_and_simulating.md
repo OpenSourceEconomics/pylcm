@@ -341,9 +341,12 @@ function while subjects start at different ages cannot be evaluated and raises
 - `log_level`: Required. Console verbosity (same options and table as `solve()`).
   Initial-condition schema and regime validity are always checked; numerical feasibility
   follows `runtime_checks`.
-- `seed=None`: Integer random seed or scalar typed `jax.random.key`. Typed roots retain
-  their PRNG implementation. Collective dissolution gates consume their addressed replay
-  artifacts from `solution`; the automatic-solve path retains and threads them itself.
+- `seed=None`: Integer random seed or scalar typed Threefry key
+  (`jax.random.key(..., impl="threefry2x32")`, the JAX default). An integer becomes a
+  Threefry key whatever `jax_default_prng_impl` says; other key implementations are
+  refused, because their draws would change with the subject chunk width. Collective
+  dissolution gates consume their addressed replay artifacts from `solution`; the
+  automatic-solve path retains and threads them itself.
 - `taste_shock_seed=None`: Optional independent integer seed or scalar typed key for
   common taste shocks across counterfactual models. Omit it to keep the ordinary `seed`
   behavior.
@@ -353,9 +356,9 @@ function while subjects start at different ages cannot be evaluated and raises
   compilation. Used only on the automatic-solve path, i.e. when `solution` is omitted.
   `None` uses the number of physical CPU cores.
 
-Typed roots are consumed directly; integer seeds retain their existing streams. Raw
-uint32 keys from `jax.random.PRNGKey` and batched typed keys are refused. Derive scalar
-role roots with `fold_in`:
+Typed roots are consumed directly; integer seeds keep their Threefry streams. Raw uint32
+keys from `jax.random.PRNGKey` and batched typed keys are refused. Derive scalar role
+roots with `fold_in`:
 
 ```python
 import jax
@@ -651,9 +654,13 @@ levels must be positive and uniform draws must lie inside the declared interval.
 Discrete shocks require exact category codes. Persistent processes consume the supplied
 realised level directly, rather than treating it as an innovation and recursing again.
 
-Paths cover every period where the named shock is declared active in the simulation
-phase. Values outside those periods are ignored. Folded shocks are supported, including
-transition-local draws: a draw affecting the transition into period `p` comes from
-column `p`. A deterministic law reading `next_<shock>` sees the supplied draw before
-computing its own next state. Shocks omitted from the mapping retain the ordinary seeded
-stream, and solve expectations remain stochastic.
+Each value is checked against the support of every regime that may read it: the
+subject's starting regime in its entry period, and afterwards every regime the
+simulation can reach from there, since later regime membership is itself drawn. A
+subject's entry value is replaced only when its starting regime draws the shock. Cells
+no regime can read, such as those before a subject enters, are ignored and may hold
+`NaN`. Folded shocks are supported, including transition-local draws: a draw affecting
+the transition into period `p` comes from column `p`. A deterministic law reading
+`next_<shock>` sees the supplied draw before computing its own next state. Shocks
+omitted from the mapping retain the ordinary seeded stream, and solve expectations
+remain stochastic.

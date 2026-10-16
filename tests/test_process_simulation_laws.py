@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import _create_continuous_stochastic_next_func
 from _lcm.typing import StochasticNextFunction
@@ -23,14 +24,16 @@ from lcm import (
     StateConditioned,
     TauchenAR1Process,
     UniformIIDProcess,
+    categorical,
     fixed_transition,
 )
 from lcm.exceptions import (
     GridInitializationError,
+    ModelInitializationError,
     PyLCMError,
     RegimeInitializationError,
 )
-from lcm.typing import ContinuousState, FloatND, UserParams
+from lcm.typing import ContinuousState, FloatND, ScalarInt, UserParams
 from tests.test_models.processes import Health, RegimeId
 
 
@@ -543,4 +546,163 @@ def test_simulation_only_runtime_parameters_leave_solve_values_unchanged() -> No
         np.array_equal(values, second.values[period][name])
         for period, regimes in first.values.items()
         for name, values in regimes.items()
+    )
+
+
+@categorical(ordered=False)
+class _WorkRetiredId:
+    work: ScalarInt
+    retired: ScalarInt
+    dead: ScalarInt
+
+
+@categorical(ordered=False)
+class _CodedHealth:
+    bad: ScalarInt
+    good: ScalarInt
+
+
+@categorical(ordered=False)
+class _RecodedHealth:
+    good: ScalarInt
+    bad: ScalarInt
+
+
+def _tauchen(**kwargs: float | str | None) -> TauchenAR1Process:
+    law = {"n_points": 3, "gauss_hermite": False, "n_std": 2.0, "mu": 0.0}
+    return TauchenAR1Process(**(law | {"rho": 0.5, "sigma": 0.3} | kwargs))  # ty: ignore[invalid-argument-type]
+
+
+def _work_retired_model(
+    *,
+    work: _ContinuousStochasticProcess | Phased,
+    retired: _ContinuousStochasticProcess | Phased,
+    extra_work_states: dict[str, DiscreteGrid] | None = None,
+    extra_retired_states: dict[str, DiscreteGrid] | None = None,
+) -> Model:
+    def regime(states: dict[str, Grid | Phased]) -> Regime:
+        return Regime(
+            states=states,
+            state_transitions={
+                name: fixed_transition(name) for name in states if name != "income"
+            },
+            functions={"utility": _utility},
+        )
+
+    return Model(
+        regimes={
+            "work": regime({"income": work} | (extra_work_states or {})),
+            "retired": regime({"income": retired} | (extra_retired_states or {})),
+            "dead": Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        initial_nodes={0: "work"},
+        edges={"work": {"work": 0, "retired": 1}, "retired": {"dead": 2}},
+        regime_id_class=_WorkRetiredId,
+        fixed_params={"discount_factor": 0.9},
+    )
+
+
+@pytest.mark.parametrize(
+    ("work", "retired"),
+    [
+        (
+            Phased(solve=_tauchen(rho=None), simulate=_tauchen(rho=0.9)),
+            _tauchen(rho=None),
+        ),
+        (_tauchen(rho=None, simulate_draws="nodes"), _tauchen(rho=None)),
+    ],
+    ids=["phased-source", "draw-mode-only"],
+)
+def test_process_carried_under_different_declarations_solves_like_fixed_law(
+    *,
+    work: _ContinuousStochasticProcess | Phased,
+    retired: _ContinuousStochasticProcess,
+) -> None:
+    """A process both regimes declare is carried, whatever the declarations differ in.
+
+    With its runtime parameter supplied, the value functions equal those of the
+    model whose declarations fix the same parameter at construction.
+    """
+    runtime = _work_retired_model(work=work, retired=retired).solve(
+        params={"work": {"income": {"rho": 0.5}}, "retired": {"income": {"rho": 0.5}}},
+        log_level="off",
+    )
+    fixed = _work_retired_model(work=_tauchen(), retired=_tauchen()).solve(
+        params={}, log_level="off"
+    )
+    assert all(
+        np.array_equal(values, runtime.values[period][name])
+        for period, regimes in fixed.values.items()
+        for name, values in regimes.items()
+    )
+
+
+def test_simulation_conditioning_codes_must_agree_across_regimes() -> None:
+    """A simulation law conditioned on a state coded per regime is refused."""
+    conditioned = NormalIIDProcess(
+        n_points=3,
+        gauss_hermite=False,
+        n_std=2.0,
+        mu=0.0,
+        sigma=StateConditioned(on="health", by={"bad": 1.0, "good": 0.1}),
+    )
+    income = Phased(
+        solve=NormalIIDProcess(
+            n_points=3, gauss_hermite=False, n_std=2.0, mu=0.0, sigma=0.5
+        ),
+        simulate=conditioned,
+    )
+    with pytest.raises(ModelInitializationError, match="same integer codes"):
+        _work_retired_model(
+            work=income,
+            retired=income,
+            extra_work_states={"health": DiscreteGrid(_CodedHealth)},
+            extra_retired_states={"health": DiscreteGrid(_RecodedHealth)},
+        )
+
+
+def test_node_draw_from_beyond_the_top_node_follows_the_top_node_row() -> None:
+    """An off-grid current value draws as from the nearest edge node."""
+    process = _tauchen(rho=0.9, simulate_draws="nodes")
+    model = _model(process)
+    solution = model.solve(params={}, log_level="off")
+    top = float(process.get_gridpoints()[-1])
+
+    def realized(start: float) -> np.ndarray:
+        frame = model.simulate(
+            params={},
+            solution=solution,
+            initial_conditions={
+                "income": jnp.full(256, start),
+                "age": jnp.zeros(256),
+                "regime_id": jnp.full(256, RegimeId.alive, dtype=jnp.int32),
+            },
+            seed=537,
+            log_level="off",
+        ).to_dataframe(use_labels=False)
+        return frame.loc[frame["period"] == 1, "income"].to_numpy()
+
+    np.testing.assert_array_equal(realized(top + 5.0), realized(top))
+
+
+@pytest.mark.parametrize(
+    "simulate_change",
+    [{"simulate_draws": "nodes"}, {"fold": True}],
+    ids=["draw-mode", "fold"],
+)
+def test_phased_process_with_one_law_is_accepted(
+    simulate_change: dict[str, str | bool],
+) -> None:
+    """Phase declarations sharing one law are not distinct laws."""
+    base = NormalIIDProcess(
+        n_points=3,
+        gauss_hermite=True,
+        mu=0.0,
+        sigma=1.0,
+        fold="fold" in simulate_change,
+    )
+    process = Phased(solve=base, simulate=replace(base, **simulate_change))
+    assert isinstance(
+        Regime(states={"income": process}, functions={"utility": _utility}), Regime
     )
