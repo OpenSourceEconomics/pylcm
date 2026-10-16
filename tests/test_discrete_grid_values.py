@@ -42,12 +42,15 @@ from lcm import (
     Decoupled,
     DeterministicTransition,
     DiscreteGrid,
+    Gate,
     InitialNodes,
     JointTransition,
     LinSpacedGrid,
     Model,
     Periods,
     Phased,
+    ProjectedRegimeValue,
+    StakeholderRoute,
     Transition,
     case_boundary,
     categorical,
@@ -55,12 +58,20 @@ from lcm import (
     piece,
     ref,
 )
+from lcm.collective import ValueDependentConstraint
+from lcm.consumption_savings_regime import (
+    ConsumptionSavingsRegime,
+    LiquidMargin,
+    post_decision_lower_bound,
+)
 from lcm.exceptions import InvalidStateTransitionError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
+from lcm.solvers import DCEGM
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
     BoolND,
+    ContinuousAction,
     ContinuousState,
     DiscreteAction,
     DiscreteState,
@@ -1794,3 +1805,419 @@ def test_off_grid_output_of_a_source_only_markov_draw_is_refused(
     assert "'next_x': 2" in str(error.value)
     assert "'source'" in str(error.value)
     assert "'target'" in str(error.value)
+
+
+# The discrete-law check reads the feasibility the solve uses and the grids of the
+# phase it checks.
+
+
+@categorical(ordered=False)
+class _SourceTerminal:
+    source: ScalarInt
+    terminal: ScalarInt
+
+
+def _pair_flow(*, kind: DiscreteState, a: DiscreteAction) -> FloatND:
+    return 1.0 - 2.0 * a + 0.0 * kind
+
+
+def _pair_terminal(*, kind: DiscreteState) -> FloatND:
+    return 0.0 * kind
+
+
+def _kind_leaves_when_working(
+    *, kind: DiscreteState, a: DiscreteAction
+) -> DiscreteState:
+    return jnp.where(a == 1, 2, kind).astype(jnp.int32)
+
+
+def _participation_model(*, threshold: float, forbids_working: bool) -> Model:
+    """`Q_alice = 1 - 2a`; only `a = 1` sends `kind` to code 2, off `{0, 1}`.
+
+    With `forbids_working` the participation constraint is the review's
+    `(a == 0) & (Q_alice >= threshold)`, which excludes `a = 1` whatever its
+    value; otherwise it reads `Q_alice` alone.
+    """
+
+    def participation(*, Q_alice: FloatND, a: DiscreteAction) -> BoolND:
+        return ((a == 0) | (not forbids_working)) & (Q_alice >= threshold)
+
+    return Model(
+        regimes={
+            "source": UserRegime(
+                states={"kind": DiscreteGrid(category_class=_TwoCodes)},
+                actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"alice": _pair_flow, "bob": _pair_flow}
+                    )
+                },
+                state_transitions={"kind": _kind_leaves_when_working},
+                constraints={
+                    "participation": ValueDependentConstraint(predicate=participation)
+                },
+            ),
+            "terminal": UserRegime(
+                states={"kind": DiscreteGrid(category_class=_TwoCodes)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"alice": _pair_terminal, "bob": _pair_terminal}
+                    )
+                },
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"source": {"terminal": 0}},
+        initial_nodes={0: "source"},
+        regime_id_class=_SourceTerminal,
+    )
+
+
+@pytest.mark.parametrize("runtime_checks", [False, True])
+def test_law_leaving_the_grid_only_where_participation_fails_solves(*, runtime_checks):
+    """Participation forbids `a = 1`, the only action that leaves the grid."""
+    got = _participation_model(threshold=0.0, forbids_working=True).solve(
+        params={"discount_factor": 1.0},
+        log_level="off",
+        runtime_checks=runtime_checks,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(got.values[0]["source"]), [[1.0, 1.0], [1.0, 1.0]]
+    )
+
+
+def test_value_constrained_cells_are_not_counted_by_validate_transitions():
+    """Feasibility that reads values is unknown before the solve."""
+    _participation_model(threshold=-2.0, forbids_working=False).validate_transitions(
+        params={"discount_factor": 1.0}
+    )
+
+
+def _impute_low() -> DiscreteState:
+    return jnp.int32(0)
+
+
+def _flag_utility(*, flag: DiscreteState, a: DiscreteAction) -> FloatND:
+    return 1.0 * flag + a
+
+
+def _flag_other_utility(
+    *, flag: DiscreteState, other: DiscreteState, a: DiscreteAction
+) -> FloatND:
+    return 1.0 * flag + other + a
+
+
+def _flag_stays(*, flag: DiscreteState) -> DiscreteState:
+    return flag
+
+
+def _flag_leaves(*, flag: DiscreteState) -> DiscreteState:
+    return flag + 2
+
+
+def _carried_flag_model(*, law: UserFunction, with_category_state: bool) -> Model:
+    """`flag` is carried: imputed in the solve, a category grid in simulation."""
+    states = {
+        "flag": Phased(
+            solve=_impute_low, simulate=DiscreteGrid(category_class=_TwoCodes)
+        )
+    }
+    transitions = {"flag": law}
+    if with_category_state:
+        states["other"] = DiscreteGrid(category_class=_TwoCodes)
+        transitions["other"] = fixed_transition("other")
+    return Model(
+        n_periods=3,
+        regimes={
+            "alive": UserRegime(
+                states=states,
+                state_transitions=transitions,
+                actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+                functions={
+                    "utility": (
+                        _flag_other_utility if with_category_state else _flag_utility
+                    )
+                },
+            ),
+            "dead": UserRegime(functions={"utility": _dead_utility}),
+        },
+        regime_id_class=_AliveDead,
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"alive": Periods(values=(0,)), "dead": Periods(values=(1,))}},
+    )
+
+
+@pytest.mark.parametrize("with_category_state", [False, True])
+def test_off_grid_law_of_a_carried_category_state_is_refused(*, with_category_state):
+    """The simulate phase checks the simulation grid of a carried state."""
+    model = _carried_flag_model(
+        law=_flag_leaves, with_category_state=with_category_state
+    )
+    with pytest.raises(InvalidStateTransitionError, match="next_flag"):
+        model.validate_transitions(params=_LOTTERY_PARAMS)
+
+
+@pytest.mark.parametrize("with_category_state", [False, True])
+def test_on_grid_law_of_a_carried_category_state_passes(*, with_category_state):
+    _carried_flag_model(
+        law=_flag_stays, with_category_state=with_category_state
+    ).validate_transitions(params=_LOTTERY_PARAMS)
+
+
+# An EGM continuation reads its child's carry at the next discrete code; a code off
+# the child's grid reads NaN, never a clamped row.
+
+
+def _egm_utility(*, consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
+    return jnp.log(consumption) + 0.0 * kind
+
+
+def _egm_inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+    return 1.0 / marginal_continuation
+
+
+def _egm_savings(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption
+
+
+def _egm_next_wealth(savings: ContinuousState) -> ContinuousState:
+    return 1.0 + savings
+
+
+def _kind_up(*, kind: DiscreteState) -> DiscreteState:
+    return kind + 1
+
+
+def _egm_dead_utility(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    return jnp.log(wealth) + 0.0 * kind
+
+
+def test_dcegm_continuation_reads_nan_at_an_off_grid_child_code():
+    """Exactly the cells whose path leaves `{0, 1}` are NaN, as in a grid search.
+
+    At period 1, `kind = 1` moves to code 2 on the way to `dead`. At period 0,
+    `kind = 1` reads its child's carry at code 2, and `kind = 0` lands on
+    `kind = 1`, whose period-1 value is NaN. The carry pads unused nodes with
+    NaN, so without the off-grid mask the code-2 rows read as an empty row and a
+    finite corner value replaces NaN.
+    """
+    margin = LiquidMargin(
+        state="wealth",
+        action="consumption",
+        resources="wealth",
+        post_decision_state="savings",
+    )
+    wealth = LinSpacedGrid(start=1.0, stop=3.0, n_points=4)
+    alive = ConsumptionSavingsRegime(
+        states={"wealth": wealth, "kind": DiscreteGrid(category_class=_TwoCodes)},
+        actions={"consumption": LinSpacedGrid(start=0.5, stop=1.0, n_points=3)},
+        state_transitions={"wealth": _egm_next_wealth, "kind": _kind_up},
+        functions={
+            "utility": _egm_utility,
+            "inverse_marginal_utility": _egm_inverse_marginal_utility,
+            "savings": _egm_savings,
+        },
+        constraints={
+            "borrowing_limit": post_decision_lower_bound(margin=margin, lower=0.0)
+        },
+        liquid=margin,
+        solver=DCEGM(savings_grid=LinSpacedGrid(start=0.0, stop=3.0, n_points=7)),
+    )
+    dead = UserRegime(
+        states={"wealth": wealth, "kind": DiscreteGrid(category_class=_TwoCodes)},
+        functions={"utility": _egm_dead_utility},
+    )
+    model = Model(
+        n_periods=3,
+        regimes={"alive": alive, "dead": dead},
+        regime_id_class=_AliveDead,
+        initial_nodes=InitialNodes(by_period={0: "alive"}),
+        edges={"alive": {"alive": Periods(values=(0,)), "dead": Periods(values=(1,))}},
+    )
+    values = model.solve(
+        params={"discount_factor": 0.9}, log_level="off", runtime_checks=False
+    ).values
+    nan_pattern = [
+        np.isnan(np.asarray(values[period]["alive"])).all(axis=1).tolist()
+        for period in (0, 1)
+    ]
+    finite_pattern = [
+        np.isfinite(np.asarray(values[period]["alive"])).all(axis=1).tolist()
+        for period in (0, 1)
+    ]
+    assert nan_pattern == [[True, True], [False, True]]
+    assert finite_pattern == [[False, False], [True, False]]
+
+
+def test_law_leaving_the_grid_where_participation_holds_fails_the_checked_solve():
+    """`Q` at `a = 1` reads the off-grid code, so participation is undecided there.
+
+    The solve counts the code-2 landing unless the constraint fails whatever `Q`
+    is, as the review's `a == 0` part does.
+    """
+    model = _participation_model(threshold=-2.0, forbids_working=False)
+    model.validate_transitions(params={"discount_factor": 1.0})
+    with pytest.raises(InvalidStateTransitionError, match="kind"):
+        model.solve(
+            params={"discount_factor": 1.0}, log_level="off", runtime_checks=True
+        )
+
+
+def test_value_constrained_off_grid_landing_is_not_raised_without_checks():
+    """Without runtime checks the solve reads NaN there, as in any other regime."""
+    _participation_model(threshold=-2.0, forbids_working=False).solve(
+        params={"discount_factor": 1.0}, log_level="off", runtime_checks=False
+    )
+
+
+def _working_flow(*, kind: DiscreteState, a: DiscreteAction) -> FloatND:
+    return 1.0 * a + 0.0 * kind
+
+
+def _kind_stays(*, kind: DiscreteState, a: DiscreteAction) -> DiscreteState:
+    return kind + 0 * a
+
+
+def test_realized_off_grid_code_of_a_value_constrained_regime_fails_simulation():
+    """The simulate law sends `kind` to code 2 at the chosen `a = 1`."""
+
+    def participation(Q_alice: FloatND) -> BoolND:
+        return Q_alice >= -2.0
+
+    model = Model(
+        regimes={
+            "source": UserRegime(
+                states={"kind": DiscreteGrid(category_class=_TwoCodes)},
+                actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"alice": _working_flow, "bob": _working_flow}
+                    )
+                },
+                state_transitions={
+                    "kind": Phased(
+                        solve=_kind_stays, simulate=_kind_leaves_when_working
+                    )
+                },
+                constraints={
+                    "participation": ValueDependentConstraint(predicate=participation)
+                },
+            ),
+            "terminal": UserRegime(
+                states={"kind": DiscreteGrid(category_class=_TwoCodes)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"alice": _pair_terminal, "bob": _pair_terminal}
+                    )
+                },
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"source": {"terminal": 0}},
+        initial_nodes={0: "source"},
+        regime_id_class=_SourceTerminal,
+    )
+    params = {"discount_factor": 1.0}
+    solution = model.solve(params=params, log_level="off", runtime_checks=True)
+    with pytest.raises(InvalidStateTransitionError, match="kind"):
+        model.simulate(
+            params=params,
+            initial_conditions={
+                "kind": jnp.asarray([0, 1], dtype=jnp.int32),
+                "age": jnp.asarray([0.0, 0.0]),
+                "regime_id": jnp.asarray([_SourceTerminal.source] * 2, dtype=jnp.int32),
+            },
+            solution=solution,
+            seed=3,
+            log_level="off",
+            runtime_checks=True,
+        )
+
+
+# A gate that reads the target's value is undecided at an off-grid code, which
+# reads NaN there; the code landing counts, not the fallback the gate closes onto.
+
+
+@categorical(ordered=True)
+class _SourceTargetFallback:
+    source: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+
+
+def _gated_flow(*, kind: DiscreteState, a: DiscreteAction) -> FloatND:
+    return 20.0 * a + 0.0 * kind
+
+
+def _kind_utility_zero(*, kind: DiscreteState) -> FloatND:
+    return 0.0 * kind
+
+
+def _kind_utility_low(*, kind: DiscreteState) -> FloatND:
+    return -10.0 + 0.0 * kind
+
+
+def _gate_on_target_value(V_target: FloatND) -> BoolND:
+    return V_target > -5.0
+
+
+def _project_kind(kind: DiscreteState) -> DiscreteState:
+    return jnp.clip(kind, 0, 1).astype(jnp.int32)
+
+
+def _gated_model(*, law: UserFunction) -> Model:
+    kind = DiscreteGrid(category_class=_TwoCodes)
+    return Model(
+        regimes={
+            "source": UserRegime(
+                states={"kind": kind},
+                actions={"a": DiscreteGrid(category_class=_TwoCodes)},
+                functions={"utility": _gated_flow},
+                state_transitions={"kind": law},
+            ),
+            "target": UserRegime(
+                states={"kind": kind}, functions={"utility": _kind_utility_zero}
+            ),
+            "fallback": UserRegime(
+                states={"kind": kind}, functions={"utility": _kind_utility_low}
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={
+            "source": Transition(
+                law="target",
+                gates={
+                    "target": Gate(
+                        predicate=_gate_on_target_value,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"kind": _project_kind},
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
+        initial_nodes={0: "source"},
+        regime_id_class=_SourceTargetFallback,
+    )
+
+
+def test_off_grid_code_behind_a_value_gate_fails_the_checked_solve():
+    """`a = 1` sends `kind` to code 2; the gate reads NaN there, not a closed gate."""
+    with pytest.raises(InvalidStateTransitionError, match="kind"):
+        _gated_model(law=_kind_leaves_when_working).solve(
+            params={"discount_factor": 1.0}, log_level="off", runtime_checks=True
+        )
+
+
+def test_on_grid_law_behind_a_value_gate_solves():
+    got = _gated_model(law=_kind_stays).solve(
+        params={"discount_factor": 1.0}, log_level="off", runtime_checks=True
+    )
+    np.testing.assert_array_equal(np.asarray(got.values[0]["source"]), [20.0, 20.0])
