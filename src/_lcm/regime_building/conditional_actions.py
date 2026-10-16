@@ -7,16 +7,16 @@ to the regime's constraints once model-level slots are merged, so every discrete
 action a condition names is known.
 """
 
-from collections.abc import Iterator, Mapping
+import inspect
+from collections.abc import Hashable, Iterator, Mapping
 from dataclasses import dataclass
 
 import jax.numpy as jnp
-from dags import get_annotations, with_signature
+from dags import get_annotations
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.grids.conditional_action import ConditionalAction
 from _lcm.grids.discrete import DiscreteGrid
-from _lcm.typing import ConstraintFunction
 from lcm.collective import CollectiveUtility, ValueDependentConstraint
 from lcm.phased import Phased
 from lcm.regime import (
@@ -158,30 +158,142 @@ def _create_pin(
     action: ConditionalAction,
     nodes: Float1D,
     readers: tuple[_Reader, ...],
-) -> ConstraintFunction:
+) -> _SignedPin | AgeSpecializedFunction:
+    """Return the pin, specialized per age when an age-specialized callable reads it.
+
+    Every reader of a variable must agree on its annotation, so the pin copies each
+    argument's annotation from the regime's callables. An age-specialized callable
+    is only known per age, so if one reads an argument the pin is age-specialized
+    too: pylcm builds it at every age next to its readers.
+    """
     arg_names = (*action.active_when, action_name)
-    return with_signature(  # ty: ignore[invalid-return-type]
-        args={
-            name: _find_annotation(
-                readers=readers,
-                arg_name=name,
-                default="ContinuousAction" if name == action_name else "DiscreteAction",
-            )
-            for name in arg_names
-        },
-        return_annotation="BoolND",
-        enforce=False,
-    )(
-        _ConditionalActionPin(
-            action_name=action_name,
-            active_when=tuple(
-                (name, tuple(sorted(values)))
-                for name, values in action.active_when.items()
-            ),
-            inactive_node=float(nodes[action.inactive_index]),
-            node_dtype=str(nodes.dtype),
-        )
+    pin = _ConditionalActionPin(
+        action_name=action_name,
+        active_when=tuple(
+            (name, tuple(sorted(values))) for name, values in action.active_when.items()
+        ),
+        inactive_node=float(nodes[action.inactive_index]),
+        node_dtype=str(nodes.dtype),
     )
+    annotator = _PinAnnotator(
+        pin=pin,
+        action_name=action_name,
+        arg_names=arg_names,
+        plain_annotations=tuple(
+            (name, annotation)
+            for name in arg_names
+            if (
+                annotation := _find_annotation(
+                    callables=_callables(readers), arg_name=name
+                )
+            )
+            is not None
+        ),
+        age_readers=tuple(_age_specialized(readers)),
+    )
+    if not annotator.age_readers:
+        return annotator(age=None)
+    return AgeSpecializedFunction(
+        build=annotator,
+        signature=_AgeReadersSignature(age_readers=annotator.age_readers),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _SignedPin:
+    """The pin under a keyword-only signature with the regime's annotations."""
+
+    pin: _ConditionalActionPin
+    """The mask."""
+
+    annotations: tuple[tuple[ActionName, str], ...]
+    """The pin's arguments with their annotations, in signature order."""
+
+    def __post_init__(self) -> None:
+        signature = inspect.Signature(
+            [
+                inspect.Parameter(
+                    name, inspect.Parameter.KEYWORD_ONLY, annotation=annotation
+                )
+                for name, annotation in self.annotations
+            ],
+            return_annotation="BoolND",
+        )
+        object.__setattr__(self, "__signature__", signature)
+        object.__setattr__(
+            self, "__annotations__", {**dict(self.annotations), "return": "BoolND"}
+        )
+        name = f"conditional_action_{self.pin.action_name}"
+        object.__setattr__(self, "__name__", name)
+        object.__setattr__(self, "__qualname__", name)
+
+    def __call__(self, **actions: FloatND | IntND) -> BoolND:
+        return self.pin(**actions)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _PinAnnotator:
+    """Sign the pin with its readers' annotations, resolving readers at an age.
+
+    The model's durable fingerprint hashes the code this builder runs, so the code
+    reads annotations with built-ins only and leaves signing to `_SignedPin`.
+    """
+
+    pin: _ConditionalActionPin
+    """The mask to sign."""
+
+    action_name: ActionName
+    """Name of the conditional action."""
+
+    arg_names: tuple[ActionName, ...]
+    """The discrete actions the conditions read, then the conditional action."""
+
+    plain_annotations: tuple[tuple[ActionName, str], ...]
+    """Annotations found on readers that do not depend on age."""
+
+    age_readers: tuple[AgeSpecializedFunction, ...]
+    """Age-specialized readers, resolved at the age the pin is built for."""
+
+    def __call__(self, age: float | None) -> _SignedPin:
+        found = dict(self.plain_annotations)
+        if age is not None:
+            for reader in self.age_readers:
+                raw = reader.build(age).__annotations__
+                for name in self.arg_names:
+                    if name not in found and name in raw:
+                        value = raw[name]
+                        # The string dags derives from an evaluated annotation.
+                        found[name] = (
+                            value
+                            if isinstance(value, str)
+                            else getattr(value, "__name__", str(value))
+                        )
+        return _SignedPin(
+            pin=self.pin,
+            annotations=tuple(
+                (
+                    name,
+                    found.get(
+                        name,
+                        "ContinuousAction"
+                        if name == self.action_name
+                        else "DiscreteAction",
+                    ),
+                )
+                for name in self.arg_names
+            ),
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _AgeReadersSignature:
+    """The pin's per-age identity: the signatures of its age-specialized readers."""
+
+    age_readers: tuple[AgeSpecializedFunction, ...]
+    """Age-specialized readers of the pin's arguments."""
+
+    def __call__(self, age: float) -> tuple[Hashable, ...]:
+        return tuple(reader.signature(age) for reader in self.age_readers)
 
 
 def _repeated_node_errors(
@@ -255,26 +367,21 @@ def _values_taken(*, grid: DiscreteGrid) -> frozenset[int | float]:
 
 
 def _find_annotation(
-    *,
-    readers: tuple[_Reader, ...],
-    arg_name: ReferenceName,
-    default: str,
-) -> str:
-    """Return the annotation the regime's callables use for one argument.
-
-    Every reader of a variable must agree on its annotation, so the pin copies it
-    from the first callable that declares the argument. A phased entry is read
-    through both of its variants and a per-target mapping through its values. An
-    age-specialized function builds its callable per age, so it is not read.
-    """
-    for func in _callables(readers):
+    *, callables: Iterator[UserFunction], arg_name: ReferenceName
+) -> str | None:
+    """Return the annotation the first callable declaring `arg_name` gives it."""
+    for func in callables:
         annotations = ensure_annotations_are_strings(get_annotations(func))
         if arg_name in annotations:
             return annotations[arg_name]
-    return default
+    return None
 
 
 def _callables(readers: tuple[_Reader, ...]) -> Iterator[UserFunction]:
+    """Yield the plain callables in `readers`, through phased and per-target entries.
+
+    Age-specialized callables are left to `_age_specialized`.
+    """
     for reader in readers:
         if isinstance(reader, Phased):
             yield from _callables((reader.solve, reader.simulate))
@@ -286,3 +393,16 @@ def _callables(readers: tuple[_Reader, ...]) -> Iterator[UserFunction]:
             yield reader.predicate
         elif callable(reader) and not isinstance(reader, AgeSpecializedFunction):
             yield reader
+
+
+def _age_specialized(readers: tuple[_Reader, ...]) -> Iterator[AgeSpecializedFunction]:
+    """Yield the age-specialized callables in `readers`, through phased entries."""
+    for reader in readers:
+        if isinstance(reader, AgeSpecializedFunction):
+            yield reader
+        elif isinstance(reader, Phased):
+            yield from _age_specialized((reader.solve, reader.simulate))
+        elif isinstance(reader, Mapping):
+            yield from _age_specialized(tuple(reader.values()))
+        elif isinstance(reader, CollectiveUtility):
+            yield from _age_specialized(tuple(reader.utilities.values()))

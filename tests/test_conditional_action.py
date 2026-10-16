@@ -16,6 +16,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeSpecializedFunction,
     ConditionalAction,
     DiscreteGrid,
     IrregSpacedGrid,
@@ -548,3 +549,108 @@ def test_saved_solution_is_accepted_only_by_the_same_declaration(
                 },
                 log_level="off",
             )
+
+
+def _age_specialized_utility_at(
+    age: float,  # noqa: ARG001
+) -> Callable[..., FloatND]:
+    def utility(*, labor: IntND, hours: FloatND) -> FloatND:
+        return 100.0 * (1 - labor) + hours
+
+    return utility
+
+
+def _array_annotated_hours_pin(*, labor: IntND, hours: FloatND) -> BoolND:
+    return (labor == Labor.yes) | (hours == 0.0)
+
+
+def _age_specialized_model(*, conditional: bool, model_level: bool) -> Model:
+    """The utility is the only reader of labor and hours, declared per age, and
+    annotates them as plain arrays. With `model_level`, labor and hours are declared
+    on the model, so broadcast pruning sees them only through their readers."""
+    ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
+    grid = IrregSpacedGrid(points=(0.0, 1.0, 2.0))
+    hours: ContinuousGrid = (
+        ConditionalAction(
+            grid=grid, active_when={"labor": Labor.yes}, inactive_value=0.0
+        )
+        if conditional
+        else grid
+    )
+    actions = {"labor": DiscreteGrid(category_class=Labor), "hours": hours}
+    constraints = {} if conditional else {"hours_only": _array_annotated_hours_pin}
+    working = Regime(
+        actions={} if model_level else actions,
+        functions={
+            "utility": AgeSpecializedFunction(
+                build=_age_specialized_utility_at,
+                signature=lambda age: 0,  # noqa: ARG005
+            )
+        },
+        constraints={} if model_level else constraints,
+    )
+    dead = Regime(
+        functions={"utility": lambda: 0.0},
+        actions={"labor": None, "hours": None} if model_level else {},
+        constraints=dict.fromkeys(constraints) if model_level else {},
+    )
+    return Model(
+        regimes={"working": working, "dead": dead},
+        actions=actions if model_level else {},
+        constraints=constraints if model_level else {},
+        ages=ages,
+        regime_id_class=RegimeId,
+        initial_nodes={ages.exact_values[0]: "working"},
+        edges={"working": {"dead": 0}},
+    )
+
+
+_AGE_PARAMS = {"discount_factor": 0.95, "working": {}, "dead": {}}
+
+
+def _age_specialized_outputs(
+    *, conditional: bool, model_level: bool
+) -> tuple[FloatND, dict[ActionName, np.ndarray], pd.DataFrame]:
+    model = _age_specialized_model(conditional=conditional, model_level=model_level)
+    solution = model.solve(params=_AGE_PARAMS, log_level="off")
+    lookup = model.lookup_policy(
+        params=_AGE_PARAMS,
+        solution=solution,
+        period=0,
+        regime_name="working",
+        states={},
+    )
+    assert lookup.actions is not None
+    frame = model.simulate(
+        params=_AGE_PARAMS,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.zeros(2),
+            "regime_id": jnp.full(2, RegimeId.working, dtype=jnp.int32),
+        },
+        log_level="off",
+    ).to_dataframe()
+    panel = frame.loc[
+        frame["regime_name"] == "working", ["subject_id", "period", "labor", "hours"]
+    ].reset_index(drop=True)
+    actions = {name: np.asarray(value) for name, value in lookup.actions.items()}
+    return solution.values[0]["working"], actions, panel
+
+
+@pytest.mark.parametrize("model_level", [False, True])
+def test_age_specialized_reader_solves_looks_up_and_simulates_like_the_pin(
+    *, model_level: bool
+) -> None:
+    """When the only reader of the actions is age-specialized and annotates them as
+    plain arrays, the declaration matches the hand-written constraint in the value
+    function, `lookup_policy` and the simulated panel."""
+    values, actions, panel = _age_specialized_outputs(
+        conditional=True, model_level=model_level
+    )
+    expected_values, expected_actions, expected_panel = _age_specialized_outputs(
+        conditional=False, model_level=model_level
+    )
+    assert_agrees_to_ulp(got=values, expected=expected_values, n_ulp=4)
+    for name, expected in expected_actions.items():
+        np.testing.assert_array_equal(actions[name], expected, err_msg=name)
+    pd.testing.assert_frame_equal(panel, expected_panel)
