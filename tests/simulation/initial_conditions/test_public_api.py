@@ -1,6 +1,7 @@
 """Public `Model` methods for validating initial conditions without simulating."""
 
 from collections.abc import Generator
+from fractions import Fraction
 
 import jax.numpy as jnp
 import numpy as np
@@ -473,7 +474,7 @@ def _age_specialized_model() -> Model:
         def wealth_cap(
             *, consumption: ContinuousAction, wealth: ContinuousState
         ) -> BoolND:
-            return consumption <= wealth + age
+            return consumption <= wealth - (age - 25.0)
 
         return wealth_cap
 
@@ -520,7 +521,7 @@ def _age_specialized_model() -> Model:
 def test_age_specialized_constraint_admits_starts_at_every_active_age() -> None:
     """Subjects starting at different ages are each checked at their own start age.
 
-    The cap is slack at every age, so both subjects are feasible.
+    Both supplied rows admit an action under the cap at their own start age.
     """
     model = _age_specialized_model()
     working_life = model.regime_names_to_ids["working_life"]
@@ -535,6 +536,95 @@ def test_age_specialized_constraint_admits_starts_at_every_active_age() -> None:
     )
 
     assert np.asarray(mask).tolist() == [True, True]
+
+
+def _start_age_scalar_feasibility(*, age: float, wealth: float) -> bool:
+    """Enumerate this fixture's five actions using exact scalar arithmetic.
+
+    This reference uses neither the model's constraint closures nor its period
+    pools. All action nodes are exact binary fractions. At the tested boundary,
+    subtracting ten from wealth is exact in both supported floating precisions.
+    """
+    age_exact = Fraction(age)
+    wealth_exact = Fraction(wealth)
+    for consumption in (
+        Fraction(1),
+        Fraction(13, 4),
+        Fraction(11, 2),
+        Fraction(31, 4),
+        Fraction(10),
+    ):
+        if consumption <= wealth_exact and consumption <= (
+            wealth_exact - (age_exact - 25)
+        ):
+            return True
+    return False
+
+
+@pytest.mark.parametrize(
+    "order",
+    [(0, 1, 2, 3, 4, 5), (5, 4, 3, 2, 1, 0), (2, 0, 5, 1, 4, 3)],
+)
+def test_age_specialized_public_checks_use_binding_caps_in_caller_order(
+    *,
+    order: tuple[int, ...],
+) -> None:
+    """Both public routes use the start-age cap, including adjacent boundaries."""
+    model = _age_specialized_model()
+    working_life = model.regime_names_to_ids["working_life"]
+    dtype = np.asarray(jnp.asarray(11.0)).dtype
+    boundary = dtype.type(11.0)
+    below = np.nextafter(boundary, dtype.type(-np.inf))
+    above = np.nextafter(boundary, dtype.type(np.inf))
+    ages = np.asarray([35.0, 25.0, 35.0, 25.0, 35.0, 35.0], dtype=dtype)
+    wealth = np.asarray([10.0, 1.0, boundary, 10.0, below, above], dtype=dtype)
+    indices = np.asarray(order)
+    ages, wealth = ages[indices], wealth[indices]
+    expected = np.asarray(
+        [
+            _start_age_scalar_feasibility(age=float(age), wealth=float(value))
+            for age, value in zip(ages, wealth, strict=True)
+        ],
+        dtype=bool,
+    )
+    np.testing.assert_array_equal(
+        expected, np.asarray([False, True, True, True, False, True])[indices]
+    )
+    initial = {
+        "age": jnp.asarray(ages),
+        "wealth": jnp.asarray(wealth),
+        "regime_id": jnp.full(len(ages), working_life),
+    }
+    params = {"discount_factor": 0.95}
+
+    mask = model.initial_conditions_feasibility(
+        initial_conditions=initial, params=params
+    )
+    assert np.asarray(mask).dtype == np.dtype(bool)
+    assert mask.shape == (len(ages),)
+    np.testing.assert_array_equal(np.asarray(mask), expected)
+
+    with pytest.raises(
+        InvalidInitialConditionsError, match="satisfies all constraints jointly"
+    ):
+        model.validate_initial_conditions(initial_conditions=initial, params=params)
+
+    admitted = {
+        name: jnp.asarray(np.asarray(values)[expected])
+        for name, values in initial.items()
+    }
+    verdict = model.validate_initial_conditions(
+        initial_conditions=admitted, params=params
+    )
+    assert verdict is None
+    np.testing.assert_array_equal(
+        np.asarray(
+            model.initial_conditions_feasibility(
+                initial_conditions=admitted, params=params
+            )
+        ),
+        np.ones(int(expected.sum()), dtype=bool),
+    )
 
 
 def test_budget_is_irrelevant_to_the_public_mask_but_not_to_simulate() -> None:
