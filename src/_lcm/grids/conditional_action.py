@@ -1,6 +1,5 @@
 """Continuous actions that are active only under some values of discrete actions."""
 
-import math
 from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -83,19 +82,6 @@ class ConditionalAction(ContinuousGrid):
         object.__setattr__(self, "inactive_index", inactive_index)
 
     @property
-    def inactive_midpoints(self) -> tuple[float, float]:
-        """Return the midpoints between the inactive node and its neighbours.
-
-        An action value strictly between them is the inactive node, at whatever
-        precision the grid's nodes are computed. Outer ends are infinite.
-        """
-        nodes = [float(node) for node in self.grid.to_jax()]
-        k = self.inactive_index
-        lower = -math.inf if k == 0 else (nodes[k - 1] + nodes[k]) / 2
-        upper = math.inf if k == len(nodes) - 1 else (nodes[k] + nodes[k + 1]) / 2
-        return lower, upper
-
-    @property
     def off_grid(self) -> OffGrid:
         """Return the lookup policy of the wrapped grid."""
         return self.grid.off_grid
@@ -159,8 +145,8 @@ def _find_inactive_index(*, grid: ContinuousGrid, inactive_value: float) -> int:
 
     A node matches when it equals `inactive_value` up to the rounding of the grid's
     dtype (two units in the last place), so `0.9` names the float32 node
-    `0.9000000357` of `LinSpacedGrid(0, 1, 11)`. Nodes are strictly ascending and
-    far further apart than that, so at most one node matches.
+    `0.9000000357` of `LinSpacedGrid(0, 1, 11)`. The nearest node is returned; model
+    build refuses it if its value occurs at more than one node.
     """
     nodes = np.asarray(grid.to_jax())
     distance = np.abs(nodes.astype(np.float64) - inactive_value)
