@@ -392,6 +392,7 @@
   "tests/simulation/test_runtime_process_grid_admission.py",
   "tests/simulation/test_series_entry_admission.py",
   "tests/simulation/test_shock_paths.py",
+  "tests/simulation/test_shock_paths_mesh.py",
   "tests/simulation/test_simulate.py",
   "tests/simulation/test_simulate_certainty_equivalent.py",
   "tests/simulation/test_simulate_constraint_reads_a_post_decision.py",
@@ -1074,6 +1075,7 @@
     "tests/simulation/test_result_dataframe_columns.py",
     "tests/simulation/test_runtime_budget.py",
     "tests/simulation/test_shock_paths.py",
+    "tests/simulation/test_shock_paths_mesh.py",
     "tests/simulation/test_simulate.py",
     "tests/simulation/test_simulate_ds_app2_housing.py",
     "tests/simulation/test_simulate_n_nbegm_continuous.py",
@@ -1718,6 +1720,7 @@
     "tests/simulation/test_program_runtime.py",
     "tests/simulation/test_regime_draw.py",
     "tests/simulation/test_shock_paths.py",
+    "tests/simulation/test_shock_paths_mesh.py",
     "tests/simulation/test_simulate_ds_app2_housing.py",
     "tests/simulation/test_simulate_n_nbegm_continuous.py",
     "tests/simulation/test_simulate_terminal_rows.py",
@@ -1984,6 +1987,7 @@
     "tests/simulation/test_residency_projection.py",
     "tests/simulation/test_result_dataframe_columns.py",
     "tests/simulation/test_shock_paths.py",
+    "tests/simulation/test_shock_paths_mesh.py",
     "tests/simulation/test_simulate_certainty_equivalent.py",
     "tests/simulation/test_simulate_ds_app2_housing.py",
     "tests/simulation/test_simulate_n_nbegm_continuous.py",
@@ -2749,6 +2753,7 @@
     "tests/simulation/test_residency_owner_epochs.py",
     "tests/simulation/test_runtime_budget.py",
     "tests/simulation/test_shock_paths.py",
+    "tests/simulation/test_shock_paths_mesh.py",
     "tests/simulation/test_simulate_n_nbegm.py",
     "tests/simulation/test_simulate_n_nbegm_continuous.py",
     "tests/simulation/test_simulation_entry_budget.py",
@@ -4547,6 +4552,33 @@
    "unchained": true
   },
   {
+   "id": "eight-device-shock-paths-mesh-fp64-linux",
+   "job": "tests-topology-eight-device",
+   "step": "Run tests/simulation/test_shock_paths_mesh.py",
+   "environment": {
+    "runner_os": "Linux",
+    "precision": 64,
+    "backend": "cpu",
+    "devices": 8,
+    "workers": 0,
+    "isolation": "fresh-process-8-device-env",
+    "policy": {
+     "policy_child": true,
+     "ci_policy": "full",
+     "hardware_profile": "cpu"
+    }
+   },
+   "selection": "whole-file",
+   "deselect": [],
+   "junit": "junit-cpu-fp64-shock-paths-mesh.xml",
+   "files": [
+    "tests/simulation/test_shock_paths_mesh.py"
+   ],
+   "no_skips_required": true,
+   "predicted_payload_minutes": 0.0,
+   "unchained": true
+  },
+  {
    "id": "eight-device-simulation-eight-devices-fp32-linux",
    "job": "tests-topology-eight-device",
    "step": "Run tests/test_distributed_simulation_eight_devices.py",
@@ -4785,6 +4817,33 @@
    "junit": "junit-cpu-fp32-materialization-admission.xml",
    "files": [
     "tests/solution/test_materialization_admission.py"
+   ],
+   "no_skips_required": true,
+   "predicted_payload_minutes": 0.0,
+   "unchained": true
+  },
+  {
+   "id": "eight-device-shock-paths-mesh-fp32-linux",
+   "job": "tests-topology-eight-device",
+   "step": "Run tests/simulation/test_shock_paths_mesh.py",
+   "environment": {
+    "runner_os": "Linux",
+    "precision": 32,
+    "backend": "cpu",
+    "devices": 8,
+    "workers": 0,
+    "isolation": "fresh-process-8-device-env",
+    "policy": {
+     "policy_child": true,
+     "ci_policy": "full",
+     "hardware_profile": "cpu"
+    }
+   },
+   "selection": "whole-file",
+   "deselect": [],
+   "junit": "junit-cpu-fp32-shock-paths-mesh.xml",
+   "files": [
+    "tests/simulation/test_shock_paths_mesh.py"
    ],
    "no_skips_required": true,
    "predicted_payload_minutes": 0.0,
@@ -15629,6 +15688,7 @@
   "tests/simulation/test_profile_comparison.py",
   "tests/simulation/test_residency_owner_epochs.py",
   "tests/simulation/test_shock_paths.py",
+  "tests/simulation/test_shock_paths_mesh.py",
   "tests/simulation/test_simulation_plan_summary.py",
   "tests/simulation/test_state_grid_period_axes.py",
   "tests/simulation/test_state_grid_period_axes_mutations.py",
