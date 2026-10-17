@@ -12,11 +12,14 @@ import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.interp import interp_on_padded_grid
+from _lcm.egm.nested_floor import PreparedNestedFloor
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy
 from _lcm.execution.core_program import core_program_graph, select_programs
 from _lcm.solution import backward_induction
 from _lcm.solution.contract import PeriodKernel
+from _lcm.solution.feasibility import BoundedResult
 from _lcm.solution.kernel_output import ConsumedKernelOutput
+from _lcm.solution.nbegm import _NBEGMNestedKernelOutput, _RideAlongNBEGMPeriodKernel
 from _lcm.solution.negm import _NEGMPeriodKernel, _with_outer_post_decision
 from _lcm.solution.nnbegm import _NNBEGMPeriodKernel
 from lcm import (
@@ -205,22 +208,36 @@ def _model(*, family: Family, lower: float | UserFunction) -> Model:
     )
 
 
-def _inner(*, kernel: PeriodKernel, context: OracleContext) -> KernelOutput:
-    """Run an installed inner kernel on actual captured rolling inputs."""
+def _inner(
+    *,
+    kernel: PeriodKernel,
+    context: OracleContext,
+    prepared_source_floor: PreparedNestedFloor | None = None,
+) -> KernelOutput:
+    """Run an installed inner kernel on the same actual operands as its producer."""
     programs = select_programs(
         graph=core_program_graph(kernel=kernel), retain_replay=True
     )
+    compiled_cores = {
+        name: partial(
+            program.function,
+            **{axis.width_keyword: axis.extent for axis in program.requirements.axes},
+        )
+        for name, program in programs.items()
+    }
+    if prepared_source_floor is not None:
+        assert type(prepared_source_floor) is BoundedResult
+        assert len(prepared_source_floor.bound_status) == 1
+        assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
+        assert kernel.retain_nested_feasibility is True
+        return kernel(
+            compiled_cores=compiled_cores,
+            **context,
+            logger=_LOGGER,
+            prepared_source_floor=prepared_source_floor,
+        )
     return kernel(
-        compiled_cores={
-            name: partial(
-                program.function,
-                **{
-                    axis.width_keyword: axis.extent
-                    for axis in program.requirements.axes
-                },
-            )
-            for name, program in programs.items()
-        },
+        compiled_cores=compiled_cores,
         **context,
         logger=_LOGGER,
     )
@@ -257,6 +274,12 @@ def _branches(
     assert len(published) == 1
     assert isinstance(kernel, _NEGMPeriodKernel | _NNBEGMPeriodKernel)
     keeper = _inner(kernel=kernel.keeper_kernel, context=context)
+    prepared_source_floor = None
+    if isinstance(kernel, _NNBEGMPeriodKernel) and kernel.query_model is not None:
+        assert isinstance(keeper, _NBEGMNestedKernelOutput)
+        prepared_source_floor = keeper.prepared_source_floor
+        assert type(prepared_source_floor) is BoundedResult
+        assert len(prepared_source_floor.bound_status) == 1
     adjusters = tuple(
         _inner(
             kernel=kernel.adjuster_kernel,
@@ -269,6 +292,7 @@ def _branches(
                     value=node,
                 ),
             },
+            prepared_source_floor=prepared_source_floor,
         )
         for node in _OUTER.to_jax()
     )
