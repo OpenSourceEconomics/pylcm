@@ -116,6 +116,7 @@ from lcm.collective import (  # noqa: E402
     StakeholderRoute,
     ValueDependentConstraint,
 )
+from lcm.composite_state import CompositeState  # noqa: E402
 from lcm.condition import Condition, implies, ref  # noqa: E402
 from lcm.consumption_savings_regime import (  # noqa: E402
     ConsumptionSavingsRegime,
@@ -242,6 +243,7 @@ __all__ = [
     "CESAggregator",
     "CertaintyEquivalent",
     "CollectiveUtility",
+    "CompositeState",
     "Condition",
     "ConditionalAction",
     "ConsumptionSavingsRegime",
