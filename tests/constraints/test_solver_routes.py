@@ -229,7 +229,7 @@ def test_dcegm_evaluates_a_constraint_over_its_discrete_combination() -> None:
 
 
 def test_dcegm_evaluates_at_the_discrete_combo_stage() -> None:
-    """A non-exact envelope builds the feasibility predicate per discrete combination."""
+    """A non-exact envelope builds the feasibility predicate per discrete combo."""
     disposition = _disposition(solver=_fues_dcegm(), constraint=ref("retire") <= 1)
 
     assert disposition.stage == "discrete_combo"
