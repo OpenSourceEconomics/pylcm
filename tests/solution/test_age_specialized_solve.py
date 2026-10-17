@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.simulation import initial_conditions
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -572,3 +573,61 @@ def test_another_ages_constraint_would_have_given_that_period_a_different_value(
     )
 
     assert float(gap) > 0.0
+
+
+def _start_pool_partition(*, cohorts_route: bool) -> list[tuple[int, list[int]]]:
+    """Return each start-pool group as (index of its period's pool, subjects).
+
+    Subjects 7 and 9 start at 45, 2 and 5 at 25, and 4 at 35. Every start age
+    resolves its own cap, so each start period has a pool of its own.
+    """
+    model = _make_specialized_constraint_model(
+        AgeSpecializedFunction(build=_cap_falling_with_age, signature=lambda age: age)
+    )
+    regime = model._regimes["working_life"]
+    ages = np.full(10, 25.0)
+    ages[[7, 9]] = 45.0
+    ages[4] = 35.0
+    subject_indices = [7, 2, 9, 4, 5]
+    cohorts = (
+        initial_conditions._InitialCohorts(
+            indices={"working_life": tuple(subject_indices)},
+            periods=tuple(int((age - 25.0) // 10.0) for age in ages),
+        )
+        if cohorts_route
+        else None
+    )
+    views = initial_conditions._regime_views_by_start_pool(
+        regime=regime,
+        initial_states={"age": jnp.asarray(ages)},
+        subject_indices=subject_indices,
+        ages=model._time,
+        cohorts=cohorts,
+    )
+    pools = regime.simulation.feasibility_pools_by_period
+    return [
+        (
+            next(
+                period
+                for period, (functions, constraints) in pools.items()
+                if view.simulation.functions is functions
+                and view.simulation.constraints is constraints
+            ),
+            list(indices),
+        )
+        for view, indices in views
+    ]
+
+
+@pytest.mark.parametrize("cohorts_route", [False, True])
+def test_regime_views_by_start_pool_groups_in_first_appearance_order(
+    *,
+    cohorts_route: bool,
+):
+    """Groups follow the first appearance of their start period among the subjects,
+    keep the subjects' order within each group, and carry that period's pools."""
+    assert _start_pool_partition(cohorts_route=cohorts_route) == [
+        (2, [7, 9]),
+        (0, [2, 5]),
+        (1, [4]),
+    ]
