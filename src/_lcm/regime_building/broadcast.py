@@ -41,7 +41,10 @@ from dags import get_ancestors
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
-from _lcm.regime_building.conditional_actions import add_conditional_action_pins
+from _lcm.regime_building.conditional_actions import (
+    add_conditional_action_pins,
+    bind_specialized_annotations,
+)
 from _lcm.regime_building.fixed_process_laws import StateDeclaration
 from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
@@ -272,6 +275,13 @@ def prune_broadcast_variables(
         Tuple of the pruned regimes and, per regime, the pruned names.
 
     """
+    # Pins of conditional actions copy their readers' annotations; a reader built
+    # per age or period is only a callable once the time axis is known, here.
+    user_regimes = bind_specialized_annotations(
+        user_regimes=user_regimes,
+        ages=ages,
+        active_periods_by_regime=active_periods_by_regime,
+    )
     all_regime_names = frozenset(user_regimes)
     kept = compute_kept_variables(
         user_regimes=user_regimes,
