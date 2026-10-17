@@ -1613,6 +1613,7 @@ class Model:
                 logger=get_call_logger(log_level="warning", runtime_checks=True),
                 process_grid_resolver=None,
                 memory=self._transition_memory(flat_params=flat_params),
+                producers=self._simulate_entry_operations,
             )
 
     def _transition_memory(self, *, flat_params: FlatParams) -> SimulationMemory | None:
@@ -1701,6 +1702,7 @@ class Model:
                         logger=log,
                         process_grid_resolver=None,
                         memory=self._transition_memory(flat_params=flat_params),
+                        producers=self._simulate_entry_operations,
                     )
             result = self._solve_from_flat_params(
                 flat_params=flat_params,
@@ -1819,6 +1821,7 @@ class Model:
             logger=log,
             process_grid_resolver=None,
             memory=self._transition_memory(flat_params=flat_params),
+            producers=self._simulate_entry_operations,
         )
         preparation = self._prepare_solution(
             flat_params=flat_params,

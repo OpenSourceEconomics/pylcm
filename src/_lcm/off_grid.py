@@ -75,10 +75,13 @@ def report_off_grid(
     logger: logging.Logger,
 ) -> None:
     """Enforce a declared raise policy and separately emit checked counts."""
-    shown = f">={count}" if count >= COUNT_CAPACITY else f"={count}"
-    message = (
-        f"Off-grid next states: regime={regime!r}, target={target!r}, "
-        f"period={period}, state={state!r}, phase={phase!r}, count{shown}"
+    message = off_grid_message(
+        count=count,
+        regime=regime,
+        target=target,
+        period=period,
+        state=state,
+        phase=phase,
     )
     if count and rule == "raise":
         raise OffGridStateError(message)
@@ -87,3 +90,25 @@ def report_off_grid(
             logger.warning(message)
         else:
             logger.info(message)
+
+
+def off_grid_message(
+    *,
+    count: int,
+    regime: RegimeName,
+    target: RegimeName,
+    period: int,
+    state: StateName,
+    phase: str,
+) -> str:
+    """Describe one target state's raw landings outside, or not finite on, its grid.
+
+    Every check that counts landings words its report and its refusal with this,
+    so the same landing reads the same in the solve kernel, the preflight and the
+    realized simulation. A count at `COUNT_CAPACITY` is a lower bound.
+    """
+    shown = f">={count}" if count >= COUNT_CAPACITY else f"={count}"
+    return (
+        f"Off-grid next states: regime={regime!r}, target={target!r}, "
+        f"period={period}, state={state!r}, phase={phase!r}, count{shown}"
+    )
