@@ -236,33 +236,19 @@ def safeguarded_continuous_argmax(
     coarse_v = best_v
 
     # Refined bracket optima join the competition.
-    refined_width = refined.upper - refined.lower
-    for index in range(n_brackets):
-        if best_companions is not None:
-            if refined.companions is None:
-                raise TypeError("A tuple search lacks its selected probe companions.")
-            take = _companion_candidate_wins(
-                cand_x=refined.x[index],
-                cand_v=refined.value[index],
-                best_x=best_x,
-                best_v=best_v,
-            )
-            best_companions = tuple(
-                jnp.where(take, item[index], current)
-                for item, current in zip(
-                    refined.companions, best_companions, strict=True
-                )
-            )
-        best_x, best_v, second_x, second_v, width = _consider(
-            cand_x=refined.x[index],
-            cand_v=refined.value[index],
-            cand_width=refined_width[index],
-            best_x=best_x,
-            best_v=best_v,
-            second_x=second_x,
-            second_v=second_v,
-            width=width,
-        )
+    refined_companions = None
+    if best_companions is not None:
+        if refined.companions is None:
+            raise TypeError("A tuple search lacks its selected probe companions.")
+        refined_companions = tuple(item[:n_brackets] for item in refined.companions)
+    best_x, best_v, second_x, second_v, width, best_companions = _fold_candidates(
+        cand_x=refined.x[:n_brackets],
+        cand_v=refined.value[:n_brackets],
+        cand_width=(refined.upper - refined.lower)[:n_brackets],
+        cand_companions=refined_companions,
+        incumbent=(best_x, best_v, second_x, second_v, width),
+        best_companions=best_companions,
+    )
 
     return SafeguardedSearchResult(
         x=jnp.where(valid, best_x, nodes[0]),
@@ -302,33 +288,100 @@ def _fold_exact_outer_nodes(
     best_companions = (
         None if node_companions is None else tuple(item[0] for item in node_companions)
     )
-    for index in range(1, n_nodes):
-        if best_companions is not None:
-            if node_companions is None:
-                raise TypeError(
-                    "Associated nodal channels must accompany the selected tuple."
-                )
+    if best_companions is not None and node_companions is None:
+        raise TypeError("Associated nodal channels must accompany the selected tuple.")
+    candidate_shape = (n_nodes - 1, *state_shape)
+    return _fold_candidates(
+        cand_x=jnp.broadcast_to(
+            nodes[1:].reshape((n_nodes - 1,) + (1,) * len(state_shape)),
+            candidate_shape,
+        ),
+        cand_v=finite_values[1:],
+        cand_width=jnp.zeros(candidate_shape),
+        cand_companions=None
+        if node_companions is None
+        else tuple(item[1:] for item in node_companions),
+        incumbent=(best_x, best_v, second_x, second_v, width),
+        best_companions=best_companions,
+    )
+
+
+def _fold_candidates(
+    *,
+    cand_x: FloatND,
+    cand_v: FloatND,
+    cand_width: FloatND,
+    cand_companions: tuple[FloatND, ...] | None,
+    incumbent: tuple[FloatND, FloatND, FloatND, FloatND, FloatND],
+    best_companions: tuple[FloatND, ...] | None,
+) -> tuple[FloatND, FloatND, FloatND, FloatND, FloatND, tuple[FloatND, ...] | None]:
+    """Fold candidates into the two-best incumbent in leading-axis order.
+
+    Each step applies `_consider` (and, for a tuple search, the companion
+    ownership rule) to one candidate, exactly as an unrolled loop would. The
+    fold is a `lax.scan`, so a traced search over a padded mesh lowers one step
+    rather than one copy per candidate.
+    """
+    incumbent_dtypes = tuple(
+        jnp.result_type(current, candidate)
+        for current, candidate in zip(
+            incumbent, (cand_x, cand_v, cand_x, cand_v, cand_width), strict=True
+        )
+    )
+    carry = (
+        tuple(
+            jnp.asarray(current, dtype=dtype)
+            for current, dtype in zip(incumbent, incumbent_dtypes, strict=True)
+        ),
+        () if best_companions is None else best_companions,
+    )
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def step(
+        carry: tuple[tuple[FloatND, ...], tuple[FloatND, ...]],
+        candidate: tuple[FloatND, FloatND, FloatND, tuple[FloatND, ...]],
+    ) -> tuple[tuple[tuple[FloatND, ...], tuple[FloatND, ...]], None]:
+        (best_x, best_v, second_x, second_v, width), companions = carry
+        x, v, candidate_width, candidate_companions = candidate
+        if companions:
             take = _companion_candidate_wins(
-                cand_x=jnp.broadcast_to(nodes[index], state_shape),
-                cand_v=finite_values[index],
-                best_x=best_x,
-                best_v=best_v,
+                cand_x=x, cand_v=v, best_x=best_x, best_v=best_v
             )
-            best_companions = tuple(
-                jnp.where(take, item[index], current)
-                for item, current in zip(node_companions, best_companions, strict=True)
+            companions = tuple(
+                jnp.where(take, item, current)
+                for item, current in zip(candidate_companions, companions, strict=True)
             )
-        best_x, best_v, second_x, second_v, width = _consider(
-            cand_x=jnp.broadcast_to(nodes[index], state_shape),
-            cand_v=finite_values[index],
-            cand_width=jnp.zeros(state_shape),
+        folded = _consider(
+            cand_x=x,
+            cand_v=v,
+            cand_width=candidate_width,
             best_x=best_x,
             best_v=best_v,
             second_x=second_x,
             second_v=second_v,
             width=width,
         )
-    return best_x, best_v, second_x, second_v, width, best_companions
+        return (folded, companions), None
+
+    (folded, companions), _ = jax.lax.scan(
+        step,
+        carry,
+        (
+            cand_x,
+            cand_v,
+            cand_width,
+            () if cand_companions is None else cand_companions,
+        ),
+    )
+    best_x, best_v, second_x, second_v, width = folded
+    return (
+        best_x,
+        best_v,
+        second_x,
+        second_v,
+        width,
+        None if best_companions is None else companions,
+    )
 
 
 def _companion_candidate_wins(

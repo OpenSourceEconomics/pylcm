@@ -108,6 +108,7 @@ from _lcm.execution.core_program import (
     ReducedAxis,
     TiledOutputAxis,
     _CheckedCoreVariant,
+    bind_core_program_fixed_params,
 )
 from _lcm.execution.output_layout import VALUE, OutputRoleTree, StateAxesLeading
 from _lcm.execution.reductions import (
@@ -2386,7 +2387,11 @@ class _RideAlongNBEGMPeriodKernel:
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
     ) -> _RideAlongNBEGMPeriodKernel:
-        """Bind the regime's and its carry targets' fixed params into both programs."""
+        """Bind the regime's and its carry targets' fixed params into every program.
+
+        Each program's checked variant receives the same binding, so a solve
+        that collects continuation read counts lowers the same inputs.
+        """
         bound = union_fixed_params(
             fixed_flat_params=fixed_flat_params,
             regime_name=self.regime_name,
@@ -2398,10 +2403,7 @@ class _RideAlongNBEGMPeriodKernel:
             self,
             _core_programs=MappingProxyType(
                 {
-                    name: replace(
-                        program,
-                        function=functools.partial(program.function, **bound),
-                    )
+                    name: bind_core_program_fixed_params(program=program, params=bound)
                     for name, program in self._core_programs.items()
                 }
             ),

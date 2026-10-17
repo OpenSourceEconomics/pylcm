@@ -73,6 +73,7 @@ from _lcm.typing import (
     ArtifactPayload,
     EconFunctionsMapping,
     FlatParams,
+    FunctionName,
     RegimeName,
     StateName,
 )
@@ -1570,10 +1571,6 @@ def _validate_finite_nnbegm_policy_query_authority(
     expected: EGMQuerySpec,
 ) -> bool:
     """Authenticate finite actual-action scoring against its canonical floor DAG."""
-    from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME  # noqa: PLC0415
-    from _lcm.params.processing import get_flat_param_names  # noqa: PLC0415
-    from _lcm.post_decision_bound import PostDecisionBoundSpec  # noqa: PLC0415
-
     read = regime.simulation.egm_policy_read
     if not isinstance(read, NNBEGMPolicyRead) or read.finite_query_authority is None:
         return False
@@ -1619,13 +1616,93 @@ def _validate_finite_nnbegm_policy_query_authority(
         ),
         action_names=tuple(state_action_space.discrete_actions),
     )
+    _validate_nnbegm_policy_floor_authority(
+        regime=regime,
+        expected=expected,
+        read=read,
+        outer_post_decision=finite.outer_post_decision,
+        label="Finite",
+    )
+    return True
+
+
+def _validate_adaptive_nnbegm_policy_query_authority(
+    *, regime: Regime, expected: EGMQuerySpec
+) -> bool:
+    """Authenticate retained adaptive replay against its canonical floor DAG.
+
+    Returns `False` when the regime does not retain an applicable adaptive
+    nested replay policy, so the scalar route stays governed by the caller.
+    Otherwise the
+    nested replay roles must match the model's adaptive query authority, and
+    the floor that replay evaluates at each subject's current state must be
+    the installed canonical runtime bound.
+    """
+    read = regime.simulation.egm_policy_read
+    adaptive = expected.adaptive_outer
+    if (
+        adaptive is None
+        or not isinstance(read, NNBEGMPolicyRead)
+        or not read.replay_policy_is_nested
+        or not read.policy_applicable
+        or all(
+            SIMULATION_POLICY not in program.retained_artifact_keys
+            for kernel in regime.solution.period_kernels.values()
+            for program in core_program_graph(kernel=kernel).values()
+        )
+    ):
+        return False
+    bound = expected.bound
+    if (
+        bound.kind != "dag"
+        or bound.lower_target is None
+        or read.consumer_route != "nnbegm_nested"
+        or read.inner_action_name != bound.action
+        or read.liquid_state_name != bound.liquid_state
+        or read.resources_target != bound.resources_target
+        or read.outer_action_name != adaptive.outer_action
+        or read.outer_state_name != adaptive.outer_state
+        or read.outer_post_decision != adaptive.outer_post_decision
+    ):
+        raise TypeError("Adaptive policy query roles differ from model authority.")
+    _validate_nnbegm_policy_floor_authority(
+        regime=regime,
+        expected=expected,
+        read=read,
+        outer_post_decision=adaptive.outer_post_decision,
+        label="Adaptive",
+    )
+    return True
+
+
+def _validate_nnbegm_policy_floor_authority(
+    *,
+    regime: Regime,
+    expected: EGMQuerySpec,
+    read: NNBEGMPolicyRead,
+    outer_post_decision: FunctionName,
+    label: str,
+) -> None:
+    """Bind replay's current-state floor to the canonical runtime bound.
+
+    The simulation phase's runtime bound and every period's intrinsic budget
+    must carry the model bound, and the floor may read only fixed current
+    states, parameters, period and age: never the liquid state, an action or
+    the outer post-decision. Its dependency identity must match the canonical
+    evaluator in every simulated period.
+    """
+    from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME  # noqa: PLC0415
+    from _lcm.params.processing import get_flat_param_names  # noqa: PLC0415
+    from _lcm.post_decision_bound import PostDecisionBoundSpec  # noqa: PLC0415
+
+    bound = expected.bound
     simulation_bounds = tuple(
         item
         for item in regime.simulation.post_decision_bounds
         if item.post_decision == bound.post_decision
     )
     if len(simulation_bounds) != 1:
-        raise TypeError("Finite policy scoring omits its canonical runtime bound.")
+        raise TypeError(f"{label} policy scoring omits its canonical runtime bound.")
     validate_query_bound_authority(declared=simulation_bounds[0], model_bound=bound)
     pools = regime.simulation.feasibility_pools_by_period
     periods = tuple(pools)
@@ -1635,12 +1712,12 @@ def _validate_finite_nnbegm_policy_query_authority(
         or not set(periods) <= set(expected.target_periods)
         or not set(periods) <= regime.simulation.Q_and_F.keys()
     ):
-        raise TypeError("Finite policy scoring has incompatible canonical periods.")
+        raise TypeError(f"{label} policy scoring has incompatible canonical periods.")
     for _functions, constraints in pools.values():
         intrinsic = constraints.get(DCEGM_BUDGET_CONSTRAINT_NAME)
         installed_budget = getattr(intrinsic, "_lcm_intrinsic_budget_bound", None)
         if type(installed_budget) is not PostDecisionBoundSpec:
-            raise TypeError("Finite policy intrinsic budget omits its model bound.")
+            raise TypeError(f"{label} policy intrinsic budget omits its model bound.")
         validate_query_bound_authority(declared=installed_budget, model_bound=bound)
     lower_inputs = dict(expected.evaluator_inputs).get("lower_bound")
     allowed = (
@@ -1651,13 +1728,15 @@ def _validate_finite_nnbegm_policy_query_authority(
     forbidden = {
         bound.liquid_state,
         *regime.simulation.action_names,
-        finite.outer_post_decision,
+        outer_post_decision,
     }
     if lower_inputs is None or not set(lower_inputs) <= allowed - forbidden:
-        raise TypeError("Finite policy floor inputs differ from fixed-state authority.")
+        raise TypeError(
+            f"{label} policy floor inputs differ from fixed-state authority."
+        )
     lower_identity = dict(expected.evaluator_identity).get("lower_bound")
     if type(lower_identity) is not tuple:
-        raise TypeError("Finite policy floor lacks canonical dependency identity.")
+        raise TypeError(f"{label} policy floor lacks canonical dependency identity.")
     lower_contexts = cast("tuple[tuple[int | None, Hashable], ...]", lower_identity)
     canonical_contexts = dict(lower_contexts)
     lower_spec = replace(
@@ -1683,7 +1762,6 @@ def _validate_finite_nnbegm_policy_query_authority(
         ),
         target_periods=periods,
     )
-    return True
 
 
 def _validate_query_policy_budget_authority(
@@ -1697,23 +1775,28 @@ def _validate_query_policy_budget_authority(
     adaptive_without_replay = (
         expected.adaptive_outer is not None
         and isinstance(policy_read, NNBEGMPolicyRead)
-        and all(
-            SIMULATION_POLICY not in program.retained_artifact_keys
-            for kernel in regime.solution.period_kernels.values()
-            for program in core_program_graph(kernel=kernel).values()
+        and (
+            not policy_read.policy_applicable
+            or all(
+                SIMULATION_POLICY not in program.retained_artifact_keys
+                for kernel in regime.solution.period_kernels.values()
+                for program in core_program_graph(kernel=kernel).values()
+            )
         )
     )
-    finite_with_adapter = _validate_finite_nnbegm_policy_query_authority(
+    with_adapter = _validate_finite_nnbegm_policy_query_authority(
         regime=regime,
         state_action_space=state_action_space,
         expected=expected,
+    ) or _validate_adaptive_nnbegm_policy_query_authority(
+        regime=regime, expected=expected
     )
     if expected.bound.kind == "dag" and (
         isinstance(policy_read, EGMPolicyRead)
         or (
             isinstance(policy_read, NNBEGMPolicyRead)
             and not adaptive_without_replay
-            and not finite_with_adapter
+            and not with_adapter
         )
     ):
         raise TypeError(
