@@ -302,7 +302,7 @@ def _read(
             passive_values=(jnp.asarray(passive),),
             passive_grids=(jnp.asarray((0.0, 1.0)),),
             action_names=actions,
-            action_values=(jnp.asarray((0, 1)),) if actions else (),
+            action_values=(jnp.asarray((0, 1), dtype=jnp.int32),) if actions else (),
             pool=cast(
                 "EconFunctionKwargs",
                 {
