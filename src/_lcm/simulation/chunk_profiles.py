@@ -100,7 +100,6 @@ from _lcm.simulation.transitions import (
     _advance_states_for_subjects,
     _clip_next_states,
     _count_realized_grid_state,
-    _count_realized_off_grid_codes,
     _draw_random_regime_ids_from_scalars,
     _update_regime_ids,
 )
@@ -815,23 +814,6 @@ def _profile_clip_next_states(
         }
         for state, values in carrier[target].items():
             grid = target_regime.simulation.grids.get(state)
-            if (
-                isinstance(grid, DiscreteGrid)
-                and runtime_checks
-                and regime.solution.counts_raise_landings
-            ):
-                inventory.operation(
-                    function=_count_realized_off_grid_codes,
-                    arguments={
-                        "codes": values,
-                        "n_codes": scalar_int,
-                        "subjects": mask,
-                        "new_regime_ids": new_ids,
-                        "target_id": scalar_int,
-                    },
-                    subject_arg_names=("codes", "subjects", "new_regime_ids"),
-                )
-                continue
             if not isinstance(grid, ContinuousGrid) or isinstance(
                 grid, _ContinuousStochasticProcess
             ):
