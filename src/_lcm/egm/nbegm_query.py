@@ -700,6 +700,7 @@ class NBEGMQuery:
             savings=jnp.where(take_row, row.savings, floor),
             coverage_missing=row.invalid_numeric
             | invalid_corner
+            | ~jnp.isfinite(resources)
             | (eligible & domain & ~represented),
             bound_status=bound_status,
         ), summary
