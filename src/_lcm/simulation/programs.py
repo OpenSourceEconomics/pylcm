@@ -48,7 +48,17 @@ from _lcm.execution.core_program import (
     ValueRead,
 )
 from _lcm.regime_building.argmax import argmax_and_max
-from _lcm.regime_building.Q_and_F import QAndFParts, get_Q_and_F_parts
+from _lcm.regime_building.decoupled import (
+    DECOUPLED_LOOKUP_OUTPUT_ROLES,
+    DECOUPLED_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
+    DecoupledTasteShockLookup,
+    DecoupledWithActionParts,
+)
+from _lcm.regime_building.Q_and_F import (
+    QAndFParts,
+    get_Q_and_F_parts,
+    has_objective_profile,
+)
 from _lcm.simulation.gated_routing import (
     simulation_gate_fold,
     simulation_gate_route_delta,
@@ -65,6 +75,7 @@ from _lcm.simulation.program_types import (
     GATED_REGIME_ID,
     GATED_ROLE,
     GATED_ROUTE_MASK,
+    LOOKUP_PART_ROLES,
     ROUTE_PROGRAM,
     SUBJECT_AXIS,
     SUBJECT_WIDTH_KEYWORD,
@@ -204,6 +215,7 @@ def build_simulation_programs(
     # publishes no such parts. A taste-shock regime applies the solve's EV1
     # reduction to its simulation decision, which draws nothing.
     action_value_bodies: dict[int, Callable[..., PytreeValue]] = {}
+    action_value_roles: dict[int, tuple[str, ...]] = {}
     action_values: dict[int, CoreProgram] = {}
     space = context.state_action_space
     lookup_subject_arg_names = tuple(space.states)
@@ -211,18 +223,14 @@ def build_simulation_programs(
         kernel = Q_and_F_functions[period]
         group = id(kernel)
         if group not in action_value_bodies:
+            body, action_value_roles[group] = _lookup_body_and_roles(
+                Q_and_F=kernel,
+                has_taste_shocks=context.has_taste_shocks,
+                n_discrete_action_axes=len(space.discrete_actions),
+            )
             action_value_bodies[group] = _SubjectTiled(
                 func=_decision_with_action_parts(
-                    Q_and_F=kernel,
-                    action_names=space.action_names,
-                    body=(
-                        partial(
-                            TasteShockLookup,
-                            n_discrete_action_axes=len(space.discrete_actions),
-                        )
-                        if context.has_taste_shocks
-                        else _DecisionWithActionParts
-                    ),
+                    Q_and_F=kernel, action_names=space.action_names, body=body
                 ),
                 subject_arg_names=lookup_subject_arg_names,
             )
@@ -236,11 +244,7 @@ def build_simulation_programs(
             requirements=dataclasses.replace(
                 decision[period].requirements, reduced_axes=()
             ),
-            output_roles=(
-                TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
-                if context.has_taste_shocks
-                else ACTION_VALUES_OUTPUT_ROLES
-            ),
+            output_roles=action_value_roles[group],
         )
 
     transition_bodies: dict[int, Callable[..., PytreeValue]] = {}
@@ -778,6 +782,33 @@ def _decision_body(
 # returns them: the decision's own pair, then each part over the action product.
 ACTION_VALUES_OUTPUT_ROLES = (ACTION_INDEX, DECISION_VALUE, *ACTION_PARTS_ROLES)
 
+
+def _lookup_body_and_roles(
+    *, Q_and_F: QAndFFunction, has_taste_shocks: bool, n_discrete_action_axes: int
+) -> tuple[Callable[..., Callable[..., PytreeValue]], tuple[str, ...]]:
+    """Return the lookup body for one kernel and the roles it publishes, in order."""
+    match has_objective_profile(Q_and_F=Q_and_F), has_taste_shocks:
+        case True, True:
+            return (
+                partial(
+                    DecoupledTasteShockLookup,
+                    n_discrete_action_axes=n_discrete_action_axes,
+                ),
+                DECOUPLED_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
+            )
+        case True, False:
+            return DecoupledWithActionParts, DECOUPLED_LOOKUP_OUTPUT_ROLES
+        case False, True:
+            return (
+                partial(
+                    TasteShockLookup, n_discrete_action_axes=n_discrete_action_axes
+                ),
+                TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
+            )
+        case _:
+            return _DecisionWithActionParts, ACTION_VALUES_OUTPUT_ROLES
+
+
 # Derived programs keyed by the source program's identity and the kept parts. The
 # source is held alongside so its identity cannot be reused while the entry lives.
 type KeptPartsPrograms = dict[
@@ -791,27 +822,25 @@ def with_kept_action_parts(
     """Return a lookup decision with its parts that publishes only the parts in `roles`.
 
     The decision's own outputs are always published, followed by the kept parts in
-    the order of `ACTION_PARTS_ROLES`. The selection is made at each state cell, so
+    the order the program publishes them. The selection is made at each state cell, so
     a dropped part is never stacked over the subjects. Keeping every part returns
     `program` unchanged; one object per kept subset keeps the executor's
     compiled-route cache warm. `cache` belongs to the owner of `program`, so the
     derived programs live exactly as long as it does; the owner serializes calls.
     """
-    unknown = roles - set(ACTION_PARTS_ROLES)
+    unknown = roles - set(LOOKUP_PART_ROLES)
     if unknown:
         msg = (
-            f"Unknown action part roles {sorted(unknown)}; known: {ACTION_PARTS_ROLES}."
+            f"Unknown action part roles {sorted(unknown)}; known: {LOOKUP_PART_ROLES}."
         )
         raise ValueError(msg)
-    if roles == set(ACTION_PARTS_ROLES):
+    published = cast("tuple[str, ...]", program.output_roles)
+    if roles >= {role for role in published if role in LOOKUP_PART_ROLES}:
         return program
     key = (id(program), roles)
     if key not in cache:
-        published = cast("tuple[str, ...]", program.output_roles)
         kept = tuple(
-            role
-            for role in published
-            if role not in ACTION_PARTS_ROLES or role in roles
+            role for role in published if role not in LOOKUP_PART_ROLES or role in roles
         )
         cache[key] = (
             program,
@@ -911,7 +940,7 @@ class _DecisionWithActionParts:
     continuation `CE` over the action product, all from one evaluation of the
     regime's kernel. A cell without a feasible action publishes index -1, as the
     dense decision does. `Q`, `U` and `CE` are unmasked: an infeasible entry holds
-    what the action would have; the decision masks `Q` with `F`.
+    what the action would have; the objective masks `Q` with `F`.
     """
 
     __name__: ClassVar[str] = "argmax_and_max_Q_over_a_with_action_parts"

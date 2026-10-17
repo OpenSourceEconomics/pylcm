@@ -34,6 +34,10 @@ from lcm.collective import (
     ProjectedRegimeValue,
     ValueDependentConstraint,
 )
+from lcm.decoupled import (
+    Decoupled,
+    resolve_koopmans_aggregator,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.taste_shocks import ExtremeValueTasteShocks
@@ -85,7 +89,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     derived_categoricals: Mapping[FunctionName, DiscreteGrid]
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
-    koopmans_aggregator: UserFunction | Phased | None
+    koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
     description: str
 
@@ -259,14 +263,15 @@ class Regime:
     `NNBEGM`.
     """
 
-    koopmans_aggregator: UserFunction | Phased | None = None
+    koopmans_aggregator: UserFunction | Phased | Decoupled | None = None
     """Combines current-period utility with the certainty equivalent into `Q`.
 
     Signature `W(utility, CE, ...)`; further arguments are runtime params
     under the pseudo-function name `koopmans_aggregator`, or outputs of
     regime functions of the same name. `Phased(solve=..., simulate=...)`
-    gives the two phases different aggregators (a naive/sophisticated
-    beta-delta split, say). `None` means the regime takes the model-level
+    gives the two phases different aggregators. `Decoupled(objective=...,
+    value=...)` chooses actions with one aggregator and stores the value of
+    another (time-inconsistent agents). `None` means the regime takes the model-level
     aggregator (`lcm.LinearAggregator` unless the `Model` says otherwise). Terminal
     regimes have no continuation and take none.
     """
@@ -602,14 +607,29 @@ class Regime:
             terminal regime, or one taking the model-level value).
 
         """
-        if isinstance(self.koopmans_aggregator, Phased):
-            variant = (
-                self.koopmans_aggregator.solve
-                if phase == "solve"
-                else self.koopmans_aggregator.simulate
-            )
-            return cast("UserFunction", variant)
-        return self.koopmans_aggregator
+        value, _ = resolve_koopmans_aggregator(
+            declaration=self.koopmans_aggregator, phase=phase
+        )
+        return value
+
+    def get_objective_aggregator(
+        self,
+        phase: Literal["solve", "simulate"] = "solve",
+    ) -> UserFunction | None:
+        """Get the aggregator this phase chooses actions with, if separate.
+
+        Args:
+            phase: Which variant to use when the objective is `Phased`.
+
+        Returns:
+            The objective aggregator of a `Decoupled` declaration, or `None`
+            when the Koopmans aggregator also chooses.
+
+        """
+        _, objective = resolve_koopmans_aggregator(
+            declaration=self.koopmans_aggregator, phase=phase
+        )
+        return objective
 
     # keyword-only-exempt: primary-argument=phase
     def get_all_functions(

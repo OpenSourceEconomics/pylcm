@@ -59,7 +59,7 @@ def _get_build_W_kwargs(
     *,
     functions: Mapping[FunctionName, EconFunction],
     koopmans_aggregator: UserFunction,
-) -> Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]:
+) -> _BuildWKwargs:
     """Return a closure that builds `W_kwargs` from `states_actions_params`.
 
     W's signature parameters come from two disjoint pools:
@@ -107,6 +107,13 @@ class _BuildWKwargs:
     """Names W accepts directly from states, actions, and flat user params."""
     dag_func: Callable[..., dict[FunctionName, FloatND | IntND]] | None
     """Compiled DAG computing W's regime-function inputs, or `None` if it has none."""
+
+    @property
+    def arg_names(self) -> frozenset[ReferenceName]:
+        """Every name W reads from the cell, directly or through its DAG inputs."""
+        if self.dag_func is None:
+            return frozenset(self.passthrough)
+        return self.passthrough | get_union_of_args([self.dag_func])
 
     # The kernel is traced with whatever leaves its caller supplies -- tracers,
     # Python scalars, arrays of either integer width -- so its annotations

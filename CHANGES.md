@@ -5,6 +5,21 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Time-inconsistent agents with `Decoupled`
+
+- `Regime(koopmans_aggregator=lcm.Decoupled(objective=..., value=...))` chooses actions
+  with `objective(utility, CE, ...)` and stores `value(utility, CE, ...)` at the chosen
+  action. `objective` may be `Phased`, so the solve and simulation choose differently;
+  with `u + β̃δ·CE` in the solve, `u + βδ·CE` in simulation and `value = u + δ·CE` this
+  covers the naive, sophisticated and partially naive beta-delta agents. With
+  `ExtremeValueTasteShocks` the objective sets the choice probabilities and the stored
+  value is the expected `value` at the noisy choice. Both functions read parameters from
+  the `koopmans_aggregator` namespace, where a shared name is one parameter.
+  `PolicyLookup.Q_objective` publishes the objective's action values. Only `GridSearch`
+  supports it; collective regimes, gated-edge sources and sharded continuous states
+  refuse it. A `Phased` Koopmans aggregator is unchanged.
+- A state or regime-function input read only by a Koopmans aggregator reaches it.
+
 ### Choice probabilities in policy lookup with taste shocks
 
 - `Model.lookup_policy` accepts GridSearch regimes with `ExtremeValueTasteShocks`. The
