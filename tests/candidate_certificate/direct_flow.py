@@ -363,7 +363,7 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_OPERATIONS_SOURCE: "481b768fc97b134c671c386336a25e9e3e78b631a0a3bc4643d9e74d0ba47e54",
     COMBINED_CHUNK_PLANNING_SOURCE: "807378c7ac745eb7fc3d42c27020f6b40d10d40da3041dcdb647e7e2d3e0d90a",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "85070e5f57210e201be248c1f2deae8068dce674112f13efdb0eb94c1dd7f7b4",
-    COMBINED_CHUNK_PROFILES_SOURCE: "1c2fea8138f7df79567534267da9d54e7b21008e307e3a93dc31f9095ed28319",
+    COMBINED_CHUNK_PROFILES_SOURCE: "1a082b72e72df04d267da843d8889ceb347cac1bb8e383ed903a0b06171befe1",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "477f39609fff5371d88d941cc5c4a0c9ab9fe3692ad2845a3fc3a6befb633f42",
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "563c7e97d4ee38bedf64cb9a6938c7fc20239d47c2a91636200d2002cc7a68d0",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
@@ -426,8 +426,8 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
     ENGINE_SOURCE: "cc6c650d562cebb9602cf72c0576a5b369b6925824d61eadcd0fb038c7594043",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
-    SIMULATION_SOURCE: "a42a63dea5a4c8e6f121116c706353ff0cbae3159c2a217bdf9ca25083a1d51c",
-    SIMULATION_TRANSITIONS_SOURCE: "eb9c93c7a156bc6355795474125c080234cbd3f938de07d30a6dc500dbd18055",
+    SIMULATION_SOURCE: "9f97cb938d32a388dfb1853496c84b95f4456756afcdbf80fab1ca2674a346af",
+    SIMULATION_TRANSITIONS_SOURCE: "e66a9a829d2456a15b9bee69fa0e13651022ce82023fcb4e53ec8713454f42c7",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "837cb0c3f05787ba54196079613efe0443b448015d3a567474ddb6bdf3391d3e",
     SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
@@ -933,13 +933,13 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "56ac5168b71953b1b998ac2bd186f9dabf519e7fded08d06043c817d1820b203",
+        "fb421c8b99b85f995e66b0d00fb853cf7af393f9fbe4f46b5eacb6a90d13ee1e",
         {
             "profile_simulation_chunk": "6d6fcedb7426a014a789b822e592147a1d2ffea40cc4004f61add59651431cba",
             "_period_copy_reservation": "bf995f9f6b2ee949a83d862cac85fb1e0148fd80ac225c0e0c469f6f758b05f2",
             "_policy_read_sources": "a83d15eb8de8a505e80cdce7a9448b11d7a9ab3001e92beb7676b491fb63245e",
             "_retained_read_source": "e0233031b8fb4dcb494575a397f5c2e9ccbfd45a69d0e6f951bb3612323cf82f",
-            "_profile_next_subjects": "a06ea887076865b4df4ef39c3eb81a0dd757825b44534df21fb5997cbc327c08",
+            "_profile_next_subjects": "f7728d779fc667059cda352d3613085d2f80b9c85cc52cba48a871bece8cb30a",
             "_profile_population_roles": "99510aeb32383e09d2b2972ef0ac6354dd0259aa494d77cefd9aa43d9fecad8e",
             "_profile_outer_storage": "f140b97925fd77d4b73acef4d6cea9c9cbc2db8cf67fb70d692be6130eed11c3",
             "_record_core": "1ca4c13d2facd739b83c8ee4c9cf265ddefcf982b4d937a6daedf39e2393684f",
@@ -978,10 +978,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "f024d480b09fe244f8adeca8eb887fa8ff90bd927613bbaeaf0caad1a052a3fb",
+        "12c045513a64b75194ad29132228d9abfe3a93ebf9f63f7b143776b14b11c44e",
         {
             "simulate": "5a200607ba9aa61ef745fe1a4d5ef16a78582039948ab2078da4a7b2f4d9b9ce",
-            "_simulate_regime_in_period": "34cb3f47fc1607d59ebcdddda5cafce37fbfbebdaaf4a6cd1c20f4f13434dac7",
+            "_simulate_regime_in_period": "53b3d69d14f24252a224ae0d2e0af6935737814d93531bca1a2df37f473be011",
             "_execute_finite_replay": "8fbb9dc117de1e2154984bbc79668966690ed60572129e2d46a376e02a60d1d9",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
             "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
@@ -1397,7 +1397,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_TRANSITIONS_SOURCE: (
-        "ec68326a7aff68a022eacd46adc4ed7755bc281b7241691765d505c118ab5488",
+        "b7d711b128f5075a424da469ad47b4a92e2a734327e90cfd2afa4b24702eb730",
         {
             "_draw_random_regime_ids_from_scalars": "548fcaf12654d05a584fabee3fbd81fe42ad256307d5ea4df826cb3ae3355a5a",
             "draw_key_from_dict": "9dfed8dafa357fa87cde342dc7f174028e4adf8454b5906a4e0d24bee164cdae",

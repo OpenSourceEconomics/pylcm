@@ -19,7 +19,7 @@ from jax import numpy as jnp
 from jax import vmap
 
 from _lcm.engine import Regime, StateActionSpace
-from _lcm.grids import ContinuousGrid
+from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.off_grid import count_off_grid, report_off_grid
 from _lcm.processes import _ContinuousStochasticProcess
@@ -43,7 +43,11 @@ from _lcm.typing import (
 )
 from _lcm.utils.counts import sum_counts
 from _lcm.utils.logging import validation_enabled
-from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError, OffGridStateError
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    InvalidStateTransitionError,
+    OffGridStateError,
+)
 from lcm.typing import Bool1D, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
 
 
@@ -133,6 +137,99 @@ def clip_next_states(
             "regime_ids": regime_ids,
         },
         subject_arg_names=("states", "subjects", "new_regime_ids"),
+    )
+
+
+def drawn_code_checks(
+    *,
+    next_state_names: Mapping[RegimeName, tuple[StateName, ...]],
+    regimes: Mapping[RegimeName, Regime],
+    targets: tuple[RegimeName, ...],
+) -> tuple[tuple[RegimeName, StateName, int], ...]:
+    """Return each target's discrete next states, with their number of codes."""
+    return tuple(
+        (target, name, len(grid.codes))
+        for target in targets
+        if target in next_state_names
+        for name in next_state_names[target]
+        if isinstance(grid := regimes[target].simulation.grids.get(name), DiscreteGrid)
+    )
+
+
+def fail_if_drawn_codes_leave_their_grids(
+    *,
+    next_states: StatesPerRegime,
+    regimes: Mapping[RegimeName, Regime],
+    targets: tuple[RegimeName, ...],
+    source: RegimeName,
+    period: int,
+    new_regime_ids: Int1D,
+    regime_ids: RegimeNamesToIds,
+    subjects: Bool1D,
+    memory: SimulationMemory | None,
+) -> None:
+    """Raise if a subject drawn to a target realizes a code off a discrete grid.
+
+    The check runs on the raw codes and the regime draw, before a gate reads a
+    target's value at those codes or reroutes the subject. A continuous source
+    state between its grid nodes can produce a code the transition preflight,
+    which sees the nodes only, never evaluates.
+
+    Raises:
+        InvalidStateTransitionError: A selected, genuine subject drawn to a
+            target carries a code outside `0..n-1` of one of its discrete grids.
+
+    """
+    checks = drawn_code_checks(
+        next_state_names={
+            target: tuple(states) for target, states in next_states.items()
+        },
+        regimes=regimes,
+        targets=targets,
+    )
+    if not checks:
+        return
+    counts = run_simulation_operation(
+        memory=memory,
+        function=_count_drawn_off_grid_codes,
+        arguments={
+            "codes": tuple(next_states[target][name] for target, name, _ in checks),
+            "n_codes": tuple(jnp.int32(size) for _, _, size in checks),
+            "target_ids": tuple(regime_ids[target] for target, _, _ in checks),
+            "subjects": subjects,
+            "new_regime_ids": new_regime_ids,
+        },
+        subject_arg_names=("codes", "subjects", "new_regime_ids"),
+    )
+    for (target, name, _), count in zip(checks, jax.device_get(counts), strict=True):
+        if int(count):
+            msg = (
+                f"In regime {source!r} (period {period}), the simulated law of "
+                f"{name!r} to regime {target!r} returns a code outside its grid "
+                "for a subject drawn there. A continuous state between its grid "
+                "nodes can produce such a code; keep the law on its grid."
+            )
+            raise InvalidStateTransitionError(msg)
+
+
+def _count_drawn_off_grid_codes(
+    *,
+    codes: tuple[IntND, ...],
+    n_codes: tuple[ScalarInt, ...],
+    target_ids: tuple[ScalarInt, ...],
+    subjects: Bool1D,
+    new_regime_ids: Int1D,
+) -> Int1D:
+    """Count, per check, the subjects drawn to its target with a code off its grid."""
+    return jnp.stack(
+        [
+            sum_counts(
+                counts=subjects
+                & (new_regime_ids == target_id)
+                & ((code < 0) | (code >= size))
+            )
+            for code, size, target_id in zip(codes, n_codes, target_ids, strict=True)
+        ]
     )
 
 
