@@ -799,7 +799,9 @@ class _RuntimePointsIrregCoordinateFinder:
     """Name under which the value arrives."""
     points_param: str
     """Qualified name of the runtime parameter carrying the grid points."""
-    off_grid: OffGrid
+    off_grid: OffGrid = dataclasses.field(
+        default="extrapolate", metadata={"fingerprint_omit_if_default": True}
+    )
     """The declared policy for exterior lookup values."""
 
     def __post_init__(self) -> None:
@@ -830,7 +832,9 @@ class _FixedPointsIrregCoordinateFinder:
     """Name under which the value arrives."""
     points: Float1D
     """The grid's points."""
-    off_grid: OffGrid
+    off_grid: OffGrid = dataclasses.field(
+        default="extrapolate", metadata={"fingerprint_omit_if_default": True}
+    )
     """The declared policy for exterior lookup values."""
 
     def __post_init__(self) -> None:
@@ -858,7 +862,9 @@ class _GridCoordinateFinder:
     """Name under which the value arrives."""
     grid: ContinuousGrid
     """The grid the value is placed on."""
-    clip_points: Float1D | None = None
+    clip_points: Float1D | None = dataclasses.field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
     """Concrete clipping nodes, resolved before tracing coordinate lookup."""
 
     def __post_init__(self) -> None:

@@ -21,7 +21,7 @@ from jax import vmap
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.grids import ContinuousGrid
 from _lcm.grids.continuous import _clip_grid_value
-from _lcm.off_grid import count_off_grid, report_off_grid
+from _lcm.off_grid import count_off_grid, off_grid_message, report_off_grid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.program_arguments import transition_arguments
@@ -104,9 +104,14 @@ def clip_next_states(
                     )
                     if grid.off_grid == "raise" and int(counts[1]):
                         raise OffGridStateError(
-                            f"Invalid next state: regime={source!r}, "
-                            f"target={target!r}, "
-                            f"period={next_period - 1}, state={name!r}"
+                            off_grid_message(
+                                count=int(counts[1]),
+                                regime=source,
+                                target=target,
+                                period=next_period - 1,
+                                state=name,
+                                phase="realized",
+                            )
                         )
                     report_off_grid(
                         count=int(counts[0]),
@@ -133,6 +138,7 @@ def clip_next_states(
             "regime_ids": regime_ids,
         },
         subject_arg_names=("states", "subjects", "new_regime_ids"),
+        subject_outputs=True,
     )
 
 
