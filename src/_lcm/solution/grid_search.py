@@ -100,7 +100,6 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
-from _lcm.utils.logging import validation_enabled
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
@@ -1089,7 +1088,7 @@ class _GridSearchPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: TimeAxis,
-        logger: logging.Logger,
+        logger: logging.Logger,  # noqa: ARG002
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelOutput:
@@ -1148,7 +1147,6 @@ class _GridSearchPeriodKernel:
                     checks=self.landing_checks,
                     regime_name=argument_builder.regime_name,
                     period=period,
-                    check_codes=validation_enabled(logger),
                 )
         bound_status = ()
         if self.n_runtime_bounds:

@@ -1432,7 +1432,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "044402612e4143ef65a297c10311833c2dcb309f21e17d52be4db92ecdd2132a",
+        "56ac5168b71953b1b998ac2bd186f9dabf519e7fded08d06043c817d1820b203",
         {
             "profile_simulation_chunk": "4808efcf5132c073c74d6e1ed97ec37e12f59628428e7a7a169bfbaff6b7d2e1",
             "_period_copy_reservation": "bf995f9f6b2ee949a83d862cac85fb1e0148fd80ac225c0e0c469f6f758b05f2",
@@ -1906,7 +1906,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_TRANSITIONS_SOURCE: (
-        "cb4993f8800d3e31a45ec6f0ea6ad08cba8c103c2365569e1cfa670903077e6d",
+        "ec68326a7aff68a022eacd46adc4ed7755bc281b7241691765d505c118ab5488",
         {
             "_draw_random_regime_ids_from_scalars": "548fcaf12654d05a584fabee3fbd81fe42ad256307d5ea4df826cb3ae3355a5a",
             "draw_key_from_dict": "9dfed8dafa357fa87cde342dc7f174028e4adf8454b5906a4e0d24bee164cdae",

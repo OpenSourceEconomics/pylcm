@@ -948,7 +948,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 checks=output.landing_checks,
                                 regime_name=regime_name,
                                 period=period,
-                                check_codes=diagnostics_enabled,
                             )
                         continuation_spec = regime.solution.continuation_spec
                         result = consume_kernel_output(
