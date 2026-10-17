@@ -1805,6 +1805,11 @@ def validate_discrete_state_laws_all_periods(
     off a category grid. Infeasible cells never count, since the solve masks
     them before any maximum.
 
+    Feasibility here is the ordinary constraints. A value-dependent constraint or
+    a gate that reads a value cannot exclude a cell whose code is off the grid,
+    since that code has no value; a value-free restriction belongs among the
+    ordinary constraints.
+
     Raises:
         InvalidStateTransitionError: At the first feasible cell a law leaves its
             grid, naming the regime, period, law, target and cell.
@@ -1822,14 +1827,7 @@ def validate_discrete_state_laws_all_periods(
         return
     for period in range(ages.n_periods - 1):
         for regime_name, regime in regimes.items():
-            # A value constraint or a gated edge decides which cells are feasible
-            # or reach a target only once the values are known. Those cells are
-            # not counted here; the solve masks them as it takes the maximum.
-            if (
-                regime.terminal
-                or period not in regime.active_periods
-                or regime.solution.counts_raise_landings
-            ):
+            if regime.terminal or period not in regime.active_periods:
                 continue
             regime_params = regime_kernel_params(flat_params, regime_name=regime_name)
             state_action_space = _state_action_space_for_period(
@@ -2050,6 +2048,7 @@ def _validate_discrete_state_laws(
                         f"In regime '{regime_name}' at age {age} (period {period}), "
                         f"the law '{name}' to regime '{target}'"
                     ),
+                    value_dependent=regime.solution.counts_raise_landings,
                 )
 
 
@@ -2161,8 +2160,14 @@ def _fail_if_codes_leave_the_grid(
     target_grid: DiscreteGrid,
     source_grids: Mapping[StateOrActionName, Grid],
     description: str,
+    value_dependent: bool = False,
 ) -> None:
-    """Raise at the first feasible row whose code lies outside `0..n-1`."""
+    """Raise at the first feasible row whose code lies outside `0..n-1`.
+
+    A cell counts as feasible when the ordinary constraints allow it. Value
+    constraints and gated edges decide a cell only once the values are known, and
+    an off-grid code has no value to decide with, so they cannot excuse it.
+    """
     off_grid = _off_grid_rows(codes=codes, feasible=feasible, target_grid=target_grid)
     if not off_grid.any():
         return
@@ -2174,6 +2179,14 @@ def _fail_if_codes_leave_the_grid(
     raise InvalidStateTransitionError(
         f"{description} leaves its grid at the feasible cell {cell}. "
         + _off_grid_remedy(target_grid)
+        + (
+            " A value constraint or a gated edge cannot exclude that cell, since an "
+            "off-grid code has no value to decide with. Declare the restriction "
+            "that rules the cell out as an ordinary constraint (in `constraints`, "
+            "beside the value constraint), or keep the law on its grid."
+            if value_dependent
+            else ""
+        )
     )
 
 

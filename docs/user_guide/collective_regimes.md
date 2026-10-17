@@ -126,6 +126,31 @@ The regime's mask is the AND of the ordinary constraints and the value-dependent
 cell whose mask is empty publishes the regime's **dissolution flag** and the `-inf`
 sentinel: there is no viable household there.
 
+A value constraint, or a gate that reads a value, cannot excuse a discrete law that
+leaves its grid. Such a law sends a state to a code outside `0..n-1`, and an off-grid
+code has no value to compare with. The transition check therefore counts every cell the
+ordinary constraints allow, in the solve and the simulation, and raises
+`InvalidStateTransitionError` where a law leaves its grid there. When a restriction does
+not read a value, declare it as an ordinary constraint beside the value-dependent one:
+
+```python
+def rest_only(*, work):
+    return work == 0
+
+
+def participation_f(*, Q_f):
+    return Q_f >= 0.0
+
+
+constraints = {
+    "rest_only": rest_only,  # value-free: an ordinary constraint
+    "participation_f": ValueDependentConstraint(predicate=participation_f),
+}
+```
+
+Written as one predicate, `(work == 0) & (Q_f >= 0.0)`, the same restriction is refused
+when only `work == 1` sends a discrete state off its grid.
+
 `solve()` stores those flags as addressed replay artifacts in `SolutionResult`. Pass the
 complete result to `simulate(solution=...)`; a gate reading `D_target` consumes the flag
 from there. Letting `simulate` solve automatically retains and threads it directly.
