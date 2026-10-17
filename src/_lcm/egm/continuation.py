@@ -1415,7 +1415,14 @@ def _expect_over_stochastic_nodes(
     states and Markov-discrete states alike; a Markov node feeds its integer
     code into the resources query (when read) and selects the carry's leading
     discrete axis by that code.
+
+    Read counts come only from an installed child query: a plain child's node
+    read returns the bare pair, so its fold carries no count slot, matching the
+    node-free read of the same child.
     """
+    collect_continuation_read_counts = (
+        collect_continuation_read_counts and read.query is not None
+    )
     # The queries depend on the node combo only when the resources function
     # reads a stochastic state; otherwise compute them once and share.
     shared_queries_and_gradients = (
