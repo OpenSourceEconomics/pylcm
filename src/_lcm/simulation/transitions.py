@@ -48,7 +48,16 @@ from lcm.exceptions import (
     InvalidStateTransitionError,
     OffGridStateError,
 )
-from lcm.typing import Bool1D, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    Bool1D,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ScalarFloat,
+    ScalarInt,
+    ValueND,
+)
 
 
 def clip_next_states(
@@ -214,13 +223,17 @@ def fail_if_drawn_codes_leave_their_grids(
 
 def _count_drawn_off_grid_codes(
     *,
-    codes: tuple[IntND, ...],
+    codes: tuple[ValueND, ...],
     n_codes: tuple[ScalarInt, ...],
     target_ids: tuple[ScalarInt, ...],
     subjects: Bool1D,
     new_regime_ids: Int1D,
 ) -> Int1D:
-    """Count, per check, the subjects drawn to its target with a code off its grid."""
+    """Count, per check, the subjects drawn to its target with a code off its grid.
+
+    The codes keep their storage dtype, which a law may widen to int64 under x64;
+    they are compared as stored, never narrowed, so no wide code can alias a valid one.
+    """
     return jnp.stack(
         [
             sum_counts(
