@@ -3054,7 +3054,9 @@ def test_s03_imported_helper_is_rejected_after_byte_reseal(
     for relative_path in {*sources, relative}:
         target = tmp_path / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text((root / relative_path).read_text(encoding="utf-8"), encoding="utf-8")
+        target.write_text(
+            (root / relative_path).read_text(encoding="utf-8"), encoding="utf-8"
+        )
     target = tmp_path / relative
     tree = ast.parse(target.read_text(encoding="utf-8"))
     function = _definition(tree=tree, qualname=helper)
