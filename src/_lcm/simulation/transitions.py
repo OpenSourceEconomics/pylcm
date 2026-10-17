@@ -48,7 +48,16 @@ from lcm.exceptions import (
     InvalidStateTransitionError,
     OffGridStateError,
 )
-from lcm.typing import Bool1D, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    Bool1D,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ScalarFloat,
+    ScalarInt,
+    ValueND,
+)
 
 
 def clip_next_states(
@@ -179,7 +188,7 @@ def _count_realized_grid_state(
 def _fail_if_realized_codes_leave_the_grid(
     *,
     enabled: bool,
-    codes: IntND,
+    codes: ValueND,
     grid: Grid,
     subjects: Bool1D,
     new_regime_ids: Int1D,
@@ -187,7 +196,11 @@ def _fail_if_realized_codes_leave_the_grid(
     description: str,
     memory: SimulationMemory | None,
 ) -> None:
-    """Raise if a reached subject's realized code lies off its discrete grid."""
+    """Raise if a reached subject's realized code lies off its discrete grid.
+
+    It sees every state that is not a plain continuous grid, a shock process's
+    float values included, and counts codes only for a discrete grid.
+    """
     if not enabled or not isinstance(grid, DiscreteGrid):
         return
     count = run_simulation_operation(
