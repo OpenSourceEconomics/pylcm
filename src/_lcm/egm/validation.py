@@ -73,6 +73,7 @@ from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.phases import _resolve_solve_functions
 from _lcm.regime_law import DecomposedTransition, RegimeLaw, RegimeLaws
 from _lcm.solution.dcegm import _BoundDCEGM
+from _lcm.solution.egm import _BoundEGM
 from _lcm.solution.nbegm import _BoundNBEGM
 from _lcm.typing import (
     ActionName,
@@ -440,7 +441,7 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
-    solver: _BoundDCEGM | _BoundNBEGM,
+    solver: _BoundDCEGM | _BoundNBEGM | _BoundEGM,
     solver_name: str,
 ) -> None:
     """Prove every declared post-decision lower bound against the savings grid.

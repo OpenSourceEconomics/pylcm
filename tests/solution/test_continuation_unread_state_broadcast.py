@@ -54,7 +54,7 @@ from _lcm.execution.workspace_planning import (
 )
 from _lcm.solution import backward_induction, grid_search
 from _lcm.solution.period_capture import _PAYLOAD_NAME
-from _lcm.typing import ArrayTree, QAndFArg, QAndFFunction
+from _lcm.typing import PytreeValue, QAndFArg, QAndFFunction
 from _lcm.utils import dispatchers
 from lcm import (
     AgeGrid,
@@ -537,7 +537,7 @@ def _solve_under(
 
     def observed_map_window(
         self: dispatchers._TiledProductMap, **kwargs: QAndFArg
-    ) -> ArrayTree:
+    ) -> PytreeValue:
         width = kwargs.get(self.width_keyword, 1)
         assert isinstance(width, int)
         windows.append((self.variables, width))

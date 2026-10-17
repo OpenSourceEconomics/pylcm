@@ -383,21 +383,19 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             period=period_value,
             age=age,
         )
-        indices, _ = cast(
-            "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
-            _prepare_program(
-                runtime=runtime,
-                program=regime.simulation.programs.forward_decision[period],
-                arguments=arguments,
-                period=period,
-                n_subjects=n_subjects,
-                widths=widths,
-                family="decision",
-                regime_name=name,
-                profiles=profiles,
-                wave=wave,
-            ),
+        prepared_outputs = _prepare_program(
+            runtime=runtime,
+            program=regime.simulation.programs.forward_decision[period],
+            arguments=arguments,
+            period=period,
+            n_subjects=n_subjects,
+            widths=widths,
+            family="decision",
+            regime_name=name,
+            profiles=profiles,
+            wave=wave,
         )
+        indices = cast("tuple[jax.ShapeDtypeStruct, ...]", prepared_outputs)[0]
         if not states and indices.ndim == 0:
             indices = jax.ShapeDtypeStruct(
                 (n_subjects,), indices.dtype, sharding=subject

@@ -39,7 +39,7 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from math import prod
 from types import MappingProxyType
-from typing import Literal, cast, no_type_check
+from typing import Literal, NotRequired, TypedDict, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -47,6 +47,7 @@ import numpy as np
 import pandas as pd
 from dags import concatenate_functions
 from dags.tree import tree_path_from_qname
+from jaxtyping import Int, Scalar
 
 from _lcm.engine import (
     Regime,
@@ -60,6 +61,7 @@ from _lcm.off_grid import count_off_grid, report_off_grid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.probability import is_live
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
@@ -74,7 +76,7 @@ from _lcm.regime_building.Q_and_F import (
     _publish_signature,
 )
 from _lcm.regime_building.schedules import Side
-from _lcm.simulation.host_operations import StaticArgument
+from _lcm.simulation.host_operations import StaticArgument, _BuilderInput
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.residency import (
@@ -83,6 +85,12 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    merge_bound_input_status,
+    reduce_bound_input_status,
+    validate_runtime_bound_status,
+)
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import (
     LotteryLifetime,
@@ -92,6 +100,7 @@ from _lcm.transition_plans import (
 )
 from _lcm.typing import (
     ArrayTree,
+    ConstraintFunction,
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionArg,
@@ -146,6 +155,22 @@ _OFF_GRID_MAX_BLOCK_ROWS = 1 << 22
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
 _NO_FUNCTIONS: EconFunctionsMapping = MappingProxyType({})
 _NO_FUNCTION_PARAMS: FlatRegimeParams = MappingProxyType({})
+
+
+class _OffGridCellInputs(TypedDict):
+    """Named model-owned inputs of the off-grid cell builder."""
+
+    functions: EconFunctionsMapping
+    constraints: ConstraintFunctionsMapping
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction]
+    transition_plans: TargetTransitionPlans
+    target: RegimeName
+    law: RegimeTransitionFunction
+    states: tuple[StateName, ...]
+    bound_specs: NotRequired[tuple[PostDecisionBoundSpec, ...]]
+    bound_periods: NotRequired[tuple[int, ...]]
+
+
 type _RegimeProbabilityOutput = tuple[
     Mapping[RegimeName, FloatND], Mapping[StateOrActionName, FloatND | IntND]
 ]
@@ -548,6 +573,9 @@ def validate_off_grid_transitions(
                         summary=summary,
                         process_grid_resolver=process_grid_resolver,
                     )
+                    counts = _validate_off_grid_bound_status(
+                        counts=counts, phase=phase, regime_name=name, period=period
+                    )
                     for index, (state, grid) in enumerate(grids.items()):
                         if grid.off_grid == "raise" and int(counts[index, 1]):
                             raise OffGridStateError(
@@ -567,6 +595,27 @@ def validate_off_grid_transitions(
                         )
 
 
+def _validate_off_grid_bound_status(
+    *,
+    counts: IntND | BoundedResult[IntND],
+    phase: SolutionPhase | SimulationPhase,
+    regime_name: RegimeName,
+    period: int,
+) -> IntND:
+    """Validate canonical bound integrity before interpreting reached landings."""
+    if isinstance(counts, BoundedResult):
+        validate_runtime_bound_status(
+            statuses=counts.bound_status,
+            bound_specs=tuple(
+                bound for bound in phase.post_decision_bounds if bound.kind == "dag"
+            ),
+            regime_name=regime_name,
+            period=period,
+        )
+        counts = counts.output
+    return cast("IntND", counts)
+
+
 def _off_grid_target_counts(
     *,
     regime: Regime,
@@ -580,7 +629,7 @@ def _off_grid_target_counts(
     ages: TimeAxis,
     summary: _ValidationSummary | None,
     process_grid_resolver: ProcessGridResolver | None,
-) -> IntND:
+) -> IntND | BoundedResult[IntND]:
     """Reuse canonical DAG/node resolution and admitted Cartesian-law execution."""
     params = regime_kernel_params(flat_params, regime_name=regime.name)
     base = (
@@ -595,7 +644,7 @@ def _off_grid_target_counts(
     plan = phase.transition_plans[target]
     bundle = phase.transitions[target]
     memory = None if summary is None else summary.memory
-    builder_inputs = {
+    builder_inputs: _OffGridCellInputs = {
         "functions": functions,
         "constraints": constraints,
         "bundle": bundle,
@@ -604,10 +653,20 @@ def _off_grid_target_counts(
         "law": law,
         "states": tuple(points),
     }
+    if any(bound.kind == "dag" for bound in phase.post_decision_bounds):
+        builder_inputs.update(
+            bound_specs=tuple(
+                bound for bound in phase.post_decision_bounds if bound.kind == "dag"
+            ),
+            bound_periods=(period,),
+        )
     point_call = (
         _build_off_grid_cell(**builder_inputs)
         if memory is None
-        else memory.producers.built(builder=_build_off_grid_cell, **builder_inputs)
+        else memory.producers.built(
+            builder=_build_off_grid_cell,
+            **cast("Mapping[str, _BuilderInput]", builder_inputs),
+        )
     )
     available = {**space.states, **space.actions}
     if phase is regime.simulation:
@@ -637,9 +696,9 @@ def _off_grid_target_counts(
         )
     arguments = {"grid_args": available, "scalar_kwargs": scalar_kwargs}
 
-    def admitted_count(block_rows: int) -> IntND:
+    def admitted_count(block_rows: int) -> IntND | BoundedResult[IntND]:
         return cast(
-            "IntND",
+            "IntND | BoundedResult[IntND]",
             _evaluate_admitted_transition_producer(
                 function=partial(
                     _off_grid_counts_law,
@@ -686,9 +745,16 @@ def _build_off_grid_cell(
     target: RegimeName,
     law: RegimeTransitionFunction,
     states: tuple[StateName, ...],
-) -> Callable[..., IntND]:
+    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
+    bound_periods: tuple[int, ...] = (),
+) -> Callable[..., IntND | BoundedResult[IntND]]:
     """Compose a model-owned cell while leaving all numerical nodes as operands."""
-    feasibility = _get_feasibility(functions=functions, constraints=constraints)
+    feasibility = _get_feasibility(
+        functions=functions,
+        constraints=constraints,
+        bound_specs=bound_specs,
+        bound_periods=bound_periods,
+    )
     plan = transition_plans[target]
     lotteries = tuple(plan.lotteries)
     support_names = MappingProxyType(
@@ -763,10 +829,10 @@ def _off_grid_counts_law(
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
     scalar_kwargs: EconFunctionKwargs,
     grid_names: tuple[StateOrActionName, ...],
-    func: Callable[..., IntND],
+    func: Callable[..., IntND | BoundedResult[IntND]],
     block_rows: int | None = None,
     largest_count: int | None = None,
-) -> IntND:
+) -> IntND | BoundedResult[IntND]:
     """Reduce saturating integer counts block by block inside one producer.
 
     `func` returns one point's counts with the checked states and the
@@ -789,13 +855,30 @@ def _off_grid_counts_law(
     rows = _OFF_GRID_BLOCK_ROWS if block_rows is None else block_rows
     point = _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
 
-    def reduce_rows(counts: IntND) -> IntND:
-        return sum_counts(
-            counts=counts, axis=tuple(range(counts.ndim - 2)), largest=largest_count
+    def reduce_rows(
+        *, counts: IntND | BoundedResult[IntND], n_rows: int | None
+    ) -> IntND | BoundedResult[IntND]:
+        bounded = isinstance(counts, BoundedResult)
+        ordinary = cast("IntND", counts.output if bounded else counts)
+        result = sum_counts(
+            counts=ordinary, axis=tuple(range(ordinary.ndim - 2)), largest=largest_count
+        )
+        return (
+            BoundedResult(
+                output=result,
+                bound_status=reduce_bound_input_status(
+                    statuses=cast("BoundedResult[IntND]", counts).bound_status,
+                    active=jnp.asarray(a=True)
+                    if n_rows is None
+                    else jnp.ones((n_rows,), dtype=bool),
+                ),
+            )
+            if bounded
+            else result
         )
 
     if not grid_names:
-        return reduce_rows(point())
+        return reduce_rows(counts=point(), n_rows=None)
     axes = tuple(jnp.asarray(grid_args[name]) for name in grid_names)
     split = len(axes)
     block = 1
@@ -805,7 +888,7 @@ def _off_grid_counts_law(
     outer, inner = axes[:split], axes[split:]
     outer_shape = tuple(axis.shape[0] for axis in outer)
 
-    def count_block(index: ScalarInt) -> IntND:
+    def count_block(index: ScalarInt) -> IntND | BoundedResult[IntND]:
         fixed = tuple(
             axis[position]
             for axis, position in zip(
@@ -813,10 +896,11 @@ def _off_grid_counts_law(
             )
         )
         if not inner:
-            return reduce_rows(point(*fixed))
+            return reduce_rows(counts=point(*fixed), n_rows=None)
         mesh = jnp.meshgrid(*inner, indexing="ij")
         return reduce_rows(
-            jax.vmap(partial(point, *fixed))(*(array.ravel() for array in mesh))
+            counts=jax.vmap(partial(point, *fixed))(*(array.ravel() for array in mesh)),
+            n_rows=prod(axis.shape[0] for axis in inner),
         )
 
     if not outer:
@@ -828,11 +912,35 @@ def _off_grid_counts_law(
             "loop can address."
         )
     shape = jax.eval_shape(count_block, jnp.int32(0))
+    if isinstance(shape, BoundedResult):
+        # keyword-only-exempt: library-callback=jax.lax.fori_loop
+        def add_block(
+            index: int | Int[Scalar, ""], total: BoundedResult[IntND]
+        ) -> BoundedResult[IntND]:
+            block = cast(
+                "BoundedResult[IntND]", count_block(jnp.asarray(index, dtype=jnp.int32))
+            )
+            return BoundedResult(
+                output=add_counts(left=total.output, right=block.output),
+                bound_status=tuple(
+                    merge_bound_input_status(left=left, right=right)
+                    for left, right in zip(
+                        total.bound_status, block.bound_status, strict=True
+                    )
+                ),
+            )
+
+        return jax.lax.fori_loop(
+            jnp.int32(0),
+            jax.lax.optimization_barrier(jnp.int32(n_blocks)),
+            add_block,
+            jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, dtype=leaf.dtype), shape),
+        )
     return jax.lax.fori_loop(
         jnp.int32(0),
         jax.lax.optimization_barrier(jnp.int32(n_blocks)),
         lambda index, total: add_counts(
-            left=total, right=count_block(index.astype(jnp.int32))
+            left=total, right=cast("IntND", count_block(index.astype(jnp.int32)))
         ),
         jnp.zeros(shape.shape, dtype=shape.dtype),
     )
@@ -897,23 +1005,30 @@ class _OffGridCell:
 
     next_inputs: Callable[..., Mapping[str, FloatND | IntND]]
     weights: Callable[..., Mapping[str, FloatND | IntND]]
-    feasibility: Callable[..., BoolND]
+    feasibility: Callable[..., BoolND | BoundedResult[BoolND]]
     regime_law: Callable[..., Mapping[RegimeName, FloatND]]
     reader: Callable[..., IntND]
     target: RegimeName
 
     @no_type_check
-    def __call__(self, **kwargs: EconFunctionArg) -> IntND:
-        reached = self.feasibility(**kwargs) & is_live(
-            self.regime_law(**kwargs)[self.target]
+    def __call__(self, **kwargs: EconFunctionArg) -> IntND | BoundedResult[IntND]:
+        evaluated = self.feasibility(**kwargs)
+        feasible = (
+            evaluated.output if isinstance(evaluated, BoundedResult) else evaluated
         )
-        return self.reader(
+        reached = feasible & is_live(self.regime_law(**kwargs)[self.target])
+        counts = self.reader(
             **{
                 **kwargs,
                 **self.next_inputs(**kwargs),
                 **self.weights(**kwargs),
                 "__off_grid_reached": reached,
             }
+        )
+        return (
+            BoundedResult(output=counts, bound_status=evaluated.bound_status)
+            if isinstance(evaluated, BoundedResult)
+            else counts
         )
 
 
@@ -2138,6 +2253,7 @@ def _evaluate_on_feasible_rows(
             builder=_get_feasibility, functions=functions, constraints=constraints
         )
     )
+    feasibility = cast("ConstraintFunction", feasibility)
     law_names = frozenset(inspect.signature(law).parameters)
     feasibility_names = frozenset(inspect.signature(feasibility).parameters)
     read_names = law_names | feasibility_names

@@ -23,7 +23,7 @@ import jax.numpy as jnp
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.solution.feasibility import FeasibilityCounts
+from _lcm.solution.feasibility import ContinuationReadCounts, FeasibilityCounts
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
@@ -59,6 +59,8 @@ class _DiagnosticRow:
 
     feasibility_counts: FeasibilityCounts | tuple[int, int] | None = None
     """Native counts, moved to host metadata at the period's existing barrier."""
+    continuation_read_counts: ContinuationReadCounts | tuple[int, int] | None = None
+    """One paired-read summary, copied once at the period barrier."""
 
 
 type FeasibilityWarnings = dict[_DiagnosticRow, tuple[int, int]]
@@ -140,6 +142,7 @@ def _fold_period_diagnostics(
     running_any_nan: BoolND,
     running_any_inf: BoolND,
     feasibility_counts: FeasibilityCounts | None = None,
+    continuation_read_counts: ContinuationReadCounts | None = None,
 ) -> tuple[BoolND, BoolND]:
     """Fold one regime-period's V array into the diagnostics accumulators.
 
@@ -174,6 +177,7 @@ def _fold_period_diagnostics(
             age=float(ages.exact_values[period]),
             time_kind=coordinate_kind(ages),
             feasibility_counts=feasibility_counts,
+            continuation_read_counts=continuation_read_counts,
         )
     )
     if not diagnostics_enabled:
@@ -215,7 +219,13 @@ def _materialize_period_feasibility_counts(
         if row.feasibility_counts is not None and enabled:
             empty, other = jax.device_get(row.feasibility_counts)
             counts = int(empty), int(other)
-        diagnostic_rows[index] = dataclasses.replace(row, feasibility_counts=counts)
+        reads: tuple[int, int] | None = None
+        if row.continuation_read_counts is not None:
+            below, eligible = jax.device_get(row.continuation_read_counts)
+            reads = int(below), int(eligible)
+        diagnostic_rows[index] = dataclasses.replace(
+            row, feasibility_counts=counts, continuation_read_counts=reads
+        )
 
 
 def _place_like(*, scalar: FloatND | BoolND, running: BoolND) -> FloatND | BoolND:
@@ -258,6 +268,19 @@ def _emit_post_loop_diagnostics(
             flat_params=flat_params,
             process_grid_resolver=process_grid_resolver,
         )
+    if logger.isEnabledFor(logging.WARNING):
+        for row in diagnostic_rows:
+            if row.continuation_read_counts is not None:
+                below, eligible = row.continuation_read_counts
+                if below:
+                    logger.warning(
+                        "Regime '%s', period %s: %s of %s eligible continuation reads "
+                        "lie below their first supported coordinate.",
+                        row.regime_name,
+                        row.period,
+                        below,
+                        eligible,
+                    )
     if running_any_inf.item() and logger.isEnabledFor(logging.WARNING):
         _warn_inf_rows(
             logger=logger,

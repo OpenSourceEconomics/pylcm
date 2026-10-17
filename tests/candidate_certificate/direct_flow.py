@@ -64,10 +64,145 @@ import ast
 import copy
 import hashlib
 import json
+import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
+
+try:
+    from outer_helper_controls import (
+        BODY_OWNERS as _OUTER_HELPER_OWNER_SELECTION,
+    )
+    from outer_helper_controls import (
+        CONTROLS as _OUTER_HELPER_CONTROLS,
+    )
+    from outer_helper_controls import (
+        outer_helper_mutation_specs as _outer_helper_control_specs,
+    )
+except ModuleNotFoundError:  # Imported as tests.candidate_certificate.direct_flow.
+    from tests.candidate_certificate.outer_helper_controls import (
+        BODY_OWNERS as _OUTER_HELPER_OWNER_SELECTION,
+    )
+    from tests.candidate_certificate.outer_helper_controls import (
+        CONTROLS as _OUTER_HELPER_CONTROLS,
+    )
+    from tests.candidate_certificate.outer_helper_controls import (
+        outer_helper_mutation_specs as _outer_helper_control_specs,
+    )
+
+try:
+    from nested_helper_selection import (
+        select_interval_winner_call as _select_interval_winner_call,
+    )
+    from nested_helper_selection import (
+        select_nbegm_query_read_choices as _select_nbegm_query_read_choices,
+    )
+except ModuleNotFoundError:  # Imported as tests.candidate_certificate.direct_flow.
+    from tests.candidate_certificate.nested_helper_selection import (
+        select_interval_winner_call as _select_interval_winner_call,
+    )
+    from tests.candidate_certificate.nested_helper_selection import (
+        select_nbegm_query_read_choices as _select_nbegm_query_read_choices,
+    )
+
+try:
+    from final_nested_controls import (
+        expected_errors as _final_nested_expected_errors,
+    )
+    from final_nested_controls import (
+        final_nested_mutation_specs as _final_nested_control_specs,
+    )
+    from final_nested_controls import (
+        primary_diagnostic as _final_nested_primary_diagnostic,
+    )
+except ModuleNotFoundError:
+    from tests.candidate_certificate.final_nested_controls import (
+        expected_errors as _final_nested_expected_errors,
+    )
+    from tests.candidate_certificate.final_nested_controls import (
+        final_nested_mutation_specs as _final_nested_control_specs,
+    )
+    from tests.candidate_certificate.final_nested_controls import (
+        primary_diagnostic as _final_nested_primary_diagnostic,
+    )
+
+
+try:
+    from child_native_controls import (
+        BODY_OWNERS as _CHILD_NATIVE_OWNER_SELECTION,
+    )
+    from child_native_controls import (
+        child_native_mutation_specs as _child_native_control_specs,
+    )
+    from child_native_controls import (
+        expected_errors as _child_native_expected_errors,
+    )
+    from child_native_controls import (
+        primary_diagnostic as _child_native_primary_diagnostic,
+    )
+    from child_native_selection import (
+        select_refine_envelope_exact as _select_refine_envelope_exact,
+    )
+except ModuleNotFoundError:
+    from tests.candidate_certificate.child_native_controls import (
+        BODY_OWNERS as _CHILD_NATIVE_OWNER_SELECTION,
+    )
+    from tests.candidate_certificate.child_native_controls import (
+        child_native_mutation_specs as _child_native_control_specs,
+    )
+    from tests.candidate_certificate.child_native_controls import (
+        expected_errors as _child_native_expected_errors,
+    )
+    from tests.candidate_certificate.child_native_controls import (
+        primary_diagnostic as _child_native_primary_diagnostic,
+    )
+    from tests.candidate_certificate.child_native_selection import (
+        select_refine_envelope_exact as _select_refine_envelope_exact,
+    )
+
+
+try:
+    from checked_dc_selection import select_checked_dc_runtime
+except ModuleNotFoundError:
+    from tests.candidate_certificate.checked_dc_selection import (
+        select_checked_dc_runtime,
+    )
+
+
+try:
+    from additional_helper_controls import (
+        BODY_OWNERS as _ADDITIONAL_HELPER_OWNER_SELECTION,
+    )
+    from additional_helper_controls import (
+        SURFACE_OWNERS as _ADDITIONAL_HELPER_SURFACE_SELECTION,
+    )
+    from additional_helper_controls import (
+        additional_helper_mutation_specs as _additional_helper_control_specs,
+    )
+    from additional_helper_controls import (
+        expected_errors as _additional_helper_expected_errors,
+    )
+    from additional_helper_controls import (
+        primary_diagnostic as _additional_helper_primary_diagnostic,
+    )
+except ModuleNotFoundError:
+    from tests.candidate_certificate.additional_helper_controls import (
+        BODY_OWNERS as _ADDITIONAL_HELPER_OWNER_SELECTION,
+    )
+    from tests.candidate_certificate.additional_helper_controls import (
+        SURFACE_OWNERS as _ADDITIONAL_HELPER_SURFACE_SELECTION,
+    )
+    from tests.candidate_certificate.additional_helper_controls import (
+        additional_helper_mutation_specs as _additional_helper_control_specs,
+    )
+    from tests.candidate_certificate.additional_helper_controls import (
+        expected_errors as _additional_helper_expected_errors,
+    )
+    from tests.candidate_certificate.additional_helper_controls import (
+        primary_diagnostic as _additional_helper_primary_diagnostic,
+    )
+
 
 try:
     from generate_sources import sha256_file
@@ -140,6 +275,15 @@ DTYPES_SOURCE = "src/_lcm/dtypes.py"
 NAMESPACE_SOURCE = "src/_lcm/utils/namespace.py"
 PANDAS_UTILS_SOURCE = "src/_lcm/pandas_utils.py"
 MODEL_PROCESSING_SOURCE = "src/_lcm/model_processing.py"
+
+DYNAMIC_BOUND_SOURCE = "src/_lcm/constraints/dynamic_bound.py"
+POST_DECISION_BOUND_SOURCE = "src/_lcm/post_decision_bound.py"
+BOUND_PROOF_SOURCE = "src/_lcm/constraints/bounds.py"
+BOUND_NORMALIZATION_SOURCE = "src/_lcm/constraints/processed.py"
+USER_REGIME_BOUND_SOURCE = "src/lcm/regime.py"
+LIQUID_BOUND_DECLARATION_SOURCE = "src/lcm/consumption_savings_regime.py"
+
+AGE_BOUND_NORMALIZATION_SOURCE = "src/_lcm/regime_building/age_normalization.py"
 
 SIMULATION_OPERANDS_SOURCE = "src/_lcm/simulation/operand_placement.py"
 SIMULATION_UNIT_SOURCE = "src/_lcm/simulation/unit_executor.py"
@@ -221,7 +365,87 @@ _UNIFORM_PROCESS_SOURCES = (
 )
 
 
+S02__LCM_CONTINUATION_SOURCE = "src/_lcm/continuation.py"
+S02__LCM_EGM_BUDGET_SOURCE = "src/_lcm/egm/budget.py"
+S02__LCM_EGM_CARRY_SOURCE = "src/_lcm/egm/carry.py"
+S02__LCM_EGM_QUERY_DATA_SOURCE = "src/_lcm/egm/query_data.py"
+S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE = "src/_lcm/regime_building/Q_and_F.py"
+S02__LCM_SIMULATION_SUBJECT_PARALLEL_SOURCE = "src/_lcm/simulation/subject_parallel.py"
+S02__LCM_SOLUTION_EGM_SOURCE = "src/_lcm/solution/egm.py"
+S02__LCM_SOLUTION_KERNEL_OUTPUT_SOURCE = "src/_lcm/solution/kernel_output.py"
+
+S02_LANDING_COUNTS_SOURCE = "src/_lcm/solution/landing_counts.py"
+
+S02__LCM_EGM_OUTER_ENVELOPE_SOURCE = "src/_lcm/egm/outer_envelope.py"
+
+S03_EULER_SOURCE = "src/_lcm/egm/euler.py"
+S03_DECLARED_LAW_SOURCE = "src/_lcm/egm/declared_law.py"
+S03_INTERP_SOURCE = "src/_lcm/egm/interp.py"
+S03_NUMERIC_INVERSE_SOURCE = "src/_lcm/egm/numeric_inverse.py"
+S03_ONE_ASSET_STEP_SOURCE = "src/_lcm/egm/one_asset_egm_step.py"
+S03_PREFERENCES_SOURCE = "src/_lcm/egm/preferences.py"
+S03_SCALAR_QUERY_SOURCE = "src/_lcm/egm/scalar_query.py"
+DECOUPLED_BOUND_SOURCE = "src/_lcm/regime_building/decoupled.py"
+
+REVIEWED_PREFIX_ASSET_ROW_SOURCE = "src/_lcm/egm/asset_row.py"
+REVIEWED_PREFIX_CONTINUATION_SOURCE = "src/_lcm/egm/continuation.py"
+REVIEWED_PREFIX_DCEGM_QUERY_SOURCE = "src/_lcm/egm/dcegm_query.py"
+REVIEWED_PREFIX_DCEGM_QUERY_MODEL_SOURCE = "src/_lcm/egm/dcegm_query_model.py"
+REVIEWED_PREFIX_REGIME_INTROSPECTION_SOURCE = "src/_lcm/egm/regime_introspection.py"
+REVIEWED_PREFIX_STEP_SOURCE = "src/_lcm/egm/step.py"
+REVIEWED_PREFIX_STEP_CORE_SOURCE = "src/_lcm/egm/step_core.py"
+REVIEWED_PREFIX_DCEGM_SOURCE = "src/_lcm/solution/dcegm.py"
+
+ASSOCIATED_SAVING_SOURCE = "src/_lcm/egm/upper_envelope/query.py"
+
+OUTER_INTERPOLATION_SOURCE = "src/_lcm/egm/outer_interpolation.py"
+OUTER_REFINEMENT_SOURCE = "src/_lcm/egm/outer_refinement.py"
+OUTER_GOLDEN_SECTION_SOURCE = "src/_lcm/optimization/golden_section.py"
+
 _CERTIFIED_CORRIDOR_SOURCES = (
+    "src/_lcm/egm/upper_envelope/__init__.py",
+    "src/_lcm/egm/upper_envelope/segment_envelope.py",
+    "src/_lcm/egm/nested_floor.py",
+    "src/_lcm/egm/finite_negm_query.py",
+    "src/_lcm/egm/adaptive_mesh_authority.py",
+    "src/_lcm/egm/adaptive_nbegm_carry.py",
+    "src/_lcm/egm/adaptive_nbegm_producer.py",
+    "src/_lcm/egm/adaptive_nbegm_query.py",
+    "src/_lcm/egm/nbegm_query_model.py",
+    "src/_lcm/egm/nbegm_query.py",
+    "src/_lcm/solution/negm.py",
+    "src/_lcm/solution/nnbegm.py",
+    "src/_lcm/egm/outer_candidates.py",
+    OUTER_INTERPOLATION_SOURCE,
+    OUTER_REFINEMENT_SOURCE,
+    OUTER_GOLDEN_SECTION_SOURCE,
+    ASSOCIATED_SAVING_SOURCE,
+    REVIEWED_PREFIX_ASSET_ROW_SOURCE,
+    REVIEWED_PREFIX_CONTINUATION_SOURCE,
+    REVIEWED_PREFIX_DCEGM_QUERY_SOURCE,
+    REVIEWED_PREFIX_DCEGM_QUERY_MODEL_SOURCE,
+    REVIEWED_PREFIX_REGIME_INTROSPECTION_SOURCE,
+    REVIEWED_PREFIX_STEP_SOURCE,
+    REVIEWED_PREFIX_STEP_CORE_SOURCE,
+    REVIEWED_PREFIX_DCEGM_SOURCE,
+    DECOUPLED_BOUND_SOURCE,
+    S03_EULER_SOURCE,
+    S03_DECLARED_LAW_SOURCE,
+    S03_INTERP_SOURCE,
+    S03_NUMERIC_INVERSE_SOURCE,
+    S03_ONE_ASSET_STEP_SOURCE,
+    S03_PREFERENCES_SOURCE,
+    S03_SCALAR_QUERY_SOURCE,
+    S02__LCM_EGM_OUTER_ENVELOPE_SOURCE,
+    S02_LANDING_COUNTS_SOURCE,
+    S02__LCM_CONTINUATION_SOURCE,
+    S02__LCM_EGM_BUDGET_SOURCE,
+    S02__LCM_EGM_CARRY_SOURCE,
+    S02__LCM_EGM_QUERY_DATA_SOURCE,
+    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE,
+    S02__LCM_SIMULATION_SUBJECT_PARALLEL_SOURCE,
+    S02__LCM_SOLUTION_EGM_SOURCE,
+    S02__LCM_SOLUTION_KERNEL_OUTPUT_SOURCE,
     FEASIBILITY_SOURCE,
     *_ACTION_GRID_SOURCES,
     *_UNIFORM_PROCESS_SOURCES,
@@ -334,19 +558,67 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     NAMESPACE_SOURCE,
     PANDAS_UTILS_SOURCE,
     MODEL_PROCESSING_SOURCE,
+    DYNAMIC_BOUND_SOURCE,
+    POST_DECISION_BOUND_SOURCE,
+    BOUND_PROOF_SOURCE,
+    BOUND_NORMALIZATION_SOURCE,
+    USER_REGIME_BOUND_SOURCE,
+    LIQUID_BOUND_DECLARATION_SOURCE,
+    AGE_BOUND_NORMALIZATION_SOURCE,
+    "src/_lcm/utils/counts.py",
+    "src/_lcm/egm/nbegm_step.py",
+    "src/_lcm/egm/nbegm_segments.py",
+    "src/_lcm/egm/framed_arithmetic.py",
+    "src/_lcm/egm/ez_kernel.py",
+    "src/_lcm/power_mean.py",
 )
 
 # Byte seals bind reviewed source files to the generated inventory. check_seals
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
+# Source seals and corridor anchors require semantic verification of the combined
+# inventories before refresh; these inherited pins deliberately retain that gate.
 _SOURCE_SEALS = {
-    FEASIBILITY_SOURCE: "a977b82186236c442f799ad361a1d1f10df5a1b495680ed6d8487c9b8a754649",
+    "src/_lcm/egm/asset_row.py": "d7389b5048707dd9657638c790f9afbd8feb27893bcfd2bd6659da66199b069c",
+    "src/_lcm/egm/continuation.py": "634f605dd055b388c8475ddf91ee0b1dbd3aa5af76e71682f0c8e0b585a92588",
+    "src/_lcm/egm/dcegm_query.py": "8d21916983c632df46ad96c57726cac6137322db985b2e0b9a9f7cb41b8ba9bb",
+    "src/_lcm/egm/dcegm_query_model.py": "92788d75814f82e8acea2a9174a210997e04f68ec8253957836c8b327a03542a",
+    "src/_lcm/egm/regime_introspection.py": "e1268a84eb34d1377c1fdf4672ccca73353190e0a77ebec405b7846fea11bbd0",
+    "src/_lcm/egm/step.py": "34fbffddd5e4d263759adc0737b1dded95c6244a2f51a146c78979efd68c314b",
+    "src/_lcm/egm/step_core.py": "5759435323866f08fa9a85dd65e81ddb3aafc96fad3ef0fdf38793ccdee26d59",
+    "src/_lcm/solution/dcegm.py": "f4bcb54bd516eaaa77e944e93f911aa800b0ce0b4af5e44f03649898135f7b89",
+    DECOUPLED_BOUND_SOURCE: "f86bcae9805cf3c72cb3be638d20070dc80b5cd3b94fcfdd2dfe85a0da4757cf",
+    S03_EULER_SOURCE: "a5e95cde939adcefdf3d8310f6617df4f203ae3479bc318cd92ac51c020d0f55",
+    S03_DECLARED_LAW_SOURCE: "635329b1a16ebe7b80ae57acfcc3fa3fd2c1b65a7b6778d1f72dc985f47e0e69",
+    S03_INTERP_SOURCE: "4eee527815c5a2fdec690a349f5bf303a13c667b3142036f07dbda3e0ba92765",
+    S03_NUMERIC_INVERSE_SOURCE: "57b4d9983131c5b4ce102c96372c21517b7d8932e0e5d576a4e95e585a7597ea",
+    S03_ONE_ASSET_STEP_SOURCE: "cfea82e9c37688b65c81974e7400c7de33f1e56176fd39afdfc69d4f54b65434",
+    S03_PREFERENCES_SOURCE: "6856747bf74e4705be484b57de881d852a5333b46a5292da35ea299c3a65cffd",
+    S03_SCALAR_QUERY_SOURCE: "709d16f6377da621eee7292c7eb33c7b2c40f65cf8916d7b80d149f6f87c94d8",
+    S02__LCM_EGM_OUTER_ENVELOPE_SOURCE: "25dfb63f6271b084bf67cbd941629db79e0229cd51c250477d166eee7cc8db2f",
+    S02_LANDING_COUNTS_SOURCE: "06a940cce9b15697fd7d2fe1791644544f48e08250abb18da6ab309abdaa6de5",
+    S02__LCM_CONTINUATION_SOURCE: "e58ff635ea68b927bc9a5156c1ef0b4a7dad4e50605f1458197572f8d84913cd",
+    S02__LCM_EGM_BUDGET_SOURCE: "1c8fb0cbc8f9156950bea34c71c9ccce2c58ac17ec6b9f1221f8c8966f1031d2",
+    S02__LCM_EGM_CARRY_SOURCE: "f453c2098dc642465b5a08eebab176441c53bd42ee1ee196fd0e07c4126fd9ec",
+    S02__LCM_EGM_QUERY_DATA_SOURCE: "f2219de10a172df058fb6e646af00d2f4aec3209c9eb1f25ba3d83abc9d08cf9",
+    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "c3c6b31eed41b3dee28b060829ce576111feba5f477f4347829360417e9abd41",
+    S02__LCM_SIMULATION_SUBJECT_PARALLEL_SOURCE: "2718be335aa7cf2770cfe63f1e30cff8be8b7a14908e0c50d64756db0b094370",
+    S02__LCM_SOLUTION_EGM_SOURCE: "c554d6e993da4b3b253ae8235a7fcac56c74a7bdc9c2537e84515d6c39af52bf",
+    S02__LCM_SOLUTION_KERNEL_OUTPUT_SOURCE: "9c7007b64a3533b7eee5c8e8c627682bd8efabf94598218b039316e519503c2c",
+    AGE_BOUND_NORMALIZATION_SOURCE: "b63cc450f56e446ba24cb5c5e6e83ab9f048f6db3f9b745f8b80efe5f59442a0",
+    DYNAMIC_BOUND_SOURCE: "154b837e9de8b66a448449d7350dce2927e3255c2c39e15f47a4881490454a90",
+    POST_DECISION_BOUND_SOURCE: "4ff8b8c7b64be2395c821acb5f328765c7a9ac2c5198fd0b2be3960227837f6c",
+    BOUND_PROOF_SOURCE: "e2d2d2ae850a3c4c91f7b094a6f603dbd77aa9f6e202d17ec4ab0af512fd1c35",
+    BOUND_NORMALIZATION_SOURCE: "55f0e24bed63303ed9338798a876b6ad4a4b287b174d9513c2065fede183d495",
+    USER_REGIME_BOUND_SOURCE: "628e76769a2fdb79f78333bcd62fbe5cde817d173ec8eb2d3b35c610d133f54c",
+    LIQUID_BOUND_DECLARATION_SOURCE: "16118c29929f206f05925d88688edbc447f31c3a7aae1e73f022570e981ab886",
+    FEASIBILITY_SOURCE: "42acebbdff7b1d1b680791e559b1540cc771bf8e82c37408795db193f91aa489",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "bd30a0ae58069ea5a748830d6cf6e799a9e6687fc1eb3b88ed7d25da3bcb7527",
-    SUPPORT_DIAGNOSTICS_SOURCE: "ce6d8924504860accdc21a3e81b0cc92029b8e35ee869da4478140a990cf9da0",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "d082165c8d6d54340b522c964ca3cd1b66d7c4a4ad09277ff7d28ca7090918d7",
+    SUPPORT_DIAGNOSTICS_SOURCE: "ecfb3a3c7f6114cfc7eb8b143150daef6da0014a986cb6cdaf1b346b9d23343e",
     SUPPORT_PRECONDITIONS_SOURCE: "52c97f5f2f6e9e3b6a7ac7215181874cef52948f613f59c270ef9638a51493ac",
-    SUPPORT_AUTHORITY_SOURCE: "32647270dba80b48e33ecc27bb77609bf30d04a5b34b754b8a7340f208a8c9a0",
-    SUPPORT_FINGERPRINT_SOURCE: "993b8b94849fdd12985db676be35262a178070b608ded76fb327456cdf4dd71d",
+    SUPPORT_AUTHORITY_SOURCE: "e9805312052411a78d0251cd0ba4936a332ef3d2a274b3683b0cd86a49fb26fc",
+    SUPPORT_FINGERPRINT_SOURCE: "1c82b1feb5f862118fb2e28d8a24c5e932bc5f0c563a786e1df47c638f34e882",
     UNIFORM_PROCESS_GRID_SOURCE: "835673768193d0282fb78d8a1223557d6ca087ea0b4bf7b1c58f5e4b903629a0",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "4e7302d6cacb53a20f6a0a08e7f57d6e074dedddd8f6a95944a9ed1ed4df7bda",
@@ -363,9 +635,9 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_OPERATIONS_SOURCE: "481b768fc97b134c671c386336a25e9e3e78b631a0a3bc4643d9e74d0ba47e54",
     COMBINED_CHUNK_PLANNING_SOURCE: "807378c7ac745eb7fc3d42c27020f6b40d10d40da3041dcdb647e7e2d3e0d90a",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "85070e5f57210e201be248c1f2deae8068dce674112f13efdb0eb94c1dd7f7b4",
-    COMBINED_CHUNK_PROFILES_SOURCE: "1c2fea8138f7df79567534267da9d54e7b21008e307e3a93dc31f9095ed28319",
+    COMBINED_CHUNK_PROFILES_SOURCE: "4d2d3a4d00bd2d4187016722f9402f4fc9fbedddb62b7e9aef3ca7ee63f5cf81",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "477f39609fff5371d88d941cc5c4a0c9ab9fe3692ad2845a3fc3a6befb633f42",
-    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "563c7e97d4ee38bedf64cb9a6938c7fc20239d47c2a91636200d2002cc7a68d0",
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "ae09cf640b7a745598337506312700ebbd26b82cee75d90ac77a88e97f12ee3a",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: "c04b3fc05dd31f728a629ff17b9774a97313b65f145216c8eb1dd741e68c5208",
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
@@ -378,14 +650,14 @@ _SOURCE_SEALS = {
     SIMULATION_POLICY_PROGRAMS_SOURCE: "40eb5f58dcbe5430cbd65ccaa447e8b5f8d4d5e5f0f7d9ad1cc76f2c8eb79746",
     PUBLISHED_POLICY_SOURCE: "469ca23b7e32b14f816f0c4301265334ae1b857d335dc182161ec166afb711b6",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "4e50d79fe971c9d5f0e59fc7b6942868cb09a1223bcde15754019d72efa2d979",
-    NBEGM_SOURCE: "869fec6e36b3ace14c3cdcd1b1c5ca2f7c367224d658aa0c54510b11fa346c5d",
-    CONTINUATION_ARGUMENTS_SOURCE: "48495f36be398f0d5eb1d1f9e161fb3a71d877dc164da416ada09aaeceda5f51",
+    NBEGM_SOURCE: "1577cfe91e08b9a43a10ebe62ee147247fb0131768d43008d5141c96b7b548f6",
+    CONTINUATION_ARGUMENTS_SOURCE: "2bfffbd49e5a2e267fcfdefadd21cf4249dcc6979a6ff4889098c37a06dcc0e1",
     SIMULATION_TASTE_STREAM_SOURCE: "a8a90200f06aec77d02d21780286e32a3620a1687ee76c23af301687a46ae5b9",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
     COMPILER_INPUTS_SOURCE: "c2df405f63a61f7d5201d754c95bcca9fdc213c97c1533025080da80814cda70",
     SIMULATION_OPERANDS_SOURCE: "7645b400641b5d995e1a2f651dc5d6ccb54df3e16732db64a75765c5a5f31645",
     SIMULATION_UNIT_SOURCE: "74859e03e21e9861cc7847f49a8cde2301700b656b2556ad0fb47334d6e809c6",
-    SIMULATION_HOST_SOURCE: "9f26942832e882269715087d5e1da41a973ac81786ea3bd1181554ab785d81e1",
+    SIMULATION_HOST_SOURCE: "31d4b52aabb9c02b21e206a896932ce4bfe183a0edf46af53593afbdeb9359ec",
     SIMULATION_MEMORY_SOURCE: "19afb85a7c2d446209cd668aaf90ab50792698f1403e6d2a619a4ed6a49bc874",
     SIMULATION_PERIOD_INPUTS_SOURCE: "dcdc57a2d7374e2931f71add777e511360aebf44187f2c7becf26be44d1923fe",
     SIMULATION_REPLAY_INPUTS_SOURCE: "2ee44446e1524d202b474d72a58465e574e8f212b9efaaabb7177da5ded9e054",
@@ -399,48 +671,48 @@ _SOURCE_SEALS = {
     RETAINED_BUFFERS_SOURCE: "ff70f53aa60b37acda0e851d7ee319b7d3d0c935ab1013227f671b44d39610af",
     SCHEDULER_SOURCE: "8910d9a15e1f1186c48f41aa7f869c4b2f9b0b719430683647f3196e836888e1",
     LIVENESS_SOURCE: "056bda4d48f26768ed8615925ce8ff89665bb8eed94b59d69f02701a95943dff",
-    CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
+    CONTINUATION_READS_SOURCE: "144206aa7175163a4dcb365da8765942a9f2c8a530ea41e102d540fa4dfe057d",
     WORKSPACE_PLANNING_SOURCE: "c5cb4ef56e436e5620ef16575fb6f2a92a6c5a5162e3ef005acb855ce259d493",
-    SIMULATION_PROGRAMS_SOURCE: "aefb3364d41ea54cc0efe3bc88434f672d6feb2e87e899f48cabfed4dde9b70a",
+    SIMULATION_PROGRAMS_SOURCE: "58492f2dcfaab8aa6db17f03c33878d83e070a4a09b50d5482920f9dee78ee47",
     SIMULATION_PROGRAM_TYPES_SOURCE: "d6abdc13894b09b44309fb45c571d233bd20cb330101ff8b0ef7a9e4624fc3a7",
-    SIMULATION_RUNTIME_SOURCE: "743031ba65c4ab17888b8f593d28f183261678c04bda69c7a76f1b54da76a2de",
+    SIMULATION_RUNTIME_SOURCE: "b2e308916c1ff657ef06cbd9a5805de868fc28f2d474b9e9f172a341f3fa0fd6",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "b508d4e10350de8b54707db238d01c7de6c73b4ca6b0176e0c6c12ec762952dc",
     COLLECTIVE_SOURCE: "4cc0683d493f597684f5801909d297145d8bade0aa752c3e35cf8af2cb55edd9",
-    MAX_Q_SOURCE: "dd7fe6cba6e9aa6e7b42688f294ed91b0fa03016456293865d4fbaea027c03b7",
-    PROCESSING_SOURCE: "2901f3cf33914e38843ad2b3fe88180d79af94765af2fcc0d3b7db27c3ca8d13",
-    GRID_SEARCH_SOURCE: "e12690a4a981512b070a5055ddd53d6121d7494b39c17653e3d3228601733297",
-    CORE_PROGRAM_SOURCE: "21e86cda882a227086aa6550a63daa9492071f7a14a9e56565e751a67ffae2b1",
+    MAX_Q_SOURCE: "ef60bcee2800cfda754523241f57d5d6fa3168f1cd16b27cf64b6a639886ced1",
+    PROCESSING_SOURCE: "5dfe1552471ac48ec7b54c43fcc4b6943d4157bac5100145c55e6686e7e6d275",
+    GRID_SEARCH_SOURCE: "1a359235d613d166d7ed41cbba994f1b550a03f09a5cba3865a843f9fc72b50f",
+    CORE_PROGRAM_SOURCE: "8a16d8d2f6e8b8113f6acfc325ab21fe476049a9a5e8e9731fa2e5605ddca679",
     OUTPUT_LAYOUT_SOURCE: "1173fe52bc6c9315b328d5ed5bc752f8012614443bd15756e0bf7245595aafbb",
     VALUE_TRANSFER_SOURCE: "c3b8b9df21ea6ebb6d029becdafd4da8905f1a3699d2a1ff5d206af218d097f6",
     FOOTPRINT_SOURCE: "0a7b5ee82a12039d4c0d0b7c54eae755923b66f052aa90868614a6ba2b9eb787",
-    INTERNAL_OUTPUTS_SOURCE: "c407d323ccb1522ada5b77681d729f86514a4c3a3e95220bf87ce787853b011f",
-    ACTION_STREAMING_SOURCE: "d7508b58e975394a7487732c1b6c0453d0edbb06ec1234a4e58bf9159cf8b473",
+    INTERNAL_OUTPUTS_SOURCE: "e41e5581295b427e22ecb3f533281c030fec77c01cf224d1a844ae6f54fe28e1",
+    ACTION_STREAMING_SOURCE: "a2df345ea1a0b8b8f580b0200b77acf8fe7952ef1466f570a0e292bcf346767a",
     ACTION_REDUCTION_SOURCE: "26355ac3edf5da80a44b4f9754b71c29e8edffc68b1a7b7ac253b9bfbf749a0f",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "40a7abd9b738055f00e347e6ac056fe69bf2501ba41f7ec82b40a18bf627c7e0",
-    DISPATCHERS_SOURCE: "3d5731223dc0a93f94c3ebdff9b89be3c2b6db2de82e80e5413de8bebab240d8",
-    FUNCTOOLS_SOURCE: "8ab955f06222b1ee34cc1d08d4f133ac2852e2ecadded512385b037860015294",
+    DISPATCHERS_SOURCE: "553bd16ef160275d841e25d3eb8cbfd13655953ae66df75d81e3f275c4c314dd",
+    FUNCTOOLS_SOURCE: "70cc0206b7a59519ef0ad664da07221ce5fa5e0dc98e8341f214e4b60c572d2d",
     CONTAINERS_SOURCE: "1b58c79878a182dd61929a15d4e3a2f3c249411d19d5df8853476bc57c2a87e1",
     ZERO_SAFE_SOURCE: "99fc6b5647425c11e2c15abc9ff49c84d1b1ff3bace3f8e51e593ff8f98ec4ad",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "60ccd04b143c714360388fcce2730804a4ca729ea4db82e4a0100732e155e53f",
-    ENGINE_SOURCE: "cc6c650d562cebb9602cf72c0576a5b369b6925824d61eadcd0fb038c7594043",
+    ENGINE_SOURCE: "1e5f6e8d2133c61df144589dec70a3f742b569f02a5c70a2c252ce92d3f83a32",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
-    SIMULATION_SOURCE: "a42a63dea5a4c8e6f121116c706353ff0cbae3159c2a217bdf9ca25083a1d51c",
+    SIMULATION_SOURCE: "ae966a7d12f1871b762d14f91ab36c13b84dcd73e84d5311aa9313c6aa96cf79",
     SIMULATION_TRANSITIONS_SOURCE: "eb9c93c7a156bc6355795474125c080234cbd3f938de07d30a6dc500dbd18055",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "f33168da55e402c554092b8e7a746777175ee14e961a79c6250e75312ca597ec",
-    SOLVER_API_SOURCE: "c31a953839b28b943f398cc9ec54623682fbbf2d3b0301cd50553149e688436e",
-    BACKWARD_INDUCTION_SOURCE: "bd156449e1bb2dcc47b115a3818be9039ddc6ca0211e20457a11fc6c06e224f8",
+    MODEL_SOURCE: "f8da5cf0f92653eaea0dda941bd17e2fd752d58126ac502e96d0cd24fe9f2387",
+    SOLVER_API_SOURCE: "bc9e7cd94009998acfc1f11d8da823475030879790a49f8192e1260012496c96",
+    BACKWARD_INDUCTION_SOURCE: "4db64cfc9dc95ee1294254eaa5ef388218f9bdce892ec597b412fd56788e9db3",
     PERIOD_REPLAY_SOURCE: "890aea9983d4d18c16a586e59b375668ed9dce3c4f81879cec733f5bb88f2000",
-    INITIAL_CONDITIONS_SOURCE: "b80d552857e29d329968789ef8da8aabf436b820586b934f59dd3f2036f91869",
+    INITIAL_CONDITIONS_SOURCE: "39966755e041f7bb17dc091ff2fb65d5209db0df585db45d79051fcb65f2230f",
     RESULT_SOURCE: "a41d0d49ec32cd0da75c30153d46b6c94f9368dccdf5f44879db8cccd159854b",
     RESULT_DATAFRAME_SOURCE: "88773c4ce66f54feface58198c1785040ba43973f0fc24cab623c699aa400a41",
     RESULT_METADATA_SOURCE: "3f1e299a4c7aa76aedea4d39288c9941a27ba7cb881d83792a44ad63b31f775d",
     ADDITIONAL_TARGETS_SOURCE: "3a4d95d5c88c801bb8bb0881a52cd8985e1cc17efdbfbf5474332e46b8d46614",
     SIMULATION_RANDOM_SOURCE: "05ea6cd8a4cf1c01c282f6d99c1f7b0f4e5503c9cf42fb0210fe0d28a79ae681",
     FOLD_ZERO_SAFE_SOURCE: "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5",
-    SOLUTION_CONTRACT_SOURCE: "13ba30149b02fc028fbb21880ae202978825a7474ac1f81e44303a48147e775c",
+    SOLUTION_CONTRACT_SOURCE: "9f3b8a711d0aea47bf0978ef3f98559e3243479d90d9833e613514b2e74e728c",
     GRIDS_INIT_SOURCE: "3c720bc2240dd1cfd45855ce501f03f8a05abda5de1142b9d00208e517b9ddce",
     GRID_BASE_SOURCE: "045d3d462aa80c6f3444030003547f76864bb1f038b8ccb1bd15a00e29e0c2a7",
     GRID_COORDINATES_SOURCE: "9dd0cf9e3c702023cd3cfa40a3164bf399ea295c57349223b8ab617c7f3533d5",
@@ -457,16 +729,39 @@ _SOURCE_SEALS = {
     DTYPES_SOURCE: "1d38a54667166599fd692f8c58b37741f355753138d234b650c54384321bcbb2",
     NAMESPACE_SOURCE: "9a33080663f01a6d65501663e8436b132176be51c8223c28b2e749d8dbf8b570",
     PANDAS_UTILS_SOURCE: "daa69665934dcec46bd92169cccd7b65e3e0a4157c3b87dc6b5eca9416453bfa",
-    MODEL_PROCESSING_SOURCE: "e410d3601e20b304f7ca917fba0e8c6330e6d5a5691f99e406e087c16d55dc07",
+    MODEL_PROCESSING_SOURCE: "879b15377a0ee704806fc266c9418f5433a259ad03a1a33913ce086585319068",
+    "src/_lcm/egm/upper_envelope/__init__.py": "79fbbac531b6be0fd6d5b88236f9b56011b8300975bdef9941e24dfd8eea33c3",
+    "src/_lcm/egm/upper_envelope/segment_envelope.py": "706b3f3c7c52c5de2b1553e34be7863653aa0cd14d834fd3b68d9533f7c1273c",
+    "src/_lcm/egm/nested_floor.py": "8983b037774946af7a90aa106268659a69963e2d8f5dd4b55c6f5532dd2dbb72",
+    "src/_lcm/egm/finite_negm_query.py": "d10095ed31e91ddb3620c5a329fe2cd38fb0d46cc891013bd3761fd0ed173677",
+    "src/_lcm/egm/adaptive_mesh_authority.py": "2cbc4e948b81af3db22e06b1e23715f44f7c6d3e7ed1fada19b877aa700942cd",
+    "src/_lcm/egm/adaptive_nbegm_carry.py": "448627fc57aad3d9280a6ac9d154d01b69b522d641ae4e90036f67aa1a49296b",
+    "src/_lcm/egm/adaptive_nbegm_producer.py": "171b469d2f439b7d62081096089f87397b3ba505eb6cbc439f5dff6d6664f9d0",
+    "src/_lcm/egm/adaptive_nbegm_query.py": "b8f2828853b0ca60fdfc1fb85d32d9de6656fb1ae66aa131effcc4f7c3bf878c",
+    "src/_lcm/egm/nbegm_query_model.py": "63980bda4ee98d990f0fc56a560aac053c5c8e451c8cd15cae73de35a76ba325",
+    "src/_lcm/egm/nbegm_query.py": "a714b466b12bebd63778e78114f644a8cf897ec8e62c4f20739e1de7fe944c58",
+    "src/_lcm/solution/negm.py": "440dab171d993e2a85d541d9293e30fc8ab41a7c4f67529caaab3c3daf90952c",
+    "src/_lcm/solution/nnbegm.py": "8a257d6a59165916c07a63a98cc567a36a98fb04308f9db170544176fed55917",
+    "src/_lcm/egm/outer_candidates.py": "7a30d25c51c0254d2fb20a86d30b1865854f8134954bce5bb7a8c72eac218f2f",
+    "src/_lcm/egm/outer_interpolation.py": "fd68eb3baa62055bf4a92a572fbec5e055a08809be044a647a31ff7982fc92a8",
+    "src/_lcm/egm/outer_refinement.py": "38a1ab6e773e433387c5416242d68c396fed19d30e0b61988f374bff1ab312d1",
+    "src/_lcm/optimization/golden_section.py": "a94984361b828a2112ed3907b589ab421788201d8b6af42e1ea8fc6c70a043db",
+    "src/_lcm/egm/upper_envelope/query.py": "01e245542fabe9f82f239ba69395a561b82a78a2abdfbb4f15ddb6a549f67ba9",
+    "src/_lcm/utils/counts.py": "a9087a3c42d32ff0ca82cf24fda2b59ed57cb77efef94714a37a6ca7cf7a3f82",
+    "src/_lcm/egm/nbegm_step.py": "394096232ad23d1abad577da07dd2e839001a541a5683aeec0daa4cf1b52f76a",
+    "src/_lcm/egm/nbegm_segments.py": "658a74ca40e3da1c025c3d03e0f8bf695feb45953113521a4700f2c1d1890505",
+    "src/_lcm/egm/framed_arithmetic.py": "f4b1fa68cc765fc1450222f7370256306d22b92a6488b40c3575e98f44e43877",
+    "src/_lcm/egm/ez_kernel.py": "568caa5183613de012ae4c7b433b5bf058d5594ef3d5263963c25f2b7302c269",
+    "src/_lcm/power_mean.py": "1580447a1ca5f6385556438105069bfb15d211bd6da40819b096ad84b2e77cb5",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 421
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
     "f58754206b785f05a7dff36c690946024effc931c888c72383fc0bd98be060cd"
 )
-EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 54
+EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 97
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
-    "1d95a163810d9ffecb7bc2f2324065c0a3d6168d9dd01002cd00ff30c5802da5"
+    "d85b3f5dc1422ac4f6aea31711c9cc25fead19439fcb5cc7addf1c89eb3cda11"
 )
 EXPECTED_UNIFORM_PROCESS_MUTATION_COUNT = 37
 EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
@@ -481,11 +776,209 @@ EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
 # `_surface_pin`, so one reviewed fact is never written twice, and a stored pin
 # that no family selects is a verifier error rather than a silent no-op.
 _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
-    FEASIBILITY_SOURCE: (
-        "d29bb927eb84020be66ccc43e7cd95a462773573df0f12ee0dab31264b80486e",
+    S03_EULER_SOURCE: (
+        "944d6c6dbb26155884fc73c821f47f602361ae70cced81f2175ebce029824ad5",
         {
-            "CountedGridSearch.__call__": "b4079d0cec5e6e8312189e663d7c8eeb3d2de45a83e8cd88655d910837630c45",
-            "FeasibilityKernelOutput.__post_init__": "73fb942f391739a207ebe8f57aafbe812430350d202a9846b70bba00f8f25f53",
+            "invert_euler": "4cf2bc5c6acf096274efe52bd4f82fc57afde7abdc86e9a2c7043e7a4a251f8e",
+        },
+    ),
+    S03_DECLARED_LAW_SOURCE: (
+        "8ad22099349717932ce8fd500fd77db9b11eadbbe3953c1caed31dd8c0198a17",
+        {
+            "build_declared_liquid_law": "ac9193e826a0e5e660137587809c9acfb5a7e0291c90b141b2ae38f7e0098bc3",
+            "_DeclaredLiquidLaw.__call__": "6cfbcac48738a6a76668bb3daec63d71c915d6b52a742b248c2d5aedbf93623f",
+            "_landing_point": "a19cff0149007de4c87559d2ca46c8aac04b1a35a920d273a02782020b608e0e",
+            "_fail_if_law_reaches_past_the_post_decision": "adb005aa0ff6c06981963994baf59dc9c30ee0f5776347354138de1d47858749",
+            "fail_if_declared_law_is_not_increasing": "68452a37b5c0062fd509841dc67026f3896ef5e64c3a830d9650bea5a8cac3ca",
+        },
+    ),
+    S03_INTERP_SOURCE: (
+        "f5db06d9c0e9a626a993b1374609bda2837a6a764f5287efd8ac5a91edb33444",
+        {
+            "locate_on_grid": "d2efde2d8211f14cce8e9bdafb34e01b96886533e7984a9e3d1f581d1a3701a1",
+            "_derivative_between_nodes": "fbdfb439dcb74798763a1765aab150286981237d4e84f3194ea8cd4229102707",
+            "_hermite_bracket_derivatives": "e80d9f40cf6bcc04be13b0dab6fe05d284807dd1af2d4fbe5cf3c01dcec0fc3c",
+            "_hermite_coefficients": "e24b38f878a2602ec6b19b17884329b8ebe2001a91c33f471e904724d71ce2e6",
+            "_hermite_correction": "c46878cd615a109cd479878f126522bda30f348c6e1297c47e31dd431bad4c10",
+            "_hermite_prepared_read_jvp": "9660c7ba1f3fe66802f87edcddf62a352647ed13aa93a80d23b79bb0a4848754",
+            "_hermite_prepared_read_primal": "0bcdf81a2810aada544cb28216179606fabf49ecf37b18ccb25bb6f673f08d13",
+            "_hermite_query_derivative": "416d4b35f85258068bb7b49f58fabf28486970764189e7899aa7f65a8d2dcf13",
+            "_interp_between_nodes": "4518e5255350a91f0236cf7d880c351259945e19b18cbce12f2d458a06e3dc09",
+            "_limit_slope": "52eb93d842fe5e7e54d6c4f8e293e43b25f63f6e9cc15269e1e4f7af2612b5f5",
+            "_linear_prepared_read_jvp": "e70cc0af44acacc256a6174cf613210d1bc984582b980d3b089a2383850acaa8",
+            "_linear_prepared_read_primal": "53703a429fce004320e58e3ad9965585fa80927d72593a023ee25f291b8bd6d7",
+            "_linear_query_derivative": "9d787289a36cda29e41870c2b2f3cb09e5827bd0bd0c193610c32ee3f941872c",
+            "_read_prepared_row": "1006696c73bf21d67ff773527c39d338e97d1597a4181ac24640d19b9b4f8df2",
+            "interp_and_derivative_on_prepared_grid": "5b392da953a3d6ec02d45ffd0a832647abc18aff4cf6667adb2c6f64bb4323cc",
+            "interp_on_padded_grid": "7bb309d76796ace15cac5dac4fa8364d63a503d45a80a88dff24454c75675ec2",
+            "interp_on_prepared_grid": "597ec1e1cc32af27f82969334a6050723504e77de778cfa0e07a9d7a4caba0c7",
+            "prepare_padded_grid": "110b9fd67d18b2a4b3e6234b48a3c3aca4cc1bc8407afc50631558fd27230bd7",
+            "_hermite_read_at_fixed_query": "85544cecd9e5737937ce8cc514a5b19354eed1d3d171779f3f9b800e994a5292",
+            "_linear_read_at_fixed_query": "e5ee72aa389f42657ac6a97621d9d93e75d9a330e84581f408df4fc953c49f1c",
+            "_sanitize_gathered": "72dbdaa706e9540c1eb5833ae4ba933310565f91a3615f5a7969553fa80c5a86",
+            "interp_left_germ_on_prepared_grid": "d265f5365038d7813695ed6b6fd1d8ad1b2b4ba659341004261f0b22bdd9656c",
+            "interp_left_record_on_prepared_grid": "d88caae609ae928a65c968280a9c718ba5ea3580664f745b94482891b310ba66",
+            "interp_right_germ_on_prepared_grid": "57ea00df567c6b40e9bdc15756c3f73c7309625094a57546646d5ea789ebb210",
+            "interp_on_regular_grid": "71992b703d659849d9558d353a8314a42650a9d8d6fb41c452076b6189137681",
+        },
+    ),
+    S03_NUMERIC_INVERSE_SOURCE: (
+        "fe2ba4922ba677dad9b962345d3a43b1dc7b8e7ccce8028bfb8e3b2c3d4a2bf4",
+        {
+            "numeric_inverse_marginal_utility": "1685c0ae1c2d958e69677046134f6d2d8600834295dafc198d35a1183b62fc01",
+            "_expand_upper_bracket": "e3fca2527d416e6563a46185dad34d7cfa01def58ee526e3b7c3bd94a78c0125",
+            "_LogMarginalUtility.__call__": "241b4f538a34a7775f56e413e725541d3dca36b6209c0b24ef49489cf21c456b",
+        },
+    ),
+    S03_ONE_ASSET_STEP_SOURCE: (
+        "b33bf81bdc79b71a9210787bae58e801ddb00944ec73580b16f21c2b172f69e4",
+        {
+            "egm_one_asset_step": "9c71ed5510a2abe16d6c6a0cc190a757a497994966a5186def23d167ebf2f938",
+            "_solve_viable_feature_row": "1fb71647ca75791e9c8b774cac31140226f24d4953e006ecb2e36548d071ec8a",
+            "_flatten_egm_savings_support": "e2c2420f75b4b36f32694ff5f000c54d6ff0d41d288defc148f0164e211c429e",
+            "_flatten_egm_savings_support_with_keys": "643e1e72a5f632e8429d8829a37d12183472c9702ea14514f17306d864064a42",
+            "_prepare_augmented_savings_support": "f01d756bc7b1c07debec9f404e6fadd1bff50b76f134d8666b53a334d3299388",
+            "_unflatten_egm_savings_support": "866053fa72fd8c81ebf56a6f2809abe0ca0f904dfbad9a9fbdd82cfbc8dacd31",
+        },
+    ),
+    S03_PREFERENCES_SOURCE: (
+        "f65129d9395e6caa5561cd6573dcd4249df60667569c653f13efd19d65bf4ca7",
+        {
+            "newton_action_ceiling": "e34e9f8c2814162ef9ecda6a7d1d773defae93ef425c1e7bb5e2188e4c266b4e",
+            "get_numeric_inverse_marginal_utility": "8f3757b16a2bba65acdfbf62393a530692abc2b3156cf5280a6668c1de38e0b8",
+            "preferences_from_utility": "3e50df18f34f5a3f88c7e375eca2f7fadd2ca812b537c95b1338bdeb4ff51bd1",
+            "get_preferences_builder": "3cf2c8f0360d36184a8e912ff90c94903e771d52870f2d2dbabd985c36f72246",
+            "get_discount_factor_reader": "7516c622ccbccab48e778af98a445b67b1b4aa621ffd88dc6704e990312a0c6f",
+            "concatenate_regime_function": "8b1ccf7173e4a730762ba94f6abc4b0064dbb98154bbd64b77774e746ed18705",
+            "_elementwise": "f4bb75fe03e8f400583a0f866fe143c613295f73346b16f65a5fd2152a67319e",
+            "_Elementwise.__call__": "3e91d64bbd8b1c61fd53caa400c041e39d1d0f2dcb90dc54a98f971571a4129b",
+            "BoundUtilityOfAction.__call__": "936b1b53bd9486a01075c20b60046e37b20cb92dafa5ccbc27ee7b769c22a1a8",
+            "AnalyticInverseMarginalUtility.__call__": "fd7a15208b88452c2d03d9220769c29e5f3e9ba6af498e0cf45c5923cc2f3eb1",
+            "_NumericInverseMarginalUtility.__call__": "d82b34b60da6901207fa057d710698733de1ad7d357c613980846989b8e11ab2",
+            "_PreferencesBuilder.__call__": "903d50608a73a37a86ee5f06171e78b6d08c2198561a207f1df833a2a858ae77",
+            "_DiscountFactorReader.__call__": "2e75574a5fa64098f5719b6f08382284918d2f07b7f3d4830f2173c346f54a2f",
+        },
+    ),
+    S03_SCALAR_QUERY_SOURCE: (
+        "160e2ce889d4a859206444dd3393ec552b97e5c51becfea0854f0bd16acd1657",
+        {
+            "build_scalar_egm_query": "16c64c19727c802d0892c9529abf4f49703891289a5da067723a7017346d519c",
+            "ScalarEGMQuery.capabilities": "97c1acf69c7dd500d9f263c861ecf832fe217552c85ae2923716fe48d32cdce7",
+            "ScalarEGMQuery.evaluate_floor": "25e9e4a37f6624d0566990e6b3230b1e9bb708c7229ee62f7a9d8ba5eacd4012",
+            "ScalarEGMQuery.__call__": "053a48530815e7614062c5082d4ddd6f19ab0f3bf6a40853daff64c3d590ed9d",
+            "_weighted_pair": "a63a34b27ad1e06e13da6bd4937dff959eb5b08ec3923be71212e1565808552a",
+            "ScalarEGMQuery.prepare": "0542998764bcb78ed7d8c594b5d6a20440fc89a99c3b20b4994c051c27d710e1",
+            "ScalarEGMQuery.read_prepared": "3958b50bd2b6942457a927518894f7d10f40540dbc81ac0ca069d2b796f5ee18",
+        },
+    ),
+    "src/_lcm/solution/contract.py": (
+        "b77355299abb3d0ecea15e9fd7fd35bae8053f2eebde445500c55d7111d627c8",
+        {
+            "SolutionKernels.__post_init__": "1af79c468efac956445e2c9a1e816b260851b589681fe69754c72d395153f795",
+        },
+    ),
+    "src/_lcm/zero_safe.py": (
+        "ab8207227e9b397bcfd174cea86b2c7e1efe39a78421cb621248f5eda94fdec9",
+        {
+            "zero_safe_weighted_term": "1f9682a923d63877e5ec668bb404bf92911278ee806e99b5ef60c098a9c82dd1",
+        },
+    ),
+    AGE_BOUND_NORMALIZATION_SOURCE: (
+        "1f1eada3e3f7565fdc552cdf8e61f3beb09d69ff5a564f90ef68f24de349cb24",
+        {
+            "_representative_regime": "4f6137dc37333d66e0cbc14b6e68c007a0f402a30189a302318758cd0b66052d",
+            "_regime_has_markers": "28456000043a2cabeb4b417ee9853405d405bfe8b6e12b44ed9635fce2f649b8",
+            "_collect_function_markers": "dd469b1c230a57d7ba2368697a924b94266208d6fe3900f3367e3e002aa5c242",
+            "_restore_representative_floor_source": "4ffb71f1966b89d46ce5baf7964e11e4b17a46bf3095ed1a3f55e1518081641f",
+        },
+    ),
+    DYNAMIC_BOUND_SOURCE: (
+        "47c64feb5fb6cfa03c0922c4834c045c7993c2b3b8c02b6f74b02ae24dc51c39",
+        {
+            "ScalarFloor.__post_init__": "0c6e83daf4c061cf5cd846e49bfe3ea06bf12e1e3636962b3742d36e408b9a7e",
+            "ScalarFloor.__call__": "335229fda495386a981dfb9cbad601a2734945842ffb084aa7d0dcbd6967f351",
+            "_ScalarFloorFactory.__call__": "021a814f63a55e5a75a06548bebbc242db92d74415cd64868ea9b45148aacda0",
+            "get_floor_node": "7de2956f7e461605802f1fa1ec0ba6a1e6e797e64e55021e5236d2c4d1171741",
+            "get_floor_source": "d7ab7aceedff9f318bebe82eee38fccdd496bb636d9054e26c499a1dfcb6e403",
+            "_bound_surface": "8e47db2328d338759919fc77e2f4a99ac9c81b8e5baabdb3750033d9e29c9ea2",
+            "validate_declared_bounds": "f362868c8ad79029d6b83d795365537883fdae858c2f1b666bd1d98c3cc70d66",
+            "_resolved_rhs_contract": "31cda272fef9bdcfd345768ee3f696aff78eb9e0477186d0b56b40362a44af64",
+            "_walk_rhs": "477512c34af977b4b73b0057c3e56b7caffcc08aa54cbd04b47a2c3bbbf469b2",
+            "_validate_scalar_trace": "d23b27b4f7d060d7f1093e6176e56407a3b5a780079adcde6dc4847dec276f6b",
+        },
+    ),
+    POST_DECISION_BOUND_SOURCE: (
+        "bf35e83f02ac09406eac2dd7722edd6154187ad6a59008119e439626ed90d090",
+        {
+            "grid_origin_bound_spec": "2ad5ca872ca937ee9455f6606c30d4f81f5995156c74c9c4304e90043433755b",
+            "_PostDecisionLowerBound.__post_init__": "741a1302a031d8823455500f2471faecd9ee4474d747b671353d9c53109ab506",
+            "_PostDecisionLowerBound.__call__": "36cb8edd373144c40b2eb742e2ad274e81f37c0d34ed42da57e852afd99e78ca",
+        },
+    ),
+    BOUND_PROOF_SOURCE: (
+        "4be3d14ca613b21ea8cd3bb0ac6195e784c4991db9e8f8b57050d419dd16f161",
+        {
+            "lower_bound_declaration": "544d2c467a8976cc790d529c1371d1b3e10ee32e4ef2644b70ef486a3cd1c79b",
+            "proves_the_savings_grids_lower_bound": "28a158196cf7594964967030d3ba824bf1ea57725ae29f3ecea5f89ad5b8ea23",
+            "matches_installed_literal_bound": "6a7ea707ac99b2ede4e63e26dcb8f2798ef250752ab7734c5ae82856b50953cd",
+            "_SavingsGridLowerBoundProof.__call__": "cff1c48d67ed9841c4be9a235c6d7a55ecbe8b74cc845f88e456afaaa4aa753a",
+        },
+    ),
+    BOUND_NORMALIZATION_SOURCE: (
+        "6aca1fbac79d79c91750075c02eab1dcf72a17ec3d80209c87d580f2855a53af",
+        {
+            "_as_condition": "dc68d4edb55c754abfba0a38fe3100b635e670dc00eb3c1ee515ebba412c6881",
+        },
+    ),
+    USER_REGIME_BOUND_SOURCE: (
+        "e6b65d9df42b74dbf634d749f502335d445e0159a69f7ad4e7858b9d9433ed40",
+        {
+            "Regime.decomposed_functions": "14e9da26e8f480f3d41b5b1307a899bbf328aaa3bfc7241fe29177add000e4d5",
+            "Regime.decomposed_constraints": "8f3528801f6043bb4c70eebc6f88e42a64b6e7c514721abc04350e0e45a79c97",
+            "Regime.get_all_functions": "4721a0482130332d4d96277c97020e1925b8dc59c1ee0ca815f77016f194fe61",
+            "Regime._restore_floor_sources": "1cda33ceebab85e6c63d15e62e5b2a1a69c9c60b8e37e23fb0d3bbb65646c9e6",
+            "decompose_constraints": "f2a315f499cec4019b3a116d1e7695e4bf75c4b69812ea42c5a61073a0018701",
+            "Regime.with_engine_functions": "d18c34ca58cba8b91fbf59a0a8bf03f057e719f4a6c25a788a623864e9046ad7",
+        },
+    ),
+    LIQUID_BOUND_DECLARATION_SOURCE: (
+        "d7fa3ac8ed4747703df866eb5e6810396333b9a8329c92ce10efba461136d99d",
+        {
+            "post_decision_lower_bound": "3bed1940e3a65135f139facb93dbeaed4de5be3b95b5cb77156baffa2dd7adc2",
+        },
+    ),
+    FEASIBILITY_SOURCE: (
+        "86846a96f49b51aac141eb896c786404d2f5fc0c2331f941ac4b1f0cc20f2d59",
+        {
+            "CountedGridSearch.__call__": "04ad7ece1ed919830feff43a843c0b62d41dc09b21e5e42a700cf2543bd3cc2b",
+            "FeasibilityKernelOutput.__post_init__": "b3bf48cb20c34c6f101b6b3a7ba7161d637614d31c0c0f616689108b0195d92d",
+            "_flatten_bound_status": "927d19863379fd04d664d9257c6c8d0694571e234e0e287202971bc264922f73",
+            "_flatten_bound_status_with_keys": "0b34cc1ec4c4ec1600e53141fff93d963d97bf4f993b4f59a73bf3d2b510467c",
+            "_unflatten_bound_status": "94e7365621f266cf09054cb632cfe0d3b123498528029069cd90138cb4f98233",
+            "reduce_bound_input_status": "abfb1b30702d44dd348d5d176079858ed03f6e136547c6a181168a711e4203ac",
+            "summarize_bound_inputs": "e9683d831c3c6b7d6a93fd33e94e5d2bfdfb735a8311e3772631f926834b0ed3",
+            "shift_savings_grid": "9ff7e6ecc5eafaed0f44786ec29b857141245b1c734170c6de122b183feaaa90",
+            "merge_bound_input_status": "863e849be315918ab0295ec97387db6e18d666f746ce4a4f4a13f9e071a4928a",
+            "validate_runtime_bound_status": "69c3f042b58a0c671d7a8aeacb5bf3c8a3dc665122459ccb6597a97ba8866b45",
+            "consume_runtime_bound_outputs": "bf756b1adde834a23d7f8b9ac0c8782e14c4e63ba3594b47d88401609d63fabf",
+            "_flatten_bounded_result": "5c22614c143da6a9a3b0e5a077680042b1ee7f33c5d0511d978e51de8c2bb0d6",
+            "_flatten_bounded_result_with_keys": "c0451fe26707b51155fb64afbb55c35314cb010279ede871c9389bc1c7e2da2a",
+            "_unflatten_bounded_result": "acc1718c80562ae91ac36f21d64fd916caee1caa63ddef4f1897af6a6e2c75af",
+            "BoundInputStatus.__reduce__": "33d2023a9031d6df24452121ed7d9e6c21cb97f6d589f16aaefe6a6cca07f584",
+            "QueryInputStatus.__reduce__": "bfc887d0254213a99e6aff139a18fc1087dbe21a07c9e6d1da05d90516039892",
+            "_flatten_query_input_status": "33c2f1a195bd106b2bdcd6975c6a874e3fc14c81e9385d25c7f8c7855de0cda9",
+            "_flatten_query_input_status_with_keys": "e7e87d2d4b6745cfcc836ac775d37c7ad00aae26049d5b8bd4bd9274a4fd2cbc",
+            "_unflatten_query_input_status": "142486aca425d21e531e79440cf1e71859dec6a015718864073a72cdfb47479c",
+            "reduce_query_input_status": "3abe4ed7820131b3e4dfab3b6c3ef3c456f471435f1b8a6f62ec15ec779ac754",
+            "merge_query_input_status": "43d6e3c63706c3238912cbc043ca6c16f0fcf03c9790ebd5f8454f9e6f2977a5",
+            "validate_query_input_status": "ecf5a6d377850ab92abf6d64d3862506df369a6922fee87a2cbf758115e24609",
+            "ContinuationReadCounts.__reduce__": "5b13f55ffd9b93e2955b58c8d8561ffb83aa98a9bc17b07b671d1a03a850ceb9",
+            "_flatten_continuation_read_counts": "2e4e457a7d297d7ce25951289d70d65870e1f7c9cce15c3062a84434d547052a",
+            "_flatten_continuation_read_counts_with_keys": "80883939f39137ae6eab82eaabd667d6b0e5603af135b97c3d2ab975b96c6252",
+            "_unflatten_continuation_read_counts": "af3a2fa1b310179a880d138c68d95a7f5d7843676a5fc872a616251c0bf591a9",
+            "count_current_feasibility": "a9c7ed1619ce2e010ede9a9924233d0266eeddc064599697fc69c4a02b799730",
+            "merge_continuation_read_counts": "8a5a05cd0ee21d8ac4e2c57dd2290da33b5a4243ae7eaafbc328f948f74b3222",
+            "reduce_continuation_read_counts": "15687533f32a66607570a5c5d2c3af81a4dca3f9d54eaa6e3b425bae7f941116",
         },
     ),
     PANDAS_UTILS_SOURCE: (
@@ -536,7 +1029,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     INITIAL_CONDITIONS_SOURCE: (
-        "93804da77dd4282564cd037281a58228f7ddaec7cfa7ffb11438ba73732ae7f7",
+        "ba918b33b01f794ce2a57c363073bddc5465870994b480ba23893f98bb47801a",
         {
             "validate_simulation_inputs": "1b024d99f9d3f19eea0863fd5c24d15535b07496bbe8db990d4511fe2b7118ef",
             "_preflight_memory": "f422d02e3553d6c9f839dc586e7237deb82b365276c58942e782184fb6ac89de",
@@ -548,12 +1041,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_regime_views_by_start_pool": "f22925f4d11403ab9888e384520a29868ef65a6b84225ab76f5da5b8085bdcf9",
             "_constraints_read_age_specialized_functions": "fe0bd564dc6a3bfbff42a2109c9cccc2eeecafd71d27036f48431af4c19a4b83",
             "_check_regime_feasibility": "72c808a53cc090e4f17b2a1bdc4b717e15e90bf2c2327f07f1fdb77e46e6f01b",
-            "_regime_feasibility_mask": "56132851274003f78fd39bc8aaedb76425eb5434f601df6c658e40218d4609d4",
-            "_run_profiled_feasibility": "4efae4cf1e6ba63418c8347c61843943079eadef62bb3b2f4cf49c9ad5961d98",
-            "_batched_feasibility_check": "4f2637ac22488e5202f6bbc655f093753c5f296bd13629148c0ff937ab7d1177",
-            "_evaluate_constant_feasibility": "3de32aeab79d2a95b7831fcafc75bb8da9478a8090f0859d73c2e43375f3f9c0",
-            "_admits_any_action": "7b79e5bde0a32eb36456597caf5b61e1e04736099b78e8c9d2a89382747c4678",
-            "_per_constraint_feasibility": "9a40c5071201df771c58b17e05c7eb088a22e94a8e5a06fef835a854b62b4b4f",
+            "_regime_feasibility_mask": "1481a07c22127ab3fd5dbdfdc8075ab0f88e6da89b246f2fbf6b96460437012e",
+            "_run_profiled_feasibility": "d741a229891de99952c847d28d2a3c7a5f4718d83f7ea24ac30fbee81591a25f",
+            "_batched_feasibility_check": "9a4fdd6ce7fed08a0ac43507ba4f4167d9683bd84bb5b044abfc00f089cafcbe",
+            "_evaluate_constant_feasibility": "598395298e67b40806256a1626043ffde0d3df09293e86a0c221cb266315bbd3",
+            "_admits_any_action": "fbde6d75f84cd48f2234779915cd957f305e6d8833daea30c3cc58c151d38e01",
+            "_per_constraint_feasibility": "8b95dc48aade9ef6e575c1c56b31999eeaae4e2bcdccc2b30e78da6013607ffe",
             "_initial_physical_joint_states": "86f8eedbe28cf8cfe0f69cafb8968bd619de673540f0325c495de0e2085df68b",
             "_replace_joint_coordinates": "926e669f6474495d0b914bd8dbc6268f3182efbd7cad92b95ae6d232ab397bf8",
             "_format_infeasibility_message": "b6683eabf3a727ebf1f61b8aa98c2818fa0fd00a7c9f295692fefbad40c75b03",
@@ -569,6 +1062,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "build_initial_states": "6bc9d8948f600be8b4099ad779be639d6a30c8a66e4612562cc700d9050144c2",
             "trim_pad_from_raw_results": "16dc20f6d29f59b624dfcc9e7575238dca7d2fe7ba5dbdde75046189856a1778",
             "_build_flat_action_grid": "65b4591dd17c07ed9e30c5ddf8f89ead9a2899c2af663b9a1d1286fb9e990e0a",
+            "_is_any_action_feasible": "ee8f21a2af6b34da408acdfed7b1f684b536d4356510a99a5735a80acf5af249",
+            "_is_feasible_without_actions": "97f6b2168cbc1416ac271dc3fd43accc1bbfd312859420a65e8db59a49de7f73",
+            "_validate_initial_bound_status": "0d1720adcca73c904ea9d361eace61cf934ca1036dc5b367411f9e4d8932ac88",
         },
     ),
     SIMULATION_TASTE_STREAM_SOURCE: (
@@ -653,7 +1149,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_HOST_SOURCE: (
-        "2f0468177c23c83e374e15ddd4acf2a93a5e802bc05d63272e6925ce16f044df",
+        "120406deebef17d70465b831e61fffde66230fa730f8776deafbb898ebd2919c",
         {
             "ProfiledSimulationOperations.dispatch": "20d68817ed760c316ad119ea002808c35581fe7b27553abf6f3efc37c469e178",
             "ProfiledSimulationOperations.compile_candidate": "fa16641b0058003789569be59cf753f15129b9ed0e3f906896b7fe593f64e4f6",
@@ -672,6 +1168,8 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_operation_key": "40fcb9b79828e12ba9f99c85012630da3d666f4ecf0ac53ac71881bd981aeb7b",
             "_validated_static_arguments": "019f4c7280741a96a875804ba30c9747807566d8983346e27f6a3023c15636eb",
             "_validated_operation_function": "c46194846f437f82ce69f5134881077482f056bc1c0a9cf98db61d74abf809e1",
+            "ProfiledSimulationOperations.built": "adfa6a6e02536c8d81b4ce4da1981ae935cde7b4569a4154a948bcfd8ccddc11",
+            "_bound_identity": "2d62fc7d2cd30115b45cc3cb608004212f2403bd3d012496523b53ad5e7c7e94",
         },
     ),
     SIMULATION_MEMORY_SOURCE: (
@@ -871,7 +1369,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     CONTINUATION_READS_SOURCE: (
         "357c576e3811082a90f274f382c4854640a573e04f02053d545db13089cdeb38",
         {
-            "continuation_leaf_reads": "804b3329232b18650ef3da054384f0307554e742b5dba1bd53b14cd1463ac3dc",
+            "continuation_leaf_reads": "cb2b2e7ea9454f375aeea145dd9b07fc8ebb23896fa8c1945bba018286877484",
             "published_continuation_template": "a858c1f8320edf22d4fb2be451d6d426838f0363e4fe6c360df93879869a89e0",
             "published_continuation_templates": "984dd8ca446a1c657f2532a0ef21f8297f6945526ab9c94b014b00ef598b7998",
             "rekeyed_value_reads": "604602c93cb9636a59d4650e3a756d017d4cfc5c5881a957ac88d6218050d438",
@@ -936,7 +1434,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     COMBINED_CHUNK_PROFILES_SOURCE: (
         "56ac5168b71953b1b998ac2bd186f9dabf519e7fded08d06043c817d1820b203",
         {
-            "profile_simulation_chunk": "6d6fcedb7426a014a789b822e592147a1d2ffea40cc4004f61add59651431cba",
+            "profile_simulation_chunk": "4808efcf5132c073c74d6e1ed97ec37e12f59628428e7a7a169bfbaff6b7d2e1",
             "_period_copy_reservation": "bf995f9f6b2ee949a83d862cac85fb1e0148fd80ac225c0e0c469f6f758b05f2",
             "_policy_read_sources": "a83d15eb8de8a505e80cdce7a9448b11d7a9ab3001e92beb7676b491fb63245e",
             "_retained_read_source": "e0233031b8fb4dcb494575a397f5c2e9ccbfd45a69d0e6f951bb3612323cf82f",
@@ -954,7 +1452,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         "776092c8593104d4b41ad20adb4ca356f1c5ec73b0c178aff133929ba5dbc127",
         {
             "profile_forward_programs": "effdfca96bc6322a037b7f0b4b9d93f97a776a55db9d0de0fcf60d32dddf7a3d",
-            "profile_forward_unit": "d17687a79e8ac70a69b242cd097152414ab484ae1c1ecd516972e1943b617d18",
+            "profile_forward_unit": "c32b237cf1f70af69221d59d75c3e730880d0ba20dacbb6e7792f06f104fae7d",
             "_profile_finite_decision": "5ca35d7e729d991a97f4d22e3f1a65b997c0403769ae6b76e5a35e512e5e66b0",
             "_abstract_policy_leaf": "96e133ac576cd9b40afbf10907084378253b43bf9376d39d0faa3743d58b0cd2",
             "AbstractSimulationProfile.__post_init__": "cbd87055b30ad84f7904480cff150f5d376033767ac3e759cfb7a086d7d19123",
@@ -979,10 +1477,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_SOURCE: (
-        "f024d480b09fe244f8adeca8eb887fa8ff90bd927613bbaeaf0caad1a052a3fb",
+        "05827c0acff34156e4e283d9926b0dfec60b3d0a113dfb20637b4f59abe52095",
         {
             "simulate": "5a200607ba9aa61ef745fe1a4d5ef16a78582039948ab2078da4a7b2f4d9b9ce",
-            "_simulate_regime_in_period": "34cb3f47fc1607d59ebcdddda5cafce37fbfbebdaaf4a6cd1c20f4f13434dac7",
+            "_simulate_regime_in_period": "a3c78abdf59530d671d3ba52597de8acb28337f56daf22a7b38ca5e8280804fe",
             "_execute_finite_replay": "8fbb9dc117de1e2154984bbc79668966690ed60572129e2d46a376e02a60d1d9",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
             "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
@@ -998,6 +1496,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_prepare_nnbegm_candidate_bank": "d5406bb8fb04f481aeb91ecbce93394cf531239a137df46d28ace9993797b62f",
             "_rank_nnbegm_candidate_bank": "fa90813a7edb9f5aa16be3f809c132f3d2e4f9ac87ce6729993e799a3ac26db5",
             "_initialize_chunk_state": "ce97dba339426c926a50f326577ea8a09cdc8f18f9193b3ea3cdcc5403956092",
+            "_canonical_Q_at_actions": "9e3363bede0dc450d9d251047ff5a9e884934bbfc2a926b0a6147ebcb60b0729",
         },
     ),
     POLICY_DIAGNOSTICS_SOURCE: (
@@ -1007,7 +1506,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "cb5df47072f0dd2476095d09dcfd84d7ef99a26175d7b19d29b81849314f0a32",
+        "3f5de25cf3e60f06a3f1b895a66b5663748e4f4d04b9467cba3009c58a6669d4",
         {
             "_validate_sharded_state_capability": "ee8b7e8a97fd413d2376a655558ea7b2a2ab61589a0ddd624ed44b69dfe5fa8d",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -1030,6 +1529,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
             "Model._process_params": "b5d2ea06549d0d63c7d1e27a3248c3a1186d01a9b71fc108918d1d99a5c4acb6",
             "_simulation_programs": "02d69b94d7005c2f01cb72585af823fcc62801fb5b45fbbac975fdfc1ceaae70",
+            "Model._lookup_policy": "e99ecff9fd6e034770a8b2dc83586534f32e33368a969b0ccf36f242fbfa1463",
         },
     ),
     OUTPUT_LAYOUT_SOURCE: (
@@ -1097,15 +1597,15 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     BACKWARD_INDUCTION_SOURCE: (
-        "bcccb1ca7d18caf1f4d95e1fb78ea58822ce2b3f1f6bcc5fc1590019b1807c83",
+        "3fdfe41ad7839316303716bde06defc22f6c6b6a709a189c2ba4faf6fffc8626",
         {
             "_period_transfer_scratch_reservations": "e614b686048f4131f4b612386ca89ed8cec5f786fc64ac82f7ba87866e54fc76",
             "_continuous_value_replica_required": "4f22692255b3746899ee7b2849776ea8967090af80d68d46272cd0b9a5bc771b",
-            "_compile_all_functions": "802f1da17e33d1c45eb47a63a2dd1c9bdb4f6b5b374387c9d1b34cbd2852483d",
-            "_prepare_solve_programs": "a27b9fd4211fae36c9c83b34fd628e062b8bfdc6f970e9944e5356937d7aa3f6",
-            "solve": "1b16fd4f261b9bbd6c71374ffe065d06450298b35a213c49d6431f489c56d372",
+            "_compile_all_functions": "7efb6b0a990bac12d4e79ae1c7e4e3dddc957c5ec5a75407c1b427c3ac3c7efb",
+            "_prepare_solve_programs": "f9001ab8e231c4407fac6091efc91ee45917a9307023b03febe2d0da3fb8a195",
+            "solve": "cb7677fb4f9583d3b715a353edb9bdf9d87e7af376a41b15e76b6f22106c53f2",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
-            "_release_closed_period_inputs": "b6fbfbdb2200f128c8c60f096e2eeaf173dffcf770b7c4a177d69c7e3e270951",
+            "_release_closed_period_inputs": "2210828dec1e73e902c8e3d3cb492cd890dd6949a2b04a0b961f5c6868691c11",
             "_retire_donated_inputs": "39d14fa63f9419afb506a7aa78e0798a51ade88d10f1df32c4ebcc0dffaafa0c",
             "_prepare_abstract_program": "6a4dfcaa4277f0a5e58965b73c5390129848bd243d1dbfc91c32806ee982867e",
             "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
@@ -1125,7 +1625,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_compile_and_log": "6c2e773eaf54f547353e2734fefa2429d266a05279d94e99c8f8e596b916f74d",
             "_run_period_kernel": "a19324443322421cfa31fed0902e6538eeba3e80040b2e709e1d237e8394906e",
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
-            "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
+            "_select_period_programs": "b370f6dda6dd4d8e0d91c8bf9bb6fc9d44345f67c191efd86e761befb69357fc",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
@@ -1144,7 +1644,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_attach_resolved_output_layout": "86b17ee66949cdc2a0751de70bf01eae7498333b18d9252d0c969e272498069c",
             "_publish_kernel_value": "50d720543d37adaae9c5e8799d72306ab1456d98ce590b3083b0d501d97e3516",
             "_resident_bytes_by_triple": "b87b5df2ce91647adf464bf2175d9453c186c1c65a7cc7e54ff6967dc015aa1d",
-            "_resident_inventory_by_triple": "3a1a4cf02baf2c360ac7a68259b8deff80a73589f89452a79b424d18a02ae7da",
+            "_resident_inventory_by_triple": "1610e37b0c92146e28717db660da721299c6c455b2835e1488b37d42dc1d7431",
             "_period_feasibility_counter_reservations": "4c8041a3e811d0581689eb4877a6a8d7355f4e87514c9a6b49f968e08911fdf1",
             "_candidate_resident_bytes": "ac8b5a9aad74d28aa50407882824f567314e9a582dc47b60766eef33686689df",
             "_compiler_reads_source": "3a1099c48958b2a5ec59affe0d9cf0dc179d773c8e96e9fcf821526572f23439",
@@ -1153,6 +1653,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_internal_leaf_bytes": "ece84ac1a1905891efcec6e59693074f62da35ca50e9185f0fae55c2829f1206",
             "_retained_base_space_arrays": "286541cb0ed42234d8f8e2344d4b7ff67e6334e03b58fa195ad88a4f3ab9b13b",
             "_CandidateResidencyLookup.__call__": "7090dee9635f84f107ac4758fd21811925a264e73738341224298b43859f082e",
+            "_run_dispatch_unit": "ae3e2cbb28d5224b39ad4de9dbd63ff3e82c3ebb5944013cb806bb5b70e05171",
+            "_accumulate_landing_totals": "6cd8c599aa1d6ac36bcb74190ce593ec041e197dd8d898568e95220fced4aabc",
+            "_match_leaf_pair_sharding": "81ce99279371a26877d29acaa2760f8c78502c91406fe11b7154f372b3c682b7",
+            "_match_leaf_template_sharding": "58636de01c9b386ae6211b5aaa4c837eb995ae0a7aa76faca6a56889f59c7b6d",
+            "_query_block_status": "6330830a169c66671eb19bb43626edc593ccf58b0f62568899905b66eb7839cf",
         },
     ),
     EAGER_CORE_SOURCE: (
@@ -1360,7 +1865,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     CORE_PROGRAM_SOURCE: (
-        "bf7c8bac4cbb74a00a8ca50cecc3ad10afe440afe0dfabe83c6a8e2056e3020e",
+        "0faef259a3ed6b01c69b8cb9aafaa5d97a3f128193abe93a54e2a5e424a8c5d1",
         {
             "_validate_abstract_inputs": "70f96b7582b3a085fdac809c48c6cbe5788f28d5b5d94dd0bb19eec5a3bdc973",
             "ValueRead.__post_init__": "9eb25ccdd2f056a241092952e6b92acef943f1babd2f2063af7b32da935a7190",
@@ -1369,7 +1874,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "TiledOutputAxis.__post_init__": "dc42959d05c19bee720f1423b60179a0d729b74546bfd278e0928cd2a6b2d3e2",
             "CoreExecutionRequirements.__post_init__": "b8c76151ae6388cf29f8b580d1b6604c5969829bfcc46838a5adcd7d04e73c7b",
             "CoreBuildContext.__post_init__": "c001bdfea799659c6e0f1d0ee09180940d5176d8a59675dcabef190a12716d7b",
-            "CoreProgram.__post_init__": "cc2b0daa4751a08b0be23ba75f086bc0c1d8ffcb6a45a9f7b1e3d914375bbf47",
+            "CoreProgram.__post_init__": "343fe026561f51d8d0fa7b60286b339c46546236ac0871bb119dd3064eef46cd",
             "MaterializedCoreProgram.__post_init__": "53205c8a2ef9ec2c5d62c759c66d151a5a2da91a1e880dc7ea46dcd700676b80",
             "ResolvedCoreProgram.__post_init__": "37bcf7ec896bdd4d78125aeb116b7f22835cf142b07075d3ae2586cfe1afee91",
             "core_program_graph": "ef88f028d82cd99b9d3768ad89df5f917e1b11142899b3ad6ac113f35a676226",
@@ -1384,7 +1889,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "resolve_core_program": "fc430e878ce5668159eaa6a26d7255ab7e90a61bf2bb570fe0cf89443416dfae",
             "resolve_core_program_candidates": "04b27f16722ddc627560a62ed9f436e8a4b0bb2646cc7edf8a7d7e99abe1a50d",
             "_resolve_core_program": "a80dbc848211a46e0cfcbde76d530805a417feea09c2e6724e171fcf96218606",
-            "select_programs": "545d2aaa5fd158f5cbbe4c8a2bf69cfffdaff588eb5066fcde54de59fb37c91b",
+            "select_programs": "a8364953a60797905b376ed2a53cd94d8671448707983d595135a4d0fcd52eb4",
             "_validate_core_program": "b7558f7fe479363723c2b4d4925ab954e262883c4e07cbc956b72bbbe4291511",
             "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
             "_resolve_input_transfer_plan": "f62a9fc86af542f15a99a0dd93978b681e1dd0c45d14772b711a6d80d3eceb2e",
@@ -1395,6 +1900,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_validate_tile_width": "e986f3d40ff2a7ebb398a28a1cc086740ac861788247716363079ea7ed438f93",
             "_validate_coordinate_argument": "eef5d339f81e5f24dfffa4215ff9eb27ee286915a6d5ec2aab0f2507f4cca546",
             "_validate_width_keyword": "d35cbcfe40e9888d2d9bdde001c488fd82f01b6a8eabbd7dbf6121bfe709674e",
+            "_CheckedCoreVariant.__post_init__": "49ac00a088f14200eceeabd7f8f81b5f404b638a25d9aa1ee1bb28d4f6139514",
+            "_validate_checked_variant": "31eb594494a78753522a888b94ab7c60ccce5473cec16c87a6744c4644c83cde",
+            "bind_core_program_fixed_params": "092c9e956fd8fa8673e2d5d7917022cdd042d2b674575c95772a56397d0e9d2d",
         },
     ),
     SIMULATION_TRANSITIONS_SOURCE: (
@@ -1446,7 +1954,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "execute_simulation_program": "c945513d448bb584d7b14be0890f85edc929708343b9a25fa4ece8a82bb6c981",
             "_SimulationCandidateCompiler.__call__": "d2292d22403be650b888d30b7649b0a089ed81115e1056180712cb3f650d5ad5",
             "_SimulationCandidateCompiler.lower": "ccfeddebd99fe733f918fa07e8a056a9e8ec4390b691b5c6173d0e95a6e06a1a",
-            "_SimulationCandidateCompiler._bound": "b6e1bf9127108e068b6c6813d09b9c1b1c1fe2e07873726530d79ecc5ce673ef",
+            "_SimulationCandidateCompiler._bound": "4ffa018af94bd045ebcbb2ad9a1169092c3e6452d182aa2861ffcbfff6916069",
             "SimulationRuntime.lower_abstract": "f823fb439bae7e6077de35e53e0561e6e634e9b8fe2266fef9c401aa2dd1d7d8",
             "SimulationRuntime._publish": "840f5393ba14b7d8285808f30da1bf67ea8362ebf950f9728eb6faa0b10a1d01",
             "_with_compiler_memory": "70e07953cf8915500cc587dc425dc46f1cc81b1313517bbe675f527062b79bcf",
@@ -1497,13 +2005,18 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_PROCESSING_SOURCE: (
-        "228dc322f85f715152ebfb386180cd78f5b2946548a4d9f8a5c9c0f0c91ad1af",
+        "7190f44c9fe23f681c0c7af5f6ad264dbe0441e310b129e60c7886ed95580424",
         {
+            "validate_model_inputs": "397571fdde986054513e0246b80aa27fa43d19135f8884d7c2c10b423ed1e742",
+            "_validate_borrowing_bound_routes": "357b17ad43290dfac7c7cdb9b8dcd4817de1a1783c75b3877d9bfd39877d3c99",
+            "_law_phase_varies": "9525a791fb3294f12a8f5e71906bbc2c1ea35cedfc4b885ebc27a7bdd47242f4",
+            "_is_solve_proved_post_decision_lower_bound": "20eff9706986b1e34261ad846c3b8db55ef631514e5824563168b3bef97adc99",
             "build_regimes_and_template": "da8e2ab92d9248698d20e43b0033ae1abdbdbff43f89f70cd2884304990bf1e1",
+            "_validate_callable_borrowing_solver": "3bfce5b88bb56c53c8eb4e1a6ed4e999335360046ff85c0eb6d3eabe9dc39fa2",
         },
     ),
     ENGINE_SOURCE: (
-        "92f283b2d8491ec65fe3fbc80120e77556c6f6d4a3004f2b0755102148fd70db",
+        "e2d8ac22edd155b7a26b19f5818612d93438bd2a8668c931b6b46b6872b5c8f6",
         {
             "SolutionPhase.resolve_process_grids": "700a7c24fe948dd51bb3bf1057504a5d05ff7ea1499fe51f8341623ffe41e34e",
             "SolutionPhase.state_action_space": "582368bba80ec725dffb46af088874dae5dee05c8601290e9fe3e8ab34a68cab",
@@ -1517,26 +2030,40 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_DIAGNOSTICS_SOURCE: (
-        "e40892e40a9a02cb2519dc1166011f90d5f9c46d78b505f02dda4c6e53e2d0ba",
+        "a7e8d6e2246deeecd17dca06b2cdea45dfd89a1a471d011f54c79020be0a7815",
         {
-            "_emit_post_loop_diagnostics": "d4100e6b986d8389dc3bccc7d08887fbc31de1979bb74b1dbc5250cc3d808f75",
+            "_emit_post_loop_diagnostics": "c43efbb3c9bb0f6e304c2aa6ac2a9513e2cede49c1eae983fd98049c9a87e87f",
             "_raise_first_nan_row": "957fe2169afa34e08bb34d577b665d9b86d924a85f177e69d3a9aa2e641f4f7e",
             "_raise_at": "94ff13c6d62acf39aa658191459878aac96462c200228095b2a89548a6bfe39b",
             "_reconstruct_next_regime_to_V_arr": "4bd93914f56d0a9e25592c7a50d64e303f314e591d31c55c5d19bf22bb67315f",
         },
     ),
     SUPPORT_FINGERPRINT_SOURCE: (
-        "d77da82bcc9aed43b74ba25dcde199b332e7efcecc1aeea63d74dc1e1b52a410",
+        "4e4db84e58674b2e0d48eb86a015241e608ea14e5e22c7127e034b562c4c7bd6",
         {
             "fingerprint_solution_support": "db6206fa4209d1d6892566377c6c62c6bed1aa28f23ce49d85fb3455f978d19f",
             "fingerprint_model": "04c8f2960e52d4144353b1e3b962edbc17b00eb05fc68a3207cf4826acbbda51",
             "_grid_support": "9709180334fc4732e2193f6b736667d6a96648f1346401a886bd7da0f41b65bf",
+            "fingerprint_model_structure": "6c14a099ed263a2bd7ff41c33138afe66eea0a261f434f5fe8ae6a5b7238a962",
+            "_query_semantic_descriptor": "71520160e0fcd8f0edae81f949c39228bbc92c8bdeaf3f0b64fa158487536400",
+            "_project_user_regime_declaration": "39cb855bdfaebf4b0e58c9c3727fe2b1921ee49f86e7d3e8226230acad377fbe",
+            "_semantic_fingerprint": "75f98beb48082f6fda273258837d03a38221af56812f8d621163ebfdfdda893b",
+            "_SemanticHasher.visit": "256905962cf037bbf8256b8bcba77a000dee579ba66795f8e496ff390f10140a",
         },
     ),
     SUPPORT_AUTHORITY_SOURCE: (
-        "5851b87adf3c1f557f7df11c6510e513e059ec04261fc4fef57e6063cad6af6f",
+        "2f4bd4226c7e5bf69cd43e3855fbbcaab7f9ec805aee5c38b284ac252827d66b",
         {
-            "build_solution_authority": "c64f94a29e0c7b6c1be7f3521f040815ebf04474cadda8de2921d9dc7a383629",
+            "build_solution_authority": "aa3c081cd3c1afeaa11d1002c47bde923d0a3800f1971ac3631c9fe87dbb1959",
+            "_validate_model_query_spec": "6d0ec4fcb36516d455f577b4e801189f176c17b89547b38e3eb6fe8d4d871533",
+            "_egm_carry_artifact_layout": "97ed3f759968823430cb6259eb43f7841761e3e4f71e7aba8a825bb2709f5c4c",
+            "_query_leaf_axis_names": "9afb77585d1a248a4d34c71231ecf42acd66d7c65c93983cac3e733933e648c6",
+            "_declared_carry_row_state_names": "835ba452926f8c55464f71282c057c64c690484767f67c9ca009db1e723b7f8e",
+            "_declared_carry_trailing_state": "c60309b6bb614ecd89aeedaf6b3051df0d3c665d4a1e0ec4502f72a68079bc31",
+            "_model_role_axes": "6e6dd672aa0cff5d3c2ee20541ea8c557362ca5ac2e6b52154222e827b84a01a",
+            "_bind_declared_continuation_authority": "5c77b3c0aacd7637e81e0449c2561f9c0d24e1eb3daa95ac000692e8ac6e4342",
+            "_bind_generated_continuation_authority": "84d4237e02fedf4fffe5ca51a455b9230109736ab641a78b7cd82c2cf8cfd7a8",
+            "_validate_query_policy_budget_authority": "2e145016ee3b87e1e75c28b72b63a5bfaef3be8d015df98451ef48e79de85909",
         },
     ),
     SUPPORT_PRECONDITIONS_SOURCE: (
@@ -1547,7 +2074,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
-        "ebecd94dab0b47608990e602d7b15c3980ed1ae0f366e44ce56d26972f06959b",
+        "115e28390e860fbdf43d0be12005415f2c206598233071c1db1a2d1ac806d896",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "d452c135767ba44076c7f3576fb9253e4c5b1d2a783cee05b7ecdbf18a180177",
@@ -1577,6 +2104,15 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_state_probability_law": "fddff0c03e9d046b20c4694816898d5d0e3fbf00007c8f618811b0f43f9cd0c8",
             "_abstract_transition_operand": "da4ed98dd978aa74b9e1e8886ab15e60f875198ad048d68ff23d143d370af33c",
             "_check_state_probs": "4e4e56e44907490ddbf993e53fd1f4e49611a505884128c66124d455143f23c7",
+            "validate_off_grid_transitions": "5a5ef3b8658296fa423376ff8580c5ce9c888ca1a160bb84b4f120a1ce6742d0",
+            "_off_grid_target_counts": "6a48bffd6e54837ee7035f3e2c9d12b2a798b4d92d7dddda9268c8dc3255fafd",
+            "_build_off_grid_cell": "24cf5f04263d32d2fd3395d00b125832ea51b0a6ed289d35777d887c8641daed",
+            "_OffGridCell.__call__": "62b232b838699acfa50c3d8a3a1c8ed0bd9eb32032a01e6a0a34ae09367b01bc",
+            "_off_grid_counts_law": "e80925d7dc50461e3839916141cbad71f417f497d05019af48d13aef1e615708",
+            "_NamedArgumentsCall.__call__": "9bf026a8bd55eb288277fd355e036b951a548eecdc4381f11526ab0ab06e0138",
+            "_GridPointCall.__call__": "d98069d6ace823f41bdf5194a0dfe757b3325016eff363633dcfa3c35840709f",
+            "_off_grid_block_candidates": "f2879912df63bc1d91a9997fd1abdf7a78f083bf6ffabb6f3a9dd964a4f9cb28",
+            "_validate_off_grid_bound_status": "e1302eb132268732f0e493703d076956c95ffdd2420b189c2f36358ceaf54d45",
         },
     ),
     PROCESS_GRID_RESOLUTION_SOURCE: (
@@ -1628,21 +2164,29 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     DISPATCHERS_SOURCE: (
-        "9fc7b45ea5a1571398a79a7a455728b6742f2482787ca2160b0b5283c724bc85",
+        "36ae91474874825079be5b558c51631c3909f1ff63b44b3a4b01f46749a46e62",
         {
-            "tiled_productmap": "f9abfc940c4ade124483a286bdb5ab6eec4aac4c928680b2f685b859e673d104",
-            "_CountBroadcastExtentInWidth.__call__": "9e1fbe5f50bdce7450a8b195401b036222290ff7b5c25bb10b7282e0e387c442",
-            "_TiledProductMap.__call__": "4c2a22f6e7e41b0a85dfb680f9de845201e2d6fe5817741879ab409e458ea703",
-            "_map_grouped_product": "e100fb75e4b1b818e22412a05fb44507621708e7edce49a9fba8a022ed68a775",
-            "_MapOverFinalCoordinate.__call__": "667a360f1998f57268721fadb1febabb6b0d3501eb346df615eff2310fc86624",
-            "_map_whole_product": "5226cfb3d079656599eb391c367423d867aa05350d6eebdcd1cc0da6cf734c79",
-            "_final_mapper": "a7115ac1eda02cc0ef40fdd176ab1c7e4906e0e6cbbbcb01540510e2723d838d",
-            "_MapWholeCoordinate.__call__": "68497277498dca5d11c4a3f4a86ad56d1e0d27a1c9bba1f9ebf5a872a7a3b7b2",
-            "_EvaluateTiledCell.__call__": "2ea2996deffd1ca2d1747f2de0ab896be4f87ca79dad4b32017f4228d5ced8c5",
+            "tiled_productmap": "fbe944483c6b55568fe81605795f9958d1cefd585e0bbf941b76dc99b6105f76",
+            "_CountBroadcastExtentInWidth.__call__": "fc7843c1aad2f0c201da56d4b502d3d0d568b0fcca2588f7c57c87a56f52f053",
+            "_TiledProductMap.__call__": "f66967b618ac4fbd44efdc5872dd3ee3428796a41fa5236524ed1143322f282f",
+            "_map_grouped_product": "cb92235746a936e0921a38dc8891ddfdcbda9b42246e1b8738025f708e0b6ef5",
+            "_MapOverFinalCoordinate.__call__": "9c6b0311f6be53e322282a20e53787527e6cd8216a135831d27a32a25d2f5873",
+            "_map_whole_product": "8c79554c80187a7a49ab0ce5928cd785f7ec73ee327ac7a4c2a1e5ebae7c213d",
+            "_final_mapper": "1a807594263ba85bb7eca059502b225de599547a66faa5bfbf2296d2254cea55",
+            "_MapWholeCoordinate.__call__": "19a3d8f40f917bcef5c326f034417fb774ca989d235054e8bfd7aa85aafa90c3",
+            "_EvaluateTiledCell.__call__": "f0870bc3a6307da49db6563e1e8bdbdd753d5ba5b9fed9fd6b9b4e99fe75a1ca",
             "_restore_product_axes": "aefd91d6e6d5c1d49f1451435c80b04c616fc010784907adcf8e377508f087c2",
-            "map_over_leading_axis": "b1d033acd692898271f38d8f2954c27d00b1b1b2198ea2dca48248466387c098",
-            "_RestoreProductAxisOrder.__call__": "d82cdfbdca975232156d9d1e9b80d3892f811dcfb0b793a55257b50e3848c43b",
+            "map_over_leading_axis": "99ff884f97c0d3f217db5616595c4a429bc641fca02a64487e11a1f845c3c5c8",
+            "_RestoreProductAxisOrder.__call__": "0f8d87f5527a4e1f9dff72e29dc5dec70203b76275993f06971f5c476adf5434",
             "_transpose_product_axes": "54961f0159833bf5de6053053200dda0e3745caae17447c2aafd2e6f4faadae3",
+            "_map_with_bound_summary": "bd177e97312a240fe464b9ea3fb7e66d2362e921c2cec22af83e205e7a345926",
+            "_BoundVmap.__call__": "6db6ab0d219f7b4b3732533d1f0046fba757a393b96f2b0b2b12803096c69e01",
+            "vmap_1d": "2704fc9f35d1e4a95de4372bc36823cf83e9f05e3757bba8f97a4b7f4bc5275d",
+            "simulation_spacemap": "bf1f6b6975837494a5096cbf851dadb8d1bd3238224a3578c2c324b04ed86560",
+            "productmap": "73cac5b25853f490ebf3e016fbdaa07c471aa2746b55744e8496be9b8e0a18a4",
+            "_restore_mapped_product": "c3ffd89df4e5486a21a7bbb81267eafe821bc4106f7ff0bc70a9d37064110597",
+            "_ProductMapBatched.__call__": "838f1fc3f4f80b37eb6d02806b4082cf26a5f8fe1c0ef9a22cd1190d6c813cc4",
+            "_MappedOverOneMoreAxis.__call__": "0507aa77048322386c81797b360a4c8527d4802cc68c34ecf5fc47571c9b9ceb",
         },
     ),
     ACTION_GRID_SOURCE: (
@@ -1653,9 +2197,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     GRID_SEARCH_SOURCE: (
-        "e381ed2c84701bdf55a935785053654b1b1d3ae03bcc1efaebe0c41121109bc6",
+        "3399b40e309e5d63f1ea83770b90f5d757b88c44f370c5496511f127b23811c5",
         {
-            "GridSearch.build_period_kernels": "b6f62fdc8a6d3a5bc4a43660f8d29276b27509b44537c9b964d70ac3e80ea3e7",
+            "GridSearch.build_period_kernels": "8d8b567ec595bab2cf51ed7e39f279515d60a34284e33a924364a9324d24acd7",
             "_action_partition_mesh": "cab2381dbe9650e10620db20b6614ccb015eb147ff3356ab66e90cec58bf06fe",
             "_classify_action_streaming": "8165f079219429b82f955b4708874d438b3c9ce5e6415b277542c3857082c18b",
             "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
@@ -1672,28 +2216,39 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_GridSearchPeriodKernel.__post_init__": "1e8c230f0845d9b8335c667f38593221a957c34955efe44921763bce6cd24ac7",
             "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
             "_GridSearchPeriodKernel.with_fixed_params": "5f5a26e02b136c760bd242cd91c22b76153adc9828a13d20de7a6a98f5877e14",
-            "_GridSearchPeriodKernel.__call__": "1e438c005f504266afdf08858f5067c977997745cbcb897b59f879cb6d43d446",
+            "_GridSearchPeriodKernel.__call__": "bc79969aadb4f348d787d95f1c4784ae46f803e493f92e3275b04f7103df7d5d",
+            "_FlattenBoundedGridSearch.__call__": "114b0acaace961b15c442d9bfc59dcd41409c73962f3034f3e29546b79cf6ac0",
+            "_grid_search_fold_weights": "9a9e0af52881e46a569335fd73c809b56c08f752ad38f01731769ca6e0c97f78",
+            "_fail_if_decoupled_route_is_unsupported": "0cfd97f1c692b3f82b78d5a9403da93c902b88aa8805e26137930ad2b7dd301e",
         },
     ),
     MAX_Q_SOURCE: (
-        "aa31d4ea0ef5ff8b6d37dc731bca2646d9ad9f683a86ea84b06e02c166bb2249",
+        "247f5fc66482fd0c880c1c75e325a06c269d8fd39a0b5f2b37e5e651c491f621",
         {
-            "get_action_partitioned_max_Q_over_a": "1fc3280eb991581e01fd097902f248c24cc48349c976780bbf7ecbd0d493a5fd",
-            "_ActionPartitionedMaxQOverA.__call__": "5f09c6f1757b622b6c36c0fcbc80463b5edd8a0e04f387eacbab4265730c8c35",
+            "get_action_partitioned_max_Q_over_a": "56790595e54ba37456305d8362da990a1010fb07aa7c8a1eb5c875d16b0227fc",
+            "_ActionPartitionedMaxQOverA.__call__": "c81ed9145dc22977d6d58eff9ca654c775f24d92f80423e7f4af7364505d6fa7",
             "_arguments_named": "95c0088a6f36474a87a6dd5d4f0a72745787638106bcbb911a0f5aad35101365",
-            "_OnActionPartitionAxis.__call__": "4446b26d78ea869dfe4d4971c394b2d50e9641c223ec825922b93ff717af0175",
-            "_call_with_operands": "68fd0d9f8a0fab1a7014574f44cdaf3b6f77fa35143359f441fb84e73cee73b0",
-            "_get_extra_param_names": "ccb1bc531a850fb9475d70e0a06b5d0bf53888e4b7b447e9c06f9e8b8333e958",
+            "_OnActionPartitionAxis.__call__": "ebae3ad5db6e89feb499866aa7ff673a8e6cd934e55346a77f051bbbd20ec64b",
+            "_call_with_operands": "c26f9db85ab67d1b4d6c730076cba1d0c6b64e2d7dd98159d9c4d37b21c24c0c",
+            "_get_extra_param_names": "cd97225f061bc5ef0bba82b75864b9cc7622174d10fe741c510ebba7d5efde0d",
             "_fail_if_action_width_keyword_collides": "d72946426a1e4a1d300fa4812f07eea8139236693ef8f79d0e8384b9d59a9f0d",
-            "get_streaming_max_Q_over_a": "cc2876935608ee535fd906584d761d87560da573c4a2addbf332eacd10a202d8",
+            "get_streaming_max_Q_over_a": "0c73d0cfa4e7640b5f721c30973cba41d2ae069fee0b7be8f2f5bcb0eda6c58d",
             "_fail_if_full_V_streaming_route_is_unsupported": "cd4c96d572ec7df9dc269f5fa2bfc1ec5c16fe0a78de3be56adc28c15f065d2c",
             "_fail_if_streaming_co_map_layout_is_invalid": "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979",
-            "_wrap_with_fold_reduction": "f46df676f9a2e6332002d58209f131c87f06f293049060e37859d55c9bfd6341",
-            "_StreamedMaxQOverA.__call__": "79a448e8706992991eb62e6e31b8d0a235c9f8d5e7b876f27a6a24e24dfb712f",
+            "_wrap_with_fold_reduction": "6070533814c5dcbe42cf8a4536de9990ea79a3ac71096afbcd4d61886041410b",
+            "_StreamedMaxQOverA.__call__": "02273275a5c12b885deece59b76bc5e0585e95dd3b6f24dda30b14040c1e10bd",
+            "get_max_Q_over_a": "7bd9cfcc24bf77d27cec4c8d57b29d8edd6e760e1d1a208032f7a2f1eb8d1adc",
+            "get_argmax_and_max_Q_over_a": "e5261052b109d875039983d3abdb64cd66606476effc3e67bd195ce67d781f7c",
+            "_HardMaxQOverA.__call__": "2dc5ae9cf394274c44394e656276e95094dabda3c77a397a9877d937727d02ea",
+            "_HardMaxArgmaxQOverA.__call__": "8bafbe4d1f5d99962015e674980474e38b4a86c44c91d81bcd3f68b620e6ac66",
+            "_SmoothedMaxQOverA.__call__": "b57530945d17ac12f45b7c70d4d951a5df887e026c3ea5239f6242d6351e0568",
+            "_TasteShockArgmaxQOverA.__call__": "76e67e0e11ea6ff97a12fac34a1d7dcd3b88ad65a4ecc70c45eff17e225da395",
+            "_with_bound_summary": "93c1272ee4199cbd0c960877083a2f8caa0c8ab735fed4310cd7ea20abcddae4",
+            "_FoldedMaxQOverA.__call__": "6df7d3ec12996d1ab25dc448d0c77244fd21afe6484d831b7e1961eaff655bdf",
         },
     ),
     ACTION_STREAMING_SOURCE: (
-        "af44e774aa5f951ce49affc0f20631c48da6fcaaeeee1763529638d2317dc15c",
+        "ec60042da0092b7a0a8859f3acc94300155947286319b06322f5890ba8c48c1d",
         {
             "build_partitioned_streaming_max_Q_over_a": "2b1ab2a3075916b37d825af02061dd985063823e47aa8f57589a47c9dba86548",
             "merge_partition_accumulators": "490ff581c56b3c85bfbfc7d3824baed55adc1aa035970e5d15c6b433c6380098",
@@ -1703,29 +2258,29 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "ActionPartitionLayout.blocks_per_partition": "b1109e10050ec6f186486a275a0467089c2c5101528b675c928ba0fd85d8b9b6",
             "ActionPartitionLayout.block_range": "c306308ded5a8642519248ce4bd7f400c8ea13b25b06a3fe2c01c24c90f03845",
             "ActionPartitionLayout.action_interval": "dbaa877fae3466c4ea5af7c2657fe18be813c4487ed3a26e6cbb06b1fac17aba",
-            "_PartitionedStreamingHardMax.__call__": "382aeb28248e0392b3cb6455d434251a43bdc911b818b60c5defacce354abb20",
-            "_PartitionedStreamingHardMax.local": "d22f025b6500a51c5337c53d870b88c80f82c9a6ed500e89b6650c1339dc3d5b",
-            "_evaluate_owned_block": "f95eb5df6591891562f8d2779dd24a879e5f6fd931f146888b46393b7f4e6366",
+            "_PartitionedStreamingHardMax.__call__": "52adb1a6f9aa972e9426dc1d83867f83e1e08eddb87fd78ba848d70405da0a36",
+            "_PartitionedStreamingHardMax.local": "d8cd0e0af2f9a40b12dc69825aa8217c2c108734239b08145c935c26251c976b",
+            "_evaluate_owned_block": "17e7e02e955ca061b50e3f6940fec706689cc2e4e8d929249a78b9d501f444bd",
             "_validate_streaming_configuration": "4f9f662fa73508293542ddd9e6ea428ac22f31f45376b80290f0e46b64a3f9b4",
             "_prepare_action_call": "27a8f85f8f16c7214846609213fdf9135bfb7118395aecdcf68ace17bea4e39c",
-            "_evaluate_block": "5e6e90502c17da3b358b0c897dfa908f926836e89d2c26cf4ae074ca83c5e3af",
-            "_evaluate_one_action": "0375e2b11924435daf1c8076ad5bc9369504f3b92665380d2bb92f74664be4c5",
+            "_evaluate_block": "80035c1cfb62fcf96e914220b672bd82ae8708b87ea3f475f3a174e27a2804da",
+            "_evaluate_one_action": "c12a6ab8b6f9a29c2b985f2eda18f9ff2bd86ef0c3d2dbd17d6f739b0219bc07",
             "_decode_action": "cd4d0f5f01fe2a5648faab36deda62d09452116e3e7cf1e691fe6214b8a692c5",
             "_validate_block_Q_and_F": "7f00abbccfe23768df403596eb22c715eb3542b4e43dd67593f7bd3e487fdeef",
-            "_trace_block": "f7bfdbd047a5c51e80e99b7b936e063e772239e6156cde30989224841babb35e",
-            "_empty_reduction": "8135c3d0fb8b4ad0068e59b705e587ad88f330228d00e020f579dd4e36d9c884",
+            "_trace_block": "f1d9a78339cd253ccd41e4e39611cdbb764c3855da2e1757c0101599d3d4b8bd",
+            "_empty_reduction": "4db3f3eddf997264f026501228275cd64447b58489a72b86d674ddf1ae047189",
             "_typed_like": "fc7809b3ba41f45007a2464926696f92b1cf2f937c2933223c49ce4984d56b22",
             "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
             "_scan_one_block": "1901bdf24caccc5087081f15fc69e9138db76545ae7bb1794539d05adf5af7c9",
             "_add_block": "a5047bea80275b77727b69b06d563bcdfea7e80c0f99dda34f6570948ccd1a72",
-            "build_streaming_max_Q_over_a": "7e56c978cd164f847bf654ca9a63d0d901f25b79e92ece51f2cab3a452364b8d",
-            "build_streaming_collective_max_Q_over_a": "8e4657ee33f24a6b271c35318b4dc16d04f46295f1882d81cdb4bc34ae1e2dfe",
-            "build_streaming_ev1_max_Q_over_a": "22fbf958cab6b62ce9f8b9ad0014b18efc6664e978188366de187482e8bea73b",
+            "build_streaming_max_Q_over_a": "a7ec46f647dedcfda11093c0ea2f51a1f80e7bae468fa0cabfbfffe667c1fcda",
+            "build_streaming_collective_max_Q_over_a": "04bac0b32b19029d774e2b5a14593fecd7dd2f8ff8ddca60b8be08e58e45d5c6",
+            "build_streaming_ev1_max_Q_over_a": "8498332dec9716b52427dabf6c22e0d624e33286b13327e22c5131f3e4c33fa8",
             "GridSearchEV1ActionReduction.semantic_key": "d1760804377fac087e3151a6dcff3c5293e984eb79b4f3f76cfc46caafdda923",
-            "_StreamingHardMax.__call__": "d0f0635deab0c3ee0bfde7d23d0a9a1062d896e116bc0250dd1bbda1f3eaea82",
-            "_StreamingCollectiveHardMax.__call__": "bbeed1f3780a938705cc0d076e53e0774063e6c3705885cd4ecff99750b8c6d4",
-            "_StreamingEV1ExpectedMax.__call__": "875de4ae1657fae190018c985512475fd6447677231086bdec2b1c0cbed7a164",
-            "_evaluate_ev1_branch_block": "301c694809919e21aa8afcfcafa879383208870fbb45ca35970b3095a34391eb",
+            "_StreamingHardMax.__call__": "e2156e188b723898384fa7a9010d0758eb7ca76ebd053548a477578be4dc38ab",
+            "_StreamingCollectiveHardMax.__call__": "68f62a8f6ee8ab3078e823db4fe5b8fd004a00816a70f208161f1360f8efbad1",
+            "_StreamingEV1ExpectedMax.__call__": "47eee10a934302721e4c00efed7edd7a5c96f8c45df8628855a8fdfcec5f10e2",
+            "_evaluate_ev1_branch_block": "7a1d1271b1a3594239af45885958c8ed8a9538cf4a5c1d90c2be07621f0abbe7",
             "_evaluate_collective_block": "749560fecb8e6255290a47b07e1cdb84f8c13db506caa11ea178b8ef3c4b3b57",
             "_scan_blocks": "90d220fa12e133d9921aaad62053012fc47ab1917b16a623db2abea8a2ecc62f",
             "_reduce_no_action": "27a09e4e36247d95db9c565aaefa311f3c1ded3c88889f0ed305cb825bae243e",
@@ -1739,8 +2294,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_initialize_ev1_reduction": "41728c9433880bdb06c0ab5d3c0821a7f100f238fa1faec90dc5ca967c627650",
             "_add_ev1_block": "5c63a9ca306c889a05581aaab90a9da4a43082772a67a7098603818fc5dbb283",
             "_finalize_open_ev1_branch_group": "f1eea36aa27ec48e7e79557c8928ed62d5e6cf01d0cc100a8e558ebdb31196fd",
-            "_scan_ev1_blocks": "e7e3248f6d4c9e175e76f3099655e7a1fb830c83803d49b89a912d8f53ea6f3f",
+            "_scan_ev1_blocks": "7f1f0ab496261364c926ee4d471cde118ece81982c8478f41314a2b8b0f67d11",
             "_flush_ev1_branch_group": "cb87cd4217df5fb3e45806593d2013a2ba452f17cbb08097a9d0cacd1e6f9270",
+            "_bounded_hard_max": "867f76a0eb3f9aa0d80efa3afb953e488b8a1c178fa3be3d45be40c9e593a483",
+            "_scan_one_ev1_block": "ba9b490e0b5b3f11aaff98f058b13947d42d5ff0c8f5a7fab842dbf6fc391857",
         },
     ),
     ACTION_REDUCTION_SOURCE: (
@@ -1755,19 +2312,25 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     FUNCTOOLS_SOURCE: (
-        None,
+        "9b6135957692aafb65ef18aa6e61e0b4ee8045b85a7baa79a9d1c65c082153d1",
         {
             "_split_bound_arguments": "d31630c0bc8f65a362f33f5cf43b4a668cc63fbe6e9fdda820ec0e225308c62e",
             "allow_args": "aafbd21439f91d8e29c52097e4b0711469942a9ca6bafce071278ef69b3d78fe",
+            "publish_signature": "5fc835acaa1bcc26f41d666c1d3a28fe82670f45916f59152aad1e77bbbfbc5b",
         },
     ),
     INTERNAL_OUTPUTS_SOURCE: (
-        None,
+        "17c81a2b6248f4c2f70e55954964af1628b65ef085e2e315836dd6ff11da269c",
         {
             "resolve_producer": "ca6ac0df113cc1a3eb2d3eae188ac842b33bf49434d6fd76a9d5a631d6348f7c",
             "assert_width_invariant_internal_outputs": "cf54d009a3abce9124ea579209b720ab06f7fe9bff641753f60753cc2ab1e975",
             "consumed_producer_names": "6c7019c97744a8bd73f34344a6dc45f195972e393dfeff1d1a206f0dce286ee2",
             "internal_input_templates": "6919cb41a458780ef41bc5bf08f5cad5f8097137461b73936dced1f0487699ce",
+            "_select_path": "1d4c7b561538395a9e2499acec2627f5ae2b9281da9f6a555834293c475aaf5e",
+            "_leaf_signature": "f2a4821d539a8c1f7a183e3f67d0d6a3bfc2b67244aa323a51d97c018d0b617f",
+            "_published_signature": "0dd263a6830e3097f7414b5c8a674f42e339f094a2459d2a6999f6748d0619aa",
+            "_tree_signature": "aea6cab8f3b6aeb31194c7fad76d2d1f061d338b1286662a07486009a5ca3c2f",
+            "assert_internal_inputs": "87915fb8a1dfbd3a8663b3cde8df68dda0b51befcf67780f86b9d71c039cfd00",
         },
     ),
     COLLECTIVE_ACTION_REDUCTION_SOURCE: (
@@ -1795,20 +2358,35 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PROCESSING_SOURCE: (
-        None,
+        "ec2c399bc3c3cd4c01cf408aa3c31a75123e0f7c9ab8bbefbab6bfb81a869c9f",
         {
-            "_build_per_subject_decisions_per_period": "40196e37f9dbaf14fd6f9b9c7ba70b676bac213fd2ffea34ac8a57a9e4b2f3f4",
-            "process_regimes": "c8f926e1179b7b4c9b6d632a882b617a7428582f26c1aa3f9b8aa29385d35d1a",
+            "_build_per_subject_decisions_per_period": "b9dd72460ebf6d266124f0c4558c5f55d0a73d0995ffe6d48ef0c004b58202f1",
+            "process_regimes": "f64a4ea27647c308595c95debe5fa401ae3ae9de8d7fac479c41b0f585a5a6b1",
             "_TerminalCarryPeriodKernel.core_programs": "842c31af0bea766bfd410783881770152246a825505be327096c117f60ee65fa",
             "_TerminalCarryPeriodKernel.with_fixed_params": "4ee13dc7cbc4ebaa68102cc6eea4272791590fa1005080dbbbcf898e5f92a8f6",
             "_TerminalCarryPeriodKernel.__call__": "cdb11e9a08f14bc6d08289d277ca4d33d897553e16fa60eb7ff6ef36260a75a1",
+            "_CanonicalRegimeBuilder.__call__": "c1f3012a579b3dec41db8059d0240bb854556b982aede2d8cb200e3e730e2f9a",
+            "_prepare_scalar_egm_query_models": "14738d0d901df243cadefb2ce4b5f38570d719c23570785619050257a7aec0bb",
+            "_fail_if_a_declaration_moved_more_than_the_kernels": "77f7d0d6adebd110f143c0156321536d67434715df60d1c7375fbfc3d0ac269e",
+            "_fail_if_a_continuation_demand_is_unmet": "549fe3f9640f3cf3f227ec0a2e209a692d02fa7ddba0bb407879aec812741cb9",
+            "_build_solution_phase": "ce652a6e6ad65dd6c5fc0192b88622628f91bfc01ff64a84e029f8b93648ef39",
+            "_process_regime_core": "a207c8e280c908df1d5251a941fed5b189ea8faab985dc15e0d752aaa9ae4046",
+            "_prepare_dcegm_query_models": "9dbd436a6be2af9365412d2c594afbea4335103f3f2a8234c9f521605d5f85fe",
+            "_canonical_constraint_routing_inputs": "b014cb91c503eb021cd7aee8b6ead91fa54a86b0ffc1b8fde29e80978b53327e",
+            "_prepare_nbegm_query_models": "8426b07f922de19e0fe9a964db097b2f155817773df5b732ffef406437657e1e",
+            "_nbegm_adaptive_query_spec": "89016e541572f19e329d79e53e84bf467c350e18329c0abfed2de825a8bf1623",
+            "_nbegm_evaluated_query_predicates": "4a734bc9d0020b846a7ed8e56c318331ec1e414191354ee55194c39d0f5e6b98",
+            "_nbegm_query_evaluator_targets": "4eca3820123c39974c20fbb85dffb68fd28286773f67a225af5a1e84aec36c33",
+            "_nbegm_query_function_pools": "3d5549c36db6f139068d67a76c0234a3055f84989391576fe5615658ba39ce1b",
+            "_nbegm_query_row_state_names": "f398c3a4c47b01a2fe7811f0c76f4ed01618129e38e7e86d703743fa24dea2ca",
+            "_solver_with_query_authority": "203ac0704791124880c3469df554795a1ffd4691cab731bf810825b79809368b",
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
-        "8fbfa5030272bcd1d5cb0bb626358393c9a9d6d74a3f928dfe5eb08be1e0011f",
+        "6be4b6cf81205c0e447ccc57d29bd8bc082b6dc5c113f518cc9fa1c15ff5da1e",
         {
-            "build_simulation_programs": "db6169a73ead1f8473638a52effd5393162d5e8d3a347280428e2c195638d1dd",
-            "_decision_programs": "bd9e88a1511edb65636d9d154c56a64e78a33b094321803cef6355b4c6bec629",
+            "build_simulation_programs": "8ceaebd8690ffa08850a57ea1815f2a644ab86fe908b3a870ab0656422333133",
+            "_decision_programs": "10c0e3f4b802f47dbfd03d577a518f9ec99a2019d0ebc41f87052c3bc0db3a67",
             "attach_gated_simulation_programs": "e92be1be5b6628706b2a2c7cdfb749b3936ade622d352161fb72d9d949a59cfa",
             "gated_simulation_programs_ready": "fe5419d6b84ba1929acf26cde8dc2feedf9589a2345925a1ae6de25fde674def",
             "budgeted_simulation_programs_ready": "0cb813fd106dee1a74a7a04138ce35ed40fafbefc5731cdc618535313fc3f87f",
@@ -1817,12 +2395,21 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_fail_if_the_streamed_reduction_is_wrong": "4393d8f3dc1dded01122dc6bf97e4f51c88e52f3804f79b08d600bc75496dd0a",
             "_decision_subject_arg_names": "3bf80bc49a6326e6be6369de80863482db1615e713b95ce476966e9562d6fde5",
             "_decision_value_reads": "7480309f78099994ba417dab87ff44c8ccc545f662855a44bc142bd3509cc1a9",
-            "_decision_body": "b888d12d325f80f67e2e7681ed2938b53a0625b3925441e791e8ea5a32450ce4",
-            "_StreamedArgmaxQOverA.__call__": "806859bf8272d676d72b70bb5ede5f7b044160fd1190534e56bf9723b7fe8cce",
-            "_StreamedArgmaxQOverA._fold": "a817cf3a8b385691bc4b98405197fa89fb5737d47cc61157687b847a83737ea1",
-            "_SubjectTiled.__call__": "f62934dc58bb872bb7f39136966c083d5a53a56aea86ac606ea5eaa972ce2a04",
+            "_decision_body": "ad98975ce27bda3e80b77d4bd8bb8316fc68f78445bc2c1d93c2b43715c9c3fc",
+            "_StreamedArgmaxQOverA.__call__": "3c4cb78e3289f57c94159a454a18cca66ddd03be73a7fd1212e05892944855f0",
+            "_StreamedArgmaxQOverA._fold": "c4cdc93b6c3412703e9b5edbf4a213bc9beaed8f5bdc9132600fe7de398a143c",
+            "_SubjectTiled.__call__": "1e702f464c54e66f14d2119d2d1fc83bdff910d05f73de133882bf0e75dc0496",
             "_evaluate_subject_tile": "da5ea37bc7faea1405b83b856ca8701e178e0daf0a26223eb70146589d6d26de",
             "_ArgumentsBoundAtDispatch.__call__": "46ee403fdfc0849f77b0727c94064168ad21c00f5072d34d15247e939594babd",
+            "_bound_output_roles": "24d474508a9c93b1285b02b6815293163e156fd550fc0811a455e3025b1d2fef",
+            "_flatten_subject_integrity": "cbf693667cd51e4cf911dba7f766145f2b2f05596291c8a7aad2eabcd714a158",
+            "with_kept_action_parts": "8629cf154b78299c070d03e96d74c5d8381988ec00f17ee68f950358686d2847",
+            "_SelectedOutputs.__call__": "51f650b139bfd1b6f78cd8f7828b62c2408fa8b6fb88750043cbc113abccd75a",
+            "_decision_with_action_parts": "a74cbfa2f04e6f1470ae8153cb89e63e46645db7875a6f656d0b7c8942f6394d",
+            "_DecisionWithActionParts.__call__": "1dda89d16e41b240954e4805ba50f553fba40b11f3aae78c7189dbc40cd276d2",
+            "_BoundActionPartsBody.__call__": "94c5f1a3b72c2803894adc074844be1200028abe69bdff83fceb105e5f93961a",
+            "_evaluated_action_parts": "eaa6a1fa9d1a3da4fd0d8a8e8f52446b9cee5186dec957f40309f1717f1e7fc7",
+            "_lookup_body_and_roles": "22ddb336908ea49df7d212355dc896ee2c69f5b02fd51b6492c515f2be8adedf",
         },
     ),
     SIMULATION_PROGRAM_TYPES_SOURCE: (
@@ -1837,17 +2424,39 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     NBEGM_SOURCE: (
-        "8bd9d4798a0eb1d72909116d335eae070d314995e2c759a19634bbd3dc843069",
+        "44da39902779411d2c625e9f968130d7f30f9347d69e02a52ee6658d405b1ff7",
         {
-            "NBEGM.declare_continuation_reads": "80df8b31258d82ba39fc2429030f30f1377f8875cf6e0704ce99e255dbb7adc2",
-            "_with_ride_marginal_reads": "3a8b8d0642f60b4af9db3784e2b38394dca5785c9a69358605cf928721442747",
+            "NBEGM.declare_continuation_reads": "b3aea84195a77cc3f4de92e284acd79cbb0e452f0f204dcd91b2aa930b4e632c",
+            "_with_ride_marginal_reads": "8fe7ef4e91312fedb70de6d7bc72cb38fd80b50798b6d6e4a4ce712a7507cf56",
+            "_NBEGMDiscreteCore.__call__": "d48acca0f3ca7acbc0c5e6b431e48075371006ebce3052f3b187a40ae4c0592d",
+            "_NBEGMScheduleDiscreteCore.__call__": "b571219f4079410c84553a90a9b5038ebd7b1d34703edb8072c0d30980d5be68",
+            "_collect_nbegm_discrete_spec": "a2c4aa8a5c086950a395d05396d059539efbc6afad8f971cc915bd844040ce3d",
+            "_collect_nbegm_schedule_discrete_spec": "2b2cafd7f056c1f423cc863ea2c64f9d628f43e7e944d90c3252d487c7b96390",
+            "_NBEGMOwnedSingleAxisCore.__call__": "2ace43ef2be36ddb3c0b1e2141b7078cc504d24e8178a65fafd92f30b99a5ca1",
+            "_nbegm_bounded_output_roles": "19601c0b0c3e2da075cf93c7efbe8487e913fafd2a2fa44a1598e84fa294581d",
+            "_ride_along_output_roles": "ca59e4477820cbadd82f07ff958bb5d0b5c2f3575ab88f54518ce50b5191ec50",
+            "_with_nbegm_scalar_carry_reads": "91f139378fed563847b502c36c132335d6f32893f2a60a5e368b34d81e475459",
+            "_with_nbegm_scalar_output_roles": "03378414f32c15bf7cffaf7225bef7e6c041642cfbb90a0e2cd1082259f80865",
+            "_NBEGMActionEligibility.__call__": "3d19a478e3a429c3f7fd7f67747a7b250234b57681bd9ca01d84ae48cf496373",
+            "_NBEGMScalarChildReads.__call__": "c8a9608a6feed12dcdda445db62f38600937a0c5bb15e37c2813ce0e7242cd28",
+            "_NBEGMScalarChildReads.read_rows": "da3d0ac2ee97d230f5496f50806da4ddb30fcba6e869b2ea66a8ce872e3b370b",
+            "_NBEGMTabulatedEulerLaw.__call__": "4fd15ffff0ae3fc44e0faddad861938cfe6b64341c595f04ccb9b92b9e51ef76",
+            "_prepare_nbegm_scalar_child_reads": "c5c220b4466a0b3cc771b64e822c5df4d7f9f223c7f84c04a29619aaff0e2d25",
+            "_scalar_conditional_nbegm_carry": "a42ee06742ab3a35e1baabce3245976d5b3fccc73aaca2a5510c9e4da46e000b",
+            "_with_scalar_nbegm_sampled_run": "bf976784d73cd65045a661a11407bc7076854d1a28ed1ed507da3a344234f7df",
+            "_RideAlongNBEGMPeriodKernel._consume_output": "ea8a7bd2399b369945b6d31bb35951d0ef863c8604745374bafcf48c49518767",
+            "_bounded_nbegm_kernel_output": "dd01ddd425e43b5aed3dd7d186b4beae81f6cb1b78617ee0c641bc302e6f136c",
+            "_fold_nbegm_scalar_read_records": "ee39b1847d388c84d876e51a9f0160eaca644372a7d1ba0d583b2deb89da6440",
+            "_nbegm_cell_continuation_columns": "514ab277b764e5dfecfc321e0311d975ef558c99cdfd69edad0fb6e687dccc92",
+            "_record_nbegm_scalar_child_slots": "82832fa81c78349fad64d63197dbd97b75774a01bfcef32169427f2e239de53c",
+            "_validate_nbegm_integrity_slot_counts": "6b74be7ee8f8a7dbfcb6d3529964fec351e5da61eda773f8d0b1df7aea02fafa",
         },
     ),
     CONTINUATION_ARGUMENTS_SOURCE: (
-        "1f622b85eec9efc12e42de55288c75ed71481cd8c5339903fe56b9e6252f15d1",
+        "0ff76c3bdc198903ae6a2cbcfaa1d4ddea3415a92c3ba29a77cea338812457ee",
         {
             "MarginalLeafArguments.__call__": "e9887274c66d0f3ae9491e7f10524aae4c0cb3a0536dbeff5dc17ab8abbaef27",
-            "MarginalLeafCore.__call__": "a27503e19218f862da83e64aff785cab8aa99e8da020d6e708d32edc31bb7741",
+            "MarginalLeafCore.__call__": "aad3b455600f6cd5e695f44346904adb94700b92647c3fa20b275dbbd6d736d8",
             "marginal_leaf_reads": "02ce2895a2ee099f1df276087ebc98d4e88c4bebc0fe841e4af2bab72a0af9e1",
         },
     ),
@@ -1857,6 +2466,727 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "replay_period": "b7de416a252dccf06fc5390f7739a17298dcbf3ec372f3c61fee4087afe6f23d",
             "_compile_cores_for_one_period": "b4e2f901108d74b0e9070889f288a8b84652e56cad458463ce3d2859a14dfb18",
             "_core_build_context_for_one_period": "99623b13b7115d3e2bae90addfce95ea9fa10ef237529287a2c6cd3bab1bd8c0",
+        },
+    ),
+    "src/_lcm/continuation.py": (
+        "d0bbd252e60a74c8690b856487f8ecbc6509864aff9560ead5c78a9fd77d3660",
+        {
+            "EGMQuerySpec.__post_init__": "a5dd39fe4fc9e64f4bdf6fb48e13e5532e9c113c63ea066331445213619adb5b",
+            "EGMContinuationSpec.__post_init__": "858421c8261189b44318132290da23dc53c63409cc4431c012f83b9aea63a480",
+            "validate_query_bound_authority": "c9b892f5e998ceb1a11106c08a3bb327c251bccdf1f3488f93887834b5aa5194",
+            "_same_bound_identity": "9112bff1752addf0eb915aeb1e2be156010a1ea7c17a46d7b46ccd593876610c",
+            "validate_query_model_authority": "fb9dba11e3aeb200c862bb64e11ce0471a4b2d1de2a19116d09fd1eee4543ad7",
+            "build_query_model_authority": "1f113571c0f3455327292f461b162f8f9fee93efec4eaa3403c45d57de7024e0",
+            "_query_bound_evaluator_targets": "9f82f0ea98ba9b0b214a3e59a651a592b7a9185a549e4012620d89f90c9bdf45",
+            "_query_evaluator_contract": "5b842073f2a991ae42b1f81aef724a26b7e60d94c6f9406c3fc04e2e84371e30",
+            "validate_query_evaluator_authority": "872b9392f5b474fba7bd37ce680665a75c56ebe7f1f296b215e052a6dd285277",
+            "_adaptive_evaluator_contract": "8d82bb532477223e972a3c02b96b7ad44d6aa6f6923f0dfa116d0976268b0e5f",
+            "validate_query_template": "4ffc7186abce559cdb769b04d3498e7a9e72abab66c0426979d0554765c5eaf8",
+            "EGMRowTopologySpec.__post_init__": "b8b3d2ec434b2182bd79c420dae4bedd4c144ae3ddaf2941e5e52a73772ba3ec",
+            "_validate_row_topology": "002d0b993c0dc92edd86fc40dd102696c80447c9f3235fa9ae1f9f58ff909ca3",
+            "_validate_row_topology_authority": "9a093fb013afd7594cb1d6d0abecf97c42f17cd2d20cebf6c24f3a3b0b7f4023",
+        },
+    ),
+    "src/_lcm/egm/query_data.py": (
+        "8af1349b05d3e0a4afeb519c9ba25630c857940dfbce66aa7d38dbcb421393e1",
+        {
+            "EGMQueryData.__post_init__": "e24a38d87ee90f33f88db56e36018ffa4366d8032a9e98259c72ee8dfed268f7",
+            "EGMQueryData.leaves": "59270bb8379faca4d29c34c474710fb38ee31888cd5ded73da165b329f8df5da",
+            "_query_record_leaves": "cbaeaf92f023eb21e512deb4cb8c5ed3e2ef04318f2e22d2d5069933112c30ea",
+            "_flatten_query_record": "8cac78187d8e9de027cde73c68bf20b2fb447a27a145a8d6ba5be3e6f777a9ab",
+            "_flatten_query_record_with_keys": "2fdd9afcf893c8ec6ace15244f7f4ae5074f79a4ddd03f1801980e5c83a53836",
+            "_unflatten_query_record": "e3892756c7f98ed7fa7ca2ef9ba126727ca4cbd9f8e9a16338bc0d280cfa0907",
+            "build_template_egm_query_data": "9399d958c45e4c9031ce049e0d2ab4a2a944d0bf2668efaa5314ffc7d1158007",
+            "select_query_data": "3aea669e4e555f68e26f5d25b23b632d16f7ca47becd26618433610ce5624708",
+            "select_adaptive_query_data": "bc1d24d555915e65597825be2147a3c35f5c30d87ee3a085f26e086a9bdf88ed",
+        },
+    ),
+    "src/_lcm/egm/carry.py": (
+        "e04fc47d386f539ee77c4ec82d067d7f178e059c15fd2841581af81e2804e756",
+        {
+            "_flatten_egm_carry": "63539b8a2847824f1b7ec52d33e8ffac5a8a8ab1905f9bd8be0d82baa8b38260",
+            "_flatten_egm_carry_with_keys": "c6298ec459ae26b58df7921e6ababc6be9a04cd46c77726d8dad064ac02dec6f",
+            "_unflatten_egm_carry": "f0c5176faf75f5f36f223b180c8917f5d56a18ce0ca42a7fcab1769cdb08f1e7",
+            "_assemble_egm_carry": "393f264afe7531cbe47997a54ceb807221b9991925865e3974d250734fc9291c",
+            "EGMCarry.leaves": "3d181c30a7098d13603d123e4df92ab034b423e9507bac29984b1c259d205f01",
+            "EGMCarry.capabilities": "1d11858ae23e0a3476dae46784b7876b29051409a9f3309db9c7073bef20c5f3",
+            "EGMCarry.value_at": "9195e6cc1eedd706bb39d583f73c465d9fe989677e44c7690ea0fa1d697ae98f",
+            "EGMCarry.marginal_at": "878f8dc72bbef252a9ded576c64b6ed55c12ab1ff261e85071283710a5106996",
+            "egm_carry_role_tree": "f4ebe40ea7cf992a69292073e7d132cf107064c75c74cc359d947641122c4d76",
+            "egm_query_role_tree": "264e6d65f86a12cf22642cde27b757c95fea9bbc9b894aae53aa122fbaecae87",
+            "_query_output_role": "0d00381430dd422c34ad1f8ab79df64038ec2f2b6b84265148d3c4ba4ef3fc92",
+            "stack_egm_carries": "1d3b071519e08f7b6eed53b4dabe86fc3c832e578a10d0142f2ea74d460d99fa",
+            "_stack_carry_leaf": "1b04f3c8bebcd95e9356839305fe12c4e337a80bdd755afc3349ac4fb0d9c6b1",
+            "build_template_egm_carry": "ba8bc7101e0259fc8cff2e09945771c2e5ffbc25572e67aae478e536482c2222",
+            "shard_carry_template": "fa806e13d1779f9e774557de1ffac6e52e56924d7b7bfc7997745d2d4b0d794b",
+            "_place_carry_leaf": "494929d178f5e05a4a96ff42fdd324ff3a83bae35e0efcfaab0901fd9f4073f3",
+            "_place_carry_template_on_one_device": "e39f96351821c5a50dea7cfffc858471f28c9b6c7777db28814f2d671e1e35f6",
+            "EGMCarry.query_data_for_transport": "842f1b02b40dccce93a3c7d100d178d8d9f045db364c66b068b09203d0b2e4ab",
+            "_flatten_owned_row_read": "3abf8e5794abe69e0f9d5b374e8e7bf33e2aa689c64cf3861a17622067e3d9b9",
+            "_flatten_owned_row_read_with_keys": "232a25a9890c618746f9ac0ac6c88f37af5351c35b80aca0aa35170ba15733b5",
+            "_read_owned_channels": "e25c42af4d22493b9ed05855d71d2d33faa498099473f7bb8a2258736aacf63e",
+            "_unflatten_owned_row_read": "3547855dcaefc477c37b926122041c0609c0858d84ae87190db77c22f25cfbcc",
+            "read_owned_row": "d6b96802842c1513e8d7bf8b6d44c5e241bf6d6dea4ee541f185da3348c0fce3",
+            "read_marginal_row": "be6f84b6b72a770593c02a229ba0f3154b81baa823c904b7365bdf469b2a38a4",
+            "read_value_and_slope_row": "0d8d41de61b40c01664403a6e43e2391149808cb6ef719e63d63782a1d295e9b",
+            "read_value_row": "86acfbaff2132e44ab86f33d4671619fb3c95c0d605dbdaf061fb36ad5c01388",
+            "_get_owned_local_piece": "ec4a2000545c6f7cab63b80314fc6e4f56a3f20fef5091282e06dac68cdaf734",
+            "_read_owned_row_with_support": "8394d3df0bd08bb21219ce0bb8e5a9009622dfd3edbb7929c185333b332b5013",
+        },
+    ),
+    "src/_lcm/solution/egm.py": (
+        "c8bc5beafff52bdaf2243e6ae1ea1a338f823f299bc92e50b5a51f917fa7c84d",
+        {
+            "_EGMCore.__call__": "83fee11d9e754f13eb70c29bc825a42de7f1b1dac2ddf1ead4fbc5b66818df70",
+            "_EGMArgumentBuilder.__call__": "6f801c142b046fa383a0129dc48e7e85c63fea66e8db27b1ba2213de4363c9f3",
+            "EGM.build_period_kernels": "3a55fcebeb5b7a1143162b3d74b111e7b3a738b5ed5eb7afc77df293b52c927d",
+            "_build_egm_period_kernel": "1e316f311fda317155246bcb25a9f8b102c93c6a7f4032270fef1363076b0302",
+            "_EGMArgumentBuilder._law_readings": "f85bbf2978a4e71f1899cacca7cb2bbd9a5b54079daa786fee2735fb7d5652d3",
+            "_EGMPeriodKernel.__call__": "68fc59f9fb1ec137a0a012bc1162bcb26d5d57df25f4d677d0f54c45a98c39f1",
+            "_scalar_egm_output_role": "66b3813ab42722b10b28d2a57008fcc40cc5bcfbd83ffbecd3c9fd6d0ceea641",
+            "_build_egm_core": "424fa2bd376638fd6cfa0b5612aead6acc711f7ee90d2475c288790414223ca4",
+            "_RegimeMassGuardedCore.__call__": "c1627ad6fa12c501cc8bb00f0a524fcd3c6bf96c8e4e037cddbcb295d035883e",
+            "_has_mandatory_child_failure": "45e3c79e9d7c78c7e260fb7312f54913b533080fbeb6f4339a6ea6890be51299",
+            "_EGMCore._value_reconstructed_action": "ada1fc964a5168a23b1c2188e7d3bdb50e91b3106ccfb79206de99f3f7ee3c46",
+            "_LiteralDCResourceTransport.__call__": "e7e5b6772745d7aeed3de26f6455db2712e76a0c8858712960a7d54764076602",
+            "_LiteralDCResourceTransport._at_state": "38224bc9b104d78871986776f7c1adecea3b573dbf60a0e1cec9f69f6ba969e1",
+            "_LiteralDCResourceTransport.value": "57824eddf242a5966f9fe3257daa65be276fff2a03f67c3067ce63d17977cbab",
+            "_build_literal_dc_resource_transport": "1c1bf883cc393b830252d8100197fa878eed0aa0b15b4125393019ba936731bc",
+            "_read_literal_dc_linear_child": "4c2b98228d468b240e31c41b4049b159d2ac099f1eb6cbe24a4fa8b104e174ed",
+            "_read_one_row_dc_child": "847665c3d9a196cb052786b0b714c88019f99a76596ebeff958d909a4ffe3f24",
+            "_EGMArgumentBuilder._retains_regime_mass": "e60931258e6d2a357a5495425865a6ba1b48c04b1026fc87daf5d8be0a43db31",
+            "_EGMPeriodKernel.__post_init__": "da494ec15aad8e5570212813d4fe5d347abfb83dfa64f3e6f2656d53a6296f7b",
+            "_EGMPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
+            "_EGMPeriodKernel.with_fixed_params": "b1dbe6505054130c1fdc98533ab637c8f40062b39f79bd42886e1329b409a8bd",
+            "_build_one_asset_carry_template": "4a91c99f8f48f46e473ec6cc98c082bbce51379435d8d8a11dad538199336cb0",
+            "_one_sided_boundary_savings_targets": "bb5854c2b079b1b20599c1ab903c0bc1b13bfbd542b556c0e85bd14fc240287d",
+            "guard_regime_mass": "e9cba031ddd8b786eb0edf5116967b7b43d73d5b95a44752637ca9f2dc2b844a",
+            "_EGMCore._prepare_child_read": "d98fdb0fce7084dbcd6eef24c1a2d94c1fd2b75b930d67e90e7f9b79185abe7b",
+            "_unpack_scalar_child_read": "82c51619056c8571831c465d1f177d145bf7360b2bd1241fa075f601c4f1ade8",
+        },
+    ),
+    "src/_lcm/regime_building/Q_and_F.py": (
+        "599609307d800e3cd5437b9cac01f7a2de10d3570d32689c857049d9813690e3",
+        {
+            "runtime_bound_specs": "84f9e94e2f2fa9cf0f27f8900a244cf80b64681bf23b2973e5c08875c76155a0",
+            "BoundedQAndF.__post_init__": "ba409022a0b51498849a82498a8c53e3cd74adbab150de8880eaebdb81b58d75",
+            "BoundedQAndF.__call__": "3d3ffddbb9412a25db2d792d2a42d5a1c433ca533f4c64e165b42ee0e61015fe",
+            "_BoundUtilitiesAndF.__post_init__": "c1910d1df00ea9332bdc2e2f62a8fa205da5e2acafaf9c1a6cd17bb4845cc3b2",
+            "_BoundUtilitiesAndF.evaluated": "b0328b23db1920d3396323688e198570861af372edaeb49ae571c337fe0a653a",
+            "_get_U_and_F": "e1d38f994db67b2beab67cc605b4f99570f97408d573b4678ca635eec7c54026",
+            "_BoundFeasibility.__call__": "7683f1d746db4874566047d2c4b3065d93d85a628297efcc8437f4e8af7e54ed",
+            "_get_feasibility": "c7263cb59e61c0aa9196151b4be1dca447878fd62b49e09e2ef738a3fe1baf63",
+            "_QAndF.evaluated": "695280e3cbcaeded86f64ce0bcaf2b7e1f94fe919612f79b0fa06404363c9807",
+            "_TerminalQAndF.evaluated": "3acd19ef48ed2e096356b1ab586b08889dbddb7f6305960286fc6b151f96d050",
+            "_TerminalCollectiveQAndF.evaluated": "beb1c70bd52c103fe4ab904d03925f4baafb8c5a635f466f0177a70cb954bb81",
+            "_CollectiveQAndF.evaluated": "97dacb482168e79164ceff5a5c52b129c5505711c52d4037e854d8cafb312b6e",
+            "_publish_signature": "29eed5ee787b943c47cfea245bd33535d213c0b2c21d44e05247fce03cf80980",
+            "_QAndF._evaluate": "830431b717e7bbb7d3c4ec5f3d7c820054eba32a981f2a6546272e9fac6f2fbb",
+            "_QAndF._parts_from_utilities": "0eca048fc8538311357a688c9745ee6c104554d45c26b9d8bb740e228e883365",
+            "_QAndF.parts": "976499debccbd87af6f279bf64a78cd042c7121f689fdc9d3bfa4fb3b9b8b8be",
+            "get_Q_and_F_parts": "9a8de79067490b976265f47f0a5ba16de023377ac082f14fb84a1296ac655a90",
+            "has_objective_profile": "fcc251061f52d4faead1c847883388539ce8a5aa1aeda708aa286a015148c81a",
+        },
+    ),
+    "src/_lcm/state_action_space.py": (
+        "046d6d4d3354ec74ff1717c549ded96f697f094a49365cf2053a446061fefefc",
+        {},
+    ),
+    "src/_lcm/egm/budget.py": (
+        "92b42d54a7fce80057798bbc80fc3f0c5c770c9efe4d73b772fd0d59102235ea",
+        {
+            "get_intrinsic_budget_constraint": "828ca3f365fcc19981783af5674990ab7a509a9447a8b4222b639ddd9f0208f4",
+            "_IntrinsicBudgetConstraint.__call__": "5a80f9d6eba5d8a1b9801432e627da80598e79e536a31e0987265bc8f6692a44",
+        },
+    ),
+    "src/_lcm/variables.py": (
+        "b855682174aa1cfb906cf87c68147694dc25f879247518b77d01ae6c266e38d6",
+        {},
+    ),
+    "src/_lcm/simulation/subject_parallel.py": (
+        "b9b86ad8df5f8e75184b9fe4831cc72ced54dc08f96d252913aa1f4a04b9ac8a",
+        {
+            "shard_subject_function": "d92328e250cb52e6fb457939c3eb9eb676f747c982ba38add780147aba04cce1",
+            "_evaluate_local_subjects": "bcf72e41a7312c0428173031dfd8c1a809a8ba2027966a2c6502dbbc5082351b",
+        },
+    ),
+    "src/_lcm/solution/kernel_output.py": (
+        "915d7f4c076a73a642bb8138a893f94379aef55f1e107f438f9811d6124dc8ab",
+        {
+            "consume_kernel_output": "303e19c473b70e805f204e8d937d1887c991a5378d67a3c6a5bdef1c2dce2cb3",
+            "_validate_generated_continuation_authority": "f1340babcab57f05de8d8b64ddae25d54e0043309934d52950fb26632ec52b0f",
+        },
+    ),
+    "src/_lcm/solution/landing_counts.py": (
+        "cbbf47998cfab05667c081e268847036ae6344dea4c40ec9e957317412602c6e",
+        {
+            "landing_checks_of": "5246312411fdfca9375fdc34b38e57a15620ff2a1da81d0d5d6c67bb0a74b9d9",
+            "get_landing_counting_max_Q_over_a": "f57081013973a279fead4eaf296eba5ab3f9322c364b55a01ed7e37612779778",
+            "_LandingCountingReduction.__call__": "faeeca7757e7ca66f394f6b72e1dde7ad58ca7ebd81f73d32830a3f056a30a3b",
+            "_LandingCountingFold.__call__": "6d12d6fadc0bcea3f456324e0397e1e860a74cf1b4d5593919ae49287c445b42",
+            "LandingCountedGridSearch.__call__": "a2e4c8877e1c1a2c7313ea3537866e5ece847751ba84ed0032d21ae0b9bb22d1",
+            "_feasible_landing_counts": "1ad2cc2b01dfa37959918d4aabac29875d658ffc3b21924e1c981b2769226668",
+            "fail_on_reached_landings": "f730556e8e8e14082ce9444b045eeabfb34d3dea6774f97a94ba599cde36bb25",
+            "_Evaluated.__call__": "9752355eca7af9b4a81c12bf72eecc6fb2e16f05e1f4f3b802cf0bd8f87fc046",
+        },
+    ),
+    "src/_lcm/egm/outer_envelope.py": (
+        "6e969e5b37ade307cfbdd88fe85db8b45f3fe5082a6b74536a34070cabc84a01",
+        {
+            "stack_candidate_carries": "8748c418485718ee5fde654aebacb42f41d62fdb721a59833a56c2918543c217",
+        },
+    ),
+    "src/_lcm/egm/asset_row.py": (
+        "5abe8d492268b1c03f434d51c05af6928b3828ca18a97beb5e5d84626a824ea8",
+        {
+            "_SolveOneComboAssetRows.__call__": "3e5f29a1c3a32581da66ab54dc92ebc2268aaa57d97811c7052c941ebfc22404",
+            "_SolveOneNode.__call__": "1ca44b67900a887da6974bfa8b337a4fdef5fad3f2d1968981642d953bb586eb",
+            "_asset_candidates_with_direct": "2b58e8449ea43421ed118df2523a85af293981a95e4f39357c852c167156d9a9",
+            "_asset_candidates_without_direct": "f7ef520fb51ab568463ca9b2f68667459ca212a42699fca1ba1e43f984fef75b",
+            "_asset_direct_gradient": "b0c214f13ed17dc0b8f95cc973439bfb156c1def010f68d46b5f4bcd086f02fe",
+            "_conditional_asset_node": "56f1f5b20c1802a25f89faa8c48108ffa95318f423c400519afefd0d9073b3ea",
+            "_conditional_asset_rows": "ea0d0990c9bfc3869480d3bad892cbc81788154365a214df01e9de32884f4508",
+            "_finalize_asset_row_node": "6e6b583ef6687ccb58d739f00a7ad637177055cf093e6a30ebd60adc123f89d4",
+            "_node_value_slope": "5bc5e2890ce90fe67fb992ec104c4d6783573a6f0b3b226b6ce6c20b368bc081",
+            "_status_asset_rows": "402f4ecb9f972630c245c9493df3537fa1362654240438169c8ae0d8e14fb223",
+            "_with_asset_child_status": "7b3499350a8d6c510e4b60eb52e44cc66135f63fbc0d1b41f1a5deb35f88e369",
+            "publish_node_from_bracket": "94aa6cf964f2972a034300246056ec6e240e94e90857243fe5a02440d2e939e5",
+            "_ExpectedContinuationValue.__call__": "b640419789c95b21164ba51bd8ce9cca24641825fa2116fd5392db900152c1f4",
+            "_continuation_of_euler_state": "9c84c359d24f4e2a7ca29543b0edf3e84dfda4c63749b7f4a5d1d55f18b27d82",
+            "_get_expected_continuation_value": "f0ed81bf374283cb9f9dd548024b0fdd17392ea6a1390ca8a72902aaae0f5a0b",
+            "_get_solve_one_combo_asset_rows": "70fe4dc5c598f19defcc7f0c9560fea75959573ae7c74ca79959c0a303497a77",
+        },
+    ),
+    "src/_lcm/egm/continuation.py": (
+        "d9847169850fb421f7d36c57f55aca98a0e24c54d96c3bbec3de2aa67b09a3d0",
+        {
+            "_ActualChildQuery.__call__": "5502c0071b798d1ea39b340e99af4129f69217b977ef9b96d859fe0cbee41590",
+            "_BoundContinuation.__call__": "af88073d02a40eaa303869f1d041a48c7b9e69030f6548ca13ae4f032b2a92cd",
+            "_BoundContinuation._read_child": "131100c9c3a8878ba05a6a9a49668cdef21d4a8fa31dbd7aa55e8c711cbb9b66",
+            "_BoundContinuation._retains_a_distribution": "43a450ba3413f120181f194dfae6c406042169c6db00d1159e87697172e7b354",
+            "_BoundContinuation._with_query_status": "d45c483a993d2c779a87a937331483bcbff940878b0d02a27926803ded8789d9",
+            "_ChildCarryReader.__call__": "22fe9dea14ef7d307bd5db3dff44f61238c537ce0faebb5a6ced87033d6a94f6",
+            "_ChildEulerState.__call__": "239214c25754c91c9d8e9148f1c66483416f84732836ba5a82c62fa578fc8796",
+            "_ChildEulerState.at_node": "2f27f807057c87607e8bffd82e8927875ccde3c8c9d8ed520d0ce45c09941438",
+            "_ReadAtNodes.__call__": "930d0868157eb939414edec2534791e73458a3997516670daa558fe5dc392cd6",
+            "_RowQueriesAndGradients.__call__": "2f9dddf3b622a1447edf2761e05aa3e5a20b9105a1d4f8169f62f0393ca365a7",
+            "_WeightedNodeBlockFold.__call__": "2259fe809e394bacbc348e7558292c3369166b99de8fd5a9ef0ee7bfb15ddb64",
+            "_accumulate_ez_partials_over_blocks": "24ba6c2ce37945c51d349d9a6c4372ab9b83da52bbd85b097aea56ad1167feb5",
+            "_aggregate_child_choices": "56dfae0d969ac73978741d124fb72eab4b37abbc0a4ab3d078ed41bbdc3070a2",
+            "_blend_passive_axes": "ee86b0e59259abe870c8f24c290fe1b9188fc17c87dd6c04a0e72cfceca154fd",
+            "_build_child_reads": "e656e4f93a376ffe075025f35484bb98146ba28a5f4d4e69bf5779086e7f2ebd",
+            "_child_draw_reads": "245d5121170150b1d19ecfb78c05e2f0939e3d8a7072183ef92266fce4960be7",
+            "_choose_blended_side": "04879417051fa01bb194684a3231428730691686c39c6fdc4b3bb8c9ac7a95d4",
+            "_collapse_stacked_candidates": "cbcdf9e44c0137070f602322f6bdc138ab3e3ea6d990b3d176e85f834c8ed7a0",
+            "_compute_row_queries_and_gradients": "896ade9d239fd56ad6922dcb33691891925e60ad16bec8f7918fbcb22882b17e",
+            "_draw_axis_names": "eada09cbd8ef8a4c46b2fc9e58aa1ae723142fef40d4787a35864fbceee0d6e8",
+            "_expect_over_stochastic_nodes": "de47953c789dab5c465c463ee4dfc6afeff824358cbdd4758035df94521d89c2",
+            "_fail_if_carry_shape_mismatches_declaration": "bc3da4a413b8077a203b35ac1719533fee409cd66914ef6e832fe34e59a69b81",
+            "_get_child_carry_reader": "8c4074e035e25a6c9d9932fa7d3faf3b47360b53d20b1e77b7a2d9e3568d7d8b",
+            "_hard_max_and_one_hot": "2d0dc3e8a7958253577238e9c56cf1dc05f89da07387b3ce29304de688d260b8",
+            "_interleave_child_index": "e4524eb5c0036dee7ff31a0539db5c33bb985af69993bc070ff54eea2f113904",
+            "_is_runtime_process": "29a41a0fd7e57f305a64d89d737fdeebff52accab0667897e52144a087a7e468",
+            "_is_stochastic_child_axis": "7b92f49106ba332f46b2fe9881f7fc268cb823da09770fce7db4b6f9221159e0",
+            "_joint_node_weights": "9cad13fb36920eb93c9d5de9df8032df4b36995231b111fa9160dbda5e21454e",
+            "_local_support_values": "c5b2dfc7d92bea5af544ac110a75a84d5e95e1c28080af1760cd971cd0ef7078",
+            "_on_node_scale": "499ff177d987dbe6f8d25ca952bc7eeef76b3843cc20f1116c76e7f264d8ceb1",
+            "_partials_on_node_scale": "6e3ed59421e6391ddfb2a11bfabdd1f34f428c0abfd8e455b8b147c86f8dd6b8",
+            "_read_feature_child_choices": "d089831c27e0a1b8c304e311383ef63f3f53d5b4256670dd8f85842da2fb67eb",
+            "_reshaped_germ": "4ab4a03aace5a7b04612d667e4289161864bb28626dea40bdc518e43015da3d9",
+            "_seed_child_query": "75327ca4560cbd192699fdc7b8019ee748344497ab8de58c9472c1afae9ba75e",
+            "_stacked_blend_payloads": "d1c4a2f225a2ef0f3731d68572bf70411e4ac798d0a8ac1ce4dc48ac42db7af1",
+            "_with_co_map_states": "2bc7faa0d63a672a221f061a44a9622e35baccb4a92f227355aff9e1b57553cb",
+            "bind_continuation": "1cfb9ba4b7e14ab52d12bafa9a7e30fbb5ad38c6d6d27b41de49dfe125c7e256",
+            "build_continuation_plan": "575e59b51dd4958897aee1335bcf518b14e6e27f9bb602060040f2e90b4a2714",
+            "child_resources_params": "4fe1bd7918b429610e776cfc361527aa6203d49d0eb374dd1fb3ed005d067157",
+            "_accumulate_ez_partials_block": "b466ad601d3c750221ee6f09ec1a3e8bd6269f7f7baef3217751e0c3e814c7f7",
+            "_composed_row_resources": "74533a91ac290c152f7fc6385a3051c7cf6f73b317dc0a71646fc49b1b49e5cc",
+            "_composed_simple_resources": "29e687065c9babe4b63f8b879111715e05904030e9ec6c639cab91450ed8bdb8",
+            "_germ_and_left_record_rows": "696e4aaa6d34a291f1114d50e13617e5bc6d8955e53345c0998bb605ba627402",
+            "_left_slope_row": "96cb4c92f9151a44b195a8e590dcf4b9f5d638e681074dd29503a70db474be69",
+            "get_egm_continuation_targets": "b9ef5ac989fb93d2383969729d5b5feb77bc96fb391da4087abf2afff6542a30",
+            "stochastic_node_axes": "82d34a340ad704f574d8137021361e8baed052d291344aee919c7862f1db2cd2",
+            "_build_feature_child_query": "2a64dce34a2e53c8ffc0ccb013d3b508574b8192535b3d649faa59f7a350ec8e",
+            "_select_feature_child_rows": "7a0ad4aff15714ec555e8252fda6a8e4339c4c07e4880a77078402837d2d18cf",
+        },
+    ),
+    "src/_lcm/egm/dcegm_query.py": (
+        "45e1cfd8b7a58728327ccb6037ffbdac4b7992ed7f0dab59949611f5e4a3708c",
+        {
+            "DCEGMQuery.__call__": "dae1d967999ec126d88271c13d5b1fec67fa8a76478c8ca122a9eabfb4ade2ed",
+            "DCEGMQuery._read_at_floor": "fecb3a2bb6ff544c4e28bacb9f99a1dd7fae8c93d75678f410eb4310ce17376f",
+            "DCEGMQuery._read_liquid_corner": "edec6fa7338bfcf978954dac08016c4377477b35026a0e85a5b97f65b9622367",
+            "DCEGMQuery._read_rows": "dc52f15dbef7ef687b8395a7da6da179df0c0ab688f4d7494d8c9d139a1cba78",
+            "DCEGMQuery.capabilities": "97c1acf69c7dd500d9f263c861ecf832fe217552c85ae2923716fe48d32cdce7",
+            "DCEGMQuery.evaluate_floor": "e6f1961f20820411a327f2106ea42d9c87af81b4b8580877020ffc1c3c984050",
+            "DCEGMQuery.input_names": "77080dd8727ac51487da2c65e73ce843ce583e543925a4e976ccc89b8720c1a0",
+            "DCEGMQuery.read_choices": "6bc81cb4f5c1ebe3771eca4deaafda365d77ebf0d2c9d41d74cbe45ce98ec9b8",
+            "DCEGMQuery.read_prepared": "d101ef7bdcea7fa9d51953584d7bf638b8088909e3c495f1517f64b48a8465d8",
+            "_evaluate": "b53e61ed416e8731e6c2aeb0efa9d82d47d2b3677de747eae3f0e06a85bf70ec",
+            "_factor_product_bits": "fa8ef8a9ae6dfaca83e8d17adbfceced549a6e658d065d8972737aefcbc29e2a",
+            "_factor_product_jvp": "e224baa675f1694fa37ae550dfcf58147b03c12fabe5ab9052bcca716815c0af",
+            "_owned_at_query": "d3cde35a170d1c9be89ce67df9d332bf7dd735069fcdfec0193272070d87f472",
+            "_passive_weights": "6700895e16aa9cf47da243442b184f5934dd4d1284a971a4989319dd02a8b0d9",
+            "_read_compact_corner": "cc3a17969235760959c9bf7dbca2883c60b735fbab2cb54f2a639165f6d8855d",
+            "_read_owned_derivative": "1a40fb7e66ae6067ff80e1e00606cef56d219e6de198c341b7f9c80fb4340e25",
+            "_weighted_sum": "5fe3ca3e5abe5f2d291a9b534b22a09ccc9c0c7175f7f84c75709aef852223dc",
+            "build_dcegm_query": "07d7b24c0c8f9d74ee3a300ee50630fa6ebe7e53b55ee63c4dcdbd858155bb7b",
+            "DCEGMQuery.read_prepared_with_counts": "9ed2c050cb6803a5104d99f7f2ea21b7242fd1daae176170dc181e7e576ea26d",
+            "DCEGMQuery._read_at_floor_with_summary": "17fc1c8b2e503fe2424e7eb9ec9958f10ce721d6111062c92cb30ae3f045ed92",
+            "DCEGMQuery._read_rows_without_counts": "0c9f5360618501fdb69439f9d7838eeb21e9f23a2e49188aed3d8632db6fc5f1",
+            "DCEGMQuery._read_rows_with_counts": "454c96a1bb6e18b7924bcc6990fa05a2af81329b3be19c8c79aabcb0c1e8d5e7",
+            "_blend_owned_rows": "bbda81a9ead622e13f77687dabaca9928d29784f08fd8d7b325933d254d2f459",
+            "_read_owned_derivative_with_support": "ed554cdaa8af45b9c812ed63c049bea02f6dfb5b77ee62d99a8ae45ca0f76313",
+            "_owned_at_query_with_support": "44a3d9582317741dfd4b49d4ffed7c1dda646a2fb69caade6bdfcf07c2ff9736",
+        },
+    ),
+    "src/_lcm/egm/dcegm_query_model.py": (
+        "b01c28eb04463ddea49a3fba277911e83e4c4358e12813b5926754fea83a3067",
+        {},
+    ),
+    "src/_lcm/egm/regime_introspection.py": (
+        "85dbc7dab5269f9c357120319d8fbbd3a6eed82128ec98e6ab51a16999baf0ea",
+        {
+            "_IdentityResources.__call__": "8e4c0452a0f4991dbf0dacd01929a7ad2f1236e23a93eb244d8813ec554d37c3",
+            "_KeeperNoAdjustment.__call__": "e2089c7184f51df1f99350ce1648f33fa3a6accd0457381ca064643076c1efc8",
+            "_annotation_of_arg": "e553cc9544e4b813451de9e45ff651a72d4d13645a1b1eb4fd9e889a9a5a6209",
+            "_as_dcegm": "ef53c53b759fddec0be64e442de77a74baaeb06f770b8822ab8d1cce9e8d3e0b",
+            "_concatenate_child_resources": "44e4fdf6aa27a10f98064e10a6086253f65f84e46f1eb0f9e96a5eb0406250db",
+            "_get_child_discrete_actions": "196de5336ce3aafb7f4a8a36b5121df38fecad588fc48c8e814cdc2d44f6648e",
+            "_get_child_resources": "65f36bae04372e5cedfd01ef134b0413709d6985dd71c744146386680a594940",
+            "_get_child_state_name": "6c707544ebbc74e91d4c5d2d4b87e12baf185f7dd1dbef5bc670461c4703250b",
+            "_keeper_no_adjustment_function": "f43bc14daaa419f78acce503be0698cb114a80d1caafdb7217d4962226b1ee35",
+            "_get_discrete_state_names": "b3f0d8886e1d8d924e80e9f6a016e8e2200de6682a135be390cb0e3769c69a9e",
+            "_get_passive_state_names": "a6e6cf7327ab51802b73e35c1862dc64a7f02a1554396cdce5624c29aba6f8ca",
+            "_get_process_state_names": "b72746336547658b9fa9b2d8d0a0a38ee7bfdae5bb0944ec52f52d8495e25c3b",
+        },
+    ),
+    "src/_lcm/egm/step.py": (
+        "0e0af63afd09c8aaf20949805548ac049387d11c00383ab5bb80e8551eb645c8",
+        {
+            "_ComboFeasibility.__call__": "61ef5afd190bc979e8759189e8a8b08cb15886e98c982d9cd1d4f293f99020ba",
+            "_EGMStep.__call__": "2b073f6e470909678506efdac6a656c3b7d6590a18d673617f78004bff033f2a",
+            "_SolveOneComboOverAxes.__call__": "8495a7d1c40d720e1ecb7ad82e73d87c77eeb5dfba32fa7cfb1eac6fbde2dc9b",
+            "_build_feasibility_function": "04d448a1c1ac79f32be505bd70216dc59948545d694e323495b1b7a2eab92c01",
+            "_build_kernel_pieces": "a5b2d988e3d3251bad1262e48d9ea0d60f61e0e93f81316ecb95af47a736c5d3",
+            "_get_egm_step": "8a18c52a99321570b918f8079d3d13b517428c7b6be4f9c1e1188348ea5799c3",
+            "_map_combo_product": "90c1612777c51c198b3c314b65dfe49180d702bec36d6bc4d292b2919ff4fb25",
+            "_publish_conditional_combo": "b84d13b4d4c687a271e30b638a34f72c1b6a8d09c73815ee638568671189811e",
+            "_publish_conditional_product": "70d9ae606497f2651e0207a2ab75a6bc52610749b006375d1018596a9bc015c7",
+            "_reorder_combo_axes": "c039213dc6f3bdf4d4dead84e8e158a378691816eb0f3e92a2b8ddd63d6e6c56",
+            "build_egm_step_functions": "cab4ff6c078a6e0310da072012e812a5e7ed4b6021d644b875a4b48acdc290a7",
+            "compute_egm_carry_length": "f62a9debe2058462245a9ae23c9446245415c7fd9b3f6752c3b38bf18b506e1d",
+            "_at_one_splayed_combo": "212968272192583e89f1e256610c39e098169da29dab431ceaf0f9bb8b4638b2",
+        },
+    ),
+    "src/_lcm/egm/step_core.py": (
+        "ed2b2f365523059cb485abe94baff57df68952d68f128385c987154b2f3885a9",
+        {
+            "ResourcesOfState.__call__": "af9b9c1f641c364baf0aea48370d1a0b64f898096589dda9d3839d60f1bf9cde",
+            "_ComputeNode.__call__": "eca99ef68065d3a3395e4b151b3bef654b73513c3db25832ecef58d28e6467c1",
+            "_SolveOneCombo.__call__": "650c67cec7d2d00b7806e1294e1506288513323dc50e5582d6179d0aed8ae665",
+            "_candidate_supgradient": "73dd6f311b1b7e55bcd7b22e9723e3e0ebc664b2585c865863a947aa0a5da7b1",
+            "_compute_constrained_candidates": "492fdfe24f6e4f6eb61cb1760861ed2911d772579130f2c8f9cdf12b25b8bd5b",
+            "_compute_nodes_after_first": "61da7049c08cb91e48437889fc089c5f727cd626dde73ea84963f4e98606e5a5",
+            "_compute_nodes_over_savings": "d20ff260cae042689e8a5036c251299302d6a05348a13267aa89bbace9bf2412",
+            "_conditional_combo_output": "e696b1d5f2b6bfc5f6e7b135262bf3ac46705d8024502b314a69ecd7a8f9f90f",
+            "_get_compute_node": "f24e8183c8c430d493beafec25a995fa9054909d2fe5dfb60cd05d3975b0f1e8",
+            "_legacy_candidates_with_child_status": "46d7587846ef1f16f56a242c7e48508c015918ba8da9c9915e0f98dfd6543ec6",
+            "_publish_V_and_carry_rows": "3e62dc314cc659ea70169a01afaa245dbf7bc9d79019bdec28af41cbd9c9d4de",
+            "_refined_rows": "cc1205c707c2691c76875e0a916d0f1c24082736060f23851085fe5805ec6340",
+            "_source_construction_status": "3752fbf4834cbc45bad60bf81245931ba01953f6d04531b35d25e7da73d4fc6c",
+            "_with_literal_child_status": "717cf9cdcea25d828a88eac33f616635c0f4e08314bc50c11b64d26c787c7b90",
+            "bind_cell_floor": "1ab70b889b27c7dd41e542eaa11c331a8885eff6dbe8b10ad31d7264d48583b5",
+            "tile_block_size": "6f0a351163f6f4f39e06e75d4a234d28b9da8280360acc17e9033db3f5699766",
+            "_get_solve_one_combo": "d05a6865c207dcf1e31f13f570a71dc244d59d36967bd1ef6a268c61a9e40e7f",
+            "_assemble_combo_candidates": "05fe527e25262707afb095a07fa4107717e9345ce7205893cc8b7e4dd78e795a",
+            "_mask_dead_combo_rows": "ca74962ddb14231b6f7efacc4c61af4955e4de4e2596e022d965f60d1ea4c7cf",
+        },
+    ),
+    "src/_lcm/probability.py": (
+        "bb125dcad684e572c3ffb7ea7fd5ca19b7225662cd5fdebe0c070a71cacdd0dd",
+        {
+            "_encoded": "58d2dd01903a637adc4af5d18dcf3767eae9b16f685a0652e24c156164511bdd",
+            "_exponent_bias": "c3a992302c901ac4ff4bb7c25cb2dc54965e8d08c9b8dd18fe98832431c469fe",
+            "_int_dtype": "4bc9a3d08ad398298522fc4e860fc8c28bcd46c59e6a4b4ef03d0b60fb52e73e",
+            "_magnitude_bits": "748b35291f6859e5f6bbbe7f6fc124637df152e16ccd339ecfcdcad0451009c1",
+            "_mantissa_bits": "dcfdeff09086db4fce5a60b93e55f071bbe145ee10f5238035cf8b8fd4fdaf94",
+            "_product_parts": "4577b0ec08ddf1cd64569028b8a9668a6d4bbe41d35891711eab704e3b032cbb",
+            "_shift_to_normal": "7bfcaa26d2bbf24b87afd716307b36e8be0548183ee2f6c7cce652ce5753cf56",
+            "_significand_in_unit_range": "df280a452049e3a304cf307d8ca743e0925c97c509162b0044f8a815d5e2d07c",
+            "_smallest_normal_bits": "b2fbbb558948de8565fe0bc0e90a25ac834b387e808e60f860da28f726eae9d7",
+            "_unbiased_exponent": "a39e94ca4b0c41c8416e5cad01bb8150565d5a1337cfa39ceda7ba5212939a8e",
+            "exact_product": "edcddd28a2ba99b630a5d5c637953378e97bb2855d0e6cfb885f256b6e667081",
+            "is_below_smallest_normal": "8406ed54c08d372e88d970f24d35f181d83c6e0103603cab368c21698988923e",
+            "is_negative": "a21b73fcf4342065c86a6d3c86d33bf10500935356153aaf252506bf34280e7b",
+            "is_represented_zero": "d0bb522a5bdd9b59a29082dc94f4f39c0d9a7f6434bffb789e530f6cf63184b5",
+            "_scaled_bits": "370b33c8756f669c28d46159c12692943e20864c1e5a2525d8c8fcff2dab46ec",
+            "_scaled_bits_jvp": "4d01940cf19ee38622cd6c37892842a8d5ffbee4751703943fbb2e4bd278e882",
+            "is_live": "71802821da8f31311d00a04754a103a1b800a511542e5108f0baba1ac7892ca1",
+            "probabilities_form_distribution": "ec4eed298e7434e2c85be32b67d20021b61e96eb102bffa8da09b6e301161928",
+            "regime_mass_is_a_distribution": "77c20e7a228127a1b1bd072ba17a8f0e5140f8a87ab7b67e93c3304b514ea2c9",
+            "scaled_by_power_of_two": "66ac45005852e867fe423327bcd3e61ae40217a4d27459d1f726d119ce6c7cb0",
+            "_log_of_nonnegative_bits": "f08993db3a70bdf1d0d2a52f633994db0bcb327a0e31a62aabd3b31de4472bc7",
+            "_log_of_nonnegative_jvp": "16da7f663340bad73c31f62493e755b0aa8f9584b253ab8f28fac11e908d6643",
+            "log_of_nonnegative": "f1dc842ddb6d656c4422e2e36e7b1b33c54345aaa199afd112d04f05c39c813d",
+            "rescaled_weight_pair": "d90ca0876a8a90af2ab72f50750d8bc499e2e5538c202181c0cb3896cec42244",
+        },
+    ),
+    "src/_lcm/solution/dcegm.py": (
+        "2c889e5eb3263552f29e0549e3486a0048a09fc9e97cffc4241f03c763f77bcb",
+        {
+            "DCEGM.build_period_kernels": "9f9b0672a8955510f42ccf195f48fda0d2919828fc1ac2695a3d6678d6da56ce",
+            "_DCEGMPeriodKernel.with_fixed_params": "576107fcdab8d47abbe0df04148ea500bc7595c77c33353f804d28576087536f",
+            "ExactEnvelope.__post_init__": "4975eeacb21f66d64f1c324a6aa57fbffea03a0bc6452f27c4a6e837135b7c10",
+            "DCEGM.__post_init__": "50857079ace68fbc7509eb627273aca0f5514a97a8ad7601daad51ed4dea9fd9",
+            "FUESEnvelope.__post_init__": "2e0cc917eb494bb33da6673a567c74762daa24c6d6903c1d38d9515667900beb",
+            "_DCEGMArgumentBuilder.__call__": "fa3b1d3fe87a3adfc8123543f255de0206718bdbe05a2ea41260419c6de17539",
+            "_DCEGMPeriodKernel.__call__": "0d58d7aeab84d00f85692ff9af0cd66a8a7c9094bad97c784d7511d5492ed202",
+            "_DCEGMPeriodKernel.__post_init__": "db2eba075d8b69c2c9e6f3fa76eba27a19717abe2ea00c680fa75a599bfd54c9",
+            "_DCEGMPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
+            "_carry_subset": "e4dd80d003cc76a16eb5a9a2fee08d3f606a225b48aac18a7a2921774dcde14d",
+            "_consume_bounded_dcegm_output": "83b7e20200f154c9f103130526bf33e0ca012edbdfb57c02b448729aa02d005a",
+            "_dcegm_output_roles": "8c32d70897d4d3e36ea1089553d83d07e69f79615b367c64e9e75117a2ac8a18",
+            "_dcegm_role_template": "3d05db38a723160cd4eb9c73c4b0b01295574ae39b98a0da16486513fba9713c",
+            "_dcegm_status_role": "ad55b61dd70842363177f847a359f5a091246cb3cd1638dd843fb308faa20f9b",
+            "_dcegm_values_core": "94547b418fae30ed7614e9037df0f7243cc7da3a6eed281bcd3de53a23043eeb",
+            "_fail_if_envelope_max_runs_too_few": "81ba34c1807e953b64e5a80163ecda6f33037ffbe74a13e24b53fb7cc3bcbbc4",
+            "_fail_if_fues_jump_thresh_non_positive": "1110ea554a2766f93856e3224bb05d8ee3ca1ccc7ee02b951fa32d9116f577fc",
+            "_fail_if_fues_n_points_to_scan_too_few": "7137c349bd2cf8b975f20a1ae1972e4266186cee99dc276f755feb2135398d6e",
+            "_fail_if_n_constrained_points_too_few": "5244d781261c2a67b3b0f8d30a158ed91d298c16f68976b8b24aa9cea004e794",
+            "_fail_if_refined_grid_factor_too_small": "e9d01a635860eee512b35f96c5eafb5864f222caf6136e40149451d28bc3e7ad",
+            "_fail_if_savings_grid_is_stochastic": "5854252ce336bdf030e8b424a2c3e3618e7d04e813198269653e58635cb509ba",
+            "_stochastic_node_axis": "ce352befe0ff8dd4001c81b64dd4f1194a7f1c2a65ebace42fb9979f631ff3d2",
+            "_tiled_axes": "80649afab5fb1b69191d98b113d6ad46770583e6a82def2d5f09acfbea7c6f54",
+            "_DCEGMPeriodKernel.retains_current_feasibility": "2e3b2810e738123afd7a72641d4a42b8e9d5dedea4afdd9cd6a463e4a4da6512",
+            "_counted_dcegm_output_roles": "cf47f2166083e9540d7a6bafb6e4033eed719e16823d80afcedd42988881580b",
+            "_strip_nested_feasibility": "694117bac7ba42507a0e005c79f7c7c2e179ad4adbae5ba6328f19fdc3a82d6f",
+            "_with_nested_feasibility_role": "cfdfa377aedebd2c93aa76b239013ca331db7a1c201b3f508bf30fdbcd18a1e0",
+            "_dcegm_query_slots_and_capabilities": "e27b7b526fd7be93c3f1f0811f67c9d82ef7835d69775e358ffb9ff1bcb7c7fd",
+        },
+    ),
+    "src/lcm/_solver_api/replay.py": (
+        "ddb211f284253cf6e22e1a42af40e0a083c2f984e92b456810834bcb0f59507e",
+        {},
+    ),
+    "src/_lcm/egm/ez_kernel.py": (
+        "13b3e1de73ce17cb921a590ed62198b4f97b10cd87579d9bc861fecbe0cb7d15",
+        {
+            "ez_consumption_from_euler": "085242c1acc653e5624001827643fa5acf67f0624be144d50acafb2b0328899e",
+            "ez_marginal_of_resource": "3eb273105d066cafbb7a1be233af83065c6a42aea37ca60ad3d8572651b3b6cf",
+            "ez_period_value": "9970fcc5ec0831e979c2b7d37f002d9578d56c91a45d23cb38307cf635e1599d",
+        },
+    ),
+    "src/_lcm/egm/framed_arithmetic.py": (
+        "87144e91c01100a51599e08336a7dddfbffd16f3af10106cb811198a03db8598",
+        {
+            "_dyadic_parts": "2e338d297e534751fe05edba3f0d14df5d66732c646055fd89310f9b76e5bf2c",
+            "_two_diff": "47bc35cc3141502578cedd4b1b05804de4768c8a3d60dc929cc8840f9ef3d982",
+            "binade_exponent": "9d25d6b129d66b3b30615b1d8eac9192560778f152987953547de87681c61a00",
+            "framed_difference": "e1b6751abb651987b8652dc2c02f91ee6827da0a32b0225c5f4e6ebf2a94fbea",
+        },
+    ),
+    "src/_lcm/egm/nbegm_segments.py": (
+        "5d035038fbae0a58c8da68927aad82b7d050125187f6619f5ce37117388a2eca",
+        {
+            "affords_an_action": "0b962d6e70b1d821fa22095724f373aacd53c41915296d4f4b96108e4b33a7c6",
+            "mask_dead_candidates": "5a59c11a535462c34ed7f1cb275bd8e7586a85947d62254ac0c4f96c14c4887d",
+            "segment_ids_from_folds": "a232e667913fb9ebffbad25957febccfa94b3fc5788a2672dac53d73376a2e88",
+        },
+    ),
+    "src/_lcm/egm/nbegm_step.py": (
+        "02b10328758afdf94eae0ac552f1bcd63fe8b27781de675bddd9756cff2d6025",
+        {
+            "_IntervalCaseSolver.__call__": "9e8e6e6d6fcffbc0cec5c9ad8989131c66e0efd7e7e5ae8cba8e3954723fbf36",
+            "_IntervalWinnerStep.__call__": "72707f2e7353bbeb5ffea6cf8c1725c775f190773d3497ee2835d3f58e4e7729",
+            "_StreamedIntervalLayout.total_candidates": "45e95a6180217b19597ee16149adb1c26b8df68fb85383b7e2c99b889805db61",
+            "_as_pairs": "9ebaee0b9aa88f8e523e5d817ed6bc1f74be2b1516e7653a7c09565b92ac2aa7",
+            "_degenerate_inversion": "c45a20c732e9e12a2ddc130b597bf820465b82a7712d9bbafd32f00c4d2cf33f",
+            "_discounted_continuation": "591bb2c3551df40fe5a372a7b747ae3f484764ca6f3f03c421310a97ccf4fe0a",
+            "_ez_flow_power_structure": "286d32f0dd485c182b7701fa77d66fcb4d52642da794ad7554d31ae15d442c7b",
+            "_fixed_savings_corner": "a8291f48c367281894d18b5e9fd83e532b88cf04cbdbe520cc2b6a203d0af265",
+            "_interval_corner_candidates": "a484de163b226040b43732b479abbe5e27bd7e8523300fb1dfc2a41ea0e6ee70",
+            "_invert_coh_with_linear_extension": "b908750cf32a30016e295606fd8fd9f5fd08ac43dc12e722dd514decab67dbbc",
+            "_invert_euler_at_node": "91ad4d855f5f74dc76555b18112a97e8e83dab42ead221936d07f6b55efa4da3",
+            "_invert_euler_over_savings": "a3338141686587ecbeb96f7558d81fc90d9bfe6b21442fabfde19c550803e50f",
+            "_kill_padding": "2ae7399b876711f95ec6b05e628a944d282ac5b77a789ca41ceb73b5b7f8f926",
+            "_linear_extension": "deb8bb7255ca344db8760d08d8885e39902ee1363a37ce855e25fba9f5876607",
+            "_make_nbegm_query_data": "b51f1692ee86f9f978ba5ab9abc034b908b07bbee7849feaf08c1433679dbd91",
+            "_next_segment_id": "9058b0199b5612fd7149eb36abf98e61e7e8a42b10b2fafddddd81c6c7cc613c",
+            "_point_candidate_segment_bases": "099c1f90aa459965fcd8f5b5c53be8f3581fce2d76208ace8292fbc52c3c451f",
+            "_publish_interval_step": "a4a062d3a8dfb61996e5dfd574c0b75bcf129bc21ef07fb61bf7da5025a1af4e",
+            "_publish_no_action_carry": "8f392309f414027d1579e3ba64f2121d299d205aa1581f2bd66e17d4cfde7580",
+            "_query_node_kind": "444a5e65acc1a48d34bc6c0c0f9f404ec15ca60f8a449ce95265120c5e7e1a3f",
+            "_savings_node_point_candidates": "9159705d3dae69d3a3e47e462c59409ecc5d83d36e01ee8a4acd89547bdde449",
+            "_savings_node_point_candidates_for_interval_block": "3fe5828dbad0d346af751d7a120efdf542d7cd270f1ecbae6167283fb7d645bc",
+            "_solve_packed_interval": "39a0f0b595334ee12619f8131ebb97c32e10632869293d1b6a043e1add7ac0af",
+            "_stack_flat": "1cce73fd366fc6c0c76439d175e4275b3a903639abb7acaeffc9324a83ceef0e",
+            "_streamed_block_candidate_positions": "49b3a334f48b21ed0d219ce6c9c8e8c8b3930ed2dd32e82c2c3482b82e46d3be",
+            "_streamed_interval_block_layout": "546fd0a7654e5c10a822336365f9e68af717db20221253aabde819d703abf602",
+            "_streamed_interval_continuation_envelope": "fdf5a7a8370a2d21f0ad2ccfd684fa60a81d250379d6daaf6a86b0c1b2332a7e",
+            "nbegm_multi_interval_step_savings": "c878e58b658b45c1ae46ebe6e7aa36a9920a2a8406b82b84636b99fb7324324a",
+            "nbegm_per_interval_continuation_step_savings": "56554f49407f9e04e04418a7f01e2beaa4864e069f614d378a324662361eb743",
+            "_single_row_nbegm_query_step": "ba4077ee1cdff8f953be04f7f5fae4896243e6513b698fc41d86d872c96819c6",
+            "_prepare_nbegm_interval_block": "e13386fc7f5e82024ec0e7b964a49d5f740f2fbc5ed88282b9614797693c881d",
+        },
+    ),
+    "src/_lcm/egm/upper_envelope/query.py": (
+        "e7e1c54ffe60be2cff904b8d342b52fff1a37fa753b837bae0aeff0bac28e598",
+        {
+            "_along_link": "3c82a606fb97c258a6c2661f36e0066e696e4ab74d2e259a762739688a861232",
+            "_batched_link_terms": "5a1f8a56d71c43c7e7f914a52cf7d141b7e56067b6dc5291462581392890a978",
+            "_block_query_terms": "92202932da6a42bb48529eaccd431a6ad340c125a7d3a60749cd4c7a17d77b5a",
+            "_derived_subnormal_possible": "24d06e5cda74ae4dd4e3cb8caaaaacaaa5e4c1e6714afde4f5814af123a999a3",
+            "_endpoint_order": "16c09ad66f06566c7961514bba7d29ddf3d6913e192952e71a421962d1b1612e",
+            "_envelope_blocked_ordinary": "faad1c8204527a3e2b4141894be7cf58d5d8e642c1a17317a9d7e85a3b53516c",
+            "_envelope_exact": "f18823d0ecb32f825dcd8ee05610a0fa4983a1e999aa237cfb756be5b1008022",
+            "_link_blocks": "9e037eca2d0cc4b0c10a56c6c6aa08cae400a67d982dd73037acc31c5701ce5c",
+            "_link_geometry": "21bbe995e458000066a7a97c2f680e24a44b4a29e7d4ea5d298176e939db5878",
+            "_link_terms": "9d5a5e0024a7f231c1ff25f8af1b64d5223278f23c319148a6de4598aba5ab7a",
+            "_mask_infeasible_queries": "bef6eb4d8bda8251496cc050fdf783667ea00650f092fd0139ea47e31ece0f9f",
+            "_on_the_links_own_scale": "8dd84b0b6d817b1912f7f031385dcb3597286ca9d2f96395c384dda410ccdeb9",
+            "_ordinary_block_best": "323fb481bb178996d08957564101ea105c8faa546f22cd42d19a853661f00168",
+            "_ordinary_block_size": "e90df67dd1725f0452fd73e3eace2cdb8ee58d527ff211ad0825eae52842c27f",
+            "_ordinary_block_step": "7b65eb09e46790ed448acd59ca8fadb910451b9727aea19cbbcf73389cafaecc",
+            "_ordinary_rank_argmax": "e189fdf83a38a312fb3c95d9570c97d441161acd0848c987518e1b89301267c5",
+            "_pad_column": "35594acba860cd4a15140d8b929b2b14ff2fad82b4ee127393fc4c6864a23ece",
+            "_pick_column": "c2ed468e0e0cd70f668d29088ed946cb089e44b31c874007c06e0d0b439882d8",
+            "_publish_decided": "1dd5b7a0fef2bd5b5715a7da8a74d3bfc8debeed73b600e40e9a0b4f952b74a8",
+            "_quotient_is_subnormal": "9c32efeac8c418f831ec4ea1002869bf86065c5f4f5812491ba2522babb90a40",
+            "_read_exact_channel": "83b48ca90be8be08f230ccd8e1245c8baa4fce3be2389b3c03751bb9d01c76ef",
+            "_read_ordinary_channel": "5fb61fa2c0b3b5fcb0d2ed7b5ac16696115717ebbfc7830d0c2a408e693bcfb6",
+            "_savings_link_endpoints": "0e681937fc35246895c96f195aa9b39a3cc3d93b033dac70dc00d5db5d4a5ba6",
+            "_segment_links_from_candidates": "944d2c28268d374b432da64a500f2755f1451f666aee9e42b16b2ef40d6cfa2f",
+            "_slope_words": "53307674bf7899065e43ede2d1a6af5cede1317b76e0cc01a23fe69bd309b7bb",
+            "_smallest_finite_exponent": "e89b0a55c07f6836c39e00895bd79a814dd52b2b74b7adbd07cc6dd5943b5ef1",
+            "_spread_over_queries": "325b744c37d290618688da4eaf93bb027753ece58145d9975624f121dacc2b95",
+            "_subnormal_operand_present": "d9e8079427ea83b2b0cb03af192979fb2f47024666eeb099d36cce24484f7c69",
+            "_take_rows": "8d4e055398c43d84a158e5a0927a33501bc07d879b01c44e1e24cc0500396352",
+            "empty_envelope_winner": "9dfc3cd4ae616726cf588a52f9ecf1d3b8b563f292000063f0f759d6b699d2f2",
+            "envelope_at_query": "536b3afc4f9d68c6d7ca0dd79cf7e9c7d4970baf59597c15aac30b699942e74b",
+            "finish_envelope_winner": "ce8cbdd55e02d678e6a46cde4352f970a690a3c14af46e5a709f9bbdcbc8895f",
+            "merge_envelope_winner": "2aaba98de675e844dac477909f5c544cf23754c29ddf89feca6261232432acfd",
+            "published_owner": "7a6063136bacdc55638a1e2cfd7e18f662b58ec25f8819b0dc24c1e1aa01c5f4",
+        },
+    ),
+    "src/_lcm/power_mean.py": (
+        "200738ebff420e5afc68cad9aa78fefcac2272cce09bae6923167cbcfc7c115b",
+        {
+            "_applied_to_anchor": "b7db4643c486197852ac69f8d9abc66cd380084efde4a607a7a7eafbf0b3324d",
+            "_log_term": "759e0e60399615ea3a80b6d78e589c4432cce43d1947ade1e89a428d6afbfdaa",
+            "weighted_power_mean_of_pair": "2b1349e619d080e825fba8cf2bd7d2a187baa1a59a7e954c6a24ae93232ff515",
+        },
+    ),
+    "src/_lcm/regime_building/decoupled.py": (
+        "70f5fcda52ea91383e4be13f747c98033510baba317a980283ffbecb221b1aa0",
+        {
+            "DecoupledTasteShockLookup.__call__": "4cb697f078e503dab438fe5bab75631d3d2f31758b480bb707d920f95fafbbd9",
+            "DecoupledWithActionParts.__call__": "44e85f717a656bc945256d5ad95ff6083b48cede4874fbc80a78cc9b493e29b7",
+            "_DecoupledQOverA.__call__": "bee09450ab81c889a7ad7c61af2e3d6a9b8d400ac85a94856fa068259107b9b3",
+            "argmax_and_readout": "bb970e9ef9a2356f598ae7400ee2a6e4e4c0338429d9f372c650e33da7caa34b",
+            "decoupled_logsum": "76dee3957e4adf72e6524c280a97893dd6f19e000ba14be848c729f70d5a387c",
+            "get_conditional_profiles": "0de48ea6866b2cf6c0fbf612ed308a90d82fa31adeadda93b905746042454413",
+            "get_decoupled_Q_over_a": "119e3f97d9d92fbfaf6dcb2356c130994f55c5e78028b69fc8dede33f075bbaa",
+            "get_decoupled_max_Q_over_a": "9f7be2a41daa00d2ff9848491fe97ebaf9d0a695830b3824a7c4226361eb49b6",
+        },
+    ),
+    "src/_lcm/utils/counts.py": (
+        "06ea17925d45274aae65f44a20471a73614a6e26779ce9912f72b91c3a3db106",
+        {
+            "add_counts": "2c0b3866b7b5f76b3a11301fa95ef082e10c68077781f38d92aa0057728dcff5",
+            "sum_counts": "dce20fae5f7889d350808f10c1fe0934bae0b5045ba37b7f274bc7acd4c8a3d5",
+        },
+    ),
+    "src/_lcm/egm/outer_interpolation.py": (
+        "90041559a7660a3933b280258acb7e0a048eacddc1a7e51f0e139be1b50956d5",
+        {
+            "LocalCubicOuterInterpolant._evaluate": "a574b31ae3068dec4bbb0084a12bdc46f330184a8d7272a969c930f99a127c9f",
+            "LocalCubicOuterInterpolant.evaluate": "3755c0a695ff20afab258d0afd328d45184d2a7d858b2f795e2377a1ef424e28",
+            "LocalCubicOuterInterpolant.evaluate_validity": "657e8037bc045ac648c6871c65d119534142924eb6cee15550463386b2f279de",
+            "LocalCubicOuterInterpolant.evaluate_with_derivative": "ddd928b6226bc8ec1ff09c543664125af18dae883a6ce535e98779cfdbf719e8",
+            "_four_point_slopes": "c3a5a255001af28a1fda40786301dd6426f30140d76184e477cb730d0a86fb14",
+            "_node_slopes": "dade18078563fed9aeee17b6e56ab3ea83b5c88e826b2fffdd69f898922470ff",
+            "_one_sided_parabolic_slope": "9cdcf4748c8326d1dca665d9d47296d09ebbc8b9db87b03418a15d4743e537dc",
+            "_pad_state_axes": "b407634890244a0f7aa330814c38aa7b8aa1efa12f0ed2ceeb78ec294ebb45f7",
+            "_prefix_four_point_slopes": "7e729e8183295d1731467c9d0d31cb576c6a48454890f48b8e3caf80d69191ee",
+            "_prefix_node_slopes": "06c1f17f9d047a2b0afa81d669ae9424e450f56b6ac8e2a63d72a07f40be09e7",
+            "_prefix_three_point_slopes": "c3ddacde8c01c87f7d498d5d9cfd67dc004ca58e8108fb867a01c86f8e9e701b",
+            "_three_point_slopes": "cfa89b8d2ec79e18746810909ef27a60809e5398b774fd5893ca6bd2ba85e1e7",
+            "_validate_nodes": "0f0381bbd0cdf671c966063f7cb8f32308afdfe7b2e628588ac49ab71918b36b",
+        },
+    ),
+    "src/_lcm/egm/outer_refinement.py": (
+        "383f034b964a567ea906b68bce32ccb84348e8f395787dc172964a026eda3aca",
+        {
+            "_consider": "c16244935263abcccdc0e3a37988926e0a262d711eacc3474a91059949bb9bdf",
+            "_node_local_max_mask": "5ae84637770adc944c9179c687a3a7bf73a9d81734bfb26f3aaa6830a204f764",
+            "_tie_band": "3f8ae5c48db15b4b9d898d1fea588edd2f11265d2eccf382f5fae1d13e693398",
+            "safeguarded_continuous_argmax": "e16bcadfd1fc657bb3e62d6eb31d5304a565cd9205b89e3f5b71252c6628406d",
+            "_fold_exact_outer_nodes": "c8bb0f3e217b887f5e78a43f619ef02a808297730aa43e9785087bf7202930af",
+        },
+    ),
+    "src/_lcm/optimization/golden_section.py": (
+        "1b835fa0052d956cc14cf72e9cd10a7d164712fceeda24323704d1f1eac1e93a",
+        {
+            "_probe": "6d41bd371eee9d773c400d5b05ff9d0e0b2269d25098fe4ea2e14e8085cc11ab",
+            "_shrink_bracket": "b9e2e900a86279f535ffd1932483c085e4e324cf6b8e75272486ecdbec845d50",
+            "maximize_golden_section": "70c6581bf1886a7ed0f252fcb61e8c4869251e946e08d276b729d306b0a28d2b",
+        },
+    ),
+    "src/_lcm/egm/adaptive_mesh_authority.py": (
+        "e3fece1cd0d0a1a66ec64e2c368f7e8ff009e067255be393c1bfb1ac69486854",
+        {
+            "admit_continuation_mesh": "cea4612cf81f8f026c3c1d5039fda48b90b312cbbbf3aebdf8b05ac3f478d895",
+            "validate_bound_continuation_mesh": "9c5a5f2f9740b8fbd417da1f894ab60a69e479af78e263bdcf19ad35c476732d",
+            "validate_continuation_mesh": "687f416f7978e7dc5849f54e28e5f287a20b8b1601fd8c0770c214847aea739d",
+        },
+    ),
+    "src/_lcm/egm/adaptive_nbegm_carry.py": (
+        "37830b5309d944705409e21f3e4f0a23bfc98b6c9ed392152040c6b388794b56",
+        {
+            "adaptive_nbegm_template": "b617607a337623e1a06e59a49ed6869ecd9ce061d240bbcb9a26a72a01ecf47d",
+            "assemble_adaptive_nbegm_carry": "d5f2b7f0aff2fb5203ca23325e13691dee49f2c08fb805dd5caf57a2128946e5",
+        },
+    ),
+    "src/_lcm/egm/adaptive_nbegm_producer.py": (
+        "d8913492e7076f1ff881475346bf80d045845978e41b53f9f3a05223190dbf3c",
+        {
+            "PreparedFloorArguments.__call__": "b0fd1bc602c7d4a3b7fde7a28141726eba2a260110e832a758d066117de4bc69",
+            "_floor_template": "24c730e2e09ffe4220564314afe5f381921a2481de97d7019726418c0eebe9f2",
+            "_tuple_roles": "812f02a6cb84cec95e97419c06d6bc05b5e7cdbea468c493bd061f5b61ce3b4c",
+            "fold_executed_summaries": "a237cc4039b9a5b6b9c507920701e74b9341da5d9bedf41a9e9b09d432c58d15",
+            "prepare_nested_inner_kernels": "20ef68bbd5378edb778be80796a19c154608a53082f73240ec9ac39fe2329e7d",
+            "with_keeper_floor": "9f31fdd02e169d0d33696445e7eaf94ddf511b7b9b641e400eaf446b4927cd09",
+        },
+    ),
+    "src/_lcm/egm/adaptive_nbegm_query.py": (
+        "f1d0a598ee5f30c526961e9c71089dfe100d2e489f00097bdbd0a16eb59d5dd1",
+        {
+            "_Profile.interpolate": "1b5bf5c3a1bdc686b1aed3e8c430af84fdf80ae82f17767de03dc8299649e207",
+            "_Profile.read": "4710f9ef0ab5ed025b45ec5dd8b536daf692fb01d6c4d9e62a649768c8000a2b",
+            "_Profile.status_at": "c149af44cf3eb1c43715cf8543c9754326b3498b8c6b9ee12ece810ab31302ca",
+            "_numeric_operand": "5efd09516283a11681a0c665f1609a64622b362355e13a93440cbf2a463cfde6",
+            "_read_one_choice": "e0ae7786afd4f6a8de4911e648a4f35e5b80cac4cca4e23ca36af9aefbf5e141",
+            "_take": "3e3c18f8b926854bf0288b8a67a4fbe1a5dfaa5308d8e97de30e17585980e758",
+            "_validate_tuple": "fe24aaf2cd866895863dd6729cc694469b2a1be2f1e73099bfb61401df4ce3a4",
+            "read_adaptive_choices": "edc0c6291c7f9925956011d150f40f818acfe3e4b727dbe031be58153bb4074e",
+            "_fold_adaptive_choice": "8e80a139c22b0a516ec83ddfa84f18afe426677d317cb67040e873ec730fb489",
+        },
+    ),
+    "src/_lcm/egm/finite_negm_query.py": (
+        "3731ba0f715ace391181b605473ecf713d05ddde111877a404cde64c9e0546c4",
+        {
+            "_collapse_finite_selection": "4a25b2d177a60c0136423d0f56dc008e48996dcbeaf6eb4dcd142bf128ddaf50",
+            "_filter_finite_survivors": "6e4065b68b57f937aac5cca52894624e9889273246c411cf4b8854a48d9f42a2",
+            "_read_finite_corner_row": "c1a901d723c259e829c2da46549e587dc9b3c8458bfc8411b3ad7db3a3a3736f",
+            "_read_finite_native_row": "163189c6c3f332270b1a21e1969be9295338dc5c6991c8af96641972320ce724",
+            "_read_finite_owned_side": "777cc740778b7c05a0f43f52d4a9345eb9b20eccbaca4db266a0790471fe0605",
+            "_read_finite_resource_gradient": "c07ff486bf9f5bdc28df1a33f057294b9aca05a425e202df05709122bad57720",
+            "_select_finite_outer_profiles": "edb4d77dd9e97edd689de171d7fb42b2cb7c65c827c5df4e401ad76e50a4439c",
+            "_single_row_finite_corner_read": "90dff3ecb15311291f506dd61a9cb2b0117895783051a956ccac754c94a23aaf",
+            "_validate_finite_outer_rows": "3e85fec5cf7ff1c519c36a29d0677c8c7582f48aaf419072a635b4c35e4f6d07",
+            "read_finite_outer_choices": "02283f416064ceaad84b548b23cd4f2343502ba701455e356cfb002f88815bad",
+            "_finite_outer_publication_inputs": "4f16e5723551105dc96055286c98508e979aded1a52376dc93188170dff35387",
+        },
+    ),
+    "src/_lcm/egm/nbegm_query.py": (
+        "a66357c921341140c64ebeb4f9b1b7ff9eb104b3e11e714747f730aaa54339e1",
+        {
+            "NBEGMQuery._read_at_floor_with_summary": "967ffa6fc479bcca8fb3afca6e23f5bb3a05a3e8eff173248ab1a317a2bbfce2",
+            "NBEGMQuery._read_rows": "87617e069f0002cf9bd6e26d90ea9b4ed3a5245d8785978fbb1a1b7802a57ced",
+            "NBEGMQuery._read_rows_with_counts": "9c7a1469081ea86e3c4046de81c9e860aae477a43e130e53d9644b6c1c406126",
+            "NBEGMQuery._read_rows_without_counts": "0c9f5360618501fdb69439f9d7838eeb21e9f23a2e49188aed3d8632db6fc5f1",
+            "NBEGMQuery.capabilities": "97c1acf69c7dd500d9f263c861ecf832fe217552c85ae2923716fe48d32cdce7",
+            "NBEGMQuery.evaluate_floor": "4a84b59e6b78cc10176e4808ec1d6945926b5e0ea89c6642e81d924a15da3ed8",
+            "NBEGMQuery.input_names": "e59ef4b415512f5dcdbe086d1c829bae0c3b6a05116e9fb0d7af5778897a7e18",
+            "NBEGMQuery.read_choices": "01717592bb29e6d76cc8dc745bc1c21227e03514df6df0901f919b478c2c96e5",
+            "NBEGMQuery.read_prepared": "44ca733a87f8cb034a2e314268fb57b8052172f26f90dab7d5d09d451294aa08",
+            "NBEGMQuery.read_prepared_with_counts": "7cff52b4c1fa4ec1327e3a88fa239a31fbe0e8dd209df721dea6a0f6e2081c82",
+            "_read_nb_compact_corner": "63f8b63a8c657026fde6cb1ec94a1d057004d8b4a219db7a1ca5cb15a9c4ee67",
+            "_read_nb_compact_corner_rows": "f22123a2f8c35afe938b04dd42400db8a4638edd581df73350e9ee449cd4fd84",
+            "build_nbegm_query": "23bd76552924fcec5d588876293d6116c5211aa28680967ab7090066d217233d",
+            "_read_scalar_nbegm_owned_row": "0a2a5b687867fa590727d99ef191c6cd59e4ddd914735fa12e8b5cd6b37ab3fc",
+            "_read_scalar_nbegm_owned_row_with_support": "b6055d487ced9637bc220ae8f3ab128e8d4e4db5d446c7ee2e1d7c3a134b9878",
+            "_with_scalar_nbegm_linear_value": "36c09828d3d89215d8ab99664cfe1dfe8499fa6b3a3574fcd8abbed9f8936dcd",
+            "_validate_nbegm_query_recipe": "702f8614bde2466b3f8ad45de4b8134841ffc8ae6a63aac0e7ab93a357964f6c",
+        },
+    ),
+    "src/_lcm/egm/nbegm_query_model.py": (
+        "b434e36fe11e9300acf9f0a3cdb7e9cb3ca00c07205f20b1bc6ef9188611b841",
+        {
+            "derive_adaptive_inner_models": "c22193ecdd762b7e86295b89051dc7ed24a603cf351f11da0862876cbc81a4cf",
+        },
+    ),
+    "src/_lcm/egm/nested_floor.py": (
+        "ac153105f85ba73895865d2f48a7e544202537780a2c598a1cce639e998defa1",
+        {
+            "nested_floor_at_cell": "170487dba7605e71d8213b64cbf3b0045c421dd40668a2e3463c31cdfaa7d1a9",
+            "prepare_nested_floor": "d22aba07033bb3c7105f1a076aed71bc98e07af461b7da5cc12570fdf2122063",
+        },
+    ),
+    "src/_lcm/egm/outer_candidates.py": (
+        "59eeebea9e9142ab041aaa881ac6c730d636e409d957175d8f49f506d244aa5b",
+        {
+            "OuterCandidateBank.candidate_carry": "4ceab52bbb8ccecc4109e8f333cb5fa2e6815fcb34af25599a1a907f22ee4742",
+            "OuterCandidateBank.candidate_v_arr": "8cde27eebfe2e6d356bb27a1f8fb05b7a735c9b319ab07b14881045f5530cd6e",
+            "OuterCandidateBank.n_candidates": "c27b1083798dd3b210d7ea9b291ca6ea28fd7fe75046522b7b76724630433872",
+            "_stack_leaves": "536a70a587df88efa7d6d3917cb3f7406ab1c0a0da48cdc38bf0f184273eda09",
+            "build_outer_candidate_bank": "d34f95a40c3e8ee16c57fd88355b55e586df4559a5b1bde26c5104b2eaae2feb",
+        },
+    ),
+    "src/_lcm/solution/negm.py": (
+        "2f4cbf7801762e7d6477e539842841967d7f2aebcac2747f2ff4d54746add929",
+        {
+            "NEGM.build_period_kernels": "9747fb9202f5084d2601b7016b3e6b073a47fd761f13794db0e3ccece405968e",
+            "_NEGMPeriodKernel.__call__": "abda379507e50390a0a06e745ce6ebf96cc47f3d34dc92d11fd48cf10ffcbff6",
+            "_NEGMPeriodKernel.__post_init__": "e5241f2618a6ee8cc775333d0a2eee41263f4f0a6ddb063f70d2a92339beab17",
+            "_NEGMSweepArgumentBuilder.__call__": "b42523d6ec3756e19037bc931a86eb8f3df530d048014f4534e7a916e22acaaf",
+            "_NestedNodeSolver.__call__": "2a3d448dc29ed1dd80aec464c435629dea7931225229b8f00c4878837c147174",
+            "_build_negm_floor_preparation": "e1c55bbb5a99c38821725f6835257b4906cd73da367ff7ca36ce5e4866475c24",
+            "_count_nested_current_feasibility": "ab797be77f5ef497ad590a99a407bf59ebeb7510b712992eecfea0dac5a64d23",
+            "_derive_negm_inner_query_model": "ed61d9953c002b927ed1ebe659d92329369f02306f4c89a9a4aa490cd8f846f0",
+            "_durable_values_at": "08077d4f948e51b0fbc2dbbc97d160c804c504b4460cb576a49a3e251449cafc",
+            "_keeper_with_prepared_floor": "87ced247c2c491d7f4ae5f7ad47976ec8ae72331b760c1bbb955c4f650465f57",
+            "_nested_feasibility_programs": "5f049652465883a607bd8d5f9c3cb4659dcd01bec0729bed08f0fcb4c8ce203f",
+            "_nested_outer_sweep_program": "6a15e39ad851336460a6fc4b7300ffa707c54d0cc63ca35e589c09da881b09d9",
+            "_nested_tuple_roles": "9b1f6c07c555ec4997f5ead3e834edd5681bab11ec7ee8d7a68c323d82a64c5a",
+            "_periodized_function_groups": "13f6d1c80876f571be8dee37eac93b5303a5e39a15d9668f7cc4d46469b17dc2",
+            "_run_nested_feasibility_kernel": "012b42d1f1f9bf281c3bbd8459f61d29cc98f2f0a70f75b0b1156ad804bb1af2",
+            "_stacked_nested_carry_role": "fbf501fdc94abf8e47925a97f4c60ce661ee55046006e60374cb4a95f3ed7593",
+            "_stacked_nested_carry_roles": "66a0b6530215123b306e07f7e9972b4d89abd6c750aa6bb28973972fa038899e",
+            "_with_declared_keeper_reads": "838d1db371ad94091fae364bd7ecea6c1cf77ba21c2b6e963f2b80784f86e102",
+        },
+    ),
+    "src/_lcm/solution/nnbegm.py": (
+        "3fb4a386eeb58d4fb275b6749c0fe2e7bc12b5106ae1bc551ac3502817f18c1c",
+        {
+            "NNBEGM.build_period_kernels": "bcc3363d6ab756dbf45c8542c731d679f137a9f67d4e776730d514e3af462851",
+            "_AdaptiveNNBEGMPeriodKernel._solve_outer": "4380ed6feb7209aa74abe215c452f6c6f4b8d85bd22e220c1bb92c7e7091727c",
+            "_AdaptiveNodeSolver.__call__": "64052f7c45e0a48790c3c70d22266e6afc736b5e556f0af6f168bfce88643fe3",
+            "_FiniteNNBEGMPeriodKernel._solve_outer": "d118dcde9dd886ba99c74a9c0373f6b47a6f39e606f6c091456c7bf8f866b4d3",
+            "_NNBEGMPeriodKernel.__call__": "d4d0d638498e9fcfff852aa63742e0528e2e66548a4273a52834d5e3ddf7cc9a",
+            "_NNBEGMPeriodKernel.__post_init__": "8bb4922deb81d64a056373e1a0f2e0ac52f2fded850113848f6f7820d1e344c1",
+            "_NNBEGMPeriodKernel._solve_adjuster_node": "02be269e555b84171c7f6c1e9861ba3e75079125eff60dc53ac41a61e372a396",
+            "_NNBEGMPeriodKernel._solve_keeper": "4ca3c8ab0f5658f1a2bf4fa318ffb9e51c705ec3096b492344aad8d2b60cdd35",
+            "_NestedArgumentBuilder.__call__": "2487c8638632a8affb421ae4fd0726d153566a7c47355a1f6045d86dfa82e5c9",
+            "_conditional_nnbegm_banks": "b5a4840292931ef0cb9fbd85c2fa52dd479ba64ba9f128660ab09e287d48d455",
+            "_role_carry_reads": "6059679259758a56da264bcf7646ec89bc1f4b4c1a17af3b431c21a92284eca0",
+            "_nnbegm_outer_replay_function": "2587eccd6afb167826e2810aca1e6636e755ef745b52264a7131dc766787344d",
+            "_nnbegm_query_period_groups": "742df35ba9a5f186841cc9a92b9afb2adf640f2f61e4147b1d6bf6dd4c1318a5",
+            "_prepare_nnbegm_query_inner_pair": "f7acc5233fd35b58cbea5a35ef3d6e13a43c014c4d734e6f5ce3df34c245ccd4",
+            "_publish_adaptive_nnbegm_query": "7f85223706dbf786f86d882e7ad41dac0f994769aa34fd8cf37252bc6624090f",
+        },
+    ),
+    "src/_lcm/egm/upper_envelope/__init__.py": (
+        "5fed98a5b1f05b85415bbad012c5b9d60e372ef79d19e8d45870c0e5112ba72f",
+        {
+            "_exact_backend": "9140c5c3dfdce63329f5665135c12f3888c332a2fb7cceee35d37cd84b90b379",
+        },
+    ),
+    "src/_lcm/egm/upper_envelope/segment_envelope.py": (
+        "74bb965b4a5fdd4093ee2286bd8fa4f52114aed3845291e9197ad635dbc14c1c",
+        {
+            "refine_envelope_exact": "f38c9eec39f60b607f5c98bfee1ac196d952b84baa85ef2b35ec6d31d6c4cbc3",
         },
     ),
 }
@@ -1931,6 +3261,50 @@ class DirectMutationControls(TypedDict):
     supplemental_mutation_count: int
     supplemental_names_match_expected: bool
     admitted_supplemental_mutations: list[str]
+    s03_scalar_mutations: dict[str, MutationCase]
+    s03_scalar_mutation_count: int
+    s03_scalar_names_match_expected: bool
+    admitted_s03_scalar_mutations: list[str]
+    owned_query_helper_mutations: dict[str, MutationCase]
+    owned_query_helper_mutation_count: int
+    owned_query_helper_names_match_expected: bool
+    admitted_owned_query_helper_mutations: list[str]
+    associated_saving_mutations: dict[str, MutationCase]
+    associated_saving_mutation_count: int
+    associated_saving_names_match_expected: bool
+    admitted_associated_saving_mutations: list[str]
+    child_failure_mutations: dict[str, MutationCase]
+    child_failure_mutation_count: int
+    child_failure_names_match_expected: bool
+    admitted_child_failure_mutations: list[str]
+    reviewed_prefix_mutations: dict[str, MutationCase]
+    reviewed_prefix_mutation_count: int
+    reviewed_prefix_names_match_expected: bool
+    admitted_reviewed_prefix_mutations: list[str]
+    decoupled_bound_mutations: dict[str, MutationCase]
+    decoupled_bound_mutation_count: int
+    decoupled_bound_names_match_expected: bool
+    admitted_decoupled_bound_mutations: list[str]
+    retained_prefix_mutations: dict[str, MutationCase]
+    retained_prefix_mutation_count: int
+    retained_prefix_names_match_expected: bool
+    admitted_retained_prefix_mutations: list[str]
+    final_nested_mutations: dict[str, MutationCase]
+    final_nested_mutation_count: int
+    final_nested_names_match_expected: bool
+    admitted_final_nested_mutations: list[str]
+    outer_helper_mutations: dict[str, MutationCase]
+    outer_helper_mutation_count: int
+    outer_helper_names_match_expected: bool
+    admitted_outer_helper_mutations: list[str]
+    child_native_mutations: dict[str, MutationCase]
+    child_native_mutation_count: int
+    child_native_names_match_expected: bool
+    admitted_child_native_mutations: list[str]
+    additional_helper_mutations: dict[str, MutationCase]
+    additional_helper_mutation_count: int
+    additional_helper_names_match_expected: bool
+    admitted_additional_helper_mutations: list[str]
     all_rejected: bool
 
 
@@ -1980,6 +3354,468 @@ def _unselected_pins() -> tuple[tuple[str, str], ...]:
     return tuple(sorted(stored - _SELECTED_PINS))
 
 
+_OUTER_HELPER_CONTRACTS = _contracts(_OUTER_HELPER_OWNER_SELECTION)
+
+_ADDITIONAL_HELPER_CONTRACTS = _contracts(_ADDITIONAL_HELPER_OWNER_SELECTION)
+_EXPECTED_ADDITIONAL_HELPER_MUTATION_NAMES = frozenset(
+    (
+        "additional_helper:body:src/_lcm/egm/adaptive_nbegm_query.py::_fold_adaptive_choice",
+        "additional_helper:body:src/_lcm/egm/continuation.py::_build_feature_child_query",
+        "additional_helper:body:src/_lcm/egm/continuation.py::_select_feature_child_rows",
+        "additional_helper:body:src/_lcm/egm/finite_negm_query.py::_finite_outer_publication_inputs",
+        "additional_helper:body:src/_lcm/egm/nbegm_query.py::_read_scalar_nbegm_owned_row",
+        "additional_helper:body:src/_lcm/egm/nbegm_query.py::_read_scalar_nbegm_owned_row_with_support",
+        "additional_helper:body:src/_lcm/egm/nbegm_query.py::_validate_nbegm_query_recipe",
+        "additional_helper:body:src/_lcm/egm/nbegm_query.py::_with_scalar_nbegm_linear_value",
+        "additional_helper:body:src/_lcm/egm/nbegm_step.py::_prepare_nbegm_interval_block",
+        "additional_helper:body:src/_lcm/egm/outer_refinement.py::_fold_exact_outer_nodes",
+        "additional_helper:body:src/_lcm/egm/step_core.py::_assemble_combo_candidates",
+        "additional_helper:body:src/_lcm/egm/step_core.py::_mask_dead_combo_rows",
+        "additional_helper:body:src/_lcm/execution/internal_outputs.py::_leaf_signature",
+        "additional_helper:body:src/_lcm/execution/internal_outputs.py::_published_signature",
+        "additional_helper:body:src/_lcm/execution/internal_outputs.py::_tree_signature",
+        "additional_helper:body:src/_lcm/execution/internal_outputs.py::assert_internal_inputs",
+        "additional_helper:body:src/_lcm/model_processing.py::_validate_callable_borrowing_solver",
+        "additional_helper:body:src/_lcm/regime_building/processing.py::_nbegm_adaptive_query_spec",
+        "additional_helper:body:src/_lcm/regime_building/processing.py::_nbegm_evaluated_query_predicates",
+        "additional_helper:body:src/_lcm/regime_building/processing.py::_nbegm_query_evaluator_targets",
+        "additional_helper:body:src/_lcm/regime_building/processing.py::_nbegm_query_function_pools",
+        "additional_helper:body:src/_lcm/regime_building/processing.py::_nbegm_query_row_state_names",
+        "additional_helper:body:src/_lcm/regime_building/processing.py::_solver_with_query_authority",
+        "additional_helper:body:src/_lcm/solution/dcegm.py::_dcegm_query_slots_and_capabilities",
+        "additional_helper:body:src/_lcm/solution/egm.py::_unpack_scalar_child_read",
+        "additional_helper:body:src/_lcm/solution/kernel_output.py::_validate_generated_continuation_authority",
+        "additional_helper:body:src/_lcm/solution/model_authority.py::_bind_declared_continuation_authority",
+        "additional_helper:body:src/_lcm/solution/model_authority.py::_bind_generated_continuation_authority",
+        "additional_helper:body:src/_lcm/solution/model_authority.py::_validate_query_policy_budget_authority",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_NBEGMActionEligibility.__call__",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_NBEGMScalarChildReads.__call__",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_NBEGMScalarChildReads.read_rows",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_NBEGMTabulatedEulerLaw.__call__",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_RideAlongNBEGMPeriodKernel._consume_output",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_bounded_nbegm_kernel_output",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_fold_nbegm_scalar_read_records",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_nbegm_cell_continuation_columns",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_prepare_nbegm_scalar_child_reads",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_record_nbegm_scalar_child_slots",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_scalar_conditional_nbegm_carry",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_validate_nbegm_integrity_slot_counts",
+        "additional_helper:body:src/_lcm/solution/nbegm.py::_with_scalar_nbegm_sampled_run",
+        "additional_helper:body:src/_lcm/solution/nnbegm.py::_nnbegm_outer_replay_function",
+        "additional_helper:body:src/_lcm/solution/nnbegm.py::_nnbegm_query_period_groups",
+        "additional_helper:body:src/_lcm/solution/nnbegm.py::_prepare_nnbegm_query_inner_pair",
+        "additional_helper:body:src/_lcm/solution/nnbegm.py::_publish_adaptive_nnbegm_query",
+        "additional_helper:semantic:invalid_numeric_laundered",
+        "additional_helper:semantic:pad_bridge",
+        "additional_helper:semantic:paired_marginal_changed",
+        "additional_helper:semantic:same_owner_false_link_bridge",
+        "additional_helper:semantic:schedule_guard_removed",
+        "additional_helper:surface:src/_lcm/egm/nbegm_query.py",
+        "additional_helper:surface:src/_lcm/execution/internal_outputs.py",
+        "additional_helper:surface:src/_lcm/solution/nbegm.py",
+    )
+)
+
+
+def _additional_helper_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
+    """Authenticate exact helper bodies and the declared three surface controls."""
+    surface, callables = _ADDITIONAL_HELPER_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="additional helper dependency", contracts=callables
+    )
+    if (
+        source in _ADDITIONAL_HELPER_SURFACE_SELECTION
+        and _transport_module_surface(tree) != surface
+    ):
+        errors.append(
+            f"additional helper dependency: {source} declaration surface changed"
+        )
+    return errors
+
+
+def additional_helper_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Construct the declared forty-six-body, three-surface and five-attack family."""
+    return _additional_helper_control_specs(
+        repo_root=repo_root, checker=sys.modules[__name__]
+    )
+
+
+def _additional_helper_case_rejected(
+    *,
+    clean: DirectFlowReport,
+    result: DirectFlowReport,
+    source: SourcePath,
+    diagnostic: str,
+) -> bool:
+    """Require clean input and every precise new or co-owned declaration refusal."""
+    return (
+        clean["ok"]
+        and clean["result"] == "pass"
+        and clean["errors"] == []
+        and clean["offending_paths"] == []
+        and not result["ok"]
+        and result["result"] == "fail"
+        and tuple(sorted(result["errors"]))
+        == _additional_helper_expected_errors(source=source, diagnostic=diagnostic)
+        and result["offending_paths"] == [source]
+    )
+
+
+_CHILD_NATIVE_CONTRACTS = _contracts(_CHILD_NATIVE_OWNER_SELECTION)
+_EXPECTED_CHILD_NATIVE_MUTATION_NAMES = frozenset(
+    (
+        "child_native:body:src/_lcm/egm/upper_envelope/__init__.py::_exact_backend",
+        "child_native:body:src/_lcm/egm/upper_envelope/segment_envelope.py::refine_envelope_exact",
+        "child_native:overload:changed_stub",
+        "child_native:overload:extra_function_binding",
+        "child_native:overload:extra_stub",
+        "child_native:overload:missing_stub",
+        "child_native:overload:overload_alias",
+        "child_native:overload:overload_import_removed",
+        "child_native:overload:overload_rebinding",
+        "child_native:overload:reordered_stubs",
+        "child_native:overload:runtime_decorator",
+        "child_native:surface:src/_lcm/egm/upper_envelope/__init__.py",
+        "child_native:surface:src/_lcm/egm/upper_envelope/segment_envelope.py",
+    )
+)
+
+
+def _child_native_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
+    """Authenticate native composition bodies and their complete declarations."""
+    surface, callables = _CHILD_NATIVE_CONTRACTS[source]
+    ordinary = {
+        name: digest
+        for name, digest in callables.items()
+        if name != "refine_envelope_exact"
+    }
+    errors = _exact_callable_errors(
+        tree=tree, label="child native dependency", contracts=ordinary
+    )
+    if "refine_envelope_exact" in callables:
+        try:
+            implementation = _select_refine_envelope_exact(
+                tree=tree, checker=sys.modules[__name__]
+            )
+        except ValueError:
+            errors.append(
+                "child native dependency: refine_envelope_exact overload declarations changed"
+            )
+        else:
+            if (
+                _callable_ast_sha256(implementation)
+                != callables["refine_envelope_exact"]
+            ):
+                errors.append(
+                    "child native dependency: exact callable corridor 'refine_envelope_exact' changed"
+                )
+    if _transport_module_surface(tree) != surface:
+        errors.append(f"child native dependency: {source} declaration surface changed")
+    return errors
+
+
+def child_native_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Construct the distinct two-body, two-surface and nine-declaration family."""
+    return _child_native_control_specs(
+        repo_root=repo_root, checker=sys.modules[__name__]
+    )
+
+
+def _child_native_case_rejected(
+    *,
+    clean: DirectFlowReport,
+    result: DirectFlowReport,
+    source: SourcePath,
+    diagnostic: str,
+) -> bool:
+    """Require a clean baseline and exactly the native owner's complete refusal."""
+    return (
+        clean["ok"]
+        and clean["result"] == "pass"
+        and clean["errors"] == []
+        and clean["offending_paths"] == []
+        and not result["ok"]
+        and result["result"] == "fail"
+        and tuple(sorted(result["errors"]))
+        == _child_native_expected_errors(source=source, diagnostic=diagnostic)
+        and result["offending_paths"] == [source]
+    )
+
+
+_FINAL_NESTED_CONTRACTS = _contracts(
+    {
+        "src/_lcm/egm/nested_floor.py": (
+            "prepare_nested_floor",
+            "nested_floor_at_cell",
+        ),
+        "src/_lcm/egm/finite_negm_query.py": (
+            "read_finite_outer_choices",
+            "_single_row_finite_corner_read",
+            "_read_finite_resource_gradient",
+            "_read_finite_corner_row",
+            "_read_finite_native_row",
+            "_read_finite_owned_side",
+            "_validate_finite_outer_rows",
+            "_filter_finite_survivors",
+            "_select_finite_outer_profiles",
+            "_collapse_finite_selection",
+        ),
+        "src/_lcm/egm/adaptive_mesh_authority.py": (
+            "admit_continuation_mesh",
+            "validate_continuation_mesh",
+            "validate_bound_continuation_mesh",
+        ),
+        "src/_lcm/egm/adaptive_nbegm_carry.py": (
+            "adaptive_nbegm_template",
+            "assemble_adaptive_nbegm_carry",
+        ),
+        "src/_lcm/egm/adaptive_nbegm_producer.py": (
+            "_tuple_roles",
+            "_floor_template",
+            "PreparedFloorArguments.__call__",
+            "with_keeper_floor",
+            "prepare_nested_inner_kernels",
+            "fold_executed_summaries",
+        ),
+        "src/_lcm/egm/adaptive_nbegm_query.py": (
+            "_numeric_operand",
+            "_Profile.read",
+            "_Profile.interpolate",
+            "_Profile.status_at",
+            "_take",
+            "read_adaptive_choices",
+            "_read_one_choice",
+            "_validate_tuple",
+        ),
+        "src/_lcm/egm/nbegm_query_model.py": ("derive_adaptive_inner_models",),
+        "src/_lcm/egm/nbegm_query.py": (
+            "build_nbegm_query",
+            "NBEGMQuery.capabilities",
+            "NBEGMQuery.input_names",
+            "NBEGMQuery.evaluate_floor",
+            "NBEGMQuery.read_prepared",
+            "NBEGMQuery.read_prepared_with_counts",
+            "NBEGMQuery._read_at_floor_with_summary",
+            "NBEGMQuery._read_rows_without_counts",
+            "NBEGMQuery._read_rows",
+            "NBEGMQuery._read_rows_with_counts",
+            "_read_nb_compact_corner_rows",
+            "_read_nb_compact_corner",
+            "NBEGMQuery.read_choices",
+        ),
+        "src/_lcm/egm/carry.py": ("_get_owned_local_piece",),
+        "src/_lcm/egm/nbegm_step.py": ("_single_row_nbegm_query_step",),
+        "src/_lcm/solution/negm.py": (
+            "NEGM.build_period_kernels",
+            "_derive_negm_inner_query_model",
+            "_build_negm_floor_preparation",
+            "_durable_values_at",
+            "_NEGMPeriodKernel.__post_init__",
+            "_NEGMPeriodKernel.__call__",
+            "_nested_feasibility_programs",
+            "_nested_tuple_roles",
+            "_stacked_nested_carry_roles",
+            "_stacked_nested_carry_role",
+            "_keeper_with_prepared_floor",
+            "_run_nested_feasibility_kernel",
+            "_nested_outer_sweep_program",
+            "_count_nested_current_feasibility",
+            "_NestedNodeSolver.__call__",
+            "_NEGMSweepArgumentBuilder.__call__",
+            "_periodized_function_groups",
+            "_with_declared_keeper_reads",
+        ),
+        "src/_lcm/solution/nnbegm.py": (
+            "NNBEGM.build_period_kernels",
+            "_conditional_nnbegm_banks",
+            "_NestedArgumentBuilder.__call__",
+            "_NNBEGMPeriodKernel.__post_init__",
+            "_NNBEGMPeriodKernel.__call__",
+            "_NNBEGMPeriodKernel._solve_keeper",
+            "_NNBEGMPeriodKernel._solve_adjuster_node",
+            "_FiniteNNBEGMPeriodKernel._solve_outer",
+            "_AdaptiveNNBEGMPeriodKernel._solve_outer",
+            "_role_carry_reads",
+            "_AdaptiveNodeSolver.__call__",
+        ),
+        "src/_lcm/solution/dcegm.py": (
+            "_counted_dcegm_output_roles",
+            "_with_nested_feasibility_role",
+            "_DCEGMPeriodKernel.retains_current_feasibility",
+            "_strip_nested_feasibility",
+        ),
+        "src/_lcm/solution/nbegm.py": (
+            "_ride_along_output_roles",
+            "_nbegm_bounded_output_roles",
+            "_with_nbegm_scalar_output_roles",
+            "_with_nbegm_scalar_carry_reads",
+            "_NBEGMOwnedSingleAxisCore.__call__",
+        ),
+        "src/_lcm/solution/feasibility.py": (
+            "reduce_continuation_read_counts",
+            "merge_continuation_read_counts",
+        ),
+        "src/_lcm/egm/query_data.py": ("select_adaptive_query_data",),
+        "src/_lcm/regime_building/processing.py": (
+            "_prepare_nbegm_query_models",
+            "_canonical_constraint_routing_inputs",
+        ),
+        "src/_lcm/egm/outer_candidates.py": (
+            "build_outer_candidate_bank",
+            "_stack_leaves",
+            "OuterCandidateBank.n_candidates",
+            "OuterCandidateBank.candidate_v_arr",
+            "OuterCandidateBank.candidate_carry",
+        ),
+    }
+)
+
+
+def _final_nested_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
+    """Check each nested helper body and its complete declaration surface."""
+    surface, callables = _FINAL_NESTED_CONTRACTS[source]
+    overloaded = "NBEGMQuery.read_choices"
+    ordinary = {
+        name: digest
+        for name, digest in callables.items()
+        if source != "src/_lcm/egm/nbegm_query.py" or name != overloaded
+    }
+    errors = _exact_callable_errors(
+        tree=tree, label="final nested dependency", contracts=ordinary
+    )
+    if source == "src/_lcm/egm/nbegm_query.py":
+        try:
+            implementation = _select_nbegm_query_read_choices(
+                tree=tree, checker=sys.modules[__name__]
+            )
+            if _callable_ast_sha256(implementation) != callables[overloaded]:
+                errors.append(
+                    "final nested dependency: exact callable corridor "
+                    "'NBEGMQuery.read_choices' changed"
+                )
+        except ValueError as error:
+            errors.append(f"final nested dependency: {error}")
+    if _transport_module_surface(tree) != surface:
+        errors.append(f"final nested dependency: {source} declaration surface changed")
+    return errors
+
+
+EXPECTED_FINAL_NESTED_MUTATION_COUNT = 122
+EXPECTED_FINAL_NESTED_MUTATION_NAMES_SHA256 = (
+    "d771f1d2d221d5dbc19cbf97d2ba87fb563cf3bad4b60db840f2996c570d3544"
+)
+
+
+def final_nested_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Keep all nested controls in a distinct canonically executed population."""
+    return _final_nested_control_specs(
+        repo_root=repo_root, checker=sys.modules[__name__]
+    )
+
+
+def _final_nested_case_rejected(
+    *,
+    clean: DirectFlowReport,
+    result: DirectFlowReport,
+    source: SourcePath,
+    diagnostic: str,
+) -> bool:
+    """Require clean input and the exact new/co-owned error set on one source."""
+    return (
+        clean["ok"]
+        and clean["result"] == "pass"
+        and clean["errors"] == []
+        and clean["offending_paths"] == []
+        and not result["ok"]
+        and result["result"] == "fail"
+        and tuple(sorted(result["errors"]))
+        == _final_nested_expected_errors(source=source, diagnostic=diagnostic)
+        and result["offending_paths"] == [source]
+    )
+
+
+_EXPECTED_OUTER_HELPER_MUTATION_NAMES = frozenset(
+    {
+        "outer_helpers:body:interpolation:evaluate",
+        "outer_helpers:body:interpolation:evaluate_derivative",
+        "outer_helpers:body:interpolation:evaluate_validity",
+        "outer_helpers:body:interpolation:evaluate_core",
+        "outer_helpers:body:interpolation:pad_axes",
+        "outer_helpers:body:interpolation:validate_nodes",
+        "outer_helpers:body:interpolation:node_slopes",
+        "outer_helpers:body:interpolation:four_point",
+        "outer_helpers:body:interpolation:three_point",
+        "outer_helpers:body:interpolation:one_sided",
+        "outer_helpers:body:interpolation:prefix_node",
+        "outer_helpers:body:interpolation:prefix_three",
+        "outer_helpers:body:interpolation:prefix_four",
+        "outer_helpers:body:search:safeguarded",
+        "outer_helpers:body:search:local_max",
+        "outer_helpers:body:search:consider",
+        "outer_helpers:body:search:tie_band",
+        "outer_helpers:body:golden:maximize",
+        "outer_helpers:body:golden:probe",
+        "outer_helpers:body:golden:shrink",
+        "outer_helpers:prefix:capacity_domain",
+        "outer_helpers:prefix:ordinary_slopes",
+        "outer_helpers:prefix:cubic_early",
+        "outer_helpers:prefix:nested_without_cubic",
+        "outer_helpers:prefix:secant_reads_padding",
+        "outer_helpers:prefix:endpoint_capacity",
+        "outer_helpers:prefix:cubic_unclamped",
+        "outer_helpers:search:pads_compete",
+        "outer_helpers:search:bracket_capacity",
+        "outer_helpers:search:objective_not_pinned",
+        "outer_helpers:search:exact_nodes_omitted",
+        "outer_helpers:search:duplicate_runner_up",
+        "outer_helpers:golden:nan_not_sanitized",
+        "outer_helpers:golden:interior_tie_right",
+        "outer_helpers:golden:cached_value_reprobed",
+        "outer_helpers:golden:upper_endpoint_omitted",
+        "outer_helpers:golden:loop_callback_replaced",
+        "outer_helpers:surface:golden_import_redirected",
+        "outer_helpers:surface:prefix_minimum_changed",
+        "outer_helpers:surface:golden_result_reordered",
+    }
+)
+
+
+def _outer_helper_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
+    """Check the explicit primitive bodies beside their exact binding surface."""
+    surface, callables = _OUTER_HELPER_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="outer helper dependency", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append(f"outer helper dependency: {source} declaration surface changed")
+    return errors
+
+
+def outer_helper_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Keep all forty primitive body/binding controls in their own population."""
+    return _outer_helper_control_specs(repo_root=repo_root)
+
+
+def _outer_helper_case_rejected(
+    *,
+    clean: DirectFlowReport,
+    result: DirectFlowReport,
+    source: SourcePath,
+    diagnostic: str,
+) -> bool:
+    """Require the exact non-seal owner error and path after a clean positive."""
+    return (
+        clean["ok"]
+        and clean["result"] == "pass"
+        and clean["errors"] == []
+        and clean["offending_paths"] == []
+        and not result["ok"]
+        and result["result"] == "fail"
+        and result["errors"] == [diagnostic]
+        and result["offending_paths"] == [source]
+    )
+
+
 def canonical_json[PayloadValue](payload: Mapping[str, PayloadValue]) -> str:
     """Render deterministic JSON for command-line controls."""
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
@@ -1995,7 +3831,17 @@ def _name(*, node: ast.AST | None, expected: str) -> bool:
     return isinstance(node, ast.Name) and node.id == expected
 
 
+def _is_bounded_result_name(node: ast.AST | None) -> bool:
+    """Recognize the exact nominal carrier, including explicit generic arguments."""
+    return _name(node=node, expected="BoundedResult") or (
+        isinstance(node, ast.Subscript)
+        and _name(node=node.value, expected="BoundedResult")
+    )
+
+
 def _call_name(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Subscript) and _is_bounded_result_name(call.func):
+        return "BoundedResult"
     """Return only an unqualified direct callee; attributes are not lookalikes."""
     if isinstance(call.func, ast.Name):
         return call.func.id
@@ -2050,6 +3896,10 @@ def _stored_name_count(*, node: ast.AST, name: str) -> int:
 
 
 def _definition(*, tree: ast.Module, name: str) -> ast.FunctionDef:
+    if name == "_read_one_row_dc_child":
+        return select_checked_dc_runtime(
+            tree=tree, qualname=name, checker=sys.modules[__name__]
+        )
     matches = [
         node
         for node in tree.body
@@ -2587,6 +4437,10 @@ def _method_definition(
     *, tree: ast.Module, class_name: str, method_name: str
 ) -> tuple[ast.ClassDef, ast.FunctionDef]:
     cls = _class_definition(tree=tree, name=class_name)
+    if class_name == "DCEGMQuery" and method_name == "read_choices":
+        return cls, select_checked_dc_runtime(
+            tree=tree, qualname="DCEGMQuery.read_choices", checker=sys.modules[__name__]
+        )
     methods = [
         node
         for node in cls.body
@@ -3029,10 +4883,200 @@ def _exact_collective_body(*, node: ast.If, simulate: bool) -> bool:  # noqa: PL
     return _exact_collective_return(statement=node.body[3], simulate=False)
 
 
+def _candidate_value_projection(tree: ast.Module) -> ast.Module:
+    """Expose ordinary Q/F identity beneath independently pinned status transport.
+
+    Only exact status wrappers are erased. The source tree's callable and surface
+    pins are checked separately; candidate-changing expressions remain visible to
+    the route proof and its existing mutation corpus.
+    """
+    result = copy.deepcopy(tree)
+    builders = {"get_max_Q_over_a", "get_argmax_and_max_Q_over_a"}
+    reducers = {
+        "_HardMaxQOverA",
+        "_HardMaxArgmaxQOverA",
+        "_SmoothedMaxQOverA",
+        "_TasteShockArgmaxQOverA",
+        "_FoldedMaxQOverA",
+    }
+
+    def project(statements: list[ast.stmt]) -> list[ast.stmt]:
+        projected: list[ast.stmt] = []
+        for original_statement in statements:
+            statement = original_statement
+            if (
+                isinstance(statement, ast.AnnAssign)
+                and _name(node=statement.target, expected="output")
+                and statement.value is not None
+            ):
+                statement = ast.Assign(
+                    targets=[statement.target], value=statement.value
+                )
+            if isinstance(statement, ast.Assign) and isinstance(
+                statement.value, ast.Call
+            ):
+                call = statement.value
+                if (
+                    _target_names(statement.targets[0]) == ("Q_arr", "F_arr")
+                    and _call_name(call) == "cast"
+                    and len(call.args) == 2
+                    and not call.keywords
+                    and _unparse(call.args[0]) == "'tuple[FloatND, BoolND]'"
+                ):
+                    statement.value = call.args[1]
+            if isinstance(statement, ast.If):
+                statement.body = project(statement.body)
+                statement.orelse = project(statement.orelse)
+            if isinstance(statement, ast.Assign) and projected:
+                previous = projected[-1]
+                if (
+                    _target_names(statement.targets[0]) == ("Q_arr", "F_arr")
+                    and _expression_matches(
+                        node=statement.value,
+                        source="evaluated.output if type(evaluated) is BoundedResult else evaluated",
+                    )
+                    and isinstance(previous, ast.Assign)
+                    and _target_names(previous.targets[0]) == ("evaluated",)
+                ):
+                    projected[-1] = ast.Assign(
+                        targets=statement.targets, value=previous.value
+                    )
+                    continue
+            if isinstance(statement, ast.Return) and isinstance(
+                statement.value, ast.Call
+            ):
+                call = statement.value
+                if (
+                    _call_name(call) == "_with_bound_summary"
+                    and not call.args
+                    and {keyword.arg for keyword in call.keywords}
+                    == {"evaluated", "output"}
+                    and _unparse(_keyword(call=call, name="evaluated"))
+                    in {"evaluated", "out"}
+                ):
+                    output = _keyword(call=call, name="output")
+                    if (
+                        isinstance(output, ast.Call)
+                        and _call_name(output) == "cast"
+                        and len(output.args) == 2
+                        and not output.keywords
+                        and _unparse(output.args[0]) == "'MaxOutput'"
+                    ):
+                        output = output.args[1]
+                    if _name(node=output, expected="output") and projected:
+                        previous = projected[-1]
+                        if isinstance(previous, ast.Assign) and _target_names(
+                            previous.targets[0]
+                        ) == ("output",):
+                            output = previous.value
+                            projected.pop()
+                    statement.value = output
+            projected.append(statement)
+        return projected
+
+    for definition in result.body:
+        if isinstance(definition, ast.FunctionDef) and definition.name in builders:
+            definition.body = [
+                statement
+                for statement in definition.body
+                if not _statements_match(
+                    observed=[statement],
+                    expected_source="action_kernel: ActionFunction = BoundedQAndF(function=Q_and_F) if bound_summary else Q_and_F",
+                )
+            ]
+            for node in ast.walk(definition):
+                if isinstance(node, ast.Name) and node.id in {
+                    "mapped_action_kernel",
+                    "action_kernel",
+                }:
+                    node.id = "Q_and_F"
+                if (
+                    isinstance(node, ast.AnnAssign)
+                    and _name(node=node.target, expected="max_Q_over_a")
+                    and _unparse(node.annotation) == "Callable[..., BoundedMaxOutput]"
+                ):
+                    node.annotation = ast.parse(
+                        "Callable[..., FloatND | tuple[FloatND, BoolND]]", mode="eval"
+                    ).body
+                if (
+                    isinstance(node, ast.AnnAssign)
+                    and _name(node=node.target, expected="argmax_and_max_Q_over_a")
+                    and _unparse(node.annotation)
+                    == "ArgmaxQOverAFunction[BoundedArgmaxOutput]"
+                ):
+                    node.annotation = ast.Name(
+                        id="ArgmaxQOverAFunction", ctx=ast.Load()
+                    )
+                if (
+                    isinstance(node, ast.Call)
+                    and _call_name(node) == "cast"
+                    and len(node.args) == 2
+                ):
+                    aliases = {
+                        "Callable[..., BoundedMaxOutput]": "Callable[..., FloatND | tuple[FloatND, BoolND]]",
+                        "MaxQOverAFunction[BoundedMaxOutput]": "MaxQOverAFunction",
+                    }
+                    if (
+                        isinstance(node.args[0], ast.Constant)
+                        and isinstance(node.args[0].value, str)
+                        and node.args[0].value in aliases
+                    ):
+                        node.args[0].value = aliases[node.args[0].value]
+            definition.body = [
+                statement
+                for statement in definition.body
+                if not _statements_match(
+                    observed=[statement],
+                    expected_source="bound_summary = bool(runtime_bound_specs(function=Q_and_F))",
+                )
+                and not _statements_match(
+                    observed=[statement],
+                    expected_source="if bound_summary:\n    Q_and_F = BoundedQAndF(function=Q_and_F)",
+                )
+            ]
+            for call in ast.walk(definition):
+                if isinstance(call, ast.Call) and _call_name(call) in {
+                    "productmap",
+                    "tiled_productmap",
+                    "vmap_1d",
+                    "simulation_spacemap",
+                }:
+                    call.keywords = [
+                        keyword
+                        for keyword in call.keywords
+                        if not (
+                            keyword.arg == "bound_summary"
+                            and _name(node=keyword.value, expected="bound_summary")
+                        )
+                    ]
+        if isinstance(definition, ast.ClassDef) and definition.name in reducers:
+            for method in definition.body:
+                if isinstance(method, ast.FunctionDef) and method.name == "__call__":
+                    method.body = project(method.body)
+                    if definition.name == "_FoldedMaxQOverA":
+                        method.body = [
+                            statement
+                            for statement in method.body
+                            if not _statements_match(
+                                observed=[statement],
+                                expected_source="ordinary = out.output if type(out) is BoundedResult else out",
+                            )
+                        ]
+                        for node in ast.walk(method):
+                            if isinstance(node, ast.Name) and node.id == "ordinary":
+                                node.id = "out"
+                    if isinstance(
+                        method.returns, ast.BinOp
+                    ) and _is_bounded_result_name(method.returns.right):
+                        method.returns = method.returns.left
+    return ast.fix_missing_locations(result)
+
+
 def _productmap_binding_errors(
     *, tree: ast.Module, outer_name: str, nested_name: str
 ) -> list[str]:
     """Require one unwrapped, unbatched action product and no later rebinding."""
+    tree = _candidate_value_projection(tree)
     try:
         outer = _definition(tree=tree, name=outer_name)
     except ValueError as error:
@@ -3091,6 +5135,7 @@ def _productmap_binding_errors(
 
 def _max_builder_wiring_errors(tree: ast.Module) -> list[str]:
     """Pin both reducers from inputs, through the guard, to the live return."""
+    tree = _candidate_value_projection(tree)
     solve_prefix = r"""_fail_if_co_map_states_not_leading(
     state_names=state_names, co_map_state_names=co_map_state_names
 )
@@ -3398,7 +5443,9 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
     )
     try:
         _, folded = _method_definition(
-            tree=tree, class_name="_FoldedMaxQOverA", method_name="__call__"
+            tree=_candidate_value_projection(tree),
+            class_name="_FoldedMaxQOverA",
+            method_name="__call__",
         )
     except ValueError as error:
         return [*errors, f"streamed max-Q builder: {error}"]
@@ -3455,7 +5502,7 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
             "_SmoothedMaxQOverA",
             (
                 "__name__: ClassVar[str] = 'max_Q_over_a'",
-                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "Q_and_F: ActionFunction",
                 "n_discrete_action_axes: int",
                 "return_feasibility: bool = False",
             ),
@@ -3465,7 +5512,7 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
             "_HardMaxQOverA",
             (
                 "__name__: ClassVar[str] = 'max_Q_over_a'",
-                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "Q_and_F: ActionFunction",
                 "stakeholders: tuple[str, ...] | None",
                 "pareto_weights: ParetoWeights | None",
                 "return_feasibility: bool = False",
@@ -3476,7 +5523,7 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
             "_StreamedMaxQOverA",
             (
                 "__name__: ClassVar[str] = 'streamed_max_Q_over_a'",
-                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "Q_and_F: RawActionFunction",
                 "action_names: tuple[ActionName, ...]",
                 "n_discrete_action_axes: int",
                 "has_taste_shocks: bool",
@@ -3484,7 +5531,7 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "pareto_weights: ParetoWeights | None",
                 "q_and_f_arg_names: frozenset[ReferenceName]",
                 "action_width_keyword: str",
-                "whole_product_Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "whole_product_Q_and_F: RawActionFunction",
                 "return_feasibility: bool = False",
             ),
         ),
@@ -3492,7 +5539,7 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
             "folded max-Q kernel",
             "_FoldedMaxQOverA",
             (
-                "mapped: Callable[..., FloatND | tuple[FloatND, BoolND]]",
+                "mapped: Callable[..., BoundedMaxOutput]",
                 "fold_steps: tuple[tuple[StateName, int, int | None], ...]",
                 "fold_weights: Mapping[StateName, FloatND]",
                 "fold_reducers: Mapping[StateName, Callable[..., FloatND]]",
@@ -3504,7 +5551,7 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
             "_TasteShockArgmaxQOverA",
             (
                 "__name__: ClassVar[str] = 'argmax_and_max_Q_over_a'",
-                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "Q_and_F: ActionFunction",
                 "n_discrete_action_axes: int",
             ),
         ),
@@ -3513,7 +5560,7 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
             "_HardMaxArgmaxQOverA",
             (
                 "__name__: ClassVar[str] = 'argmax_and_max_Q_over_a'",
-                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "Q_and_F: ActionFunction",
                 "stakeholders: tuple[str, ...] | None",
                 "pareto_weights: ParetoWeights | None",
             ),
@@ -3691,6 +5738,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "internal_outputs: tuple[InternalOutputSpec, ...] = ()",
                 "compiler_options: tuple[tuple[str, int], ...] = ()",
                 "invariant_binding: InvariantBinding | None = None",
+                "checked_variant: _CheckedCoreVariant | None = None",
             ),
             methods=("__post_init__",),
         )
@@ -4170,6 +6218,7 @@ def category(self) -> str:
             label="solve caller native program graph",
             class_name="_GridSearchPeriodKernel",
             fields=(
+                "n_runtime_bounds: int = field(default=0, metadata={'fingerprint_omit_if_default': True})",
                 "_core_programs: Mapping[str, CoreProgram]",
                 (
                     "landing_checks: tuple[tuple[RegimeName, StateName], ...] = "
@@ -4208,7 +6257,7 @@ def _feasibility_summary_errors(tree: ast.Module) -> list[str]:
         label="native feasibility summary",
         class_name="CountedGridSearch",
         fields=(
-            "function: Callable[..., tuple[FloatND, BoolND]]",
+            "function: Callable[..., tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]]",
             "collective: bool",
         ),
         methods=("__call__",),
@@ -4231,15 +6280,15 @@ def _feasibility_summary_errors(tree: ast.Module) -> list[str]:
         return [*errors, f"native feasibility summary: {error}"]
     if not _body_matches(
         node=method,
-        expected_source="""value, empty = self.function(**kwargs)
+        expected_source="""evaluated = self.function(**kwargs)
+value, empty = cast("tuple[FloatND, BoolND]", evaluated.output if type(evaluated) is BoundedResult else evaluated)
 infinite = jnp.isinf(value)
 if self.collective:
     infinite = jnp.any(infinite, axis=-1)
 empty_count = jnp.sum(empty, dtype=jnp.int32)
 other_inf_count = jnp.sum(infinite & ~empty, dtype=jnp.int32)
-if self.collective:
-    return value, empty, empty_count, other_inf_count
-return value, empty_count, other_inf_count
+output: CountedGridSearchOutput = (value, empty, empty_count, other_inf_count) if self.collective else (value, empty_count, other_inf_count)
+return BoundedResult[CountedGridSearchOutput](output=output, bound_status=evaluated.bound_status) if type(evaluated) is BoundedResult else output
 """,
     ):
         errors.append("native feasibility summary: producer value or counters changed")
@@ -4833,7 +6882,7 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
                 (
                     "from _lcm.engine import EGMPolicyRead, FeasibilityPoolsByPeriod, NNBEGMPolicyRead, Regime, SimulationPhase, SolutionPhase, StateActionSpace, Variables, _fail_if_template_is_misplaced, placed_devices_for_ids"
                 ),
-                "from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a",
+                "from _lcm.regime_building.max_Q_over_a import BoundedArgmaxOutput, get_argmax_and_max_Q_over_a",
                 "from _lcm.simulation.programs import attach_gated_simulation_programs, build_simulation_programs",
             ],
             expected_binding_counts={
@@ -5999,6 +8048,1018 @@ def _structural_blueprint_errors(*, tree: ast.Module, source: SourcePath) -> lis
     return errors
 
 
+_BORROWING_BOUND_CONTRACTS = _contracts(
+    {
+        AGE_BOUND_NORMALIZATION_SOURCE: (
+            "_representative_regime",
+            "_regime_has_markers",
+            "_collect_function_markers",
+            "_restore_representative_floor_source",
+        ),
+        DYNAMIC_BOUND_SOURCE: (
+            "ScalarFloor.__post_init__",
+            "ScalarFloor.__call__",
+            "_ScalarFloorFactory.__call__",
+            "get_floor_node",
+            "get_floor_source",
+            "_bound_surface",
+            "validate_declared_bounds",
+            "_resolved_rhs_contract",
+            "_walk_rhs",
+            "_validate_scalar_trace",
+        ),
+        POST_DECISION_BOUND_SOURCE: (
+            "grid_origin_bound_spec",
+            "_PostDecisionLowerBound.__post_init__",
+            "_PostDecisionLowerBound.__call__",
+        ),
+        BOUND_PROOF_SOURCE: (
+            "lower_bound_declaration",
+            "proves_the_savings_grids_lower_bound",
+            "matches_installed_literal_bound",
+            "_SavingsGridLowerBoundProof.__call__",
+        ),
+        BOUND_NORMALIZATION_SOURCE: ("_as_condition",),
+        USER_REGIME_BOUND_SOURCE: (
+            "Regime.decomposed_functions",
+            "Regime.decomposed_constraints",
+            "Regime.get_all_functions",
+            "Regime._restore_floor_sources",
+            "decompose_constraints",
+            "Regime.with_engine_functions",
+        ),
+        LIQUID_BOUND_DECLARATION_SOURCE: ("post_decision_lower_bound",),
+        MODEL_PROCESSING_SOURCE: (
+            "validate_model_inputs",
+            "_validate_borrowing_bound_routes",
+            "_law_phase_varies",
+            "_is_solve_proved_post_decision_lower_bound",
+        ),
+    }
+)
+
+
+def _floor_source_implementation(*, tree: ast.Module) -> ast.FunctionDef:
+    """Authenticate two typing overloads and select their one runtime body."""
+    expected = ast.parse(
+        "@overload\n"
+        "def get_floor_source(*, function: UserFunction) -> UserFunction: ...\n"
+        "@overload\n"
+        "def get_floor_source(*, function: None) -> None: ...\n"
+    ).body
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "get_floor_source"
+    ]
+    bindings = _scope_binding_counts(tree.body)
+    imports = _relevant_imports(tree=tree, names={"overload"})
+    if (
+        len(functions) != 3
+        or bindings.get("get_floor_source") != 3
+        or bindings.get("overload") != 1
+        or imports
+        != ["from typing import TYPE_CHECKING, Literal, cast, no_type_check, overload"]
+        or [_ast_key(node) for node in functions[:2]]
+        != [_ast_key(node) for node in expected]
+        or functions[-1].decorator_list
+    ):
+        raise ValueError("get_floor_source overload declarations changed")
+    return functions[-1]
+
+
+def _borrowing_bound_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
+    """Authenticate named floor composition and its validation/proof boundary."""
+    surface, callables = _BORROWING_BOUND_CONTRACTS[source]
+    ordinary = (
+        {
+            name: digest
+            for name, digest in callables.items()
+            if name != "get_floor_source"
+        }
+        if source == DYNAMIC_BOUND_SOURCE
+        else callables
+    )
+    errors = _exact_callable_errors(
+        tree=tree, label="borrowing bound authority", contracts=ordinary
+    )
+    if source == DYNAMIC_BOUND_SOURCE:
+        try:
+            implementation = _floor_source_implementation(tree=tree)
+        except ValueError as error:
+            errors.append(f"borrowing bound authority: {error}")
+        else:
+            if _callable_ast_sha256(implementation) != callables["get_floor_source"]:
+                errors.append(
+                    "borrowing bound authority: exact callable corridor 'get_floor_source' changed"
+                )
+    if _transport_module_surface(tree) != surface:
+        errors.append("borrowing bound authority: module or producer schema changed")
+    return errors
+
+
+_S03_SCALAR_CONTRACTS = _contracts(
+    {
+        S03_EULER_SOURCE: ("invert_euler",),
+        "src/_lcm/constraints/bounds.py": ("_SavingsGridLowerBoundProof.__call__",),
+        "src/_lcm/egm/budget.py": (
+            "get_intrinsic_budget_constraint",
+            "_IntrinsicBudgetConstraint.__call__",
+        ),
+        S03_DECLARED_LAW_SOURCE: (
+            "build_declared_liquid_law",
+            "_DeclaredLiquidLaw.__call__",
+            "_landing_point",
+            "_fail_if_law_reaches_past_the_post_decision",
+            "fail_if_declared_law_is_not_increasing",
+        ),
+        S03_INTERP_SOURCE: ("locate_on_grid",),
+        S03_NUMERIC_INVERSE_SOURCE: (
+            "numeric_inverse_marginal_utility",
+            "_expand_upper_bracket",
+            "_LogMarginalUtility.__call__",
+        ),
+        S03_ONE_ASSET_STEP_SOURCE: (
+            "egm_one_asset_step",
+            "_solve_viable_feature_row",
+            "_prepare_augmented_savings_support",
+            "_flatten_egm_savings_support",
+            "_flatten_egm_savings_support_with_keys",
+            "_unflatten_egm_savings_support",
+        ),
+        S03_PREFERENCES_SOURCE: (
+            "newton_action_ceiling",
+            "get_numeric_inverse_marginal_utility",
+            "preferences_from_utility",
+            "get_preferences_builder",
+            "get_discount_factor_reader",
+            "concatenate_regime_function",
+            "_elementwise",
+            "_Elementwise.__call__",
+            "BoundUtilityOfAction.__call__",
+            "AnalyticInverseMarginalUtility.__call__",
+            "_NumericInverseMarginalUtility.__call__",
+            "_PreferencesBuilder.__call__",
+            "_DiscountFactorReader.__call__",
+        ),
+        S03_SCALAR_QUERY_SOURCE: (
+            "build_scalar_egm_query",
+            "ScalarEGMQuery.capabilities",
+            "ScalarEGMQuery.evaluate_floor",
+            "ScalarEGMQuery.__call__",
+            "_weighted_pair",
+        ),
+        "src/_lcm/engine.py": (),
+        "src/_lcm/model_processing.py": ("_validate_borrowing_bound_routes",),
+        "src/_lcm/regime_building/processing.py": (
+            "_CanonicalRegimeBuilder.__call__",
+            "_prepare_scalar_egm_query_models",
+            "_fail_if_a_declaration_moved_more_than_the_kernels",
+            "_fail_if_a_continuation_demand_is_unmet",
+            "_build_solution_phase",
+            "_process_regime_core",
+        ),
+        "src/_lcm/solution/backward_induction.py": (
+            "solve",
+            "_match_leaf_pair_sharding",
+            "_match_leaf_template_sharding",
+            "_release_closed_period_inputs",
+        ),
+        "src/_lcm/solution/contract.py": ("SolutionKernels.__post_init__",),
+        "src/_lcm/solution/egm.py": (
+            "EGM.build_period_kernels",
+            "_build_egm_period_kernel",
+            "_EGMArgumentBuilder.__call__",
+            "_EGMArgumentBuilder._law_readings",
+            "_EGMPeriodKernel.__call__",
+            "_scalar_egm_output_role",
+            "_build_egm_core",
+            "_EGMCore.__call__",
+            "_EGMCore._prepare_child_read",
+            "_RegimeMassGuardedCore.__call__",
+        ),
+        "src/_lcm/solution/feasibility.py": ("BoundInputStatus.__reduce__",),
+        "src/_lcm/solution/model_authority.py": ("_validate_model_query_spec",),
+        "src/_lcm/zero_safe.py": ("zero_safe_weighted_term",),
+    }
+)
+
+
+def _s03_scalar_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
+    """Authenticate scalar-query owners and imported numerical dependencies."""
+    surface, callables = _S03_SCALAR_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="S03 scalar dependency", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append(f"S03 scalar dependency: {source} declaration surface changed")
+    return errors
+
+
+_REVIEWED_PREFIX_CONTRACTS = _contracts(
+    {
+        "src/_lcm/egm/asset_row.py": (
+            "_SolveOneComboAssetRows.__call__",
+            "_SolveOneNode.__call__",
+            "_asset_candidates_with_direct",
+            "_asset_candidates_without_direct",
+            "_asset_direct_gradient",
+            "_conditional_asset_node",
+            "_conditional_asset_rows",
+            "_finalize_asset_row_node",
+            "_node_value_slope",
+            "_status_asset_rows",
+            "_with_asset_child_status",
+            "publish_node_from_bracket",
+            "_ExpectedContinuationValue.__call__",
+            "_continuation_of_euler_state",
+            "_get_expected_continuation_value",
+            "_get_solve_one_combo_asset_rows",
+        ),
+        "src/_lcm/egm/carry.py": (
+            "_flatten_owned_row_read",
+            "_flatten_owned_row_read_with_keys",
+            "_read_owned_channels",
+            "_unflatten_owned_row_read",
+            "read_owned_row",
+            "read_marginal_row",
+            "read_value_and_slope_row",
+            "read_value_row",
+            "_read_owned_row_with_support",
+        ),
+        "src/_lcm/egm/continuation.py": (
+            "_ActualChildQuery.__call__",
+            "_BoundContinuation.__call__",
+            "_BoundContinuation._read_child",
+            "_BoundContinuation._retains_a_distribution",
+            "_BoundContinuation._with_query_status",
+            "_ChildCarryReader.__call__",
+            "_ChildEulerState.__call__",
+            "_ChildEulerState.at_node",
+            "_ReadAtNodes.__call__",
+            "_RowQueriesAndGradients.__call__",
+            "_WeightedNodeBlockFold.__call__",
+            "_accumulate_ez_partials_over_blocks",
+            "_aggregate_child_choices",
+            "_blend_passive_axes",
+            "_build_child_reads",
+            "_child_draw_reads",
+            "_choose_blended_side",
+            "_collapse_stacked_candidates",
+            "_compute_row_queries_and_gradients",
+            "_draw_axis_names",
+            "_expect_over_stochastic_nodes",
+            "_fail_if_carry_shape_mismatches_declaration",
+            "_get_child_carry_reader",
+            "_hard_max_and_one_hot",
+            "_interleave_child_index",
+            "_is_runtime_process",
+            "_is_stochastic_child_axis",
+            "_joint_node_weights",
+            "_local_support_values",
+            "_on_node_scale",
+            "_partials_on_node_scale",
+            "_read_feature_child_choices",
+            "_reshaped_germ",
+            "_seed_child_query",
+            "_stacked_blend_payloads",
+            "_with_co_map_states",
+            "bind_continuation",
+            "build_continuation_plan",
+            "child_resources_params",
+            "_accumulate_ez_partials_block",
+            "_composed_row_resources",
+            "_composed_simple_resources",
+            "_germ_and_left_record_rows",
+            "_left_slope_row",
+            "get_egm_continuation_targets",
+            "stochastic_node_axes",
+        ),
+        "src/_lcm/egm/dcegm_query.py": (
+            "DCEGMQuery.__call__",
+            "DCEGMQuery._read_at_floor",
+            "DCEGMQuery._read_liquid_corner",
+            "DCEGMQuery._read_rows",
+            "DCEGMQuery.capabilities",
+            "DCEGMQuery.evaluate_floor",
+            "DCEGMQuery.input_names",
+            "DCEGMQuery.read_choices",
+            "DCEGMQuery.read_prepared",
+            "_evaluate",
+            "_factor_product_bits",
+            "_factor_product_jvp",
+            "_owned_at_query",
+            "_passive_weights",
+            "_read_compact_corner",
+            "_read_owned_derivative",
+            "_weighted_sum",
+            "build_dcegm_query",
+            "DCEGMQuery.read_prepared_with_counts",
+            "DCEGMQuery._read_at_floor_with_summary",
+            "DCEGMQuery._read_rows_without_counts",
+            "DCEGMQuery._read_rows_with_counts",
+            "_blend_owned_rows",
+            "_read_owned_derivative_with_support",
+            "_owned_at_query_with_support",
+        ),
+        "src/_lcm/egm/dcegm_query_model.py": (),
+        "src/_lcm/egm/interp.py": (
+            "_derivative_between_nodes",
+            "_hermite_bracket_derivatives",
+            "_hermite_coefficients",
+            "_hermite_correction",
+            "_hermite_prepared_read_jvp",
+            "_hermite_prepared_read_primal",
+            "_hermite_query_derivative",
+            "_interp_between_nodes",
+            "_limit_slope",
+            "_linear_prepared_read_jvp",
+            "_linear_prepared_read_primal",
+            "_linear_query_derivative",
+            "_read_prepared_row",
+            "interp_and_derivative_on_prepared_grid",
+            "interp_on_padded_grid",
+            "interp_on_prepared_grid",
+            "prepare_padded_grid",
+            "_hermite_read_at_fixed_query",
+            "_linear_read_at_fixed_query",
+            "_sanitize_gathered",
+            "interp_left_germ_on_prepared_grid",
+            "interp_left_record_on_prepared_grid",
+            "interp_right_germ_on_prepared_grid",
+            "interp_on_regular_grid",
+        ),
+        "src/_lcm/egm/query_data.py": ("select_query_data",),
+        "src/_lcm/egm/regime_introspection.py": (
+            "_IdentityResources.__call__",
+            "_KeeperNoAdjustment.__call__",
+            "_annotation_of_arg",
+            "_as_dcegm",
+            "_concatenate_child_resources",
+            "_get_child_discrete_actions",
+            "_get_child_resources",
+            "_get_child_state_name",
+            "_keeper_no_adjustment_function",
+            "_get_discrete_state_names",
+            "_get_passive_state_names",
+            "_get_process_state_names",
+        ),
+        "src/_lcm/egm/scalar_query.py": (
+            "ScalarEGMQuery.prepare",
+            "ScalarEGMQuery.read_prepared",
+        ),
+        "src/_lcm/egm/step.py": (
+            "_ComboFeasibility.__call__",
+            "_EGMStep.__call__",
+            "_SolveOneComboOverAxes.__call__",
+            "_build_feasibility_function",
+            "_build_kernel_pieces",
+            "_get_egm_step",
+            "_map_combo_product",
+            "_publish_conditional_combo",
+            "_publish_conditional_product",
+            "_reorder_combo_axes",
+            "build_egm_step_functions",
+            "compute_egm_carry_length",
+            "_at_one_splayed_combo",
+        ),
+        "src/_lcm/egm/step_core.py": (
+            "ResourcesOfState.__call__",
+            "_ComputeNode.__call__",
+            "_SolveOneCombo.__call__",
+            "_candidate_supgradient",
+            "_compute_constrained_candidates",
+            "_compute_nodes_after_first",
+            "_compute_nodes_over_savings",
+            "_conditional_combo_output",
+            "_get_compute_node",
+            "_legacy_candidates_with_child_status",
+            "_publish_V_and_carry_rows",
+            "_refined_rows",
+            "_source_construction_status",
+            "_with_literal_child_status",
+            "bind_cell_floor",
+            "tile_block_size",
+            "_get_solve_one_combo",
+        ),
+        "src/_lcm/execution/core_program.py": (
+            "_CheckedCoreVariant.__post_init__",
+            "_validate_checked_variant",
+            "bind_core_program_fixed_params",
+        ),
+        "src/_lcm/execution/internal_outputs.py": ("_select_path",),
+        "src/_lcm/probability.py": (
+            "_encoded",
+            "_exponent_bias",
+            "_int_dtype",
+            "_magnitude_bits",
+            "_mantissa_bits",
+            "_product_parts",
+            "_shift_to_normal",
+            "_significand_in_unit_range",
+            "_smallest_normal_bits",
+            "_unbiased_exponent",
+            "exact_product",
+            "is_below_smallest_normal",
+            "is_negative",
+            "is_represented_zero",
+            "_scaled_bits",
+            "_scaled_bits_jvp",
+            "is_live",
+            "probabilities_form_distribution",
+            "regime_mass_is_a_distribution",
+            "scaled_by_power_of_two",
+        ),
+        "src/_lcm/solution/dcegm.py": (
+            "DCEGM.build_period_kernels",
+            "_DCEGMPeriodKernel.with_fixed_params",
+            "ExactEnvelope.__post_init__",
+            "DCEGM.__post_init__",
+            "FUESEnvelope.__post_init__",
+            "_DCEGMArgumentBuilder.__call__",
+            "_DCEGMPeriodKernel.__call__",
+            "_DCEGMPeriodKernel.__post_init__",
+            "_DCEGMPeriodKernel.core_programs",
+            "_carry_subset",
+            "_consume_bounded_dcegm_output",
+            "_dcegm_output_roles",
+            "_dcegm_role_template",
+            "_dcegm_status_role",
+            "_dcegm_values_core",
+            "_fail_if_envelope_max_runs_too_few",
+            "_fail_if_fues_jump_thresh_non_positive",
+            "_fail_if_fues_n_points_to_scan_too_few",
+            "_fail_if_n_constrained_points_too_few",
+            "_fail_if_refined_grid_factor_too_small",
+            "_fail_if_savings_grid_is_stochastic",
+            "_stochastic_node_axis",
+            "_tiled_axes",
+        ),
+        "src/_lcm/solution/egm.py": (
+            "_EGMCore._value_reconstructed_action",
+            "_LiteralDCResourceTransport.__call__",
+            "_LiteralDCResourceTransport._at_state",
+            "_LiteralDCResourceTransport.value",
+            "_build_literal_dc_resource_transport",
+            "_read_literal_dc_linear_child",
+            "_read_one_row_dc_child",
+            "_EGMArgumentBuilder._retains_regime_mass",
+            "_EGMPeriodKernel.__post_init__",
+            "_EGMPeriodKernel.core_programs",
+            "_EGMPeriodKernel.with_fixed_params",
+            "_build_one_asset_carry_template",
+            "_one_sided_boundary_savings_targets",
+            "guard_regime_mass",
+        ),
+        "src/_lcm/solution/feasibility.py": (
+            "ContinuationReadCounts.__reduce__",
+            "_flatten_continuation_read_counts",
+            "_flatten_continuation_read_counts_with_keys",
+            "_unflatten_continuation_read_counts",
+            "count_current_feasibility",
+        ),
+        "src/_lcm/solution/nbegm.py": (
+            "_NBEGMDiscreteCore.__call__",
+            "_NBEGMScheduleDiscreteCore.__call__",
+            "_collect_nbegm_discrete_spec",
+            "_collect_nbegm_schedule_discrete_spec",
+        ),
+        SOLVER_API_SOURCE: (),
+    }
+)
+
+
+def _reviewed_prefix_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
+    """Authenticate finite library-owned query arithmetic and checked transport."""
+    surface, callables = _REVIEWED_PREFIX_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="reviewed S04/S05 dependency", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append(
+            f"reviewed S04/S05 dependency: {source} declaration surface changed"
+        )
+    return errors
+
+
+_S02_QUERY_STATUS_CONTRACTS = _contracts(
+    {
+        "src/_lcm/continuation.py": (
+            "EGMQuerySpec.__post_init__",
+            "EGMContinuationSpec.__post_init__",
+            "validate_query_bound_authority",
+            "_same_bound_identity",
+            "validate_query_model_authority",
+            "build_query_model_authority",
+            "_query_bound_evaluator_targets",
+            "_query_evaluator_contract",
+            "validate_query_evaluator_authority",
+            "_adaptive_evaluator_contract",
+            "validate_query_template",
+            "EGMRowTopologySpec.__post_init__",
+            "_validate_row_topology",
+            "_validate_row_topology_authority",
+        ),
+        "src/_lcm/egm/query_data.py": (
+            "EGMQueryData.__post_init__",
+            "EGMQueryData.leaves",
+            "_query_record_leaves",
+            "_flatten_query_record",
+            "_flatten_query_record_with_keys",
+            "_unflatten_query_record",
+            "build_template_egm_query_data",
+        ),
+        "src/_lcm/egm/carry.py": (
+            "_flatten_egm_carry",
+            "_flatten_egm_carry_with_keys",
+            "_unflatten_egm_carry",
+            "_assemble_egm_carry",
+            "EGMCarry.leaves",
+            "EGMCarry.capabilities",
+            "EGMCarry.value_at",
+            "EGMCarry.marginal_at",
+            "egm_carry_role_tree",
+            "egm_query_role_tree",
+            "_query_output_role",
+            "stack_egm_carries",
+            "_stack_carry_leaf",
+            "build_template_egm_carry",
+            "shard_carry_template",
+            "_place_carry_template_on_one_device",
+            "_place_carry_leaf",
+            "EGMCarry.query_data_for_transport",
+        ),
+        "src/_lcm/solution/model_authority.py": (
+            "build_solution_authority",
+            "_validate_model_query_spec",
+            "_egm_carry_artifact_layout",
+            "_query_leaf_axis_names",
+            "_declared_carry_row_state_names",
+            "_declared_carry_trailing_state",
+            "_model_role_axes",
+        ),
+        "src/_lcm/solution/continuation_reads.py": ("continuation_leaf_reads",),
+        "src/_lcm/solution/continuation_arguments.py": (
+            "MarginalLeafArguments.__call__",
+            "MarginalLeafCore.__call__",
+            "marginal_leaf_reads",
+        ),
+        "src/_lcm/solution/fingerprint.py": (
+            "fingerprint_model_structure",
+            "_query_semantic_descriptor",
+            "_project_user_regime_declaration",
+            "_semantic_fingerprint",
+            "_SemanticHasher.visit",
+        ),
+        "src/_lcm/solution/egm.py": (
+            "_EGMCore.__call__",
+            "_EGMArgumentBuilder.__call__",
+            "_has_mandatory_child_failure",
+        ),
+        "src/_lcm/egm/budget.py": (
+            "get_intrinsic_budget_constraint",
+            "_IntrinsicBudgetConstraint.__call__",
+        ),
+        "src/_lcm/engine.py": (),
+        "src/_lcm/dtypes.py": ("canonical_float_dtype",),
+        "src/_lcm/post_decision_bound.py": (),
+        "src/_lcm/variables.py": (),
+        "src/_lcm/state_action_space.py": (),
+        "src/_lcm/execution/output_layout.py": (),
+        "src/_lcm/solution/feasibility.py": (
+            "_flatten_bound_status",
+            "_flatten_bound_status_with_keys",
+            "_unflatten_bound_status",
+            "reduce_bound_input_status",
+            "summarize_bound_inputs",
+            "shift_savings_grid",
+            "merge_bound_input_status",
+            "validate_runtime_bound_status",
+            "consume_runtime_bound_outputs",
+            "FeasibilityKernelOutput.__post_init__",
+            "CountedGridSearch.__call__",
+            "_flatten_bounded_result",
+            "_flatten_bounded_result_with_keys",
+            "_unflatten_bounded_result",
+            "QueryInputStatus.__reduce__",
+            "_flatten_query_input_status",
+            "_flatten_query_input_status_with_keys",
+            "_unflatten_query_input_status",
+            "reduce_query_input_status",
+            "merge_query_input_status",
+            "validate_query_input_status",
+        ),
+        "src/_lcm/utils/dispatchers.py": (
+            "map_over_leading_axis",
+            "_map_with_bound_summary",
+            "_BoundVmap.__call__",
+            "vmap_1d",
+            "simulation_spacemap",
+            "productmap",
+            "tiled_productmap",
+            "_RestoreProductAxisOrder.__call__",
+            "_restore_mapped_product",
+            "_map_grouped_product",
+            "_map_whole_product",
+            "_ProductMapBatched.__call__",
+            "_MappedOverOneMoreAxis.__call__",
+        ),
+        "src/_lcm/simulation/subject_parallel.py": (
+            "shard_subject_function",
+            "_evaluate_local_subjects",
+        ),
+        "src/_lcm/regime_building/Q_and_F.py": (
+            "runtime_bound_specs",
+            "BoundedQAndF.__post_init__",
+            "BoundedQAndF.__call__",
+            "_BoundUtilitiesAndF.__post_init__",
+            "_BoundUtilitiesAndF.evaluated",
+            "_get_U_and_F",
+            "_BoundFeasibility.__call__",
+            "_get_feasibility",
+            "_QAndF.evaluated",
+            "_TerminalQAndF.evaluated",
+            "_TerminalCollectiveQAndF.evaluated",
+            "_CollectiveQAndF.evaluated",
+            "_publish_signature",
+        ),
+        "src/_lcm/regime_building/max_Q_over_a.py": (
+            "get_streaming_max_Q_over_a",
+            "_StreamedMaxQOverA.__call__",
+            "_with_bound_summary",
+            "_FoldedMaxQOverA.__call__",
+            "get_max_Q_over_a",
+            "get_argmax_and_max_Q_over_a",
+            "_HardMaxQOverA.__call__",
+            "_HardMaxArgmaxQOverA.__call__",
+            "_SmoothedMaxQOverA.__call__",
+            "_TasteShockArgmaxQOverA.__call__",
+            "get_action_partitioned_max_Q_over_a",
+            "_ActionPartitionedMaxQOverA.__call__",
+            "_OnActionPartitionAxis.__call__",
+            "_arguments_named",
+            "_call_with_operands",
+        ),
+        "src/_lcm/solution/grid_search.py": (
+            "_FlattenBoundedGridSearch.__call__",
+            "_GridSearchPeriodKernel.__call__",
+            "GridSearch.build_period_kernels",
+            "_grid_search_fold_weights",
+        ),
+        "src/_lcm/solution/action_streaming.py": (
+            "_bounded_hard_max",
+            "_StreamingHardMax.__call__",
+            "_PartitionedStreamingHardMax.__call__",
+            "_PartitionedStreamingHardMax.local",
+            "_StreamingEV1ExpectedMax.__call__",
+            "_StreamingCollectiveHardMax.__call__",
+            "_evaluate_owned_block",
+            "_evaluate_ev1_branch_block",
+            "_evaluate_collective_block",
+            "_scan_ev1_blocks",
+            "_scan_one_ev1_block",
+            "_finalize_open_ev1_branch_group",
+        ),
+        "src/_lcm/solution/kernel_output.py": ("consume_kernel_output",),
+        "src/_lcm/solution/backward_induction.py": (
+            "solve",
+            "_run_dispatch_unit",
+            "_accumulate_landing_totals",
+            "_query_block_status",
+        ),
+        "src/_lcm/simulation/programs.py": (
+            "build_simulation_programs",
+            "_decision_programs",
+            "_bound_output_roles",
+            "_flatten_subject_integrity",
+            "_decision_body",
+            "with_kept_action_parts",
+            "_SelectedOutputs.__call__",
+            "_decision_with_action_parts",
+            "_DecisionWithActionParts.__call__",
+            "_StreamedArgmaxQOverA.__call__",
+            "_SubjectTiled.__call__",
+        ),
+        "src/_lcm/simulation/runtime.py": ("_SimulationCandidateCompiler._bound",),
+        "src/_lcm/simulation/simulate.py": ("_canonical_Q_at_actions",),
+        "src/_lcm/simulation/initial_conditions.py": (
+            "_regime_feasibility_mask",
+            "_is_any_action_feasible",
+            "_is_feasible_without_actions",
+            "_admits_any_action",
+            "_validate_initial_bound_status",
+        ),
+        "src/_lcm/transition_checks.py": (
+            "validate_off_grid_transitions",
+            "_off_grid_target_counts",
+            "_build_off_grid_cell",
+            "_OffGridCell.__call__",
+            "_off_grid_counts_law",
+            "_NamedArgumentsCall.__call__",
+            "_GridPointCall.__call__",
+            "_off_grid_block_candidates",
+            "_validate_off_grid_bound_status",
+        ),
+        "src/_lcm/simulation/chunk_profiles.py": (
+            "profile_simulation_chunk",
+            "_record_core",
+        ),
+        "src/_lcm/simulation/host_operations.py": (
+            "ProfiledSimulationOperations.built",
+            "_bound_identity",
+            "_static_identity",
+        ),
+        "src/_lcm/simulation/forward_program_profiles.py": ("profile_forward_unit",),
+        "src/lcm/model.py": ("Model._lookup_policy",),
+        "src/_lcm/utils/functools.py": ("publish_signature",),
+        "src/_lcm/solution/landing_counts.py": (
+            "landing_checks_of",
+            "get_landing_counting_max_Q_over_a",
+            "_LandingCountingReduction.__call__",
+            "_LandingCountingFold.__call__",
+            "LandingCountedGridSearch.__call__",
+            "_feasible_landing_counts",
+            "fail_on_reached_landings",
+            "_Evaluated.__call__",
+        ),
+        "src/_lcm/egm/outer_envelope.py": ("stack_candidate_carries",),
+        "src/_lcm/regime_building/processing.py": ("_prepare_dcegm_query_models",),
+    }
+)
+
+
+def _s02_query_status_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
+    """Authenticate selected imported query/status helpers and their declarations."""
+    surface, callables = _S02_QUERY_STATUS_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="S02 query/status dependency", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append(
+            f"S02 query/status dependency: {source} declaration surface changed"
+        )
+    return errors
+
+
+_ASSOCIATED_SAVING_OVERLOAD_COUNTS = {
+    "envelope_at_query": 6,
+    "empty_envelope_winner": 2,
+    "merge_envelope_winner": 2,
+    "finish_envelope_winner": 2,
+}
+_ASSOCIATED_SAVING_OVERLOAD_DECLARATIONS = "@overload\ndef envelope_at_query(\n    *,\n    endog_grid: Float1D,\n    policy: Float1D,\n    value: Float1D,\n    marginal: Float1D,\n    segment_id: Float1D,\n    stable_index: IntND | None = ...,\n    x_query: FloatND,\n    segment_block_size: int = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    return_owner: Literal[False] = ...,\n    candidate_savings: None = ...,\n) -> tuple[FloatND, FloatND, FloatND]: ...\n\n\n@overload\ndef envelope_at_query(\n    *,\n    endog_grid: Float1D,\n    policy: Float1D,\n    value: Float1D,\n    marginal: Float1D,\n    segment_id: Float1D,\n    stable_index: IntND | None = ...,\n    x_query: FloatND,\n    segment_block_size: int = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    return_owner: Literal[True],\n    candidate_savings: None = ...,\n) -> tuple[FloatND, FloatND, FloatND, IntND]: ...\n\n\n@overload\ndef envelope_at_query(\n    *,\n    endog_grid: Float1D,\n    policy: Float1D,\n    value: Float1D,\n    marginal: Float1D,\n    segment_id: Float1D,\n    stable_index: IntND | None = ...,\n    x_query: FloatND,\n    segment_block_size: int = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    return_owner: bool,\n    candidate_savings: None = ...,\n) -> tuple[FloatND, FloatND, FloatND] | tuple[FloatND, FloatND, FloatND, IntND]: ...\n\n\n@overload\ndef envelope_at_query(\n    *,\n    endog_grid: Float1D,\n    policy: Float1D,\n    value: Float1D,\n    marginal: Float1D,\n    segment_id: Float1D,\n    stable_index: IntND | None = ...,\n    x_query: FloatND,\n    segment_block_size: int = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    return_owner: Literal[False] = ...,\n    candidate_savings: Float1D,\n) -> tuple[FloatND, FloatND, FloatND, FloatND]: ...\n\n\n@overload\ndef envelope_at_query(\n    *,\n    endog_grid: Float1D,\n    policy: Float1D,\n    value: Float1D,\n    marginal: Float1D,\n    segment_id: Float1D,\n    stable_index: IntND | None = ...,\n    x_query: FloatND,\n    segment_block_size: int = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    return_owner: Literal[True],\n    candidate_savings: Float1D,\n) -> tuple[FloatND, FloatND, FloatND, FloatND, IntND]: ...\n\n\n@overload\ndef envelope_at_query(\n    *,\n    endog_grid: Float1D,\n    policy: Float1D,\n    value: Float1D,\n    marginal: Float1D,\n    segment_id: Float1D,\n    stable_index: IntND | None = ...,\n    x_query: FloatND,\n    segment_block_size: int = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    return_owner: bool = ...,\n    candidate_savings: Float1D,\n) -> (\n    tuple[FloatND, FloatND, FloatND, FloatND]\n    | tuple[FloatND, FloatND, FloatND, FloatND, IntND]\n): ...\n\n\n@overload\ndef empty_envelope_winner(\n    *, query: FloatND, retain_savings: Literal[False] = ...\n) -> EnvelopeWinner: ...\n\n\n@overload\ndef empty_envelope_winner(\n    *, query: FloatND, retain_savings: Literal[True]\n) -> _SavingsEnvelopeWinner: ...\n\n\n@overload\ndef merge_envelope_winner(\n    *,\n    held: EnvelopeWinner,\n    endog_grid: Float1D,\n    policy: Float1D,\n    value: Float1D,\n    marginal: Float1D,\n    segment_id: Float1D,\n    stable_index: IntND,\n    query: FloatND,\n    arithmetic: ComparisonArithmetic,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    candidate_savings: None = ...,\n) -> EnvelopeWinner: ...\n\n\n@overload\ndef merge_envelope_winner(\n    *,\n    held: _SavingsEnvelopeWinner,\n    endog_grid: Float1D,\n    policy: Float1D,\n    value: Float1D,\n    marginal: Float1D,\n    segment_id: Float1D,\n    stable_index: IntND,\n    query: FloatND,\n    arithmetic: ComparisonArithmetic,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    candidate_savings: Float1D,\n) -> _SavingsEnvelopeWinner: ...\n\n\n@overload\ndef finish_envelope_winner(\n    *,\n    winner: EnvelopeWinner,\n    query: FloatND,\n    arithmetic: ComparisonArithmetic,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n) -> tuple[FloatND, FloatND, FloatND]: ...\n\n\n@overload\ndef finish_envelope_winner(\n    *,\n    winner: _SavingsEnvelopeWinner,\n    query: FloatND,\n    arithmetic: ComparisonArithmetic,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n) -> tuple[FloatND, FloatND, FloatND, FloatND, IntND]: ...\n\n"
+_ASSOCIATED_SAVING_CONTRACTS = _contracts(
+    {
+        ASSOCIATED_SAVING_SOURCE: (
+            "envelope_at_query",
+            "_savings_link_endpoints",
+            "empty_envelope_winner",
+            "merge_envelope_winner",
+            "finish_envelope_winner",
+            "_derived_subnormal_possible",
+            "_envelope_exact",
+            "_link_blocks",
+            "_envelope_blocked_ordinary",
+            "_ordinary_block_best",
+            "_segment_links_from_candidates",
+            "_link_geometry",
+            "_along_link",
+            "_endpoint_order",
+            "_read_exact_channel",
+            "_read_ordinary_channel",
+            "_mask_infeasible_queries",
+            "published_owner",
+            "_subnormal_operand_present",
+            "_quotient_is_subnormal",
+            "_ordinary_block_size",
+            "_pad_column",
+            "_ordinary_block_step",
+            "_block_query_terms",
+            "_slope_words",
+            "_batched_link_terms",
+            "_ordinary_rank_argmax",
+            "_pick_column",
+            "_spread_over_queries",
+            "_take_rows",
+            "_publish_decided",
+            "_link_terms",
+            "_on_the_links_own_scale",
+            "_smallest_finite_exponent",
+        )
+    }
+)
+
+
+_NB_PRODUCER_SOURCE = "src/_lcm/egm/nbegm_step.py"
+_NB_PRODUCER_OVERLOAD_COUNTS = {
+    "nbegm_multi_interval_step_savings": 3,
+    "nbegm_per_interval_continuation_step_savings": 7,
+}
+_NB_PRODUCER_OVERLOAD_DECLARATIONS = "@overload\ndef nbegm_multi_interval_step_savings(\n    *,\n    cont_value: Float1D,\n    cont_marginal: Float1D,\n    liquid_grid: Float1D,\n    savings_grid: Float1D,\n    discount_factor: ScalarFloat,\n    preferences: Preferences,\n    coh_slopes: Float1D,\n    coh_intercepts: Float1D,\n    breakpoints: Float1D,\n    inverse_eis: ScalarFloat | None = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    retain_query: Literal[False] = ...,\n) -> tuple[Float1D, Float1D, Float1D]: ...\n\n\n@overload\ndef nbegm_multi_interval_step_savings(\n    *,\n    cont_value: Float1D,\n    cont_marginal: Float1D,\n    liquid_grid: Float1D,\n    savings_grid: Float1D,\n    discount_factor: ScalarFloat,\n    preferences: Preferences,\n    coh_slopes: Float1D,\n    coh_intercepts: Float1D,\n    breakpoints: Float1D,\n    inverse_eis: ScalarFloat | None = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    retain_query: Literal[True],\n) -> _NBEGMQueryStep: ...\n\n\n@overload\ndef nbegm_multi_interval_step_savings(\n    *,\n    cont_value: Float1D,\n    cont_marginal: Float1D,\n    liquid_grid: Float1D,\n    savings_grid: Float1D,\n    discount_factor: ScalarFloat,\n    preferences: Preferences,\n    coh_slopes: Float1D,\n    coh_intercepts: Float1D,\n    breakpoints: Float1D,\n    inverse_eis: ScalarFloat | None = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    retain_query: bool = ...,\n) -> tuple[Float1D, Float1D, Float1D] | _NBEGMQueryStep: ...\n\n\n@overload\ndef nbegm_per_interval_continuation_step_savings(\n    *,\n    cont_value: FloatND | None,\n    cont_marginal: FloatND | None,\n    liquid_grid: Float1D,\n    savings_grid: Float1D,\n    discount_factor: ScalarFloat,\n    preferences: Preferences,\n    coh_slopes: Float1D,\n    coh_intercepts: Float1D,\n    breakpoints: Float1D,\n    coh_grid: Float1D | None = ...,\n    envelope_segment_width: int = ...,\n    extra_savings: FloatND | None = ...,\n    extra_cont_value: FloatND | None = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,\n    interval_width: int = ...,\n    interval_indices: Int1D | None = ...,\n    query_status_slots: Literal[0] = ...,\n    collect_continuation_read_counts: Literal[False] = False,\n    return_owner: Literal[False] = ...,\n    retain_query: Literal[False] = ...,\n) -> tuple[Float1D, Float1D, Float1D]: ...\n\n\n@overload\ndef nbegm_per_interval_continuation_step_savings(\n    *,\n    cont_value: FloatND | None,\n    cont_marginal: FloatND | None,\n    liquid_grid: Float1D,\n    savings_grid: Float1D,\n    discount_factor: ScalarFloat,\n    preferences: Preferences,\n    coh_slopes: Float1D,\n    coh_intercepts: Float1D,\n    breakpoints: Float1D,\n    coh_grid: Float1D | None = ...,\n    envelope_segment_width: int = ...,\n    extra_savings: FloatND | None = ...,\n    extra_cont_value: FloatND | None = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,\n    interval_width: int = ...,\n    interval_indices: Int1D | None = ...,\n    query_status_slots: Literal[0] = ...,\n    collect_continuation_read_counts: Literal[False] = False,\n    return_owner: Literal[True],\n    retain_query: Literal[False] = ...,\n) -> tuple[Float1D, Float1D, Float1D, Int1D]: ...\n\n\n@overload\ndef nbegm_per_interval_continuation_step_savings(\n    *,\n    cont_value: FloatND | None,\n    cont_marginal: FloatND | None,\n    liquid_grid: Float1D,\n    savings_grid: Float1D,\n    discount_factor: ScalarFloat,\n    preferences: Preferences,\n    coh_slopes: Float1D,\n    coh_intercepts: Float1D,\n    breakpoints: Float1D,\n    coh_grid: Float1D | None = ...,\n    envelope_segment_width: int = ...,\n    extra_savings: FloatND | None = ...,\n    extra_cont_value: FloatND | None = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,\n    interval_width: int = ...,\n    interval_indices: Int1D | None = ...,\n    query_status_slots: Literal[0] = ...,\n    collect_continuation_read_counts: Literal[False] = False,\n    return_owner: bool,\n    retain_query: Literal[False] = ...,\n) -> tuple[Float1D, Float1D, Float1D] | tuple[Float1D, Float1D, Float1D, Int1D]: ...\n\n\n@overload\ndef nbegm_per_interval_continuation_step_savings(\n    *,\n    cont_value: FloatND | None,\n    cont_marginal: FloatND | None,\n    liquid_grid: Float1D,\n    savings_grid: Float1D,\n    discount_factor: ScalarFloat,\n    preferences: Preferences,\n    coh_slopes: Float1D,\n    coh_intercepts: Float1D,\n    breakpoints: Float1D,\n    coh_grid: Float1D | None = ...,\n    envelope_segment_width: int = ...,\n    extra_savings: FloatND | None = ...,\n    extra_cont_value: FloatND | None = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,\n    interval_width: int = ...,\n    interval_indices: Int1D | None = ...,\n    query_status_slots: Literal[0] = ...,\n    collect_continuation_read_counts: Literal[False] = False,\n    return_owner: Literal[False] = ...,\n    retain_query: Literal[True],\n) -> _NBEGMQueryStep: ...\n\n\n@overload\ndef nbegm_per_interval_continuation_step_savings(\n    *,\n    cont_value: FloatND | None,\n    cont_marginal: FloatND | None,\n    liquid_grid: Float1D,\n    savings_grid: Float1D,\n    discount_factor: ScalarFloat,\n    preferences: Preferences,\n    coh_slopes: Float1D,\n    coh_intercepts: Float1D,\n    breakpoints: Float1D,\n    coh_grid: Float1D | None = ...,\n    envelope_segment_width: int = ...,\n    extra_savings: FloatND | None = ...,\n    extra_cont_value: FloatND | None = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,\n    interval_width: int = ...,\n    interval_indices: Int1D | None = ...,\n    query_status_slots: Literal[0] = ...,\n    collect_continuation_read_counts: Literal[False] = False,\n    return_owner: Literal[True],\n    retain_query: Literal[True],\n) -> _OwnedNBEGMQueryStep: ...\n\n\n@overload\ndef nbegm_per_interval_continuation_step_savings(\n    *,\n    cont_value: FloatND | None,\n    cont_marginal: FloatND | None,\n    liquid_grid: Float1D,\n    savings_grid: Float1D,\n    discount_factor: ScalarFloat,\n    preferences: Preferences,\n    coh_slopes: Float1D,\n    coh_intercepts: Float1D,\n    breakpoints: Float1D,\n    coh_grid: Float1D | None = ...,\n    envelope_segment_width: int = ...,\n    extra_savings: FloatND | None = ...,\n    extra_cont_value: FloatND | None = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,\n    interval_width: int = ...,\n    interval_indices: Int1D | None = ...,\n    query_status_slots: int = ...,\n    collect_continuation_read_counts: bool = False,\n    return_owner: Literal[False] = ...,\n    retain_query: bool = ...,\n) -> _NBEGMUnownedIntervalResult: ...\n\n\n@overload\ndef nbegm_per_interval_continuation_step_savings(\n    *,\n    cont_value: FloatND | None,\n    cont_marginal: FloatND | None,\n    liquid_grid: Float1D,\n    savings_grid: Float1D,\n    discount_factor: ScalarFloat,\n    preferences: Preferences,\n    coh_slopes: Float1D,\n    coh_intercepts: Float1D,\n    breakpoints: Float1D,\n    coh_grid: Float1D | None = ...,\n    envelope_segment_width: int = ...,\n    extra_savings: FloatND | None = ...,\n    extra_cont_value: FloatND | None = ...,\n    arithmetic: ComparisonArithmetic = ...,\n    feasibility_partition: ResolvedAxisPartition | None = ...,\n    feasible_interval_mask: BoolND | None = ...,\n    interval_block_reader: Callable[[IntND], _NBEGMIntervalRows] | None = ...,\n    interval_width: int = ...,\n    interval_indices: Int1D | None = ...,\n    query_status_slots: int = ...,\n    collect_continuation_read_counts: bool = False,\n    return_owner: bool = ...,\n    retain_query: bool = ...,\n) -> _NBEGMIntervalResult: ...\n\n"
+_RETAINED_PREFIX_CONTRACTS = _contracts(
+    {
+        "src/_lcm/utils/counts.py": ("sum_counts", "add_counts"),
+        "src/_lcm/egm/nbegm_step.py": (
+            "nbegm_multi_interval_step_savings",
+            "nbegm_per_interval_continuation_step_savings",
+            "_query_node_kind",
+            "_make_nbegm_query_data",
+            "_invert_euler_over_savings",
+            "_invert_euler_at_node",
+            "_ez_flow_power_structure",
+            "_discounted_continuation",
+            "_invert_coh_with_linear_extension",
+            "_linear_extension",
+            "_degenerate_inversion",
+            "_next_segment_id",
+            "_as_pairs",
+            "_stack_flat",
+            "_interval_corner_candidates",
+            "_fixed_savings_corner",
+            "_publish_no_action_carry",
+            "_publish_interval_step",
+            "_IntervalCaseSolver.__call__",
+            "_solve_packed_interval",
+            "_streamed_interval_block_layout",
+            "_streamed_block_candidate_positions",
+            "_StreamedIntervalLayout.total_candidates",
+            "_streamed_interval_continuation_envelope",
+            "_IntervalWinnerStep.__call__",
+            "_kill_padding",
+            "_point_candidate_segment_bases",
+            "_savings_node_point_candidates_for_interval_block",
+            "_savings_node_point_candidates",
+        ),
+        "src/_lcm/egm/nbegm_segments.py": (
+            "affords_an_action",
+            "mask_dead_candidates",
+            "segment_ids_from_folds",
+        ),
+        "src/_lcm/egm/framed_arithmetic.py": (
+            "framed_difference",
+            "binade_exponent",
+            "_dyadic_parts",
+            "_two_diff",
+        ),
+        "src/_lcm/egm/ez_kernel.py": (
+            "ez_consumption_from_euler",
+            "ez_marginal_of_resource",
+            "ez_period_value",
+        ),
+        "src/_lcm/power_mean.py": (
+            "weighted_power_mean_of_pair",
+            "_applied_to_anchor",
+            "_log_term",
+        ),
+        "src/_lcm/probability.py": (
+            "log_of_nonnegative",
+            "_log_of_nonnegative_bits",
+            "_log_of_nonnegative_jvp",
+            "rescaled_weight_pair",
+        ),
+    }
+)
+
+
+def _nb_producer_implementation(*, tree: ast.Module, name: str) -> ast.FunctionDef:
+    """Select a declared NB runtime body beside exact ordered typing stubs."""
+    if name not in _NB_PRODUCER_OVERLOAD_COUNTS:
+        raise ValueError(f"{name} is not a reviewed retained producer overload")
+    expected = [
+        node
+        for node in ast.parse(_NB_PRODUCER_OVERLOAD_DECLARATIONS).body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
+    count = _NB_PRODUCER_OVERLOAD_COUNTS[name]
+    bindings = _scope_binding_counts(tree.body)
+    if (
+        len(expected) != count
+        or len(functions) != count + 1
+        or bindings.get(name) != count + 1
+        or bindings.get("overload") != 1
+        or _relevant_imports(tree=tree, names={"overload"})
+        != ["from typing import Literal, NamedTuple, cast, overload"]
+        or [_ast_key(node) for node in functions[:count]]
+        != [_ast_key(node) for node in expected]
+        or functions[-1].decorator_list
+    ):
+        raise ValueError(f"{name} overload declarations changed")
+    return functions[-1]
+
+
+def _retained_prefix_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
+    """Check only newly selected bodies in the existing prefix canonical store."""
+    surface, callables = _RETAINED_PREFIX_CONTRACTS[source]
+    ordinary = {
+        name: digest
+        for name, digest in callables.items()
+        if source != _NB_PRODUCER_SOURCE
+        or (
+            name not in _NB_PRODUCER_OVERLOAD_COUNTS
+            and name != "_IntervalWinnerStep.__call__"
+        )
+    }
+    errors = _exact_callable_errors(
+        tree=tree, label="retained DC/NB dependency", contracts=ordinary
+    )
+    if source == _NB_PRODUCER_SOURCE:
+        for name in _NB_PRODUCER_OVERLOAD_COUNTS:
+            try:
+                implementation = _nb_producer_implementation(tree=tree, name=name)
+            except ValueError as error:
+                errors.append(f"retained DC/NB dependency: {error}")
+            else:
+                if _callable_ast_sha256(implementation) != callables[name]:
+                    errors.append(
+                        f"retained DC/NB dependency: exact callable corridor {name!r} changed"
+                    )
+    if source == _NB_PRODUCER_SOURCE:
+        name = "_IntervalWinnerStep.__call__"
+        try:
+            implementation = _select_interval_winner_call(
+                tree=tree, checker=sys.modules[__name__]
+            )
+        except ValueError as error:
+            errors.append(f"retained DC/NB dependency: {error}")
+        else:
+            if _callable_ast_sha256(implementation) != callables[name]:
+                errors.append(
+                    f"retained DC/NB dependency: exact callable corridor {name!r} changed"
+                )
+    if _transport_module_surface(tree) != surface:
+        errors.append(
+            f"retained DC/NB dependency: {source} declaration surface changed"
+        )
+    return errors
+
+
+def _associated_saving_implementation(
+    *, tree: ast.Module, name: str
+) -> ast.FunctionDef:
+    """Select one of four runtime bodies beside its exact ordered typing stubs."""
+    if name not in _ASSOCIATED_SAVING_OVERLOAD_COUNTS:
+        raise ValueError(f"{name} is not a reviewed associated saving overload")
+    expected = [
+        node
+        for node in ast.parse(_ASSOCIATED_SAVING_OVERLOAD_DECLARATIONS).body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
+    count = _ASSOCIATED_SAVING_OVERLOAD_COUNTS[name]
+    bindings = _scope_binding_counts(tree.body)
+    imports = _relevant_imports(tree=tree, names={"overload"})
+    if (
+        len(functions) != count + 1
+        or len(expected) != count
+        or bindings.get(name) != count + 1
+        or bindings.get("overload") != 1
+        or imports != ["from typing import Literal, NamedTuple, cast, overload"]
+        or [_ast_key(node) for node in functions[:count]]
+        != [_ast_key(node) for node in expected]
+        or functions[-1].decorator_list
+    ):
+        raise ValueError(f"{name} overload declarations changed")
+    return functions[-1]
+
+
+def _associated_saving_errors(*, tree: ast.Module) -> list[str]:
+    """Authenticate original savings through the existing selected envelope tuple."""
+    surface, callables = _ASSOCIATED_SAVING_CONTRACTS[ASSOCIATED_SAVING_SOURCE]
+    errors = _exact_callable_errors(
+        tree=tree,
+        label="associated saving dependency",
+        contracts={
+            name: digest
+            for name, digest in callables.items()
+            if name not in _ASSOCIATED_SAVING_OVERLOAD_COUNTS
+        },
+    )
+    for name in _ASSOCIATED_SAVING_OVERLOAD_COUNTS:
+        try:
+            implementation = _associated_saving_implementation(tree=tree, name=name)
+        except ValueError as error:
+            errors.append(f"associated saving dependency: {error}")
+        else:
+            if _callable_ast_sha256(implementation) != callables[name]:
+                errors.append(
+                    f"associated saving dependency: exact callable corridor {name!r} changed"
+                )
+    if _transport_module_surface(tree) != surface:
+        errors.append(
+            f"associated saving dependency: {ASSOCIATED_SAVING_SOURCE} declaration surface changed"
+        )
+    return errors
+
+
 _FINITE_REPLAY_CONTRACTS = _contracts(
     {
         SIMULATION_POLICY_PROGRAMS_SOURCE: (
@@ -6235,7 +9296,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "9aa89082feabf7911e7fda36df5d723743638255dde40d4fe480e3667b87f313"
+        expected = "67fc7d7afa8fda667b938eec91394efe3b8bc5f5580847a78a869edd75a99545"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -6308,6 +9369,7 @@ def _corridor_errors(
     fields: tuple[str, ...],
     simulate: bool,
 ) -> list[str]:
+    tree = _candidate_value_projection(tree)
     label = "simulate" if simulate else "solve"
     errors: list[str] = []
     try:
@@ -6378,6 +9440,7 @@ def _taste_corridor_errors(
     simulate: bool,
 ) -> list[str]:
     """Pin one taste-shock route from exact Q/F origin through its full reducer."""
+    tree = _candidate_value_projection(tree)
     label = "taste-shock simulate" if simulate else "taste-shock solve"
     try:
         binding, nested = _taste_kernel(
@@ -6941,6 +10004,40 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> DirectFlowReport:
         except (KeyError, OSError, SyntaxError, UnicodeError) as error:
             errors.append(f"{relative}: {error}")
             offending.add(relative)
+    decoupled_tree = parsed.get(DECOUPLED_BOUND_SOURCE)
+    if decoupled_tree is not None:
+        metadata_errors = _decoupled_bound_transport_errors(decoupled_tree)
+        errors.extend(metadata_errors)
+        if metadata_errors:
+            offending.add(DECOUPLED_BOUND_SOURCE)
+    for relative in _OUTER_HELPER_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _outer_helper_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    for relative in _ADDITIONAL_HELPER_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _additional_helper_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    for relative in _CHILD_NATIVE_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _child_native_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    for relative in _FINAL_NESTED_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _final_nested_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
     max_tree = parsed.get(MAX_Q_SOURCE)
     if max_tree is not None:
         binding_errors = _productmap_binding_errors(
@@ -7175,6 +10272,54 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> DirectFlowReport:
         tree = parsed.get(relative)
         if tree is not None:
             new_errors = _structural_blueprint_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    for relative in _BORROWING_BOUND_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _borrowing_bound_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    for relative in _REVIEWED_PREFIX_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _reviewed_prefix_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    for relative in _S03_SCALAR_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _s03_scalar_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    for relative in _UPSTREAM_COMPOSITION_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _upstream_composition_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    for relative in _RETAINED_PREFIX_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _retained_prefix_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    associated_saving_tree = parsed.get(ASSOCIATED_SAVING_SOURCE)
+    if associated_saving_tree is not None:
+        new_errors = _associated_saving_errors(tree=associated_saving_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(ASSOCIATED_SAVING_SOURCE)
+    for relative in _S02_QUERY_STATUS_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _s02_query_status_errors(tree=tree, source=relative)
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
@@ -7440,20 +10585,22 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
         2,
     )
     mutations["solve:wrapped_productmap_input"] = source.replace(
-        "func=Q_and_F,\n        variables=action_names,",
-        "func=lambda **kwargs: Q_and_F(**kwargs),\n        variables=action_names,",
+        "func=action_kernel,\n        variables=action_names,",
+        "func=lambda **kwargs: action_kernel(**kwargs),\n        variables=action_names,",
         1,
     )
     # Replace the second productmap binding independently for simulate.
-    first = source.find("func=Q_and_F,\n        variables=action_names,")
-    second = source.find("func=Q_and_F,\n        variables=action_names,", first + 1)
+    first = source.find("func=action_kernel,\n        variables=action_names,")
+    second = source.find(
+        "func=action_kernel,\n        variables=action_names,", first + 1
+    )
     if second < 0:
         raise ValueError("second Q_and_F productmap binding not found")
     mutations["simulate:wrapped_productmap_input"] = source[:second] + source[
         second:
     ].replace(
-        "func=Q_and_F,\n        variables=action_names,",
-        "func=lambda **kwargs: Q_and_F(**kwargs),\n        variables=action_names,",
+        "func=action_kernel,\n        variables=action_names,",
+        "func=lambda **kwargs: action_kernel(**kwargs),\n        variables=action_names,",
         1,
     )
 
@@ -7631,8 +10778,8 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
         1,
     )
     mutations["taste_shock_solve:wrong_return"] = source.replace(
-        "return (smoothed, ~jnp.any(F_arr)) if self.return_feasibility else smoothed",
-        "return (Qc.reshape(-1)[0], ~jnp.any(F_arr)) if self.return_feasibility else Qc.reshape(-1)[0]",
+        "output: MaxOutput = (\n            (smoothed, ~jnp.any(F_arr)) if self.return_feasibility else smoothed\n        )",
+        "output = (Qc.reshape(-1)[0], ~jnp.any(F_arr)) if self.return_feasibility else Qc.reshape(-1)[0]",
         1,
     )
 
@@ -7681,9 +10828,8 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
         1,
     )
     mutations["taste_shock_simulate:noisy_value_return"] = source.replace(
-        "return jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32), Qc[\n"
-        "            discrete_argmax\n        ]",
-        "return jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32), "
+        "output = (\n            jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32),\n            Qc[discrete_argmax],\n        )",
+        "output = jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32), "
         "noisy_Qc[discrete_argmax]",
         1,
     )
@@ -7735,13 +10881,13 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
     )
     mutations["solve:action_names_rebinding"] = _insert_before_nth(
         text=source,
-        marker="    Q_and_F = productmap(",
+        marker="    mapped_action_kernel = productmap(",
         insertion="    action_names = action_names[:-1]\n",
         occurrence=1,
     )
     mutations["simulate:action_names_rebinding"] = _insert_before_nth(
         text=source,
-        marker="    Q_and_F = productmap(",
+        marker="    mapped_action_kernel = productmap(",
         insertion="    action_names = action_names[:-1]\n",
         occurrence=2,
     )
@@ -7797,14 +10943,14 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
     )
     mutations["taste_shock_solve:attribute_q_and_f"] = _replace_nth(
         text=source,
-        marker="        Q_arr, F_arr = self.Q_and_F(",
-        replacement="        Q_arr, F_arr = candidate_filter.Q_and_F(",
+        marker="        evaluated = self.Q_and_F(",
+        replacement="        evaluated = candidate_filter.Q_and_F(",
         occurrence=1,
     )
     mutations["taste_shock_simulate:attribute_q_and_f"] = _replace_nth(
         text=source,
-        marker="        Q_arr, F_arr = self.Q_and_F(",
-        replacement="        Q_arr, F_arr = candidate_filter.Q_and_F(",
+        marker="        evaluated = self.Q_and_F(",
+        replacement="        evaluated = candidate_filter.Q_and_F(",
         occurrence=3,
     )
     mutations["singleton_simulate:attribute_argmax_and_max"] = source.replace(
@@ -7828,20 +10974,75 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
     )
     mutations["solve:attribute_productmap"] = _replace_nth(
         text=source,
-        marker="    Q_and_F = productmap(",
-        replacement="    Q_and_F = candidate_filter.productmap(",
+        marker="    mapped_action_kernel = productmap(",
+        replacement="    mapped_action_kernel = candidate_filter.productmap(",
         occurrence=1,
     )
     mutations["simulate:attribute_productmap"] = _replace_nth(
         text=source,
-        marker="    Q_and_F = productmap(",
-        replacement="    Q_and_F = candidate_filter.productmap(",
+        marker="    mapped_action_kernel = productmap(",
+        replacement="    mapped_action_kernel = candidate_filter.productmap(",
         occurrence=2,
     )
     return mutations
 
 
 _SUPPLEMENTAL_SOURCE_MUTATIONS = {
+    "s02_query:intrinsic_budget_owner_changed": (
+        "src/_lcm/egm/budget.py",
+        'DCEGM_BUDGET_CONSTRAINT_NAME: FunctionName = "dcegm_budget_constraint"',
+        'DCEGM_BUDGET_CONSTRAINT_NAME: FunctionName = "unowned_budget"',
+    ),
+    "borrowing_bound:representative_marker_cache_identity_bypassed": (
+        AGE_BOUND_NORMALIZATION_SOURCE,
+        "value=user_regime.decomposed_functions.get(name, value)",
+        "value=value",
+    ),
+    "borrowing_bound:scalar_shape_check_removed": (
+        "src/_lcm/constraints/dynamic_bound.py",
+        "value.ndim != 0 or not jnp.issubdtype(value.dtype, jnp.floating)",
+        "not jnp.issubdtype(value.dtype, jnp.floating)",
+    ),
+    "borrowing_bound:parameter_owner_discarded": (
+        "src/_lcm/constraints/dynamic_bound.py",
+        '("parameter", regime_name, path[-1] if path else target, name)',
+        '("parameter", regime_name, name)',
+    ),
+    "borrowing_bound:temporal_marker_discarded": (
+        "src/_lcm/constraints/dynamic_bound.py",
+        "return replace(\n            function,",
+        "return AgeSpecializedFunction(",
+    ),
+    "borrowing_bound:forbidden_dependency_bypassed": (
+        "src/_lcm/constraints/dynamic_bound.py",
+        "if name in forbidden:",
+        "if False and name in forbidden:",
+    ),
+    "borrowing_bound:literal_proof_value_substituted": (
+        "src/_lcm/constraints/bounds.py",
+        "jnp.asarray(declaration[1], dtype=dtype)",
+        "jnp.asarray(bound_spec.literal_value, dtype=dtype)",
+    ),
+    "borrowing_bound:normalized_rhs_renamed": (
+        "src/_lcm/constraints/processed.py",
+        'Ref(f"{name}_lower")',
+        'Ref(f"{name}_wrong")',
+    ),
+    "borrowing_bound:grid_origin_shifted": (
+        "src/_lcm/post_decision_bound.py",
+        "origin = float(grid.to_jax()[0])",
+        "origin = float(grid.to_jax()[0]) + 1.0",
+    ),
+    "borrowing_bound:liquid_role_overwritten": (
+        "src/lcm/consumption_savings_regime.py",
+        "liquid_state=margin.state,",
+        "liquid_state=margin.action,",
+    ),
+    "borrowing_bound:declared_producer_replaced_by_view": (
+        "src/lcm/regime.py",
+        "restored[name] = raw",
+        "restored[name] = producer",
+    ),
     "solve_completion:conflict_wait_bypassed": (
         "src/_lcm/execution/pending_work.py",
         "    owner.before(devices=devices)",
@@ -8171,6 +11372,282 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
         STRUCTURAL_BLUEPRINTS_SOURCE,
         "            leaf.shape,\n            leaf.dtype,\n",
         "            leaf.shape,\n",
+    ),
+}
+
+
+_S02_HELPER_MUTATIONS = {
+    "s02_query:auto_lower_target_omitted": (
+        "src/_lcm/continuation.py",
+        "_query_bound_evaluator_targets",
+        "expression",
+        '(*targets, ("lower_bound", bound.lower_target))',
+        "targets",
+        1,
+    ),
+    "s02_query:active_period_pool_omitted": (
+        "src/_lcm/continuation.py",
+        "_query_evaluator_contract",
+        "expression",
+        "tuple(sorted((functions_by_period or {}).items()))",
+        "()",
+        1,
+    ),
+    "s02_query:executable_ancestor_omitted": (
+        "src/_lcm/continuation.py",
+        "_query_evaluator_contract",
+        "expression",
+        "get_ancestors(pool, targets=target, include_targets=True)",
+        "{target}",
+        1,
+    ),
+    "s02_query:executable_aux_restored": (
+        "src/_lcm/egm/query_data.py",
+        "_flatten_query_record",
+        "expression",
+        "(tuple(getattr(record, item.name) for item in fields(record)), None)",
+        "(tuple(getattr(record, item.name) for item in fields(record)), type(record))",
+        1,
+    ),
+    "s02_query:shared_mesh_state_sharded": (
+        "src/_lcm/egm/carry.py",
+        "_query_output_role",
+        "keyword",
+        "state_names",
+        "state_names",
+        1,
+    ),
+    "s02_query:expected_model_descriptor_bypassed": (
+        "src/_lcm/solution/model_authority.py",
+        "_validate_model_query_spec",
+        "expression",
+        "regime.solution.query_authority",
+        "spec.layout.query_spec",
+        1,
+    ),
+    "s02_status:active_lane_nonfinite_ignored": (
+        "src/_lcm/solution/feasibility.py",
+        "reduce_bound_input_status",
+        "keyword",
+        "nonfinite_floor",
+        "jnp.any(~active & status.nonfinite_floor)",
+        1,
+    ),
+    "s02_status:scan_history_retained": (
+        "src/_lcm/utils/dispatchers.py",
+        "_map_with_bound_summary",
+        "expression",
+        (
+            "(BoundedResult(output=output, bound_status=statuses, query_statu"
+            "s=merge_query_input_status(left=carry.query_status, right=reduce"
+            "_query_input_status(statuses=result.query_status, active=valid))"
+            ", continuation_read_counts=merge_continuation_read_counts(left=c"
+            "arry.continuation_read_counts, right=reduce_continuation_read_co"
+            "unts(counts=result.continuation_read_counts, active=valid))), No"
+            "ne)"
+        ),
+        (
+            "(BoundedResult(output=output, bound_status=statuses, query_statu"
+            "s=merge_query_input_status(left=carry.query_status, right=reduce"
+            "_query_input_status(statuses=result.query_status, active=valid))"
+            ", continuation_read_counts=merge_continuation_read_counts(left=c"
+            "arry.continuation_read_counts, right=reduce_continuation_read_co"
+            "unts(counts=result.continuation_read_counts, active=valid))), st"
+            "atuses)"
+        ),
+        1,
+    ),
+    "s02_status:subject_scalar_roles_ignored": (
+        "src/_lcm/simulation/subject_parallel.py",
+        "shard_subject_function",
+        "keyword",
+        "scalar_positions",
+        "frozenset()",
+        1,
+    ),
+    "s02_status:subject_collective_or_omitted": (
+        "src/_lcm/simulation/subject_parallel.py",
+        "_evaluate_local_subjects",
+        "expression",
+        'jax.lax.pmax(leaf.astype(jnp.int32), "X").astype(jnp.bool_)',
+        "leaf",
+        1,
+    ),
+    "s02_status:mandatory_host_gate_omitted": (
+        "src/_lcm/solution/feasibility.py",
+        "validate_runtime_bound_status",
+        "expression",
+        "nonfinite or invalid_grid",
+        "False",
+        1,
+    ),
+    "s02_query:typed_adapter_refusal_omitted": (
+        "src/_lcm/solution/egm.py",
+        "_EGMCore._prepare_child_read",
+        "expression",
+        "next_query_data is not None",
+        "False",
+        1,
+    ),
+    "s02_status:canonical_dag_declarations_omitted": (
+        "src/_lcm/regime_building/Q_and_F.py",
+        "runtime_bound_specs",
+        "expression",
+        "flow.bound_specs if type(flow) is _BoundUtilitiesAndF else ()",
+        "()",
+        1,
+    ),
+    "s02_status:kernel_status_channel_omitted": (
+        "src/_lcm/solution/kernel_output.py",
+        "consume_kernel_output",
+        "keyword",
+        "bound_status",
+        "()",
+        1,
+    ),
+    "s02_status:bounded_aux_executable": (
+        "src/_lcm/solution/feasibility.py",
+        "_flatten_bounded_result",
+        "expression",
+        "(children, None)",
+        "(children, type(result))",
+        1,
+    ),
+    "s02_status:bounded_keyed_leaf_swapped": (
+        "src/_lcm/solution/feasibility.py",
+        "_flatten_bounded_result_with_keys",
+        "expression",
+        'jax.tree_util.GetAttrKey("bound_status")',
+        'jax.tree_util.GetAttrKey("output")',
+        1,
+    ),
+    "s02_status:bounded_reconstruction_status_swapped": (
+        "src/_lcm/solution/feasibility.py",
+        "_unflatten_bounded_result",
+        "expression",
+        'object.__setattr__(result, "bound_status", leaves[1])',
+        'object.__setattr__(result, "bound_status", leaves[0])',
+        1,
+    ),
+    "s02_status:off_grid_host_helper_omits_status": (
+        "src/_lcm/transition_checks.py",
+        "_validate_off_grid_bound_status",
+        "keyword",
+        "statuses",
+        "()",
+        1,
+    ),
+    "s02_status:off_grid_host_call_seam_replaced": (
+        "src/_lcm/transition_checks.py",
+        "validate_off_grid_transitions",
+        "expression",
+        "_validate_off_grid_bound_status",
+        "candidate_filter._validate_off_grid_bound_status",
+        1,
+    ),
+    "s02_status:initial_host_helper_omits_status": (
+        "src/_lcm/simulation/initial_conditions.py",
+        "_validate_initial_bound_status",
+        "keyword",
+        "statuses",
+        "()",
+        1,
+    ),
+    "s02_status:initial_host_call_seam_replaced": (
+        "src/_lcm/simulation/initial_conditions.py",
+        "_regime_feasibility_mask",
+        "expression",
+        "_validate_initial_bound_status",
+        "candidate_filter._validate_initial_bound_status",
+        1,
+    ),
+    "s02_status:fold_weight_helper_changes_row": (
+        "src/_lcm/solution/grid_search.py",
+        "_grid_search_fold_weights",
+        "expression",
+        "process.get_transition_probs()[0]",
+        "process.get_transition_probs()[-1]",
+        1,
+    ),
+    "s02_status:fold_weight_call_seam_replaced": (
+        "src/_lcm/solution/grid_search.py",
+        "GridSearch.build_period_kernels",
+        "expression",
+        "_grid_search_fold_weights",
+        "candidate_filter._grid_search_fold_weights",
+        1,
+    ),
+    "s02_status:landing_total_helper_loses_left_bank": (
+        "src/_lcm/solution/backward_induction.py",
+        "_accumulate_landing_totals",
+        "keyword",
+        "left",
+        "jnp.zeros_like(landing_totals)",
+        1,
+    ),
+    "s02_status:landing_total_call_seam_replaced": (
+        "src/_lcm/solution/backward_induction.py",
+        "_run_dispatch_unit",
+        "expression",
+        "_accumulate_landing_totals",
+        "candidate_filter._accumulate_landing_totals",
+        1,
+    ),
+    "s02_status:signature_metadata_omitted": (
+        "src/_lcm/utils/functools.py",
+        "publish_signature",
+        "expression",
+        'object.__setattr__(target, "__signature__", signature)',
+        "None",
+        1,
+    ),
+    "s02_status:landing_reducer_status_omitted": (
+        "src/_lcm/solution/landing_counts.py",
+        "LandingCountedGridSearch.__call__",
+        "keyword",
+        "bound_status",
+        "()",
+        1,
+    ),
+    "s02_status:off_grid_eager_index_conversion_omitted": (
+        "src/_lcm/transition_checks.py",
+        "_off_grid_counts_law",
+        "expression",
+        "jnp.asarray(index, dtype=jnp.int32)",
+        "index.astype(jnp.int32)",
+        1,
+    ),
+    "s02_query:carry_query_record_discarded": (
+        "src/_lcm/egm/carry.py",
+        "EGMCarry.query_data_for_transport",
+        "expression",
+        "self.query_data",
+        "None",
+        1,
+    ),
+    "s02_query:outer_candidate_marginal_negated": (
+        "src/_lcm/egm/outer_envelope.py",
+        "stack_candidate_carries",
+        "expression",
+        "replace(candidate, value=jnp.where(jnp.isnan(leaf['value',]), -jnp.inf, leaf['value',]), marginal_utility=jnp.where(jnp.isnan(leaf['value',]), 0.0, leaf['marginal_utility',]))",
+        "replace(candidate, value=jnp.where(jnp.isnan(leaf['value',]), -jnp.inf, leaf['value',]), marginal_utility=jnp.where(jnp.isnan(leaf['value',]), 0.0, -leaf['marginal_utility',]))",
+        1,
+    ),
+    "s02_query:outer_query_record_call_seam_replaced": (
+        "src/_lcm/egm/outer_envelope.py",
+        "stack_candidate_carries",
+        "expression",
+        "nan_is_infeasible and candidate.query_data_for_transport() is None",
+        "nan_is_infeasible and candidate_filter.query_data_for_transport() is None",
+        1,
+    ),
+    "s02_query:builder_query_record_call_seam_replaced": (
+        "src/_lcm/solution/egm.py",
+        "_EGMArgumentBuilder.__call__",
+        "expression",
+        "next_carry.query_data_for_transport",
+        "candidate_filter.query_data_for_transport",
+        1,
     ),
 }
 
@@ -9510,8 +12987,8 @@ _ACTION_PARTITION_MUTATIONS = {
         ACTION_STREAMING_SOURCE,
         "_PartitionedStreamingHardMax.__call__",
         "expression",
-        "tuple(range(self.n_partitions))",
-        "tuple(reversed(range(self.n_partitions)))",
+        "merge_partition_accumulators(accumulators=gathered, order=tuple(range(self.n_partitions)))",
+        "merge_partition_accumulators(accumulators=gathered, order=tuple(reversed(range(self.n_partitions))))",
         1,
     ),
     "action_partition:merge_starts_at_last_partition": (
@@ -9783,11 +13260,27 @@ def _callable_mutation_specs(
     ) in mutations.items():
         source = (repo_root / relative).read_text(encoding="utf-8")
         tree = ast.parse(source, filename=relative)
-        if "." in qualname:
+        if (
+            relative == _NB_PRODUCER_SOURCE
+            and qualname == "_IntervalWinnerStep.__call__"
+        ):
+            function = _select_interval_winner_call(
+                tree=tree, checker=sys.modules[__name__]
+            )
+        elif "." in qualname:
             class_name, method_name = qualname.split(".", maxsplit=1)
             _, function = _method_definition(
                 tree=tree, class_name=class_name, method_name=method_name
             )
+        elif (
+            relative == ASSOCIATED_SAVING_SOURCE
+            and qualname in _ASSOCIATED_SAVING_OVERLOAD_COUNTS
+        ):
+            function = _associated_saving_implementation(tree=tree, name=qualname)
+        elif (
+            relative == _NB_PRODUCER_SOURCE and qualname in _NB_PRODUCER_OVERLOAD_COUNTS
+        ):
+            function = _nb_producer_implementation(tree=tree, name=qualname)
         else:
             function = _definition(tree=tree, name=qualname)
         replacement = ast.parse(new, mode="eval").body
@@ -9854,6 +13347,574 @@ def _callable_mutation_specs(
     return result
 
 
+_REVIEWED_PREFIX_MUTATIONS = {
+    "reviewed_prefix:row_poison_not_legal": (
+        "src/_lcm/egm/dcegm_query.py",
+        "DCEGMQuery._read_at_floor_with_summary",
+        "expression",
+        "row.supported & ~row.invalid_numeric",
+        "row.supported",
+        1,
+    ),
+    "reviewed_prefix:inactive_poison_not_reduced": (
+        "src/_lcm/egm/dcegm_query.py",
+        "_blend_owned_rows",
+        "expression",
+        "jnp.any(active & result.invalid_numeric)",
+        "jnp.any(result.invalid_numeric)",
+        1,
+    ),
+    "reviewed_prefix:compact_corner_owner_retained": (
+        "src/_lcm/egm/dcegm_query.py",
+        "_read_compact_corner",
+        "expression",
+        "known & owned",
+        "known",
+        1,
+    ),
+    "reviewed_prefix:zero_passive_factor_dead": (
+        "src/_lcm/egm/dcegm_query.py",
+        "_passive_weights",
+        "expression",
+        "~is_represented_zero(axis_weights).reshape(shape)",
+        "jnp.ones_like(axis_weights, dtype=jnp.bool_).reshape(shape)",
+        1,
+    ),
+    "reviewed_prefix:product_jvp_keeps_other_factors": (
+        "src/_lcm/egm/dcegm_query.py",
+        "_factor_product_jvp",
+        "expression",
+        "_factor_product(others) * factor_tangents[index]",
+        "factor_tangents[index]",
+        1,
+    ),
+    "reviewed_prefix:prepared_floor_not_recomputed": (
+        "src/_lcm/egm/dcegm_query.py",
+        "DCEGMQuery.read_prepared",
+        "keyword",
+        "floor_state",
+        "self.evaluate_floor(pool=pool)",
+        1,
+    ),
+    "reviewed_prefix:row_link_same_owner": (
+        "src/_lcm/egm/carry.py",
+        "_read_owned_row_with_support",
+        "expression",
+        "pair_link & (data.owner_id[lower] == data.owner_id[upper])",
+        "pair_link",
+        1,
+    ),
+    "reviewed_prefix:economic_rows_stay_live": (
+        "src/_lcm/egm/carry.py",
+        "_read_owned_row_with_support",
+        "expression",
+        "finite | economic",
+        "finite",
+        1,
+    ),
+    "reviewed_prefix:associated_saving_not_value": (
+        "src/_lcm/egm/carry.py",
+        "_read_owned_channels",
+        "expression",
+        "read(fp=savings[indices])",
+        "read(fp=value[indices])",
+        1,
+    ),
+    "reviewed_prefix:floor_axes_not_row_axes": (
+        "src/_lcm/egm/query_data.py",
+        "select_query_data",
+        "expression",
+        "positions if floor_positions is None else floor_positions",
+        "positions",
+        1,
+    ),
+    "reviewed_prefix:literal_target_period_not_source": (
+        "src/_lcm/solution/egm.py",
+        "_LiteralDCResourceTransport._at_state",
+        "expression",
+        "jnp.int32(self.target_period)",
+        "jnp.int32(0)",
+        1,
+    ),
+    "reviewed_prefix:literal_resource_chain_once": (
+        "src/_lcm/solution/egm.py",
+        "_LiteralDCResourceTransport.__call__",
+        "expression",
+        "gradients * marginal_return",
+        "marginal_return",
+        1,
+    ),
+    "reviewed_prefix:literal_valuation_in_resources": (
+        "src/_lcm/solution/egm.py",
+        "_EGMCore._value_reconstructed_action",
+        "expression",
+        "resource_landing",
+        "valuation_landing",
+        1,
+    ),
+    "reviewed_prefix:inactive_flow_operand_safe": (
+        "src/_lcm/solution/egm.py",
+        "_EGMCore._value_reconstructed_action",
+        "expression",
+        "jnp.where(rescore, step.consumption, 1.0)",
+        "step.consumption",
+        1,
+    ),
+    "reviewed_prefix:same_child_slot_activity": (
+        "src/_lcm/solution/egm.py",
+        "_read_one_row_dc_child",
+        "expression",
+        "reduce_query_input_status(statuses=(status,), active=activity)",
+        (
+            "reduce_query_input_status(statuses=(status,), active=jnp.one"
+            "s(liquid.shape, dtype=jnp.bool_))"
+        ),
+        1,
+    ),
+    "reviewed_prefix:literal_child_status_preserved": (
+        "src/_lcm/egm/step_core.py",
+        "_with_literal_child_status",
+        "keyword",
+        "query_status",
+        "None",
+        1,
+    ),
+    "reviewed_prefix:asset_child_status_preserved": (
+        "src/_lcm/egm/asset_row.py",
+        "_with_asset_child_status",
+        "keyword",
+        "query_status",
+        "None",
+        1,
+    ),
+    "reviewed_prefix:stochastic_dead_node_not_counted": (
+        "src/_lcm/egm/continuation.py",
+        "_WeightedNodeBlockFold.__call__",
+        "keyword",
+        "active",
+        "jnp.ones_like(block_weights, dtype=jnp.bool_)",
+        1,
+    ),
+    "reviewed_prefix:count_pair_order": (
+        "src/_lcm/solution/feasibility.py",
+        "_flatten_continuation_read_counts",
+        "expression",
+        "(status.below_first_live, status.eligible)",
+        "(status.eligible, status.below_first_live)",
+        1,
+    ),
+    "reviewed_prefix:optional_count_aux_inert": (
+        "src/_lcm/solution/feasibility.py",
+        "_flatten_bounded_result",
+        "expression",
+        "('continuation_read_counts', result.query_status is not None)",
+        "(type(result), result.query_status is not None)",
+        1,
+    ),
+    "reviewed_prefix:checked_exact_bool": (
+        "src/_lcm/execution/core_program.py",
+        "select_programs",
+        "expression",
+        "type(collect_continuation_read_counts) is not bool",
+        "False",
+        1,
+    ),
+    "reviewed_prefix:checked_same_labels": (
+        "src/_lcm/execution/core_program.py",
+        "_validate_checked_variant",
+        "expression",
+        "set(checked) != set(ordinary)",
+        "False",
+        1,
+    ),
+    "reviewed_prefix:checked_fixed_params_both": (
+        "src/_lcm/execution/core_program.py",
+        "bind_core_program_fixed_params",
+        "expression",
+        "functools.partial(variant.function, **params)",
+        "variant.function",
+        1,
+    ),
+    "reviewed_prefix:locator_exact_known_container": (
+        "src/_lcm/execution/internal_outputs.py",
+        "_select_path",
+        "expression",
+        "type(node) is BoundedResult and step == 'output'",
+        "step == 'output'",
+        1,
+    ),
+    "reviewed_prefix:dc_resources_not_identity": (
+        "src/_lcm/egm/regime_introspection.py",
+        "_get_child_resources",
+        "expression",
+        "_as_dcegm(user_regime) is not None",
+        "False",
+        1,
+    ),
+    "reviewed_prefix:canonical_combo_permutation": (
+        "src/_lcm/egm/step.py",
+        "_reorder_combo_axes",
+        "expression",
+        "jnp.transpose(arr, (*perm, *trailing))",
+        "arr",
+        1,
+    ),
+    "reviewed_prefix:dc_fixed_params_reach_pair": (
+        "src/_lcm/solution/dcegm.py",
+        "_DCEGMPeriodKernel.with_fixed_params",
+        "expression",
+        "bind_core_program_fixed_params(program=program, params=egm_fixed)",
+        "program",
+        1,
+    ),
+}
+
+
+_REVIEWED_PREFIX_DIAGNOSTICS = {
+    "reviewed_prefix:row_poison_not_legal": (
+        "reviewed S04/S05 dependency: exact callable corridor 'DCEGMQ"
+        "uery._read_at_floor_with_summary' changed"
+    ),
+    "reviewed_prefix:inactive_poison_not_reduced": (
+        "reviewed S04/S05 dependency: exact callable corridor '_blend"
+        "_owned_rows' changed"
+    ),
+    "reviewed_prefix:compact_corner_owner_retained": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_read_compact_corner' changed"
+    ),
+    "reviewed_prefix:zero_passive_factor_dead": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_passive_weights' changed"
+    ),
+    "reviewed_prefix:product_jvp_keeps_other_factors": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_factor_product_jvp' changed"
+    ),
+    "reviewed_prefix:prepared_floor_not_recomputed": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor 'DCEGMQuery.read_prepared' changed"
+    ),
+    "reviewed_prefix:row_link_same_owner": (
+        "reviewed S04/S05 dependency: exact callable corridor '_read_"
+        "owned_row_with_support' changed"
+    ),
+    "reviewed_prefix:economic_rows_stay_live": (
+        "reviewed S04/S05 dependency: exact callable corridor '_read_"
+        "owned_row_with_support' changed"
+    ),
+    "reviewed_prefix:associated_saving_not_value": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_read_owned_channels' changed"
+    ),
+    "reviewed_prefix:floor_axes_not_row_axes": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor 'select_query_data' changed"
+    ),
+    "reviewed_prefix:literal_target_period_not_source": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_LiteralDCResourceTransport._at_state' changed"
+    ),
+    "reviewed_prefix:literal_resource_chain_once": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_LiteralDCResourceTransport.__call__' changed"
+    ),
+    "reviewed_prefix:literal_valuation_in_resources": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_EGMCore._value_reconstructed_action' changed"
+    ),
+    "reviewed_prefix:inactive_flow_operand_safe": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_EGMCore._value_reconstructed_action' changed"
+    ),
+    "reviewed_prefix:same_child_slot_activity": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_read_one_row_dc_child' changed"
+    ),
+    "reviewed_prefix:literal_child_status_preserved": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_with_literal_child_status' changed"
+    ),
+    "reviewed_prefix:asset_child_status_preserved": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_with_asset_child_status' changed"
+    ),
+    "reviewed_prefix:stochastic_dead_node_not_counted": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_WeightedNodeBlockFold.__call__' changed"
+    ),
+    "reviewed_prefix:count_pair_order": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_flatten_continuation_read_counts' changed"
+    ),
+    "reviewed_prefix:optional_count_aux_inert": (
+        "S02 query/status dependency: "
+        "exact callable corridor '_flatten_bounded_result' changed"
+    ),
+    "reviewed_prefix:checked_exact_bool": (
+        "core-program provider-to-resolver transport: "
+        "exact callable corridor 'select_programs' changed"
+    ),
+    "reviewed_prefix:checked_same_labels": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_validate_checked_variant' changed"
+    ),
+    "reviewed_prefix:checked_fixed_params_both": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor 'bind_core_program_fixed_params' changed"
+    ),
+    "reviewed_prefix:locator_exact_known_container": (
+        "reviewed S04/S05 dependency: exact callable corridor '_select_path' changed"
+    ),
+    "reviewed_prefix:dc_resources_not_identity": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_get_child_resources' changed"
+    ),
+    "reviewed_prefix:canonical_combo_permutation": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_reorder_combo_axes' changed"
+    ),
+    "reviewed_prefix:dc_fixed_params_reach_pair": (
+        "reviewed S04/S05 dependency: "
+        "exact callable corridor '_DCEGMPeriodKernel.with_fixed_params' changed"
+    ),
+    "reviewed_prefix:model_authority_immutable": (
+        "reviewed S04/S05 dependency: "
+        "src/_lcm/egm/dcegm_query_model.py declaration surface changed"
+    ),
+}
+
+
+_REVIEWED_PREFIX_SOURCE_MUTATIONS = {
+    "reviewed_prefix:model_authority_immutable": (
+        "src/_lcm/egm/dcegm_query_model.py",
+        "@dataclass(frozen=True, kw_only=True)",
+        "@dataclass(frozen=False, kw_only=True)",
+    ),
+}
+
+EXPECTED_REVIEWED_PREFIX_MUTATION_COUNT = 28
+EXPECTED_REVIEWED_PREFIX_MUTATION_NAMES_SHA256 = (
+    "71a70a218ef33bcd2ac4506902d63d3a4fb1f5a51a021a56cb4ccc9f691726cf"
+)
+
+
+def reviewed_prefix_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build controls for owned row mathematics and immutable model transport."""
+    specs = _callable_mutation_specs(
+        repo_root=repo_root, mutations=_REVIEWED_PREFIX_MUTATIONS
+    )
+    for name, (relative, old, new) in _REVIEWED_PREFIX_SOURCE_MUTATIONS.items():
+        source = (repo_root / relative).read_text(encoding="utf-8")
+        if source.count(old) != 1:
+            raise ValueError(f"{name}: expected one exact declaration anchor")
+        specs[name] = {"path": relative, "source": source.replace(old, new, 1)}
+    return specs
+
+
+EXPECTED_S03_SCALAR_MUTATION_COUNT = 57
+EXPECTED_S03_SCALAR_MUTATION_NAMES_SHA256 = (
+    "070c43d068455d31f3b1c9c54502149253ca9ce3a97bc39a22158283310c7487"
+)
+
+
+def s03_scalar_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build separate named helper-body controls for the scalar-query corridor."""
+    specs = {}
+    for relative, (_, callables) in _S03_SCALAR_CONTRACTS.items():
+        original = (repo_root / relative).read_text(encoding="utf-8")
+        for qualname in callables:
+            tree = ast.parse(original, filename=relative)
+            if "." in qualname:
+                class_name, method_name = qualname.split(".", maxsplit=1)
+                _, function = _method_definition(
+                    tree=tree, class_name=class_name, method_name=method_name
+                )
+            else:
+                function = _definition(tree=tree, name=qualname)
+            function.body = ast.parse("return None").body
+            mutated = ast.unparse(tree) + "\n"
+            if mutated == original:
+                raise ValueError(f"S03 helper mutation did not change {qualname}")
+            specs[f"s03_scalar:{relative}:{qualname}"] = {
+                "path": relative,
+                "source": mutated,
+            }
+    return specs
+
+
+_OWNED_QUERY_HELPER_MUTATIONS = {
+    "owned_query_status:pickle_wrong_record": (
+        "src/_lcm/solution/feasibility.py",
+        "QueryInputStatus.__reduce__",
+        "expression",
+        "_unflatten_query_input_status",
+        "_unflatten_bound_status",
+        1,
+    ),
+    "owned_query_status:flatten_floor_grid_swapped": (
+        "src/_lcm/solution/feasibility.py",
+        "_flatten_query_input_status",
+        "expression",
+        "tuple(status)",
+        "(status.invalid_shifted_grid, status.nonfinite_floor, status.coverage_missing)",
+        1,
+    ),
+    "owned_query_status:keyed_flatten_floor_grid_swapped": (
+        "src/_lcm/solution/feasibility.py",
+        "_flatten_query_input_status_with_keys",
+        "expression",
+        "zip(QueryInputStatus._fields, status, strict=True)",
+        "zip(QueryInputStatus._fields, (status.invalid_shifted_grid, status.nonfinite_floor, status.coverage_missing), strict=True)",
+        1,
+    ),
+    "owned_query_status:unflatten_floor_grid_swapped": (
+        "src/_lcm/solution/feasibility.py",
+        "_unflatten_query_input_status",
+        "expression",
+        "tuple.__new__(QueryInputStatus, leaves)",
+        "tuple.__new__(QueryInputStatus, (leaves[1], leaves[0], leaves[2]))",
+        1,
+    ),
+    "owned_query_status:reducer_inactive_lanes": (
+        "src/_lcm/solution/feasibility.py",
+        "reduce_query_input_status",
+        "expression",
+        "active & flag",
+        "~active & flag",
+        1,
+    ),
+    "owned_query_status:merge_requires_both_windows": (
+        "src/_lcm/solution/feasibility.py",
+        "merge_query_input_status",
+        "expression",
+        "a | b",
+        "a & b",
+        1,
+    ),
+    "owned_query_status:validator_arithmetic_gate_removed": (
+        "src/_lcm/solution/feasibility.py",
+        "validate_query_input_status",
+        "expression",
+        "nonfinite or invalid_grid",
+        "False",
+        1,
+    ),
+    "owned_query_status:validator_coverage_gate_removed": (
+        "src/_lcm/solution/feasibility.py",
+        "validate_query_input_status",
+        "expression",
+        "missing",
+        "False",
+        1,
+    ),
+    "owned_query_status:block_slot_count_ignored": (
+        "src/_lcm/solution/backward_induction.py",
+        "_query_block_status",
+        "expression",
+        "len(statuses or ()) != n_query_slots",
+        "False",
+        1,
+    ),
+    "owned_query_authority:topology_schema_not_checked": (
+        "src/_lcm/continuation.py",
+        "EGMRowTopologySpec.__post_init__",
+        "expression",
+        "self.schema_version != 1",
+        "False",
+        1,
+    ),
+    "owned_query_authority:topology_exact_type_not_checked": (
+        "src/_lcm/continuation.py",
+        "_validate_row_topology",
+        "expression",
+        "type(topology) is not EGMRowTopologySpec",
+        "False",
+        1,
+    ),
+    "owned_query_authority:topology_authority_not_compared": (
+        "src/_lcm/continuation.py",
+        "_validate_row_topology_authority",
+        "expression",
+        "not same",
+        "False",
+        1,
+    ),
+    "owned_query_authority:dc_later_periods_omitted": (
+        "src/_lcm/regime_building/processing.py",
+        "_prepare_dcegm_query_models",
+        "keyword",
+        "target_periods",
+        "(periods[0],)",
+        1,
+    ),
+}
+
+_OWNED_QUERY_PRIORITY_MUTATION = (
+    "owned_query_status:validator_coverage_before_arithmetic"
+)
+EXPECTED_OWNED_QUERY_HELPER_MUTATION_COUNT = 14
+EXPECTED_OWNED_QUERY_HELPER_MUTATION_NAMES_SHA256 = (
+    "0a4bd8a9400c984913740b6e58ac399e660bb5b39c41d1b6b2580388d196cb07"
+)
+
+
+def owned_query_helper_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build separate body controls for owned query integrity and authority."""
+    specs = _callable_mutation_specs(
+        repo_root=repo_root, mutations=_OWNED_QUERY_HELPER_MUTATIONS
+    )
+    relative = "src/_lcm/solution/feasibility.py"
+    tree = ast.parse((repo_root / relative).read_text(encoding="utf-8"))
+    function = _definition(tree=tree, name="validate_query_input_status")
+    loop_indices = [
+        index
+        for index, statement in enumerate(function.body)
+        if isinstance(statement, ast.For)
+    ]
+    if len(loop_indices) != 2:
+        raise ValueError("Query integrity priority requires exactly two owned loops.")
+    first, second = loop_indices
+    function.body[first], function.body[second] = (
+        function.body[second],
+        function.body[first],
+    )
+    specs[_OWNED_QUERY_PRIORITY_MUTATION] = {
+        "path": relative,
+        "source": ast.unparse(tree) + "\n",
+    }
+    return specs
+
+
+_CHILD_FAILURE_MUTATIONS = {
+    "owned_child_status:never_detected": False,
+    "owned_child_status:always_detected": True,
+}
+EXPECTED_CHILD_FAILURE_MUTATION_COUNT = 2
+EXPECTED_CHILD_FAILURE_MUTATION_NAMES_SHA256 = (
+    "cfbf4195d3fb235d7ccec0a05d7d79712581053207d0ec36cfaeffaa9592b5df"
+)
+
+
+def child_failure_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build separate controls for mandatory-child and clean-coverage precedence."""
+    relative = "src/_lcm/solution/egm.py"
+    original = (repo_root / relative).read_text(encoding="utf-8")
+    specs = {}
+    for name, failure in _CHILD_FAILURE_MUTATIONS.items():
+        tree = ast.parse(original, filename=relative)
+        function = _definition(tree=tree, name="_has_mandatory_child_failure")
+        original_body = tuple(_ast_key(statement) for statement in function.body)
+        function.body = [ast.Return(value=ast.Constant(value=failure))]
+        if tuple(_ast_key(statement) for statement in function.body) == original_body:
+            raise ValueError(f"Child failure mutation did not change {name}")
+        specs[name] = {
+            "path": relative,
+            "source": ast.unparse(ast.fix_missing_locations(tree)) + "\n",
+        }
+    return specs
+
+
 def supplemental_direct_flow_mutation_specs(
     *, repo_root: Path
 ) -> dict[str, dict[str, str]]:
@@ -9866,7 +13927,101 @@ def supplemental_direct_flow_mutation_specs(
         mutated = original.replace(old, new)
         ast.parse(mutated, filename=relative)
         specs[name] = {"path": relative, "source": mutated}
+    specs.update(
+        _callable_mutation_specs(repo_root=repo_root, mutations=_S02_HELPER_MUTATIONS)
+    )
     return specs
+
+
+_ASSOCIATED_SAVING_MUTATIONS = {
+    "associated_saving:endpoint_original_ordinates": (
+        "src/_lcm/egm/upper_envelope/query.py",
+        "_savings_link_endpoints",
+        "expression",
+        "candidate_savings[1:]",
+        "candidate_savings[:-1]",
+        1,
+    ),
+    "associated_saving:exact_same_selected_column": (
+        "src/_lcm/egm/upper_envelope/query.py",
+        "_envelope_exact",
+        "expression",
+        "take(column=savings_endpoints[0])",
+        "take(column=links.left_policy)",
+        1,
+    ),
+    "associated_saving:exact_status_coupled": (
+        "src/_lcm/egm/upper_envelope/query.py",
+        "_envelope_exact",
+        "expression",
+        "coupled_status | savings_status",
+        "coupled_status",
+        1,
+    ),
+    "associated_saving:ordinary_block_endpoint": (
+        "src/_lcm/egm/upper_envelope/query.py",
+        "_ordinary_block_best",
+        "expression",
+        "block[:, 9]",
+        "block[:, 8]",
+        1,
+    ),
+    "associated_saving:ordinary_payload_take": (
+        "src/_lcm/egm/upper_envelope/query.py",
+        "_ordinary_block_step",
+        "expression",
+        "jnp.where(take, offered_channel, standing_channel)",
+        "offered_channel",
+        1,
+    ),
+    "associated_saving:stream_endpoint_pairs": (
+        "src/_lcm/egm/upper_envelope/query.py",
+        "merge_envelope_winner",
+        "expression",
+        "zip(savings_held[1:], savings_links, strict=True)",
+        "zip(savings_held[1:][::-1], savings_links[::-1], strict=True)",
+        1,
+    ),
+    "associated_saving:descending_and_point_owner": (
+        "src/_lcm/egm/upper_envelope/query.py",
+        "_endpoint_order",
+        "expression",
+        "(lower, jnp.where(zero_width, lower, upper))",
+        "(flat_left, flat_right)",
+        1,
+    ),
+    "associated_saving:legacy_absence_shape": (
+        "src/_lcm/egm/upper_envelope/query.py",
+        "empty_envelope_winner",
+        "expression",
+        "retain_savings",
+        "True",
+        1,
+    ),
+}
+
+_ASSOCIATED_SAVING_DIAGNOSTICS = {
+    "associated_saving:endpoint_original_ordinates": "associated saving dependency: exact callable corridor '_savings_link_endpoints' changed",
+    "associated_saving:exact_same_selected_column": "associated saving dependency: exact callable corridor '_envelope_exact' changed",
+    "associated_saving:exact_status_coupled": "associated saving dependency: exact callable corridor '_envelope_exact' changed",
+    "associated_saving:ordinary_block_endpoint": "associated saving dependency: exact callable corridor '_ordinary_block_best' changed",
+    "associated_saving:ordinary_payload_take": "associated saving dependency: exact callable corridor '_ordinary_block_step' changed",
+    "associated_saving:stream_endpoint_pairs": "associated saving dependency: exact callable corridor 'merge_envelope_winner' changed",
+    "associated_saving:descending_and_point_owner": "associated saving dependency: exact callable corridor '_endpoint_order' changed",
+    "associated_saving:legacy_absence_shape": "associated saving dependency: exact callable corridor 'empty_envelope_winner' changed",
+}
+
+EXPECTED_ASSOCIATED_SAVING_MUTATION_COUNT = 8
+EXPECTED_ASSOCIATED_SAVING_MUTATION_NAMES_SHA256 = (
+    "10413feac535a08f59a86aff734259d02f0b8b7e5ea609ecf41c32060402897a"
+)
+
+
+def associated_saving_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build the eight exact original-saving association controls."""
+    return _callable_mutation_specs(
+        repo_root=repo_root, mutations=_ASSOCIATED_SAVING_MUTATIONS
+    )
 
 
 def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
@@ -9988,8 +14143,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "path": FEASIBILITY_SOURCE,
         "source": replace_once(
             source=feasibility_source,
-            old="return value, empty_count, other_inf_count",
-            new="return -value, empty_count, other_inf_count",
+            old="else (value, empty_count, other_inf_count)",
+            new="else (-value, empty_count, other_inf_count)",
             label="feasibility summary unchanged value",
         ),
     }
@@ -10198,8 +14353,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "caller_solve:published_value_filtered": replace_once(
             source=grid_source,
-            old="            value=V_arr, feasibility_counts=(empty_count, other_inf_count)",
-            new="            value=candidate_filter(V_arr), feasibility_counts=(empty_count, other_inf_count)",
+            old="            value=V_arr,\n            feasibility_counts=(empty_count, other_inf_count),",
+            new="            value=candidate_filter(V_arr),\n            feasibility_counts=(empty_count, other_inf_count),",
             label="solve caller value publication",
         ),
         "streaming_provider:action_names_slice": replace_once(
@@ -10581,7 +14736,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "            fold_state_names=fold_state_names, stakeholders=stakeholders\n"
         "        )\n"
         "        mapped = _wrap_with_fold_reduction(\n"
-        '            mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", mapped),\n'
+        '            mapped=cast("Callable[..., BoundedMaxOutput]", mapped),\n'
         "            fold_state_names=fold_state_names,\n"
         "            fold_weights=fold_weights,\n"
         "            fold_conditioning=fold_conditioning,\n"
@@ -10601,7 +14756,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     streaming_fold_after_co_map = _insert_before_nth(
         text=streaming_fold_after_co_map,
         marker=(
-            '    return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))'
+            '    return cast(\n        "MaxQOverAFunction[BoundedMaxOutput]",\n        allow_only_kwargs(func=mapped, enforce=False),\n    )'
         ),
         insertion=streaming_fold_block,
         occurrence=2,
@@ -10623,9 +14778,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "path": MAX_Q_SOURCE,
         "source": _replace_nth(
             text=max_source,
-            marker='            mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", mapped),',
+            marker='            mapped=cast("Callable[..., BoundedMaxOutput]", mapped),',
             replacement=(
-                '            mapped=cast("Callable[..., FloatND | tuple[FloatND, BoolND]]", '
+                '            mapped=cast("Callable[..., BoundedMaxOutput]", '
                 "candidate_filter(mapped)),"
             ),
             occurrence=2,
@@ -10783,8 +14938,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "path": MAX_Q_SOURCE,
         "source": replace_once(
             source=max_source,
-            old="            return ev1_result.smoothed_value",
-            new="            return -ev1_result.smoothed_value",
+            old="                ev1_output = ev1_result.smoothed_value",
+            new="                ev1_output = -ev1_result.smoothed_value",
             label="streamed EV1 value publication",
         ),
     }
@@ -10901,8 +15056,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_blocks:admit_padded_tail": _replace_nth(
             text=action_streaming_source,
-            marker="    return values, feasible & valid, global_ids",
-            replacement="    return values, feasible, global_ids",
+            marker="    output = (values, feasible & valid, global_ids)",
+            replacement="    output = (values, feasible, global_ids)",
             occurrence=1,
         ),
         "streaming_blocks:block_local_action_ids": _replace_nth(
@@ -11084,20 +15239,20 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         action_streaming_cases[f"streaming_blocks:candidate_index_{index}"] = (
             _replace_nth(
                 text=action_streaming_source,
-                marker="    return values, feasible & valid, global_ids",
+                marker="    output = (values, feasible & valid, global_ids)",
                 replacement=(
                     "    feasible = feasible & (global_ids != "
-                    f"{index})\n    return values, feasible & valid, global_ids"
+                    f"{index})\n    output = (values, feasible & valid, global_ids)"
                 ),
                 occurrence=1,
             )
         )
         action_streaming_cases[f"streaming_ev1:candidate_index_{index}"] = _replace_nth(
             text=action_streaming_source,
-            marker="    return values, feasible & valid, global_ids",
+            marker="    output = (values, feasible & valid, global_ids)",
             replacement=(
                 "    feasible = feasible & (global_ids != "
-                f"{index})\n    return values, feasible & valid, global_ids"
+                f"{index})\n    output = (values, feasible & valid, global_ids)"
             ),
             occurrence=2,
         )
@@ -11482,10 +15637,10 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "source": replace_once(
                     source=simulation_programs_source,
                     old=(
-                        "return _SubjectTiled(func=dense_reducer, subject_arg_names=subject_arg_names)"
+                        "return _SubjectTiled(\n            func=dense_reducer,\n            subject_arg_names=subject_arg_names,\n            n_bound_records=n_bound_records,\n        )"
                     ),
                     new=(
-                        "return _SubjectTiled(func=candidate_filter(dense_reducer), subject_arg_names=subject_arg_names)"
+                        "return _SubjectTiled(\n            func=candidate_filter(dense_reducer),\n            subject_arg_names=subject_arg_names,\n            n_bound_records=n_bound_records,\n        )"
                     ),
                     label="dense_reducer_replaced",
                 ),
@@ -12006,8 +16161,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": DISPATCHERS_SOURCE,
             "source": replace_once(
                 source=dispatchers_source,
-                old="xs=jnp.arange(n_cells, dtype=jnp.int32), batch_size=width",
-                new="xs=jnp.arange(n_cells, dtype=jnp.int32), batch_size=n_cells",
+                old="xs=jnp.arange(n_cells, dtype=jnp.int32),\n            batch_size=width,",
+                new="xs=jnp.arange(n_cells, dtype=jnp.int32),\n            batch_size=n_cells,",
                 label="tiled product planned width",
             ),
         },
@@ -12853,12 +17008,140 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     supplemental = supplemental_direct_flow_mutation_specs(repo_root=root)
     if set(specs) & set(supplemental):
         raise ValueError("Supplemental mutation names overlap the pinned registry")
-    mutated_paths = {spec["path"] for spec in (*specs.values(), *supplemental.values())}
+    s03_scalar = s03_scalar_mutation_specs(repo_root=root)
+    owned_query = owned_query_helper_mutation_specs(repo_root=root)
+    child_failure = child_failure_mutation_specs(repo_root=root)
+    reviewed_prefix = reviewed_prefix_mutation_specs(repo_root=root)
+    decoupled_bound = decoupled_bound_mutation_specs(repo_root=root)
+    retained_prefix = retained_prefix_mutation_specs(repo_root=root)
+    associated_saving = associated_saving_mutation_specs(repo_root=root)
+    outer_helpers = outer_helper_mutation_specs(repo_root=root)
+    final_nested = final_nested_mutation_specs(repo_root=root)
+    child_native = child_native_mutation_specs(repo_root=root)
+    additional_helpers = additional_helper_mutation_specs(repo_root=root)
+    if (set(specs) | set(supplemental)) & set(s03_scalar):
+        raise ValueError("S03 scalar mutations overlap existing populations")
+    if (set(specs) | set(supplemental) | set(s03_scalar)) & set(owned_query):
+        raise ValueError("Owned query helper mutations overlap existing populations")
+    if (set(specs) | set(supplemental) | set(s03_scalar) | set(owned_query)) & set(
+        child_failure
+    ):
+        raise ValueError("Child failure mutations overlap existing populations")
+    if set(reviewed_prefix) & (
+        set(specs)
+        | set(supplemental)
+        | set(s03_scalar)
+        | set(owned_query)
+        | set(child_failure)
+    ):
+        raise ValueError("Reviewed prefix mutations overlap existing populations")
+    if set(decoupled_bound) & (
+        set(specs)
+        | set(supplemental)
+        | set(s03_scalar)
+        | set(owned_query)
+        | set(child_failure)
+        | set(reviewed_prefix)
+    ):
+        raise ValueError("Decoupled bound mutations overlap existing populations")
+    if (
+        set(specs)
+        | set(supplemental)
+        | set(s03_scalar)
+        | set(owned_query)
+        | set(child_failure)
+        | set(reviewed_prefix)
+        | set(decoupled_bound)
+    ) & set(associated_saving):
+        raise ValueError("Associated saving mutations overlap existing populations")
+    if set(retained_prefix) & (
+        set(specs)
+        | set(supplemental)
+        | set(s03_scalar)
+        | set(owned_query)
+        | set(child_failure)
+        | set(reviewed_prefix)
+        | set(decoupled_bound)
+        | set(associated_saving)
+    ):
+        raise ValueError("Retained prefix mutations overlap existing populations")
+    if set(outer_helpers) & (
+        set(specs)
+        | set(supplemental)
+        | set(s03_scalar)
+        | set(owned_query)
+        | set(child_failure)
+        | set(reviewed_prefix)
+        | set(decoupled_bound)
+        | set(associated_saving)
+        | set(retained_prefix)
+    ):
+        raise ValueError("Outer helper mutations overlap existing populations")
+    if set(final_nested) & (
+        set(specs)
+        | set(supplemental)
+        | set(s03_scalar)
+        | set(owned_query)
+        | set(child_failure)
+        | set(reviewed_prefix)
+        | set(decoupled_bound)
+        | set(associated_saving)
+        | set(retained_prefix)
+        | set(outer_helpers)
+    ):
+        raise ValueError("Final nested mutations overlap existing populations")
+    if set(child_native) & (
+        set(specs)
+        | set(supplemental)
+        | set(s03_scalar)
+        | set(owned_query)
+        | set(child_failure)
+        | set(reviewed_prefix)
+        | set(decoupled_bound)
+        | set(associated_saving)
+        | set(retained_prefix)
+        | set(outer_helpers)
+        | set(final_nested)
+    ):
+        raise ValueError("Child native mutations overlap existing populations")
+    if set(additional_helpers) & (
+        set(specs)
+        | set(supplemental)
+        | set(s03_scalar)
+        | set(owned_query)
+        | set(child_failure)
+        | set(reviewed_prefix)
+        | set(decoupled_bound)
+        | set(associated_saving)
+        | set(retained_prefix)
+        | set(outer_helpers)
+        | set(final_nested)
+        | set(child_native)
+    ):
+        raise ValueError("Additional helper mutations overlap existing populations")
+    mutated_paths = {
+        spec["path"]
+        for spec in (
+            *specs.values(),
+            *supplemental.values(),
+            *s03_scalar.values(),
+            *owned_query.values(),
+            *child_failure.values(),
+            *reviewed_prefix.values(),
+            *decoupled_bound.values(),
+            *associated_saving.values(),
+            *retained_prefix.values(),
+            *outer_helpers.values(),
+            *final_nested.values(),
+            *child_native.values(),
+            *additional_helpers.values(),
+        )
+    }
     certified_paths = (
         set(_CERTIFIED_CORRIDOR_SOURCES)
         - set(_UNIFORM_PROCESS_SOURCES)
         - set(_ACTION_GRID_SOURCES)
-    )
+    ) | {SUPPORT_AUTHORITY_SOURCE, SUPPORT_TRANSITION_CHECKS_SOURCE}
     if mutated_paths != certified_paths:
         raise ValueError(
             "mutation-source coverage differs from the certified corridor: "
@@ -12892,6 +17175,17 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
     }
     registered = direct_flow_mutation_specs(repo_root=root)
     supplemental = supplemental_direct_flow_mutation_specs(repo_root=root)
+    s03_scalar = s03_scalar_mutation_specs(repo_root=root)
+    owned_query = owned_query_helper_mutation_specs(repo_root=root)
+    child_failure = child_failure_mutation_specs(repo_root=root)
+    reviewed_prefix = reviewed_prefix_mutation_specs(repo_root=root)
+    decoupled_bound = decoupled_bound_mutation_specs(repo_root=root)
+    retained_prefix = retained_prefix_mutation_specs(repo_root=root)
+    associated_saving = associated_saving_mutation_specs(repo_root=root)
+    outer_helpers = outer_helper_mutation_specs(repo_root=root)
+    final_nested = final_nested_mutation_specs(repo_root=root)
+    child_native = child_native_mutation_specs(repo_root=root)
+    additional_helpers = additional_helper_mutation_specs(repo_root=root)
     uniform = uniform_process_mutation_specs(repo_root=root)
     action_grid = action_grid_mutation_specs(repo_root=root)
     feasibility = feasibility_mutation_specs(repo_root=root)
@@ -12900,6 +17194,62 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
     allocation = allocation_reservation_mutation_specs(repo_root=root)
     normal = normal_process_mutation_specs(repo_root=root)
     partition = action_partition_mutation_specs(repo_root=root)
+    if set(final_nested) & (
+        set(uniform)
+        | set(action_grid)
+        | set(feasibility)
+        | set(grouped)
+        | set(guard)
+        | set(allocation)
+        | set(normal)
+        | set(partition)
+    ):
+        raise ValueError("Final nested mutations overlap additional populations")
+    if set(child_native) & (
+        set(registered)
+        | set(supplemental)
+        | set(s03_scalar)
+        | set(owned_query)
+        | set(child_failure)
+        | set(reviewed_prefix)
+        | set(decoupled_bound)
+        | set(associated_saving)
+        | set(retained_prefix)
+        | set(outer_helpers)
+        | set(final_nested)
+        | set(uniform)
+        | set(action_grid)
+        | set(feasibility)
+        | set(grouped)
+        | set(guard)
+        | set(allocation)
+        | set(normal)
+        | set(partition)
+    ):
+        raise ValueError("Child native mutations overlap other populations")
+    if set(additional_helpers) & (
+        set(registered)
+        | set(supplemental)
+        | set(s03_scalar)
+        | set(owned_query)
+        | set(child_failure)
+        | set(reviewed_prefix)
+        | set(decoupled_bound)
+        | set(associated_saving)
+        | set(retained_prefix)
+        | set(outer_helpers)
+        | set(final_nested)
+        | set(child_native)
+        | set(uniform)
+        | set(action_grid)
+        | set(feasibility)
+        | set(grouped)
+        | set(guard)
+        | set(allocation)
+        | set(normal)
+        | set(partition)
+    ):
+        raise ValueError("Additional helper mutations overlap other populations")
     cases: dict[str, MutationCase] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
@@ -12910,6 +17260,17 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
         for name, spec in (
             registered
             | supplemental
+            | s03_scalar
+            | owned_query
+            | child_failure
+            | reviewed_prefix
+            | decoupled_bound
+            | associated_saving
+            | retained_prefix
+            | outer_helpers
+            | final_nested
+            | child_native
+            | additional_helpers
             | uniform
             | action_grid
             | feasibility
@@ -12922,14 +17283,179 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
             relative = spec["path"]
             target = temp_root / relative
             target.write_text(spec["source"], encoding="utf-8")
-            result = verify_direct_candidate_flow(repo_root=temp_root)
+            original_seal = _SOURCE_SEALS[relative]
+            if (
+                name in outer_helpers
+                or name in final_nested
+                or name in child_native
+                or name in additional_helpers
+                or name in reviewed_prefix
+                or name in decoupled_bound
+                or name in retained_prefix
+                or name.startswith(
+                    (
+                        "s02_query:",
+                        "s02_status:",
+                        "s03_scalar:",
+                        "owned_query_status:",
+                        "owned_query_authority:",
+                        "owned_child_status:",
+                        "reviewed_prefix:",
+                        "associated_saving:",
+                        "retained_prefix:",
+                    )
+                )
+            ):
+                _SOURCE_SEALS[relative] = sha256_file(target)
+            try:
+                result = verify_direct_candidate_flow(repo_root=temp_root)
+            finally:
+                _SOURCE_SEALS[relative] = original_seal
+            rejected = not result["ok"]
+            if name in child_failure:
+                diagnostic = "S02 query/status dependency: exact callable corridor '_has_mandatory_child_failure' changed"
+                rejected = (
+                    diagnostic not in clean["errors"] and diagnostic in result["errors"]
+                )
+            if name in reviewed_prefix:
+                diagnostic = _REVIEWED_PREFIX_DIAGNOSTICS[name]
+                rejected = (
+                    clean["ok"]
+                    and diagnostic in result["errors"]
+                    and not any(
+                        "source seal mismatch" in error for error in result["errors"]
+                    )
+                )
+            if name in decoupled_bound:
+                rejected = (
+                    clean["ok"]
+                    and result["offending_paths"] == [DECOUPLED_BOUND_SOURCE]
+                    and any(
+                        "Decoupled bound metadata:" in error
+                        for error in result["errors"]
+                    )
+                    and not any(
+                        "source seal mismatch" in error for error in result["errors"]
+                    )
+                )
+            if name in associated_saving:
+                diagnostic = _ASSOCIATED_SAVING_DIAGNOSTICS[name]
+                rejected = (
+                    diagnostic not in clean["errors"]
+                    and diagnostic in result["errors"]
+                    and not any(
+                        "source seal mismatch" in error for error in result["errors"]
+                    )
+                )
+            if name in retained_prefix:
+                diagnostic = _RETAINED_PREFIX_DIAGNOSTICS[name]
+                rejected = (
+                    clean["ok"]
+                    and diagnostic in result["errors"]
+                    and not any(
+                        "source seal mismatch" in error for error in result["errors"]
+                    )
+                )
+            if name in outer_helpers:
+                control = _OUTER_HELPER_CONTROLS[name]
+                rejected = _outer_helper_case_rejected(
+                    clean=clean,
+                    result=result,
+                    source=control.source,
+                    diagnostic=control.diagnostic,
+                )
+            if name in final_nested:
+                rejected = _final_nested_case_rejected(
+                    clean=clean,
+                    result=result,
+                    source=relative,
+                    diagnostic=_final_nested_primary_diagnostic(name=name),
+                )
+            if name in child_native:
+                rejected = _child_native_case_rejected(
+                    clean=clean,
+                    result=result,
+                    source=relative,
+                    diagnostic=_child_native_primary_diagnostic(name=name),
+                )
+            if name in additional_helpers:
+                rejected = _additional_helper_case_rejected(
+                    clean=clean,
+                    result=result,
+                    source=relative,
+                    diagnostic=_additional_helper_primary_diagnostic(name=name),
+                )
             cases[name] = {
                 "path": relative,
-                "rejected": not result["ok"],
+                "rejected": rejected,
                 "errors": result["errors"],
                 "offending_paths": result["offending_paths"],
             }
             target.write_text(originals[relative], encoding="utf-8")
+            if (
+                name in final_nested
+                or name in child_native
+                or name in additional_helpers
+            ):
+                restored = verify_direct_candidate_flow(repo_root=temp_root)
+                if restored != clean:
+                    raise ValueError(
+                        f"{name}: nested control did not restore its clean baseline"
+                    )
+    additional_helper_cases = {name: cases.pop(name) for name in additional_helpers}
+    additional_helper_admitted = sorted(
+        name
+        for name, result in additional_helper_cases.items()
+        if not result["rejected"]
+    )
+    additional_helper_names_match = (
+        set(additional_helper_cases) == _EXPECTED_ADDITIONAL_HELPER_MUTATION_NAMES
+        and len(additional_helper_cases) == 54
+    )
+    child_native_cases = {name: cases.pop(name) for name in child_native}
+    child_native_admitted = sorted(
+        name for name, result in child_native_cases.items() if not result["rejected"]
+    )
+    child_native_names_match = (
+        set(child_native_cases) == _EXPECTED_CHILD_NATIVE_MUTATION_NAMES
+        and len(child_native_cases) == 13
+    )
+    final_nested_cases = {name: cases.pop(name) for name in final_nested}
+    final_nested_admitted = sorted(
+        name for name, result in final_nested_cases.items() if not result["rejected"]
+    )
+    final_nested_names_match = (
+        len(final_nested_cases) == EXPECTED_FINAL_NESTED_MUTATION_COUNT
+        and _mutation_name_digest(tuple(final_nested_cases))
+        == EXPECTED_FINAL_NESTED_MUTATION_NAMES_SHA256
+    )
+    decoupled_bound_cases = {name: cases.pop(name) for name in decoupled_bound}
+    decoupled_bound_admitted = sorted(
+        name for name, result in decoupled_bound_cases.items() if not result["rejected"]
+    )
+    decoupled_bound_names_match = (
+        len(decoupled_bound_cases) == 8
+        and _mutation_name_digest(tuple(decoupled_bound_cases))
+        == "96fe054af698aadee64e5bb7d06c9e2fb7160c382168bb5cee7942b3c58dfa24"
+    )
+    reviewed_prefix_cases = {name: cases.pop(name) for name in reviewed_prefix}
+    reviewed_prefix_admitted = sorted(
+        name for name, result in reviewed_prefix_cases.items() if not result["rejected"]
+    )
+    reviewed_prefix_names_match = (
+        len(reviewed_prefix_cases) == EXPECTED_REVIEWED_PREFIX_MUTATION_COUNT
+        and _mutation_name_digest(tuple(reviewed_prefix_cases))
+        == EXPECTED_REVIEWED_PREFIX_MUTATION_NAMES_SHA256
+    )
+    outer_helper_cases = {name: cases.pop(name) for name in outer_helpers}
+    outer_helper_admitted = sorted(
+        name for name, result in outer_helper_cases.items() if not result["rejected"]
+    )
+    outer_helper_names_match = (
+        set(outer_helper_cases)
+        == set(_OUTER_HELPER_CONTROLS)
+        == _EXPECTED_OUTER_HELPER_MUTATION_NAMES
+    )
     partition_cases = {name: cases.pop(name) for name in partition}
     partition_admitted = sorted(
         name for name, result in partition_cases.items() if not result["rejected"]
@@ -12997,6 +17523,53 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
     uniform_admitted = sorted(
         name for name, result in uniform_cases.items() if not result["rejected"]
     )
+    s03_scalar_cases = {name: cases.pop(name) for name in s03_scalar}
+    s03_scalar_admitted = sorted(
+        name for name, result in s03_scalar_cases.items() if not result["rejected"]
+    )
+    s03_scalar_names_match = (
+        len(s03_scalar_cases) == EXPECTED_S03_SCALAR_MUTATION_COUNT
+        and _mutation_name_digest(tuple(s03_scalar_cases))
+        == EXPECTED_S03_SCALAR_MUTATION_NAMES_SHA256
+    )
+    owned_query_cases = {name: cases.pop(name) for name in owned_query}
+    owned_query_admitted = sorted(
+        name for name, result in owned_query_cases.items() if not result["rejected"]
+    )
+    owned_query_names_match = (
+        len(owned_query_cases) == EXPECTED_OWNED_QUERY_HELPER_MUTATION_COUNT
+        and _mutation_name_digest(tuple(owned_query_cases))
+        == EXPECTED_OWNED_QUERY_HELPER_MUTATION_NAMES_SHA256
+    )
+    child_failure_cases = {name: cases.pop(name) for name in child_failure}
+    child_failure_admitted = sorted(
+        name for name, result in child_failure_cases.items() if not result["rejected"]
+    )
+    child_failure_names_match = (
+        len(child_failure_cases) == EXPECTED_CHILD_FAILURE_MUTATION_COUNT
+        and _mutation_name_digest(tuple(child_failure_cases))
+        == EXPECTED_CHILD_FAILURE_MUTATION_NAMES_SHA256
+    )
+    retained_prefix_cases = {name: cases.pop(name) for name in retained_prefix}
+    retained_prefix_admitted = sorted(
+        name for name, result in retained_prefix_cases.items() if not result["rejected"]
+    )
+    retained_prefix_names_match = (
+        len(retained_prefix_cases) == EXPECTED_RETAINED_PREFIX_MUTATION_COUNT
+        and _mutation_name_digest(tuple(retained_prefix_cases))
+        == EXPECTED_RETAINED_PREFIX_MUTATION_NAMES_SHA256
+    )
+    associated_saving_cases = {name: cases.pop(name) for name in associated_saving}
+    associated_saving_admitted = sorted(
+        name
+        for name, result in associated_saving_cases.items()
+        if not result["rejected"]
+    )
+    associated_saving_names_match = (
+        len(associated_saving_cases) == EXPECTED_ASSOCIATED_SAVING_MUTATION_COUNT
+        and _mutation_name_digest(tuple(associated_saving_cases))
+        == EXPECTED_ASSOCIATED_SAVING_MUTATION_NAMES_SHA256
+    )
     supplemental_cases = {name: cases.pop(name) for name in supplemental}
     supplemental_admitted = sorted(
         name for name, result in supplemental_cases.items() if not result["rejected"]
@@ -13063,8 +17636,74 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
         "supplemental_mutation_count": len(supplemental_cases),
         "supplemental_names_match_expected": supplemental_names_match,
         "admitted_supplemental_mutations": supplemental_admitted,
+        "s03_scalar_mutations": s03_scalar_cases,
+        "s03_scalar_mutation_count": len(s03_scalar_cases),
+        "s03_scalar_names_match_expected": s03_scalar_names_match,
+        "admitted_s03_scalar_mutations": s03_scalar_admitted,
+        "owned_query_helper_mutations": owned_query_cases,
+        "owned_query_helper_mutation_count": len(owned_query_cases),
+        "owned_query_helper_names_match_expected": owned_query_names_match,
+        "admitted_owned_query_helper_mutations": owned_query_admitted,
+        "associated_saving_mutations": associated_saving_cases,
+        "associated_saving_mutation_count": len(associated_saving_cases),
+        "associated_saving_names_match_expected": associated_saving_names_match,
+        "admitted_associated_saving_mutations": associated_saving_admitted,
+        "child_failure_mutations": child_failure_cases,
+        "child_failure_mutation_count": len(child_failure_cases),
+        "child_failure_names_match_expected": child_failure_names_match,
+        "admitted_child_failure_mutations": child_failure_admitted,
+        "reviewed_prefix_mutations": reviewed_prefix_cases,
+        "reviewed_prefix_mutation_count": len(reviewed_prefix_cases),
+        "reviewed_prefix_names_match_expected": reviewed_prefix_names_match,
+        "admitted_reviewed_prefix_mutations": reviewed_prefix_admitted,
+        "decoupled_bound_mutations": decoupled_bound_cases,
+        "decoupled_bound_mutation_count": len(decoupled_bound_cases),
+        "decoupled_bound_names_match_expected": decoupled_bound_names_match,
+        "admitted_decoupled_bound_mutations": decoupled_bound_admitted,
+        "retained_prefix_mutations": retained_prefix_cases,
+        "retained_prefix_mutation_count": len(retained_prefix_cases),
+        "retained_prefix_names_match_expected": retained_prefix_names_match,
+        "admitted_retained_prefix_mutations": retained_prefix_admitted,
+        "final_nested_mutations": final_nested_cases,
+        "final_nested_mutation_count": len(final_nested_cases),
+        "final_nested_names_match_expected": final_nested_names_match,
+        "admitted_final_nested_mutations": final_nested_admitted,
+        "outer_helper_mutations": outer_helper_cases,
+        "outer_helper_mutation_count": len(outer_helper_cases),
+        "outer_helper_names_match_expected": outer_helper_names_match,
+        "admitted_outer_helper_mutations": outer_helper_admitted,
+        "child_native_mutations": child_native_cases,
+        "child_native_mutation_count": len(child_native_cases),
+        "child_native_names_match_expected": child_native_names_match,
+        "admitted_child_native_mutations": child_native_admitted,
+        "additional_helper_mutations": additional_helper_cases,
+        "additional_helper_mutation_count": len(additional_helper_cases),
+        "additional_helper_names_match_expected": additional_helper_names_match,
+        "admitted_additional_helper_mutations": additional_helper_admitted,
         "all_rejected": (
-            clean["ok"]
+            not additional_helper_admitted
+            and additional_helper_names_match
+            and not child_native_admitted
+            and child_native_names_match
+            and not final_nested_admitted
+            and final_nested_names_match
+            and not outer_helper_admitted
+            and not decoupled_bound_admitted
+            and decoupled_bound_names_match
+            and outer_helper_names_match
+            and not retained_prefix_admitted
+            and retained_prefix_names_match
+            and not associated_saving_admitted
+            and associated_saving_names_match
+            and not reviewed_prefix_admitted
+            and reviewed_prefix_names_match
+            and not child_failure_admitted
+            and child_failure_names_match
+            and not owned_query_admitted
+            and owned_query_names_match
+            and not s03_scalar_admitted
+            and s03_scalar_names_match
+            and clean["ok"]
             and not partition_admitted
             and partition_names_match
             and not normal_admitted
@@ -13088,3 +17727,1702 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> DirectMutationContr
             and names_match_expected
         ),
     }
+
+
+def _decoupled_metadata_binding(
+    *, function: ast.FunctionDef, name: str, expected_source: SourceText
+) -> bool:
+    """Match the sole assignment of a named metadata owner in one function."""
+    assignments = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and _name(node=node.targets[0], expected=name)
+    ]
+    return (
+        _stored_name_count(node=function, name=name) == 1
+        and len(assignments) == 1
+        and _expression_matches(node=assignments[0].value, source=expected_source)
+    )
+
+
+def _decoupled_bound_transport_errors(tree: ast.Module) -> list[str]:
+    """Check one evaluated bound record across dense Decoupled reductions."""
+    prefix = "Decoupled bound metadata"
+    try:
+        action = _definition(tree=tree, name="get_decoupled_Q_over_a")
+        state = _definition(tree=tree, name="get_decoupled_max_Q_over_a")
+        _, readout = _method_definition(
+            tree=tree, class_name="_DecoupledQOverA", method_name="__call__"
+        )
+    except ValueError as error:
+        return [f"{prefix}: {error}"]
+    errors = []
+    bindings = _scope_binding_counts(tree.body)
+    imports = {
+        "BoundedQAndF": "_lcm.regime_building.Q_and_F",
+        "runtime_bound_specs": "_lcm.regime_building.Q_and_F",
+        "BoundedResult": "_lcm.solution.feasibility",
+        "_with_bound_summary": "_lcm.regime_building.max_Q_over_a",
+        "_wrap_with_fold_reduction": "_lcm.regime_building.max_Q_over_a",
+        "productmap": "_lcm.utils.dispatchers",
+        "tiled_productmap": "_lcm.utils.dispatchers",
+        "with_signature": "dags",
+        "cast": "typing",
+    }
+    for name, module in imports.items():
+        owners = [
+            alias
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom) and node.module == module
+            for alias in node.names
+            if alias.name == name and alias.asname is None
+        ]
+        if len(owners) != 1 or bindings.get(name) != 1:
+            errors.append(f"{prefix}: imported owner {name} changed")
+    checks = (
+        (
+            action,
+            "bounded",
+            "bool(runtime_bound_specs(function=Q_and_F))",
+        ),
+        (
+            action,
+            "parts",
+            """productmap(
+                func=BoundedQAndF(function=Q_and_F, parts=True)
+                if bounded else get_Q_and_F_parts(Q_and_F=Q_and_F),
+                variables=action_names,
+                batch_sizes=dict.fromkeys(action_names, 0),
+                bound_summary=bounded,
+            )""",
+        ),
+        (
+            readout,
+            "evaluated",
+            """self.parts(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                **states_actions_params,
+            )""",
+        ),
+        (
+            readout,
+            "parts",
+            """cast(
+                "QAndFParts",
+                evaluated.output if type(evaluated) is BoundedResult else evaluated,
+            )""",
+        ),
+    )
+    for function, name, expression in checks:
+        if not _decoupled_metadata_binding(
+            function=function, name=name, expected_source=expression
+        ):
+            errors.append(f"{prefix}: {function.name}.{name} transport changed")
+    constructors = [
+        node
+        for node in ast.walk(action)
+        if isinstance(node, ast.Call) and _call_name(node) == "_DecoupledQOverA"
+    ]
+    if len(constructors) != 1 or not _expression_matches(
+        node=_keyword(call=constructors[0], name="parts") if constructors else None,
+        source='cast("Callable[..., QAndFParts | BoundedResult[QAndFParts]]", parts)',
+    ):
+        errors.append(f"{prefix}: action parts are not bound into the readout")
+    mappings = [
+        node
+        for node in ast.walk(state)
+        if isinstance(node, ast.Call)
+        and _call_name(node) in {"productmap", "tiled_productmap"}
+    ]
+    if len(mappings) != 2:
+        errors.append(f"{prefix}: state mappings changed")
+    errors.extend(
+        f"{prefix}: {_call_name(mapping)} loses state summaries"
+        for mapping in mappings
+        if not (
+            _name(node=_keyword(call=mapping, name="func"), expected="cell")
+            and _expression_matches(
+                node=_keyword(call=mapping, name="bound_summary"),
+                source="bool(runtime_bound_specs(function=Q_and_F))",
+            )
+        )
+    )
+    folds = [
+        node
+        for node in ast.walk(state)
+        if isinstance(node, ast.Call)
+        and _call_name(node) == "_wrap_with_fold_reduction"
+    ]
+    if len(folds) != 1 or not _expression_matches(
+        node=_keyword(call=folds[0], name="mapped") if folds else None,
+        source='cast("Callable[..., BoundedMaxOutput]", mapped)',
+    ):
+        errors.append(f"{prefix}: folded mappings lose their bound result")
+    returns = [node for node in ast.walk(readout) if isinstance(node, ast.Return)]
+    if len(returns) != 3:
+        errors.append(f"{prefix}: hard and EV1 return owners changed")
+    for returned in returns:
+        call = returned.value
+        if not (
+            isinstance(call, ast.Call)
+            and _call_name(call) == "_with_bound_summary"
+            and not call.args
+            and {item.arg for item in call.keywords} == {"evaluated", "output"}
+            and len(call.keywords) == 2
+            and _name(node=_keyword(call=call, name="evaluated"), expected="evaluated")
+        ):
+            errors.append(f"{prefix}: a readout return loses the actual summary")
+    return errors
+
+
+_DECOUPLED_BOUND_MUTATION_NAMES = (
+    "action_adapter_bypassed",
+    "action_summary_disabled",
+    "state_tiled_summary_disabled",
+    "state_untiled_summary_disabled",
+    "readout_parts_recomputed",
+    "hard_return_wrong_status_owner",
+    "ev1_solve_return_wrong_status_owner",
+    "ev1_simulate_return_wrong_status_owner",
+)
+
+
+def decoupled_bound_mutation_source(*, source: SourceText, mutation: str) -> SourceText:
+    """Alter one named metadata link, leaving ordinary Decoupled arithmetic intact."""
+    tree = ast.parse(source, filename=DECOUPLED_BOUND_SOURCE)
+    action = _definition(tree=tree, name="get_decoupled_Q_over_a")
+    state = _definition(tree=tree, name="get_decoupled_max_Q_over_a")
+    _, readout = _method_definition(
+        tree=tree, class_name="_DecoupledQOverA", method_name="__call__"
+    )
+    if mutation == "action_adapter_bypassed":
+        for node in ast.walk(action):
+            if isinstance(node, ast.Call) and _call_name(node) == "productmap":
+                next(
+                    item for item in node.keywords if item.arg == "func"
+                ).value = ast.parse(
+                    "get_Q_and_F_parts(Q_and_F=Q_and_F)", mode="eval"
+                ).body
+    elif mutation == "action_summary_disabled":
+        for node in ast.walk(action):
+            if isinstance(node, ast.Call) and _call_name(node) == "productmap":
+                next(
+                    item for item in node.keywords if item.arg == "bound_summary"
+                ).value = ast.Constant(value=False)
+    elif mutation in {"state_tiled_summary_disabled", "state_untiled_summary_disabled"}:
+        owner = (
+            "tiled_productmap"
+            if mutation == "state_tiled_summary_disabled"
+            else "productmap"
+        )
+        for node in ast.walk(state):
+            if isinstance(node, ast.Call) and _call_name(node) == owner:
+                next(
+                    item for item in node.keywords if item.arg == "bound_summary"
+                ).value = ast.Constant(value=False)
+    elif mutation == "readout_parts_recomputed":
+        assignment = next(
+            node
+            for node in ast.walk(readout)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and _name(node=node.targets[0], expected="parts")
+        )
+        assignment.value = ast.parse(
+            "self.parts(next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params)",
+            mode="eval",
+        ).body
+    elif mutation in _DECOUPLED_BOUND_MUTATION_NAMES[5:]:
+        returns = sorted(
+            (node for node in ast.walk(readout) if isinstance(node, ast.Return)),
+            key=lambda node: node.lineno,
+        )
+        call = returns[_DECOUPLED_BOUND_MUTATION_NAMES[5:].index(mutation)].value
+        if not isinstance(call, ast.Call):
+            raise ValueError("Expected a metadata-preserving return call.")
+        next(
+            item for item in call.keywords if item.arg == "evaluated"
+        ).value = ast.Name(id="parts", ctx=ast.Load())
+    else:
+        raise ValueError(f"Unknown bounded Decoupled mutation {mutation!r}")
+    result = ast.unparse(ast.fix_missing_locations(tree)) + "\n"
+    if _ast_key(ast.parse(result)) == _ast_key(ast.parse(source)):
+        raise ValueError(f"Bounded Decoupled mutation {mutation!r} changed no AST.")
+    return result
+
+
+def decoupled_bound_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Register each actual Decoupled metadata mutation as a separate control."""
+    original = (repo_root.resolve() / DECOUPLED_BOUND_SOURCE).read_text(
+        encoding="utf-8"
+    )
+    return {
+        f"decoupled_bound:{mutation}": {
+            "path": DECOUPLED_BOUND_SOURCE,
+            "source": decoupled_bound_mutation_source(
+                source=original, mutation=mutation
+            ),
+        }
+        for mutation in _DECOUPLED_BOUND_MUTATION_NAMES
+    }
+
+
+_RETAINED_PREFIX_OWNER_SELECTION = {
+    "src/_lcm/egm/carry.py": ("_read_owned_row_with_support",),
+    "src/_lcm/egm/dcegm_query.py": (
+        "DCEGMQuery.read_prepared_with_counts",
+        "DCEGMQuery._read_at_floor_with_summary",
+        "DCEGMQuery._read_rows_without_counts",
+        "DCEGMQuery._read_rows_with_counts",
+        "_blend_owned_rows",
+        "_read_owned_derivative_with_support",
+        "_owned_at_query_with_support",
+    ),
+    "src/_lcm/utils/counts.py": ("sum_counts", "add_counts"),
+    "src/_lcm/egm/nbegm_step.py": (
+        "nbegm_multi_interval_step_savings",
+        "nbegm_per_interval_continuation_step_savings",
+        "_query_node_kind",
+        "_make_nbegm_query_data",
+        "_invert_euler_over_savings",
+        "_invert_euler_at_node",
+        "_ez_flow_power_structure",
+        "_discounted_continuation",
+        "_invert_coh_with_linear_extension",
+        "_linear_extension",
+        "_degenerate_inversion",
+        "_next_segment_id",
+        "_as_pairs",
+        "_stack_flat",
+        "_interval_corner_candidates",
+        "_fixed_savings_corner",
+        "_publish_no_action_carry",
+        "_publish_interval_step",
+        "_IntervalCaseSolver.__call__",
+        "_solve_packed_interval",
+        "_streamed_interval_block_layout",
+        "_streamed_block_candidate_positions",
+        "_StreamedIntervalLayout.total_candidates",
+        "_streamed_interval_continuation_envelope",
+        "_IntervalWinnerStep.__call__",
+        "_kill_padding",
+        "_point_candidate_segment_bases",
+        "_savings_node_point_candidates_for_interval_block",
+        "_savings_node_point_candidates",
+    ),
+    "src/_lcm/egm/nbegm_segments.py": (
+        "affords_an_action",
+        "mask_dead_candidates",
+        "segment_ids_from_folds",
+    ),
+    "src/_lcm/egm/framed_arithmetic.py": (
+        "framed_difference",
+        "binade_exponent",
+        "_dyadic_parts",
+        "_two_diff",
+    ),
+    "src/_lcm/egm/ez_kernel.py": (
+        "ez_consumption_from_euler",
+        "ez_marginal_of_resource",
+        "ez_period_value",
+    ),
+    "src/_lcm/power_mean.py": (
+        "weighted_power_mean_of_pair",
+        "_applied_to_anchor",
+        "_log_term",
+    ),
+    "src/_lcm/probability.py": (
+        "log_of_nonnegative",
+        "_log_of_nonnegative_bits",
+        "_log_of_nonnegative_jvp",
+        "rescaled_weight_pair",
+    ),
+}
+_RETAINED_PREFIX_SEMANTIC_MUTATIONS = {
+    "retained_prefix:checked_selects_counted_reader": (
+        "src/_lcm/egm/dcegm_query.py",
+        "DCEGMQuery.read_prepared_with_counts",
+        "keyword",
+        "read_rows",
+        "self._read_rows_without_counts",
+        1,
+    ),
+    "retained_prefix:prepared_floor_not_repeated": (
+        "src/_lcm/egm/dcegm_query.py",
+        "DCEGMQuery._read_at_floor_with_summary",
+        "expression",
+        "floor_state",
+        "self.evaluate_floor(pool=pool)",
+        1,
+    ),
+    "retained_prefix:dead_support_not_eligible": (
+        "src/_lcm/egm/dcegm_query.py",
+        "DCEGMQuery._read_rows_with_counts",
+        "expression",
+        "active & has_first",
+        "active",
+        1,
+    ),
+    "retained_prefix:below_first_is_strict": (
+        "src/_lcm/egm/dcegm_query.py",
+        "DCEGMQuery._read_rows_with_counts",
+        "expression",
+        "row_queries.reshape(n_rows) < first",
+        "row_queries.reshape(n_rows) <= first",
+        1,
+    ),
+    "retained_prefix:first_original_node": (
+        "src/_lcm/egm/dcegm_query.py",
+        "DCEGMQuery._read_rows_with_counts",
+        "expression",
+        "jnp.argmax(supported_node, axis=-1)",
+        "jnp.argmax(~supported_node, axis=-1)",
+        1,
+    ),
+    "retained_prefix:JVP_primal_support": (
+        "src/_lcm/egm/dcegm_query.py",
+        "_read_owned_derivative_with_support",
+        "expression",
+        (
+            "(result._replace(marginal=jnp.where(jnp.isneginf(result.value), "
+            "0.0, tangent.value)), supported_node)"
+        ),
+        (
+            "(result._replace(marginal=jnp.where(jnp.isneginf(result.value), "
+            "0.0, tangent.value)), "
+            "jnp.zeros_like(supported_node))"
+        ),
+        1,
+    ),
+    "retained_prefix:count_add_saturates": (
+        "src/_lcm/utils/counts.py",
+        "add_counts",
+        "expression",
+        "left > COUNT_CAPACITY - right",
+        "False",
+        1,
+    ),
+    "retained_prefix:count_sum_overflow_path": (
+        "src/_lcm/utils/counts.py",
+        "sum_counts",
+        "expression",
+        "n_elements * largest_element <= COUNT_CAPACITY",
+        "True",
+        1,
+    ),
+    "retained_prefix:ordinary_needs_original_A": (
+        "src/_lcm/egm/nbegm_step.py",
+        "_make_nbegm_query_data",
+        "expression",
+        "jnp.isfinite(savings)",
+        "True",
+        1,
+    ),
+    "retained_prefix:economic_kind_not_PAD": (
+        "src/_lcm/egm/nbegm_step.py",
+        "_query_node_kind",
+        "expression",
+        "supported & jnp.isneginf(value)",
+        "False",
+        1,
+    ),
+    "retained_prefix:link_same_budget_run": (
+        "src/_lcm/egm/nbegm_step.py",
+        "_make_nbegm_query_data",
+        "expression",
+        "budget_run[:-1] == budget_run[1:]",
+        "jnp.ones_like(budget_run[:-1], dtype=bool)",
+        1,
+    ),
+    "retained_prefix:flat_original_winner_A": (
+        "src/_lcm/egm/nbegm_step.py",
+        "_interval_corner_candidates",
+        "expression",
+        "jnp.where(flat, savings_grid[best_floor], savings_grid[0])",
+        "savings_grid[0]",
+        1,
+    ),
+    "retained_prefix:upper_original_A": (
+        "src/_lcm/egm/nbegm_step.py",
+        "_interval_corner_candidates",
+        "expression",
+        "jnp.where(smax_feasible, savings_grid[-1], jnp.nan)",
+        "jnp.where(smax_feasible, savings_grid[0], jnp.nan)",
+        1,
+    ),
+    "retained_prefix:Euler_original_A": (
+        "src/_lcm/egm/nbegm_step.py",
+        "_IntervalCaseSolver.__call__",
+        "expression",
+        "jnp.where(in_case, savings_grid, jnp.nan)",
+        "jnp.where(in_case, coh_endog, jnp.nan)",
+        1,
+    ),
+    "retained_prefix:dense_compact_floor_column": (
+        "src/_lcm/egm/nbegm_step.py",
+        "nbegm_per_interval_continuation_step_savings",
+        "expression",
+        "cont_value[:, 0]",
+        "cont_value[:, -1]",
+        1,
+    ),
+    "retained_prefix:stream_compact_floor_column": (
+        "src/_lcm/egm/nbegm_step.py",
+        "_IntervalWinnerStep.__call__",
+        "expression",
+        (
+            "retained.corner_continuation.at[destinations].set(block_value[:, "
+            '0], mode="drop")'
+        ),
+        (
+            "retained.corner_continuation.at[destinations].set(block_value[:, "
+            '-1], mode="drop")'
+        ),
+        1,
+    ),
+    "retained_prefix:padding_owns_no_compact_slot": (
+        "src/_lcm/egm/nbegm_step.py",
+        "_IntervalWinnerStep.__call__",
+        "expression",
+        "jnp.where(interval_live, indices, self.n_intervals)",
+        "indices",
+        1,
+    ),
+    "retained_prefix:one_callback_per_block": (
+        "src/_lcm/egm/nbegm_step.py",
+        "_IntervalWinnerStep.__call__",
+        "expression",
+        "self.interval_block_reader(indices)",
+        "(self.interval_block_reader(indices), self.interval_block_reader(indices))[0]",
+        1,
+    ),
+    "retained_prefix:dense_points_own_A": (
+        "src/_lcm/egm/nbegm_step.py",
+        "_savings_node_point_candidates",
+        "expression",
+        "jnp.where(node_feasible, savings_at_grid, jnp.nan)",
+        "jnp.where(node_feasible, point_coh[:, None], jnp.nan)",
+        1,
+    ),
+    "retained_prefix:block_points_own_A": (
+        "src/_lcm/egm/nbegm_step.py",
+        "_savings_node_point_candidates_for_interval_block",
+        "expression",
+        "jnp.where(feasible, savings_at_grid, jnp.nan)",
+        "jnp.where(feasible, point_coh[:, None], jnp.nan)",
+        1,
+    ),
+    "retained_prefix:node_support_not_tolerance": (
+        "src/_lcm/egm/nbegm_segments.py",
+        "affords_an_action",
+        "expression",
+        "budget > 0.0",
+        "budget > 1e-6",
+        1,
+    ),
+    "retained_prefix:segments_do_not_bridge_holes": (
+        "src/_lcm/egm/nbegm_segments.py",
+        "segment_ids_from_folds",
+        "expression",
+        "~ascending | dead[1:] | dead[:-1]",
+        "~ascending",
+        1,
+    ),
+    "retained_prefix:framed_difference_common_frame": (
+        "src/_lcm/egm/framed_arithmetic.py",
+        "framed_difference",
+        "expression",
+        "jnp.maximum(exponent_a, exponent_b)",
+        "jnp.minimum(exponent_a, exponent_b)",
+        1,
+    ),
+    "retained_prefix:EZ_resource_native_chain": (
+        "src/_lcm/egm/ez_kernel.py",
+        "ez_marginal_of_resource",
+        "expression",
+        "inverse_eis * jnp.log(value)",
+        "jnp.log(value)",
+        1,
+    ),
+    "retained_prefix:pair_anchor_exact_payoff": (
+        "src/_lcm/power_mean.py",
+        "_applied_to_anchor",
+        "expression",
+        "jnp.where(deviation == 0.0, payoff, payoff * jnp.exp(deviation))",
+        "payoff * jnp.exp(deviation)",
+        1,
+    ),
+    "retained_prefix:log_JVP_not_recomputed_bits": (
+        "src/_lcm/probability.py",
+        "_log_of_nonnegative_jvp",
+        "expression",
+        "values_dot / values",
+        "values_dot",
+        1,
+    ),
+}
+_RETAINED_PREFIX_STUB_MUTATIONS = {
+    "retained_prefix:multi_stub_type": (
+        "nbegm_multi_interval_step_savings",
+        0,
+        "annotation",
+    ),
+    "retained_prefix:multi_stub_count": (
+        "nbegm_multi_interval_step_savings",
+        0,
+        "duplicate",
+    ),
+    "retained_prefix:multi_stub_order": (
+        "nbegm_multi_interval_step_savings",
+        0,
+        "swap",
+    ),
+    "retained_prefix:interval_stub_type": (
+        "nbegm_per_interval_continuation_step_savings",
+        0,
+        "annotation",
+    ),
+    "retained_prefix:interval_stub_count": (
+        "nbegm_per_interval_continuation_step_savings",
+        0,
+        "duplicate",
+    ),
+    "retained_prefix:interval_stub_order": (
+        "nbegm_per_interval_continuation_step_savings",
+        0,
+        "swap",
+    ),
+}
+_RETAINED_PREFIX_DIAGNOSTICS = {
+    "retained_prefix:body:src/_lcm/egm/carry.py::_read_owned_row_with_support": "reviewed "
+    "S04/S05 "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_read_owned_row_with_support' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/dcegm_query.py::DCEGMQuery.read_prepared_with_counts": "reviewed "
+    "S04/S05 "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'DCEGMQuery.read_prepared_with_counts' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/dcegm_query.py::DCEGMQuery._read_at_floor_with_summary": "reviewed "
+    "S04/S05 "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'DCEGMQuery._read_at_floor_with_summary' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/dcegm_query.py::DCEGMQuery._read_rows_without_counts": "reviewed "
+    "S04/S05 "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'DCEGMQuery._read_rows_without_counts' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/dcegm_query.py::DCEGMQuery._read_rows_with_counts": "reviewed "
+    "S04/S05 "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'DCEGMQuery._read_rows_with_counts' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/dcegm_query.py::_blend_owned_rows": "reviewed "
+    "S04/S05 "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_blend_owned_rows' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/dcegm_query.py::_read_owned_derivative_with_support": "reviewed "
+    "S04/S05 "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_read_owned_derivative_with_support' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/dcegm_query.py::_owned_at_query_with_support": "reviewed "
+    "S04/S05 "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_owned_at_query_with_support' "
+    "changed",
+    "retained_prefix:body:src/_lcm/utils/counts.py::sum_counts": "retained DC/NB "
+    "dependency: "
+    "exact callable "
+    "corridor "
+    "'sum_counts' "
+    "changed",
+    "retained_prefix:body:src/_lcm/utils/counts.py::add_counts": "retained DC/NB "
+    "dependency: "
+    "exact callable "
+    "corridor "
+    "'add_counts' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::nbegm_multi_interval_step_savings": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'nbegm_multi_interval_step_savings' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::nbegm_per_interval_continuation_step_savings": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'nbegm_per_interval_continuation_step_savings' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_query_node_kind": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_query_node_kind' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_make_nbegm_query_data": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_make_nbegm_query_data' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_invert_euler_over_savings": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_invert_euler_over_savings' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_invert_euler_at_node": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_invert_euler_at_node' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_ez_flow_power_structure": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_ez_flow_power_structure' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_discounted_continuation": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_discounted_continuation' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_invert_coh_with_linear_extension": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_invert_coh_with_linear_extension' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_linear_extension": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_linear_extension' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_degenerate_inversion": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_degenerate_inversion' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_next_segment_id": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_next_segment_id' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_as_pairs": "retained DC/NB "
+    "dependency: "
+    "exact callable "
+    "corridor "
+    "'_as_pairs' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_stack_flat": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_stack_flat' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_interval_corner_candidates": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_interval_corner_candidates' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_fixed_savings_corner": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_fixed_savings_corner' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_publish_no_action_carry": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_publish_no_action_carry' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_publish_interval_step": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_publish_interval_step' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_IntervalCaseSolver.__call__": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_IntervalCaseSolver.__call__' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_solve_packed_interval": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_solve_packed_interval' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_streamed_interval_block_layout": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_streamed_interval_block_layout' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_streamed_block_candidate_positions": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_streamed_block_candidate_positions' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_StreamedIntervalLayout.total_candidates": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_StreamedIntervalLayout.total_candidates' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_streamed_interval_continuation_envelope": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_streamed_interval_continuation_envelope' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_IntervalWinnerStep.__call__": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_IntervalWinnerStep.__call__' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_kill_padding": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_kill_padding' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_point_candidate_segment_bases": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_point_candidate_segment_bases' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_savings_node_point_candidates_for_interval_block": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_savings_node_point_candidates_for_interval_block' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_step.py::_savings_node_point_candidates": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_savings_node_point_candidates' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_segments.py::affords_an_action": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'affords_an_action' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_segments.py::mask_dead_candidates": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'mask_dead_candidates' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/nbegm_segments.py::segment_ids_from_folds": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'segment_ids_from_folds' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/framed_arithmetic.py::framed_difference": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'framed_difference' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/framed_arithmetic.py::binade_exponent": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'binade_exponent' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/framed_arithmetic.py::_dyadic_parts": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_dyadic_parts' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/framed_arithmetic.py::_two_diff": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_two_diff' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/ez_kernel.py::ez_consumption_from_euler": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'ez_consumption_from_euler' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/ez_kernel.py::ez_marginal_of_resource": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'ez_marginal_of_resource' "
+    "changed",
+    "retained_prefix:body:src/_lcm/egm/ez_kernel.py::ez_period_value": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'ez_period_value' "
+    "changed",
+    "retained_prefix:body:src/_lcm/power_mean.py::weighted_power_mean_of_pair": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'weighted_power_mean_of_pair' "
+    "changed",
+    "retained_prefix:body:src/_lcm/power_mean.py::_applied_to_anchor": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_applied_to_anchor' "
+    "changed",
+    "retained_prefix:body:src/_lcm/power_mean.py::_log_term": "retained DC/NB "
+    "dependency: exact "
+    "callable corridor "
+    "'_log_term' "
+    "changed",
+    "retained_prefix:body:src/_lcm/probability.py::log_of_nonnegative": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'log_of_nonnegative' "
+    "changed",
+    "retained_prefix:body:src/_lcm/probability.py::_log_of_nonnegative_bits": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_log_of_nonnegative_bits' "
+    "changed",
+    "retained_prefix:body:src/_lcm/probability.py::_log_of_nonnegative_jvp": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'_log_of_nonnegative_jvp' "
+    "changed",
+    "retained_prefix:body:src/_lcm/probability.py::rescaled_weight_pair": "retained "
+    "DC/NB "
+    "dependency: "
+    "exact "
+    "callable "
+    "corridor "
+    "'rescaled_weight_pair' "
+    "changed",
+    "retained_prefix:checked_selects_counted_reader": "reviewed S04/S05 "
+    "dependency: exact callable "
+    "corridor "
+    "'DCEGMQuery.read_prepared_with_counts' "
+    "changed",
+    "retained_prefix:prepared_floor_not_repeated": "reviewed S04/S05 dependency: "
+    "exact callable corridor "
+    "'DCEGMQuery._read_at_floor_with_summary' "
+    "changed",
+    "retained_prefix:dead_support_not_eligible": "reviewed S04/S05 dependency: "
+    "exact callable corridor "
+    "'DCEGMQuery._read_rows_with_counts' "
+    "changed",
+    "retained_prefix:below_first_is_strict": "reviewed S04/S05 dependency: exact "
+    "callable corridor "
+    "'DCEGMQuery._read_rows_with_counts' "
+    "changed",
+    "retained_prefix:first_original_node": "reviewed S04/S05 dependency: exact "
+    "callable corridor "
+    "'DCEGMQuery._read_rows_with_counts' "
+    "changed",
+    "retained_prefix:JVP_primal_support": "reviewed S04/S05 dependency: exact "
+    "callable corridor "
+    "'_read_owned_derivative_with_support' "
+    "changed",
+    "retained_prefix:count_add_saturates": "retained DC/NB dependency: exact "
+    "callable corridor 'add_counts' "
+    "changed",
+    "retained_prefix:count_sum_overflow_path": "retained DC/NB dependency: exact "
+    "callable corridor 'sum_counts' "
+    "changed",
+    "retained_prefix:ordinary_needs_original_A": "retained DC/NB dependency: "
+    "exact callable corridor "
+    "'_make_nbegm_query_data' "
+    "changed",
+    "retained_prefix:economic_kind_not_PAD": "retained DC/NB dependency: exact "
+    "callable corridor "
+    "'_query_node_kind' changed",
+    "retained_prefix:link_same_budget_run": "retained DC/NB dependency: exact "
+    "callable corridor "
+    "'_make_nbegm_query_data' changed",
+    "retained_prefix:flat_original_winner_A": "retained DC/NB dependency: exact "
+    "callable corridor "
+    "'_interval_corner_candidates' "
+    "changed",
+    "retained_prefix:upper_original_A": "retained DC/NB dependency: exact "
+    "callable corridor "
+    "'_interval_corner_candidates' changed",
+    "retained_prefix:Euler_original_A": "retained DC/NB dependency: exact "
+    "callable corridor "
+    "'_IntervalCaseSolver.__call__' changed",
+    "retained_prefix:dense_compact_floor_column": "retained DC/NB dependency: "
+    "exact callable corridor "
+    "'nbegm_per_interval_continuation_step_savings' "
+    "changed",
+    "retained_prefix:stream_compact_floor_column": "retained DC/NB dependency: "
+    "exact callable corridor "
+    "'_IntervalWinnerStep.__call__' "
+    "changed",
+    "retained_prefix:padding_owns_no_compact_slot": "retained DC/NB dependency: "
+    "exact callable corridor "
+    "'_IntervalWinnerStep.__call__' "
+    "changed",
+    "retained_prefix:one_callback_per_block": "retained DC/NB dependency: exact "
+    "callable corridor "
+    "'_IntervalWinnerStep.__call__' "
+    "changed",
+    "retained_prefix:dense_points_own_A": "retained DC/NB dependency: exact "
+    "callable corridor "
+    "'_savings_node_point_candidates' "
+    "changed",
+    "retained_prefix:block_points_own_A": "retained DC/NB dependency: exact "
+    "callable corridor "
+    "'_savings_node_point_candidates_for_interval_block' "
+    "changed",
+    "retained_prefix:node_support_not_tolerance": "retained DC/NB dependency: "
+    "exact callable corridor "
+    "'affords_an_action' changed",
+    "retained_prefix:segments_do_not_bridge_holes": "retained DC/NB dependency: "
+    "exact callable corridor "
+    "'segment_ids_from_folds' "
+    "changed",
+    "retained_prefix:framed_difference_common_frame": "retained DC/NB dependency: "
+    "exact callable corridor "
+    "'framed_difference' "
+    "changed",
+    "retained_prefix:EZ_resource_native_chain": "retained DC/NB dependency: exact "
+    "callable corridor "
+    "'ez_marginal_of_resource' "
+    "changed",
+    "retained_prefix:pair_anchor_exact_payoff": "retained DC/NB dependency: exact "
+    "callable corridor "
+    "'_applied_to_anchor' changed",
+    "retained_prefix:log_JVP_not_recomputed_bits": "retained DC/NB dependency: "
+    "exact callable corridor "
+    "'_log_of_nonnegative_jvp' "
+    "changed",
+    "retained_prefix:multi_stub_type": "retained DC/NB dependency: "
+    "nbegm_multi_interval_step_savings "
+    "overload declarations changed",
+    "retained_prefix:multi_stub_count": "retained DC/NB dependency: "
+    "nbegm_multi_interval_step_savings "
+    "overload declarations changed",
+    "retained_prefix:multi_stub_order": "retained DC/NB dependency: "
+    "nbegm_multi_interval_step_savings "
+    "overload declarations changed",
+    "retained_prefix:interval_stub_type": "retained DC/NB dependency: "
+    "nbegm_per_interval_continuation_step_savings "
+    "overload declarations changed",
+    "retained_prefix:interval_stub_count": "retained DC/NB dependency: "
+    "nbegm_per_interval_continuation_step_savings "
+    "overload declarations changed",
+    "retained_prefix:interval_stub_order": "retained DC/NB dependency: "
+    "nbegm_per_interval_continuation_step_savings "
+    "overload declarations changed",
+    "combined_source:bounded_parts_owner": "combined upstream dependency: exact "
+    "callable corridor "
+    "'get_decoupled_Q_over_a' changed",
+    "combined_source:disabled_constructor_absent": "combined upstream dependency: "
+    "exact callable corridor "
+    "'get_decoupled_Q_over_a' "
+    "changed",
+    "combined_source:ordinary_state_summary": "combined upstream dependency: "
+    "exact callable corridor "
+    "'get_decoupled_max_Q_over_a' "
+    "changed",
+    "combined_source:tiled_state_summary": "combined upstream dependency: exact "
+    "callable corridor "
+    "'get_decoupled_max_Q_over_a' changed",
+    "combined_source:hard_return_summary": "combined upstream dependency: exact "
+    "callable corridor "
+    "'_DecoupledQOverA.__call__' changed",
+    "combined_source:ev1_value_return_summary": "combined upstream dependency: "
+    "exact callable corridor "
+    "'_DecoupledQOverA.__call__' "
+    "changed",
+    "combined_source:ev1_sample_return_summary": "combined upstream dependency: "
+    "exact callable corridor "
+    "'_DecoupledQOverA.__call__' "
+    "changed",
+    "combined_source:single_action_evaluation": "combined upstream dependency: "
+    "exact callable corridor "
+    "'_DecoupledQOverA.__call__' "
+    "changed",
+    "combined_source:hard_readout_profile": "combined upstream dependency: exact "
+    "callable corridor "
+    "'argmax_and_readout' changed",
+    "combined_source:conditional_stored_profile": "combined upstream dependency: "
+    "exact callable corridor "
+    "'get_conditional_profiles' "
+    "changed",
+    "combined_source:ev1_economic_infinite_support": "combined upstream "
+    "dependency: exact callable "
+    "corridor 'decoupled_logsum' "
+    "changed",
+    "combined_source:lookup_hard_readout": "combined upstream dependency: exact "
+    "callable corridor "
+    "'DecoupledWithActionParts.__call__' "
+    "changed",
+    "combined_source:lookup_runtime_scale": "combined upstream dependency: exact "
+    "callable corridor "
+    "'DecoupledTasteShockLookup.__call__' "
+    "changed",
+    "combined_source:objective_metadata_dispatch": "combined upstream dependency: "
+    "exact callable corridor "
+    "'has_objective_profile' "
+    "changed",
+    "combined_source:ordinary_complete_parts": "combined upstream dependency: "
+    "exact callable corridor "
+    "'get_Q_and_F_parts' changed",
+    "combined_source:parts_output_channel": "combined upstream dependency: exact "
+    "callable corridor '_QAndF.parts' "
+    "changed",
+    "combined_source:ordinary_flow_pool": "combined upstream dependency: exact "
+    "callable corridor '_QAndF._evaluate' "
+    "changed",
+    "combined_source:objective_separate_from_stored": "combined upstream "
+    "dependency: exact callable "
+    "corridor "
+    "'_QAndF._parts_from_utilities' "
+    "changed",
+    "combined_source:lookup_constructor_roles": "combined upstream dependency: "
+    "exact callable corridor "
+    "'_lookup_body_and_roles' changed",
+    "combined_source:lookup_original_summary": "combined upstream dependency: "
+    "exact callable corridor "
+    "'_BoundActionPartsBody.__call__' "
+    "changed",
+    "combined_source:lookup_same_evaluated_callback": "combined upstream "
+    "dependency: exact callable "
+    "corridor "
+    "'_evaluated_action_parts' "
+    "changed",
+    "combined_source:unsupported_route_refusal": "combined upstream dependency: "
+    "exact callable corridor "
+    "'_fail_if_decoupled_route_is_unsupported' "
+    "changed",
+    "combined_source:rounded_equal_support": "S03 scalar dependency: exact "
+    "callable corridor "
+    "'_solve_viable_feature_row' changed",
+    "combined_source:rightmost_original_endpoint": "S03 scalar dependency: exact "
+    "callable corridor "
+    "'_solve_viable_feature_row' "
+    "changed",
+    "combined_source:complete_endpoint_association": "S03 scalar dependency: "
+    "exact callable corridor "
+    "'_solve_viable_feature_row' "
+    "changed",
+}
+EXPECTED_RETAINED_PREFIX_MUTATION_COUNT = 113
+EXPECTED_RETAINED_PREFIX_MUTATION_NAMES_SHA256 = (
+    "ff7f730978f19c765f3f342e431b46e0ffff94a4817eebcdf8fd9bf9c92221f1"
+)
+
+
+def retained_prefix_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Keep finite retained-read counterexamples separate from every old registry."""
+    specs = _callable_mutation_specs(
+        repo_root=repo_root, mutations=_RETAINED_PREFIX_SEMANTIC_MUTATIONS
+    )
+    for relative, names in _RETAINED_PREFIX_OWNER_SELECTION.items():
+        source = (repo_root / relative).read_text(encoding="utf-8")
+        for qualname in names:
+            tree = ast.parse(source, filename=relative)
+            if (
+                relative == _NB_PRODUCER_SOURCE
+                and qualname in _NB_PRODUCER_OVERLOAD_COUNTS
+            ):
+                function = _nb_producer_implementation(tree=tree, name=qualname)
+            elif (
+                relative == _NB_PRODUCER_SOURCE
+                and qualname == "_IntervalWinnerStep.__call__"
+            ):
+                function = _select_interval_winner_call(
+                    tree=tree, checker=sys.modules[__name__]
+                )
+            elif "." in qualname:
+                cls, method = qualname.split(".", maxsplit=1)
+                _, function = _method_definition(
+                    tree=tree, class_name=cls, method_name=method
+                )
+            else:
+                function = _definition(tree=tree, name=qualname)
+            function.body = ast.parse("return None").body
+            specs[f"retained_prefix:body:{relative}::{qualname}"] = {
+                "path": relative,
+                "source": ast.unparse(tree) + "\n",
+            }
+    relative = _NB_PRODUCER_SOURCE
+    source = (repo_root / relative).read_text(encoding="utf-8")
+    for name, (owner, index, mode) in _RETAINED_PREFIX_STUB_MUTATIONS.items():
+        tree = ast.parse(source, filename=relative)
+        _nb_producer_implementation(tree=tree, name=owner)
+        stubs = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == owner
+        ][:-1]
+        position = tree.body.index(stubs[index])
+        if mode == "annotation":
+            parameter = next(
+                arg for arg in stubs[index].args.kwonlyargs if arg.arg == "retain_query"
+            )
+            parameter.annotation = ast.Name(id="bool", ctx=ast.Load())
+        elif mode == "duplicate":
+            tree.body.insert(position, copy.deepcopy(stubs[index]))
+        elif mode == "swap":
+            second = tree.body.index(stubs[index + 1])
+            tree.body[position], tree.body[second] = (
+                tree.body[second],
+                tree.body[position],
+            )
+        else:
+            raise ValueError(f"{name}: unknown reviewed declaration mutation")
+        specs[name] = {"path": relative, "source": ast.unparse(tree) + "\n"}
+    upstream = _upstream_composition_mutation_specs(repo_root=repo_root)
+    if set(specs) & set(upstream):
+        raise ValueError("Upstream controls overlap retained controls")
+    specs.update(upstream)
+    return specs
+
+
+_UPSTREAM_COMPOSITION_CONTRACTS = _contracts(
+    {
+        "src/_lcm/regime_building/decoupled.py": (
+            "get_decoupled_Q_over_a",
+            "get_decoupled_max_Q_over_a",
+            "_DecoupledQOverA.__call__",
+            "argmax_and_readout",
+            "get_conditional_profiles",
+            "decoupled_logsum",
+            "DecoupledWithActionParts.__call__",
+            "DecoupledTasteShockLookup.__call__",
+        ),
+        "src/_lcm/regime_building/Q_and_F.py": (
+            "has_objective_profile",
+            "get_Q_and_F_parts",
+            "_QAndF.parts",
+            "_QAndF._evaluate",
+            "_QAndF._parts_from_utilities",
+        ),
+        "src/_lcm/simulation/programs.py": (
+            "_lookup_body_and_roles",
+            "_BoundActionPartsBody.__call__",
+            "_evaluated_action_parts",
+        ),
+        "src/_lcm/solution/grid_search.py": (
+            "_fail_if_decoupled_route_is_unsupported",
+        ),
+    }
+)
+_UPSTREAM_COMPOSITION_MUTATIONS = {
+    "combined_source:bounded_parts_owner": (
+        "src/_lcm/regime_building/decoupled.py",
+        "get_decoupled_Q_over_a",
+        "expression",
+        "BoundedQAndF(function=Q_and_F, parts=True)",
+        "get_Q_and_F_parts(Q_and_F=Q_and_F)",
+        1,
+        None,
+    ),
+    "combined_source:disabled_constructor_absent": (
+        "src/_lcm/regime_building/decoupled.py",
+        "get_decoupled_Q_over_a",
+        "condition",
+        "bounded",
+        "True",
+        1,
+        None,
+    ),
+    "combined_source:ordinary_state_summary": (
+        "src/_lcm/regime_building/decoupled.py",
+        "get_decoupled_max_Q_over_a",
+        "keyword",
+        "bound_summary",
+        "False",
+        1,
+        "productmap",
+    ),
+    "combined_source:tiled_state_summary": (
+        "src/_lcm/regime_building/decoupled.py",
+        "get_decoupled_max_Q_over_a",
+        "keyword",
+        "bound_summary",
+        "False",
+        1,
+        "tiled_productmap",
+    ),
+    "combined_source:hard_return_summary": (
+        "src/_lcm/regime_building/decoupled.py",
+        "_DecoupledQOverA.__call__",
+        "expression",
+        (
+            "_with_bound_summary(evaluated=evaluated, "
+            "output=(index, value) if "
+            "self.publishes_index else (value, "
+            "empty))"
+        ),
+        "(index, value) if self.publishes_index else (value, empty)",
+        1,
+        None,
+    ),
+    "combined_source:ev1_value_return_summary": (
+        "src/_lcm/regime_building/decoupled.py",
+        "_DecoupledQOverA.__call__",
+        "expression",
+        "_with_bound_summary(evaluated=evaluated, output=(value, empty))",
+        "(value, empty)",
+        1,
+        None,
+    ),
+    "combined_source:ev1_sample_return_summary": (
+        "src/_lcm/regime_building/decoupled.py",
+        "_DecoupledQOverA.__call__",
+        "expression",
+        (
+            "_with_bound_summary(evaluated=evaluated, "
+            "output=(jnp.where(empty, -1, "
+            "flat_index).astype(jnp.int32), "
+            "jnp.where(empty, -jnp.inf, "
+            "jnp.ravel(conditional.value)[discrete])))"
+        ),
+        (
+            "(jnp.where(empty, -1, "
+            "flat_index).astype(jnp.int32), "
+            "jnp.where(empty, -jnp.inf, "
+            "jnp.ravel(conditional.value)[discrete]))"
+        ),
+        1,
+        None,
+    ),
+    "combined_source:single_action_evaluation": (
+        "src/_lcm/regime_building/decoupled.py",
+        "_DecoupledQOverA.__call__",
+        "statement",
+        (
+            "evaluated = "
+            "self.parts(next_regime_to_V_arr=next_regime_to_V_arr, "
+            "**states_actions_params)"
+        ),
+        (
+            "evaluated = "
+            "self.parts(next_regime_to_V_arr=next_regime_to_V_arr, "
+            "**states_actions_params)\n"
+            "evaluated = "
+            "self.parts(next_regime_to_V_arr=next_regime_to_V_arr, "
+            "**states_actions_params)"
+        ),
+        1,
+        None,
+    ),
+    "combined_source:hard_readout_profile": (
+        "src/_lcm/regime_building/decoupled.py",
+        "argmax_and_readout",
+        "expression",
+        "jnp.ravel(readout)[index]",
+        "jnp.ravel(selection)[index]",
+        1,
+        None,
+    ),
+    "combined_source:conditional_stored_profile": (
+        "src/_lcm/regime_building/decoupled.py",
+        "get_conditional_profiles",
+        "expression",
+        "parts.Q.reshape(*shape, -1)",
+        'cast("FloatND", parts.Q_objective).reshape(*shape, -1)',
+        1,
+        None,
+    ),
+    "combined_source:ev1_economic_infinite_support": (
+        "src/_lcm/regime_building/decoupled.py",
+        "decoupled_logsum",
+        "expression",
+        "jnp.isfinite(conditional.objective)",
+        "probabilities > 0",
+        1,
+        None,
+    ),
+    "combined_source:lookup_hard_readout": (
+        "src/_lcm/regime_building/decoupled.py",
+        "DecoupledWithActionParts.__call__",
+        "keyword",
+        "readout",
+        "Q_objective",
+        1,
+        "argmax_and_readout",
+    ),
+    "combined_source:lookup_runtime_scale": (
+        "src/_lcm/regime_building/decoupled.py",
+        "DecoupledTasteShockLookup.__call__",
+        "expression",
+        'cast("FloatND", kwargs[TASTE_SHOCK_SCALE_PARAM])',
+        "jnp.asarray(1.0)",
+        1,
+        None,
+    ),
+    "combined_source:objective_metadata_dispatch": (
+        "src/_lcm/regime_building/Q_and_F.py",
+        "has_objective_profile",
+        "expression",
+        'getattr(Q_and_F, "objective_aggregator", None) is not None',
+        "False",
+        1,
+        None,
+    ),
+    "combined_source:ordinary_complete_parts": (
+        "src/_lcm/regime_building/Q_and_F.py",
+        "get_Q_and_F_parts",
+        "expression",
+        "kernel.parts",
+        "kernel.__call__",
+        1,
+        None,
+    ),
+    "combined_source:parts_output_channel": (
+        "src/_lcm/regime_building/Q_and_F.py",
+        "_QAndF.parts",
+        "expression",
+        (
+            "self._evaluate(next_regime_to_V_arr=next_regime_to_V_arr, "
+            "**states_actions_params)[0]"
+        ),
+        (
+            "self._evaluate(next_regime_to_V_arr=next_regime_to_V_arr, "
+            "**states_actions_params)[1]"
+        ),
+        1,
+        None,
+    ),
+    "combined_source:ordinary_flow_pool": (
+        "src/_lcm/regime_building/Q_and_F.py",
+        "_QAndF._evaluate",
+        "expression",
+        "self.U_and_F(**states_actions_params)",
+        "self.U_and_F(**{})",
+        1,
+        None,
+    ),
+    "combined_source:objective_separate_from_stored": (
+        "src/_lcm/regime_building/Q_and_F.py",
+        "_QAndF._parts_from_utilities",
+        "keyword",
+        "Q_objective",
+        "Q_arr",
+        1,
+        "QAndFParts",
+    ),
+    "combined_source:lookup_constructor_roles": (
+        "src/_lcm/simulation/programs.py",
+        "_lookup_body_and_roles",
+        "statement",
+        "return DecoupledWithActionParts, DECOUPLED_LOOKUP_OUTPUT_ROLES",
+        "return _DecisionWithActionParts, ACTION_VALUES_OUTPUT_ROLES",
+        1,
+        None,
+    ),
+    "combined_source:lookup_original_summary": (
+        "src/_lcm/simulation/programs.py",
+        "_BoundActionPartsBody.__call__",
+        "keyword",
+        "bound_status",
+        "()",
+        1,
+        "BoundedResult",
+    ),
+    "combined_source:lookup_same_evaluated_callback": (
+        "src/_lcm/simulation/programs.py",
+        "_evaluated_action_parts",
+        "statement",
+        "return parts",
+        "return ()",
+        1,
+        None,
+    ),
+    "combined_source:unsupported_route_refusal": (
+        "src/_lcm/solution/grid_search.py",
+        "_fail_if_decoupled_route_is_unsupported",
+        "condition",
+        "unsupported",
+        "False",
+        1,
+        None,
+    ),
+    "combined_source:rounded_equal_support": (
+        "src/_lcm/egm/one_asset_egm_step.py",
+        "_solve_viable_feature_row",
+        "expression",
+        "support[1:] >= support[:-1]",
+        "support[1:] > support[:-1]",
+        1,
+        None,
+    ),
+    "combined_source:rightmost_original_endpoint": (
+        "src/_lcm/egm/one_asset_egm_step.py",
+        "_solve_viable_feature_row",
+        "statement",
+        "selected_original = indices[lower]",
+        "selected_original = indices[jnp.maximum(lower - 1, 0)]",
+        1,
+        None,
+    ),
+    "combined_source:complete_endpoint_association": (
+        "src/_lcm/egm/one_asset_egm_step.py",
+        "_solve_viable_feature_row",
+        "expression",
+        "value_endog[selected_original]",
+        "value_endog[indices[0]]",
+        1,
+        None,
+    ),
+}
+
+
+def _upstream_composition_mutation_specs(
+    *, repo_root: Path
+) -> dict[str, dict[str, str]]:
+    """Apply one named upstream expression, condition, keyword or statement change."""
+    specs = {}
+    for name, (
+        relative,
+        qualname,
+        mode,
+        old,
+        new,
+        expected_count,
+        callee,
+    ) in _UPSTREAM_COMPOSITION_MUTATIONS.items():
+        tree = ast.parse((repo_root / relative).read_text(encoding="utf-8"))
+        if "." in qualname:
+            class_name, method_name = qualname.split(".", maxsplit=1)
+            _, function = _method_definition(
+                tree=tree, class_name=class_name, method_name=method_name
+            )
+        else:
+            function = _definition(tree=tree, name=qualname)
+        if mode == "statement":
+            expected = ast.parse(old).body
+            if len(expected) != 1:
+                raise ValueError(
+                    f"{name}: a statement control needs one original anchor"
+                )
+            matches = [
+                node
+                for node in ast.walk(function)
+                if isinstance(node, ast.stmt)
+                and _ast_key(node) == _ast_key(expected[0])
+            ]
+        elif mode == "keyword":
+            matches = [
+                keyword
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == callee
+                for keyword in node.keywords
+                if keyword.arg == old
+            ]
+        elif mode == "condition":
+            expected = ast.parse(old, mode="eval").body
+            matches = [
+                node
+                for node in ast.walk(function)
+                if isinstance(node, ast.If | ast.IfExp)
+                and _ast_key(node.test) == _ast_key(expected)
+            ]
+        elif mode == "expression":
+            expected = ast.parse(old, mode="eval").body
+            matches = [
+                node
+                for node in ast.walk(function)
+                if isinstance(node, ast.expr) and _ast_key(node) == _ast_key(expected)
+            ]
+        else:
+            raise ValueError(f"{name}: unreviewed upstream mutation mode {mode!r}")
+        if len(matches) != expected_count or expected_count != 1:
+            raise ValueError(f"{name}: expected one anchor, found {len(matches)}")
+        if mode == "statement":
+            replacement = ast.parse(new).body
+            for parent in ast.walk(function):
+                for attribute, values in ast.iter_fields(parent):
+                    if isinstance(values, list) and any(
+                        value is matches[0] for value in values
+                    ):
+                        changed = []
+                        for value in values:
+                            changed.extend(
+                                copy.deepcopy(replacement)
+                                if value is matches[0]
+                                else [value]
+                            )
+                        setattr(parent, attribute, changed)
+        elif mode == "keyword":
+            cast("ast.keyword", matches[0]).value = ast.parse(new, mode="eval").body
+        elif mode == "condition":
+            cast("ast.If | ast.IfExp", matches[0]).test = ast.parse(
+                new, mode="eval"
+            ).body
+        else:
+            replacement = ast.parse(new, mode="eval").body
+            for parent in ast.walk(function):
+                for attribute, value in ast.iter_fields(parent):
+                    if value is matches[0]:
+                        setattr(parent, attribute, copy.deepcopy(replacement))
+                    elif isinstance(value, list):
+                        setattr(
+                            parent,
+                            attribute,
+                            [
+                                copy.deepcopy(replacement)
+                                if item is matches[0]
+                                else item
+                                for item in value
+                            ],
+                        )
+        mutated = ast.unparse(ast.fix_missing_locations(tree)) + "\n"
+        ast.parse(mutated, filename=relative)
+        specs[name] = {"path": relative, "source": mutated}
+    return specs
+
+
+def _upstream_composition_errors(*, tree: ast.Module, source: SourcePath) -> list[str]:
+    """Authenticate the finite upstream composition bodies in their canonical store."""
+    surface, callables = _UPSTREAM_COMPOSITION_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="combined upstream dependency", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append(
+            f"combined upstream dependency: {source} declaration surface changed"
+        )
+    return errors

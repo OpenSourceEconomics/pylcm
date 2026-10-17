@@ -199,6 +199,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         )
         if (
             can_publish_policy
+            and (policy_descriptor.applicable or policy_ref in authority.artifacts)
             and policy_ref not in replay
             and policy_ref not in omissions
         ):

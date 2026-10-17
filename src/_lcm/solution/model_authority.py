@@ -9,7 +9,7 @@ applicability.
 
 import itertools
 import math
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from types import MappingProxyType
@@ -20,8 +20,20 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from _lcm.continuation import ContinuationSpec, EGMContinuationSpec
+from _lcm.continuation import (
+    ContinuationSpec,
+    EGMContinuationSpec,
+    EGMQuerySpec,
+    validate_query_bound_authority,
+    validate_query_evaluator_authority,
+    validate_query_model_authority,
+    validate_query_template,
+)
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.egm.adaptive_mesh_authority import (
+    ACTIVE_CONTINUATION_MESH_AXIS,
+    admit_continuation_mesh,
+)
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy, OuterPolicyBank
 from _lcm.egm.outer_inversion import DeclaredOuterInverse
@@ -37,6 +49,7 @@ from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.regime_building.age_normalization import resolve_periodized_nodes
 from _lcm.regime_building.gated_edges import (
     edge_may_fold_at_period,
     gate_reads_dissolution_flag,
@@ -58,13 +71,16 @@ from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     ArtifactPayload,
+    EconFunctionsMapping,
     FlatParams,
+    FunctionName,
     RegimeName,
     StateName,
 )
 from lcm._solver_api.identity import ArtifactRuntimeType
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
+    EGM_CONTINUATION,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
     ArtifactAuthority,
@@ -383,6 +399,11 @@ def _snapshot_nnbegm_policy_read(route: NNBEGMPolicyRead) -> NNBEGMPolicyRead:
     _validate_nnbegm_policy_read(route)
     return replace(
         route,
+        finite_query_authority=(
+            None
+            if route.finite_query_authority is None
+            else replace(route.finite_query_authority)
+        ),
         outer_target_function_by_period=MappingProxyType(
             dict(route.outer_target_function_by_period)
         ),
@@ -429,6 +450,10 @@ def _validate_nnbegm_policy_read(  # noqa: C901, PLR0912
     """Validate NNBEGM route structure before copying mappings or tuples."""
     if type(route) is not NNBEGMPolicyRead:
         raise TypeError("NNBEGM replay route must be exact.")
+    if route.finite_query_authority is not None:
+        if type(route.finite_query_authority) is not EGMQuerySpec:
+            raise TypeError("Finite NNBEGM policy query authority must be exact.")
+        EGMQuerySpec.__post_init__(route.finite_query_authority)
     _require_exact_mapping(
         value=route.outer_target_function_by_period,
         label="NNBEGM outer_target_function_by_period",
@@ -681,7 +706,7 @@ class _ArtifactLayout:
     action_roles: tuple[str, ...] = ()
 
 
-def build_solution_authority(  # noqa: PLR0915
+def build_solution_authority(  # noqa: C901, PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
@@ -970,6 +995,12 @@ def build_solution_authority(  # noqa: PLR0915
                     key=continuation_spec.artifact_key,
                 )
                 continuation_template = continuation_spec.template
+                if isinstance(continuation_spec, EGMContinuationSpec):
+                    _validate_model_query_spec(
+                        regime=regime,
+                        state_action_space=state_action_space,
+                        spec=continuation_spec,
+                    )
                 continuation_persistence = (
                     PersistencePolicy.MODEL_VERIFIABLE
                     if isinstance(continuation_template, EGMCarry)
@@ -1533,6 +1564,370 @@ def _nested_policy_artifact_layout(
     )
 
 
+def _validate_finite_nnbegm_policy_query_authority(
+    *,
+    regime: Regime,
+    state_action_space: StateActionSpace,
+    expected: EGMQuerySpec,
+) -> bool:
+    """Authenticate finite actual-action scoring against its canonical floor DAG."""
+    read = regime.simulation.egm_policy_read
+    if not isinstance(read, NNBEGMPolicyRead) or read.finite_query_authority is None:
+        return False
+    declared = read.finite_query_authority
+    finite = expected.finite_outer
+    bound = expected.bound
+    if (
+        type(declared) is not EGMQuerySpec
+        or finite is None
+        or expected.adaptive_outer is not None
+        or expected.coordinate_kind != "liquid"
+        or expected.row_topology is None
+        or expected.row_topology.kind != "nb_budget_interval_run"
+        or bound.kind != "dag"
+        or bound.lower_target is None
+        or read.replay_policy_is_nested
+        or not read.policy_applicable
+        or not read.policy_required
+        or read.consumer_route != "nnbegm_finite"
+        or read.inner_action_name != bound.action
+        or read.liquid_state_name != bound.liquid_state
+        or read.resources_target != bound.resources_target
+        or read.outer_action_name != finite.outer_action
+        or read.outer_state_name != finite.outer_state
+        or read.outer_post_decision != finite.outer_post_decision
+        or read.outer_no_adjustment_target != finite.keeper_target
+        or read.outer_grid_values != finite.outer_nodes
+    ):
+        raise TypeError("Finite policy query roles differ from model authority.")
+    installed = tuple(
+        item
+        for item in regime.solution.post_decision_bounds
+        if item.post_decision == bound.post_decision
+    )
+    if len(installed) != 1:
+        raise TypeError("Finite policy query requires a unique installed model bound.")
+    validate_query_model_authority(
+        spec=declared,
+        model_spec=expected,
+        model_bound=installed[0],
+        state_names=_declared_carry_row_state_names(
+            regime=regime, state_action_space=state_action_space
+        ),
+        action_names=tuple(state_action_space.discrete_actions),
+    )
+    _validate_nnbegm_policy_floor_authority(
+        regime=regime,
+        expected=expected,
+        read=read,
+        outer_post_decision=finite.outer_post_decision,
+        label="Finite",
+    )
+    return True
+
+
+def _validate_adaptive_nnbegm_policy_query_authority(
+    *, regime: Regime, expected: EGMQuerySpec
+) -> bool:
+    """Authenticate retained adaptive replay against its canonical floor DAG.
+
+    Returns `False` when the regime does not retain an applicable adaptive
+    nested replay policy, so the scalar route stays governed by the caller.
+    Otherwise the
+    nested replay roles must match the model's adaptive query authority, and
+    the floor that replay evaluates at each subject's current state must be
+    the installed canonical runtime bound.
+    """
+    read = regime.simulation.egm_policy_read
+    adaptive = expected.adaptive_outer
+    if (
+        adaptive is None
+        or not isinstance(read, NNBEGMPolicyRead)
+        or not read.replay_policy_is_nested
+        or not read.policy_applicable
+        or all(
+            SIMULATION_POLICY not in program.retained_artifact_keys
+            for kernel in regime.solution.period_kernels.values()
+            for program in core_program_graph(kernel=kernel).values()
+        )
+    ):
+        return False
+    bound = expected.bound
+    if (
+        bound.kind != "dag"
+        or bound.lower_target is None
+        or read.consumer_route != "nnbegm_nested"
+        or read.inner_action_name != bound.action
+        or read.liquid_state_name != bound.liquid_state
+        or read.resources_target != bound.resources_target
+        or read.outer_action_name != adaptive.outer_action
+        or read.outer_state_name != adaptive.outer_state
+        or read.outer_post_decision != adaptive.outer_post_decision
+    ):
+        raise TypeError("Adaptive policy query roles differ from model authority.")
+    _validate_nnbegm_policy_floor_authority(
+        regime=regime,
+        expected=expected,
+        read=read,
+        outer_post_decision=adaptive.outer_post_decision,
+        label="Adaptive",
+    )
+    return True
+
+
+def _validate_nnbegm_policy_floor_authority(
+    *,
+    regime: Regime,
+    expected: EGMQuerySpec,
+    read: NNBEGMPolicyRead,
+    outer_post_decision: FunctionName,
+    label: str,
+) -> None:
+    """Bind replay's current-state floor to the canonical runtime bound.
+
+    The simulation phase's runtime bound and every period's intrinsic budget
+    must carry the model bound, and the floor may read only fixed current
+    states, parameters, period and age: never the liquid state, an action or
+    the outer post-decision. Its dependency identity must match the canonical
+    evaluator in every simulated period.
+    """
+    from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME  # noqa: PLC0415
+    from _lcm.params.processing import get_flat_param_names  # noqa: PLC0415
+    from _lcm.post_decision_bound import PostDecisionBoundSpec  # noqa: PLC0415
+
+    bound = expected.bound
+    simulation_bounds = tuple(
+        item
+        for item in regime.simulation.post_decision_bounds
+        if item.post_decision == bound.post_decision
+    )
+    if len(simulation_bounds) != 1:
+        raise TypeError(f"{label} policy scoring omits its canonical runtime bound.")
+    validate_query_bound_authority(declared=simulation_bounds[0], model_bound=bound)
+    pools = regime.simulation.feasibility_pools_by_period
+    periods = tuple(pools)
+    if (
+        not periods
+        or set(periods) != read.outer_target_function_by_period.keys()
+        or not set(periods) <= set(expected.target_periods)
+        or not set(periods) <= regime.simulation.Q_and_F.keys()
+    ):
+        raise TypeError(f"{label} policy scoring has incompatible canonical periods.")
+    for _functions, constraints in pools.values():
+        intrinsic = constraints.get(DCEGM_BUDGET_CONSTRAINT_NAME)
+        installed_budget = getattr(intrinsic, "_lcm_intrinsic_budget_bound", None)
+        if type(installed_budget) is not PostDecisionBoundSpec:
+            raise TypeError(f"{label} policy intrinsic budget omits its model bound.")
+        validate_query_bound_authority(declared=installed_budget, model_bound=bound)
+    lower_inputs = dict(expected.evaluator_inputs).get("lower_bound")
+    allowed = (
+        set(regime.simulation.state_names)
+        | get_flat_param_names(regime.regime_params_template)
+        | {"period", "age"}
+    )
+    forbidden = {
+        bound.liquid_state,
+        *regime.simulation.action_names,
+        outer_post_decision,
+    }
+    if lower_inputs is None or not set(lower_inputs) <= allowed - forbidden:
+        raise TypeError(
+            f"{label} policy floor inputs differ from fixed-state authority."
+        )
+    lower_identity = dict(expected.evaluator_identity).get("lower_bound")
+    if type(lower_identity) is not tuple:
+        raise TypeError(f"{label} policy floor lacks canonical dependency identity.")
+    lower_contexts = cast("tuple[tuple[int | None, Hashable], ...]", lower_identity)
+    canonical_contexts = dict(lower_contexts)
+    lower_spec = replace(
+        expected,
+        evaluator_targets=(("lower_bound", bound.lower_target),),
+        evaluator_inputs=(("lower_bound", lower_inputs),),
+        evaluator_identity=(
+            (
+                "lower_bound",
+                (
+                    (None, canonical_contexts[periods[0]]),
+                    *((period, canonical_contexts[period]) for period in periods),
+                ),
+            ),
+        ),
+        target_periods=periods,
+    )
+    validate_query_evaluator_authority(
+        spec=lower_spec,
+        functions=pools[periods[0]][0],
+        functions_by_period=MappingProxyType(
+            {period: functions for period, (functions, _constraints) in pools.items()}
+        ),
+        target_periods=periods,
+    )
+
+
+def _validate_query_policy_budget_authority(
+    *, regime: Regime, state_action_space: StateActionSpace, expected: EGMQuerySpec
+) -> None:
+    """Authenticate a query against its canonical policy and intrinsic budget."""
+    # Budget construction imports solver modules that also import authority helpers.
+    from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME  # noqa: PLC0415
+
+    policy_read = regime.simulation.egm_policy_read
+    adaptive_without_replay = (
+        expected.adaptive_outer is not None
+        and isinstance(policy_read, NNBEGMPolicyRead)
+        and (
+            not policy_read.policy_applicable
+            or all(
+                SIMULATION_POLICY not in program.retained_artifact_keys
+                for kernel in regime.solution.period_kernels.values()
+                for program in core_program_graph(kernel=kernel).values()
+            )
+        )
+    )
+    with_adapter = _validate_finite_nnbegm_policy_query_authority(
+        regime=regime,
+        state_action_space=state_action_space,
+        expected=expected,
+    ) or _validate_adaptive_nnbegm_policy_query_authority(
+        regime=regime, expected=expected
+    )
+    if expected.bound.kind == "dag" and (
+        isinstance(policy_read, EGMPolicyRead)
+        or (
+            isinstance(policy_read, NNBEGMPolicyRead)
+            and not adaptive_without_replay
+            and not with_adapter
+        )
+    ):
+        raise TypeError(
+            "Query policy/intrinsic budget authority requires a model-bound adapter; "
+            "scalar budget descriptors are refused."
+        )
+    if (
+        expected.bound.kind == "dag"
+        and DCEGM_BUDGET_CONSTRAINT_NAME in regime.simulation.constraints
+    ):
+        from _lcm.post_decision_bound import PostDecisionBoundSpec  # noqa: PLC0415
+
+        intrinsic = regime.simulation.constraints[DCEGM_BUDGET_CONSTRAINT_NAME]
+        installed = getattr(intrinsic, "_lcm_intrinsic_budget_bound", None)
+        if type(installed) is not PostDecisionBoundSpec:
+            raise TypeError(
+                "Query scalar intrinsic budget lacks its model-bound adapter."
+            )
+        validate_query_bound_authority(declared=installed, model_bound=expected.bound)
+
+
+def _validate_model_query_spec(
+    *,
+    regime: Regime,
+    state_action_space: StateActionSpace,
+    spec: EGMContinuationSpec,
+) -> None:
+    """Authenticate a feature descriptor before observing its numeric template."""
+    declared = spec.layout.query_spec
+    expected = regime.solution.query_authority
+    if declared is None:
+        if expected is not None or spec.template.query_data is not None:
+            raise TypeError("Query continuation omits model-owned authority.")
+        return
+    if expected is None:
+        raise TypeError(
+            "Query continuation lacks independently constructed model authority."
+        )
+    _validate_query_policy_budget_authority(
+        regime=regime, state_action_space=state_action_space, expected=expected
+    )
+    bounds = tuple(
+        bound
+        for bound in regime.solution.post_decision_bounds
+        if bound.post_decision == expected.bound.post_decision
+    )
+    if len(bounds) != 1:
+        raise TypeError("Query continuation has no unique installed model bound.")
+    validate_query_model_authority(
+        spec=declared,
+        model_spec=expected,
+        model_bound=bounds[0],
+        state_names=_declared_carry_row_state_names(
+            regime=regime, state_action_space=state_action_space
+        ),
+        action_names=tuple(state_action_space.discrete_actions),
+    )
+    adaptive = expected.adaptive_outer
+    if adaptive is not None and (
+        adaptive.outer_state not in expected.state_names
+        or adaptive.outer_state == bounds[0].liquid_state
+        or adaptive.outer_action not in state_action_space.continuous_actions
+        or adaptive.outer_action == bounds[0].action
+    ):
+        raise TypeError(
+            "Query outer roles differ from the canonical non-liquid margin."
+        )
+    finite = expected.finite_outer
+    if finite is not None and (
+        finite.outer_state not in expected.state_names
+        or finite.outer_state == bounds[0].liquid_state
+        or finite.outer_action not in state_action_space.continuous_actions
+        or finite.outer_action == bounds[0].action
+        or expected.outer_capacity != spec.layout.n_stacked_candidates
+    ):
+        raise TypeError("Finite query roles differ from the canonical outer margin.")
+    query_constraints = regime.solution.query_constraint_functions
+    predicate_targets = frozenset(
+        target
+        for purpose, target in expected.evaluator_targets
+        if purpose.startswith("predicate:")
+    )
+    query_constraints = (
+        MappingProxyType(
+            {
+                target: function
+                for target, function in query_constraints.items()
+                if target in predicate_targets
+            }
+        )
+        if query_constraints is not None
+        else None
+    )
+    functions = regime.solution.continuation_functions
+    if query_constraints is not None:
+        functions = cast(
+            "EconFunctionsMapping",
+            resolve_periodized_nodes(
+                mapping=MappingProxyType({**query_constraints, **functions}),
+                period=regime.active_periods[0],
+            ),
+        )
+    validate_query_evaluator_authority(
+        spec=expected,
+        functions=functions,
+        target_periods=regime.active_periods,
+        functions_by_period=MappingProxyType(
+            {
+                period: MappingProxyType(
+                    {
+                        **cast(
+                            "EconFunctionsMapping",
+                            resolve_periodized_nodes(
+                                mapping=query_constraints or MappingProxyType({}),
+                                period=period,
+                            ),
+                        ),
+                        **period_functions,
+                        **constraints,
+                    }
+                )
+                for period, (
+                    period_functions,
+                    constraints,
+                ) in regime.solution.feasibility_pools_by_period.items()
+            }
+        ),
+    )
+    validate_query_template(template=spec.template, spec=expected)
+
+
 def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
     *,
     regime: Regime,
@@ -1610,11 +2005,54 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
         )
     )
     common_axis_names = (*leading_names, trailing_name)
+    query_spec = spec.layout.query_spec
+    if query_spec is not None:
+        axes.extend(
+            (
+                AxisAuthority(
+                    name="pylcm:egm:link",
+                    length=max(row_shape[-1] - 1, 0),
+                    role=AxisRole.OTHER,
+                    coordinates=tuple(range(max(row_shape[-1] - 1, 0))),
+                ),
+                AxisAuthority(
+                    name="pylcm:egm:interval",
+                    length=len(query_spec.interval_ids),
+                    role=AxisRole.OTHER,
+                    coordinates=query_spec.interval_ids,
+                ),
+            )
+        )
+        if query_spec.adaptive_outer is not None:
+            capacity = query_spec.adaptive_outer.adjuster_capacity
+            axes.extend(
+                (
+                    AxisAuthority(
+                        name="pylcm:egm:outer_mesh",
+                        length=capacity,
+                        role=AxisRole.CANDIDATE,
+                        coordinates=tuple(range(capacity)),
+                    ),
+                    AxisAuthority(
+                        name="pylcm:egm:outer_link",
+                        length=capacity - 1,
+                        role=AxisRole.OTHER,
+                        coordinates=tuple(range(capacity - 1)),
+                    ),
+                )
+            )
     leaf_axes: dict[TreePath, tuple[str, ...]] = {}
     for path, leaf in paths_and_leaves:
         shape = tuple(leaf.shape)
         field = path[-1]
-        if field == "attribute:taste_shock_scale":
+        if path[0] == "attribute:query_data":
+            names = _query_leaf_axis_names(
+                path=path,
+                state_names=row_state_names,
+                leading_names=tuple(leading_names),
+                trailing_name=trailing_name,
+            )
+        elif field == "attribute:taste_shock_scale":
             names: tuple[str, ...] = ()
         elif field == "attribute:breakpoints":
             breakpoint_name = "pylcm:egm:breakpoint"
@@ -1658,6 +2096,42 @@ def _egm_carry_artifact_layout(  # noqa: C901, PLR0912, PLR0915
         axes=tuple(axes),
         state_roles=state_roles,
         action_roles=action_roles,
+    )
+
+
+def _query_leaf_axis_names(  # noqa: PLR0911
+    *,
+    path: TreePath,
+    state_names: tuple[StateName, ...],
+    leading_names: tuple[str, ...],
+    trailing_name: str,
+) -> tuple[str, ...]:
+    """Name fixed-cell, row/link, interval and shared-mesh axes independently."""
+    field = path[-1].removeprefix("attribute:")
+    if "attribute:adaptive_outer_data" in path:
+        if field == "outer_count":
+            return ()
+        if field in ("outer_nodes", "outer_node_kind"):
+            return ("pylcm:egm:outer_mesh",)
+        return (
+            *leading_names[:-1],
+            "pylcm:egm:outer_link"
+            if field == "outer_link_valid"
+            else "pylcm:egm:outer_mesh",
+        )
+    if field == "floor_used":
+        return state_names
+    if "attribute:liquid_corner_data" in path:
+        return (
+            *leading_names,
+            "pylcm:egm:link" if field == "link_valid" else trailing_name,
+            "pylcm:egm:interval",
+        )
+    if field.startswith("corner_"):
+        return (*leading_names, "pylcm:egm:interval")
+    return (
+        *leading_names,
+        "pylcm:egm:link" if field == "link_valid" else trailing_name,
     )
 
 
@@ -2062,6 +2536,53 @@ def _replay_model_context_from_state_action_space(
     )
 
 
+def _bind_generated_continuation_authority(
+    *,
+    bound: _AuthorityBinding,
+    internal_result: BackwardInductionResult,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+) -> None:
+    """Bind exactly the completed meshes emitted for adaptive publications."""
+    expected_continuations = {
+        ArtifactRef(period=period, regime=name, key=EGM_CONTINUATION)
+        for period, values in internal_result.value_functions.items()
+        for name in values
+        if (spec := regimes[name].solution.query_authority) is not None
+        and spec.adaptive_outer is not None
+    }
+    actual_continuations = set()
+    for (
+        period,
+        generated_by_regime,
+    ) in internal_result.generated_continuation_authorities.items():
+        for name, generated in generated_by_regime.items():
+            ref = ArtifactRef(period=period, regime=name, key=EGM_CONTINUATION)
+            spec = regimes[name].solution.query_authority
+            if (
+                spec is None
+                or spec.adaptive_outer is None
+                or generated.model_identity
+                != spec.adaptive_outer.mesh_authority_identity
+            ):
+                raise TypeError(
+                    "Generated continuation mesh has no "
+                    "matching canonical adaptive route."
+                )
+            bound.bind_adaptive_continuation(
+                ref=ref,
+                nodes=generated.adaptive_outer_nodes,
+                regime=regimes[name],
+                flat_params=flat_params,
+            )
+            actual_continuations.add(ref)
+    if actual_continuations != expected_continuations:
+        raise TypeError(
+            "Generated continuation mesh coverage "
+            "differs from actual adaptive publications."
+        )
+
+
 def bind_generated_solution_authority(
     *,
     authority: SolutionAuthority,
@@ -2124,6 +2645,12 @@ def bind_generated_solution_authority(
             f"nested policies: missing={missing}, unexpected={unexpected}."
         )
         raise TypeError(msg)
+    _bind_generated_continuation_authority(
+        bound=bound,
+        internal_result=internal_result,
+        regimes=regimes,
+        flat_params=flat_params,
+    )
     for period, regime_to_diagnostics in internal_result.diagnostics.items():
         for regime_name, diagnostics in regime_to_diagnostics.items():
             bound.bind_diagnostics(
@@ -2175,6 +2702,40 @@ def bind_declared_solution_authority(
             ),
         )
     return bound.authority_with_bindings()
+
+
+def _bind_declared_continuation_authority(
+    *,
+    bound: _AuthorityBinding,
+    authority: SolutionAuthority,
+    artifact_descriptors: Mapping[ArtifactRef, ArtifactDescriptor],
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+) -> None:
+    """Admit completed continuation meshes from canonical declared axes."""
+    for ref in authority.artifacts:
+        if ref.key != EGM_CONTINUATION:
+            continue
+        regime = regimes[ref.regime]
+        spec = regime.solution.query_authority
+        if spec is None or spec.adaptive_outer is None:
+            continue
+        descriptor = artifact_descriptors.get(ref)
+        if type(descriptor) is not ArtifactDescriptor:
+            continue
+        axes = tuple(
+            axis
+            for axis in descriptor.named_axes
+            if axis.name == ACTIVE_CONTINUATION_MESH_AXIS
+        )
+        if len(axes) != 1:
+            raise TypeError(
+                "A declared adaptive continuation lacks its completed mesh axis."
+            )
+        nodes = admit_continuation_mesh(nodes=axes[0].coordinates, spec=spec)
+        bound.bind_adaptive_continuation(
+            ref=ref, nodes=nodes, regime=regime, flat_params=flat_params
+        )
 
 
 def bind_declared_adaptive_authority(
@@ -2233,6 +2794,13 @@ def bind_declared_adaptive_authority(
             regime=regime,
             flat_params=flat_params,
         )
+    _bind_declared_continuation_authority(
+        bound=bound,
+        authority=authority,
+        artifact_descriptors=artifact_descriptors,
+        regimes=regimes,
+        flat_params=flat_params,
+    )
     return bound.authority_with_bindings()
 
 
@@ -2359,6 +2927,71 @@ class _AuthorityBinding:
         )
         self.artifacts[ref] = bound_authority
         self.artifact_descriptors[ref] = bound_authority.descriptor
+        self.bound_refs.add(ref)
+
+    def bind_adaptive_continuation(
+        self,
+        *,
+        ref: ArtifactRef,
+        nodes: tuple[float, ...],
+        regime: Regime,
+        flat_params: FlatParams,
+    ) -> None:
+        """Bind only the separately admitted completed mesh; retain fixed leaf
+        schemas.
+        """
+        spec = regime.solution.query_authority
+        if spec is None:
+            raise TypeError(
+                "Generated continuation facts require canonical query authority."
+            )
+        nodes = admit_continuation_mesh(nodes=nodes, spec=spec)
+        old = self.artifacts[ref]
+        template, containers = _snapshot_artifact_template_once(
+            template=old.template,
+            payload_runtime_type=old.payload_runtime_type,
+        )
+        if any(axis.name == ACTIVE_CONTINUATION_MESH_AXIS for axis in old.axes):
+            raise TypeError("A completed continuation mesh cannot be bound twice.")
+        axes = (
+            *old.axes,
+            AxisAuthority(
+                name=ACTIVE_CONTINUATION_MESH_AXIS,
+                length=len(nodes),
+                role=AxisRole.CANDIDATE,
+                coordinates=nodes,
+            ),
+        )
+        generated = _authority_from_observed_template(
+            key=old.descriptor.key,
+            channel=old.descriptor.channel,
+            persistence=old.descriptor.persistence,
+            payload_runtime_type=old.payload_runtime_type,
+            template_snapshot=template,
+            container_runtime_types=containers,
+            leaf_axis_names=MappingProxyType(
+                {path: leaf.axis_names for path, leaf in old.leaves.items()}
+            ),
+            axes=axes,
+            state_roles=old.state_roles,
+            action_roles=old.action_roles,
+            categorical_domains=dict(old.categorical_domains),
+            consumer_route=old.consumer_route,
+            applicable=old.applicable,
+            required=old.required,
+        )
+        state_action_space = _state_action_space_for_period(
+            regime=regime,
+            base=regime.solution.state_action_space(
+                regime_params=regime_kernel_params(flat_params, regime_name=ref.regime),
+            ),
+            period=ref.period,
+        )
+        generated = _bind_model_owned_artifact_facts(
+            authority=generated, regime=regime, state_action_space=state_action_space
+        )
+        self.artifacts[ref] = generated
+        self.artifact_descriptors[ref] = generated.descriptor
         self.bound_refs.add(ref)
 
     def bind_diagnostics(

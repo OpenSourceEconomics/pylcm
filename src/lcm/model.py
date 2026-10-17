@@ -28,6 +28,11 @@ from beartype import beartype
 from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF, SIMULATION_INPUT_CONF
+from _lcm.egm.adaptive_mesh_authority import (
+    ACTIVE_CONTINUATION_MESH_AXIS,
+    validate_bound_continuation_mesh,
+)
+from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import (
@@ -46,6 +51,7 @@ from _lcm.execution.execution_plan import (
     visible_device_pool_limits,
 )
 from _lcm.execution.footprint import layout_footprint
+from _lcm.execution.output_layout import OutputRoleLeaf
 from _lcm.grids import (
     DiscreteGrid,
     Grid,
@@ -223,6 +229,7 @@ from _lcm.solution.block_major import (
     active_component_selection,
 )
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.feasibility import consume_runtime_bound_outputs
 from _lcm.solution.fingerprint import (
     SolutionParamProjection,
     fingerprint_model,
@@ -3116,6 +3123,32 @@ class Model:
         PeriodToRegimeToDissolutionFlags,
     ]:
         """Require every replay artifact the labelled solution's routes consume."""
+        for ref in solution.retained_continuations:
+            if ref.key != EGM_CONTINUATION:
+                continue
+            expected = authority.artifacts[ref]
+            if not any(
+                axis.name == ACTIVE_CONTINUATION_MESH_AXIS for axis in expected.axes
+            ):
+                continue
+            supplied = (
+                solution.retained_continuations._materialize_from_template_snapshot(  # noqa: SLF001
+                    ref,
+                    template_snapshot=snapshot_artifact_template_declaration(expected),
+                )
+            )
+            canonical = _canonicalize_artifact_payload(
+                payload=supplied, authority=expected
+            )
+            if isinstance(canonical, EGMCarry):
+                try:
+                    validate_bound_continuation_mesh(
+                        carry=canonical, authority=expected
+                    )
+                except (TypeError, ValueError) as error:
+                    raise InvalidSimulationInputError(
+                        f"Artifact {ref!r} mismatched continuation mesh: {error}"
+                    ) from error
         policies = _materialize_artifact_projection(
             store=solution.replay_artifacts,
             key=SIMULATION_POLICY,
@@ -3333,6 +3366,12 @@ class Model:
                 descriptor = authority.replay[ref]
                 policy_read = descriptor.route
                 if not isinstance(policy_read, EGMPolicyRead | NNBEGMPolicyRead):
+                    continue
+                if (
+                    not descriptor.applicable
+                    and not descriptor.required
+                    and ref not in authority.artifacts
+                ):
                     continue
                 supplied = policies.get(period, {}).get(regime_name)
                 omission = solution.omissions.get(ref)
@@ -4441,21 +4480,35 @@ class Model:
             )
         outputs = cast(
             "tuple[jax.Array, ...]",
-            executor.dispatch(
-                program=program,
-                period=period,
-                n_subjects=n_rows,
-                arguments=decision_arguments(
-                    states=space.states,
-                    discrete_actions={n: grids[n] for n in space.discrete_actions},
-                    continuous_actions={n: grids[n] for n in space.continuous_actions},
-                    taste_keys={},
-                    next_values=next_V,
-                    references=references,
-                    params=regime_kernel_params(flat_params, regime_name=regime_name),
-                    period=jnp.int32(period),
-                    age=self._time.values[period],  # noqa: PD011
+            consume_runtime_bound_outputs(
+                outputs=cast(
+                    "tuple[jax.Array, ...]",
+                    executor.dispatch(
+                        program=program,
+                        period=period,
+                        n_subjects=n_rows,
+                        arguments=decision_arguments(
+                            states=space.states,
+                            discrete_actions={
+                                n: grids[n] for n in space.discrete_actions
+                            },
+                            continuous_actions={
+                                n: grids[n] for n in space.continuous_actions
+                            },
+                            taste_keys={},
+                            next_values=next_V,
+                            references=references,
+                            params=regime_kernel_params(
+                                flat_params, regime_name=regime_name
+                            ),
+                            period=jnp.int32(period),
+                            age=self._time.values[period],  # noqa: PD011
+                        ),
+                    ),
                 ),
+                bound_specs=regime.simulation.post_decision_bounds,
+                regime_name=regime_name,
+                period=period,
             ),
         )
         if not space.states:
@@ -4463,8 +4516,12 @@ class Model:
             # once, for the one row an empty query stands for; every output gets
             # that row here.
             outputs = tuple(output[None] for output in outputs)
-        # Every lookup program publishes a flat tuple, one role per output.
-        roles = cast("tuple[str, ...]", program.output_roles)
+        # Both lookup programs publish a flat tuple, one role per output.
+        roles = tuple(
+            role
+            for role in cast("tuple[str | OutputRoleLeaf, ...]", program.output_roles)
+            if isinstance(role, str)
+        )
         by_role = dict(zip(roles, outputs, strict=True))
         # A taste-shock regime draws its discrete action, so the lookup decodes
         # the continuous action attaining each combination's `Qc` instead.

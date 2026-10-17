@@ -32,7 +32,10 @@ def _decision_cell(
     streamed = build_streaming_max_Q_over_a(
         Q_and_F=_decision_Q_and_F, action_names=("choice",), block_width=3
     )
-    return streamed(region=region, sector=sector, wealth=wealth, choice=choice)
+    return cast(
+        "HardMaxResult",
+        streamed(region=region, sector=sector, wealth=wealth, choice=choice),
+    )
 
 
 @pytest.mark.parametrize("width", [1, 4, 11, 21, 40])

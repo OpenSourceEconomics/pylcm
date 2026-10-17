@@ -168,19 +168,18 @@ def test_the_shard_assignment_is_reproduced_by_the_sharder():
             )
 
 
-def test_the_two_source_only_modules_run_only_on_the_source_contract_lane():
-    """Batch 4: the consolidated modules leave every numerical lane.
-
-    Their portability control stays behind on every general lane, so removing
-    them costs no platform signal -- that is asserted here rather than left as
-    a claim in a comment.
-    """
+def test_source_only_modules_run_only_on_the_source_contract_lane() -> None:
+    """Source campaigns run once while portability remains on every general lane."""
     source_only = set(
         ci_workloads.files_for(invocation_id="source-contract-fp64-linux")
     )
     assert source_only == {
         "tests/test_simulation_candidate_program_certificate.py",
         "tests/test_uniform_process_grid_certificate.py",
+        "tests/test_outer_helper_certificate.py",
+        "tests/test_final_nested_aggregate_certificate.py",
+        "tests/test_additional_helper_aggregate_certificate.py",
+        "tests/test_child_native_aggregate_certificate.py",
     }
     universe = set(ci_workloads.general_shard_universe())
     assert not (source_only & universe), (

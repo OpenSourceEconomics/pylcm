@@ -64,6 +64,11 @@ class GoldenSectionResult:
     valid: BoolND
     """Which cells carried a real bracket; invalid cells report `-inf`."""
 
+    probe_status: BoolND | None = None
+    """Mandatory failures from actual valid probes, absent on ordinary searches."""
+    companions: tuple[FloatND, ...] | None = None
+    """Associated channels from the same selected tuple evaluation."""
+
 
 def maximize_golden_section(
     *,
@@ -73,6 +78,10 @@ def maximize_golden_section(
     iterations: int,
     valid: BoolND | None = None,
     width_tolerance: float | None = None,
+    objective_with_status: Callable[
+        [FloatND], tuple[FloatND, tuple[FloatND, ...], BoolND]
+    ]
+    | None = None,
 ) -> GoldenSectionResult:
     """Maximize a vectorized scalar objective inside per-cell brackets.
 
@@ -124,34 +133,90 @@ def maximize_golden_section(
     width = safe_upper - safe_lower
     x1 = safe_lower + _INV_PHI_SQ * width
     x2 = safe_lower + _INV_PHI * width
-    carry0 = (
-        safe_lower,
-        safe_upper,
-        x1,
-        _probe(objective=objective, x=x1),
-        x2,
-        _probe(objective=objective, x=x2),
-    )
-
-    a, b, xa, fa, xb, fb = jax.lax.fori_loop(
-        0,
-        iterations,
-        functools.partial(_shrink_bracket, objective=objective),
-        carry0,
-    )
+    probe_status = None
+    best_companions = None
+    if objective_with_status is None:
+        carry0 = (
+            safe_lower,
+            safe_upper,
+            x1,
+            _probe(objective=objective, x=x1),
+            x2,
+            _probe(objective=objective, x=x2),
+        )
+        a, b, xa, fa, xb, fb = jax.lax.fori_loop(
+            0,
+            iterations,
+            functools.partial(_shrink_bracket, objective=objective),
+            carry0,
+        )
+    else:
+        fa0, companions_a, status_a = _probe_with_status(
+            objective=objective_with_status, x=x1
+        )
+        fb0, companions_b, status_b = _probe_with_status(
+            objective=objective_with_status, x=x2
+        )
+        a, b, xa, fa, companions_a, xb, fb, companions_b, probe_status = (
+            jax.lax.fori_loop(
+                0,
+                iterations,
+                functools.partial(
+                    _shrink_bracket_with_status, objective=objective_with_status
+                ),
+                (
+                    safe_lower,
+                    safe_upper,
+                    x1,
+                    fa0,
+                    companions_a,
+                    x2,
+                    fb0,
+                    companions_b,
+                    status_a | status_b,
+                ),
+            )
+        )
 
     # Explicit endpoint safeguard, then select in increasing-abscissa order
     # with a strict `>` so exact ties resolve to the smaller abscissa.
     best_x = safe_lower
-    best_f = _probe(objective=objective, x=safe_lower)
-    for cand_x, cand_f in (
-        (xa, fa),
-        (xb, fb),
-        (safe_upper, _probe(objective=objective, x=safe_upper)),
-    ):
-        take = cand_f > best_f
-        best_x = jnp.where(take, cand_x, best_x)
-        best_f = jnp.where(take, cand_f, best_f)
+    if objective_with_status is None:
+        best_f = _probe(objective=objective, x=safe_lower)
+        upper_f = _probe(objective=objective, x=safe_upper)
+    else:
+        if probe_status is None:
+            raise TypeError("An associated search requires its actual probe status.")
+        best_f, best_companions, status_lower = _probe_with_status(
+            objective=objective_with_status, x=safe_lower
+        )
+        upper_f, upper_companions, status_upper = _probe_with_status(
+            objective=objective_with_status, x=safe_upper
+        )
+        probe_status = probe_status | status_lower | status_upper
+    if objective_with_status is None:
+        for cand_x, cand_f in (
+            (xa, fa),
+            (xb, fb),
+            (safe_upper, upper_f),
+        ):
+            take = cand_f > best_f
+            best_x = jnp.where(take, cand_x, best_x)
+            best_f = jnp.where(take, cand_f, best_f)
+    else:
+        for cand_x, cand_f, companions in (
+            (xa, fa, companions_a),
+            (xb, fb, companions_b),
+            (safe_upper, upper_f, upper_companions),
+        ):
+            take = cand_f > best_f
+            best_x = jnp.where(take, cand_x, best_x)
+            best_f = jnp.where(take, cand_f, best_f)
+            best_companions = jax.tree.map(
+                functools.partial(jnp.where, take),
+                companions,
+                best_companions,
+            )
 
     if width_tolerance is None:
         converged = is_valid
@@ -166,6 +231,8 @@ def maximize_golden_section(
         iterations=iterations,
         converged=converged,
         valid=is_valid,
+        probe_status=None if probe_status is None else is_valid & probe_status,
+        companions=best_companions,
     )
 
 
@@ -176,6 +243,71 @@ def _probe(*, objective: Callable[[FloatND], FloatND], x: FloatND) -> FloatND:
 
 
 type _Bracket = tuple[FloatND, FloatND, FloatND, FloatND, FloatND, FloatND]
+
+type _StatusBracket = tuple[
+    FloatND,
+    FloatND,
+    FloatND,
+    FloatND,
+    tuple[FloatND, ...],
+    FloatND,
+    FloatND,
+    tuple[FloatND, ...],
+    BoolND,
+]
+
+
+def _probe_with_status(
+    *,
+    objective: Callable[[FloatND], tuple[FloatND, tuple[FloatND, ...], BoolND]],
+    x: FloatND,
+) -> tuple[FloatND, tuple[FloatND, ...], BoolND]:
+    """Retain mandatory tuple failures before numerical NaN sanitization."""
+    raw, companions, status = objective(x)
+    return jnp.where(jnp.isnan(raw), -jnp.inf, raw), companions, status
+
+
+# keyword-only-exempt: library-callback=jax.lax.fori_loop
+def _shrink_bracket_with_status(
+    _i: LoopIndex,
+    carry: _StatusBracket,
+    *,
+    objective: Callable[[FloatND], tuple[FloatND, tuple[FloatND, ...], BoolND]],
+) -> _StatusBracket:
+    """Reuse each golden mirror point and accumulate its mandatory tuple status."""
+    a, b, xa, fa, companions_a, xb, fb, companions_b, status = carry
+    take_left = fa >= fb
+    a_next = jnp.where(take_left, a, xa)
+    b_next = jnp.where(take_left, xb, b)
+    x_kept = jnp.where(take_left, xa, xb)
+    f_kept = jnp.where(take_left, fa, fb)
+    companions_kept = jax.tree.map(
+        lambda left, right: jnp.where(take_left, left, right),
+        companions_a,
+        companions_b,
+    )
+    x_new = a_next + b_next - x_kept
+    f_new, companions_new, new_status = _probe_with_status(objective=objective, x=x_new)
+    left_is_kept = x_kept <= x_new
+    return (
+        a_next,
+        b_next,
+        jnp.where(left_is_kept, x_kept, x_new),
+        jnp.where(left_is_kept, f_kept, f_new),
+        jax.tree.map(
+            lambda kept, new: jnp.where(left_is_kept, kept, new),
+            companions_kept,
+            companions_new,
+        ),
+        jnp.where(left_is_kept, x_new, x_kept),
+        jnp.where(left_is_kept, f_new, f_kept),
+        jax.tree.map(
+            lambda kept, new: jnp.where(left_is_kept, new, kept),
+            companions_kept,
+            companions_new,
+        ),
+        status | new_status,
+    )
 
 
 # keyword-only-exempt: library-callback=jax.lax.fori_loop

@@ -21,6 +21,7 @@ from _lcm.egm.continuation import (
     _stacked_blend_payloads,
 )
 from _lcm.egm.interp import interp_on_padded_grid, prepare_padded_grid
+from _lcm.solution.feasibility import BoundedResult
 from lcm.solvers import GridSearch
 from tests.conftest import X64_ENABLED
 from tests.test_models import negm_kinked_toy as negm_toy
@@ -96,7 +97,7 @@ def test_stacked_read_blends_the_nodewise_candidate_maximum():
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -108,6 +109,8 @@ def test_stacked_read_blends_the_nodewise_candidate_maximum():
         row_gradients=jnp.asarray([1.0, 1.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 2.25, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=_READ_ATOL)
@@ -135,7 +138,7 @@ def test_stacked_read_masks_a_candidate_below_its_lifted_support():
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -147,6 +150,8 @@ def test_stacked_read_masks_a_candidate_below_its_lifted_support():
         row_gradients=jnp.asarray([3.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 1.0, atol=_READ_ATOL)
     # Winner A's marginal 0.5, scaled by the composed gradient 3.0.
@@ -180,7 +185,7 @@ def test_stacked_read_pins_an_earlier_clamp_winners_marginal_to_zero():
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -192,6 +197,8 @@ def test_stacked_read_pins_an_earlier_clamp_winners_marginal_to_zero():
         row_gradients=jnp.asarray([1.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 2.0, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=_READ_ATOL)
@@ -224,7 +231,7 @@ def test_paired_read_publishes_the_left_derivative_at_a_left_owned_terminal_tie(
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -237,6 +244,8 @@ def test_paired_read_publishes_the_left_derivative_at_a_left_owned_terminal_tie(
         paired_marginal_read=True,
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 12.0, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 1.0, atol=_READ_ATOL)
@@ -260,7 +269,7 @@ def test_stacked_read_propagates_a_poisoned_candidate_row():
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, _ = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -272,6 +281,8 @@ def test_stacked_read_propagates_a_poisoned_candidate_row():
         row_gradients=jnp.asarray([1.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, _ = result
 
     assert bool(jnp.isnan(smoothed_value))
 
@@ -300,7 +311,7 @@ def test_stacked_read_with_a_singleton_candidate_is_differentiable():
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
     def read_value(query):
-        smoothed_value, _ = _aggregate_child_choices(
+        result = _aggregate_child_choices(
             carry=carry,
             prepared_search_grid=prepared_search_grid,
             prepared_valid_length=prepared_valid_length,
@@ -312,6 +323,8 @@ def test_stacked_read_with_a_singleton_candidate_is_differentiable():
             row_gradients=jnp.asarray([1.0]),
             n_outer_candidates=2,
         )
+        assert not isinstance(result, BoundedResult)
+        smoothed_value, _ = result
         return smoothed_value
 
     value, derivative = jax.value_and_grad(read_value)(jnp.asarray(4.0))
@@ -341,7 +354,7 @@ def test_stacked_read_tie_publishes_the_right_continuous_marginal():
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -353,6 +366,8 @@ def test_stacked_read_tie_publishes_the_right_continuous_marginal():
         row_gradients=jnp.asarray([2.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 0.5, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
@@ -381,7 +396,7 @@ def test_stacked_read_tie_owner_follows_the_limited_value_slope():
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -393,6 +408,8 @@ def test_stacked_read_tie_owner_follows_the_limited_value_slope():
         row_gradients=jnp.asarray([2.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 1.0, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
@@ -419,7 +436,7 @@ def test_stacked_read_tie_with_equal_right_slopes_follows_the_curvature():
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -431,6 +448,8 @@ def test_stacked_read_tie_with_equal_right_slopes_follows_the_curvature():
         row_gradients=jnp.asarray([2.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 0.0, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 6.0, atol=_READ_ATOL)
@@ -456,7 +475,7 @@ def test_blend_of_a_dead_and_a_live_passive_node_keeps_the_infeasible_pair():
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -468,6 +487,8 @@ def test_blend_of_a_dead_and_a_live_passive_node_keeps_the_infeasible_pair():
         row_gradients=jnp.asarray([1.0, 1.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     assert float(smoothed_value) == float("-inf")
     assert float(smoothed_marginal) == 0.0
@@ -506,7 +527,7 @@ def test_stacked_read_matches_host_max_of_reads_on_curved_rows():
     gradients = np.array([1.05, 0.95])
     passive_value, passive_grid = 0.4, np.array([0.0, 1.0])
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -518,6 +539,8 @@ def test_stacked_read_matches_host_max_of_reads_on_curved_rows():
         row_gradients=jnp.asarray(gradients),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     expected_value = 0.0
     expected_marginal = 0.0
@@ -656,7 +679,7 @@ def test_stacked_read_terminal_tie_is_owned_by_the_left_envelope_owner():
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -668,6 +691,8 @@ def test_stacked_read_terminal_tie_is_owned_by_the_left_envelope_owner():
         row_gradients=jnp.asarray([2.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 2.0, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
@@ -696,7 +721,7 @@ def test_stacked_read_terminal_duplicate_left_owner_publishes_left_record():
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -708,6 +733,8 @@ def test_stacked_read_terminal_duplicate_left_owner_publishes_left_record():
         row_gradients=jnp.asarray([2.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 1.0, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 2.0, atol=_READ_ATOL)
@@ -736,7 +763,7 @@ def test_stacked_read_earlier_clamp_winner_publishes_zero_marginal():
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    smoothed_value, smoothed_marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=prepared_search_grid,
         prepared_valid_length=prepared_valid_length,
@@ -748,6 +775,8 @@ def test_stacked_read_earlier_clamp_winner_publishes_zero_marginal():
         row_gradients=jnp.asarray([2.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    smoothed_value, smoothed_marginal = result
 
     np.testing.assert_allclose(float(smoothed_value), 2.0, atol=_READ_ATOL)
     np.testing.assert_allclose(float(smoothed_marginal), 0.0, atol=_READ_ATOL)
@@ -790,7 +819,7 @@ def test_passive_blend_publishes_a_marginal_inside_the_clarke_interval():
     )
     search, valid = _prepare(carry)
 
-    value, marginal = _aggregate_child_choices(
+    result = _aggregate_child_choices(
         carry=carry,
         prepared_search_grid=search,
         prepared_valid_length=valid,
@@ -802,6 +831,8 @@ def test_passive_blend_publishes_a_marginal_inside_the_clarke_interval():
         row_gradients=jnp.array([1.0, 1.0]),
         n_outer_candidates=2,
     )
+    assert not isinstance(result, BoundedResult)
+    value, marginal = result
 
     np.testing.assert_allclose(float(value), 100.0, atol=_READ_ATOL)
     assert 1.0 - _READ_ATOL <= float(marginal) <= 5.5 + _READ_ATOL

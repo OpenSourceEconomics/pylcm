@@ -37,11 +37,27 @@ def continuation_leaf_reads(
     Without `argument_by_leaf` the leaves are addressed inside the rolling
     `next_regime_to_continuation` mapping, keyed by the target regime. With it,
     only the named leaves are declared, each addressed as the program argument
-    its builder puts it in.
+    its builder puts it in. Naming `query_data` as one argument declares every
+    nested query leaf with its relative field path.
     """
     reads: list[ValueRead] = []
+    if argument_by_leaf is not None and any(
+        leaf_path[:1] == ("query_data",)
+        and leaf_path not in argument_by_leaf
+        and ("query_data",) not in argument_by_leaf
+        for leaf_path in template.leaves()
+    ):
+        raise TypeError("Query leaf is missing its declared read argument.")
     for leaf_path in template.leaves():
         argument = None if argument_by_leaf is None else argument_by_leaf.get(leaf_path)
+        source_path = () if argument else (target, *leaf_path)
+        if (
+            argument_by_leaf is not None
+            and argument is None
+            and leaf_path[:1] == ("query_data",)
+        ):
+            argument = argument_by_leaf.get(("query_data",))
+            source_path = leaf_path[1:]
         if argument_by_leaf is not None and argument is None:
             continue
         reads.append(
@@ -59,7 +75,7 @@ def continuation_leaf_reads(
                     core_key=core_key,
                     channel=ValueInputChannel.CONTINUATION_LEAF,
                     argument=argument,
-                    path=() if argument else (target, *leaf_path),
+                    path=source_path,
                 ),
             )
         )

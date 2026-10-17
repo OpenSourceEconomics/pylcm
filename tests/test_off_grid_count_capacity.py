@@ -9,6 +9,7 @@ many", which the diagnostic says explicitly and which still refuses a
 import logging
 import os
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +19,11 @@ import pytest
 from _lcm import transition_checks
 from _lcm.off_grid import report_off_grid
 from _lcm.regime_building.Q_and_F import _live_landing_counts
-from _lcm.solution.feasibility import CountedGridSearch
+from _lcm.solution.feasibility import (
+    BoundedResult,
+    BoundInputStatus,
+    CountedGridSearch,
+)
 from _lcm.solution.landing_counts import (
     LandingCountedGridSearch,
     _feasible_landing_counts,
@@ -32,6 +37,7 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     FloatND,
+    IntND,
     ScalarInt,
     StateOrActionName,
 )
@@ -73,11 +79,14 @@ def _preflight_total(*, parts: tuple[int, ...], compiled: bool) -> int:
         grid_args: dict[StateOrActionName, jax.Array],
         scalar_kwargs: EconFunctionKwargs,
     ) -> jax.Array:
-        return transition_checks._off_grid_counts_law(
-            grid_args=grid_args,
-            scalar_kwargs=scalar_kwargs,
-            grid_names=("row",),
-            func=_count_point,
+        return cast(
+            "jax.Array",
+            transition_checks._off_grid_counts_law(
+                grid_args=grid_args,
+                scalar_kwargs=scalar_kwargs,
+                grid_names=("row",),
+                func=_count_point,
+            ),
         )
 
     counts = (jax.jit(run) if compiled else run)(
@@ -91,6 +100,45 @@ def _preflight_total(*, parts: tuple[int, ...], compiled: bool) -> int:
 
 def test_count_capacity_is_int32_max() -> None:
     assert int(COUNT_CAPACITY) == _INT32_MAX
+
+
+@pytest.mark.parametrize("block_rows", [1, 2])
+@pytest.mark.parametrize("disabled", [False, True], ids=["normal", "disable-jit"])
+def test_bounded_outer_counts_accept_eager_integer_indices(
+    *, block_rows: int, disabled: bool
+) -> None:
+    """An outer count loop preserves counts and synthetic transport status."""
+
+    def point(*, row: ScalarInt) -> BoundedResult[IntND]:
+        return BoundedResult(
+            output=jnp.stack(
+                (jnp.stack((row + jnp.int32(1), (row == 1).astype(jnp.int32))),)
+            ),
+            bound_status=(
+                BoundInputStatus(
+                    nonfinite_floor=row == 2,
+                    invalid_shifted_grid=jnp.asarray(a=False),
+                ),
+            ),
+        )
+
+    with jax.disable_jit(disabled):
+        result = transition_checks._off_grid_counts_law(
+            grid_args={"row": jnp.arange(3, dtype=jnp.int32)},
+            scalar_kwargs=MappingProxyType({}),
+            grid_names=("row",),
+            func=point,
+            block_rows=block_rows,
+        )
+
+    assert isinstance(result, BoundedResult)
+    np.testing.assert_array_equal(result.output, [[6, 1]])
+    assert len(result.bound_status) == 1
+    status = result.bound_status[0]
+    assert status.nonfinite_floor.shape == ()
+    assert status.invalid_shifted_grid.shape == ()
+    np.testing.assert_array_equal(status.nonfinite_floor, desired=True)
+    np.testing.assert_array_equal(status.invalid_shifted_grid, desired=False)
 
 
 @pytest.mark.parametrize("total", _TOTALS)
@@ -197,7 +245,7 @@ def test_state_reduction_saturates_instead_of_wrapping(compiled: bool) -> None: 
     )
 
     def run() -> jax.Array:
-        return counted()[-1]
+        return cast("tuple[jax.Array, ...]", counted())[-1]
 
     assert int((jax.jit(run) if compiled else run)()[0]) == _INT32_MAX
 

@@ -20,7 +20,7 @@ import functools
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -31,7 +31,16 @@ from _lcm.egm.interp import (
     interp_on_prepared_grid,
     prepare_padded_grid,
 )
+from _lcm.egm.query_data import (
+    EGMQueryData,
+    NumericQueryLeaf,
+    QueryNodeKind,
+)
+from _lcm.egm.query_data import (
+    build_template_egm_query_data as build_template_egm_query_data,  # noqa: PLC0414
+)
 from _lcm.grids import Grid
+from lcm.exceptions import UnsupportedOperationError
 from lcm.solver_api import (
     EGM_CONTINUATION,
     EGM_ENDOGENOUS_COORDINATE,
@@ -39,10 +48,12 @@ from lcm.solver_api import (
     ContinuationCapabilities,
 )
 from lcm.typing import (
+    BoolND,
     Float1D,
     Float2D,
     FloatND,
     Int1D,
+    ScalarBool,
     ScalarFloat,
     ScalarInt,
     StateName,
@@ -69,8 +80,7 @@ class EGMCarry:
     row per combo: leading axes are the regime's discrete states (in V state
     order; process states are node-valued discrete dimensions), then its
     passive continuous states (in V continuous-state order, one node per
-    combo), then its discrete actions. Every array is pinned to the canonical
-    float dtype.
+    combo), then its discrete actions. Floating arrays use the canonical float dtype.
     """
 
     endog_grid: FloatND
@@ -129,14 +139,21 @@ class EGMCarry:
     or jump-schedule rows), whose downstream never reaches that replay.
     """
 
+    query_data: EGMQueryData | None = None
+    """Conditional candidate/support data interpreted only by model authority."""
+
     @property
     def capabilities(self) -> ContinuationCapabilities:
-        """Return what these rows can answer.
+        """Return capabilities of the standalone carry reader.
 
-        The rows carry a value everywhere and its exact slope in the endogenous
+        The rows publish value and their declared marginal in the endogenous
         coordinate. They name no owning candidate, and they locate their own
-        boundaries only when a `breakpoints` row is published.
+        boundaries only when a `breakpoints` row is published. Query payloads
+        require a model-bound adapter, which supplies its own reader capabilities;
+        their numeric metadata does not make this standalone reader queryable.
         """
+        if self.query_data is not None:
+            return ContinuationCapabilities()
         return ContinuationCapabilities(
             value=True,
             marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE}),
@@ -146,6 +163,10 @@ class EGMCarry:
 
     def value_at(self, *, query: FloatND) -> FloatND:
         """Return the value of these rows at `query`, one query per row."""
+        if self.query_data is not None:
+            raise UnsupportedOperationError(
+                "Feature rows require the model-bound query adapter."
+            )
         rows = self._row_arguments(query=query)
         return jax.vmap(read_value_row)(
             search_grid=rows.search_grid,
@@ -158,6 +179,10 @@ class EGMCarry:
 
     def marginal_at(self, *, query: FloatND, state: StateName) -> FloatND:
         """Return the marginal in `state` at `query`, one query per row."""
+        if self.query_data is not None:
+            raise UnsupportedOperationError(
+                "Feature rows require the model-bound query adapter."
+            )
         capabilities = self.capabilities
         if state not in capabilities.marginal_states:
             msg = (
@@ -174,15 +199,25 @@ class EGMCarry:
             x_query=rows.x_query,
         ).reshape(self.endog_grid.shape[:-1])
 
-    def leaves(self) -> MappingProxyType[tuple[str, ...], FloatND]:
+    def query_data_for_transport(self) -> EGMQueryData | None:
+        """Return the optional whole query record without copying its buffers."""
+        return self.query_data
+
+    def leaves(self) -> MappingProxyType[tuple[str, ...], NumericQueryLeaf]:
         """Return every published array of this carry by its field path."""
-        return MappingProxyType(
-            {
-                (name,): getattr(self, name)
-                for name in _EGM_CARRY_FIELDS
-                if getattr(self, name) is not None
-            }
-        )
+        leaves: dict[tuple[str, ...], NumericQueryLeaf] = {
+            (name,): getattr(self, name)
+            for name in _EGM_CARRY_FIELDS
+            if name != "query_data" and getattr(self, name) is not None
+        }
+        if self.query_data is not None:
+            leaves.update(
+                {
+                    ("query_data", *path): leaf
+                    for path, leaf in self.query_data.leaves().items()
+                }
+            )
+        return MappingProxyType(leaves)
 
     def _flat_rows(self, *, array: FloatND) -> Float2D:
         """Collapse every leading axis of one payload row set."""
@@ -212,16 +247,21 @@ _EGM_CARRY_FIELDS = (
     "taste_shock_scale",
     "breakpoints",
     "policy",
+    "query_data",
 )
 
 
-def _flatten_egm_carry(carry: EGMCarry) -> tuple[tuple[PytreeChild, ...], None]:
+def _flatten_egm_carry(
+    carry: EGMCarry,
+) -> tuple[tuple[PytreeChild | EGMQueryData, ...], None]:
     return tuple(getattr(carry, name) for name in _EGM_CARRY_FIELDS), None
 
 
 def _flatten_egm_carry_with_keys(
     carry: EGMCarry,
-) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
+) -> tuple[
+    tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild | EGMQueryData], ...], None
+]:
     """Flatten with field-named keys so a leaf path reads `.endog_grid`."""
     return (
         tuple(
@@ -233,12 +273,14 @@ def _flatten_egm_carry_with_keys(
 
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
-def _unflatten_egm_carry(_aux: None, children: Iterable[PytreeChild]) -> EGMCarry:
+def _unflatten_egm_carry(
+    _aux: None, children: Iterable[PytreeChild | EGMQueryData]
+) -> EGMCarry:
     return _assemble_egm_carry(children=children)
 
 
 def _assemble_egm_carry(
-    *, children: Iterable[PytreeChild | OutputRoleLeaf]
+    *, children: Iterable[PytreeChild | OutputRoleLeaf | EGMQueryData]
 ) -> EGMCarry:
     """Set the carry's fields in flatten order, bypassing its checked constructor."""
     carry = object.__new__(EGMCarry)
@@ -247,12 +289,334 @@ def _assemble_egm_carry(
     return carry
 
 
+def stack_egm_carries(*, candidates: tuple[EGMCarry, ...]) -> EGMCarry:
+    """Insert one outer axis while keeping fixed-cell floors and mesh data shared."""
+    if not candidates:
+        raise ValueError("At least one outer candidate is required.")
+    structure = jax.tree.structure(candidates[0])
+    if any(jax.tree.structure(candidate) != structure for candidate in candidates[1:]):
+        raise TypeError("Outer candidates require identical carry/query structure.")
+    return cast(
+        "EGMCarry",
+        jax.tree.map_with_path(_stack_carry_leaf, *candidates),
+    )
+
+
+def _stack_carry_leaf(
+    path: tuple[jax.tree_util.GetAttrKey, ...], *leaves: NumericQueryLeaf
+) -> NumericQueryLeaf:
+    """Stack candidate-dependent axes without duplicating shared query banks."""
+    names = tuple(key.name for key in path)
+    if names in (("taste_shock_scale",), ("query_data", "floor_used")):
+        return leaves[0]
+    if "adaptive_outer_data" in names:
+        return leaves[0]
+    axis = -3 if "liquid_corner_data" in names else -2
+    return jnp.stack(leaves, axis=axis)
+
+
 jax.tree_util.register_pytree_with_keys(
     EGMCarry,
     _flatten_egm_carry_with_keys,
     _unflatten_egm_carry,
     _flatten_egm_carry,
 )
+
+
+class OwnedRowRead(NamedTuple):
+    """Associated candidate with missing support separate from corrupt records."""
+
+    value: ScalarFloat
+    marginal: ScalarFloat
+    savings: ScalarFloat
+    supported: ScalarBool
+    invalid_numeric: ScalarBool
+    owner_id: ScalarInt
+    side_id: ScalarInt
+
+
+def _flatten_owned_row_read(
+    result: OwnedRowRead,
+) -> tuple[tuple[PytreeChild, ...], None]:
+    return tuple(result), None
+
+
+def _flatten_owned_row_read_with_keys(
+    result: OwnedRowRead,
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, PytreeChild], ...], None]:
+    return tuple(
+        (jax.tree_util.GetAttrKey(name), leaf)
+        for name, leaf in zip(OwnedRowRead._fields, result, strict=True)
+    ), None
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_owned_row_read(
+    _aux: None, children: Iterable[PytreeChild]
+) -> OwnedRowRead:
+    """Restore temporary query batches and compiler roles without scalar checks."""
+    leaves = tuple(children)
+    if len(leaves) != len(OwnedRowRead._fields):
+        raise TypeError("An owned row read requires all its associated fields.")
+    return cast("OwnedRowRead", tuple.__new__(OwnedRowRead, leaves))
+
+
+jax.tree_util.register_pytree_with_keys(
+    OwnedRowRead,
+    _flatten_owned_row_read_with_keys,
+    _unflatten_owned_row_read,
+    _flatten_owned_row_read,
+)
+
+
+def read_owned_row(
+    *,
+    query: ScalarFloat,
+    grid: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    data: EGMQueryData,
+    owner_capacity: int,
+    side_is_row_side: bool = True,
+) -> OwnedRowRead:
+    """Read V, marginal and original saving through one owned conditional bracket.
+
+    The caller supplies the canonical run capacity and retains model authority.
+    `side_is_row_side` distinguishes row-side labels from native conditional
+    envelope labels retained on a sampled liquid row. The latter retain their
+    provenance while the value derivative uses the published row's right piece.
+    Exact nodes select the right copy without requiring a neighbouring link.
+    Below support the first owning secant extends; above support the last
+    original candidate clamps. No gap or foreign run becomes represented.
+    """
+    result, _ = _read_owned_row_with_support(
+        query=query,
+        grid=grid,
+        value=value,
+        marginal=marginal,
+        data=data,
+        owner_capacity=owner_capacity,
+        side_is_row_side=side_is_row_side,
+    )
+    return result
+
+
+def _read_owned_row_with_support(
+    *,
+    query: ScalarFloat,
+    grid: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    data: EGMQueryData,
+    owner_capacity: int,
+    side_is_row_side: bool = True,
+    _left_endpoint: bool = False,
+) -> tuple[OwnedRowRead, BoolND]:
+    """Retain the node-support mask already required by the associated row read."""
+    search, count = prepare_padded_grid(grid)
+    last = jnp.maximum(count - 1, 0)
+    insertion = jnp.searchsorted(search, query, side="right")
+    exact_index = jnp.clip(insertion - 1, 0, last).astype(jnp.int32)
+    if _left_endpoint:
+        left = jnp.clip(jnp.searchsorted(search, query, side="left"), 0, last)
+        exact_index = jnp.where(grid[left] == query, left, exact_index)
+    endpoint = (count > 0) & ((grid[exact_index] == query) | (query >= grid[last]))
+    endpoint_index = jnp.where(query >= grid[last], last, exact_index)
+    if _left_endpoint:
+        endpoint_index = jnp.where(query > grid[last], last, exact_index)
+    upper = jnp.clip(insertion, 1, jnp.maximum(count - 1, 1)).astype(jnp.int32)
+    lower = upper - 1
+    pair_link = (
+        data.link_valid[jnp.clip(lower, 0, data.link_valid.shape[0] - 1)]
+        if data.link_valid.shape[0]
+        else jnp.asarray(False)  # noqa: FBT003
+    )
+    lower = jnp.where(endpoint, endpoint_index, lower)
+    upper = jnp.where(endpoint, endpoint_index, upper)
+    arithmetic_grid = jnp.where(jnp.isfinite(grid), grid, 0.0)
+    width = arithmetic_grid[upper] - arithmetic_grid[lower]
+    weight_upper = jnp.where(
+        endpoint,
+        1.0,
+        (query - arithmetic_grid[lower]) / jnp.where(width > 0.0, width, 1.0),
+    )
+    active_lower = (1.0 - weight_upper) != 0.0
+    active_upper = weight_upper != 0.0
+    finite = data.node_kind == QueryNodeKind.FINITE
+    economic = data.node_kind == QueryNodeKind.ECONOMIC_MINUS_INF
+    known = finite | economic
+    numeric_valid = (
+        jnp.isfinite(grid)
+        & jnp.isfinite(data.savings)
+        & (
+            (finite & jnp.isfinite(value) & jnp.isfinite(marginal))
+            | (economic & jnp.isneginf(value) & (marginal == 0.0))
+        )
+    )
+    owner_valid = (data.owner_id >= 0) & (data.owner_id < owner_capacity)
+    side_valid = (data.side_id >= -1) & (data.side_id <= 1)
+    supported_node = known & numeric_valid & owner_valid & side_valid
+    invalid_record = (data.node_kind != QueryNodeKind.PAD) & (
+        ~known | ~owner_valid | ~side_valid
+    )
+    invalid_numeric = (
+        active_lower & (invalid_record[lower] | (known[lower] & ~numeric_valid[lower]))
+    ) | (
+        active_upper & (invalid_record[upper] | (known[upper] & ~numeric_valid[upper]))
+    )
+    negative_economic = (economic[lower] & ((1.0 - weight_upper) < 0.0)) | (
+        economic[upper] & (weight_upper < 0.0)
+    )
+    positive_economic = (economic[lower] & ((1.0 - weight_upper) > 0.0)) | (
+        economic[upper] & (weight_upper > 0.0)
+    )
+    safe_value = jnp.where(numeric_valid, value, 0.0)
+    safe_marginal = jnp.where(finite & numeric_valid, marginal, 0.0)
+    safe_savings = jnp.where(numeric_valid, data.savings, 0.0)
+    row_value, row_marginal, row_savings = _read_owned_channels(
+        query=query,
+        grid=arithmetic_grid,
+        value=safe_value,
+        marginal=safe_marginal,
+        savings=safe_savings,
+        data=data,
+        supported_node=supported_node,
+        lower=lower,
+        upper=upper,
+        endpoint=endpoint,
+        node_index=endpoint_index,
+        last=last,
+        side_is_row_side=side_is_row_side,
+        _left_endpoint=_left_endpoint,
+    )
+    complete_nodes = (~active_lower | supported_node[lower]) & (
+        ~active_upper | supported_node[upper]
+    )
+    connected = endpoint | (pair_link & (data.owner_id[lower] == data.owner_id[upper]))
+    invalid_numeric |= (
+        complete_nodes
+        & connected
+        & (
+            ~jnp.isfinite(row_savings)
+            | (
+                ~positive_economic
+                & (~jnp.isfinite(row_value) | ~jnp.isfinite(row_marginal))
+            )
+        )
+    )
+    supported = (
+        (count > 0) & complete_nodes & connected & ~negative_economic & ~invalid_numeric
+    )
+    result = OwnedRowRead(
+        value=jnp.where(
+            supported, jnp.where(positive_economic, -jnp.inf, row_value), 0.0
+        ),
+        marginal=jnp.where(supported & ~positive_economic, row_marginal, 0.0),
+        savings=jnp.where(supported, row_savings, 0.0),
+        supported=supported,
+        invalid_numeric=invalid_numeric,
+        owner_id=jnp.where(supported, data.owner_id[lower], -1),
+        side_id=jnp.where(supported & endpoint, data.side_id[lower], 0),
+    )
+    return result, supported_node
+
+
+def _read_owned_channels(
+    *,
+    query: ScalarFloat,
+    grid: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    savings: Float1D,
+    data: EGMQueryData,
+    supported_node: BoolND,
+    lower: ScalarInt,
+    upper: ScalarInt,
+    endpoint: ScalarBool,
+    node_index: ScalarInt,
+    last: ScalarInt,
+    side_is_row_side: bool,
+    _left_endpoint: bool = False,
+) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
+    """Reuse the declared interpolants on one safe, already owned local piece.
+
+    A represented exact node without an owning adjacent piece reads as a
+    singleton. Its value derivative is zero while its ordinary marginal stays
+    available. Outgoing endpoints use their left piece; incoming nodes use
+    their right piece. Local scratch never adds represented row support.
+    """
+    use_left = (
+        _left_endpoint
+        | (node_index == last)
+        | (side_is_row_side & (data.side_id[node_index] == -1))
+    )
+    indices, count, _ = _get_owned_local_piece(
+        grid=grid,
+        data=data,
+        supported_node=supported_node,
+        lower=lower,
+        upper=upper,
+        endpoint=endpoint,
+        node_index=node_index,
+        last=last,
+        use_left=use_left,
+    )
+    local_grid = grid[indices]
+    search_grid = jnp.where(jnp.arange(2) < count, local_grid, jnp.inf)
+    read = functools.partial(
+        interp_on_prepared_grid,
+        x_query=query,
+        search_grid=search_grid,
+        valid_length=count,
+        xp=local_grid,
+    )
+    return (
+        read(fp=value[indices], fp_slopes=marginal[indices]),
+        read(fp=marginal[indices]),
+        read(fp=savings[indices]),
+    )
+
+
+def _get_owned_local_piece(
+    *,
+    grid: Float1D,
+    data: EGMQueryData,
+    supported_node: BoolND,
+    lower: ScalarInt,
+    upper: ScalarInt,
+    endpoint: ScalarBool,
+    node_index: ScalarInt,
+    last: ScalarInt,
+    use_left: ScalarBool,
+) -> tuple[Int1D, ScalarInt, ScalarBool]:
+    """Locate an authenticated adjacent piece or its original singleton fallback."""
+    piece_lower = jnp.where(
+        endpoint, jnp.where(use_left, jnp.maximum(node_index - 1, 0), node_index), lower
+    )
+    piece_upper = jnp.where(
+        endpoint,
+        jnp.where(use_left, node_index, jnp.minimum(node_index + 1, last)),
+        upper,
+    )
+    link = (
+        data.link_valid[jnp.clip(piece_lower, 0, data.link_valid.shape[0] - 1)]
+        if data.link_valid.shape[0]
+        else jnp.asarray(False)  # noqa: FBT003
+    )
+    has_piece = (
+        (piece_upper > piece_lower)
+        & link
+        & supported_node[piece_lower]
+        & supported_node[piece_upper]
+        & (data.owner_id[piece_lower] == data.owner_id[piece_upper])
+        & (grid[piece_upper] > grid[piece_lower])
+    )
+    fallback = jnp.where(endpoint, node_index, lower)
+    piece_lower = jnp.where(has_piece, piece_lower, fallback)
+    piece_upper = jnp.where(has_piece, piece_upper, fallback)
+    indices = jnp.stack((piece_lower, piece_upper))
+    count = jnp.where(has_piece, jnp.int32(2), jnp.int32(1))
+    return indices, count, has_piece
 
 
 def read_value_row(
@@ -345,6 +709,7 @@ def egm_carry_role_tree(
     scalar: OutputRoleLeaf,
     breakpoints: OutputRoleLeaf | None,
     policy: OutputRoleLeaf | None,
+    query_data: EGMQueryData | None = None,
 ) -> EGMCarry:
     """Build an `EGMCarry`-shaped tree of output roles.
 
@@ -354,13 +719,52 @@ def egm_carry_role_tree(
     are role declarations rather than arrays, so the tree is assembled through
     the field-by-field assembly rather than the runtime-checked constructor.
     """
-    return _assemble_egm_carry(children=(row, row, row, scalar, breakpoints, policy))
+    return _assemble_egm_carry(
+        children=(row, row, row, scalar, breakpoints, policy, query_data)
+    )
+
+
+def egm_query_role_tree(
+    *, query_data: EGMQueryData, state_names: tuple[StateName, ...]
+) -> EGMQueryData:
+    """Declare each numeric query buffer's exact dtype, shape and state axes."""
+    return cast(
+        "EGMQueryData",
+        jax.tree.map_with_path(
+            functools.partial(_query_output_role, state_names=state_names),
+            query_data,
+        ),
+    )
+
+
+# keyword-only-exempt: library-callback=jax.tree.map_with_path
+def _query_output_role(
+    path: tuple[jax.tree_util.GetAttrKey, ...],
+    leaf: NumericQueryLeaf,
+    *,
+    state_names: tuple[StateName, ...],
+) -> OutputRoleLeaf:
+    """Replicate shared mesh metadata and place conditional banks by fixed states."""
+    from _lcm.execution.output_layout import StateAxesLeading  # noqa: PLC0415
+
+    names = tuple(key.name for key in path)
+    shared_mesh = names[0] == "adaptive_outer_data" and names[-1] in (
+        "outer_nodes",
+        "outer_count",
+        "outer_node_kind",
+    )
+    return StateAxesLeading(
+        state_names=() if shared_mesh else state_names,
+        dtype=leaf.dtype,
+        shape=leaf.shape,
+    )
 
 
 def build_template_egm_carry(
     *,
     n_rows: int,
     leading_shape: tuple[int, ...] = (),
+    query_data: EGMQueryData | None = None,
 ) -> EGMCarry:
     """Build a benign all-finite carry template with `n_rows` grid slots.
 
@@ -388,6 +792,7 @@ def build_template_egm_carry(
         value=jnp.zeros(shape, dtype=dtype),
         marginal_utility=jnp.zeros(shape, dtype=dtype),
         taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
+        query_data=query_data,
     )
 
 
@@ -448,7 +853,7 @@ def shard_carry_template(
         ),
     )
     scalar_spec = jax.NamedSharding(plan.mesh, jax.P())
-    return jax.tree.map(
+    return jax.tree.map_with_path(
         functools.partial(
             _place_carry_leaf, scalar_spec=scalar_spec, leading_spec=leading_spec
         ),
@@ -476,12 +881,21 @@ def _place_carry_template_on_one_device(
     return jax.device_put(template, jax.sharding.SingleDeviceSharding(devices[0]))
 
 
-# keyword-only-exempt: library-callback=jax.tree.map
+# keyword-only-exempt: library-callback=jax.tree.map_with_path
 def _place_carry_leaf(
-    leaf: FloatND,
+    path: tuple[jax.tree_util.GetAttrKey, ...],
+    leaf: NumericQueryLeaf,
     *,
     scalar_spec: jax.NamedSharding,
     leading_spec: jax.NamedSharding,
-) -> FloatND:
-    """Place one carry leaf: a scalar replicates, a row takes the leading sharding."""
-    return jax.device_put(leaf, scalar_spec if leaf.ndim == 0 else leading_spec)
+) -> NumericQueryLeaf:
+    """Replicate scalar/shared mesh data and partition fixed-state banks."""
+    names = tuple(key.name for key in path)
+    shared_mesh = "adaptive_outer_data" in names and names[-1] in (
+        "outer_nodes",
+        "outer_count",
+        "outer_node_kind",
+    )
+    return jax.device_put(
+        leaf, scalar_spec if leaf.ndim == 0 or shared_mesh else leading_spec
+    )
