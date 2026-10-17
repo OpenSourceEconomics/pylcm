@@ -1805,6 +1805,11 @@ def validate_discrete_state_laws_all_periods(
     off a category grid. Infeasible cells never count, since the solve masks
     them before any maximum.
 
+    Feasibility here is the ordinary constraints. A value-dependent constraint or
+    a gate that reads a value cannot exclude a cell whose code is off the grid,
+    since that code has no value; a value-free restriction belongs among the
+    ordinary constraints.
+
     Raises:
         InvalidStateTransitionError: At the first feasible cell a law leaves its
             grid, naming the regime, period, law, target and cell.

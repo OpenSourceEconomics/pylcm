@@ -10,7 +10,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A deterministic law of a discrete state that leaves its grid at a cell where some
   choice is feasible raises `InvalidStateTransitionError` before the solve, naming the
   regime, period, law and cell; cells where no choice is feasible never count.
-  `Model.validate_transitions` runs this check too.
+  `Model.validate_transitions` runs this check too. Feasibility here is the ordinary
+  constraints, in both phases: a value-dependent constraint or a gate that reads a
+  value cannot exclude a cell whose code is off the grid, since that code has no value.
+  Declare a value-free restriction as an ordinary constraint instead.
 - Behavior change: with `runtime_checks=False`, reading the value function at a code
   outside `0..n-1` gives NaN instead of the value at the nearest end node. This holds
   for category grids as well, which used to clamp silently. An integer value grid has
