@@ -422,7 +422,7 @@ def test_feasibility_summary_preserves_the_native_value() -> None:
 
 def test_feasibility_summary_rejects_changed_native_values() -> None:
     """Changing only the wrapper's value readout breaks its transport proof."""
-    source = (_SRC_ROOT / "_lcm/solution/feasibility.py").read_text()
+    source = (_SRC_ROOT / "_lcm/solution/feasibility.py").read_text(encoding="utf-8")
     changed = source.replace(
         "else (value, empty_count, other_inf_count)",
         "else (-value, empty_count, other_inf_count)",
@@ -3054,9 +3054,9 @@ def test_s03_imported_helper_is_rejected_after_byte_reseal(
     for relative_path in {*sources, relative}:
         target = tmp_path / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text((root / relative_path).read_text(), encoding="utf-8")
+        target.write_text((root / relative_path).read_text(encoding="utf-8"), encoding="utf-8")
     target = tmp_path / relative
-    tree = ast.parse(target.read_text())
+    tree = ast.parse(target.read_text(encoding="utf-8"))
     function = _definition(tree=tree, qualname=helper)
     assert isinstance(function, ast.FunctionDef)
     function.body = ast.parse("return None").body
@@ -3132,7 +3132,7 @@ def test_s03_owned_numerical_helper_body_adds_explicit_detection(
     for source in {*sources, relative}:
         target = tmp_path / source
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text((root / source).read_text(), encoding="utf-8")
+        target.write_text((root / source).read_text(encoding="utf-8"), encoding="utf-8")
     baseline = verify_direct_candidate_flow(repo_root=tmp_path)
     diagnostic = f"S03 scalar dependency: exact callable corridor {helper!r} changed"
     assert diagnostic not in baseline["errors"], (
