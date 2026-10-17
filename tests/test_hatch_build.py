@@ -14,6 +14,7 @@ Two properties the build owes its caller:
   says so at the time.
 """
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Unpack
@@ -678,6 +679,116 @@ def test_a_cache_miss_stores_the_compiled_libraries(
             f"{hatch_build.CUDA_LIBRARY}.build.log",
             hatch_build.NATIVE_CACHE_INDEX,
         ]
+    )
+
+
+def _damage_entry(*, entry: Path, damage: str) -> None:
+    """Break a stored cache entry in one named way."""
+    index = entry / hatch_build.NATIVE_CACHE_INDEX
+    if damage == "truncated index":
+        index.write_text(index.read_text()[:5])
+    elif damage == "index not a list":
+        index.write_text('{"libraries": 1}')
+    elif damage == "missing listed library":
+        (entry / hatch_build.CUDA_LIBRARY).unlink()
+    elif damage == "listed name not a file":
+        (entry / hatch_build.CUDA_LIBRARY).unlink()
+        (entry / hatch_build.CUDA_LIBRARY).mkdir()
+    elif damage == "no index":
+        index.unlink()
+
+
+def _build_after_damage(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, damage: str
+) -> tuple[list[Path], list[Path], Path]:
+    """Store an entry, damage it, then build twice more into fresh directories.
+
+    Returns the compile targets of the two later builds, the libraries the first
+    of them returned, and the entry.
+    """
+    root = _fake_checkout(tmp_path / "checkout")
+    monkeypatch.setenv("PYLCM_NATIVE_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.delenv("PYLCM_NATIVE_CACHE", raising=False)
+    _pin_toolchain(monkeypatch=monkeypatch)
+    calls: list[Path] = []
+    monkeypatch.setattr(hatch_build, "_compile", _counting_compile(calls))
+    hatch_build.build_exact_affine_cached(
+        root=root, output_dir=tmp_path / "first", jax_include_dir="/jax/include"
+    )
+    entry = tmp_path / "cache" / hatch_build.native_cache_key(root=root)
+    _damage_entry(entry=entry, damage=damage)
+    calls.clear()
+    written = hatch_build.build_exact_affine_cached(
+        root=root, output_dir=tmp_path / "second", jax_include_dir="/jax/include"
+    )
+    hatch_build.build_exact_affine_cached(
+        root=root, output_dir=tmp_path / "third", jax_include_dir="/jax/include"
+    )
+    return calls, written, entry
+
+
+DAMAGES = [
+    "truncated index",
+    "index not a list",
+    "missing listed library",
+    "listed name not a file",
+    "no index",
+]
+
+
+@pytest.mark.parametrize("damage", DAMAGES)
+def test_a_damaged_entry_is_recompiled_once_and_then_hit(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, damage: str
+) -> None:
+    """The build after the damage compiles; the one after that hits the cache."""
+    calls, _, _ = _build_after_damage(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, damage=damage
+    )
+
+    assert [target.parent.name for target in calls] == ["second", "second"]
+
+
+@pytest.mark.parametrize("damage", DAMAGES)
+def test_a_damaged_entry_still_returns_the_compiled_libraries(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, damage: str
+) -> None:
+    """The rebuild returns both libraries, written into its own output directory."""
+    _, written, _ = _build_after_damage(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, damage=damage
+    )
+
+    assert [(path.parent.name, path.name, path.is_file()) for path in written] == [
+        ("second", hatch_build.CPU_LIBRARY, True),
+        ("second", hatch_build.CUDA_LIBRARY, True),
+    ]
+
+
+@pytest.mark.parametrize("damage", DAMAGES)
+def test_a_damaged_entry_is_replaced_by_a_complete_one(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, damage: str
+) -> None:
+    """After the rebuild the entry lists, and holds, every library again."""
+    _, _, entry = _build_after_damage(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, damage=damage
+    )
+
+    names = json.loads((entry / hatch_build.NATIVE_CACHE_INDEX).read_text())
+    assert [(name, (entry / name).is_file()) for name in names] == [
+        (hatch_build.CPU_LIBRARY, True),
+        (hatch_build.CUDA_LIBRARY, True),
+    ]
+
+
+def test_a_damaged_entry_says_it_is_rebuilt(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    """The build names the damaged entry it is replacing."""
+    _, _, entry = _build_after_damage(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, damage="truncated index"
+    )
+
+    assert f"native cache entry {entry.name} damaged; rebuilding" in (
+        capsys.readouterr().out
     )
 
 
