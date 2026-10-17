@@ -14,7 +14,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from beartype import beartype
+from jax import Array
 from jax.typing import ArrayLike
+from jaxtyping import Int
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
@@ -33,6 +35,9 @@ from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ValueND
 # so a fill-mode read cannot wrap it onto the last node the way `-1` would.
 MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 _INT32_MAX = jnp.iinfo(jnp.int32).max
+
+# A code array of any integer width; with x64 enabled, `jnp.array([0])` is int64.
+type _CodeIndex = Int[Array, "..."]
 
 # A declared value, before it is normalized to a Python scalar.
 type _UserValue = int | float | np.integer | np.floating
@@ -481,3 +486,17 @@ def _as_float_query(*, value: ArrayLike, dtype: np.dtype) -> FloatND:
     if isinstance(value, jax.Array):
         return value.astype(dtype)
     return jnp.asarray(np.asarray(value).astype(dtype))
+
+
+def read_at_codes(
+    *, array: ValueND, positions: tuple[_CodeIndex | int | slice, ...]
+) -> ValueND:
+    """Return `array[positions]`, a fill value wherever a code lies off its axis.
+
+    A code outside `0..n-1`, including `MISSING_CAT_CODE` and `-1`, reads NaN
+    from a floating array and the dtype's fill value (the most negative signed
+    integer, for instance) from any other. Nothing is clamped onto an end node or
+    wrapped onto the last one, so a read of an off-grid next state cannot pass
+    for a value.
+    """
+    return array.at[positions].get(mode="fill", wrap_negative_indices=False)

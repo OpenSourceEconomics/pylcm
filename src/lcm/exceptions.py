@@ -50,6 +50,14 @@ class InvalidStateTransitionProbabilitiesError(PyLCMError):
     """
 
 
+class InvalidStateTransitionError(PyLCMError):
+    """Raised when a deterministic law of a discrete state leaves its grid.
+
+    Reported for a cell where some choice is feasible: the law returns a code
+    outside `0..n-1`, or a value on no node of a `DiscreteGrid(values=...)`.
+    """
+
+
 class OffGridStateError(PyLCMError):
     """Raised when an explicitly guarded continuous state leaves its grid."""
 

@@ -7,6 +7,18 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ### Discrete grids with numeric values
 
+- A deterministic law of a discrete state that leaves its grid at a cell where some
+  choice is feasible raises `InvalidStateTransitionError` before the solve, naming the
+  regime, period, law and cell; cells where no choice is feasible never count.
+  `Model.validate_transitions` runs this check too. Feasibility here is the ordinary
+  constraints, in both phases: a value-dependent constraint or a gate that reads a
+  value cannot exclude a cell whose code is off the grid, since that code has no value.
+  Declare a value-free restriction as an ordinary constraint instead.
+- Behavior change: with `runtime_checks=False`, reading the value function at a code
+  outside `0..n-1` gives NaN instead of the value at the nearest end node. This holds
+  for category grids as well, which used to clamp silently. An integer value grid has
+  no NaN, so a user function reading such a state receives `MISSING_CAT_CODE`, the
+  int32 minimum, while the value function there is still NaN.
 - `DiscreteGrid(values=[0, 20, 40])` declares a discrete variable by its numbers instead
   of a category class. Values are strictly ascending, finite, and all integers (stored
   as int32) or all floats (stored at the canonical float dtype). Codes stay `0..n-1`;
