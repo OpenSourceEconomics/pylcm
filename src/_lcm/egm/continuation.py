@@ -2333,7 +2333,26 @@ def _aggregate_child_choices(
             values=value_at_child, axes=(0,)
         )
     smoothed_marginal = jnp.sum(choice_probs * marginal_at_child)
-    return smoothed_value, smoothed_marginal
+    # The carry pads unused nodes with NaN, so an off-grid code's all-NaN rows
+    # would read as an empty row and fall back to a finite candidate. A code off
+    # its axis reads NaN, as `read_at_codes` promises.
+    on_grid = _codes_on_their_axes(
+        codes=child_index, sizes=leaves[("value",)].shape[: len(child_index)]
+    )
+    return (
+        jnp.where(on_grid, smoothed_value, jnp.nan),
+        jnp.where(on_grid, smoothed_marginal, jnp.nan),
+    )
+
+
+def _codes_on_their_axes(
+    *, codes: tuple[ScalarInt, ...], sizes: tuple[int, ...]
+) -> BoolND:
+    """Return whether every code lies in `0..n-1` of its own axis."""
+    on_grid = jnp.ones((), dtype=bool)
+    for code, size in zip(codes, sizes, strict=True):
+        on_grid = on_grid & (jnp.asarray(code) >= 0) & (jnp.asarray(code) < size)
+    return on_grid
 
 
 def _read_feature_child_choices(

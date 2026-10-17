@@ -1930,13 +1930,21 @@ def validate_discrete_state_laws_all_periods(
     if not any(
         isinstance(grid, DiscreteGrid)
         for regime in regimes.values()
-        for name, grid in regime.solution.grids.items()
-        if name in regime.solution.state_names
+        for phase in (regime.solution, regime.simulation)
+        for name, grid in phase.grids.items()
+        if name in phase.state_names
     ):
         return
     for period in range(ages.n_periods - 1):
         for regime_name, regime in regimes.items():
-            if regime.terminal or period not in regime.active_periods:
+            # A value constraint or a gated edge decides which cells are feasible
+            # or reach a target only once the values are known. Those cells are
+            # not counted here; the solve masks them as it takes the maximum.
+            if (
+                regime.terminal
+                or period not in regime.active_periods
+                or regime.solution.counts_raise_landings
+            ):
                 continue
             regime_params = regime_kernel_params(flat_params, regime_name=regime_name)
             state_action_space = _state_action_space_for_period(
@@ -2008,6 +2016,13 @@ def _validate_discrete_state_laws(
             **state_action_space.actions,
         }
         for target in phase.reachability.targets(period=period, source=regime_name):
+            # A carried state has a simulation grid but no solve axis, so each
+            # side reads its target's grids from the same phase.
+            target_phase = (
+                regimes[target].simulation
+                if side == "simulate"
+                else regimes[target].solution
+            )
             transitions = phase.transitions.get(target, MappingProxyType({}))
             plan = phase.transition_plans.get(target)
             lotteries = (
@@ -2051,10 +2066,9 @@ def _validate_discrete_state_laws(
                 for name in transitions
                 if name.startswith("next_")
                 and name not in stochastic
+                and name.removeprefix("next_") in target_phase.state_names
                 and isinstance(
-                    grid := regimes[target].solution.grids.get(
-                        name.removeprefix("next_")
-                    ),
+                    grid := target_phase.grids.get(name.removeprefix("next_")),
                     DiscreteGrid,
                 )
             }
@@ -2074,9 +2088,7 @@ def _validate_discrete_state_laws(
             law_grids = {
                 **grids,
                 **{
-                    name: regimes[target]
-                    .solution.grids[name.removeprefix("next_")]
-                    .to_jax()
+                    name: target_phase.grids[name.removeprefix("next_")].to_jax()
                     for name in stochastic
                 },
             }
@@ -2148,7 +2160,7 @@ def _validate_discrete_state_laws(
                     feasible=feasible,
                     point={k.removeprefix("__node_"): v for k, v in point.items()},
                     target_grid=target_grid,
-                    source_grids=regime.solution.grids,
+                    source_grids=phase.grids,
                     description=(
                         f"In regime '{regime_name}' at age {age} (period {period}), "
                         f"the law '{name}' to regime '{target}'"

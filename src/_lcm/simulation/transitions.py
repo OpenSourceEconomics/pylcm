@@ -19,7 +19,7 @@ from jax import numpy as jnp
 from jax import vmap
 
 from _lcm.engine import Regime, StateActionSpace
-from _lcm.grids import ContinuousGrid
+from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.off_grid import count_off_grid, report_off_grid
 from _lcm.processes import _ContinuousStochasticProcess
@@ -43,8 +43,21 @@ from _lcm.typing import (
 )
 from _lcm.utils.counts import sum_counts
 from _lcm.utils.logging import validation_enabled
-from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError, OffGridStateError
-from lcm.typing import Bool1D, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    InvalidStateTransitionError,
+    OffGridStateError,
+)
+from lcm.typing import (
+    Bool1D,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ScalarFloat,
+    ScalarInt,
+    ValueND,
+)
 
 
 def clip_next_states(
@@ -69,6 +82,11 @@ def clip_next_states(
     duplicates are advanced and clipped but never counted.
     """
     points: dict[RegimeName, dict[StateName, Float1D]] = {}
+    # The transition preflight leaves a source whose value constraints or gated
+    # edges decide its reached cells to the solve and to these realized codes.
+    check_codes = (
+        validation_enabled(logger) and regimes[source].solution.counts_raise_landings
+    )
     for target in targets:
         regime = regimes[target]
         axes = regime.solution.period_state_axes
@@ -81,6 +99,19 @@ def clip_next_states(
             if not isinstance(grid, ContinuousGrid) or isinstance(
                 grid, _ContinuousStochasticProcess
             ):
+                _fail_if_realized_codes_leave_the_grid(
+                    enabled=check_codes,
+                    codes=states[target][name],
+                    grid=grid,
+                    subjects=subjects & genuine,
+                    new_regime_ids=new_regime_ids,
+                    target_id=regime_ids[target],
+                    description=(
+                        f"In regime {source!r} (period {next_period - 1}), the "
+                        f"simulated law of {name!r} to regime {target!r}"
+                    ),
+                    memory=memory,
+                )
                 continue
             check = validation_enabled(logger) or grid.off_grid == "raise"
             if check or grid.off_grid == "clip_state":
@@ -152,6 +183,54 @@ def _count_realized_grid_state(
             sum_counts(counts=owned & ~jnp.isfinite(values)),
         ]
     )
+
+
+def _fail_if_realized_codes_leave_the_grid(
+    *,
+    enabled: bool,
+    codes: ValueND,
+    grid: Grid,
+    subjects: Bool1D,
+    new_regime_ids: Int1D,
+    target_id: ScalarInt,
+    description: str,
+    memory: SimulationMemory | None,
+) -> None:
+    """Raise if a reached subject's realized code lies off its discrete grid.
+
+    It sees every state that is not a plain continuous grid, a shock process's
+    float values included, and counts codes only for a discrete grid.
+    """
+    if not enabled or not isinstance(grid, DiscreteGrid):
+        return
+    count = run_simulation_operation(
+        memory=memory,
+        function=_count_realized_off_grid_codes,
+        arguments={
+            "codes": codes,
+            "n_codes": jnp.int32(len(grid.codes)),
+            "subjects": subjects,
+            "new_regime_ids": new_regime_ids,
+            "target_id": target_id,
+        },
+        subject_arg_names=("codes", "subjects", "new_regime_ids"),
+    )
+    if int(count):
+        msg = f"{description} returns a code outside its grid for a reached subject."
+        raise InvalidStateTransitionError(msg)
+
+
+def _count_realized_off_grid_codes(
+    *,
+    codes: IntND,
+    n_codes: ScalarInt,
+    subjects: Bool1D,
+    new_regime_ids: Int1D,
+    target_id: ScalarInt,
+) -> ScalarInt:
+    """Count selected, genuine subjects whose realized code lies off `0..n-1`."""
+    owned = subjects & (new_regime_ids == target_id)
+    return sum_counts(counts=owned & ((codes < 0) | (codes >= n_codes)))
 
 
 def _clip_next_states(

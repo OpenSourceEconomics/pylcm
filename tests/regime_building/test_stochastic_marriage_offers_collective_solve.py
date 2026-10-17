@@ -43,6 +43,7 @@ correctness/expressibility on small grids, not performance at EKL's actual
 scale.
 """
 
+import re
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -486,8 +487,8 @@ def test_endogenous_offer_distribution_is_rejected() -> None:
     the transition closures, so the ill-formed `Q_f` argument is NOT caught at
     build time: the DAG machinery falls back to treating the unresolved name
     as an ordinary flat regime PARAMETER (`married_terminal__next_spouse_type
-    __Q_f`), so it surfaces only once `solve` actually invokes the closure and
-    finds no such parameter was supplied — a `KeyError` naming exactly the
+    __Q_f`), so it surfaces only once `solve` evaluates the period kernel and
+    finds no such parameter was supplied — a `ValueError` naming exactly the
     missing (and unsuppliable-as-a-live-value) argument. There is no way to
     bind it to the household's own in-solve `Q_f` array: the params dict can
     only ever hold a caller-supplied CONSTANT, never the solved value, so the
@@ -536,7 +537,10 @@ def test_endogenous_offer_distribution_is_rejected() -> None:
             "married_terminal": MappingProxyType({}),
         }
     )
-    with pytest.raises(KeyError) as error:
+    with pytest.raises(
+        ValueError,
+        match=re.escape("missing: {'married_terminal__next_spouse_type__Q_f'}"),
+    ):
         solve(
             program_fingerprint="test_stochastic_marriage_offers_collective_solve",
             flat_params=flat_params,
@@ -545,4 +549,3 @@ def test_endogenous_offer_distribution_is_rejected() -> None:
             logger=get_logger(log_level="off"),
             enable_jit=False,
         )
-    assert error.value.args == ("married_terminal__next_spouse_type__Q_f",)
