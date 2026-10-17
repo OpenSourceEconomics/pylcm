@@ -406,9 +406,11 @@ def _install_bounded_child(
         stochastic_node_width: int | None = None,
         resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
         co_map_state_names: tuple[StateName, ...] = (),
+        collect_continuation_read_counts: bool = False,
     ) -> Callable[[ScalarFloat], BoundedResult[tuple[ScalarFloat, ScalarFloat]]]:
         del plan, next_regime_to_continuation, dtype, stochastic_node_width
         del resolved_process_grids, co_map_state_names
+        del collect_continuation_read_counts
         wealth = cast("ScalarFloat", combo_pool.get("wealth", jnp.asarray(0.0)))
 
         def child(

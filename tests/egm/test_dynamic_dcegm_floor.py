@@ -215,12 +215,14 @@ def test_prepared_source_offsets_keep_order_and_extent(
         ],
         savings_nodes: Float1D,
         savings_point_width: int | None,
+        bound_summary: bool = False,
     ) -> tuple[FloatND, ...]:
         observed.append(np.asarray(savings_nodes))
         output = original(
             compute_node=compute_node,
             savings_nodes=savings_nodes,
             savings_point_width=savings_point_width,
+            bound_summary=bound_summary,
         )
         assert not isinstance(output, feasibility.BoundedResult)
         return output
