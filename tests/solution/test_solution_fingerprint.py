@@ -1871,6 +1871,7 @@ def _fingerprint_regime(
             transitions={},
             compute_regime_transition_probs=None,
             external_replay_route=None,
+            egm_policy_read=None,
             reachability=SimpleNamespace(
                 active_regimes_by_period=(frozenset({"alive"}),) * 2
             ),

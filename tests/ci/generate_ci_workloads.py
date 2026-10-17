@@ -11,6 +11,8 @@ What it changes, and nothing else:
   list does not name is added to `general_shard_universe` and to
   `unweighted_files` — never to `file_weights`, because a file with no observed
   weight is not a file that costs nothing;
+- every file some invocation selects that has neither a weight nor an
+  unweighted entry is added to `unweighted_files`;
 - the `files` list of every `general-shard-<n>-<leg>` invocation is recomputed
   from that universe with the manifest's own weighted partition, so the
   recorded split is the one CI computes at run time;
@@ -117,6 +119,11 @@ def regenerate(
             if invocation_id not in by_id:
                 raise KeyError(f"{invocation_id} is not a recorded invocation")
             by_id[invocation_id]["files"] = sorted(group)
+    # A file a lane selects by hand still needs a weight or an unweighted entry.
+    selected = {file_ for inv in updated["invocations"] for file_ in inv["files"]}
+    updated["unweighted_files"] = sorted(
+        {*updated["unweighted_files"], *(selected - weighted)}
+    )
     _fail_if_missing_paths(repo_root=repo_root, universe=universe)
     return updated
 

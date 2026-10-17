@@ -27,7 +27,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
-from lcm.solvers import DCEGM, GridSearch, OneMarginSolver
+from lcm.solvers import DCEGM, FUESEnvelope, GridSearch, OneMarginSolver
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -175,11 +175,17 @@ def test_a_proved_bound_is_still_checked_against_the_grid() -> None:
 
 
 def test_a_bound_on_the_euler_state_is_refused_by_dcegm() -> None:
-    """A bound elsewhere says nothing about the savings grid, so nothing proved it."""
+    """A per-combination envelope cannot read the Euler state its inversion makes."""
     with pytest.raises(
         ModelInitializationError, match=r"dcegm solve.*still needs \['wealth'\]"
     ):
-        _model(solver=_dcegm(), constraint=ref("wealth") >= 0.0)
+        _model(
+            solver=DCEGM(
+                savings_grid=LinSpacedGrid(start=-2.0, stop=4.0, n_points=12),
+                envelope=FUESEnvelope(),
+            ),
+            constraint=ref("wealth") >= 0.0,
+        )
 
 
 def test_a_bound_on_the_post_decision_state_is_evaluated_by_grid_search() -> None:
