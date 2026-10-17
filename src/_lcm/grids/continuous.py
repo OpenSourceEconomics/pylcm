@@ -65,7 +65,9 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     n_points: ScalarInt
     """The number of points in the grid (`jnp.int32` JAX scalar)."""
 
-    off_grid: OffGrid = "extrapolate"
+    off_grid: OffGrid = dataclasses.field(
+        default="extrapolate", metadata={"fingerprint_omit_if_default": True}
+    )
     """Extrapolate, clip only lookup, clip the next state, or refuse exterior states."""
 
     @beartype(conf=GRID_CONF)
@@ -244,7 +246,9 @@ class IrregSpacedGrid(ContinuousGrid):
     n_points: int
     """Number of points. Derived from `len(points)` when points are given."""
 
-    off_grid: OffGrid = "extrapolate"
+    off_grid: OffGrid = dataclasses.field(
+        default="extrapolate", metadata={"fingerprint_omit_if_default": True}
+    )
     """Policy applied to values outside the supplied closed grid."""
 
     @beartype(conf=GRID_CONF)
