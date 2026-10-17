@@ -49,6 +49,7 @@ documentation and tests.
 | [`lcm.GridBreakpoint`](grids_and_processes.md#api-continuous-grids)                     | Piecewise-grid boundary              |
 | [`lcm.PiecewiseLinSpacedGrid`](grids_and_processes.md#api-continuous-grids)             | Piecewise linear grid                |
 | [`lcm.PiecewiseLogSpacedGrid`](grids_and_processes.md#api-continuous-grids)             | Piecewise log grid                   |
+| [`lcm.ConditionalAction`](grids_and_processes.md#api-continuous-grids)                  | Action active under some codes       |
 | [`lcm.UniformIIDProcess`](grids_and_processes.md#api-stochastic-processes)              | IID uniform process                  |
 | [`lcm.NormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)               | IID normal process                   |
 | [`lcm.JointNormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)          | Named correlated IID normal shocks   |
