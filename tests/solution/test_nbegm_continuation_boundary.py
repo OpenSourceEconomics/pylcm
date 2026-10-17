@@ -135,13 +135,13 @@ def _cell(*, continuation: _BoundContinuation) -> _NBEGMCellContinuation:
 
 @pytest.mark.parametrize("boundary", ["cell", "interval"])
 @pytest.mark.parametrize("bounded", [False, True])
-def test_nbegm_plain_boundary_refuses_uninstalled_query_status(
+def test_nbegm_boundary_folds_installed_query_status_over_savings_rows(
     *,
     boundary: Literal["cell", "interval"],
     bounded: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Keep concrete plain rows and reject query status without its NB adapter."""
+    """Keep concrete rows and fold an installed child's query status over them."""
     continuation = _continuation(bounded=bounded)
     specimen = continuation(jnp.asarray(1.0))
     if bounded:
@@ -194,11 +194,12 @@ def test_nbegm_plain_boundary_refuses_uninstalled_query_status(
             savings_grid=cell.savings_grid,
         )
 
+    rows = read_rows()
     if bounded:
-        with pytest.raises(TypeError, match=r"NB-EGM.*query status"):
-            read_rows()
+        assert isinstance(rows, BoundedResult)
+        np.testing.assert_array_equal(rows.query_status, [[True, False, False]])
+        rows = rows.output
     else:
-        rows = read_rows()
         assert not isinstance(rows, BoundedResult)
-        np.testing.assert_array_equal(rows[0], [7.0, 9.0, 11.0])
-        np.testing.assert_array_equal(rows[1], [2.0, 2.0, 2.0])
+    np.testing.assert_array_equal(rows[0], [7.0, 9.0, 11.0])
+    np.testing.assert_array_equal(rows[1], [2.0, 2.0, 2.0])
