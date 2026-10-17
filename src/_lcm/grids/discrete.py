@@ -115,6 +115,7 @@ class DiscreteGrid(Grid):
         self.__value_array: Int1D | Float1D | None = None
         self.__midpoints = None
         self.__tolerance = 0.0
+        self.__holds_integers = False
 
     def __init_values(
         self,
@@ -164,6 +165,7 @@ class DiscreteGrid(Grid):
         self.__values = declared
         self.__value_array = value_array
         self.__tolerance = float(tolerance)
+        self.__holds_integers = is_integer
 
     @property
     def categories(self) -> tuple[str, ...]:
@@ -250,7 +252,8 @@ class DiscreteGrid(Grid):
         index = jnp.where((codes >= 0) & (codes < n_nodes), codes, n_nodes)
         return nodes.at[index].get(
             mode="fill",
-            fill_value=_off_grid_value(nodes),
+            # Integers have no NaN, so an off-grid code reads the sentinel there.
+            fill_value=MISSING_CAT_CODE if self.__holds_integers else math.nan,
             wrap_negative_indices=False,
         )
 
@@ -478,10 +481,3 @@ def _as_float_query(*, value: ArrayLike, dtype: np.dtype) -> FloatND:
     if isinstance(value, jax.Array):
         return value.astype(dtype)
     return jnp.asarray(np.asarray(value).astype(dtype))
-
-
-def _off_grid_value(nodes: Int1D | Float1D) -> float | int:
-    """Return the value an off-grid code reads: NaN, or the int32 sentinel."""
-    if jnp.issubdtype(nodes.dtype, jnp.integer):
-        return MISSING_CAT_CODE
-    return math.nan

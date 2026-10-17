@@ -144,41 +144,7 @@ def _callable_mapping_errors(
 def validate_regimes(*, regimes: Mapping[RegimeName, Regime], laws: RegimeLaws) -> None:
     """Validate every regime against the law its model binds for it."""
     for name, regime in regimes.items():
-        fail_if_value_grids(
-            states=regime.states,
-            actions=regime.actions,
-            derived_categoricals=regime.derived_categoricals,
-        )
         validate_regime_law(regime, law=laws[name])
-
-
-def fail_if_value_grids(
-    *,
-    states: Mapping[StateOrActionName, StateEntry],
-    actions: Mapping[StateOrActionName, StateEntry],
-    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
-) -> None:
-    """Raise if a state, action or derived categorical is a value grid.
-
-    User functions read the codes of every discrete variable, so a value grid
-    would hand them positions where they expect its numbers. Inspect raw
-    mappings separately, before model transformations can replace their grids.
-    """
-    names = {
-        name
-        for mapping in (states, actions, derived_categoricals)
-        for name, entry in mapping.items()
-        for grid in (
-            (entry.solve, entry.simulate) if isinstance(entry, Phased) else (entry,)
-        )
-        if isinstance(grid, DiscreteGrid) and grid.values is not None
-    }
-    if names:
-        raise RegimeInitializationError(
-            f"{sorted(names)} are declared as `DiscreteGrid(values=...)`. "
-            "A model passes discrete variables to user functions as codes, so "
-            "declare them with a category class and decode the codes by hand."
-        )
 
 
 def validate_regime(regime: Regime) -> None:
