@@ -28,7 +28,7 @@ from _lcm.solution.contract import ConstraintRouteContext, SolutionKernels
 from _lcm.typing import EconFunctionsMapping
 from lcm import ref
 from lcm.solver_api import SolverExecutionCapabilities
-from lcm.solvers import DCEGM, EGM, GridSearch, Solver
+from lcm.solvers import DCEGM, EGM, FUESEnvelope, GridSearch, Solver
 from lcm.typing import BoolND, ContinuousState
 from tests.test_models import dcegm_paper_twin, negm_kinked_toy
 
@@ -143,6 +143,13 @@ def _dcegm() -> Solver:
     return _bound(DCEGM(savings_grid=dcegm_paper_twin.SAVINGS_GRID))
 
 
+def _fues_dcegm() -> Solver:
+    """The same DC-EGM with an envelope that evaluates feasibility per combination."""
+    return _bound(
+        DCEGM(savings_grid=dcegm_paper_twin.SAVINGS_GRID, envelope=FUESEnvelope())
+    )
+
+
 def _egm() -> Solver:
     """The bound plain EGM of the same regime."""
     return _bound(EGM(savings_grid=dcegm_paper_twin.SAVINGS_GRID))
@@ -222,10 +229,17 @@ def test_dcegm_evaluates_a_constraint_over_its_discrete_combination() -> None:
 
 
 def test_dcegm_evaluates_at_the_discrete_combo_stage() -> None:
-    """DC-EGM's feasibility predicate is built per discrete combination."""
-    disposition = _disposition(solver=_dcegm(), constraint=ref("retire") <= 1)
+    """A non-exact envelope builds the feasibility predicate per discrete combination."""
+    disposition = _disposition(solver=_fues_dcegm(), constraint=ref("retire") <= 1)
 
     assert disposition.stage == "discrete_combo"
+
+
+def test_exact_dcegm_evaluates_at_the_state_node_stage() -> None:
+    """The exact envelope evaluates feasibility at published current-state nodes."""
+    disposition = _disposition(solver=_dcegm(), constraint=ref("retire") <= 1)
+
+    assert disposition.stage == "state_node"
 
 
 def test_dcegm_refuses_a_constraint_reading_its_continuous_action() -> None:
@@ -244,9 +258,16 @@ def test_dcegm_evaluates_a_constraint_over_a_passive_continuous_state() -> None:
 
 def test_dcegm_refuses_a_constraint_reading_its_euler_state() -> None:
     """The Euler state is the axis the inversion produces, not a combination input."""
-    disposition = _disposition(solver=_dcegm(), constraint=ref("wealth") >= 0.0)
+    disposition = _disposition(solver=_fues_dcegm(), constraint=ref("wealth") >= 0.0)
 
     assert isinstance(disposition, Reject)
+
+
+def test_exact_dcegm_evaluates_a_constraint_reading_its_euler_state() -> None:
+    """At a published current-state node the Euler state is bound."""
+    disposition = _disposition(solver=_dcegm(), constraint=ref("wealth") >= 0.0)
+
+    assert isinstance(disposition, Evaluate)
 
 
 def test_dcegm_evaluates_a_constraint_over_a_regime_parameter() -> None:
@@ -407,7 +428,7 @@ def test_a_bound_on_another_name_is_not_proved_by_the_savings_grid() -> None:
     """
     disposition = _disposition(solver=_dcegm(), constraint=ref("wealth") >= 0.0)
 
-    assert isinstance(disposition, Reject)
+    assert not isinstance(disposition, ProvedByConstruction)
 
 
 def test_egm_savings_bounds_are_evaluated_on_the_simulate_route() -> None:
