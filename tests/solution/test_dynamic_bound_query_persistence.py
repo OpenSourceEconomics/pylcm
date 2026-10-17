@@ -55,6 +55,18 @@ def _outer_cost(*, adjustment: FloatND, income: FloatND) -> FloatND:
     return adjustment + income
 
 
+# A finite nested operator over the two-node `adjustment` grid; slot zero is the
+# keeper, so its capacity is three.
+_FINITE_OUTER = continuation.FiniteOuterQuerySpec(
+    outer_state="income",
+    outer_action="adjustment",
+    outer_post_decision="outer_target",
+    keeper_target=None,
+    cost_target="outer_cost",
+    outer_nodes=(0.0, 1.0),
+)
+
+
 def _feature_model(
     *,
     liquid_corner: bool = False,
@@ -103,6 +115,7 @@ def _feature_model(
         if outer_mode == "adaptive_continuous"
         else None
     )
+    finite = _FINITE_OUTER if outer_mode == "finite_max" else None
     query = build_template_egm_query_data(
         outer_capacity=outer_capacity,
         adaptive_capacity=3 if adaptive is not None else None,
@@ -124,9 +137,10 @@ def _feature_model(
         outer_mode=outer_mode,
         outer_capacity=outer_capacity,
         adaptive_outer=adaptive,
+        finite_outer=finite,
         state_names=("income",),
         action_names=(),
-        coordinate_kind="resources",
+        coordinate_kind="resources" if finite is None else "nested_common_resources",
         marginal_convention="ordinary_linear",
         corner_coordinate_kind="liquid_row" if liquid_corner else "compact_interval",
         row_capacity=5,
@@ -522,7 +536,12 @@ def test_query_structure_fingerprint_seals_semantics(*, change: str) -> None:
     changes = {
         "coordinate": {"marginal_convention": "paired_value_derivative"},
         "interval": {"interval_ids": (9,)},
-        "outer": {"outer_mode": "finite_max", "outer_capacity": 3},
+        "outer": {
+            "outer_mode": "finite_max",
+            "outer_capacity": 3,
+            "finite_outer": _FINITE_OUTER,
+            "coordinate_kind": "nested_common_resources",
+        },
         "source": {
             "evaluator_targets": (("resources", "savings"), ("utility", "utility"))
         },
