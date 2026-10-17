@@ -63,6 +63,8 @@ from _lcm.transition_checks import (
 )
 from _lcm.typing import (
     ActionName,
+    ConstraintFunctionsMapping,
+    EconFunctionsMapping,
     FlatParams,
     HostArray,
     InitialConditions,
@@ -976,9 +978,6 @@ def validate_initial_conditions(
 
     Raises:
         InvalidInitialConditionsError: If any validation check fails.
-        UnsupportedOperationError: If a constraint depends on an age-specialized
-            function while subjects start away from the regime's representative
-            age, so that feasibility cannot be evaluated for them.
 
     """
     initial_states, regime_arr = _admitted_initial_states(
@@ -1045,9 +1044,6 @@ def initial_conditions_feasibility_mask(
     Raises:
         InvalidInitialConditionsError: If the regime IDs, state names, shapes,
             ages or discrete codes are invalid.
-        UnsupportedOperationError: If a constraint depends on an age-specialized
-            function while subjects start away from the regime's representative
-            age, so that feasibility cannot be evaluated for them.
 
     """
     initial_states, regime_arr = _admitted_initial_states(
@@ -1068,20 +1064,27 @@ def initial_conditions_feasibility_mask(
         ).tolist()
         if not subject_indices:
             continue
-        verdict = _regime_feasibility_mask(
+        regime_params = _merged_regime_params(
+            regime=regime, regime_name=regime_name, flat_params=flat_params
+        )
+        for regime_view, view_indices in _regime_views_by_start_pool(
             regime=regime,
-            regime_name=regime_name,
             initial_states=initial_states,
             subject_indices=subject_indices,
-            regime_params=_merged_regime_params(
-                regime=regime, regime_name=regime_name, flat_params=flat_params
-            ),
             ages=ages,
-            process_grid_resolver=process_grid_resolver,
-        )
-        # Without a summary the producer always returns a verdict.
-        assert verdict is not None  # noqa: S101
-        mask[subject_indices] = np.asarray(verdict.feasible)
+        ):
+            verdict = _regime_feasibility_mask(
+                regime=regime_view,
+                regime_name=regime_name,
+                initial_states=initial_states,
+                subject_indices=view_indices,
+                regime_params=regime_params,
+                ages=ages,
+                process_grid_resolver=process_grid_resolver,
+            )
+            # Without a summary the producer always returns a verdict.
+            assert verdict is not None  # noqa: S101
+            mask[view_indices] = np.asarray(verdict.feasible)
     return jnp.asarray(mask)
 
 
@@ -1592,23 +1595,31 @@ def _collect_feasibility_errors(
         if not subject_indices:
             continue
 
-        msg = _check_regime_feasibility(
+        regime_params = _merged_regime_params(
+            regime=regime, regime_name=regime_name, flat_params=flat_params
+        )
+        for regime_view, view_indices in _regime_views_by_start_pool(
             regime=regime,
-            regime_name=regime_name,
             initial_states=initial_states,
             subject_indices=subject_indices,
-            regime_params=_merged_regime_params(
-                regime=regime, regime_name=regime_name, flat_params=flat_params
-            ),
             ages=ages,
             cohorts=cohorts,
-            summary=summary,
-            process_grid_resolver=process_grid_resolver,
-            action_grid_resolver=action_grid_resolver,
-            memory=memory,
-        )
-        if msg is not None:
-            errors.append(msg)
+        ):
+            msg = _check_regime_feasibility(
+                regime=regime_view,
+                regime_name=regime_name,
+                initial_states=initial_states,
+                subject_indices=view_indices,
+                regime_params=regime_params,
+                ages=ages,
+                cohorts=cohorts,
+                summary=summary,
+                process_grid_resolver=process_grid_resolver,
+                action_grid_resolver=action_grid_resolver,
+                memory=memory,
+            )
+            if msg is not None:
+                errors.append(msg)
 
     return errors
 
@@ -1818,65 +1829,78 @@ def _regime_feasibility_function(
     return memory.producers.built(builder=_get_feasibility, **inputs)
 
 
-def _age_specialized_feasibility_message(
+def _regime_views_by_start_pool(
     *,
     regime: Regime,
-    regime_name: RegimeName,
     initial_states: Mapping[StateName, FloatND | IntND],
     subject_indices: list[int],
     ages: TimeAxis,
     cohorts: _InitialCohorts | None = None,
-) -> str | None:
-    """Return an error message if a subject's feasibility check would silently
-    read a policy-specialized function resolved at the wrong age, else `None`.
+) -> tuple[tuple[Regime, list[int]], ...]:
+    """Pair each group of a regime's subjects with the regime view that judges them.
 
     The published `regime.simulation.constraints`/`functions` hold each
     `AgeSpecializedFunction` resolved at the regime's representative (first
-    active) period only. A subject starting at any other period would have
-    their feasibility checked against that closure instead of their own.
-    """
-    specialized = regime.simulation.age_specialized_function_names
-    if not specialized:
-        return None
-    pool = {**dict(regime.simulation.functions), **dict(regime.simulation.constraints)}
-    consumed = (
-        set(
-            get_ancestors(
-                pool,
-                targets=list(regime.simulation.constraints),
-                include_targets=True,
-            )
-        )
-        & specialized
-    )
-    if not consumed:
-        return None
+    active) period. When a constraint reads one, every subject is judged by the
+    function and constraint pool of its own start period instead, and subjects
+    whose start periods share a pool share one view. Otherwise all subjects are
+    judged by the published pools.
 
-    representative_period = regime.active_periods[0]
-    idx_arr = np.asarray(subject_indices)
+    Args:
+        regime: The internal regime instance.
+        initial_states: Mapping of state names to arrays (includes "age").
+        subject_indices: Indices of subjects starting in this regime.
+        ages: TimeAxis for the model.
+        cohorts: Host cohort metadata of the summary route.
+
+    Returns:
+        Pairs of a regime view and the subject indices it judges, together
+        covering `subject_indices` exactly once.
+
+    """
+    if not _constraints_read_age_specialized_functions(regime):
+        return ((regime, subject_indices),)
     if cohorts is None:
         subject_periods, _ = resolve_initial_periods(
-            ages=ages, initial_ages=np.asarray(initial_states["age"])[idx_arr]
+            ages=ages,
+            initial_ages=np.asarray(initial_states["age"])[np.asarray(subject_indices)],
         )
     else:
         subject_periods = np.array(
             [cohorts.periods[index] for index in subject_indices]
         )
-    off_representative = subject_periods != representative_period
-    if not np.any(off_representative):
-        return None
-
-    offending_indices = idx_arr[off_representative].tolist()
-    return (
-        f"Regime {regime_name!r}: subjects at indices {offending_indices} start "
-        f"away from the representative period {representative_period} used to "
-        f"resolve the policy-specialized (`AgeSpecializedFunction`) function(s) "
-        f"{sorted(consumed)} for feasibility checking. Published simulation "
-        f"functions hold one representative-age closure, so checking feasibility "
-        f"for these subjects would silently apply the wrong age's policy. Move "
-        f"the age-specialized logic out of the constraint (for example, compute "
-        f"it as a plain state fed by a transition) instead."
+    pools = regime.simulation.feasibility_pools_by_period
+    groups: dict[
+        int,
+        tuple[tuple[EconFunctionsMapping, ConstraintFunctionsMapping], list[int]],
+    ] = {}
+    for index, period in zip(subject_indices, subject_periods.tolist(), strict=True):
+        pool = pools[int(period)]
+        groups.setdefault(id(pool), (pool, []))[1].append(index)
+    return tuple(
+        (
+            dataclasses.replace(
+                regime,
+                simulation=dataclasses.replace(
+                    regime.simulation, functions=functions, constraints=constraints
+                ),
+            ),
+            indices,
+        )
+        for (functions, constraints), indices in groups.values()
     )
+
+
+def _constraints_read_age_specialized_functions(regime: Regime) -> bool:
+    """Whether a simulation constraint depends on an `AgeSpecializedFunction`."""
+    specialized = regime.simulation.age_specialized_function_names
+    if not specialized:
+        return False
+    pool = {**dict(regime.simulation.functions), **dict(regime.simulation.constraints)}
+    ancestors = get_ancestors(
+        pool, targets=list(regime.simulation.constraints), include_targets=True
+    )
+    return not specialized.isdisjoint(ancestors)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -2059,23 +2083,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
         The per-subject verdict with the operands diagnostics reuse, or `None`
         when the verdict was reduced into `summary`.
 
-    Raises:
-        UnsupportedOperationError: If a constraint depends on an age-specialized
-            function while subjects start away from the regime's representative
-            age.
-
     """
-    age_specialized_message = _age_specialized_feasibility_message(
-        regime=regime,
-        regime_name=regime_name,
-        initial_states=initial_states,
-        subject_indices=subject_indices,
-        ages=ages,
-        cohorts=cohorts,
-    )
-    if age_specialized_message is not None:
-        raise UnsupportedOperationError(age_specialized_message)
-
     feasibility_func = _regime_feasibility_function(regime=regime, memory=memory)
     accepted = get_union_of_args([feasibility_func])
 
