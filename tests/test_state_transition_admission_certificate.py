@@ -216,12 +216,12 @@ def test_state_transition_admission_contract_is_complete() -> None:
         (
             _INITIAL_CONDITIONS,
             (
-                "            simulation_memory=memory,\n        )\n\n\n"
-                "def _preflight_memory"
+                "            simulation_memory=memory,\n        )\n"
+                "        with contextlib.closing("
             ),
             (
-                "            simulation_memory=None,\n        )\n\n\n"
-                "def _preflight_memory"
+                "            simulation_memory=None,\n        )\n"
+                "        with contextlib.closing("
             ),
             "serial transition replay must retain simulation memory",
         ),

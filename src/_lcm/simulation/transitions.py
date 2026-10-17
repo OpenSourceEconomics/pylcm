@@ -6,6 +6,7 @@ transition functions from user-defined regimes; this module executes them.
 
 """
 
+import logging
 from collections.abc import Mapping
 from functools import partial
 from types import MappingProxyType
@@ -18,6 +19,10 @@ from jax import numpy as jnp
 from jax import vmap
 
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.grids import ContinuousGrid
+from _lcm.grids.continuous import _clip_grid_value
+from _lcm.off_grid import count_off_grid, report_off_grid
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.program_arguments import transition_arguments
 from _lcm.simulation.random import generate_simulation_keys
@@ -35,8 +40,140 @@ from _lcm.typing import (
     StateName,
     StatesPerRegime,
 )
-from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from _lcm.utils.counts import sum_counts
+from _lcm.utils.logging import validation_enabled
+from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError, OffGridStateError
 from lcm.typing import Bool1D, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
+
+
+def clip_next_states(
+    *,
+    states: StatesPerRegime,
+    regimes: Mapping[RegimeName, Regime],
+    base_spaces: Mapping[RegimeName, StateActionSpace],
+    targets: tuple[RegimeName, ...],
+    next_period: int,
+    source: RegimeName,
+    new_regime_ids: Int1D,
+    regime_ids: RegimeNamesToIds,
+    logger: logging.Logger,
+    subjects: Bool1D,
+    genuine: np.ndarray,
+    memory: SimulationMemory | None,
+) -> StatesPerRegime:
+    """Check raw realized states before applying explicit economic state clipping.
+
+    `subjects` selects the rows this source advances; `genuine` additionally marks
+    the rows that stand for a distinct real subject, so alignment and grouping
+    duplicates are advanced and clipped but never counted.
+    """
+    points: dict[RegimeName, dict[StateName, Float1D]] = {}
+    for target in targets:
+        regime = regimes[target]
+        axes = regime.solution.period_state_axes
+        state_points = {
+            **base_spaces[target].states,
+            **({} if axes is None else axes.get(next_period, {})),
+        }
+        for name in states[target]:
+            grid = regime.simulation.grids[name]
+            if not isinstance(grid, ContinuousGrid) or isinstance(
+                grid, _ContinuousStochasticProcess
+            ):
+                continue
+            check = validation_enabled(logger) or grid.off_grid == "raise"
+            if check or grid.off_grid == "clip_state":
+                nodes = (
+                    cast("Float1D", state_points[name])
+                    if name in state_points
+                    else grid.to_jax()
+                )
+                if check:
+                    counts = run_simulation_operation(
+                        memory=memory,
+                        function=_count_realized_grid_state,
+                        arguments={
+                            "values": states[target][name],
+                            "points": nodes,
+                            "subjects": subjects & genuine,
+                            "new_regime_ids": new_regime_ids,
+                            "target_id": regime_ids[target],
+                        },
+                        subject_arg_names=("values", "subjects", "new_regime_ids"),
+                    )
+                    if grid.off_grid == "raise" and int(counts[1]):
+                        raise OffGridStateError(
+                            f"Invalid next state: regime={source!r}, "
+                            f"target={target!r}, "
+                            f"period={next_period - 1}, state={name!r}"
+                        )
+                    report_off_grid(
+                        count=int(counts[0]),
+                        rule=grid.off_grid,
+                        regime=source,
+                        target=target,
+                        period=next_period - 1,
+                        state=name,
+                        phase="realized",
+                        logger=logger,
+                    )
+                if grid.off_grid == "clip_state":
+                    points.setdefault(target, {})[name] = nodes
+    if not points:
+        return states
+    return run_simulation_operation(
+        memory=memory,
+        function=_clip_next_states,
+        arguments={
+            "states": states,
+            "points": points,
+            "subjects": subjects,
+            "new_regime_ids": new_regime_ids,
+            "regime_ids": regime_ids,
+        },
+        subject_arg_names=("states", "subjects", "new_regime_ids"),
+    )
+
+
+def _count_realized_grid_state(
+    *,
+    values: FloatND,
+    points: Float1D,
+    subjects: Bool1D,
+    new_regime_ids: Int1D,
+    target_id: ScalarInt,
+) -> Int1D:
+    """Only selected, genuine subjects contribute to a raw realized-state count."""
+    owned = subjects & (new_regime_ids == target_id)
+    return jnp.stack(
+        [
+            count_off_grid(values=values, points=points, feasible=owned),
+            sum_counts(counts=owned & ~jnp.isfinite(values)),
+        ]
+    )
+
+
+def _clip_next_states(
+    *,
+    states: StatesPerRegime,
+    points: Mapping[RegimeName, Mapping[StateName, Float1D]],
+    subjects: Bool1D,
+    new_regime_ids: Int1D,
+    regime_ids: RegimeNamesToIds,
+) -> StatesPerRegime:
+    """Clip finite values only on the rows this source actually advances."""
+    result = {target: dict(values) for target, values in states.items()}
+    for target, state_points in points.items():
+        for name, nodes in state_points.items():
+            raw = states[target][name]
+            result[target][name] = jnp.where(
+                subjects & (new_regime_ids == regime_ids[target]),
+                _clip_grid_value(value=raw, points=nodes),
+                raw,
+            )
+    return MappingProxyType(
+        {target: MappingProxyType(values) for target, values in result.items()}
+    )
 
 
 def create_regime_state_action_space(

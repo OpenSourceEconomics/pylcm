@@ -122,10 +122,13 @@ def _solve_with(
         n_consumption=12,
         execution_config=execution_config,
     )
+    # Runtime checks off: their untiled off-grid count producers are admitted
+    # against the same budget, ahead of the solve cores this search plans.
     return model.solve(
         params=nbegm_ride_along_toy.build_params(),
         retention=ResultRetention.VALUES,
         log_level=log_level,
+        runtime_checks=False,
     )
 
 

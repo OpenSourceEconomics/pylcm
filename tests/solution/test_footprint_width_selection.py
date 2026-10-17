@@ -206,9 +206,12 @@ def _solve_capturing_compilation(
         execution_config=ExecutionConfig(device_memory_bytes=budget_bytes)
     )
     params = _filled_template(template=model.get_params_template())
+    # Runtime checks off: their untiled off-grid count producers are admitted
+    # against the same budget, ahead of the cores whose widths are observed here.
     model.solve(
         params=params,
         log_level="debug",
+        runtime_checks=False,
     )
     (call,) = calls
     return call
@@ -421,7 +424,8 @@ def test_a_cell_whose_position_fills_the_budget_is_refused_by_name(
         ExecutionPlanningError, match=re.escape("Regime 'acting' at period 0")
     ):
         _selected_width_products(
-            monkeypatch=monkeypatch, budget_bytes=2 * _value_bytes()
+            monkeypatch=monkeypatch,
+            budget_bytes=_fixed_fixture_bytes() + 2 * _value_bytes(),
         )
 
 
@@ -453,8 +457,12 @@ def test_only_a_core_with_room_left_for_a_workspace_is_lowered(
 def test_the_refusal_names_the_cell_the_budget_and_the_resident_bytes(
     *, monkeypatch: pytest.MonkeyPatch, template: str
 ) -> None:
-    """A cell fitting at no width names where it failed and what it competed with."""
-    budget = 2 * _value_bytes() + 1
+    """A cell fitting at no width names where it failed and what it competed with.
+
+    The budget holds the model's inputs, so the transition preflight admits them
+    and the cell's own position is what fills it.
+    """
+    budget = _fixed_fixture_bytes() + 2 * _value_bytes()
     pattern = template.format(
         resident=_fixed_fixture_bytes() + 2 * _value_bytes(), budget=budget
     )

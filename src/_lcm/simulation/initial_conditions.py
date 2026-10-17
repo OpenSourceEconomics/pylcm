@@ -58,6 +58,7 @@ from _lcm.transition_checks import (
     _SerialValidationRequired,
     _validate_transition_sequence,
     _ValidationSummary,
+    validate_off_grid_transitions,
     validate_transitions,
 )
 from _lcm.typing import (
@@ -82,6 +83,7 @@ from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidInitialConditionsError,
     NoFeasibleActionError,
+    OffGridStateError,
     PyLCMError,
     UnsupportedOperationError,
 )
@@ -126,7 +128,7 @@ class _InitialCohorts:
     periods: tuple[int, ...]
 
 
-def validate_simulation_inputs(
+def validate_simulation_inputs(  # noqa: C901
     *,
     initial_conditions: InitialConditions,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -185,6 +187,20 @@ def validate_simulation_inputs(
                 regime_names_to_ids=regime_names_to_ids,
                 memory=memory,
             )
+            with contextlib.closing(
+                _ValidationSummary(
+                    memory=memory, process_grid_resolver=process_grid_resolver
+                )
+            ) as summary:
+                validate_off_grid_transitions(
+                    regimes=regimes,
+                    flat_params=flat_params,
+                    ages=ages,
+                    logger=logger,
+                    mandatory_only=True,
+                    summary=summary,
+                    process_grid_resolver=process_grid_resolver,
+                )
         finally:
             if memory is not None:
                 memory.close_unit()
@@ -232,7 +248,17 @@ def validate_simulation_inputs(
                     process_grid_resolver=process_grid_resolver,
                 )
                 accepted = summary.valid()
-            except UnsupportedOperationError:
+                if accepted:
+                    validate_off_grid_transitions(
+                        regimes=regimes,
+                        flat_params=flat_params,
+                        ages=ages,
+                        logger=logger,
+                        mandatory_only=True,
+                        summary=summary,
+                        process_grid_resolver=process_grid_resolver,
+                    )
+            except UnsupportedOperationError, OffGridStateError:
                 raise
             except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
                 raise
@@ -266,6 +292,47 @@ def validate_simulation_inputs(
             process_grid_resolver=process_grid_resolver,
             simulation_memory=memory,
         )
+        with contextlib.closing(
+            _ValidationSummary(
+                memory=memory, process_grid_resolver=process_grid_resolver
+            )
+        ) as summary:
+            validate_off_grid_transitions(
+                regimes=regimes,
+                flat_params=flat_params,
+                ages=ages,
+                logger=logger,
+                mandatory_only=True,
+                summary=summary,
+                process_grid_resolver=process_grid_resolver,
+            )
+
+
+def transition_preflight_memory(
+    *,
+    execution: ResolvedExecution | None,
+    producers: ProfiledSimulationOperations,
+    flat_params: FlatParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    ages: TimeAxis,
+) -> SimulationMemory | None:
+    """Admit transition checks that run before any solution or subject exists.
+
+    The owner charges the parameters and model-owned grids as live inputs and
+    keeps every admitted producer in the model's `producers`, so a retained model
+    reuses them. `None` for an execution without a device budget.
+    """
+    return _preflight_memory(
+        execution=execution,
+        retained_footprint=measure_buffer_footprint(tree=()),
+        producers=producers,
+        initial_conditions={},
+        flat_params=flat_params,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        ages=ages,
+    )
 
 
 def _preflight_memory(
@@ -302,6 +369,7 @@ def _preflight_memory(
         devices=devices,
         subject_devices=devices[:1],
         operations=_PREFLIGHT_OPERATIONS,
+        budget_note=execution.device_memory_cap_note(),
         producers=ProfiledSimulationOperations() if producers is None else producers,
         inputs=union_buffer_footprints(
             footprints=(

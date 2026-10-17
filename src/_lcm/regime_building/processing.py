@@ -3494,6 +3494,13 @@ def _build_solution_phase(  # noqa: PLR0915
     # no continuation, so the set is empty there.
     co_map_state_names: tuple[StateName, ...] = ()
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = ()
+    # A value constraint or a gated edge decides which actions and branches a
+    # landing is reached through only once the values are known, so these
+    # sources count their raise-rule landings inside the solve kernel, where
+    # both are, rather than in the preflight, where neither is.
+    counts_raise_landings = bool(value_aware_feasibility.value_constraints) or bool(
+        gated_continuations
+    )
 
     period_to_state_nodes = _period_to_state_nodes(
         regime_name=regime_name, grid_schedule=grid_schedule
@@ -3614,6 +3621,7 @@ def _build_solution_phase(  # noqa: PLR0915
             same_period_refs=value_aware_feasibility.same_period_refs,
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
+            count_raise_landings=counts_raise_landings,
         )
         Q_and_F_functions = grouped_Q_and_F.by_period
         decision_group_key = grouped_Q_and_F.group_key
@@ -3854,6 +3862,7 @@ def _build_solution_phase(  # noqa: PLR0915
         action_partitions=action_partitions,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
+        counts_raise_landings=counts_raise_landings,
     )
     return _SolutionBuild(
         phase=phase,
@@ -8418,6 +8427,7 @@ def _build_Q_and_F_per_period(
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
+    count_raise_landings: bool = False,
 ) -> _GroupedQAndF:
     """Build Q-and-F closures for each active period of a non-terminal regime.
 
@@ -8468,6 +8478,8 @@ def _build_Q_and_F_per_period(
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
             regime without gated edges.
+        count_raise_landings: Whether each closure also returns its raw landing
+            counts on the raise-rule grids it reads. Only the solve site sets it.
 
     Returns:
         Immutable mapping of period index to the per-period Q-and-F closure.
@@ -8605,6 +8617,7 @@ def _build_Q_and_F_per_period(
                     else None
                 ),
                 gated_continuations=period_gated_continuations,
+                count_raise_landings=count_raise_landings,
             )
             continue
         built[key] = get_Q_and_F(
@@ -8644,6 +8657,7 @@ def _build_Q_and_F_per_period(
                 else None
             ),
             gated_continuations=period_gated_continuations,
+            count_raise_landings=count_raise_landings,
         )
 
     return _GroupedQAndF(
