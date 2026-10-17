@@ -481,7 +481,12 @@ def _model_wide_conditioning_names(
     return frozenset(
         grid.state_conditioned.on
         for user_regime in user_regimes.values()
-        for grid in user_regime.states.values()
+        for declaration in user_regime.states.values()
+        for grid in (
+            (declaration.solve, declaration.simulate)
+            if isinstance(declaration, Phased)
+            else (declaration,)
+        )
         if isinstance(grid, _ContinuousStochasticProcess)
         and grid.state_conditioned is not None
     )
@@ -871,7 +876,7 @@ def _validate_constraint_phase_invariance(
         carried_next = frozenset(
             f"next_{name}"
             for name, spec in user_regime.states.items()
-            if isinstance(spec, Phased)
+            if isinstance(spec, Phased) and callable(spec.solve)
         )
         if not phase_varying and not carried_next:
             continue

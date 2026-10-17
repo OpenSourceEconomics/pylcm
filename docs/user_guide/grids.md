@@ -102,9 +102,10 @@ points arrive at runtime, those supplied points define the closed endpoints. Int
 piecewise boundary ownership is unchanged. Numerical grid rules do not replace a tax,
 benefit or other economic cap declared in the model.
 
-With `runtime_checks=True`, diagnostics count raw exterior next states before clipping,
-excluding infeasible cells and unreachable lottery support. Output still follows
-`log_level`. The explicit `"raise"` policy applies even with `runtime_checks=False`.
+With `runtime_checks=True` and output enabled, diagnostics count raw exterior next
+states before clipping, excluding infeasible cells and unreachable lottery support.
+Silent solves skip these count-only diagnostic sweeps. The explicit `"raise"` policy
+applies at every `log_level`, even with `runtime_checks=False`.
 
 A regime with value-dependent constraints or gated edges only knows which actions and
 branches a next state is reached through once values exist. Its solve therefore checks

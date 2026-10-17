@@ -216,12 +216,14 @@ def test_state_transition_admission_contract_is_complete() -> None:
         (
             _INITIAL_CONDITIONS,
             (
-                "            simulation_memory=memory,\n        )\n"
-                "        with contextlib.closing("
+                "            summary=None,\n"
+                "            process_grid_resolver=process_grid_resolver,\n"
+                "            simulation_memory=memory,\n        )"
             ),
             (
-                "            simulation_memory=None,\n        )\n"
-                "        with contextlib.closing("
+                "            summary=None,\n"
+                "            process_grid_resolver=process_grid_resolver,\n"
+                "            simulation_memory=None,\n        )"
             ),
             "serial transition replay must retain simulation memory",
         ),
@@ -278,8 +280,14 @@ def test_state_transition_admission_contract_is_complete() -> None:
         ),
         (
             _TRANSITION_CHECKS,
-            "        resident_bytes=max(external.values()),",
-            "        resident_bytes=0,",
+            (
+                "        resident_bytes=max(external.values()),\n    )\n"
+                '    return cast("FloatND", executable(**placed).block_until_ready())'
+            ),
+            (
+                "        resident_bytes=0,\n    )\n"
+                '    return cast("FloatND", executable(**placed).block_until_ready())'
+            ),
             "largest device residency must be charged",
         ),
         (
@@ -302,8 +310,16 @@ def test_state_transition_admission_contract_is_complete() -> None:
         ),
         (
             _TRANSITION_CHECKS,
-            "        devices=(memory.subject_devices[0],),",
-            "        devices=(jax.devices()[0],),",
+            (
+                "        devices=(memory.subject_devices[0],),\n    )\n"
+                "    executable = memory.producers.admit_producer(\n"
+                "        function=partial(\n            _state_probability_law,"
+            ),
+            (
+                "        devices=(jax.devices()[0],),\n    )\n"
+                "    executable = memory.producers.admit_producer(\n"
+                "        function=partial(\n            _state_probability_law,"
+            ),
             "state law output must use the first selected subject device",
         ),
         (
@@ -331,7 +347,7 @@ def test_state_transition_admission_mutation_is_rejected(
         _TRANSITION_CHECKS: (_ROOT / _TRANSITION_CHECKS).read_text(),
         _HOST_OPERATIONS: (_ROOT / _HOST_OPERATIONS).read_text(),
     }
-    sources[path].index(old)
+    assert sources[path].count(old) == 1
     sources[path] = sources[path].replace(old, new, 1)
 
     errors = _state_transition_admission_errors(

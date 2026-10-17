@@ -1,5 +1,6 @@
 """Grid policies distinguish value lookup from the economic state handoff."""
 
+import logging
 from collections.abc import Callable, Mapping
 from fractions import Fraction
 from functools import partial
@@ -80,6 +81,7 @@ from lcm.typing import (
     Period,
     RegimeName,
     ScalarInt,
+    StateName,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -434,6 +436,26 @@ def test_explicit_raise_is_mandatory_at_every_runtime_and_output_setting(
 
 
 @pytest.mark.parametrize("off_grid", ["extrapolate", "clip_lookup", "clip_state"])
+def test_silent_solve_does_not_materialize_unreportable_off_grid_counts(
+    *, off_grid: OffGrid, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hidden count diagnostics must not allocate a full phase Cartesian grid."""
+
+    def reject_count_sweep(**_kwargs) -> None:
+        pytest.fail("Silent solve expanded an optional off-grid diagnostic grid")
+
+    monkeypatch.setattr(
+        transition_checks, "_off_grid_target_counts", reject_count_sweep
+    )
+    solution = _model(off_grid=off_grid).solve(
+        params={"discount_factor": 1.0, "reward": 2.0},
+        log_level="off",
+        runtime_checks=True,
+    )
+    assert np.isfinite(solution.values[0]["alive"]).all()
+
+
+@pytest.mark.parametrize("off_grid", ["extrapolate", "clip_lookup", "clip_state"])
 def test_checked_solve_reports_the_raw_count_before_clipping(
     *, off_grid: OffGrid, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -452,6 +474,33 @@ def test_checked_solve_reports_the_raw_count_before_clipping(
         and "count=1" in row
         for row in rows
     )
+
+
+@pytest.mark.parametrize("off_grid", ["extrapolate", "clip_lookup", "clip_state"])
+def test_validate_transitions_counts_off_grid_landings_without_output(
+    *, off_grid: OffGrid, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit validation request counts the raw exterior cell of every policy."""
+    reported = []
+
+    def _record(
+        *,
+        count: int,
+        rule: OffGrid,  # noqa: ARG001
+        regime: RegimeName,  # noqa: ARG001
+        target: RegimeName,  # noqa: ARG001
+        period: int,
+        state: StateName,
+        phase: str,  # noqa: ARG001
+        logger: logging.Logger,  # noqa: ARG001
+    ) -> None:
+        reported.append((state, period, count))
+
+    monkeypatch.setattr(transition_checks, "report_off_grid", _record)
+    _model(off_grid=off_grid).validate_transitions(
+        params={"discount_factor": 1.0, "reward": 2.0}
+    )
+    assert reported == [("wealth", 0, 1)]
 
 
 @pytest.mark.parametrize("runtime_checks", [False, True])
@@ -1205,7 +1254,7 @@ def test_budgeted_public_solve_admits_every_off_grid_count(
         transition_checks, "_evaluate_admitted_transition_producer", _recording_admit
     )
     _wide_model(device_memory_bytes=2**28).solve(
-        params={"discount_factor": 1.0, "reward": 2.0}, log_level="off"
+        params={"discount_factor": 1.0, "reward": 2.0}, log_level="warning"
     )
     assert admitted == [("wealth", "consumption")]
 

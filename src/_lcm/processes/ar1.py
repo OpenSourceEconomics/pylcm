@@ -11,7 +11,7 @@ from functools import partial
 from math import comb
 from numbers import Real
 from types import MappingProxyType
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -111,6 +111,7 @@ class TauchenAR1Process(_AR1Process):
     def on_nodes(
         *,
         nodes: tuple[float, ...],
+        simulate_draws: Literal["continuous", "nodes"] = "continuous",
         rho: float | None = None,
         sigma: float | StateConditioned | None = None,
         mu: float | None = 0.0,
@@ -124,6 +125,7 @@ class TauchenAR1Process(_AR1Process):
         _fail_if_non_real_nodes(nodes=nodes)
         return _TauchenOnNodesProcess(
             nodes=tuple(float(node) for node in nodes),
+            simulate_draws=simulate_draws,
             n_points=len(nodes),
             gauss_hermite=False,
             rho=rho,

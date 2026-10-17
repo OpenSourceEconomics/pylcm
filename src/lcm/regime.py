@@ -135,6 +135,10 @@ class Regime:
     derived function (no grid axis) in the solve phase and a seeded, evolved
     state in the simulate phase, whose law of motion is its regular
     `state_transitions` entry.
+    `Phased(solve=process, simulate=process)` keeps the perceived process for
+    values and decisions and draws from the separate simulation process. Distinct
+    phase laws use continuous draws and cannot fold; runtime parameter names shared
+    by both declarations share one value, while constructor parameters may differ.
     An `AgeSpecializedGrid` value is a continuous state whose grid bounds vary
     with age (fixed `n_points`); it is resolved to a concrete grid per period at
     model build.
@@ -647,7 +651,7 @@ class Regime:
             for name, func in self.decomposed_functions.items()
         }
         for name, spec in self.states.items():
-            if isinstance(spec, Phased):
+            if isinstance(spec, Phased) and callable(spec.solve):
                 # Carried state: the solve variant is its derived-function
                 # imputation; the law of motion is its regular
                 # `state_transitions` entry, collected below.

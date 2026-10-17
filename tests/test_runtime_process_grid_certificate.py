@@ -174,6 +174,24 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
     ):
         errors.append("staged roots must release on success and failure")
 
+    producer_calls = [
+        node
+        for node in ast.walk(staged_node)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_produce"
+    ]
+    if len(producer_calls) != 2 or any(
+        not any(
+            keyword.arg == "process_stage"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in call.keywords
+        )
+        for call in producer_calls
+    ):
+        errors.append("staged arithmetic must select its admitted executor")
+
     # The trace is cached per abstract parameter signature: the caller maps the
     # values to their types in positional order, and the cached body binds the
     # names and traces those types positionally, so both halves are pinned. A
