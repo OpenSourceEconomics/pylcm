@@ -5116,13 +5116,15 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         if isinstance(func, PeriodizedEconFunction)
     )
 
-    # Publish representative-period-resolved functions AND constraints: the
-    # feasibility check (`_get_feasibility` at initial-conditions validation) and
-    # additional-target computation consume both as plain callables, so an
-    # unresolved `PeriodizedEconFunction` leaking into either raises at build/eval
-    # time. `next_state` above keeps resolving `simulate_functions` per period;
-    # per-period *target* reads of a periodized node are still rejected by the guard
-    # via `age_specialized_function_names` (a rep-period closure would be wrong).
+    # Publish representative-period-resolved functions AND constraints as plain
+    # callables, so an unresolved `PeriodizedEconFunction` never reaches a
+    # consumer. Additional-target computation reads them, and so does the
+    # initial-conditions feasibility check while no constraint reads an
+    # age-specialized function; otherwise that check judges each subject by
+    # `feasibility_pools_by_period` at the subject's start period. `next_state`
+    # above resolves `simulate_functions` per period; per-period *target* reads of
+    # a periodized node are rejected by the guard via
+    # `age_specialized_function_names` (a rep-period closure would be wrong).
     simulation_active_periods = simulated_periods[regime_name]
     published_simulate_functions = (
         cast(
