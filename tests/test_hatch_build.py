@@ -711,7 +711,7 @@ def test_a_disabled_cache_writes_no_entry(
     [
         ({"PYLCM_NATIVE_CACHE_DIR": "/explicit"}, Path("/explicit")),
         ({"XDG_CACHE_HOME": "/xdg"}, Path("/xdg/pylcm/native")),
-        ({"HOME": "/someone"}, Path("/someone/.cache/pylcm/native")),
+        ({}, Path("/someone/.cache/pylcm/native")),
     ],
 )
 def test_the_cache_directory_follows_the_environment(
@@ -721,6 +721,8 @@ def test_the_cache_directory_follows_the_environment(
     expected: Path,
 ) -> None:
     """An explicit directory wins, then `XDG_CACHE_HOME`, then `~/.cache`."""
+    # `Path.home` reads `USERPROFILE` on Windows and `HOME` elsewhere.
+    monkeypatch.setattr(Path, "home", lambda: Path("/someone"))
     for name in ("PYLCM_NATIVE_CACHE_DIR", "XDG_CACHE_HOME"):
         monkeypatch.delenv(name, raising=False)
     for name, value in environment.items():
