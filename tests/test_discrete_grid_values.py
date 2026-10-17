@@ -34,7 +34,6 @@ from _lcm.regime_building.value_adapter import (
     adapt_user_function,
     collect_value_grids,
 )
-from _lcm.simulation.transitions import _fail_if_realized_codes_leave_the_grid
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -48,7 +47,6 @@ from lcm import (
     JointTransition,
     LinSpacedGrid,
     Model,
-    NormalIIDProcess,
     Periods,
     Phased,
     ProjectedRegimeValue,
@@ -1833,17 +1831,23 @@ def _kind_leaves_when_working(
     return jnp.where(a == 1, 2, kind).astype(jnp.int32)
 
 
-def _participation_model(*, threshold: float, forbids_working: bool) -> Model:
+def _rest_only(*, a: DiscreteAction) -> BoolND:
+    return a == 0
+
+
+def _participation_model(*, rest_as_ordinary: bool) -> Model:
     """`Q_alice = 1 - 2a`; only `a = 1` sends `kind` to code 2, off `{0, 1}`.
 
-    With `forbids_working` the participation constraint is the review's
-    `(a == 0) & (Q_alice >= threshold)`, which excludes `a = 1` whatever its
-    value; otherwise it reads `Q_alice` alone.
+    The restriction `a == 0` sits inside the value constraint, as in the review's
+    `(a == 0) & (Q_f >= 0)`, or beside it as an ordinary constraint.
     """
 
     def participation(*, Q_alice: FloatND, a: DiscreteAction) -> BoolND:
-        return ((a == 0) | (not forbids_working)) & (Q_alice >= threshold)
+        return ((a == 0) | rest_as_ordinary) & (Q_alice >= 0.0)
 
+    constraints = {"participation": ValueDependentConstraint(predicate=participation)}
+    if rest_as_ordinary:
+        constraints["rest_only"] = _rest_only
     return Model(
         regimes={
             "source": UserRegime(
@@ -1855,9 +1859,7 @@ def _participation_model(*, threshold: float, forbids_working: bool) -> Model:
                     )
                 },
                 state_transitions={"kind": _kind_leaves_when_working},
-                constraints={
-                    "participation": ValueDependentConstraint(predicate=participation)
-                },
+                constraints=constraints,
             ),
             "terminal": UserRegime(
                 states={"kind": DiscreteGrid(category_class=_TwoCodes)},
@@ -1875,23 +1877,30 @@ def _participation_model(*, threshold: float, forbids_working: bool) -> Model:
     )
 
 
+def test_value_constraint_cannot_excuse_an_off_grid_law():
+    """`a = 1` is feasible by the ordinary constraints, and its code is off the grid.
+
+    An off-grid code has no value, so the value constraint cannot decide that
+    cell; the error names the ordinary constraint as the remedy.
+    """
+    with pytest.raises(InvalidStateTransitionError, match="ordinary constraint"):
+        _participation_model(rest_as_ordinary=False).validate_transitions(
+            params={"discount_factor": 1.0}
+        )
+
+
 @pytest.mark.parametrize("runtime_checks", [False, True])
-def test_law_leaving_the_grid_only_where_participation_fails_solves(*, runtime_checks):
-    """Participation forbids `a = 1`, the only action that leaves the grid."""
-    got = _participation_model(threshold=0.0, forbids_working=True).solve(
+def test_ordinary_restriction_beside_a_value_constraint_solves(*, runtime_checks):
+    """Declared as an ordinary constraint, `a == 0` excludes the off-grid action."""
+    model = _participation_model(rest_as_ordinary=True)
+    model.validate_transitions(params={"discount_factor": 1.0})
+    got = model.solve(
         params={"discount_factor": 1.0},
         log_level="off",
         runtime_checks=runtime_checks,
     )
     np.testing.assert_array_equal(
         np.asarray(got.values[0]["source"]), [[1.0, 1.0], [1.0, 1.0]]
-    )
-
-
-def test_value_constrained_cells_are_not_counted_by_validate_transitions():
-    """Feasibility that reads values is unknown before the solve."""
-    _participation_model(threshold=-2.0, forbids_working=False).validate_transitions(
-        params={"discount_factor": 1.0}
     )
 
 
@@ -2053,93 +2062,8 @@ def test_dcegm_continuation_reads_nan_at_an_off_grid_child_code():
     assert finite_pattern == [[False, False], [True, False]]
 
 
-def test_law_leaving_the_grid_where_participation_holds_fails_the_checked_solve():
-    """`Q` at `a = 1` reads the off-grid code, so participation is undecided there.
-
-    The solve counts the code-2 landing unless the constraint fails whatever `Q`
-    is, as the review's `a == 0` part does.
-    """
-    model = _participation_model(threshold=-2.0, forbids_working=False)
-    model.validate_transitions(params={"discount_factor": 1.0})
-    with pytest.raises(InvalidStateTransitionError, match="kind"):
-        model.solve(
-            params={"discount_factor": 1.0}, log_level="off", runtime_checks=True
-        )
-
-
-def test_value_constrained_off_grid_landing_is_not_raised_without_checks():
-    """Without runtime checks the solve reads NaN there, as in any other regime."""
-    _participation_model(threshold=-2.0, forbids_working=False).solve(
-        params={"discount_factor": 1.0}, log_level="off", runtime_checks=False
-    )
-
-
-def _working_flow(*, kind: DiscreteState, a: DiscreteAction) -> FloatND:
-    return 1.0 * a + 0.0 * kind
-
-
-def _kind_stays(*, kind: DiscreteState, a: DiscreteAction) -> DiscreteState:
-    return kind + 0 * a
-
-
-def test_realized_off_grid_code_of_a_value_constrained_regime_fails_simulation():
-    """The simulate law sends `kind` to code 2 at the chosen `a = 1`."""
-
-    def participation(Q_alice: FloatND) -> BoolND:
-        return Q_alice >= -2.0
-
-    model = Model(
-        regimes={
-            "source": UserRegime(
-                states={"kind": DiscreteGrid(category_class=_TwoCodes)},
-                actions={"a": DiscreteGrid(category_class=_TwoCodes)},
-                functions={
-                    "utility": CollectiveUtility(
-                        utilities={"alice": _working_flow, "bob": _working_flow}
-                    )
-                },
-                state_transitions={
-                    "kind": Phased(
-                        solve=_kind_stays, simulate=_kind_leaves_when_working
-                    )
-                },
-                constraints={
-                    "participation": ValueDependentConstraint(predicate=participation)
-                },
-            ),
-            "terminal": UserRegime(
-                states={"kind": DiscreteGrid(category_class=_TwoCodes)},
-                functions={
-                    "utility": CollectiveUtility(
-                        utilities={"alice": _pair_terminal, "bob": _pair_terminal}
-                    )
-                },
-            ),
-        },
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        edges={"source": {"terminal": 0}},
-        initial_nodes={0: "source"},
-        regime_id_class=_SourceTerminal,
-    )
-    params = {"discount_factor": 1.0}
-    solution = model.solve(params=params, log_level="off", runtime_checks=True)
-    with pytest.raises(InvalidStateTransitionError, match="kind"):
-        model.simulate(
-            params=params,
-            initial_conditions={
-                "kind": jnp.asarray([0, 1], dtype=jnp.int32),
-                "age": jnp.asarray([0.0, 0.0]),
-                "regime_id": jnp.asarray([_SourceTerminal.source] * 2, dtype=jnp.int32),
-            },
-            solution=solution,
-            seed=3,
-            log_level="off",
-            runtime_checks=True,
-        )
-
-
-# A gate that reads the target's value is undecided at an off-grid code, which
-# reads NaN there; the code landing counts, not the fallback the gate closes onto.
+# A gated edge decides its branch only at a cell the ordinary constraints allow, so
+# a law leaving the grid there is refused whatever the gate reads.
 
 
 @categorical(ordered=True)
@@ -2161,7 +2085,25 @@ def _kind_utility_low(*, kind: DiscreteState) -> FloatND:
     return -10.0 + 0.0 * kind
 
 
-def _gate_on_target_value(V_target: FloatND) -> BoolND:
+def _kind_stays(*, kind: DiscreteState, a: DiscreteAction) -> DiscreteState:
+    return kind + 0 * a
+
+
+def _invalid_when_working(code: int) -> UserFunction:
+    def law(*, kind: DiscreteState, a: DiscreteAction) -> DiscreteState:
+        return jnp.where(a == 1, code, kind).astype(jnp.int32)
+
+    return law
+
+
+def _window_gate(*, center: float, width: float) -> UserFunction:
+    def gate(V_target: FloatND) -> BoolND:
+        return jnp.abs(V_target - center) < width
+
+    return gate
+
+
+def _threshold_gate(V_target: FloatND) -> BoolND:
     return V_target > -5.0
 
 
@@ -2169,7 +2111,13 @@ def _project_kind(kind: DiscreteState) -> DiscreteState:
     return jnp.clip(kind, 0, 1).astype(jnp.int32)
 
 
-def _gated_model(*, law: UserFunction) -> Model:
+def _gated_model(
+    *,
+    gate: UserFunction,
+    law: UserFunction | Phased,
+    enable_jit: bool,
+    forbid_working: bool = False,
+) -> Model:
     kind = DiscreteGrid(category_class=_TwoCodes)
     return Model(
         regimes={
@@ -2178,6 +2126,7 @@ def _gated_model(*, law: UserFunction) -> Model:
                 actions={"a": DiscreteGrid(category_class=_TwoCodes)},
                 functions={"utility": _gated_flow},
                 state_transitions={"kind": law},
+                constraints={"rest_only": _rest_only} if forbid_working else {},
             ),
             "target": UserRegime(
                 states={"kind": kind}, functions={"utility": _kind_utility_zero}
@@ -2192,7 +2141,7 @@ def _gated_model(*, law: UserFunction) -> Model:
                 law="target",
                 gates={
                     "target": Gate(
-                        predicate=_gate_on_target_value,
+                        predicate=gate,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -2207,37 +2156,90 @@ def _gated_model(*, law: UserFunction) -> Model:
         },
         initial_nodes={0: "source"},
         regime_id_class=_SourceTargetFallback,
+        enable_jit=enable_jit,
     )
 
 
-def test_off_grid_code_behind_a_value_gate_fails_the_checked_solve():
-    """`a = 1` sends `kind` to code 2; the gate reads NaN there, not a closed gate."""
-    with pytest.raises(InvalidStateTransitionError, match="kind"):
-        _gated_model(law=_kind_leaves_when_working).solve(
-            params={"discount_factor": 1.0}, log_level="off", runtime_checks=True
-        )
+_PARAMS_ONE: UserParams = {"discount_factor": 1.0}
+_WINDOWS = [(0.0, 5.0), (0.0, 0.5), (1.0, 2.0), (-2.0, 3.0)]
+_BAD_CODES = [-1, 2, 3]
 
 
-def test_on_grid_law_behind_a_value_gate_solves():
-    got = _gated_model(law=_kind_stays).solve(
-        params={"discount_factor": 1.0}, log_level="off", runtime_checks=True
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize(("center", "width"), _WINDOWS)
+@pytest.mark.parametrize("bad_code", _BAD_CODES)
+def test_off_grid_law_behind_a_value_gate_is_refused(
+    *, bad_code, center, width, enable_jit
+):
+    """A finite-window gate on `V_target` cannot hide the off-grid code of `a = 1`."""
+    model = _gated_model(
+        gate=_window_gate(center=center, width=width),
+        law=_invalid_when_working(bad_code),
+        enable_jit=enable_jit,
     )
+    with pytest.raises(InvalidStateTransitionError, match="ordinary constraint"):
+        model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize(("center", "width"), _WINDOWS)
+def test_on_grid_law_behind_a_value_gate_solves(*, center, width, enable_jit):
+    """Two actions: `Q(0) = 0`, `Q(1) = 20` at either code."""
+    got = _gated_model(
+        gate=_window_gate(center=center, width=width),
+        law=_kind_stays,
+        enable_jit=enable_jit,
+    ).solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
     np.testing.assert_array_equal(np.asarray(got.values[0]["source"]), [20.0, 20.0])
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_realized_code_check_takes_the_float_values_of_a_shock_process(*, enabled):
-    """The realized check sees every non-continuous state, a shock process too."""
-    process = NormalIIDProcess(
-        n_points=3, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("bad_code", _BAD_CODES)
+def test_ordinarily_excluded_off_grid_action_behind_a_gate_solves(
+    *, bad_code, enable_jit
+):
+    """An ordinary constraint excluding `a = 1` keeps its off-grid code unread."""
+    got = _gated_model(
+        gate=_window_gate(center=0.0, width=5.0),
+        law=_invalid_when_working(bad_code),
+        enable_jit=enable_jit,
+        forbid_working=True,
+    ).solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
+    np.testing.assert_array_equal(np.asarray(got.values[0]["source"]), [0.0, 0.0])
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_simulation_only_off_grid_law_behind_a_value_gate_is_refused(*, enable_jit):
+    """The simulate phase's law is checked before any subject is rerouted."""
+    model = _gated_model(
+        gate=_threshold_gate,
+        law=Phased(solve=_kind_stays, simulate=_invalid_when_working(2)),
+        enable_jit=enable_jit,
     )
-    _fail_if_realized_codes_leave_the_grid(
-        enabled=enabled,
-        codes=jnp.asarray([0.25, -1.5]),
-        grid=process,
-        subjects=jnp.asarray([True, True]),
-        new_regime_ids=jnp.asarray([0, 0], dtype=jnp.int32),
-        target_id=jnp.int32(0),
-        description="a shock process",
-        memory=None,
+    with pytest.raises(InvalidStateTransitionError, match="ordinary constraint"):
+        model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_on_grid_phased_law_behind_a_value_gate_simulates_to_the_target(*, enable_jit):
+    model = _gated_model(
+        gate=_threshold_gate,
+        law=Phased(solve=_kind_stays, simulate=_kind_stays),
+        enable_jit=enable_jit,
     )
+    solution = model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
+    panel = model.simulate(
+        params=_PARAMS_ONE,
+        initial_conditions={
+            "kind": jnp.asarray([0, 1], dtype=jnp.int32),
+            "age": jnp.zeros(2),
+            "regime_id": jnp.full(2, _SourceTargetFallback.source, dtype=jnp.int32),
+        },
+        solution=solution,
+        seed=3,
+        log_level="off",
+        runtime_checks=True,
+    ).to_dataframe(use_labels=False)
+    later = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    assert later["regime_name"].tolist() == ["target", "target"]
+    np.testing.assert_array_equal(later["kind"].to_numpy(), [0, 1])
