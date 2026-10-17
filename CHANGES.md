@@ -5,6 +5,20 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Discrete grids with numeric values
+
+- `DiscreteGrid(values=[0, 20, 40])` declares a discrete variable by its numbers instead
+  of a category class. Values are strictly ascending, finite, and all integers (stored
+  as int32) or all floats (stored at the canonical float dtype). Codes stay `0..n-1`;
+  `categories` holds the `repr` of each value.
+- A float matches a node exactly unless the grid declares an absolute `tolerance`,
+  which must lie below half the smallest gap between values; integer grids take
+  integers and match them exactly. `grid.encode` maps values to codes (off-grid values
+  get the missing-category code), `grid.decode` maps codes to values (an off-grid code
+  reads NaN on a float grid), and `grid.nearest` snaps a float to its closest node.
+- A `Model` does not accept value grids until user functions receive values instead of
+  codes.
+
 ### Time-inconsistent agents with `Decoupled`
 
 - `Regime(koopmans_aggregator=lcm.Decoupled(objective=..., value=...))` chooses actions
