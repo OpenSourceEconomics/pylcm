@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from fractions import Fraction
 from functools import partial
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Literal, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -22,7 +22,10 @@ from _lcm.regime_building.V import (
     _get_coordinate_finder,
     get_V_interpolator,
 )
-from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.host_operations import (
+    ProfiledSimulationOperations,
+    _ProfiledOperation,
+)
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.transitions import _clip_next_states
@@ -82,6 +85,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.simulation.test_entry_operation_reuse import _HostCompilation
 
 
 @categorical(ordered=False)
@@ -1160,7 +1164,7 @@ def test_off_grid_count_workspace_is_bounded_by_one_block() -> None:
     assert stats.temp_size_in_bytes < product_bytes // 16
 
 
-def _wide_model(*, device_memory_bytes: int) -> Model:
+def _wide_model(*, device_memory_bytes: int | None) -> Model:
     """Budgeted model whose product spans many blocks of the trailing action."""
     grid = LinSpacedGrid(start=0, stop=2, n_points=2000)
     return Model(
@@ -1231,6 +1235,50 @@ def test_warm_public_solve_reuses_the_admitted_off_grid_count() -> None:
     with count_compile_requests() as warm:
         model.solve(params=params, log_level="off")
     assert (cold.compile_requests > 0, warm.compile_requests) == (True, 0)
+
+
+def test_warm_unbudgeted_checked_solve_compiles_no_off_grid_count() -> None:
+    """Without a device budget, a repeated checked solve reuses its counts too."""
+    model = _wide_model(device_memory_bytes=None)
+    params = {"discount_factor": 1.0, "reward": 2.0}
+    with count_compile_requests() as cold:
+        model.solve(params=params, log_level="off")
+    with count_compile_requests() as warm:
+        model.solve(params=params, log_level="off")
+    assert (cold.compile_requests > 0, warm.compile_requests) == (True, 0)
+
+
+def test_budgeted_clip_dispatch_reuses_the_profiled_executable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Simulation clips states with the one executable its chunk profile compiled."""
+    keys = []
+    compile_candidate = ProfiledSimulationOperations.compile_candidate
+
+    def _recording_compile_candidate(
+        self: ProfiledSimulationOperations, **call: Unpack[_HostCompilation]
+    ) -> _ProfiledOperation:
+        if call["function"] is _clip_next_states:
+            keys.append(call["key"])
+        return compile_candidate(self, **call)
+
+    monkeypatch.setattr(
+        ProfiledSimulationOperations, "compile_candidate", _recording_compile_candidate
+    )
+    model = _model(off_grid="clip_state", device_memory_bytes=2**28)
+    params = {"discount_factor": 1.0, "reward": 2.0}
+    model.simulate(
+        params=params,
+        initial_conditions={
+            "age": jnp.zeros(4),
+            "regime_id": jnp.zeros(4, dtype=jnp.int32),
+            "wealth": jnp.linspace(0.0, 2.0, 4),
+        },
+        solution=model.solve(params=params, log_level="off"),
+        log_level="off",
+        seed=0,
+    )
+    assert len(set(keys)) == 1
 
 
 def test_off_grid_count_loop_hides_its_trip_count_from_the_compiler(
@@ -1483,6 +1531,26 @@ def test_raise_omits_the_action_excluded_by_any_constraint(
         log_level="off",
     )
     np.testing.assert_array_equal(solution.values[0]["source"], np.ones((3, 2)))
+
+
+@pytest.mark.parametrize("tail", [-1.0, 3.0])
+def test_kernel_and_preflight_refuse_the_same_landing_in_the_same_words(
+    tail: float,
+) -> None:
+    """The solve kernel's refusal names the count exactly as the preflight does."""
+    messages = []
+    for value_dependent in (True, False):
+        model = _collective_model(
+            rule="raise", tail=tail, threshold=-2.0, value_dependent=value_dependent
+        )
+        with pytest.raises(OffGridStateError) as error:
+            model.solve(params={"discount_factor": 1.0}, log_level="off")
+        messages.append(str(error.value))
+    expected = (
+        "Off-grid next states: regime='source', target='terminal', period=0, "
+        "state='wealth', phase='solve', count=3"
+    )
+    assert messages == [expected, expected]
 
 
 @pytest.mark.parametrize("tail", [-1.0, 3.0])
