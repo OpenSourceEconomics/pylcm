@@ -5,6 +5,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Categories with characteristics
+
+- `characteristics(category_class=..., by_category=...)` checks a table that lists
+  every category's `int` or `bool` characteristics against a categorical class and
+  returns read-only arrays indexed by code. `category_with(columns, **characteristics)`
+  maps bool or signed-integer characteristics back to a category code under `jit` and
+  `vmap`, returning the int32 minimum where no category matches. A new user-guide page shows how to declare,
+  publish and read such characteristics.
+
 ### Discrete grids with numeric values
 
 - A deterministic law of a discrete state that leaves its grid at a cell where some

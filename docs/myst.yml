@@ -49,6 +49,7 @@ project:
         - file: user_guide/migrating_dated_regimes.md
         - file: user_guide/regimes.ipynb
         - file: user_guide/grids.md
+        - file: user_guide/categories_with_characteristics.md
         - file: user_guide/transitions.ipynb
         - file: user_guide/collective_regimes.md
         - file: user_guide/age_specialized.md
