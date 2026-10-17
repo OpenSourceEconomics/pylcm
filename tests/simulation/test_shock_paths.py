@@ -114,6 +114,7 @@ def test_common_path_decisions_match_policy_lookup() -> None:
             regime_name="alive",
             states={"shock": jnp.full(len(rows), path[period])},
         )
+        assert expected.actions is not None
         np.testing.assert_array_equal(rows["shock"], path[period])
         np.testing.assert_array_equal(rows["choice"], expected.actions["choice"])
     # Independent myopic oracle: no state or action feeds continuation.

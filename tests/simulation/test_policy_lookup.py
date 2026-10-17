@@ -269,6 +269,7 @@ def test_lookup_policy_takes_discrete_state_codes_of_any_integer_dtype():
             regime_name="working_life",
             states={"wealth": codes},
         )
+        assert got.actions is not None
         return {
             "value": np.asarray(got.value).tolist(),
             **{name: np.asarray(a).tolist() for name, a in got.actions.items()},
@@ -433,6 +434,7 @@ def test_lookup_policy_under_a_device_budget_has_analytic_last_decision_policy()
         regime_name="working_life",
         states={"wealth": jnp.array([2.0])},
     )
+    assert got.actions is not None
     # All successors are dead with utility zero; c <= wealth leaves c in {1, 2}
     # and work subtracts 0.5, so the optimum is c = 2, retire, value log(2).
     np.testing.assert_allclose(
@@ -547,6 +549,7 @@ def test_restored_budgeted_lookup_has_analytic_last_decision_policy(
             regime_name="working_life",
             states=states,
         )
+        assert result.actions is not None
         jax.block_until_ready((result.value, dict(result.actions)))
         # At age 19 all successors are dead with utility zero. The constraint
         # c <= wealth leaves c in {1, 2}; work subtracts 0.5. Thus these literals

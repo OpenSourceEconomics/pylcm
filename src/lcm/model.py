@@ -8,7 +8,7 @@ import os
 import threading
 import uuid
 from collections import OrderedDict
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
@@ -162,6 +162,9 @@ from _lcm.simulation.program_types import (
     ACTION_FEASIBILITY,
     ACTION_INDEX,
     ACTION_VALUES,
+    CHOICE_PROBABILITIES,
+    CONDITIONAL_ACTION_INDEX,
+    CONDITIONAL_VALUE,
     CONTINUATION_CE,
     DECISION_VALUE,
     FLOW_UTILITY,
@@ -358,7 +361,7 @@ from lcm.solver_api import (
     _replay_route_identity,
     _same_exact_artifact_contract,
 )
-from lcm.solvers import GridSearch
+from lcm.solvers import GridSearch, Solver
 from lcm.transition import (
     DeclaredModelEdges,
     ModelEdges,
@@ -4064,12 +4067,15 @@ class Model:
         action_grids: Mapping[ActionName, jax.Array] | None = None,
         keep_intermediates: tuple[Intermediate, ...] = (),
     ) -> PolicyLookup:
-        """Return the optimal actions and value at given states of one regime-period.
+        """Return the decision at given states of one regime-period.
 
-        Evaluates the same decision program `simulate` runs, so a subject standing
-        at one of `states` in `(period, regime_name)` chooses exactly the returned
-        actions and attains the returned value. Repeated calls with the same number
-        of rows reuse one compiled program.
+        Evaluates the decision `simulate` runs: the simulate phase's current
+        utility and aggregator with the solved continuation, on the requested
+        action grid. Without taste shocks, a subject standing at one of `states`
+        in `(period, regime_name)` chooses exactly the returned actions and
+        attains the returned value. With taste shocks, the returned choice
+        probabilities are the distribution of that subject's discrete choice.
+        Repeated calls with the same number of rows reuse one compiled program.
 
         Args:
             params: The parameters `solution` was solved with; checked against its
@@ -4102,12 +4108,17 @@ class Model:
         Returns:
             The argmax action value per action name and the max of Q over the
             (possibly restricted) action grid, one entry per state row, and the
-            intermediates named in `keep_intermediates`; the others are `None`.
+            intermediates named in `keep_intermediates`; the others are `None`. A
+            GridSearch regime with taste shocks returns no actions; it returns the
+            smoothed maximum as the value, and per discrete-action combination
+            `Qc`, the choice probabilities and the continuous actions attaining
+            `Qc`.
 
         Raises:
-            NoFeasibleActionError: A queried state of a regime with actions has no
-                feasible action, as `simulate` refuses it. A regime without actions
-                returns the value negative infinity there instead.
+            NoFeasibleActionError: A queried state of a regime with actions and no
+                taste shocks has no feasible action, as `simulate` refuses it. A
+                regime without actions returns the value negative infinity there
+                instead.
 
         """
         self._check_identity_runtime()
@@ -4118,19 +4129,13 @@ class Model:
         if period not in regime.simulation.programs.decision:
             msg = f"Regime {regime_name!r} makes no decision in period {period}."
             raise InvalidSimulationInputError(msg)
-        if regime.has_taste_shocks or regime.gated_edges:
-            msg = (
-                "Policy lookup supports regimes without taste shocks or gated "
-                f"edges; {regime_name!r} declares one."
-            )
-            raise InvalidSimulationInputError(msg)
         _fail_if_invalid_intermediates(keep_intermediates=keep_intermediates)
-        if keep_intermediates and regime.stakeholders is not None:
-            msg = (
-                "Policy lookup keeps intermediates for singleton regimes only; "
-                f"{regime_name!r} is a collective regime."
-            )
-            raise InvalidSimulationInputError(msg)
+        _fail_if_policy_lookup_unsupported(
+            regime=regime,
+            regime_name=regime_name,
+            solver=self.user_regimes[regime_name].solver,
+            keep_intermediates=keep_intermediates,
+        )
         allocations = self._open_entry_allocations(
             params=params, inputs=(states, action_grids), solution=solution
         )
@@ -4357,7 +4362,9 @@ class Model:
                     ),
                     cache=self._kept_parts_programs,
                 )
-                if keep_intermediates
+                # A taste-shock regime draws its discrete action, so its lookup
+                # always takes the decision that publishes the choice probabilities.
+                if keep_intermediates or regime.has_taste_shocks
                 else _with_action_extents(
                     program=programs.decision[period],
                     extents=tuple(len(grids[n]) for n in space.action_names),
@@ -4388,13 +4395,21 @@ class Model:
             # once, for the one row an empty query stands for; every output gets
             # that row here.
             outputs = tuple(output[None] for output in outputs)
-        # Both lookup programs publish a flat tuple, one role per output.
+        # Every lookup program publishes a flat tuple, one role per output.
         roles = cast("tuple[str, ...]", program.output_roles)
         by_role = dict(zip(roles, outputs, strict=True))
-        indices, value = by_role[ACTION_INDEX], by_role[DECISION_VALUE]
+        # A taste-shock regime draws its discrete action, so the lookup decodes
+        # the continuous action attaining each combination's `Qc` instead.
+        indices, decoded = (
+            (by_role[CONDITIONAL_ACTION_INDEX], space.continuous_actions)
+            if regime.has_taste_shocks
+            else (by_role[ACTION_INDEX], space.actions)
+        )
+        # A taste-shock regime publishes choice probabilities, not one decision,
+        # so only a regime without taste shocks refuses an empty action set here.
         _fail_if_a_queried_state_has_no_feasible_action(
             indices=indices,
-            has_actions=bool(space.actions),
+            has_actions=bool(space.actions) and not regime.has_taste_shocks,
             n_query_rows=n_query_rows,
             regime=regime,
             states=space.states,
@@ -4405,7 +4420,7 @@ class Model:
             regime_name=regime_name,
             period=period,
         )
-        lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
+        lookup_grids = MappingProxyType({n: grids[n] for n in decoded})
         if unit is None or allocations is None:
             actions = _lookup_values_from_indices(
                 flat_indices=indices, grids=lookup_grids
@@ -4433,12 +4448,15 @@ class Model:
             unit.close()
         return _trim_lookup_rows(
             lookup=PolicyLookup(
-                actions=actions,
-                value=value,
+                actions=None if regime.has_taste_shocks else actions,
+                value=by_role[DECISION_VALUE],
                 Q=by_role.get(ACTION_VALUES),
                 F=by_role.get(ACTION_FEASIBILITY),
                 U=by_role.get(FLOW_UTILITY),
                 CE=by_role.get(CONTINUATION_CE),
+                Qc=by_role.get(CONDITIONAL_VALUE),
+                choice_probabilities=by_role.get(CHOICE_PROBABILITIES),
+                conditional_actions=actions if regime.has_taste_shocks else None,
             ),
             n_rows=n_query_rows,
             allocations=allocations,
@@ -5084,6 +5102,36 @@ def _with_action_extents(
     return cache[key][1]
 
 
+def _fail_if_policy_lookup_unsupported(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    solver: Solver,
+    keep_intermediates: tuple[Intermediate, ...],
+) -> None:
+    """Raise when policy lookup cannot reproduce the regime's simulated decision."""
+    if regime.gated_edges:
+        msg = (
+            "Policy lookup supports regimes without gated edges; "
+            f"{regime_name!r} declares one."
+        )
+        raise InvalidSimulationInputError(msg)
+    if regime.has_taste_shocks and type(solver) is not GridSearch:
+        msg = (
+            "Policy lookup supports taste shocks in regimes solved by "
+            f"GridSearch only; {regime_name!r} is solved by "
+            f"{type(solver).__name__}, whose simulation need not reproduce "
+            "the choice probabilities of its solve."
+        )
+        raise InvalidSimulationInputError(msg)
+    if keep_intermediates and regime.stakeholders is not None:
+        msg = (
+            "Policy lookup keeps intermediates for singleton regimes only; "
+            f"{regime_name!r} is a collective regime."
+        )
+        raise InvalidSimulationInputError(msg)
+
+
 def _fail_if_off_grid(
     *,
     kind: str,
@@ -5532,16 +5580,7 @@ def _trim_lookup_rows(
     if n_rows is None:
         return lookup
     if allocations is None or unit is None:
-        return PolicyLookup(
-            actions=MappingProxyType(
-                {name: each[:n_rows] for name, each in lookup.actions.items()}
-            ),
-            value=lookup.value[:n_rows],
-            Q=None if lookup.Q is None else lookup.Q[:n_rows],
-            F=None if lookup.F is None else lookup.F[:n_rows],
-            U=None if lookup.U is None else lookup.U[:n_rows],
-            CE=None if lookup.CE is None else lookup.CE[:n_rows],
-        )
+        return _map_lookup_arrays(lookup=lookup, func=lambda array: array[:n_rows])
     return _admit_trimmed_lookup_rows(
         lookup=lookup,
         n_rows=n_rows,
@@ -5583,8 +5622,10 @@ def _admit_trimmed_lookup_rows(
                     allocations=allocations,
                     call_roots=(
                         call_roots,
-                        tuple(lookup.actions.values()),
-                        (lookup.value, lookup.Q, lookup.F, lookup.U, lookup.CE),
+                        tuple(
+                            getattr(lookup, field.name)
+                            for field in dataclasses.fields(lookup)
+                        ),
                         kept,
                     ),
                 ),
@@ -5595,15 +5636,29 @@ def _admit_trimmed_lookup_rows(
         kept.append(result)
         return result
 
-    return PolicyLookup(
-        actions=MappingProxyType(
-            {name: trim(each) for name, each in lookup.actions.items()}
-        ),
-        value=trim(lookup.value),
-        Q=None if lookup.Q is None else trim(lookup.Q),
-        F=None if lookup.F is None else trim(lookup.F),
-        U=None if lookup.U is None else trim(lookup.U),
-        CE=None if lookup.CE is None else trim(lookup.CE),
+    return _map_lookup_arrays(lookup=lookup, func=trim)
+
+
+def _map_lookup_arrays(
+    *, lookup: PolicyLookup, func: Callable[[jax.Array], jax.Array]
+) -> PolicyLookup:
+    """Apply `func` to every array a lookup holds."""
+
+    def apply(
+        each: jax.Array | Mapping[ActionName, jax.Array] | None,
+    ) -> jax.Array | MappingProxyType[ActionName, jax.Array] | None:
+        if each is None:
+            return None
+        if isinstance(each, Mapping):
+            return MappingProxyType({name: func(a) for name, a in each.items()})
+        return func(each)
+
+    return dataclasses.replace(
+        lookup,
+        **{
+            field.name: apply(getattr(lookup, field.name))
+            for field in dataclasses.fields(lookup)
+        },
     )
 
 

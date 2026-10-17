@@ -36,15 +36,16 @@ from lcm import (
     LinSpacedGrid,
     Model,
     PowerMean,
-    Regime,
     categorical,
 )
 from lcm.exceptions import InvalidSimulationInputError
+from lcm.regime import Regime
 from lcm.result import PolicyLookup
 from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     FloatND,
     Intermediate,
     ScalarInt,
@@ -358,6 +359,7 @@ def test_budgeted_lookup_returns_the_feasibility_of_each_action():
         states={"wealth": jnp.array([2.0])},
         keep_intermediates=ALL_INTERMEDIATES,
     )
+    assert got.actions is not None
     assert tuple(got.actions) == ("labor_supply", "consumption")
     np.testing.assert_array_equal(
         np.asarray(got.F), np.array([[[True, True, False], [True, True, False]]])
@@ -756,6 +758,92 @@ def test_action_value_lookup_evaluates_the_regime_kernel_once():
         keep_intermediates=ALL_INTERMEDIATES,
     )
     assert len(traces) == 1
+
+
+def test_lookup_without_taste_shocks_returns_no_choice_distribution(solved):
+    got = lookup(solved=solved, period=0, keep_intermediates=ALL_INTERMEDIATES)
+    assert (got.Qc, got.choice_probabilities, got.conditional_actions) == (
+        None,
+        None,
+        None,
+    )
+
+
+@categorical(ordered=False)
+class _KeyRegimeId:
+    alive: ScalarInt
+    done: ScalarInt
+
+
+@categorical(ordered=True)
+class _Choice:
+    off: ScalarInt
+    on: ScalarInt
+
+
+def _utility_with_key(
+    *, consumption: ContinuousAction, taste_shock_key: DiscreteAction
+) -> FloatND:
+    return consumption + taste_shock_key
+
+
+def _next_wealth_with_key(
+    *,
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+    taste_shock_key: DiscreteAction,
+) -> ContinuousState:
+    return wealth - consumption + taste_shock_key
+
+
+def _budget(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+    return consumption <= wealth
+
+
+def _zero_bequest(wealth: ContinuousState) -> FloatND:
+    return 0.0 * wealth
+
+
+def test_action_values_keep_an_action_named_taste_shock_key():
+    """An ordinary action may carry the name the engine gives its taste-shock key.
+
+    `u = c + k`, `c <= w`, no continuation value: the argmax is `k = 1` and the
+    largest feasible `c`, so the values at `w = 1, 2` are `2` and `2.5`.
+    """
+    model = Model(
+        edges={"alive": {"done": 40}},
+        regimes={
+            "alive": Regime(
+                states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
+                state_transitions={"wealth": _next_wealth_with_key},
+                actions={
+                    "taste_shock_key": DiscreteGrid(category_class=_Choice),
+                    "consumption": LinSpacedGrid(start=0.5, stop=1.5, n_points=3),
+                },
+                constraints={"budget": _budget},
+                functions={"utility": _utility_with_key},
+            ),
+            "done": Regime(
+                states={"wealth": LinSpacedGrid(start=0.0, stop=3.0, n_points=7)},
+                functions={"utility": _zero_bequest},
+            ),
+        },
+        ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
+        regime_id_class=_KeyRegimeId,
+        initial_nodes={40: "alive"},
+    )
+    params = {"discount_factor": 0.9}
+    got = model.lookup_policy(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        period=0,
+        regime_name="alive",
+        states={"wealth": jnp.array([1.0, 2.0])},
+        keep_intermediates=ALL_INTERMEDIATES,
+    )
+    np.testing.assert_array_almost_equal(
+        np.asarray(got.value), np.array([2.0, 2.5]), decimal=DECIMAL_PRECISION
+    )
 
 
 @categorical(ordered=False)

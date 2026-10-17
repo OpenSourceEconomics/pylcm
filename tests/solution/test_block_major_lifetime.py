@@ -622,6 +622,7 @@ def _lookup_column(
         regime_name="work",
         states=_LOOKUP_STATES,
     )
+    assert got.actions is not None
     return np.asarray(got.value if column == "value" else got.actions[column])
 
 
